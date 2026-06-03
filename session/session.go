@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 )
 
 // session value keys.

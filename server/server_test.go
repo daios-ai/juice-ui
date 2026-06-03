@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/daios/juice-ui/client"
-	"github.com/daios/juice-ui/session"
+	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/session"
 )
 
 // newTestHandler builds the full BFF handler pointed at the given kernel URL.

@@ -1,4 +1,4 @@
-module github.com/daios/juice-ui
+module github.com/daios-ai/juice-ui
 
 go 1.22.2
 

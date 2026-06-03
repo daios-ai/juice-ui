@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 )
 
 // OutcomeClass is one of the three call result classes (R6.5.5).

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 )
 
 func TestNewRendererParsesAllTemplates(t *testing.T) {

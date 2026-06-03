@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 	"github.com/gorilla/csrf"
 )
 

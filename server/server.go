@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/daios/juice-ui/client"
-	"github.com/daios/juice-ui/session"
+	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/session"
 	"github.com/gorilla/csrf"
 )
 

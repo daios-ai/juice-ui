@@ -130,3 +130,10 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+func TestVersionDefaults(t *testing.T) {
+	// Build metadata has safe defaults when not injected via -ldflags.
+	if version == "" || commit == "" {
+		t.Errorf("version/commit must have non-empty defaults, got %q/%q", version, commit)
+	}
+}

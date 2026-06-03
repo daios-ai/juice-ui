@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 )
 
 //go:embed templates/*.html

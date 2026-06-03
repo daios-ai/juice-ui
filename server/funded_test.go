@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 )
 
 // fakeKernel is a configurable httptest kernel for funded-session tests.

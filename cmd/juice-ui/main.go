@@ -15,9 +15,15 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/daios/juice-ui/client"
-	"github.com/daios/juice-ui/server"
-	"github.com/daios/juice-ui/session"
+	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/server"
+	"github.com/daios-ai/juice-ui/session"
+)
+
+// Build metadata, injected at link time via -ldflags "-X main.version=... -X main.commit=...".
+var (
+	version = "dev"
+	commit  = "unknown"
 )
 
 // Config is the BFF's runtime configuration, loaded from the environment with
@@ -108,6 +114,10 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version" || os.Args[1] == "version") {
+		fmt.Printf("juice-ui %s (%s)\n", version, commit)
+		return
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg, err := LoadConfig(os.Getenv)
 	if err != nil {
@@ -119,7 +129,7 @@ func main() {
 		log.Error("startup failed", "err", err)
 		os.Exit(1)
 	}
-	log.Info("juice-ui listening", "addr", cfg.ListenAddr, "kernel", cfg.KernelBaseURL, "secure", cfg.Secure)
+	log.Info("juice-ui listening", "version", version, "commit", commit, "addr", cfg.ListenAddr, "kernel", cfg.KernelBaseURL, "secure", cfg.Secure)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

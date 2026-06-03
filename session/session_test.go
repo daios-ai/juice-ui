@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/daios/juice-ui/client"
+	"github.com/daios-ai/juice-ui/client"
 )
 
 type fakeRefresher struct {
