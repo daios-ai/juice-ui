@@ -1,6 +1,6 @@
 # Juice Web UI Requirements
 
-Version: 0.4
+Version: 0.5
 Status: design draft — endpoint surface pending verification against the running kernel
 Codename: `juice-ui`
 
@@ -310,6 +310,24 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 * **R8.3** No secrets or tokens in HTML, URLs, client storage, or logs.
 * **R8.4** Structured logs to stderr include a request ID and, where available,
   the subject and resource identifiers.
+* **R8.5** The UI ships **light and dark themes from a single set of semantic
+  design tokens** (CSS custom properties); components reference tokens only,
+  never raw colors, so the themes stay in lockstep. The aesthetic is a warm,
+  Anthropic/Claude-inspired look: a warm charcoal dark mode and a warm ivory
+  light mode (not cool blue-black / pure white), a muted terracotta "clay"
+  accent reserved **strictly for primary/brand actions**, a sans-serif grotesque
+  for the UI, and monospace for money, IDs, hashes, and `@owner/name`. The exact
+  values are tuned by eye; this is inspired-by, not a replica of any brand's
+  proprietary tokens.
+* **R8.6** Theme selection defaults to the OS `prefers-color-scheme`; an explicit
+  user choice is persisted **server-side** (a `theme` cookie the BFF reads) and
+  stamped onto the document at render time, so server-rendered pages show the
+  correct theme with **no flash of the wrong theme** and the toggle works without
+  JavaScript. Motion respects `prefers-reduced-motion`.
+* **R8.7** Both themes meet WCAG AA contrast (≥4.5:1 body text, ≥3:1 large text
+  and UI affordances). The credited / refunded / escrow-pending status colors
+  MUST remain mutually distinct **and** distinct from the clay accent in both
+  themes, because that three-way distinction is a financial trust signal.
 
 ## 9. Testing
 
