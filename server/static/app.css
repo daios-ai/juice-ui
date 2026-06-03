@@ -159,6 +159,15 @@ textarea { min-height: 7rem; font-family: var(--font-mono); }
 .cost .f { color: var(--text-muted); }
 .cost .n { color: var(--credited); }
 
+/* In-flight progress (R8.2). htmx adds .htmx-request to the hx-indicator target
+   for the duration of the request; we show an indeterminate bar so long calls
+   (e.g. chat) never look stalled. No-JS submits fall back to a full reload. */
+.progress { display: none; align-items: center; gap: .6rem; flex: 1; color: var(--text-muted); font-size: .9rem; }
+.progress.htmx-request { display: flex; }
+.progress .bar { position: relative; height: 6px; flex: 0 0 140px; max-width: 45%; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.progress .bar::after { content: ""; position: absolute; top: 0; left: -40%; height: 100%; width: 40%; border-radius: 999px; background: var(--accent); animation: indeterminate 1.05s ease-in-out infinite; }
+@keyframes indeterminate { 0% { left: -40%; } 100% { left: 100%; } }
+
 /* Outcome panels */
 .outcome { border-left: 4px solid var(--border-strong); padding: .75rem 1rem; border-radius: var(--radius); background: var(--surface-2); }
 .outcome.rejected { border-left-color: var(--escrow); }

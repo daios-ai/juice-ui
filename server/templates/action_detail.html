@@ -23,9 +23,11 @@
 </div>
 
 <h2>Run</h2>
-{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}
+<div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
 
-<form class="card stack" method="post" action="/actions/{{$d.Action.ID}}/run" data-run-panel>
+<form class="card stack" method="post" action="/actions/{{$d.Action.ID}}/run" data-run-panel
+      hx-post="/actions/{{$d.Action.ID}}/run" hx-target="#run-result" hx-swap="innerHTML"
+      hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
 
   {{if $d.IsPaid}}
@@ -81,7 +83,12 @@
   </div>
 
   {{if not $d.Form.UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
-  <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run ({{money $d.Action.Price}} credits){{else}}Run{{end}}</button>
+  <div class="row">
+    <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run ({{money $d.Action.Price}} credits){{else}}Run{{end}}</button>
+    <div id="run-progress" class="progress" role="status" aria-live="polite">
+      <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
+    </div>
+  </div>
 </form>
 
 {{if $d.Action.OutputSchema}}

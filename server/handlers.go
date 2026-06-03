@@ -321,13 +321,50 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	// The Run panel submits via htmx and swaps in just the outcome fragment so a
+	// long call (e.g. chat) shows a progress bar instead of blocking a full-page
+	// reload (R8.2). Without JS the form posts normally and we re-render the page.
+	if err != nil {
+		if isAuthErr(err) {
+			_ = s.sessions.Logout(ctx)
+			if isHTMX(r) {
+				w.Header().Set("HX-Redirect", "/login")
+				return
+			}
+			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+			return
+		}
+		s.log.Warn("run failed", "request_id", client.RequestIDFromContext(ctx), "err", err)
+		if isHTMX(r) {
+			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
+			return
+		}
+		s.renderPage(w, r, statusFor(err), "error", "Error", errorView{Message: userMessage(err)})
 		return
 	}
 	if argErr != nil {
 		view.Error = "Invalid JSON in arguments: " + argErr.Error()
 	}
+	if isHTMX(r) {
+		if view.Error != "" || view.Outcome == nil {
+			_ = s.render.Fragment(w, http.StatusOK, "_error", orDefaultStr(view.Error, "The call could not be completed."))
+			return
+		}
+		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", *view.Outcome)
+		return
+	}
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
+}
+
+// isHTMX reports whether the request came from htmx (so we can return a fragment
+// instead of a full page).
+func isHTMX(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
+
+func orDefaultStr(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 // runCall executes the action through the funded-session abstraction, opening a

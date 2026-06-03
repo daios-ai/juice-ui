@@ -142,10 +142,16 @@ DASH="$(uiget "$BOB" /)"
 expect "shows available credits" "$DASH" "1,000"
 expect "explains top-ups are out-of-band" "$DASH" "out-of-band"
 
-say "Story: discovery degrades honestly to catalog (R6.2.4, R10.7)"
-DISC="$(uiget "$BOB" "/discover?q=hello")"
-expect "semantic-search fallback banner" "$DISC" "catalog search instead"
-expect "fallback shows the kernel's reason" "$DISC" "reason:"
+say "Story: discovery — semantic search or honest catalog fallback (R6.2, R10.7)"
+DISC="$(uiget "$BOB" "/discover?q=demo")"
+expect "query renders the discovery results view" "$DISC" "Results for"
+# Discovery is always usable. Whether it falls back depends on the kernel's
+# embedder (and the float32 lookup bug); assert the reason only when it did.
+if printf '%s' "$DISC" | grep -q "catalog search instead"; then
+  expect "fallback names the kernel's reason" "$DISC" "reason:"
+else
+  ok "semantic search available (no fallback needed)"
+fi
 expect "catalog browse lists an action" "$(uiget "$BOB" /discover)" "@alice/"
 
 say "Story: authoring in Studio (R6.3) + owner-only affordances (R9.2)"
@@ -175,6 +181,13 @@ RUN_PAY="$(submit "$BOB" "/actions/$PAY_ID" "/actions/$PAY_ID/run" \
 expect "paid call succeeds" "$RUN_PAY" "Success"
 expect "cost breakdown gross shown" "$RUN_PAY" "gross"
 expect "gross is 100" "$RUN_PAY" "money\">100"
+# The run form carries an in-flight progress bar (R8.2), and an htmx submit
+# returns just the outcome fragment (not a full page) so the bar can show.
+expect "run form has a progress indicator" "$(uiget "$BOB" "/actions/$PAY_ID")" 'id="run-progress"'
+FRAG="$(submit "$BOB" "/actions/$FREE_ID" "/actions/$FREE_ID/run" \
+  --data-urlencode "has_fields=1" --data-urlencode "f_x=hi" --data-urlencode "t_x=string" -H 'HX-Request: true')"
+expect "htmx run returns the outcome fragment" "$FRAG" "outcome"
+refute "htmx run is a fragment, not a full page" "$FRAG" "<!DOCTYPE html>"
 
 say "Story: input-schema rejection — not sent, not charged (R6.5.5)"
 # @sys/lookup requires 'query'; submitting none -> 422 rejection BEFORE charge.
@@ -226,6 +239,8 @@ CHAT_ID="$(curl -s "$KURL/v1/actions?owner=@sys&name=llm/chat" | uuid)"
 CHATPAGE="$(uiget "$BOB" "/actions/$CHAT_ID")"
 expect "messages array skeleton pre-filled" "$CHATPAGE" 'role'
 expect "skeleton shows content field too" "$CHATPAGE" 'content'
+expect "raw-JSON toggle present" "$CHATPAGE" 'data-raw-toggle'
+expect "schema-form.js is wired in" "$CHATPAGE" 'schema-form.js'
 
 say "Story: theme toggle works (no-JS) + CSRF protection (R8.6, R5.5)"
 submit "$BOB" / /theme --data-urlencode "theme=dark" >/dev/null
