@@ -33,6 +33,7 @@ type discoverResult struct {
 type discoverView struct {
 	Query           string
 	LookupAvailable bool
+	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []discoverResult
 	Catalog         []client.Action
 }
@@ -236,8 +237,14 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 			view.Results = parseLookup(out.Result)
 			return nil
 		}
-		// Degrade honestly to catalog search (R6.2.4).
+		// Degrade honestly to catalog search (R6.2.4). Surface the kernel's own
+		// reason rather than guessing the cause (it may be a missing embedder,
+		// or @sys/lookup failing for another reason).
 		view.LookupAvailable = false
+		view.Reason = out.Detail
+		if view.Reason == "" {
+			view.Reason = out.Message
+		}
 		cat, e := s.client.ListActions(ctx, tok, "", "")
 		if e != nil {
 			return e

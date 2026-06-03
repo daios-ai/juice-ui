@@ -37,6 +37,7 @@ type Outcome struct {
 	Cost        *Cost  // success only
 	FailureTxID string // failed only, best-effort
 	Message     string // user-facing explanation
+	Detail      string // raw kernel error message (for diagnostics; never includes secrets)
 }
 
 // IsSuccess reports a successful call outcome (template helper).
@@ -107,11 +108,12 @@ func (k *Caller) callIn(ctx context.Context, token, processID, ref string, args 
 		// with a failure transaction). Disambiguate by whether a new failure
 		// transaction was recorded.
 		if txID := k.newFailureTx(ctx, token, processID, before); txID != "" {
-			return Outcome{Class: Failed, Message: ke.UserMessage(), FailureTxID: txID}, nil
+			return Outcome{Class: Failed, Message: ke.UserMessage(), Detail: ke.KernelMessage, FailureTxID: txID}, nil
 		}
 		return Outcome{
 			Class:   Rejected,
 			Message: "Not sent — you were not charged. " + ke.UserMessage(),
+			Detail:  ke.KernelMessage,
 		}, nil
 	case client.KindExecutionFailed, client.KindTimeout, client.KindInvalidState:
 		// Failure after execution began (or a non-operational service): the
@@ -119,6 +121,7 @@ func (k *Caller) callIn(ctx context.Context, token, processID, ref string, args 
 		return Outcome{
 			Class:       Failed,
 			Message:     ke.UserMessage(),
+			Detail:      ke.KernelMessage,
 			FailureTxID: k.newFailureTx(ctx, token, processID, before),
 		}, nil
 	default:

@@ -144,7 +144,8 @@ expect "explains top-ups are out-of-band" "$DASH" "out-of-band"
 
 say "Story: discovery degrades honestly to catalog (R6.2.4, R10.7)"
 DISC="$(uiget "$BOB" "/discover?q=hello")"
-expect "semantic-search-unavailable banner" "$DISC" "Semantic search is unavailable"
+expect "semantic-search fallback banner" "$DISC" "catalog search instead"
+expect "fallback shows the kernel's reason" "$DISC" "reason:"
 expect "catalog browse lists an action" "$(uiget "$BOB" /discover)" "@alice/"
 
 say "Story: authoring in Studio (R6.3) + owner-only affordances (R9.2)"

@@ -3,7 +3,7 @@
 <p class="subtitle">Describe what you want to do, or browse the catalog.</p>
 
 {{if not .Data.LookupAvailable}}
-<div class="banner">Semantic search is unavailable on this kernel (no embedder configured), so results come from catalog search instead.</div>
+<div class="banner">Semantic search isn’t available right now, so results come from catalog search instead.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
 {{end}}
 
 <form class="card row" method="get" action="/discover">
