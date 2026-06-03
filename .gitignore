@@ -1,0 +1,15 @@
+# Binaries
+/juice-ui
+*.exe
+*.test
+*.out
+
+# Go build/test artifacts
+/bin/
+/dist/
+coverage.*
+
+# Local env / editor
+*.env
+.env
+.DS_Store

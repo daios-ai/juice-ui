@@ -1,0 +1,7 @@
+- Never implement anything that violates requirements.md
+- Never implement code if I don't ask you directly
+- Keep the number of files small because this codebase is critical and must be correct!
+- Every GO file must have a corresponding test file
+- Never peek into the implementation of the Juice kernel
+- For every flow you want to implement, you must try it out yourself
+  on the kernel first.
