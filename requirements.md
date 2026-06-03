@@ -1,6 +1,6 @@
 # Juice Web UI Requirements
 
-Version: 0.3
+Version: 0.4
 Status: design draft — endpoint surface pending verification against the running kernel
 Codename: `juice-ui`
 
@@ -167,11 +167,28 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 
 ### 6.2 Marketplace and discovery
 
-* **R6.2.1** Browse and search public, active actions (`GET /v1/actions`), each
-  shown with price, description, and stats (uses, success/failure, rating mean
-  and count, latency mean).
+* **R6.2.1** *(Mandatory, first-class.)* Action discovery is a core feature of
+  the UI. The primary way to find actions is **natural-language search backed by
+  `@sys/lookup`**: the user describes what they want, and the UI calls
+  `@sys/lookup` (required `query`, optional `limit`) via the normal call path
+  (`POST /v1/call`, through the funded-session abstraction of R6.5.1 — lookup is
+  a price-0 native action). Results are ranked `results[]` of `{action_id, name,
+  owner_handle, description, score}` and are presented prominently, each linking
+  to the action detail / Run panel (§6.2.2). Because `action_id`, `owner_handle`,
+  and `name` are returned together, lookup results also yield a callable
+  `@owner/name` and a manageable `id` directly.
 * **R6.2.2** An action detail view shows full metadata, input/output schemas,
   stats, and ratings, with a Run panel (§6.5).
+* **R6.2.3** Catalog browse is the secondary path: `GET /v1/actions` (with
+  owner/name filters) lists public, active actions with price, description, and
+  stats (uses, success/failure, rating mean and count, latency mean). It is also
+  the fallback when lookup is unavailable.
+* **R6.2.4** Discovery degrades honestly. If `@sys/lookup` returns
+  `ErrInvalidState` (e.g. no embedder configured on the kernel, see R10.7), the
+  UI falls back to catalog search (R6.2.3) and tells the user semantic search is
+  unavailable, rather than presenting a dead search box. The discovery feature
+  itself remains mandatory; only its semantic-ranking quality is
+  environment-dependent.
 
 ### 6.3 Studio (author and manage own actions)
 
@@ -335,3 +352,8 @@ running kernel; otherwise it stays conditional or is dropped from scope.
   exposes any HTTP protocol for ownership-proof challenge creation, credential
   submission, and proof status. If not, the UI cannot drive a proof flow and
   only surfaces the kernel's rejection on public activation.
+* **R10.7** *(lookup operational status — R6.2.1, R6.2.4)* Confirm whether
+  `@sys/lookup` is operational on the running kernel (an embedder is configured)
+  or returns `ErrInvalidState`. This does not gate the discovery feature, which
+  is mandatory regardless; it determines whether semantic ranking is available
+  or the UI runs in catalog-fallback mode.
