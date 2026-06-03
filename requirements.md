@@ -1,6 +1,6 @@
 # Juice Web UI Requirements
 
-Version: 0.5
+Version: 0.6
 Status: design draft — endpoint surface pending verification against the running kernel
 Codename: `juice-ui`
 
@@ -59,6 +59,30 @@ server-side.
   no secrets. Reject invalid startup configuration clearly.
 * **R2.5** Do not reproduce kernel business logic (fees, settlement, schema
   validation) in the UI. The UI presents kernel results; the kernel decides.
+* **R2.6** Technology stack (standard-library-first; dependencies only where
+  hand-rolling would be a correctness or security risk):
+  * **Routing:** stdlib `net/http` ServeMux (Go 1.22+ method/pattern routing,
+    `{id}` wildcards) — no router dependency.
+  * **Templating:** stdlib `html/template` (auto-escaping), with partials that
+    double as htmx swap fragments.
+  * **Interactivity:** **htmx** plus small vanilla ES modules — no build step,
+    no Node, no SPA framework. Handlers return HTML fragments; htmx performs
+    swaps and the event-inbox polling. Vanilla JS is limited to the
+    schema→form renderer and the theme toggle.
+  * **Styling:** hand-written CSS driven by the R8.5 design tokens; no CSS
+    framework, no build pipeline.
+  * **Sessions:** `alexedwards/scs` (server-side token storage per R1.2).
+  * **CSRF:** `gorilla/csrf` (per R5.5). Security-sensitive primitives are not
+    hand-rolled.
+  * **PKCE / crypto:** stdlib `crypto/rand`, `crypto/sha256`, `encoding/base64`.
+  * **Logging:** stdlib `log/slog` (structured, per R8.4).
+  * **Configuration:** stdlib `os` with a small typed loader.
+  * **Tests:** stdlib `testing` and `net/http/httptest`; the kernel is faked as
+    an `httptest.Server` (per R9 — no network, no live kernel).
+
+  The total dependency footprint is small (htmx on the front end; `scs` and
+  `gorilla/csrf` on the back end); everything else is the standard library. No
+  build pipeline or `node_modules`.
 
 ## 3. Scope
 
