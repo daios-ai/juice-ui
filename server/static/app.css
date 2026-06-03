@@ -1,0 +1,134 @@
+/* Components reference design tokens only (R8.5). */
+
+* { box-sizing: border-box; }
+
+html { color-scheme: light dark; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: var(--font-mono); }
+
+/* Money, IDs, hashes, @owner/name render in monospace (R8.5). */
+.money, .id, .hash, .ref { font-family: var(--font-mono); }
+.money { font-variant-numeric: tabular-nums; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.skip-link {
+  position: absolute; left: -999px; top: 0;
+  background: var(--accent); color: var(--accent-contrast); padding: .5rem .75rem;
+}
+.skip-link:focus { left: .5rem; }
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Layout */
+.topbar {
+  display: flex; align-items: center; gap: 1rem;
+  padding: .75rem 1.25rem; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; font-size: 1.1rem; color: var(--text); }
+.nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+.nav a { color: var(--text-muted); }
+.nav a:hover { color: var(--text); }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: .75rem; }
+.handle { color: var(--text-muted); font-size: .9rem; }
+
+.container { max-width: 980px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+.footer { text-align: center; color: var(--text-muted); font-size: .8rem; padding: 2rem 1rem; }
+
+h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+h2 { font-size: 1.2rem; margin: 1.5rem 0 .5rem; }
+.subtitle { color: var(--text-muted); margin: 0 0 1.5rem; }
+
+/* Cards & grids */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow);
+}
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.stack > * + * { margin-top: 1rem; }
+.row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+
+/* Balances */
+.balances { display: flex; gap: 2rem; flex-wrap: wrap; }
+.balance .amount { font-size: 1.8rem; }
+.balance .label { color: var(--text-muted); font-size: .85rem; }
+
+/* Buttons */
+button, .btn { font-family: inherit; font-size: .95rem; cursor: pointer; }
+.btn-primary {
+  background: var(--accent); color: var(--accent-contrast);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  padding: .55rem 1rem; font-weight: 600;
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .5rem .9rem;
+}
+.btn:hover { border-color: var(--text-muted); }
+.btn-quiet { background: none; border: none; color: var(--text-muted); padding: .25rem .5rem; }
+.btn-quiet:hover { color: var(--text); text-decoration: underline; }
+.btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: .35rem .55rem; color: var(--text); font-size: 1rem; }
+.btn-danger { color: var(--refunded); }
+
+/* Forms */
+label { display: block; font-weight: 600; margin-bottom: .25rem; }
+.field { margin-bottom: 1rem; }
+.field .help { color: var(--text-muted); font-size: .85rem; font-weight: 400; margin: .1rem 0 .35rem; }
+.req { color: var(--accent); }
+input[type=text], input[type=password], input[type=email], input[type=number],
+textarea, select {
+  width: 100%; padding: .55rem .65rem; font-family: inherit; font-size: .95rem;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+}
+textarea { min-height: 7rem; font-family: var(--font-mono); }
+.field-error input, .field-error textarea { border-color: var(--accent); }
+.error-text { color: var(--accent); font-size: .85rem; margin-top: .25rem; }
+
+/* Status pills (financial trust signal, R8.7) */
+.pill { display: inline-block; padding: .1rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid currentColor; }
+.status-credited { color: var(--credited); }
+.status-refunded { color: var(--refunded); }
+.status-escrow   { color: var(--escrow); }
+
+/* Cost breakdown */
+.cost { display: flex; gap: 1.5rem; }
+.cost .g { color: var(--text); }
+.cost .f { color: var(--text-muted); }
+.cost .n { color: var(--credited); }
+
+/* Outcome panels */
+.outcome { border-left: 4px solid var(--border-strong); padding: .75rem 1rem; border-radius: var(--radius); background: var(--surface-2); }
+.outcome.rejected { border-left-color: var(--escrow); }
+.outcome.failed   { border-left-color: var(--refunded); }
+.outcome.success  { border-left-color: var(--credited); }
+
+/* Code blocks for inline JSON */
+pre.json { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem; overflow:auto; font-family: var(--font-mono); font-size: .85rem; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: .55rem .5rem; border-bottom: 1px solid var(--border); font-size: .9rem; }
+th { color: var(--text-muted); font-weight: 600; }
+
+.flash { background: var(--surface-2); border-bottom: 1px solid var(--border); padding: .6rem 1.25rem; color: var(--text); }
+.banner { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .75rem 1rem; color: var(--text-muted); }
+
+.muted { color: var(--text-muted); }
+.score { color: var(--text-muted); font-size: .85rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

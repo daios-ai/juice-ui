@@ -1,0 +1,49 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{.CSRFToken}}">
+  <title>{{if .Title}}{{.Title}} · {{end}}Juice</title>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/theme.js" type="module"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="/">Juice</a>
+    {{if .Handle}}
+    <nav class="nav" aria-label="Primary">
+      <a href="/">Dashboard</a>
+      <a href="/discover">Discover</a>
+      <a href="/studio">Studio</a>
+      <a href="/processes">Sessions</a>
+      <a href="/transactions">Transactions</a>
+      <a href="/listeners">Listeners</a>
+    </nav>
+    {{end}}
+    <div class="topbar-right">
+      <form method="post" action="/theme" class="theme-toggle">
+        {{.CSRFField}}
+        <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
+        <button type="submit" class="btn-icon" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme">
+          {{if eq .Theme "dark"}}☼{{else}}☾{{end}}
+        </button>
+      </form>
+      {{if .Handle}}
+      <span class="handle mono">{{.Handle}}</span>
+      <form method="post" action="/logout">{{.CSRFField}}<button type="submit" class="btn-quiet">Sign out</button></form>
+      {{end}}
+    </div>
+  </header>
+  {{if .Flash}}<div class="flash" role="status">{{.Flash}}</div>{{end}}
+  <main id="main" class="container">
+    {{block "content" .}}{{end}}
+  </main>
+  <footer class="footer">
+    <span>Juice UI — talks only to the kernel HTTP API.</span>
+  </footer>
+</body>
+</html>{{end}}

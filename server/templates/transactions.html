@@ -1,0 +1,21 @@
+{{define "content"}}
+<h1>Transactions</h1>
+<p class="subtitle">Every call you made, with its cost breakdown and outcome.</p>
+{{if .Data.Transactions}}
+<table>
+  <thead><tr><th>Status</th><th>Gross</th><th>Fee</th><th>Net</th><th>When</th><th></th></tr></thead>
+  <tbody>
+  {{range .Data.Transactions}}
+  <tr>
+    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+    <td class="money">{{money .Gross}}</td>
+    <td class="money">{{money .Fee}}</td>
+    <td class="money">{{money .Net}}</td>
+    <td class="muted">{{.StartedAt}}</td>
+    <td><a href="/transactions/{{.ID}}">view</a></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="muted">No transactions yet.</p>{{end}}
+{{end}}

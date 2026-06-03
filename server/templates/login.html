@@ -1,0 +1,41 @@
+{{define "content"}}
+<h1>Sign in to Juice</h1>
+<p class="subtitle">Server-rendered, secure session. Your tokens stay on the server.</p>
+
+{{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
+{{if .Data.Notice}}<div class="banner">{{.Data.Notice}}</div>{{end}}
+
+<div class="grid">
+  <form class="card stack" method="post" action="/login">
+    {{.CSRFField}}
+    <h2>Existing account</h2>
+    <div class="field">
+      <label for="handle">Handle</label>
+      <input id="handle" name="handle" type="text" placeholder="@you" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn-primary" type="submit">Sign in</button>
+  </form>
+
+  <form class="card stack" method="post" action="/signup">
+    {{.CSRFField}}
+    <h2>Create account</h2>
+    <div class="field">
+      <label for="c_handle">Handle</label>
+      <input id="c_handle" name="handle" type="text" placeholder="@you" required>
+    </div>
+    <div class="field">
+      <label for="c_email">Email</label>
+      <input id="c_email" name="email" type="email" required>
+    </div>
+    <div class="field">
+      <label for="c_password">Password</label>
+      <input id="c_password" name="password" type="password" autocomplete="new-password" required>
+    </div>
+    <button class="btn" type="submit">Create account &amp; sign in</button>
+  </form>
+</div>
+{{end}}

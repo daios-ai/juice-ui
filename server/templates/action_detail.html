@@ -1,0 +1,121 @@
+{{define "content"}}
+{{$d := .Data}}
+<p><a href="/discover">← Discover</a></p>
+<h1>{{$d.Action.Name}}</h1>
+<p class="subtitle ref mono">{{$d.Action.Action}}</p>
+
+{{if $d.Error}}{{template "_error" $d.Error}}{{end}}
+
+<div class="card stack">
+  {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
+  <p class="row">
+    {{if $d.IsPaid}}<span class="money">{{money $d.Action.Price}} credits / call</span>{{else}}<span class="muted">free (price 0)</span>{{end}}
+    <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span>
+    <span class="muted">kind: {{$d.Action.Kind}}</span>
+  </p>
+  {{if $d.HasStats}}
+  <p class="muted">
+    {{$d.Stats.Uses}} uses · {{$d.Stats.Successes}} ok / {{$d.Stats.Failures}} failed ·
+    rating {{printf "%.2f" $d.Stats.RatingMean}} ({{$d.Stats.RatingCount}}) ·
+    latency {{printf "%.0f" $d.Stats.LatencyMean}}ms
+  </p>
+  {{end}}
+</div>
+
+<h2>Run</h2>
+{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}
+
+<form class="card stack" method="post" action="/actions/{{$d.Action.ID}}/run" data-run-panel>
+  {{.CSRFField}}
+
+  {{if $d.IsPaid}}
+  <div class="field">
+    <label for="process_id">Funded session</label>
+    <p class="help">Paid calls draw from a funded session (escrow). Pick one or start a new one.</p>
+    <select id="process_id" name="process_id">
+      {{range $d.Open}}<option value="{{.Ident}}">{{truncate 8 .Ident}}… — {{money .Available}} available</option>{{end}}
+      <option value="">▸ Start a new session</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="new_funds">New session funds</label>
+    <p class="help">Used only when starting a new session. Refunded on “end &amp; reclaim”.</p>
+    <input id="new_funds" name="new_funds" type="number" min="0" value="{{$d.Action.Price}}">
+  </div>
+  {{else}}
+  <p class="help">This is a price-0 action. It runs in a temporary session that is created, used, and ended automatically — it still appears in your session history.</p>
+  {{end}}
+
+  {{if not $d.Form.UseRawFallback}}
+  <label class="row" style="font-weight:600">
+    <input type="checkbox" name="use_raw" value="1" data-raw-toggle style="width:auto"> Edit input as raw JSON
+  </label>
+  <div data-fields class="stack">
+    {{range $d.Form.Fields}}
+    <div class="field">
+      <label for="f_{{.Name}}">{{.Name}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</label>
+      {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
+      <input type="hidden" name="t_{{.Name}}" value="{{.Type}}">
+      {{if .Enum}}
+      <select id="f_{{.Name}}" name="f_{{.Name}}">
+        {{range .Enum}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+      {{else if eq .Type "boolean"}}
+      <select id="f_{{.Name}}" name="f_{{.Name}}"><option value="false">false</option><option value="true">true</option></select>
+      {{else if or (eq .Type "integer") (eq .Type "number")}}
+      <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" {{if eq .Type "integer"}}step="1"{{end}}>
+      {{else if or (eq .Type "object") (eq .Type "array")}}
+      <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}"></textarea>
+      {{else}}
+      <input id="f_{{.Name}}" name="f_{{.Name}}" type="text">
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <div class="field" data-raw{{if not $d.Form.UseRawFallback}} hidden{{end}}>
+    <label for="raw_args">Arguments (JSON)</label>
+    <p class="help">Defaults to <code>{}</code> when empty.</p>
+    <textarea id="raw_args" name="raw_args" placeholder="{}"></textarea>
+  </div>
+
+  {{if not $d.Form.UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
+  <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run ({{money $d.Action.Price}} credits){{else}}Run{{end}}</button>
+</form>
+
+{{if $d.Action.OutputSchema}}
+<h2>Expected result shape</h2>
+<pre class="json">{{json $d.Action.OutputSchema}}</pre>
+{{end}}
+
+{{if $d.IsOwner}}
+<h2>Manage (owner)</h2>
+<div class="card stack">
+  <div class="row">
+    {{if $d.Action.Active}}
+    <form method="post" action="/actions/{{$d.Action.ID}}/disable">{{$.CSRFField}}<button class="btn" type="submit">Disable</button></form>
+    {{else}}
+    <form method="post" action="/actions/{{$d.Action.ID}}/enable">{{$.CSRFField}}<button class="btn-primary" type="submit">Enable</button></form>
+    {{end}}
+    {{if $d.Action.Public}}
+    <form method="post" action="/actions/{{$d.Action.ID}}/revoke-all">{{$.CSRFField}}<button class="btn" type="submit">Make private (revoke-all)</button></form>
+    {{else}}
+    <form method="post" action="/actions/{{$d.Action.ID}}/grant-all">{{$.CSRFField}}<button class="btn" type="submit">Make public (grant-all)</button></form>
+    {{end}}
+    <form method="post" action="/actions/{{$d.Action.ID}}/delete" onsubmit="return confirm('Delete this action? History is preserved.')">{{$.CSRFField}}<button class="btn btn-danger" type="submit">Delete</button></form>
+  </div>
+
+  <form class="stack" method="post" action="/actions/{{$d.Action.ID}}/acl">
+    {{$.CSRFField}}
+    <h3>Grant access to a specific user</h3>
+    <p class="help">The kernel identifies the subject by user ID (UUID). There is no HTTP handle→ID lookup, so paste the subject’s user ID. Use “Make public” above to grant everyone.</p>
+    <div class="row">
+      <input name="subject_user_id" type="text" placeholder="subject user id (UUID)" style="flex:1">
+      <select name="permission"><option value="read">read</option><option value="call">call</option><option value="admin">admin</option></select>
+      <button class="btn" type="submit">Grant</button>
+    </div>
+  </form>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,35 @@
+{{define "content"}}
+<h1>Dashboard</h1>
+<p class="subtitle">Signed in as <span class="handle mono">{{.Data.User.Handle}}</span></p>
+
+<div class="card">
+  <div class="balances">
+    <div class="balance">
+      <div class="amount money">{{money .Data.User.Available}}</div>
+      <div class="label">Available credits</div>
+    </div>
+    <div class="balance">
+      <div class="amount money">{{money .Data.User.Locked}}</div>
+      <div class="label">Locked in sessions</div>
+    </div>
+  </div>
+  <p class="muted" style="margin-top:1rem">
+    Credit top-ups happen out-of-band (a superuser deposits via the CLI). The UI
+    cannot add credits to your balance; it spends from existing credits and funds
+    sessions from them.
+  </p>
+</div>
+
+<h2>Open sessions</h2>
+{{if .Data.Open}}
+<table>
+  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th><th></th></tr></thead>
+  <tbody>
+    {{range .Data.Open}}{{template "_process_row" .}}{{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No open sessions. Start one from any paid action's Run panel.</p>
+{{end}}
+<p style="margin-top:1rem"><a href="/processes">Full session history →</a></p>
+{{end}}

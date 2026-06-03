@@ -1,0 +1,43 @@
+{{define "content"}}
+<h1>Discover actions</h1>
+<p class="subtitle">Describe what you want to do, or browse the catalog.</p>
+
+{{if not .Data.LookupAvailable}}
+<div class="banner">Semantic search is unavailable on this kernel (no embedder configured), so results come from catalog search instead.</div>
+{{end}}
+
+<form class="card row" method="get" action="/discover">
+  <div class="field" style="flex:1; margin:0">
+    <label for="q" class="sr-only">Search</label>
+    <input id="q" name="q" type="text" value="{{.Data.Query}}" placeholder="e.g. summarize a document, send a payment">
+  </div>
+  <button class="btn-primary" type="submit">Search</button>
+</form>
+
+{{if .Data.Query}}
+<h2>Results for “{{.Data.Query}}”</h2>
+{{if .Data.Results}}
+<div class="grid">
+  {{range .Data.Results}}
+  <article class="card">
+    <h3><a href="/actions/{{.ActionID}}">{{.Name}}</a></h3>
+    <p class="ref mono">{{.OwnerHandle}}/{{.Name}}</p>
+    {{if .Description}}<p>{{truncate 160 .Description}}</p>{{end}}
+    {{if gt .Score 0.0}}<p class="score">relevance {{printf "%.2f" .Score}}</p>{{end}}
+  </article>
+  {{end}}
+</div>
+{{else}}
+<p class="muted">No matches.</p>
+{{end}}
+{{else}}
+<h2>Catalog</h2>
+{{if .Data.Catalog}}
+<div class="grid">
+  {{range .Data.Catalog}}{{template "_action_card" .}}{{end}}
+</div>
+{{else}}
+<p class="muted">No public actions yet.</p>
+{{end}}
+{{end}}
+{{end}}

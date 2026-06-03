@@ -1,0 +1,80 @@
+{{define "_action_card"}}
+<article class="card">
+  <h3><a href="/actions/{{.ID}}">{{.Name}}</a></h3>
+  <p class="ref mono">{{.Action}}</p>
+  {{if .Description}}<p>{{truncate 160 .Description}}</p>{{end}}
+  <p class="row">
+    {{if gt .Price 0}}<span class="money">{{money .Price}} credits</span>{{else}}<span class="muted">free</span>{{end}}
+    {{if not .Active}}<span class="pill status-escrow">inactive</span>{{end}}
+  </p>
+</article>
+{{end}}
+
+{{define "_cost_breakdown"}}
+<div class="cost" aria-label="cost breakdown">
+  <span class="g">gross <b class="money">{{money .Gross}}</b></span>
+  <span class="f">fee <b class="money">{{money .Fee}}</b></span>
+  <span class="n">net <b class="money">{{money .Net}}</b></span>
+</div>
+<p class="muted" style="font-size:.8rem">The fee applies to the value added by this call.</p>
+{{end}}
+
+{{define "_call_outcome"}}
+{{if .IsRejected}}
+<div class="outcome rejected" role="status">
+  <strong>Not sent — you were not charged.</strong>
+  <p>{{.Message}}</p>
+</div>
+{{else if .IsFailed}}
+<div class="outcome failed" role="status">
+  <strong>The action failed — your funds were fully refunded.</strong>
+  <p>{{.Message}}</p>
+  {{if .FailureTxID}}<p><a href="/transactions/{{.FailureTxID}}">View failure transaction</a></p>{{end}}
+</div>
+{{else}}
+<div class="outcome success" role="status">
+  <strong>Success.</strong>
+  <pre class="json">{{json .Result}}</pre>
+  {{if .Cost}}{{template "_cost_breakdown" .Cost}}{{end}}
+  {{if .TxID}}<p><a href="/transactions/{{.TxID}}">View transaction &amp; receipt</a></p>{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "_process_row"}}
+<tr>
+  <td class="id mono">{{truncate 8 .Ident}}…</td>
+  <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+  <td class="money">{{money .Available}}</td>
+  <td class="money">{{money .Locked}}</td>
+  <td><a href="/processes/{{.Ident}}">open</a></td>
+</tr>
+{{end}}
+
+{{define "_error"}}
+<div class="banner" role="alert">{{.}}</div>
+{{end}}
+
+{{define "_inbox"}}
+{{if .Error}}<div class="banner" role="alert">{{.Error}}</div>{{end}}
+{{if .Events}}
+<table>
+  <thead><tr><th>Event</th><th>Args</th><th></th></tr></thead>
+  <tbody>
+  {{range .Events}}
+  <tr>
+    <td class="id mono">{{truncate 8 .ID}}…</td>
+    <td><pre class="json">{{json .Args}}</pre></td>
+    <td>
+      <form method="post" action="/events/{{.ID}}/consume">
+        {{$.CSRFField}}<button class="btn" type="submit">Consume</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No pending events.</p>
+{{end}}
+{{end}}
