@@ -170,6 +170,22 @@ func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
+func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
+	state := r.FormValue("sidebar")
+	if state != "collapsed" {
+		state = "expanded" // any non-collapsed value clears the collapse
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: "sidebar", Value: state, Path: "/", MaxAge: 31536000,
+		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
+	})
+	to := r.Header.Get("Referer")
+	if to == "" {
+		to = "/"
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
 // ---- dashboard ----
 
 func (s *Server) getDashboard(w http.ResponseWriter, r *http.Request) {

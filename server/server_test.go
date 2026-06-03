@@ -83,6 +83,33 @@ func TestThemeStampedNoFlash(t *testing.T) {
 	}
 }
 
+func TestSidebarCollapseStamped(t *testing.T) {
+	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
+	defer srv.Close()
+	// No cookie -> expanded (no data-sidebar attribute).
+	r1, err := http.Get(srv.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := io.ReadAll(r1.Body)
+	r1.Body.Close()
+	if strings.Contains(string(plain), "data-sidebar") {
+		t.Error("expanded sidebar should not stamp data-sidebar")
+	}
+	// Cookie -> collapsed, stamped server-side (no flash, works without JS).
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/login", nil)
+	req.AddCookie(&http.Cookie{Name: "sidebar", Value: "collapsed"})
+	r2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(r2.Body)
+	r2.Body.Close()
+	if !strings.Contains(string(body), `data-sidebar="collapsed"`) {
+		t.Error("collapsed sidebar cookie not stamped onto the document")
+	}
+}
+
 func TestRequestIDHeaderSet(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()

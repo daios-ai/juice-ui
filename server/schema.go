@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Field is one input field derived from a JSON Schema property.
@@ -13,6 +14,7 @@ type Field struct {
 	Required    bool
 	Description string
 	Enum        []string
+	Example     string // for object/array fields: a pretty-printed JSON skeleton
 }
 
 // FormModel is the server-side model the run form is rendered from (R6.5.4). The
@@ -21,7 +23,8 @@ type Field struct {
 // validation authority (R2.5).
 type FormModel struct {
 	Fields         []Field
-	UseRawFallback bool // no usable object schema -> offer only the raw-JSON editor
+	UseRawFallback bool   // no usable object schema -> offer only the raw-JSON editor
+	Example        string // a pretty-printed JSON skeleton of the whole input, for the raw editor
 }
 
 // schemaDoc is the subset of JSON Schema the form renderer understands.
@@ -59,20 +62,28 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	if err := json.Unmarshal(doc.Properties, &props); err != nil {
 		return FormModel{UseRawFallback: true}
 	}
+	// Keep the raw schema of each property so nested object/array fields can be
+	// given a concrete JSON skeleton (R6.5.4: tell the user what the shape is).
+	var rawProps map[string]json.RawMessage
+	_ = json.Unmarshal(doc.Properties, &rawProps)
 	required := make(map[string]bool, len(doc.Required))
 	for _, r := range doc.Required {
 		required[r] = true
 	}
-	fm := FormModel{Fields: make([]Field, 0, len(keys))}
+	fm := FormModel{Fields: make([]Field, 0, len(keys)), Example: SchemaExample(inputSchema)}
 	for _, k := range keys {
 		p := props[k]
-		fm.Fields = append(fm.Fields, Field{
+		f := Field{
 			Name:        k,
 			Type:        p.Type,
 			Required:    required[k],
 			Description: p.Description,
 			Enum:        enumStrings(p.Enum),
-		})
+		}
+		if p.Type == "object" || p.Type == "array" {
+			f.Example = SchemaExample(rawProps[k])
+		}
+		fm.Fields = append(fm.Fields, f)
 	}
 	return fm
 }
@@ -108,6 +119,70 @@ func orderedKeys(obj json.RawMessage) []string {
 		}
 	}
 	return keys
+}
+
+// SchemaExample returns a pretty-printed JSON skeleton of a schema — empty
+// strings, zeros, false, one-element arrays, nested objects — so the user can
+// see the expected input shape and fill it in (R6.5.4). It returns "" when the
+// schema is unconstrained (no usable type).
+func SchemaExample(raw json.RawMessage) string {
+	compact := skeleton(raw)
+	if compact == "" || compact == "null" {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(compact), "", "  "); err != nil {
+		return compact
+	}
+	return buf.String()
+}
+
+// skeleton builds a compact JSON skeleton string for a schema, preserving the
+// declaration order of object properties.
+func skeleton(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "null"
+	}
+	var s struct {
+		Type       string            `json:"type"`
+		Properties json.RawMessage   `json:"properties"`
+		Items      json.RawMessage   `json:"items"`
+		Enum       []json.RawMessage `json:"enum"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "null"
+	}
+	if len(s.Enum) > 0 {
+		return string(s.Enum[0])
+	}
+	switch s.Type {
+	case "string":
+		return `""`
+	case "integer", "number":
+		return "0"
+	case "boolean":
+		return "false"
+	case "array":
+		if len(bytes.TrimSpace(s.Items)) > 0 {
+			return "[" + skeleton(s.Items) + "]"
+		}
+		return "[]"
+	case "object":
+		keys := orderedKeys(s.Properties)
+		if len(keys) == 0 {
+			return "{}"
+		}
+		var props map[string]json.RawMessage
+		_ = json.Unmarshal(s.Properties, &props)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			kb, _ := json.Marshal(k)
+			parts = append(parts, string(kb)+":"+skeleton(props[k]))
+		}
+		return "{" + strings.Join(parts, ",") + "}"
+	default:
+		return "null"
+	}
 }
 
 // enumStrings renders enum values as display strings.

@@ -89,6 +89,53 @@ func TestBuildFormNestedOrderPreserved(t *testing.T) {
 	}
 }
 
+func TestSchemaExampleNested(t *testing.T) {
+	// llm/chat-shaped schema: messages is an array of {role, content} objects.
+	schema := json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"system":{"type":"string","description":"Optional system prompt"},
+			"messages":{"type":"array","items":{"type":"object","properties":{
+				"role":{"type":"string"},"content":{"type":"string"}}}}
+		},
+		"required":["messages"]
+	}`)
+	ex := SchemaExample(schema)
+	// Must be valid JSON and reveal the nested shape.
+	if !json.Valid([]byte(ex)) {
+		t.Fatalf("example is not valid JSON:\n%s", ex)
+	}
+	for _, want := range []string{`"messages"`, `"role"`, `"content"`, `"system"`, "[", "{"} {
+		if !strings.Contains(ex, want) {
+			t.Errorf("example missing %q:\n%s", want, ex)
+		}
+	}
+	// The array field carries its own skeleton for pre-filling its textarea.
+	fm := BuildForm(schema)
+	var msgs Field
+	for _, f := range fm.Fields {
+		if f.Name == "messages" {
+			msgs = f
+		}
+	}
+	if msgs.Type != "array" || !json.Valid([]byte(msgs.Example)) || !strings.Contains(msgs.Example, `"role"`) {
+		t.Errorf("messages field example wrong: %q", msgs.Example)
+	}
+}
+
+func TestSchemaExampleScalars(t *testing.T) {
+	ex := SchemaExample(json.RawMessage(`{"type":"object","properties":{"x":{"type":"string"},"n":{"type":"integer"},"b":{"type":"boolean"}}}`))
+	for _, want := range []string{`"x": ""`, `"n": 0`, `"b": false`} {
+		if !strings.Contains(ex, want) {
+			t.Errorf("example missing %q:\n%s", want, ex)
+		}
+	}
+	// Unconstrained schema yields no skeleton.
+	if SchemaExample(json.RawMessage(`{}`)) != "" {
+		t.Error("unconstrained schema should produce empty example")
+	}
+}
+
 func TestFormJSONRoundTrip(t *testing.T) {
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{"q":{"type":"string","description":"d"}},"required":["q"]}`))
 	s, err := fm.FormJSON()

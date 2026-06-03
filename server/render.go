@@ -33,6 +33,7 @@ func StaticFS() fs.FS {
 type Page struct {
 	Title     string
 	Theme     string        // "light" | "dark" | "" (defer to prefers-color-scheme)
+	Sidebar   string        // "collapsed" | "" (expanded); stamped to avoid flash
 	Handle    string        // signed-in handle for the nav, or "" when anonymous
 	CSRFField template.HTML // hidden CSRF input for no-JS forms
 	CSRFToken string        // raw token for the <meta> tag htmx reads

@@ -212,6 +212,20 @@ LID="$(uiget "$BOB" /listeners | grep -oE '/listeners/[0-9a-f-]{36}/inbox' | hea
 INBOX="$(uiget "$BOB" "/listeners/$LID/inbox")"
 expect "inbox shows a pending event or none cleanly" "$INBOX" "Consume\|No pending events"
 
+say "Story: collapsible sidebar (no-JS) (R8.1)"
+expect "sidebar nav present" "$(uiget "$BOB" /)" 'class="sidebar"'
+submit "$BOB" / /sidebar --data-urlencode "sidebar=collapsed" >/dev/null
+expect "sidebar collapse stamped server-side" "$(uiget "$BOB" /)" 'data-sidebar="collapsed"'
+submit "$BOB" / /sidebar --data-urlencode "sidebar=expanded" >/dev/null
+refute "sidebar expand clears the stamp" "$(uiget "$BOB" /)" 'data-sidebar="collapsed"'
+
+say "Story: run form reveals nested input shape (R6.5.4)"
+CHAT_ID="$(curl -s "$KURL/v1/actions?owner=@sys&name=llm/chat" | uuid)"
+# (JSON quotes are HTML-escaped in the textarea; the browser renders them back.)
+CHATPAGE="$(uiget "$BOB" "/actions/$CHAT_ID")"
+expect "messages array skeleton pre-filled" "$CHATPAGE" 'role'
+expect "skeleton shows content field too" "$CHATPAGE" 'content'
+
 say "Story: theme toggle works (no-JS) + CSRF protection (R8.6, R5.5)"
 submit "$BOB" / /theme --data-urlencode "theme=dark" >/dev/null
 expect "explicit dark theme stamped" "$(uiget "$BOB" /)" 'data-theme="dark"'

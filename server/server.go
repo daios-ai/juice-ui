@@ -58,6 +58,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /signup", s.postSignup)
 	mux.HandleFunc("POST /logout", s.postLogout)
 	mux.HandleFunc("POST /theme", s.postTheme)
+	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
 	// Authenticated routes.
 	mux.HandleFunc("GET /{$}", s.requireAuth(s.getDashboard))
@@ -177,6 +178,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 	return Page{
 		Title:     title,
 		Theme:     themeFromRequest(r),
+		Sidebar:   sidebarFromRequest(r),
 		Handle:    s.sessions.Handle(r.Context()),
 		CSRFField: csrf.TemplateField(r),
 		CSRFToken: csrf.Token(r),
@@ -261,6 +263,16 @@ func themeFromRequest(r *http.Request) string {
 	}
 	if c.Value == "light" || c.Value == "dark" {
 		return c.Value
+	}
+	return ""
+}
+
+// sidebarFromRequest returns "collapsed" when the user has collapsed the
+// sidebar, else "" (expanded). Stamped at render time so the layout is correct
+// with no flash and the toggle works without JavaScript.
+func sidebarFromRequest(r *http.Request) string {
+	if c, err := r.Cookie("sidebar"); err == nil && c.Value == "collapsed" {
+		return "collapsed"
 	}
 	return ""
 }
