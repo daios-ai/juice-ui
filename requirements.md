@@ -1,6 +1,6 @@
 # Juice Web UI Requirements
 
-Version: 0.2
+Version: 0.3
 Status: design draft — endpoint surface pending verification against the running kernel
 Codename: `juice-ui`
 
@@ -115,11 +115,15 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   secret fields.
 * **R4.2** Structured fields (`args`, `result`) are inline JSON objects, not
   double-encoded strings.
-* **R4.3** Action identity is `@owner/name`. References parse as a **single
-  split on the first `/` after `@`**: the owner contains no `/`; the name is the
-  remainder and MAY contain `/` (e.g. `@sys/llm/chat`). The UI MUST NOT split a
-  reference on every `/`. When `@owner/name` appears in a URL, it is
-  percent-encoded.
+* **R4.3** Action identity is `@owner/name`. The UI MUST parse references by a
+  **single split on the first `/` after `@`** — owner before, name (the
+  remainder) after — and MUST NOT split on every `/`. This rule is correct
+  whether or not names may contain `/`, so it is mandatory now. When
+  `@owner/name` appears in a URL it is percent-encoded. **Pending R10.2:**
+  whether a name may legally contain `/`, and the canonical spelling of the
+  native chat action, are unverified; the UI MUST NOT hard-code either
+  interpretation — in particular it MUST NOT reject `/` in a name on input nor
+  build call URLs without percent-encoding — until R10.2 is resolved.
 * **R4.4** Action read/list responses carry both `id` (UUID, for management) and
   a computed `action` (`@owner/name`, for calling). The UI uses `action`
   directly in call requests and never asks the user to type a UUID.
@@ -156,7 +160,10 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 ### 6.1 Dashboard
 
 * **R6.1.1** Show the authenticated user (`GET /v1/me`) with `available` and
-  `locked` credits distinguished, and a list of the user's open processes.
+  `locked` credits distinguished, and the user's funded sessions. The dashboard
+  filters to **open** processes; closed processes (including BFF-created
+  ephemeral ones, see R6.5.1) are not pretended away but live in a full,
+  honest process history rather than cluttering the dashboard.
 
 ### 6.2 Marketplace and discovery
 
@@ -208,9 +215,11 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 ### 6.5 Funded sessions and calling actions
 
 * **R6.5.1** The process/escrow model is abstracted as a "funded session." For
-  **price-0 actions** (including `@sys/lookup` and `@sys/llm/chat`), the BFF
-  auto-provisions a zero-funded ephemeral process, executes the call, and ends
-  it; no process UI is shown.
+  **price-0 actions** (including `@sys/lookup` and the native chat action,
+  naming per R10.2), the BFF auto-provisions a zero-funded ephemeral process,
+  executes the call, and ends it. This process is **hidden from the run UI**, not
+  nonexistent: the kernel still creates it, and once ended it appears as a closed
+  process in history (R6.1.1). The UI MUST NOT imply no process occurred.
 * **R6.5.2** For **paid actions**, the user opens or reuses a funded session
   (`POST /v1/processes`), and calls draw from it. The UI shows escrow draining,
   supports top-up (`POST /v1/processes/{id}/fund`), and "end & reclaim"
