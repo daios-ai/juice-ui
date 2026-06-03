@@ -16,10 +16,11 @@ type fakeKernel struct {
 	mu          sync.Mutex
 	startedFund *int64
 	ended       []string
+	called      bool // whether POST /v1/call has happened
 	callStatus  int
 	callBody    string
 	txBody      string
-	listBody    string
+	listBody    string // transactions list returned AFTER the call (before: empty)
 }
 
 func (f *fakeKernel) start(t *testing.T) (*client.Client, func()) {
@@ -43,6 +44,9 @@ func (f *fakeKernel) start(t *testing.T) (*client.Client, func()) {
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /v1/call", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.called = true
+		f.mu.Unlock()
 		w.WriteHeader(f.callStatus)
 		w.Write([]byte(f.callBody))
 	})
@@ -50,7 +54,16 @@ func (f *fakeKernel) start(t *testing.T) (*client.Client, func()) {
 		w.Write([]byte(f.txBody))
 	})
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(f.listBody))
+		// Transactions appear only after the call ran (so the before/after
+		// snapshot in callIn can detect a tx this call created).
+		f.mu.Lock()
+		body := f.listBody
+		called := f.called
+		f.mu.Unlock()
+		if !called || body == "" {
+			body = "[]"
+		}
+		w.Write([]byte(body))
 	})
 	srv := httptest.NewServer(mux)
 	return client.New(srv.URL, nil), srv.Close
@@ -125,6 +138,29 @@ func TestCallEphemeralInputRejection(t *testing.T) {
 	// process still created and ended even though nothing was charged.
 	if len(f.ended) != 1 {
 		t.Errorf("process should still be ended: %v", f.ended)
+	}
+}
+
+func TestCallOutputSchemaViolationIsFailed(t *testing.T) {
+	// An output-schema violation returns HTTP 422 (like an input rejection) but
+	// records a failure transaction and refunds. It must render as Failed, not
+	// "not sent / not charged". (Regression: @sys/lookup score float32 vs number.)
+	f := &fakeKernel{
+		callStatus: 422,
+		callBody:   `{"error":"field #.results[0].score: expected number, got float32"}`,
+		listBody:   `[{"id":"tx-out","status":"failure"}]`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).CallEphemeral(context.Background(), "tok", "@sys/lookup", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Class != Failed {
+		t.Fatalf("class = %v want Failed (output-schema failure is refunded, not a no-charge rejection)", out.Class)
+	}
+	if out.FailureTxID != "tx-out" {
+		t.Errorf("failure tx = %q want tx-out", out.FailureTxID)
 	}
 }
 

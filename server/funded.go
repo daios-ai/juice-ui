@@ -81,6 +81,12 @@ func (k *Caller) CallFunded(ctx context.Context, token, processID, ref string, a
 // outcome classes, returning other errors (auth, insufficient funds, not found,
 // rate limited) to the caller for generic handling.
 func (k *Caller) callIn(ctx context.Context, token, processID, ref string, args json.RawMessage) (Outcome, error) {
+	// Snapshot existing transactions so that, on a 422, we can tell an input
+	// rejection (no new transaction, not charged) from an output-schema
+	// violation (a new failure transaction, fully refunded) — both surface as
+	// HTTP 422 but are different outcome classes (R6.5.5).
+	before := k.txIDs(ctx, token, processID)
+
 	reply, err := k.c.Call(ctx, token, client.CallRequest{
 		ProcessID: processID,
 		Action:    ref,
@@ -96,7 +102,13 @@ func (k *Caller) callIn(ctx context.Context, token, processID, ref string, args 
 	}
 	switch ke.Kind {
 	case client.KindInvalidInput:
-		// Rejected before lock: not sent, not charged, no transaction.
+		// 422 covers both input-schema rejection (before the lock, no
+		// transaction) and output-schema violation (after execution, refunded,
+		// with a failure transaction). Disambiguate by whether a new failure
+		// transaction was recorded.
+		if txID := k.newFailureTx(ctx, token, processID, before); txID != "" {
+			return Outcome{Class: Failed, Message: ke.UserMessage(), FailureTxID: txID}, nil
+		}
 		return Outcome{
 			Class:   Rejected,
 			Message: "Not sent — you were not charged. " + ke.UserMessage(),
@@ -104,12 +116,11 @@ func (k *Caller) callIn(ctx context.Context, token, processID, ref string, args 
 	case client.KindExecutionFailed, client.KindTimeout, client.KindInvalidState:
 		// Failure after execution began (or a non-operational service): the
 		// kernel records a failure transaction and fully refunds.
-		out := Outcome{
-			Class:   Failed,
-			Message: ke.UserMessage(),
-		}
-		out.FailureTxID = k.findFailureTx(ctx, token, processID)
-		return out, nil
+		return Outcome{
+			Class:       Failed,
+			Message:     ke.UserMessage(),
+			FailureTxID: k.newFailureTx(ctx, token, processID, before),
+		}, nil
 	default:
 		// Auth, unauthorized, insufficient funds, not found, rate limited:
 		// these are not call-outcome classes; let the handler map them.
@@ -136,17 +147,33 @@ func (k *Caller) success(ctx context.Context, token string, reply client.CallRep
 	return out
 }
 
-// findFailureTx returns the id of the most recent failure transaction in the
-// process, best-effort, so a Failed outcome can link to it (R6.5.5, R7.1).
-func (k *Caller) findFailureTx(ctx context.Context, token, processID string) string {
+// txIDs returns the set of transaction ids currently recorded for a process,
+// best-effort, used as a baseline to detect a transaction created by this call.
+func (k *Caller) txIDs(ctx context.Context, token, processID string) map[string]bool {
+	seen := map[string]bool{}
+	txs, err := k.c.ListTransactions(ctx, token, processID)
+	if err != nil {
+		return seen
+	}
+	for _, tx := range txs {
+		seen[tx.ID] = true
+	}
+	return seen
+}
+
+// newFailureTx returns the id of a failure transaction recorded by this call —
+// a failure tx not present in the baseline `before` — so a Failed outcome can
+// link to it (R6.5.5, R7.1). Returns "" if no new failure transaction exists
+// (e.g. an input rejection, or a state error that records nothing).
+func (k *Caller) newFailureTx(ctx context.Context, token, processID string, before map[string]bool) string {
 	txs, err := k.c.ListTransactions(ctx, token, processID)
 	if err != nil {
 		return ""
 	}
 	id := ""
 	for _, tx := range txs {
-		if tx.Status == "failure" {
-			id = tx.ID // last failure wins; lists are oldest-first in practice
+		if tx.Status == "failure" && !before[tx.ID] {
+			id = tx.ID // newest new failure wins; lists are oldest-first in practice
 		}
 	}
 	return id
