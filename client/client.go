@@ -69,6 +69,11 @@ type Action struct {
 	UpdatedAt    string          `json:"updated_at"`
 }
 
+// Ref returns "@owner/name" for this action. The kernel's computed Action
+// field is null on the live kernel (verified 2026-06-04), so we derive it
+// from OwnerHandle (which already carries "@") and Name.
+func (a Action) Ref() string { return a.OwnerHandle + "/" + a.Name }
+
 // CreateActionInput is the body for POST /v1/actions. Schemas are inline JSON.
 type CreateActionInput struct {
 	Name         string          `json:"name"`

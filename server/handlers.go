@@ -65,11 +65,14 @@ type processView struct {
 
 type transactionsView struct {
 	Transactions []client.Transaction
+	Actions      map[string]client.Action // action_id → Action; missing if deleted
 	MyID         string
 }
 
 type txView struct {
 	Tx      client.Transaction
+	Action  *client.Action // nil if action not found (soft-deleted)
+	Me      client.User
 	CanRate bool
 	Error   string
 }
@@ -581,6 +584,7 @@ func (s *Server) postEnd(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var txs []client.Transaction
+	actions := map[string]client.Action{}
 	var myID string
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
@@ -589,13 +593,27 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 		myID = me.ID
 		t, e := s.client.ListTransactions(ctx, tok, "")
+		if e != nil {
+			return e
+		}
 		txs = t
-		return e
+		// Fetch each unique action once; skip silently on 404 (deleted action).
+		seen := map[string]bool{}
+		for _, tx := range txs {
+			if tx.ActionID == "" || seen[tx.ActionID] {
+				continue
+			}
+			seen[tx.ActionID] = true
+			if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
+				actions[tx.ActionID] = a
+			}
+		}
+		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{Transactions: txs, MyID: myID})
+	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{Transactions: txs, Actions: actions, MyID: myID})
 }
 
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
@@ -613,7 +631,11 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 		}
 		// The buyer (subject) may rate a successful transaction once; duplicate
 		// and non-buyer attempts map to friendly errors at submit time (R6.6.4).
-		view = txView{Tx: tx, CanRate: tx.Status == "success" && tx.SubjectUserID == me.ID}
+		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.SubjectUserID == me.ID}
+		// Fetch the action; nil on 404 (soft-deleted action).
+		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
+			view.Action = &a
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {

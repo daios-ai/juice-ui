@@ -7,15 +7,45 @@
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
 <div class="card stack">
-  <p class="row">
+
+  {{/* Status + action */}}
+  <div class="row" style="align-items:center;gap:1rem">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
-  </p>
+    <span class="mono">
+      {{if $d.Action}}<a href="/actions/{{$d.Action.ID}}">{{$d.Action.Ref}}</a>
+      {{else}}<span class="muted">{{truncate $d.Tx.ActionID 8}}… (deleted)</span>{{end}}
+    </span>
+  </div>
+
+  {{/* Parties */}}
+  <div>
+    <h3>Parties</h3>
+    <table style="width:auto">
+      <tr>
+        <th style="padding-right:2rem">Buyer</th>
+        <td class="mono">
+          {{if eq $d.Tx.OwnerUserID $d.Me.ID}}{{$d.Me.Handle}}
+          {{else}}<span class="muted">{{truncate $d.Tx.OwnerUserID 8}}…</span>{{end}}
+        </td>
+      </tr>
+      <tr>
+        <th style="padding-right:2rem">Seller</th>
+        <td class="mono">
+          {{if $d.Action}}{{$d.Action.OwnerHandle}}
+          {{else}}<span class="muted">{{truncate $d.Tx.TargetUserID 8}}…</span>{{end}}
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  {{/* Cost */}}
   {{if eq $d.Tx.Status "success"}}
   {{template "_cost_breakdown" (costOf $d.Tx)}}
   {{else}}
   <div class="outcome failed"><strong>Failed — fully refunded.</strong>{{if $d.Tx.Reason}}<p>{{$d.Tx.Reason}}</p>{{end}}</div>
   {{end}}
 
+  {{/* Args / Result */}}
   <div>
     <h3>Arguments</h3>
     <pre class="json">{{json $d.Tx.Args}}</pre>
@@ -25,6 +55,7 @@
     <pre class="json">{{json $d.Tx.Result}}</pre>
   </div>
 
+  {{/* Rating */}}
   {{if $d.CanRate}}
   <form class="row" method="post" action="/transactions/{{$d.Tx.ID}}/rate">
     {{.CSRFField}}

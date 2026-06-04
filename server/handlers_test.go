@@ -28,11 +28,14 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`[]`))
 	})
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
-		// T1: U1 is buyer; T2: U1 is seller.
+		// T1: U1 is buyer; T2: U1 is seller. Both reference action "owned".
 		w.Write([]byte(`[
-			{"id":"T1","owner_user_id":"U1","target_user_id":"U2","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
-			{"id":"T2","owner_user_id":"U2","target_user_id":"U1","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
+			{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","subject_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
+			{"id":"T2","action_id":"owned","owner_user_id":"U2","target_user_id":"U1","subject_user_id":"U2","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
 		]`))
+	})
+	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","subject_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"action_id":"x"}`))
@@ -150,6 +153,28 @@ func TestTransactionsShowsBuyerAndSellerRoles(t *testing.T) {
 	}
 	if !strings.Contains(body, "seller") {
 		t.Error("transactions page must show 'seller' role for transactions where I am target_user_id")
+	}
+	// Action ref should appear (action "owned" has owner_handle "@alice", name "x")
+	if !strings.Contains(body, "@alice/x") {
+		t.Error("transactions page must show the action ref (@owner/name) for each transaction")
+	}
+}
+
+func TestTransactionDetailShowsActionAndParties(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/transactions/T1")
+	// Action ref
+	if !strings.Contains(body, "@alice/x") {
+		t.Error("transaction detail must show the action ref")
+	}
+	// Buyer: current user (U1 = @alice) is the buyer
+	if !strings.Contains(body, "@alice") {
+		t.Error("transaction detail must show the buyer handle when current user is buyer")
 	}
 }
 

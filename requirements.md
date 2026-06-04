@@ -283,8 +283,13 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 * **R6.6.1** List and view transactions (`GET /v1/transactions`), which
   returns all transactions where the user is buyer (`owner_user_id`) or seller
   (the called action's owner). Each row shows the user's role (`buyer` /
-  `seller`, both when calling one's own action), status, cost breakdown, inline
-  args and result, and `reason` on failure.
+  `seller`, both when calling one's own action), the action called
+  (`@owner/name`, linked to the action detail page, resolved via
+  `GET /v1/actions/{action_id}`; show a truncated ID if the action has since
+  been deleted), status, and cost breakdown. The transaction detail page
+  renders as a receipt: action ref, buyer and seller parties, gross/fee/net
+  breakdown, inline args and result, `reason` on failure, and the rating
+  control for the buyer.
 * **R6.6.2** *(Conditional — §10.)* Once a receipt-read HTTP route is confirmed,
   a transaction detail view shows its immutable receipt (hashes, economic fields,
   signature) for both success and failure.
