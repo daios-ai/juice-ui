@@ -148,7 +148,7 @@ Action responses include a computed `action` field (`@owner/name`) alongside `id
 | Show transaction | `GET /v1/transactions/{id}` → transaction | `juice tx show --id` |
 | Rate transaction | `POST /v1/transactions/{id}/rate` `{rating}` → rating | `juice tx rate --id --rating` |
 
-`rating` must be 0 (bad) or 1 (good). Transaction `args` and `result` fields are inline JSON objects.
+A subject reads transactions where it is buyer (`owner_user_id`) or seller (the action's owner). `rating` must be 0 (bad) or 1 (good). Transaction `args` and `result` fields are inline JSON objects.
 
 ### Listeners
 

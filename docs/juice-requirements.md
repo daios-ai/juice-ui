@@ -46,7 +46,7 @@ All IDs are stable opaque identifiers; action IDs are globally unique. Credit ba
 | Object              | Required fields                                                                                                                                                                                                                             | Rules                                                                                                                                                                                                                                                                                                                   |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `User`              | `id`, `handle`, `email`, `available`, `locked`, `suspended_at`, `public_key`, `remote_base_url`, `created_at`, `updated_at`                                                                                                                 | `handle` is unique and must not contain `/`. A suspended user is rejected at every authenticated request with `ErrUnauthenticated`. `public_key`, when set, is a unique base64url Ed25519 32-byte public key. Local users have null `public_key` and `remote_base_url`; remote peers set both.                          |
-| `Action`            | `id`, `owner_user_id`, `name`, `kind`, `active`, `public`, `price`, `description`, `input_schema`, `output_schema`, `source`, `artifact_hash`, `remote_action_id`, `created_at`, `updated_at`                                               | `kind ∈ {http, wasm, native, remote_proxy}`. `(owner_user_id, name)` is unique. `name` may use `/` as a path separator for hierarchical grouping (e.g., `llm/chat`); the `@owner/name` reference is unambiguous because handles cannot contain `/`. An `active=false` action is not callable by non-owners. Public discovery returns active actions only unless an owner requests private state. Authorized users may inspect script source. Compiled artifacts are content-addressed by `artifact_hash`. |
+| `Action`            | `id`, `owner_user_id`, `name`, `kind`, `active`, `public`, `price`, `description`, `input_schema`, `output_schema`, `source`, `artifact_hash`, `remote_action_id`, `created_at`, `updated_at`                                               | `kind ∈ {http, wasm, native, remote_proxy}`. `(owner_user_id, name)` is unique. `name` follows URL-path conventions: `/` is a hierarchy separator, not a forbidden character (e.g., `llm/chat`). The full `@owner/name` reference is structurally analogous to `host/path` in a URL — unambiguous because handles (like hostnames) cannot contain `/`. An `active=false` action is not callable by non-owners. Public discovery returns active actions only unless an owner requests private state. Authorized users may inspect script source. Compiled artifacts are content-addressed by `artifact_hash`. |
 | `ACLEntry`          | `subject_user_id`, `action_id`, `permission`, `created_at`                                                                                                                                                                                  | `permission ∈ {read, call, admin}`. ACLs are direct user-to-action grants. `read` permits inspection; `call` permits execution; `admin` permits ACL and lifecycle changes. Owners implicitly have `admin`.                                                                                                              |
 | `Process`           | `id`, `owner_user_id`, `available`, `locked`, `status`, `created_at`, `ended_at`                                                                                                                                                            | `status ∈ {open, closed}`. A process starts with user-provided funds and may start with zero credits (`available = 0`). Closing it returns all remaining funds to its owner. Closed processes cannot execute calls.                                                                                                     |
 | `Trace`             | `id`, `process_id`, `parent_trace_id`, `caused_by_trace_id`, `cost`, `latency_ms`, `created_at`                                                                                                                                             | Every process has one root trace. Choose one root convention consistently: `parent_trace_id = id` or `parent_trace_id = null`. Every direct `Call()` creates exactly one child trace.                                                                                                                                   |
@@ -56,7 +56,7 @@ All IDs are stable opaque identifiers; action IDs are globally unique. Credit ba
 | `Listener`          | `id`, `owner_user_id`, `source_user_id`, `event_name`, `target_action_id`, `active`, `created_at`                                                                                                                                           | A listener subscribes its owner to an exact `(source_user_id, event_name)` pair.                                                                                                                                                                                                                                        |
 | `Event`             | `id`, `listener_id`, `args_json`, `causing_trace_id`, `consumed_at`, `tx_id`, `created_at`                                                                                                                                                  | Persistent queued work item. `causing_trace_id` is nullable.                                                                                                                                                                                                                                                            |
 | `Deposit`           | `id`, `operator_user_id`, `target_user_id`, `amount`, `reason`, `created_at`                                                                                                                                                                | Immutable audit record for a positive out-of-band superuser credit grant.                                                                                                                                                                                                                                               |
-| `Receipt`           | `id`, `issuer_user_id`, `tx_id`, `trace_id`, `action_id`, `args_hash`, `reply_hash`, `status`, `gross`, `net`, `fee`, `reason`, `created_at`, `signature`                                                                                   | Immutable signed record for exactly one committed call.                                                                                                                                                                                                                                                                 |
+| `Receipt`           | `id`, `issuer_user_id`, `tx_id`, `trace_id`, `action_id`, `caller_user_id`, `process_id`, `args_hash`, `reply_hash`, `status`, `gross`, `net`, `fee`, `reason`, `started_at`, `created_at`, `signature`                                     | Immutable signed record for exactly one committed call. `caller_user_id` is the authenticated subject of the call. `started_at` is the wall-clock time the call began; `created_at` is settlement time.                                                                                                                 |
 | `Rating`            | `id`, `rated_tx_id`, `rated_receipt_id`, `rater_user_id`, `rating`, `created_at`, `signature`                                                                                                                                               | Immutable signed feedback record. `rating ∈ {0, 1}`. At most one rating exists per transaction. `rated_receipt_id` may be null only for pre-receipt transactions.                                                                                                                                                       |
 | `IdempotencyRecord` | `id`, `idempotency_key`, `counterparty_user_id`, `receipt_id`, `created_at`, `expires_at`                                                                                                                                                   | Used only for cross-kernel calls.                                                                                                                                                                                                                                                                                       |
 
@@ -338,7 +338,7 @@ ScriptAuthority ⊆ KernelAuthority(trace, process, subject)
 
 ### 7.2 Local language services
 
-`llm` exposes replaceable interfaces; concrete adapters call Ollama. The kernel must not import Ollama adapters. Model names are configurable; default chat model: `gemma4:26b`.
+`llm` exposes replaceable interfaces; concrete adapters call Ollama. The kernel must not import Ollama adapters. Model names and URL are configurable; defaults: URL `http://localhost:11434`, chat model `gemma4:26b`, embedding model `nomic-embed-text`.
 
 ```text
 Embed(ctx, text) -> vector
@@ -422,6 +422,18 @@ CanonicalJSON(v any) ([]byte, error)
 ```
 
 Generate and verify signatures only over `CanonicalJSON` output. A rating signature covers all fields except `signature` and is signed with the platform key. Property ordering uses UTF-8 byte order; this matches RFC 8785 UTF-16 ordering for all-ASCII property names, which is all this implementation uses.
+
+### 9.4 Transaction access
+
+Both parties to a transaction may read it in full — the buyer (`owner_user_id`) and the seller (the called action's owner) — so an owner can debug and audit calls to their action.
+
+```text
+CanReadTransaction(u, t) := u = t.owner_user_id ∨ u = Action(t.action_id).owner_user_id ∨ IsSuperuser(u)
+```
+
+Receipts stay an internal settlement artifact for federation and verification (§9.2, §12); there is no provider-receipt endpoint.
+
+Invariant: every credit to an action owner is reconstructible from the transactions readable by that owner.
 
 ## 10. Authentication and errors
 
@@ -610,6 +622,7 @@ Required endpoint behavior:
 | `POST /v1/call`                    | Requires `args` field; rejected with `ErrInvalidInput` when absent. `{}` is valid for unconstrained inputs. `action` is `@owner/name`.     |
 | `POST /v1/events/emit`             | Does not accept `source_user_id`; the event source is always the authenticated subject. Requires `args` field.                              |
 | `POST /v1/auth/logout`             | Accept refresh token in body, revoke it, and return `ErrUnauthenticated` for missing or already-revoked tokens.                             |
+| `GET /v1/transactions`             | Subject's transactions as buyer or seller per `CanReadTransaction`; `GET /v1/transactions/{id}` returns `ErrNotFound` to non-parties.       |
 
 ## 14. Logging and configuration
 
@@ -696,6 +709,8 @@ zero-credit process satisfies fund locking for zero-price actions
 Kernel.Deposit rejected with ErrUnauthorized for non-superuser caller
 receipt created atomically with successful transaction commit
 receipt created atomically with failed transaction commit
+action owner reads transactions for calls to their action
+non-party denied access to a transaction
 OpenAPI import/unimport flow for API-owned actions
 OpenAPI import compiles parameters and JSON body into one input schema
 OpenAPI activation rejects incomplete schemas or missing descriptions
@@ -734,6 +749,7 @@ consumed events never appear in ListPendingEvents
 pending events are absent after listener deletion
 transaction row is immutable after commit (no field updated post-creation)
 rating records reference valid tx_id and receipt_id
+every credit to an action owner is reconstructible from transactions readable by that owner
 imported action reimport or unimport never deletes transaction or receipt history
 imported action current stats reset never mutates transaction, receipt, or rating rows
 OpenAPI and remote imports create ordinary Actions, not separate action types
@@ -748,6 +764,7 @@ API owner re-runs import against a changed OpenAPI document; the matched action 
 API owner unimports an OpenAPI document; matching actions are deactivated and history remains attached
 remote kernel is added, a signed manifest is imported, a caller executes the proxy through Call(), and local stats remain separate from manifest stats
 remote proxy is unimported; the local proxy is deactivated and the remote kernel is unaffected
+caller executes a paid action multiple times; the action owner lists transactions for their action and the sum of transaction net amounts equals the total credits received by the owner
 ```
 
 ## 16. Design rationale
