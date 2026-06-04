@@ -5,3 +5,9 @@
 - Never peek into the implementation of the Juice kernel
 - For every flow you want to implement, you must try it out yourself
   on the kernel first.
+- These belong to the official kernel documentation:
+  - docs/API.md
+  - docs/flows.sh
+  - docs/juice-requirements.md
+  Never modify them.
+
