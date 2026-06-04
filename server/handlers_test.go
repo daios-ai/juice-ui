@@ -27,6 +27,13 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[]`))
 	})
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
+		// T1: U1 is buyer; T2: U1 is seller.
+		w.Write([]byte(`[
+			{"id":"T1","owner_user_id":"U1","target_user_id":"U2","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
+			{"id":"T2","owner_user_id":"U2","target_user_id":"U1","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
+		]`))
+	})
 	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"action_id":"x"}`))
 	})
@@ -127,6 +134,22 @@ func TestAuthenticatedStateChangeStillNeedsCSRF(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("authenticated CSRF-less POST = %d want 403", resp.StatusCode)
+	}
+}
+
+func TestTransactionsShowsBuyerAndSellerRoles(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/transactions")
+	if !strings.Contains(body, "buyer") {
+		t.Error("transactions page must show 'buyer' role for transactions where I am owner_user_id")
+	}
+	if !strings.Contains(body, "seller") {
+		t.Error("transactions page must show 'seller' role for transactions where I am target_user_id")
 	}
 }
 

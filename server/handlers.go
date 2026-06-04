@@ -63,7 +63,10 @@ type processView struct {
 	Transactions []client.Transaction
 }
 
-type transactionsView struct{ Transactions []client.Transaction }
+type transactionsView struct {
+	Transactions []client.Transaction
+	MyID         string
+}
 
 type txView struct {
 	Tx      client.Transaction
@@ -578,7 +581,13 @@ func (s *Server) postEnd(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var txs []client.Transaction
+	var myID string
 	err := s.sessions.Do(ctx, func(tok string) error {
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		myID = me.ID
 		t, e := s.client.ListTransactions(ctx, tok, "")
 		txs = t
 		return e
@@ -586,7 +595,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{Transactions: txs})
+	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{Transactions: txs, MyID: myID})
 }
 
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {

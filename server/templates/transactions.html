@@ -1,12 +1,16 @@
 {{define "content"}}
 <h1>Transactions</h1>
-<p class="subtitle">Every call you made, with its cost breakdown and outcome.</p>
+<p class="subtitle">Calls you made (buyer) and calls to your actions (seller).</p>
 {{if .Data.Transactions}}
 <table>
-  <thead><tr><th>Status</th><th>Gross</th><th>Fee</th><th>Net</th><th>When</th><th></th></tr></thead>
+  <thead><tr><th>Role</th><th>Status</th><th>Gross</th><th>Fee</th><th>Net</th><th>When</th><th></th></tr></thead>
   <tbody>
   {{range .Data.Transactions}}
   <tr>
+    <td>
+      {{if eq .OwnerUserID $.Data.MyID}}<span class="pill">buyer</span>{{end}}
+      {{if eq .TargetUserID $.Data.MyID}}<span class="pill status-credited">seller</span>{{end}}
+    </td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
     <td class="money">{{money .Gross}}</td>
     <td class="money">{{money .Fee}}</td>

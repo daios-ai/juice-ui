@@ -280,8 +280,11 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 
 ### 6.6 Transactions, receipts, traces, ratings
 
-* **R6.6.1** List and view transactions (`GET /v1/transactions`), showing
-  status, cost breakdown, inline args and result, and `reason` on failure.
+* **R6.6.1** List and view transactions (`GET /v1/transactions`), which
+  returns all transactions where the user is buyer (`owner_user_id`) or seller
+  (the called action's owner). Each row shows the user's role (`buyer` /
+  `seller`, both when calling one's own action), status, cost breakdown, inline
+  args and result, and `reason` on failure.
 * **R6.6.2** *(Conditional — §10.)* Once a receipt-read HTTP route is confirmed,
   a transaction detail view shows its immutable receipt (hashes, economic fields,
   signature) for both success and failure.
