@@ -143,7 +143,7 @@ textarea, select {
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius);
 }
-textarea { resize: vertical; font-family: var(--font-mono); }
+textarea { resize: vertical; font-family: var(--font-mono); line-height: inherit; }
 .field-error input, .field-error textarea { border-color: var(--accent); }
 .error-text { color: var(--accent); font-size: .85rem; margin-top: .25rem; }
 

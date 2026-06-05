@@ -20,7 +20,8 @@ for (const form of document.querySelectorAll("form.theme-toggle")) {
 // Auto-resize textareas: grow with content up to 10 visible lines, then scroll.
 function resizeTA(ta) {
   const cs = getComputedStyle(ta);
-  const lineH = parseFloat(cs.lineHeight);
+  let lineH = parseFloat(cs.lineHeight);
+  if (isNaN(lineH)) lineH = parseFloat(cs.fontSize) * 1.4;
   const padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
   const maxH = lineH * 10 + padV;
   ta.style.height = 'auto';
