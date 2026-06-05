@@ -55,6 +55,72 @@
 <div class="banner" role="alert">{{.}}</div>
 {{end}}
 
+{{define "_my_action_card"}}
+<article class="card stack" id="action-{{.Action.ID}}">
+  <div>
+    <h3 style="margin:0 0 .2rem"><a href="/actions/{{.Action.ID}}">{{.Action.Name}}</a></h3>
+    <p class="ref mono" style="margin:0">{{.Action.Ref}}</p>
+  </div>
+  {{if .Action.Description}}<p style="margin:0">{{truncate 120 .Action.Description}}</p>{{end}}
+  <p class="row" style="margin:0;gap:.5rem">
+    <span class="muted" style="font-size:.85rem">{{.Action.Kind}}</span>
+    {{if gt .Action.Price 0}}<span class="money" style="font-size:.85rem">{{money .Action.Price}} credits</span>{{else}}<span class="muted" style="font-size:.85rem">free</span>{{end}}
+    <span class="pill {{if .Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Active}}active{{else}}inactive{{end}}</span>
+    <span class="pill {{if .Action.Public}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Public}}public{{else}}private{{end}}</span>
+  </p>
+  <div class="row" style="gap:.5rem;margin:0">
+    {{if .Action.Active}}
+    <form method="post" action="/actions/{{.Action.ID}}/disable"
+          hx-post="/actions/{{.Action.ID}}/disable"
+          hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
+      {{.CSRFField}}<button class="btn" type="submit">Disable</button>
+    </form>
+    {{else}}
+    <form method="post" action="/actions/{{.Action.ID}}/enable"
+          hx-post="/actions/{{.Action.ID}}/enable"
+          hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
+      {{.CSRFField}}<button class="btn-primary" type="submit">Enable</button>
+    </form>
+    {{end}}
+    {{if .Action.Public}}
+    <form method="post" action="/actions/{{.Action.ID}}/revoke-all"
+          hx-post="/actions/{{.Action.ID}}/revoke-all"
+          hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
+      {{.CSRFField}}<button class="btn" type="submit">Make private</button>
+    </form>
+    {{else}}
+    <form method="post" action="/actions/{{.Action.ID}}/grant-all"
+          hx-post="/actions/{{.Action.ID}}/grant-all"
+          hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
+      {{.CSRFField}}<button class="btn" type="submit">Make public</button>
+    </form>
+    {{end}}
+  </div>
+</article>
+{{end}}
+
+{{define "_make_result"}}
+{{if .Error}}
+<div class="banner" role="alert">{{.Error}}</div>
+{{else if .Success}}
+<div class="outcome success" role="status">
+  <strong>Action synthesized.</strong>
+  <p><a href="/actions/{{.ActionID}}">{{.ActionRef}}</a> was created and is now active.</p>
+</div>
+{{else}}
+<div class="outcome failed" role="status">
+  <strong>Synthesis failed — your 20 credits were fully refunded.</strong>
+  {{if .Diagnostics}}
+  <ul style="margin:.5rem 0 0;padding-left:1.25rem">
+    {{range .Diagnostics}}<li>{{.}}</li>{{end}}
+  </ul>
+  {{else}}
+  <p>No diagnostic detail was returned. Try refining your description.</p>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
 {{define "_inbox"}}
 {{if .Error}}<div class="banner" role="alert">{{.Error}}</div>{{end}}
 {{if .Events}}

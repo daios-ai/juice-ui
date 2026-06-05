@@ -1,30 +1,45 @@
 {{define "content"}}
+{{$d := .Data}}
 <h1>Studio</h1>
 <p class="subtitle">Author and manage your actions.</p>
 
-{{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
-{{if .Data.Notice}}<div class="banner">{{.Data.Notice}}</div>{{end}}
+{{if $d.Error}}{{template "_error" $d.Error}}{{end}}
+{{if .Flash}}<div class="banner">{{.Flash}}</div>{{end}}
 
-<div class="banner">
-  Note: the kernel lists only your <strong>active, public</strong> actions over HTTP.
-  Inactive or private drafts aren’t enumerable here — open them directly by link or ID after creating them.
+<h2>Create</h2>
+
+<div class="card stack">
+  <h3 style="margin:0">Synthesize with AI</h3>
+  <p class="help" style="margin:0">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 credits</strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}</span> available{{end}}.</p>
+  {{if $d.InsufficientCredits}}
+  <div class="banner">Fewer than 20 credits available. Top up your balance before synthesizing.</div>
+  {{else}}
+  <form method="post" action="/studio/make"
+        hx-post="/studio/make" hx-target="#make-result" hx-swap="innerHTML"
+        hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">
+    {{.CSRFField}}
+    <div class="field">
+      <label for="make-desc">Description <span class="req">*</span></label>
+      <textarea id="make-desc" name="description" required rows="3"
+                placeholder="Return a fixed greeting that says Hello world"></textarea>
+    </div>
+    <div class="row">
+      <button class="btn-primary" type="submit">Synthesize (~45 s)</button>
+      <div id="make-progress" class="progress" role="status" aria-live="polite">
+        <span class="bar" aria-hidden="true"></span><span>Synthesizing… this takes about 45 seconds.</span>
+      </div>
+    </div>
+  </form>
+  {{end}}
+  <div id="make-result"></div>
 </div>
 
-<h2>Your active actions</h2>
-{{if .Data.Actions}}
-<div class="grid">
-  {{range .Data.Actions}}{{template "_action_card" .}}{{end}}
-</div>
-{{else}}
-<p class="muted">No active public actions listed.</p>
-{{end}}
-
-<h2>Create an action</h2>
+<h3>Manual creation</h3>
 <form class="card stack" method="post" action="/studio/create">
   {{.CSRFField}}
   <div class="field">
     <label for="name">Name <span class="req">*</span></label>
-    <p class="help">May contain “/” for hierarchy (e.g. <code>llm/chat</code>).</p>
+    <p class="help">May contain "/" for hierarchy (e.g. <code>llm/chat</code>).</p>
     <input id="name" name="name" type="text" required>
   </div>
   <div class="field">
@@ -37,7 +52,7 @@
   </div>
   <div class="field">
     <label for="source">Source URL</label>
-    <p class="help">The kernel rejects non-HTTP(S), loopback, and private addresses; it is the authority on URL acceptance.</p>
+    <p class="help">The kernel rejects non-HTTP(S), loopback, and private addresses.</p>
     <input id="source" name="source" type="text" placeholder="https://…">
   </div>
   <div class="field">
@@ -57,17 +72,26 @@
     <textarea id="output_schema" name="output_schema" placeholder='{"type":"object"}'></textarea>
   </div>
   <p class="help">Actions are created inactive. Editing source, schema, kind, or price deactivates an action, matching kernel update rules.</p>
-  <button class="btn-primary" type="submit">Create action</button>
+  <button class="btn" type="submit">Create action</button>
 </form>
 
-<h2>Import from OpenAPI</h2>
+<h3>Import from OpenAPI</h3>
 <form class="card stack" method="post" action="/studio/import">
   {{.CSRFField}}
   <div class="field">
     <label for="spec_url">OpenAPI spec URL</label>
     <input id="spec_url" name="spec_url" type="text" placeholder="https://…/openapi.json">
   </div>
-  <p class="help">Import is idempotent and creates inactive actions. The kernel requires API-ownership proof before public activation; the UI surfaces its decision.</p>
+  <p class="help">Import is idempotent and creates inactive actions. The kernel requires API-ownership proof before public activation.</p>
   <button class="btn" type="submit">Import</button>
 </form>
+
+<h2>Your actions</h2>
+{{if $d.Cards}}
+<div class="grid">
+  {{range $d.Cards}}{{template "_my_action_card" .}}{{end}}
+</div>
+{{else}}
+<p class="muted">No active public actions yet. Create one above, then enable and publish it from the action detail page.</p>
+{{end}}
 {{end}}

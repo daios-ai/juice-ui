@@ -216,8 +216,12 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 
 ### 6.3 Studio (author and manage own actions)
 
-* **R6.3.1** List the owner's actions including inactive ones (owner-private
-  view). Create actions (`POST /v1/actions`) — created inactive by default.
+* **R6.3.1** The Studio page has two zones: a **creation zone** (R6.3.6) at the
+  top and an **action management list** below. The list shows the owner's
+  actions including inactive ones (owner-private view),
+  filterable by active/inactive state; each card shows kind, status, price, and
+  public state. Create actions (`POST /v1/actions`) — created inactive by
+  default.
 * **R6.3.2** Editing source, schema, kind, or price warns that the action will
   be deactivated, matching kernel update rules.
 * **R6.3.3** Enable/disable, delete (preserving history), and manage ACLs and
@@ -227,7 +231,8 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   (permission ∈ `read`/`call`/`admin`). Because grant takes a `subject_user_id`
   (UUID), the UI requires a documented handle→user-ID resolution path (§10).
   Owner-only operations are presented only to the owner; the kernel remains the
-  authority.
+  authority. Active/inactive and public/private state changes are inline toggles
+  on the action list card, updated via htmx without a full page reload.
 * **R6.3.4** For `kind=wasm`, the UI notes that the artifact compiles on enable
   and surfaces compilation failure as a typed error.
 * **R6.3.5** Action-source URL input MAY be preflighted (e.g. obvious non-HTTP(S)
@@ -235,6 +240,15 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   acceptance (non-HTTP(S), loopback, RFC-1918 private, link-local). The UI MUST
   surface the kernel's rejection clearly rather than reimplement its policy
   (R2.5).
+* **R6.3.6** `@sys/make` is exposed in the creation zone as an AI-synthesis
+  path alongside manual creation. The user provides a natural-language
+  description; the BFF provisions an ephemeral 20-credit process
+  (start → `POST /v1/call` `@sys/make` → end), shows synthesis progress, and
+  renders the result inline: `status="success"` → the created action's
+  `@owner/name` linked to its edit view; `status="failure"` → the
+  `diagnostics[]` field as synthesis feedback (not surfaced as a kernel error).
+  The ephemeral process appears in closed history per R6.1.1. Fewer than 20
+  available credits blocks submission with a clear message.
 
 ### 6.4 OpenAPI import
 
@@ -387,10 +401,10 @@ running kernel; otherwise it stays conditional or is dropped from scope.
   chat action (`llm/chat` per the kernel spec vs. `llm-chat` in `docs/API.md`)
   and whether action names may legally contain `/`, against a live action
   listing. This settles form routing, URL encoding, and reference parsing.
-* **R10.3** *(owner-private listing — §3.1, R6.3.1)* Confirm whether
-  `GET /v1/actions?owner=` with the owner authenticated returns that owner's
-  inactive/private actions. If not, Studio's "manage my actions including
-  inactive" has no HTTP surface and must be renegotiated.
+* **R10.3** *(owner-private listing — §3.1, R6.3.1)* Confirmed: when the
+  authenticated user queries `GET /v1/actions?owner=@self`, the kernel returns
+  all owned actions regardless of active/public state. Unauthenticated or
+  cross-user queries still return only active+public actions.
 * **R10.4** *(handle→user-ID — R6.3.3, R6.7.1)* ACL grant and listener create
   both take a `subject_user_id`/`source_user_id` UUID on the wire, but the UI
   works in `@handle`. Confirm a documented HTTP path from handle to user ID; if

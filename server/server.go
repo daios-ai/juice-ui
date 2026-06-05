@@ -74,6 +74,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /studio", s.requireAuth(s.getStudio))
 	mux.HandleFunc("POST /studio/create", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /studio/import", s.requireAuth(s.postImport))
+	mux.HandleFunc("POST /studio/make", s.requireAuth(s.postMakeAction))
 	mux.HandleFunc("GET /processes", s.requireAuth(s.getProcesses))
 	mux.HandleFunc("GET /processes/{id}", s.requireAuth(s.getProcess))
 	mux.HandleFunc("POST /processes/{id}/fund", s.requireAuth(s.postFund))

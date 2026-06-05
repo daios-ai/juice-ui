@@ -51,9 +51,24 @@ type actionView struct {
 }
 
 type studioView struct {
-	Actions []client.Action
-	Error   string
-	Notice  string
+	User                client.User
+	Cards               []myActionCardView
+	InsufficientCredits bool
+	Error               string
+	Notice              string
+}
+
+type myActionCardView struct {
+	Action    client.Action
+	CSRFField template.HTML
+}
+
+type makeResultView struct {
+	Success     bool
+	ActionRef   string   // "@owner/name" on success
+	ActionID    string   // UUID on success, for link
+	Diagnostics []string // synthesis-failure diagnostics
+	Error       string   // kernel or validation error
 }
 
 type processesView struct{ Open, Closed []client.Process }
@@ -394,12 +409,14 @@ func (s *Server) runCall(ctx context.Context, tok string, a client.Action, r *ht
 
 func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	var me client.User
 	var acts []client.Action
 	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
+		u, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
+		me = u
 		// Owner filter returns only active+public actions (R10.3 limitation).
 		a, e := s.client.ListActions(ctx, tok, me.Handle, "")
 		if e != nil {
@@ -411,7 +428,16 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{Actions: acts})
+	csrfField := csrf.TemplateField(r)
+	cards := make([]myActionCardView, len(acts))
+	for i, a := range acts {
+		cards[i] = myActionCardView{Action: a, CSRFField: csrfField}
+	}
+	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{
+		User:                me,
+		Cards:               cards,
+		InsufficientCredits: me.Available < 20,
+	})
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +458,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !json.Valid([]byte(raw)) {
-			s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{Error: "The " + f.key + " is not valid JSON."})
+			s.flashRedirect(w, r, "/studio", "The "+f.key+" is not valid JSON.")
 			return
 		}
 		*f.dst = json.RawMessage(raw)
@@ -449,7 +475,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{Error: userMessage(err)})
+		s.flashRedirect(w, r, "/studio", userMessage(err))
 		return
 	}
 	// Created inactive; jump to its detail page (it won't appear in the list).
@@ -471,24 +497,146 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/studio", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
 }
 
+// postMakeAction calls @sys/make to synthesize a WASM action from a
+// natural-language description (R6.3.6). It provisions an ephemeral 20-credit
+// process, calls @sys/make, ends the process, then returns an htmx fragment
+// (_make_result) or, for no-JS clients, a flash-redirect.
+func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	desc := strings.TrimSpace(r.FormValue("description"))
+
+	var view makeResultView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		if desc == "" {
+			view = makeResultView{Error: "A description is required."}
+			return nil
+		}
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		if me.Available < 20 {
+			view = makeResultView{Error: fmt.Sprintf("Fewer than 20 credits available (you have %d). Top up your balance before synthesizing.", me.Available)}
+			return nil
+		}
+		p, e := s.client.StartProcess(ctx, tok, 20)
+		if e != nil {
+			return e
+		}
+		pid := p.Ident()
+		defer func() { _ = s.client.EndProcess(ctx, tok, pid) }()
+
+		out, e := s.caller.CallFunded(ctx, tok, pid, "@sys/make", mustArgs(map[string]any{"description": desc}))
+		if e != nil {
+			return e
+		}
+		if !out.IsSuccess() {
+			view = makeResultView{Error: out.Message}
+			return nil
+		}
+		var res struct {
+			Status      string   `json:"status"`
+			ActionID    string   `json:"action_id"`
+			ActionName  string   `json:"action_name"`
+			Diagnostics []string `json:"diagnostics"`
+		}
+		if e := json.Unmarshal(out.Result, &res); e != nil {
+			return fmt.Errorf("parse @sys/make result: %w", e)
+		}
+		if res.Status == "success" {
+			view = makeResultView{
+				Success:   true,
+				ActionRef: me.Handle + "/" + res.ActionName,
+				ActionID:  res.ActionID,
+			}
+		} else {
+			view = makeResultView{Diagnostics: res.Diagnostics}
+		}
+		return nil
+	})
+	if err != nil {
+		if isAuthErr(err) {
+			_ = s.sessions.Logout(ctx)
+			if isHTMX(r) {
+				w.Header().Set("HX-Redirect", "/login")
+				return
+			}
+			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+			return
+		}
+		s.log.Warn("make failed", "request_id", client.RequestIDFromContext(ctx), "err", err)
+		view = makeResultView{Error: userMessage(err)}
+	}
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_make_result", view)
+		return
+	}
+	// No-JS fallback: redirect with flash.
+	if view.Success {
+		s.flashRedirect(w, r, "/actions/"+view.ActionID, "Action synthesized.")
+		return
+	}
+	msg := view.Error
+	if msg == "" {
+		msg = "Synthesis failed. Refine your description and try again."
+	}
+	s.flashRedirect(w, r, "/studio", msg)
+}
+
 func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	op := lastSegment(r.URL.Path)
 	ctx := r.Context()
+	htmx := isHTMX(r)
+	var updated client.Action
 	err := s.sessions.Do(ctx, func(tok string) error {
 		switch op {
 		case "enable":
-			return s.client.EnableAction(ctx, tok, id)
+			if e := s.client.EnableAction(ctx, tok, id); e != nil {
+				return e
+			}
 		case "disable":
-			return s.client.DisableAction(ctx, tok, id)
+			if e := s.client.DisableAction(ctx, tok, id); e != nil {
+				return e
+			}
 		case "grant-all":
-			return s.client.GrantAll(ctx, tok, id)
+			if e := s.client.GrantAll(ctx, tok, id); e != nil {
+				return e
+			}
 		case "revoke-all":
-			return s.client.RevokeAll(ctx, tok, id)
+			if e := s.client.RevokeAll(ctx, tok, id); e != nil {
+				return e
+			}
+		}
+		if htmx {
+			a, e := s.client.GetAction(ctx, tok, id)
+			updated = a
+			return e
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	if err != nil {
+		if isAuthErr(err) {
+			_ = s.sessions.Logout(ctx)
+			if htmx {
+				w.Header().Set("HX-Redirect", "/login")
+				return
+			}
+			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+			return
+		}
+		if htmx {
+			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
+			return
+		}
+		s.handleErr(w, r, err)
+		return
+	}
+	if htmx {
+		_ = s.render.Fragment(w, http.StatusOK, "_my_action_card", myActionCardView{
+			Action:    updated,
+			CSRFField: csrf.TemplateField(r),
+		})
 		return
 	}
 	http.Redirect(w, r, "/actions/"+id, http.StatusSeeOther)
