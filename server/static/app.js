@@ -17,6 +17,25 @@ for (const form of document.querySelectorAll("form.theme-toggle")) {
   });
 }
 
+// Auto-resize textareas: grow with content up to 10 visible lines, then scroll.
+const MAX_LINES = 10;
+function resizeTA(ta) {
+  const cs = getComputedStyle(ta);
+  const lineH = parseFloat(cs.lineHeight);
+  const padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const minH = lineH * (parseInt(ta.getAttribute('rows')) || 3) + padV;
+  const maxH = lineH * MAX_LINES + padV;
+  ta.style.height = 'auto';
+  const sh = ta.scrollHeight;
+  ta.style.height = Math.max(minH, Math.min(sh, maxH)) + 'px';
+  ta.style.overflowY = sh > maxH ? 'auto' : 'hidden';
+}
+for (const ta of document.querySelectorAll('textarea')) {
+  ta.style.resize = 'none';
+  ta.addEventListener('input', () => resizeTA(ta));
+  resizeTA(ta);
+}
+
 // Optimistic sidebar collapse/expand.
 for (const form of document.querySelectorAll("form.sidebar-collapse")) {
   form.addEventListener("submit", () => {
