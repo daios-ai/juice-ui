@@ -14,7 +14,7 @@
     </td>
     <td class="mono">
       {{if $action.ID}}<a href="/actions/{{$action.ID}}">{{$action.Ref}}</a>
-      {{else}}<span class="muted">{{truncate .ActionID 8}}…</span>{{end}}
+      {{else}}<span class="muted">{{truncate 8 .ActionID}}…</span>{{end}}
     </td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
     <td class="money">{{money .Gross}}</td>

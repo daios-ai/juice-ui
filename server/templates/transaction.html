@@ -13,7 +13,7 @@
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
     <span class="mono">
       {{if $d.Action}}<a href="/actions/{{$d.Action.ID}}">{{$d.Action.Ref}}</a>
-      {{else}}<span class="muted">{{truncate $d.Tx.ActionID 8}}… (deleted)</span>{{end}}
+      {{else}}<span class="muted">{{truncate 8 $d.Tx.ActionID}}… (deleted)</span>{{end}}
     </span>
   </div>
 
@@ -25,14 +25,14 @@
         <th style="padding-right:2rem">Buyer</th>
         <td class="mono">
           {{if eq $d.Tx.OwnerUserID $d.Me.ID}}{{$d.Me.Handle}}
-          {{else}}<span class="muted">{{truncate $d.Tx.OwnerUserID 8}}…</span>{{end}}
+          {{else}}<span class="muted">{{truncate 8 $d.Tx.OwnerUserID}}…</span>{{end}}
         </td>
       </tr>
       <tr>
         <th style="padding-right:2rem">Seller</th>
         <td class="mono">
           {{if $d.Action}}{{$d.Action.OwnerHandle}}
-          {{else}}<span class="muted">{{truncate $d.Tx.TargetUserID 8}}…</span>{{end}}
+          {{else}}<span class="muted">{{truncate 8 $d.Tx.TargetUserID}}…</span>{{end}}
         </td>
       </tr>
     </table>
