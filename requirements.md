@@ -141,13 +141,10 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   double-encoded strings.
 * **R4.3** Action identity is `@owner/name`. The UI MUST parse references by a
   **single split on the first `/` after `@`** — owner before, name (the
-  remainder) after — and MUST NOT split on every `/`. This rule is correct
-  whether or not names may contain `/`, so it is mandatory now. When
-  `@owner/name` appears in a URL it is percent-encoded. **Pending R10.2:**
-  whether a name may legally contain `/`, and the canonical spelling of the
-  native chat action, are unverified; the UI MUST NOT hard-code either
-  interpretation — in particular it MUST NOT reject `/` in a name on input nor
-  build call URLs without percent-encoding — until R10.2 is resolved.
+  remainder) after — and MUST NOT split on every `/`. Action names may contain
+  `/` (e.g. `@sys/llm/chat`); the parse rule is unambiguous because handles
+  cannot contain `/`. When `@owner/name` appears in a URL it is
+  percent-encoded.
 * **R4.4** Action read/list responses carry both `id` (UUID, for management) and
   a computed `action` (`@owner/name`, for calling). The UI uses `action`
   directly in call requests and never asks the user to type a UUID.
@@ -224,15 +221,12 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   default.
 * **R6.3.2** Editing source, schema, kind, or price warns that the action will
   be deactivated, matching kernel update rules.
-* **R6.3.3** Enable/disable, delete (preserving history), and manage ACLs and
-  grant-all/revoke-all. ACL **grant** uses `POST /v1/actions/{id}/acl` with body
-  `{subject_user_id, permission}`; ACL **revoke** uses
-  `DELETE /v1/actions/{id}/acl/{subject_id}/{permission}` with no body
-  (permission ∈ `read`/`call`/`admin`). Because grant takes a `subject_user_id`
-  (UUID), the UI requires a documented handle→user-ID resolution path (§10).
-  Owner-only operations are presented only to the owner; the kernel remains the
-  authority. Active/inactive and public/private state changes are inline toggles
-  on the action list card, updated via htmx without a full page reload.
+* **R6.3.3** Enable/disable, delete (preserving history). Public/private
+  visibility is toggled via `PUT /v1/actions/{id}` with `{public: true|false}`;
+  there are no separate ACL, grant-all, or revoke-all operations. Owner-only
+  operations are presented only to the owner; the kernel remains the authority.
+  Active/inactive and public/private state changes are inline toggles on the
+  action list card, updated via htmx without a full page reload.
 * **R6.3.4** For `kind=wasm`, the UI notes that the artifact compiles on enable
   and surfaces compilation failure as a typed error.
 * **R6.3.5** Action-source URL input MAY be preflighted (e.g. obvious non-HTTP(S)
@@ -313,8 +307,8 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   cross-process `FOLLOWS_FROM` links, and making visible that the caller's
   process is debited only by `action.price`.
 * **R6.6.4** The buyer may rate a transaction once (`POST .../rate`, rating 0 or
-  1). The rate control appears only for the buyer and only when unrated;
-  duplicate and non-buyer attempts map to friendly errors.
+  1, optional `note` string). The rate control appears only for the buyer and
+  only when unrated; duplicate and non-buyer attempts map to friendly errors.
 
 ### 6.7 Listeners and events
 
@@ -397,18 +391,17 @@ running kernel; otherwise it stays conditional or is dropped from scope.
   response shapes for trace and receipt reads are not listed in `docs/API.md`;
   confirm them against the running kernel, then make §6.6.2–6.6.3 mandatory and
   update `docs/API.md`.
-* **R10.2** *(action naming — R4.3)* Confirm the canonical name of the native
-  chat action (`llm/chat` per the kernel spec vs. `llm-chat` in `docs/API.md`)
-  and whether action names may legally contain `/`, against a live action
-  listing. This settles form routing, URL encoding, and reference parsing.
+* **R10.2** *(action naming — R4.3)* Confirmed: action names may contain `/`.
+  The native chat action is `@sys/llm/chat`. The parse rule (split on first `/`
+  after `@`) is unambiguous and mandatory.
 * **R10.3** *(owner-private listing — §3.1, R6.3.1)* Confirmed: when the
   authenticated user queries `GET /v1/actions?owner=@self`, the kernel returns
   all owned actions regardless of active/public state. Unauthenticated or
   cross-user queries still return only active+public actions.
-* **R10.4** *(handle→user-ID — R6.3.3, R6.7.1)* ACL grant and listener create
-  both take a `subject_user_id`/`source_user_id` UUID on the wire, but the UI
-  works in `@handle`. Confirm a documented HTTP path from handle to user ID; if
-  none exists, these create flows cannot be satisfied as designed.
+* **R10.4** *(handle→user-ID — R6.7.1)* Listener create takes a
+  `source_user_id` UUID on the wire, but the UI works in `@handle`. Confirm a
+  documented HTTP path from handle to user ID; if none exists, listener create
+  cannot be satisfied as designed.
 * **R10.5** *(action-reference→action-ID — R6.7.1)* Confirm that
   `@owner/name` can be resolved to an `action_id` over HTTP (expected via
   `GET /v1/actions?owner=&name=`), as required for listener target binding.

@@ -57,12 +57,20 @@
 
   {{/* Rating */}}
   {{if $d.CanRate}}
-  <form class="row" method="post" action="/transactions/{{$d.Tx.ID}}/rate">
+  <form class="col" method="post" action="/transactions/{{$d.Tx.ID}}/rate">
     {{.CSRFField}}
     <span>Rate this result:</span>
-    <button class="btn" name="rating" value="1" type="submit">👍 good</button>
-    <button class="btn" name="rating" value="0" type="submit">👎 bad</button>
+    <textarea name="note" placeholder="Optional note…" rows="2"></textarea>
+    <div class="row">
+      <button class="btn" name="rating" value="1" type="submit">👍 good</button>
+      <button class="btn" name="rating" value="0" type="submit">👎 bad</button>
+    </div>
   </form>
+  {{else if $d.Tx.Rating}}
+  <div class="col muted" style="font-size:.9rem">
+    <span>Rated: {{if eq $d.Tx.Rating.Value 1}}👍 good{{else}}👎 bad{{end}}</span>
+    {{if $d.Tx.Rating.Note}}<span>Note: {{$d.Tx.Rating.Note}}</span>{{end}}
+  </div>
   {{end}}
 
   <p class="muted" style="font-size:.8rem">

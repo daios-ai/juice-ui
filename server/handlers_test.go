@@ -30,8 +30,8 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
 		// T1: U1 is buyer; T2: U1 is seller. Both reference action "owned".
 		w.Write([]byte(`[
-			{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","subject_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
-			{"id":"T2","action_id":"owned","owner_user_id":"U2","target_user_id":"U1","subject_user_id":"U2","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
+			{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","caller_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
+			{"id":"T2","action_id":"owned","owner_user_id":"U2","target_user_id":"U1","caller_user_id":"U2","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
 		]`))
 	})
 	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +68,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"result":{"status":"success","action_id":"A2","action_name":"synthesized","diagnostics":[]},"tx_id":"TX1","trace_id":"TR1"}`))
 	})
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","subject_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
+		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","caller_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/actions/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"active":true}`))
@@ -76,11 +76,8 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /v1/actions/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"active":false}`))
 	})
-	mux.HandleFunc("POST /v1/actions/{id}/grant-all", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("POST /v1/actions/{id}/revoke-all", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+	mux.HandleFunc("PUT /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","owner_user_id":"U1","owner_handle":"@alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
 	})
 	return httptest.NewServer(mux)
 }

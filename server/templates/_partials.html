@@ -83,14 +83,14 @@
     </form>
     {{end}}
     {{if .Action.Public}}
-    <form method="post" action="/actions/{{.Action.ID}}/revoke-all"
-          hx-post="/actions/{{.Action.ID}}/revoke-all"
+    <form method="post" action="/actions/{{.Action.ID}}/make-private"
+          hx-post="/actions/{{.Action.ID}}/make-private"
           hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
       {{.CSRFField}}<button class="btn" type="submit">Make private</button>
     </form>
     {{else}}
-    <form method="post" action="/actions/{{.Action.ID}}/grant-all"
-          hx-post="/actions/{{.Action.ID}}/grant-all"
+    <form method="post" action="/actions/{{.Action.ID}}/make-public"
+          hx-post="/actions/{{.Action.ID}}/make-public"
           hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
       {{.CSRFField}}<button class="btn" type="submit">Make public</button>
     </form>

@@ -417,7 +417,7 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		me = u
-		// Owner filter returns only active+public actions (R10.3 limitation).
+		// Owner filter with the authenticated user's token returns all owned actions.
 		a, e := s.client.ListActions(ctx, tok, me.Handle, "")
 		if e != nil {
 			return e
@@ -599,14 +599,16 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 			if e := s.client.DisableAction(ctx, tok, id); e != nil {
 				return e
 			}
-		case "grant-all":
-			if e := s.client.GrantAll(ctx, tok, id); e != nil {
-				return e
-			}
-		case "revoke-all":
-			if e := s.client.RevokeAll(ctx, tok, id); e != nil {
-				return e
-			}
+		case "make-public":
+			pub := true
+			a, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
+			updated = a
+			return e
+		case "make-private":
+			pub := false
+			a, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
+			updated = a
+			return e
 		}
 		if htmx {
 			a, e := s.client.GetAction(ctx, tok, id)
@@ -652,17 +654,6 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/studio", "Action deleted. History is preserved.")
 }
 
-func (s *Server) postACLGrant(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	subject := strings.TrimSpace(r.FormValue("subject_user_id"))
-	perm := r.FormValue("permission")
-	ctx := r.Context()
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.GrantACL(ctx, tok, id, subject, perm) })
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.flashRedirect(w, r, "/actions/"+id, "Access granted.")
-}
 
 // ---- processes ----
 
@@ -777,9 +768,8 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		// The buyer (subject) may rate a successful transaction once; duplicate
-		// and non-buyer attempts map to friendly errors at submit time (R6.6.4).
-		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.SubjectUserID == me.ID}
+		// The buyer (process owner) may rate a successful, unrated transaction (R6.6.4).
+		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerUserID == me.ID && tx.Rating == nil}
 		// Fetch the action; nil on 404 (soft-deleted action).
 		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
 			view.Action = &a
@@ -796,7 +786,8 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 	rating := int(parseInt64(r.FormValue("rating")))
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.RateTransaction(ctx, tok, id, rating) })
+	note := strings.TrimSpace(r.FormValue("note"))
+	err := s.sessions.Do(ctx, func(tok string) error { return s.client.RateTransaction(ctx, tok, id, rating, note) })
 	if isAuthErr(err) {
 		s.handleErr(w, r, err)
 		return
@@ -916,7 +907,7 @@ func (s *Server) postConsume(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		defer func() { _ = s.client.EndProcess(ctx, tok, p.Ident()) }()
-		_, e = s.client.ConsumeEvent(ctx, tok, eventID, p.Ident(), "")
+		_, e = s.client.ConsumeEvent(ctx, tok, eventID, p.Ident())
 		return e
 	})
 	if isAuthErr(err) {

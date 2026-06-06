@@ -13,6 +13,7 @@
 # Out of scope by design (§3.2): admin/supervision, deposits-from-UI, federation.
 # (We DO use the admin CLI here only to fund a buyer for setup — that is the test
 # harness acting as operator, not the UI.)
+# 
 set -u
 
 JUICE="${JUICE:-$(command -v juice)}"
@@ -71,7 +72,8 @@ say "build BFF"
 
 say "bootstrap throwaway kernel (creates @sys)"
 mkdir -p "$TMP/sys" "$TMP/alice" "$TMP/bob"
-JUICE_LOG_LEVEL=error JUICE_BOOTSTRAP_PASSWORD=syspass JUICE_ALLOW_LOCAL_SOURCES=true HOME="$TMP/sys" \
+printf '{"allow_local_sources":true,"log_level":"error"}\n' > "$TMP/juice.json"
+JUICE_LOG_LEVEL=error JUICE_BOOTSTRAP_PASSWORD=syspass HOME="$TMP/sys" \
   "$JUICE" --db "$DB" serve --addr "127.0.0.1:$KPORT" >"$TMP/k.log" 2>&1 &
 KPID=$!
 wait_health "$KURL/health" || { echo "kernel did not start"; cat "$TMP/k.log"; exit 2; }
@@ -88,7 +90,7 @@ mkact() { # name price path -> echoes id
     --input-schema '{"type":"object","properties":{"x":{"type":"string","description":"anything"}}}' \
     --output-schema '{"type":"object"}' | uuid)"
   j "$TMP/alice" action enable --id "$id" >/dev/null 2>&1
-  j "$TMP/alice" action grant-all --id "$id" >/dev/null 2>&1
+  j "$TMP/alice" action update --id "$id" --public >/dev/null 2>&1
   echo "$id"
 }
 PAY_ID="$(mkact pay 100 ok)"      # paid success

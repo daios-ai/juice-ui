@@ -92,6 +92,7 @@ type UpdateActionInput struct {
 	Source       *string         `json:"source,omitempty"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	Public       *bool           `json:"public,omitempty"`
 }
 
 // Process is a funded session. The kernel returns process_id on create but id on
@@ -132,26 +133,34 @@ type CallReply struct {
 	TraceID string          `json:"trace_id"`
 }
 
+// TransactionRating is the embedded rating on a transaction response.
+type TransactionRating struct {
+	Value int    `json:"value"`
+	Note  string `json:"note"`
+}
+
 // Transaction is the settled record of a call. gross/net/fee are integer
 // credits. result is null on failure; reason is set on failure.
 type Transaction struct {
-	ID            string          `json:"id"`
-	ProcessID     string          `json:"process_id"`
-	TraceID       string          `json:"trace_id"`
-	ParentTraceID string          `json:"parent_trace_id"`
-	OwnerUserID   string          `json:"owner_user_id"`
-	SubjectUserID string          `json:"subject_user_id"`
-	TargetUserID  string          `json:"target_user_id"`
-	ActionID      string          `json:"action_id"`
-	Args          json.RawMessage `json:"args"`
-	Result        json.RawMessage `json:"result"`
-	Status        string          `json:"status"`
-	Gross         int64           `json:"gross"`
-	Net           int64           `json:"net"`
-	Fee           int64           `json:"fee"`
-	Reason        string          `json:"reason"`
-	StartedAt     string          `json:"started_at"`
-	EndedAt       string          `json:"ended_at"`
+	ID            string             `json:"id"`
+	ProcessID     string             `json:"process_id"`
+	TraceID       string             `json:"trace_id"`
+	ParentTraceID string             `json:"parent_trace_id"`
+	OwnerUserID   string             `json:"owner_user_id"`
+	CallerUserID  string             `json:"caller_user_id"`
+	TargetUserID  string             `json:"target_user_id"`
+	ActionID      string             `json:"action_id"`
+	ActionName    string             `json:"action_name"`
+	Args          json.RawMessage    `json:"args"`
+	Result        json.RawMessage    `json:"result"`
+	Status        string             `json:"status"`
+	Gross         int64              `json:"gross"`
+	Net           int64              `json:"net"`
+	Fee           int64              `json:"fee"`
+	Reason        string             `json:"reason"`
+	Rating        *TransactionRating `json:"rating"`
+	StartedAt     string             `json:"started_at"`
+	EndedAt       string             `json:"ended_at"`
 }
 
 // Stats is GET /v1/stats/{action_id}.
@@ -173,6 +182,7 @@ type Rating struct {
 	RatedTxID   string `json:"rated_tx_id"`
 	RaterUserID string `json:"rater_user_id"`
 	Rating      int    `json:"rating"`
+	Note        string `json:"note,omitempty"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -419,26 +429,6 @@ func (c *Client) DeleteAction(ctx context.Context, token, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/actions/"+url.PathEscape(id), token, nil, nil)
 }
 
-// GrantACL grants a permission to a subject user. subjectUserID MUST be a UUID:
-// the kernel does not accept @handles here (verified live, R10.4).
-func (c *Client) GrantACL(ctx context.Context, token, id, subjectUserID, permission string) error {
-	body := map[string]string{"subject_user_id": subjectUserID, "permission": permission}
-	return c.do(ctx, http.MethodPost, "/v1/actions/"+url.PathEscape(id)+"/acl", token, body, nil)
-}
-
-func (c *Client) RevokeACL(ctx context.Context, token, id, subjectID, permission string) error {
-	path := "/v1/actions/" + url.PathEscape(id) + "/acl/" + url.PathEscape(subjectID) + "/" + url.PathEscape(permission)
-	return c.do(ctx, http.MethodDelete, path, token, nil, nil)
-}
-
-func (c *Client) GrantAll(ctx context.Context, token, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/actions/"+url.PathEscape(id)+"/grant-all", token, nil, nil)
-}
-
-func (c *Client) RevokeAll(ctx context.Context, token, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/actions/"+url.PathEscape(id)+"/revoke-all", token, nil, nil)
-}
-
 func (c *Client) ImportOpenAPI(ctx context.Context, token, specURL string) (ImportResult, error) {
 	var r ImportResult
 	err := c.do(ctx, http.MethodPost, "/v1/actions/import", token, map[string]string{"spec_url": specURL}, &r)
@@ -524,9 +514,13 @@ func (c *Client) GetTransaction(ctx context.Context, token, id string) (Transact
 	return t, err
 }
 
-// RateTransaction submits a 0/1 rating for a transaction.
-func (c *Client) RateTransaction(ctx context.Context, token, id string, rating int) error {
-	return c.do(ctx, http.MethodPost, "/v1/transactions/"+url.PathEscape(id)+"/rate", token, map[string]int{"rating": rating}, nil)
+// RateTransaction submits a 0/1 rating with an optional note for a transaction.
+func (c *Client) RateTransaction(ctx context.Context, token, id string, rating int, note string) error {
+	body := struct {
+		Rating int    `json:"rating"`
+		Note   string `json:"note,omitempty"`
+	}{Rating: rating, Note: note}
+	return c.do(ctx, http.MethodPost, "/v1/transactions/"+url.PathEscape(id)+"/rate", token, body, nil)
 }
 
 // ---- listeners & events ----
@@ -574,13 +568,9 @@ func (c *Client) ListEvents(ctx context.Context, token, listenerID string) ([]Ev
 
 // ConsumeEvent consumes a pending event through a funded process, returning a
 // call reply.
-func (c *Client) ConsumeEvent(ctx context.Context, token, eventID, processID, parentTraceID string) (CallReply, error) {
-	body := map[string]string{"process_id": processID}
-	if parentTraceID != "" {
-		body["parent_trace_id"] = parentTraceID
-	}
+func (c *Client) ConsumeEvent(ctx context.Context, token, eventID, processID string) (CallReply, error) {
 	var r CallReply
-	err := c.do(ctx, http.MethodPost, "/v1/events/"+url.PathEscape(eventID)+"/consume", token, body, &r)
+	err := c.do(ctx, http.MethodPost, "/v1/events/"+url.PathEscape(eventID)+"/consume", token, map[string]string{"process_id": processID}, &r)
 	return r, err
 }
 

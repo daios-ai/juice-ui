@@ -208,23 +208,6 @@ func TestErrorResponseClassified(t *testing.T) {
 	}
 }
 
-func TestRevokeACLPathParams(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.status = 204
-	if err := f.client().RevokeACL(context.Background(), "tok", "act1", "subj1", "call"); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastMethod != http.MethodDelete {
-		t.Errorf("method = %s", f.lastMethod)
-	}
-	if f.lastPath != "/v1/actions/act1/acl/subj1/call" {
-		t.Errorf("path = %s", f.lastPath)
-	}
-	if len(f.lastBody) != 0 {
-		t.Errorf("DELETE must carry no body, got %s", f.lastBody)
-	}
-}
 
 func TestEmitNeverSendsSource(t *testing.T) {
 	f := newFake()

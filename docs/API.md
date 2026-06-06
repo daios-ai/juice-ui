@@ -16,7 +16,7 @@ Fields that contain structured data use `json.RawMessage`, never `string`. `Tran
 Wherever a request identifies a callable action, a single `action` field carries the combined `@owner/name` notation. The server resolves it. Split fields (`target` + `action_name`) are forbidden. Owner handles must not contain `/`; action names must not contain `/`. Parsing is unambiguous: split on the first `/` after `@`. When `@owner/name` appears in a URL query string, `/` must be percent-encoded.
 
 **R4 — DELETE never carries a request body.**  
-Sub-resource removal uses path parameters: `DELETE /v1/actions/{id}/acl/{subject_id}/{permission}`. Request bodies on DELETE are rejected by many proxies and clients.
+Sub-resource removal uses path parameters. Request bodies on DELETE are rejected by many proxies and clients.
 
 **R5 — State mutations return the updated resource.**  
 Any operation that changes resource state returns the new state as the response body. `POST /v1/processes/{id}/fund` returns the updated process. Purely destructive operations (`DELETE`, `POST .../end`) return 204.
@@ -25,7 +25,7 @@ Any operation that changes resource state returns the new state as the response 
 No envelope objects. `GET /v1/listeners/{id}/events` returns `[…]` directly. Metadata such as pagination belongs in response headers, not the body.
 
 **R7 — Input validated at the HTTP boundary.**  
-The handler rejects invalid inputs before calling the kernel. `rating` must be 0 or 1. `permission` must be `read`, `call`, or `admin`. Both return `ErrInvalidInput` when violated.
+The handler rejects invalid inputs before calling the kernel. `rating` must be 0 or 1; returns `ErrInvalidInput` when violated.
 
 **R8 — Action responses include both `id` and `action`.**  
 Every read or list response for an action resource includes both `id` (UUID, for management operations) and a computed `action` field containing `@owner/name` (for calling). Clients can copy the `action` value directly into call requests without a separate lookup.
@@ -65,8 +65,8 @@ Any CLI flag that accepts a JSON value also accepts `@path/to/file.json`. The `@
 **C11 — `args` is always present; empty input is `{}`.**  
 `POST /v1/call` and `POST /v1/events/emit` require `args` in the request body. `{}` is the canonical representation of an empty argument set. Omitting `args` is normalized to `{}` rather than rejected, for ergonomics.
 
-**C12 — Emit source is always the authenticated subject.**  
-`POST /v1/events/emit` does not accept a `source_user_id` field. The event source is set from the authenticated caller. The server ignores any `source_user_id` in the request body.
+**C12 — Emit source is always the request user.**  
+`POST /v1/events/emit` does not accept a `source_user_id` field. The event source is set from the request user. The server ignores any `source_user_id` in the request body.
 
 **C13 — Diagnostic output goes to stderr; resource data goes to stdout.**  
 Log lines, progress messages, and error text go to stderr. The only content written to stdout is the resource payload: human-readable summaries, `--output json` bodies, and `--quiet` IDs. This makes every command pipeable and keeps `$(juice ... --quiet)` capture reliable.
@@ -106,14 +106,10 @@ Log lines, progress messages, and error text go to stderr. The only content writ
 | Create action | `POST /v1/actions` `{name, kind, [source, description, price, input_schema, output_schema]}` → 201 action | `juice action create --name --kind [--source --description --price --input-schema --output-schema]` |
 | List public actions | `GET /v1/actions[?owner=&name=]` → action[] | `juice action list [--all --limit --offset]` |
 | Show action | `GET /v1/actions/{id}` → action | `juice action show --id` |
-| Update action | `PUT /v1/actions/{id}` `{[price, description, source, input_schema, output_schema]}` → action | `juice action update --id [--price --description --source --input-schema --output-schema]` |
+| Update action | `PUT /v1/actions/{id}` `{[price, description, source, input_schema, output_schema, public]}` → action | `juice action update --id [--price --description --source --input-schema --output-schema --public]` |
 | Enable action | `POST /v1/actions/{id}/enable` → `{active:true}` | `juice action enable --id` |
 | Disable action | `POST /v1/actions/{id}/disable` → `{active:false}` | `juice action disable --id` |
 | Delete action | `DELETE /v1/actions/{id}` → 204 | `juice action delete --id` |
-| Grant ACL | `POST /v1/actions/{id}/acl` `{subject_user_id, permission}` → 204 | `juice action acl grant --id --user --perm` |
-| Revoke ACL | `DELETE /v1/actions/{id}/acl/{subject_id}/{permission}` → 204 | `juice action acl revoke --id --user --perm` |
-| Make public | `POST /v1/actions/{id}/grant-all` → 204 | `juice action grant-all --id` |
-| Make private | `POST /v1/actions/{id}/revoke-all` → 204 | `juice action revoke-all --id` |
 | Import OpenAPI | `POST /v1/actions/import` `{spec_url}` → import result | `juice action import --openapi <url>` |
 | Unimport OpenAPI | `POST /v1/actions/unimport` `{spec_url[, name]}` → action[] | `juice action unimport --openapi <url> [--name]` |
 | Get manifest | `GET /v1/actions/{id}/manifest` → signed manifest | — (used internally by `remote import`) |
@@ -146,9 +142,10 @@ Action responses include a computed `action` field (`@owner/name`) alongside `id
 |-----------|------|-----|
 | List transactions | `GET /v1/transactions[?process_id=]` → transaction[] | `juice tx list [--process --limit --offset]` |
 | Show transaction | `GET /v1/transactions/{id}` → transaction | `juice tx show --id` |
-| Rate transaction | `POST /v1/transactions/{id}/rate` `{rating}` → rating | `juice tx rate --id --rating` |
+| Rate transaction | `POST /v1/transactions/{id}/rate` `{rating, note?}` → rating | `juice tx rate --id --rating [--note]` |
+| Verify remote receipt | `GET /v1/transactions/{id}/receipt-verification` → verification | `juice tx verify-receipt --id` |
 
-A subject reads transactions where it is buyer (`owner_user_id`) or seller (the action's owner). `rating` must be 0 (bad) or 1 (good). Transaction `args` and `result` fields are inline JSON objects.
+A caller reads transactions where it is buyer (`owner_user_id`) or seller (the action's owner). `rating` must be 0 (bad) or 1 (good); `note` is an optional string. Transaction and list responses include a `rating` field — `{"value": 0|1, "note": string|null}` when rated, `null` when unrated. Transaction `args` and `result` fields are inline JSON objects. Remote-proxy transactions include `remote_receipt_hash` and `remote_receipt_json`; `receipt-verification` checks the stored receipt signature and fields against the remote peer's public key entirely from local data. Returns `ErrInvalidState` for non-remote-proxy transactions.
 
 ### Listeners
 
@@ -167,9 +164,9 @@ Deleting a listener also purges all pending events for that listener.
 |-----------|------|-----|
 | Emit event | `POST /v1/events/emit` `{event_name, args}` → `{event_ids:[]}` | `juice event emit --event [--args]` |
 | List pending events | `GET /v1/listeners/{id}/events` → event[] | `juice event list --listener` |
-| Consume event | `POST /v1/events/{id}/consume` `{process_id[, parent_trace_id]}` → call reply | `juice event consume --id --process [--trace]` |
+| Consume event | `POST /v1/events/{id}/consume` `{process_id}` → call reply | `juice event consume --id --process` |
 
-The event source is always the authenticated caller. `source_user_id` is not an input field.
+The event source is always the request user. `source_user_id` is not an input field.
 
 ### System Actions
 

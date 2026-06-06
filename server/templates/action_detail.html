@@ -106,23 +106,12 @@
     <form method="post" action="/actions/{{$d.Action.ID}}/enable">{{$.CSRFField}}<button class="btn-primary" type="submit">Enable</button></form>
     {{end}}
     {{if $d.Action.Public}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/revoke-all">{{$.CSRFField}}<button class="btn" type="submit">Make private (revoke-all)</button></form>
+    <form method=”post” action=”/actions/{{$d.Action.ID}}/make-private”>{{$.CSRFField}}<button class=”btn” type=”submit”>Make private</button></form>
     {{else}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/grant-all">{{$.CSRFField}}<button class="btn" type="submit">Make public (grant-all)</button></form>
+    <form method=”post” action=”/actions/{{$d.Action.ID}}/make-public”>{{$.CSRFField}}<button class=”btn” type=”submit”>Make public</button></form>
     {{end}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/delete" onsubmit="return confirm('Delete this action? History is preserved.')">{{$.CSRFField}}<button class="btn btn-danger" type="submit">Delete</button></form>
+    <form method=”post” action=”/actions/{{$d.Action.ID}}/delete” onsubmit=”return confirm(‘Delete this action? History is preserved.’)”>{{$.CSRFField}}<button class=”btn btn-danger” type=”submit”>Delete</button></form>
   </div>
-
-  <form class="stack" method="post" action="/actions/{{$d.Action.ID}}/acl">
-    {{$.CSRFField}}
-    <h3>Grant access to a specific user</h3>
-    <p class="help">The kernel identifies the subject by user ID (UUID). There is no HTTP handle→ID lookup, so paste the subject’s user ID. Use “Make public” above to grant everyone.</p>
-    <div class="row">
-      <input name="subject_user_id" type="text" placeholder="subject user id (UUID)" style="flex:1">
-      <select name="permission"><option value="read">read</option><option value="call">call</option><option value="admin">admin</option></select>
-      <button class="btn" type="submit">Grant</button>
-    </div>
-  </form>
 </div>
 {{end}}
 {{end}}
