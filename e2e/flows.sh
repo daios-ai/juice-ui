@@ -69,6 +69,7 @@ wait_health() { local url="$1"; for _ in $(seq 1 60); do curl -sf "$url" >/dev/n
 [ -z "$JUICE" ] && { echo "juice binary not found (set JUICE=...)"; exit 2; }
 say "build BFF"
 ( cd "$ROOT" && go build -o "$BFF" ./cmd/juice-ui ) || { echo "build failed"; exit 2; }
+cd "$TMP"
 
 say "bootstrap throwaway kernel (creates @sys)"
 mkdir -p "$TMP/sys" "$TMP/alice" "$TMP/bob"
