@@ -92,16 +92,10 @@ type txView struct {
 	Error   string
 }
 
-type listenersView struct {
-	Listeners []client.Listener
-	Error     string
-	Notice    string
-}
-
-type inboxView struct {
-	Events    []client.Event
-	CSRFField template.HTML
-	Error     string
+type stepsView struct {
+	MyID  string       // current user's ID; used in template to gate the complete form
+	Steps []client.Step
+	Error string
 }
 
 type errorView struct{ Message string }
@@ -799,115 +793,73 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/transactions/"+id, "Thanks for rating.")
 }
 
-// ---- listeners & events ----
+// ---- steps ----
 
-func (s *Server) getListeners(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var ls []client.Listener
+	var myID string
+	var steps []client.Step
 	err := s.sessions.Do(ctx, func(tok string) error {
-		l, e := s.client.ListListeners(ctx, tok)
-		ls = l
-		return e
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "listeners", "Listeners", listenersView{Listeners: ls})
-}
-
-func (s *Server) postCreateListener(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	source := strings.TrimSpace(r.FormValue("source_user_id"))
-	event := strings.TrimSpace(r.FormValue("event_name"))
-	ref, ok := client.ParseActionRef(strings.TrimSpace(r.FormValue("target_action")))
-	if !ok {
-		s.flashRedirect(w, r, "/listeners", "Target action must be in @owner/name form.")
-		return
-	}
-	resolved := false
-	err := s.sessions.Do(ctx, func(tok string) error {
-		// Resolve @owner/name -> action_id (R10.5). Works for active+public actions.
-		acts, e := s.client.ListActions(ctx, tok, ref.Owner, ref.Name)
+		me, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
-		if len(acts) == 0 {
-			return nil
+		myID = me.ID
+		st, e := s.client.ListSteps(ctx, tok, "", "")
+		if e != nil {
+			return e
 		}
-		resolved = true
-		_, e = s.client.CreateListener(ctx, tok, source, event, acts[0].ID)
+		steps = st
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "steps", "Steps", stepsView{MyID: myID, Steps: steps})
+}
+
+func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	partialArgs, err := rawJSONOrEmpty(r.FormValue("partial_args"))
+	if err != nil {
+		s.flashRedirect(w, r, "/steps", "Partial args must be valid JSON.")
+		return
+	}
+	inputSchema, err := rawJSONOrEmpty(r.FormValue("input_schema"))
+	if err != nil {
+		s.flashRedirect(w, r, "/steps", "Input schema must be valid JSON.")
+		return
+	}
+	in := client.CreateStepInput{
+		ProcessID:      strings.TrimSpace(r.FormValue("process_id")),
+		Action:         strings.TrimSpace(r.FormValue("action")),
+		PartialArgs:    partialArgs,
+		InputSchema:    inputSchema,
+		RequiredCaller: strings.TrimSpace(r.FormValue("required_caller")),
+	}
+	if pt := strings.TrimSpace(r.FormValue("parent_trace_id")); pt != "" {
+		in.ParentTraceID = pt
+	}
+	err = s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.CreateStep(ctx, tok, in)
 		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	if !resolved {
-		s.flashRedirect(w, r, "/listeners", "Could not resolve the target action; it must be active and public to bind a listener.")
-		return
-	}
-	s.flashRedirect(w, r, "/listeners", "Listener created.")
+	s.flashRedirect(w, r, "/steps", "Step created.")
 }
 
-func (s *Server) postEmit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	ctx := r.Context()
-	event := strings.TrimSpace(r.FormValue("event_name"))
 	args, err := rawJSONOrEmpty(r.FormValue("args"))
 	if err != nil {
-		s.flashRedirect(w, r, "/listeners", "Arguments must be valid JSON.")
+		s.flashRedirect(w, r, "/steps", "Arguments must be valid JSON.")
 		return
 	}
-	var res client.EmitResult
-	derr := s.sessions.Do(ctx, func(tok string) error {
-		v, e := s.client.EmitEvent(ctx, tok, event, args)
-		res = v
-		return e
-	})
-	if s.handleErr(w, r, derr) {
-		return
-	}
-	s.flashRedirect(w, r, "/listeners", fmt.Sprintf("Emitted to %d listener(s).", len(res.EventIDs)))
-}
-
-func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ctx := r.Context()
-	var events []client.Event
-	err := s.sessions.Do(ctx, func(tok string) error {
-		e, er := s.client.ListEvents(ctx, tok, id)
-		events = e
-		return er
-	})
-	view := inboxView{Events: events, CSRFField: csrf.TemplateField(r)}
-	if err != nil {
-		view.Error = userMessage(err)
-	}
-	if e := s.render.Fragment(w, http.StatusOK, "_inbox", view); e != nil {
-		s.log.Error("render inbox", "err", e)
-	}
-}
-
-func (s *Server) postDeleteListener(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ctx := r.Context()
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.DeleteListener(ctx, tok, id) })
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.flashRedirect(w, r, "/listeners", "Listener deleted; pending events purged.")
-}
-
-func (s *Server) postConsume(w http.ResponseWriter, r *http.Request) {
-	eventID := r.PathValue("id")
-	ctx := r.Context()
-	// Consume through the funded-session model: a zero-funded ephemeral process
-	// (R6.7.3). Works for price-0 target actions; paid targets need funds.
-	err := s.sessions.Do(ctx, func(tok string) error {
-		p, e := s.client.StartProcess(ctx, tok, 0)
-		if e != nil {
-			return e
-		}
-		defer func() { _ = s.client.EndProcess(ctx, tok, p.Ident()) }()
-		_, e = s.client.ConsumeEvent(ctx, tok, eventID, p.Ident())
+	err = s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.CompleteStep(ctx, tok, id, args)
 		return e
 	})
 	if isAuthErr(err) {
@@ -915,10 +867,10 @@ func (s *Server) postConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.flashRedirect(w, r, "/listeners", userMessage(err))
+		s.flashRedirect(w, r, "/steps", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/listeners", "Event consumed.")
+	s.flashRedirect(w, r, "/steps", "Step completed.")
 }
 
 // ---- helpers ----

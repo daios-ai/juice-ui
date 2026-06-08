@@ -29,6 +29,13 @@
         </td>
       </tr>
       <tr>
+        <th style="padding-right:2rem">Caller</th>
+        <td class="mono">
+          {{if eq $d.Tx.CallerUserID $d.Me.ID}}{{$d.Me.Handle}}
+          {{else}}<span class="muted">{{truncate 8 $d.Tx.CallerUserID}}…</span>{{end}}
+        </td>
+      </tr>
+      <tr>
         <th style="padding-right:2rem">Seller</th>
         <td class="mono">
           {{if $d.Action}}{{$d.Action.OwnerHandle}}

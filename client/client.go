@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -186,30 +187,49 @@ type Rating struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-// Listener subscribes a target action to a source user's named events. Both IDs
-// are UUIDs on the wire (R6.7.1).
-type Listener struct {
-	ID             string `json:"id"`
-	OwnerUserID    string `json:"owner_user_id"`
-	SourceUserID   string `json:"source_user_id"`
-	EventName      string `json:"event_name"`
-	TargetActionID string `json:"target_action_id"`
-	Active         bool   `json:"active"`
-	CreatedAt      string `json:"created_at"`
+// Step is a suspended computation boundary: a pre-baked future Call that a
+// designated caller completes by supplying the remaining input.
+type Step struct {
+	ID                   string          `json:"id"`
+	ProcessID            string          `json:"process_id"`
+	ParentTraceID        string          `json:"parent_trace_id"`
+	RequiredCallerUserID string          `json:"required_caller_user_id"`
+	NextActionID         string          `json:"next_action_id"`
+	Action               string          `json:"action"` // computed @owner/name; absent in list responses
+	PartialArgs          json.RawMessage `json:"partial_args"`
+	InputSchema          json.RawMessage `json:"input_schema"`
+	Status               string          `json:"status"` // waiting|running|done
+	TxID                 string          `json:"tx_id"`
+	CreatedAt            string          `json:"created_at"`
 }
 
-// Event is a pending event for a listener.
-type Event struct {
-	ID             string          `json:"id"`
-	ListenerID     string          `json:"listener_id"`
-	Args           json.RawMessage `json:"args"`
-	CausingTraceID string          `json:"causing_trace_id"`
-	CreatedAt      string          `json:"created_at"`
+// Ref returns "@owner/name" for this step's next action. The kernel returns the
+// action field only on single-step GET and with a double-@ quirk (verified
+// 2026-06-08): "@@sys/lookup" instead of "@sys/lookup". We strip the extra "@".
+func (s Step) Ref() string {
+	if strings.HasPrefix(s.Action, "@@") {
+		return s.Action[1:]
+	}
+	return s.Action
 }
 
-// EmitResult is the response of POST /v1/events/emit.
-type EmitResult struct {
-	EventIDs []string `json:"event_ids"`
+// CreateStepInput is the body for POST /v1/steps.
+type CreateStepInput struct {
+	ProcessID      string          `json:"process_id"`
+	Action         string          `json:"action"`          // @owner/name
+	PartialArgs    json.RawMessage `json:"partial_args"`
+	InputSchema    json.RawMessage `json:"input_schema"`
+	RequiredCaller string          `json:"required_caller"` // @handle
+	ParentTraceID  string          `json:"parent_trace_id,omitempty"`
+}
+
+// StepCompleteReply is the response of POST /v1/steps/{id}/complete.
+// The kernel also returns receipt_id and gross but they are not used by the BFF.
+type StepCompleteReply struct {
+	Result  json.RawMessage `json:"result"`
+	TxID    string          `json:"tx_id"`
+	TraceID string          `json:"trace_id"`
+	StepID  string          `json:"step_id"`
 }
 
 // ImportResult is the response of POST /v1/actions/import. Go's JSON decoding is
@@ -523,54 +543,46 @@ func (c *Client) RateTransaction(ctx context.Context, token, id string, rating i
 	return c.do(ctx, http.MethodPost, "/v1/transactions/"+url.PathEscape(id)+"/rate", token, body, nil)
 }
 
-// ---- listeners & events ----
+// ---- steps ----
 
-func (c *Client) CreateListener(ctx context.Context, token, sourceUserID, eventName, targetActionID string) (Listener, error) {
-	body := map[string]string{"source_user_id": sourceUserID, "event_name": eventName, "target_action_id": targetActionID}
-	var l Listener
-	err := c.do(ctx, http.MethodPost, "/v1/listeners", token, body, &l)
-	return l, err
+func (c *Client) CreateStep(ctx context.Context, token string, in CreateStepInput) (Step, error) {
+	var s Step
+	err := c.do(ctx, http.MethodPost, "/v1/steps", token, in, &s)
+	return s, err
 }
 
-func (c *Client) ListListeners(ctx context.Context, token string) ([]Listener, error) {
-	var l []Listener
-	err := c.do(ctx, http.MethodGet, "/v1/listeners", token, nil, &l)
-	return l, err
+func (c *Client) ListSteps(ctx context.Context, token, processID, status string) ([]Step, error) {
+	q := url.Values{}
+	if processID != "" {
+		q.Set("process_id", processID)
+	}
+	if status != "" {
+		q.Set("status", status)
+	}
+	path := "/v1/steps"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var s []Step
+	err := c.do(ctx, http.MethodGet, path, token, nil, &s)
+	return s, err
 }
 
-func (c *Client) GetListener(ctx context.Context, token, id string) (Listener, error) {
-	var l Listener
-	err := c.do(ctx, http.MethodGet, "/v1/listeners/"+url.PathEscape(id), token, nil, &l)
-	return l, err
+func (c *Client) GetStep(ctx context.Context, token, id string) (Step, error) {
+	var s Step
+	err := c.do(ctx, http.MethodGet, "/v1/steps/"+url.PathEscape(id), token, nil, &s)
+	return s, err
 }
 
-func (c *Client) DeleteListener(ctx context.Context, token, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/listeners/"+url.PathEscape(id), token, nil, nil)
-}
-
-// EmitEvent emits an event as the authenticated user. source_user_id is never
-// sent (R4.7/C12). Args defaults to {}.
-func (c *Client) EmitEvent(ctx context.Context, token, eventName string, args json.RawMessage) (EmitResult, error) {
+// CompleteStep completes a waiting step. args is always sent in the body (the
+// kernel returns ErrInvalidInput when the field is absent); nil/empty is
+// normalized to {}.
+func (c *Client) CompleteStep(ctx context.Context, token, id string, args json.RawMessage) (StepCompleteReply, error) {
 	body := struct {
-		EventName string          `json:"event_name"`
-		Args      json.RawMessage `json:"args"`
-	}{eventName, emptyArgs(args)}
-	var r EmitResult
-	err := c.do(ctx, http.MethodPost, "/v1/events/emit", token, body, &r)
-	return r, err
-}
-
-func (c *Client) ListEvents(ctx context.Context, token, listenerID string) ([]Event, error) {
-	var e []Event
-	err := c.do(ctx, http.MethodGet, "/v1/listeners/"+url.PathEscape(listenerID)+"/events", token, nil, &e)
-	return e, err
-}
-
-// ConsumeEvent consumes a pending event through a funded process, returning a
-// call reply.
-func (c *Client) ConsumeEvent(ctx context.Context, token, eventID, processID string) (CallReply, error) {
-	var r CallReply
-	err := c.do(ctx, http.MethodPost, "/v1/events/"+url.PathEscape(eventID)+"/consume", token, map[string]string{"process_id": processID}, &r)
+		Args json.RawMessage `json:"args"`
+	}{Args: emptyArgs(args)}
+	var r StepCompleteReply
+	err := c.do(ctx, http.MethodPost, "/v1/steps/"+url.PathEscape(id)+"/complete", token, body, &r)
 	return r, err
 }
 

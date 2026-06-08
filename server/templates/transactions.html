@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>Transactions</h1>
-<p class="subtitle">Calls you made (buyer) and calls to your actions (seller).</p>
+<p class="subtitle">Calls you made (buyer), calls you initiated (caller), and calls to your actions (seller).</p>
 {{if .Data.Transactions}}
 <table>
   <thead><tr><th>Role</th><th>Action</th><th>Status</th><th>Gross</th><th>Fee</th><th>Net</th><th>When</th><th></th></tr></thead>
@@ -10,6 +10,7 @@
   <tr>
     <td>
       {{if eq .OwnerUserID $.Data.MyID}}<span class="pill">buyer</span>{{end}}
+      {{if and (eq .CallerUserID $.Data.MyID) (ne .CallerUserID .OwnerUserID)}}<span class="pill status-escrow">caller</span>{{end}}
       {{if eq .TargetUserID $.Data.MyID}}<span class="pill status-credited">seller</span>{{end}}
     </td>
     <td class="mono">

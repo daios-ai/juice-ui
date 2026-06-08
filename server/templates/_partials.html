@@ -121,26 +121,3 @@
 {{end}}
 {{end}}
 
-{{define "_inbox"}}
-{{if .Error}}<div class="banner" role="alert">{{.Error}}</div>{{end}}
-{{if .Events}}
-<table>
-  <thead><tr><th>Event</th><th>Args</th><th></th></tr></thead>
-  <tbody>
-  {{range .Events}}
-  <tr>
-    <td class="id mono">{{truncate 8 .ID}}…</td>
-    <td><pre class="json">{{json .Args}}</pre></td>
-    <td>
-      <form method="post" action="/events/{{.ID}}/consume">
-        {{$.CSRFField}}<button class="btn" type="submit">Consume</button>
-      </form>
-    </td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-{{else}}
-<p class="muted">No pending events.</p>
-{{end}}
-{{end}}

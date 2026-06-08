@@ -209,22 +209,71 @@ func TestErrorResponseClassified(t *testing.T) {
 }
 
 
-func TestEmitNeverSendsSource(t *testing.T) {
+func TestCreateStepSendsFields(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"event_ids":["e1"]}`
-	res, err := f.client().EmitEvent(context.Background(), "tok", "order.created", nil)
+	f.status = 201
+	f.reply = `{"id":"s1","process_id":"p1","required_caller_user_id":"u1","next_action_id":"a1","status":"waiting","created_at":"2026-01-01T00:00:00Z"}`
+	in := CreateStepInput{
+		ProcessID:      "p1",
+		Action:         "@sys/lookup",
+		PartialArgs:    json.RawMessage(`{"q":"hi"}`),
+		InputSchema:    json.RawMessage(`{"type":"object"}`),
+		RequiredCaller: "@alice",
+	}
+	s, err := f.client().CreateStep(context.Background(), "tok", in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.EventIDs) != 1 {
-		t.Errorf("event ids = %+v", res.EventIDs)
+	if s.ID != "s1" || s.Status != "waiting" {
+		t.Errorf("step = %+v", s)
 	}
-	if strings.Contains(string(f.lastBody), "source_user_id") {
-		t.Errorf("emit must not send source_user_id: %s", f.lastBody)
+	if f.lastPath != "/v1/steps" || f.lastMethod != "POST" {
+		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
+	}
+	if !strings.Contains(string(f.lastBody), `"@sys/lookup"`) {
+		t.Errorf("action not sent: %s", f.lastBody)
+	}
+	if !strings.Contains(string(f.lastBody), `"@alice"`) {
+		t.Errorf("required_caller not sent: %s", f.lastBody)
+	}
+}
+
+func TestCompleteStepAlwaysSendsArgs(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"result":{},"tx_id":"t1","trace_id":"tr1","step_id":"s1"}`
+	// nil args → normalized to {}
+	r, err := f.client().CompleteStep(context.Background(), "tok", "s1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TxID != "t1" || r.StepID != "s1" {
+		t.Errorf("reply = %+v", r)
 	}
 	if !strings.Contains(string(f.lastBody), `"args":{}`) {
-		t.Errorf("args not defaulted: %s", f.lastBody)
+		t.Errorf("args must always be sent: %s", f.lastBody)
+	}
+	if f.lastPath != "/v1/steps/s1/complete" || f.lastMethod != "POST" {
+		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
+	}
+}
+
+func TestStepRefStripsDoubleAt(t *testing.T) {
+	// Kernel returns @@owner/name; Ref() strips the extra @.
+	s := Step{Action: "@@sys/lookup"}
+	if got := s.Ref(); got != "@sys/lookup" {
+		t.Errorf("Ref() = %q want @sys/lookup", got)
+	}
+	// Single @ is returned as-is.
+	s2 := Step{Action: "@sys/lookup"}
+	if got := s2.Ref(); got != "@sys/lookup" {
+		t.Errorf("Ref() single-@ = %q want @sys/lookup", got)
+	}
+	// Empty action.
+	s3 := Step{}
+	if got := s3.Ref(); got != "" {
+		t.Errorf("Ref() empty = %q want empty", got)
 	}
 }
 

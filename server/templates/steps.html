@@ -1,0 +1,71 @@
+{{define "content"}}
+<h1>Steps</h1>
+<p class="subtitle">Suspended calls that a designated caller completes when ready.</p>
+
+{{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
+
+<h2>Create a step</h2>
+<form class="card stack" method="post" action="/steps/create">
+  {{.CSRFField}}
+  <div class="field">
+    <label for="s_process">Process ID <span class="req">*</span></label>
+    <input id="s_process" name="process_id" type="text" placeholder="UUID" required>
+  </div>
+  <div class="field">
+    <label for="s_action">Action <span class="req">*</span></label>
+    <p class="help">The action to call on completion, as <span class="ref mono">@owner/name</span>.</p>
+    <input id="s_action" name="action" type="text" placeholder="@owner/action" required>
+  </div>
+  <div class="field">
+    <label for="s_partial">Partial args (JSON)</label>
+    <p class="help">Pre-bound input merged with the caller's input on completion. Caller's keys win.</p>
+    <textarea id="s_partial" name="partial_args" rows="3" placeholder="{}"></textarea>
+  </div>
+  <div class="field">
+    <label for="s_schema">Input schema (JSON)</label>
+    <p class="help">Constrains what the caller may supply. Empty allows any input.</p>
+    <textarea id="s_schema" name="input_schema" rows="3" placeholder='{"type":"object"}'></textarea>
+  </div>
+  <div class="field">
+    <label for="s_caller">Required caller <span class="req">*</span></label>
+    <p class="help">Only this user may complete the step, as <span class="ref mono">@handle</span>.</p>
+    <input id="s_caller" name="required_caller" type="text" placeholder="@handle" required>
+  </div>
+  <div class="field">
+    <label for="s_trace">Parent trace ID (optional)</label>
+    <input id="s_trace" name="parent_trace_id" type="text" placeholder="UUID">
+  </div>
+  <button class="btn-primary" type="submit">Create step</button>
+</form>
+
+<h2>Your steps</h2>
+{{if .Data.Steps}}
+<table>
+  <thead>
+    <tr><th>ID</th><th>Action</th><th>Status</th><th>Required caller</th><th>Created</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range .Data.Steps}}
+  <tr>
+    <td class="id mono">{{truncate 8 .ID}}…</td>
+    <td class="mono">
+      {{if .Action}}{{truncate 24 .Ref}}{{else}}<span class="muted">{{truncate 8 .NextActionID}}…</span>{{end}}
+    </td>
+    <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "running"}}status-escrow{{else}}{{end}}">{{.Status}}</span></td>
+    <td class="mono muted">{{truncate 8 .RequiredCallerUserID}}…</td>
+    <td class="muted">{{truncate 19 .CreatedAt}}</td>
+    <td>
+      {{if and (eq .Status "waiting") (eq .RequiredCallerUserID $.Data.MyID)}}
+      <form class="stack" method="post" action="/steps/{{.ID}}/complete" style="min-width:16rem">
+        {{$.CSRFField}}
+        <textarea name="args" rows="2" placeholder="{}" style="font-size:.85rem"></textarea>
+        <button class="btn-primary" type="submit" style="align-self:flex-start">Complete</button>
+      </form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="muted">No steps yet.</p>{{end}}
+{{end}}

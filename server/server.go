@@ -81,12 +81,9 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /transactions", s.requireAuth(s.getTransactions))
 	mux.HandleFunc("GET /transactions/{id}", s.requireAuth(s.getTransaction))
 	mux.HandleFunc("POST /transactions/{id}/rate", s.requireAuth(s.postRate))
-	mux.HandleFunc("GET /listeners", s.requireAuth(s.getListeners))
-	mux.HandleFunc("POST /listeners/create", s.requireAuth(s.postCreateListener))
-	mux.HandleFunc("POST /listeners/emit", s.requireAuth(s.postEmit))
-	mux.HandleFunc("GET /listeners/{id}/inbox", s.requireAuth(s.getInbox))
-	mux.HandleFunc("POST /listeners/{id}/delete", s.requireAuth(s.postDeleteListener))
-	mux.HandleFunc("POST /events/{id}/consume", s.requireAuth(s.postConsume))
+	mux.HandleFunc("GET /steps", s.requireAuth(s.getSteps))
+	mux.HandleFunc("POST /steps/create", s.requireAuth(s.postCreateStep))
+	mux.HandleFunc("POST /steps/{id}/complete", s.requireAuth(s.postCompleteStep))
 
 	// Middleware chain (outer to inner): request-id -> logging -> session -> CSRF.
 	csrfMW := csrf.Protect(o.CSRFKey,
