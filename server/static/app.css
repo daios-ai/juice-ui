@@ -58,12 +58,17 @@ a:hover { text-decoration: underline; }
 .sidebar-foot .btn-icon { display: flex; align-items: center; gap: .7rem; width: 100%; border: none; background: none; color: var(--text-muted); padding: .5rem .55rem; }
 .sidebar-foot .btn-icon:hover { background: var(--surface-2); color: var(--text); }
 .handle { color: var(--text-muted); font-size: .85rem; padding: 0 .55rem; overflow: hidden; text-overflow: ellipsis; }
+.credits { color: var(--text-muted); font-size: .85rem; padding: 0 .55rem; font-family: var(--font-mono); }
+.budget-form { display: flex; align-items: center; gap: .3rem; padding: 0 .55rem; }
+.budget-input { width: 5rem; font-size: .8rem; padding: .2rem .4rem; }
+.budget-form .btn-quiet { padding: .2rem .4rem; font-size: .8rem; }
 .logout { margin: 0; }
 .logout .btn-quiet { display: flex; align-items: center; gap: .7rem; width: 100%; padding: .5rem .55rem; }
 
 /* Collapsed state: icons only (no flash — stamped server-side via data-sidebar). */
 html[data-sidebar="collapsed"] .sidebar { --sb-w: 56px; }
 html[data-sidebar="collapsed"] .sidebar .lbl { display: none; }
+html[data-sidebar="collapsed"] .credits, html[data-sidebar="collapsed"] .budget-form { display: none; }
 
 /* Collapsed header shows just the logo; hovering (or keyboard-focusing the
    button) swaps it for the expand toggle, so the rail stays clean but remains

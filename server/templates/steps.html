@@ -42,17 +42,18 @@
 {{if .Data.Steps}}
 <table>
   <thead>
-    <tr><th>ID</th><th>Action</th><th>Status</th><th>Required caller</th><th>Created</th><th></th></tr>
+    <tr><th>ID</th><th>Next action</th><th>Input</th><th>Status</th><th>Caller</th><th>Created</th><th></th></tr>
   </thead>
   <tbody>
   {{range .Data.Steps}}
   <tr>
     <td class="id mono">{{truncate 8 .ID}}…</td>
     <td class="mono">
-      {{if .Action}}{{truncate 24 .Ref}}{{else}}<span class="muted">{{truncate 8 .NextActionID}}…</span>{{end}}
+      {{with index $.Data.Actions .NextActionID}}{{.Ref}}{{else}}<span class="muted">{{truncate 8 .NextActionID}}…</span>{{end}}
     </td>
+    <td style="max-width:24rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" class="mono" title="{{jsonCompact .PartialArgs}}">{{truncate 60 (jsonCompact .PartialArgs)}}</td>
     <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "running"}}status-escrow{{else}}{{end}}">{{.Status}}</span></td>
-    <td class="mono muted">{{truncate 8 .RequiredCallerUserID}}…</td>
+    <td class="mono muted">{{if eq .RequiredCallerUserID $.Data.MyID}}you{{else}}{{truncate 8 .RequiredCallerUserID}}…{{end}}</td>
     <td class="muted">{{truncate 19 .CreatedAt}}</td>
     <td>
       {{if and (eq .Status "waiting") (eq .RequiredCallerUserID $.Data.MyID)}}

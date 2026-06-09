@@ -39,13 +39,20 @@
       <option value="">▸ Start a new session</option>
     </select>
   </div>
-  <div class="field">
-    <label for="new_funds">New session funds</label>
-    <p class="help">Used only when starting a new session. Refunded on “end &amp; reclaim”.</p>
-    <input id="new_funds" name="new_funds" type="number" min="0" value="{{$d.Action.Price}}">
+  <div class=”field”>
+    <label for=”new_funds”>New session funds</label>
+    <p class=”help”>Used only when starting a new session. Refunded on “end &amp; reclaim”.</p>
+    <input id=”new_funds” name=”new_funds” type=”number” min=”0” value=”{{$d.DefaultBudget}}”>
   </div>
   {{else}}
-  <p class="help">This is a price-0 action. It runs in a temporary session that is created, used, and ended automatically — it still appears in your session history.</p>
+  <label class=”row”>
+    <input type=”checkbox” name=”keep_open” value=”1” data-keep-open-toggle style=”width:auto”> Keep session open after call
+  </label>
+  <div class=”field” data-keep-open-budget hidden>
+    <label for=”keep_budget”>Session budget (credits)</label>
+    <p class=”help”>Credits to allocate when opening the session. Refunded on “end &amp; reclaim”.</p>
+    <input id=”keep_budget” name=”budget” type=”number” min=”0” value=”{{$d.DefaultBudget}}”>
+  </div>
   {{end}}
 
   {{if not $d.Form.UseRawFallback}}

@@ -34,8 +34,10 @@ type Page struct {
 	Title     string
 	Theme     string        // "light" | "dark" | "" (defer to prefers-color-scheme)
 	Sidebar   string        // "collapsed" | "" (expanded); stamped to avoid flash
-	Handle    string        // signed-in handle for the nav, or "" when anonymous
-	CSRFField template.HTML // hidden CSRF input for no-JS forms
+	Handle        string        // signed-in handle for the nav, or "" when anonymous
+	Available     int64         // signed-in user's available balance; 0 when unauthenticated or unknown
+	DefaultBudget int64         // user-configured default session budget (cookie)
+	CSRFField     template.HTML // hidden CSRF input for no-JS forms
 	CSRFToken string        // raw token for the <meta> tag htmx reads
 	Flash     string        // transient user message
 	Data      any           // page-specific view model
@@ -53,6 +55,7 @@ func NewRenderer() (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":       money,
 		"json":        prettyJSON,
+		"jsonCompact": jsonCompact,
 		"statusClass": statusClass,
 		"truncate":    truncate,
 		"costOf":      costOf,
@@ -143,6 +146,17 @@ func money(n int64) string {
 
 // prettyJSON renders inline JSON (args/result) as indented text (R4.2). It never
 // double-encodes: structured fields arrive as raw JSON and are pretty-printed.
+func jsonCompact(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return string(raw)
+	}
+	return buf.String()
+}
+
 func prettyJSON(raw json.RawMessage) string {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return "—"

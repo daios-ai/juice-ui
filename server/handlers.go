@@ -39,15 +39,16 @@ type discoverView struct {
 }
 
 type actionView struct {
-	Action   client.Action
-	HasStats bool
-	Stats    client.Stats
-	Form     FormModel
-	IsOwner  bool
-	IsPaid   bool
-	Open     []client.Process
-	Outcome  *Outcome
-	Error    string
+	Action        client.Action
+	HasStats      bool
+	Stats         client.Stats
+	Form          FormModel
+	IsOwner       bool
+	IsPaid        bool
+	Open          []client.Process
+	Outcome       *Outcome
+	DefaultBudget int64
+	Error         string
 }
 
 type studioView struct {
@@ -93,9 +94,10 @@ type txView struct {
 }
 
 type stepsView struct {
-	MyID  string       // current user's ID; used in template to gate the complete form
-	Steps []client.Step
-	Error string
+	MyID    string
+	Steps   []client.Step
+	Actions map[string]client.Action // next_action_id → action, for name display
+	Error   string
 }
 
 type errorView struct{ Message string }
@@ -289,10 +291,11 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view = actionView{
-			Action:  a,
-			Form:    BuildForm(a.InputSchema),
-			IsOwner: a.OwnerUserID == me.ID,
-			IsPaid:  a.Price > 0,
+			Action:        a,
+			Form:          BuildForm(a.InputSchema),
+			IsOwner:       a.OwnerUserID == me.ID,
+			IsPaid:        a.Price > 0,
+			DefaultBudget: defaultBudgetFromRequest(r),
 		}
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats, view.HasStats = st, true
@@ -323,7 +326,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerUserID == me.ID, IsPaid: a.Price > 0}
+		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerUserID == me.ID, IsPaid: a.Price > 0, DefaultBudget: defaultBudgetFromRequest(r)}
 		if argErr == nil {
 			out, e := s.runCall(ctx, tok, a, r, args)
 			if e != nil {
@@ -384,13 +387,31 @@ func orDefaultStr(v, def string) string {
 
 // runCall executes the action through the funded-session abstraction, opening a
 // new session for paid actions when the user did not pick an existing one.
+// For price-0 actions, "keep_open=1" creates a funded session that is left open
+// so any steps the call creates remain completable.
 func (s *Server) runCall(ctx context.Context, tok string, a client.Action, r *http.Request, args json.RawMessage) (Outcome, error) {
 	if a.Price <= 0 {
+		if r.FormValue("keep_open") == "1" {
+			budget := parseInt64(r.FormValue("budget"))
+			if budget <= 0 {
+				budget = defaultBudgetFromRequest(r)
+			}
+			p, err := s.client.StartProcess(ctx, tok, budget)
+			if err != nil {
+				return Outcome{}, err
+			}
+			// Process left open intentionally; appears in sessions list for manual end.
+			return s.caller.CallFunded(ctx, tok, p.Ident(), a.Action, args)
+		}
 		return s.caller.CallEphemeral(ctx, tok, a.Action, args)
 	}
 	pid := strings.TrimSpace(r.FormValue("process_id"))
 	if pid == "" {
-		p, err := s.client.StartProcess(ctx, tok, parseInt64(r.FormValue("new_funds")))
+		funds := parseInt64(r.FormValue("new_funds"))
+		if funds <= 0 {
+			funds = defaultBudgetFromRequest(r)
+		}
+		p, err := s.client.StartProcess(ctx, tok, funds)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -799,6 +820,7 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var myID string
 	var steps []client.Step
+	actions := map[string]client.Action{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
@@ -810,12 +832,22 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		steps = st
+		seen := map[string]bool{}
+		for _, step := range steps {
+			if step.NextActionID == "" || seen[step.NextActionID] {
+				continue
+			}
+			seen[step.NextActionID] = true
+			if a, ae := s.client.GetAction(ctx, tok, step.NextActionID); ae == nil {
+				actions[step.NextActionID] = a
+			}
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "steps", "Steps", stepsView{MyID: myID, Steps: steps})
+	s.renderPage(w, r, http.StatusOK, "steps", "Steps", stepsView{MyID: myID, Steps: steps, Actions: actions})
 }
 
 func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
