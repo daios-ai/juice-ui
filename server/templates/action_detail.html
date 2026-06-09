@@ -16,8 +16,8 @@
   {{if $d.HasStats}}
   <p class="muted">
     {{$d.Stats.Uses}} uses · {{$d.Stats.Successes}} ok / {{$d.Stats.Failures}} failed ·
-    rating {{printf "%.2f" $d.Stats.RatingMean}} ({{$d.Stats.RatingCount}}) ·
-    latency {{printf "%.0f" $d.Stats.LatencyMean}}ms
+    rating {{printf "%.2f" $d.Stats.RatingEstimate}} ({{$d.Stats.RatingCount}}) ·
+    latency {{printf "%.0f" $d.Stats.LatencyEstimate}}ms
   </p>
   {{end}}
 </div>
