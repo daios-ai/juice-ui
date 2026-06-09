@@ -108,7 +108,7 @@
     {{if $d.Action.Public}}
     <form method=”post” action=”/actions/{{$d.Action.ID}}/make-private”>{{$.CSRFField}}<button class=”btn” type=”submit”>Make private</button></form>
     {{else}}
-    <form method=”post” action=”/actions/{{$d.Action.ID}}/make-public”>{{$.CSRFField}}<button class=”btn” type=”submit”>Make public</button></form>
+    <form method=”post” action=”/actions/{{$d.Action.ID}}/make-public”>{{$.CSRFField}}<button class=”btn-primary” type=”submit”>Make public</button></form>
     {{end}}
     <form method=”post” action=”/actions/{{$d.Action.ID}}/delete” onsubmit=”return confirm(‘Delete this action? History is preserved.’)”>{{$.CSRFField}}<button class=”btn btn-danger” type=”submit”>Delete</button></form>
   </div>

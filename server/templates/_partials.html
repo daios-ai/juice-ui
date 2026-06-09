@@ -92,7 +92,7 @@
     <form method="post" action="/actions/{{.Action.ID}}/make-public"
           hx-post="/actions/{{.Action.ID}}/make-public"
           hx-target="#action-{{.Action.ID}}" hx-swap="outerHTML">
-      {{.CSRFField}}<button class="btn" type="submit">Make public</button>
+      {{.CSRFField}}<button class="btn-primary" type="submit">Make public</button>
     </form>
     {{end}}
   </div>

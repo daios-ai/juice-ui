@@ -130,7 +130,7 @@ button, .btn { font-family: inherit; font-size: .95rem; cursor: pointer; }
 .btn-quiet { background: none; border: none; color: var(--text-muted); padding: .25rem .5rem; }
 .btn-quiet:hover { color: var(--text); text-decoration: underline; }
 .btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: .35rem .55rem; color: var(--text); font-size: 1rem; }
-.btn-danger { color: var(--refunded); }
+.btn-danger { color: var(--refunded); border-color: var(--refunded); }
 
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: .25rem; }
