@@ -20,6 +20,19 @@
   </p>
 </div>
 
+<h2>Settings</h2>
+<div class="card stack">
+  <form method="post" action="/settings/default-budget" class="row" style="align-items:flex-end;gap:1rem">
+    {{.CSRFField}}
+    <div class="field" style="margin:0;flex:0 0 auto">
+      <label for="default_budget">Default session budget (credits)</label>
+      <p class="help">Applied when starting a new session from the Run panel.</p>
+      <input id="default_budget" name="budget" type="number" min="0" value="{{.DefaultBudget}}" style="width:10rem">
+    </div>
+    <button class="btn-primary" type="submit">Save</button>
+  </form>
+</div>
+
 <h2>Open sessions</h2>
 {{if .Data.Open}}
 <table>

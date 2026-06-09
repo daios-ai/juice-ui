@@ -46,11 +46,6 @@
         {{if .Handle}}
         <span class="handle mono lbl" title="{{.Handle}}">{{.Handle}}</span>
         <span class="credits lbl" title="Available credits">◈ <span class="money">{{money .Available}}</span></span>
-        <form method="post" action="/settings/default-budget" class="lbl budget-form">
-          {{.CSRFField}}
-          <label title="Default session budget (credits)"><span class="ico" aria-hidden="true">⊙</span><input class="budget-input" name="budget" type="number" min="0" value="{{.DefaultBudget}}" aria-label="Default session budget"></label>
-          <button type="submit" class="btn-quiet" title="Save default budget">✓</button>
-        </form>
         <form method="post" action="/logout" class="logout">
           {{.CSRFField}}
           <button type="submit" class="btn-quiet" title="Sign out"><span class="ico" aria-hidden="true">⏻</span><span class="lbl">Sign out</span></button>
