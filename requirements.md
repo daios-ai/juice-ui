@@ -1,6 +1,6 @@
 # Juice Web UI Requirements
 
-Version: 0.6
+Version: 0.7
 Status: design draft — endpoint surface pending verification against the running kernel
 Codename: `juice-ui`
 
@@ -103,8 +103,7 @@ The UI MUST expose every user flow reachable over the kernel HTTP API:
 * Processes: start, list, show, fund, end.
 * Call execution: `POST /v1/call`.
 * Transactions: list, show, rate.
-* Listeners and events: listener create/list/show/delete; event
-  emit/list-pending/consume.
+* Steps: step create/list/show/complete.
 
 The following are in scope **conditionally**, only once their HTTP routes are
 confirmed on the running kernel (§10); until then they are not mandatory:
@@ -122,7 +121,6 @@ These kernel operations are CLI-only and MUST NOT be attempted from the UI:
 
 The corresponding `flows.sh` flows are non-goals for this UI: `bootstrap`,
 `suspension`, `deposits`, `admin_supervision`, and all `federation_*` flows.
-Server-side restart behavior (in-flight event reset) is likewise out of scope.
 
 ### 3.3 Known limitations
 
@@ -152,8 +150,8 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   re-renders from that response rather than guessing. Destructive operations and
   `end` return 204.
 * **R4.6** List responses are bare arrays; pagination metadata is in headers.
-* **R4.7** `POST /v1/call` and `POST /v1/events/emit` always include `args`;
-  empty input is `{}`. Emit never sends `source_user_id`.
+* **R4.7** `POST /v1/call` and `POST /v1/steps/{id}/complete` always include
+  `args`; empty input is `{}`.
 
 ## 5. Authentication and session
 
@@ -205,7 +203,7 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   stats (uses, success/failure, rating mean and count, latency mean). It is also
   the fallback when lookup is unavailable.
 * **R6.2.4** Discovery degrades honestly. If `@sys/lookup` returns
-  `ErrInvalidState` (e.g. no embedder configured on the kernel, see R10.7), the
+  `ErrInvalidState` (e.g. no embedder configured on the kernel, see R10.5), the
   UI falls back to catalog search (R6.2.3) and tells the user semantic search is
   unavailable, rather than presenting a dead search box. The discovery feature
   itself remains mandatory; only its semantic-ranking quality is
@@ -289,8 +287,8 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 ### 6.6 Transactions, receipts, traces, ratings
 
 * **R6.6.1** List and view transactions (`GET /v1/transactions`), which
-  returns all transactions where the user is buyer (`owner_user_id`) or seller
-  (the called action's owner). Each row shows the user's role (`buyer` /
+  returns all transactions where the user is buyer (`owner_user_id`), caller
+  (`caller_user_id`), or seller (the called action's owner). Each row shows the user's role (`buyer` /
   `seller`, both when calling one's own action), the action called
   (`@owner/name`, linked to the action detail page, resolved via
   `GET /v1/actions/{action_id}`; show a truncated ID if the action has since
@@ -303,28 +301,26 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   signature) for both success and failure.
 * **R6.6.3** *(Conditional — §10.)* Once a trace-read HTTP route is confirmed, a
   transaction detail view shows its trace tree with cumulative `cost` and
-  `latency_ms`, visualizing contractor sub-calls and event-triggered calls as
+  `latency_ms`, visualizing contractor sub-calls and step-completed calls as
   cross-process `FOLLOWS_FROM` links, and making visible that the caller's
   process is debited only by `action.price`.
 * **R6.6.4** The buyer may rate a transaction once (`POST .../rate`, rating 0 or
   1, optional `note` string). The rate control appears only for the buyer and
   only when unrated; duplicate and non-buyer attempts map to friendly errors.
 
-### 6.7 Listeners and events
+### 6.7 Steps
 
-* **R6.7.1** Create listeners, list, show, and delete (delete purges pending
-  events). The HTTP create body is `{source_user_id, event_name,
-  target_action_id}` — both IDs are UUIDs. The UI presents a source `@handle`
-  and a target `@owner/name`, so it requires documented resolution paths
-  handle→user-ID and action-reference→action-ID (§10). Action-reference→ID is
-  likely satisfiable via action listing filters; handle→user-ID is not yet
-  confirmed.
-* **R6.7.2** Emit events (`POST /v1/events/emit`); the source is always the
-  authenticated user.
-* **R6.7.3** An inbox polls pending events for a listener
-  (`GET /v1/listeners/{id}/events`) and consumes them
-  (`POST /v1/events/{id}/consume`) through the funded-session model. Already-
-  consumed and non-owner states are shown explicitly.
+* **R6.7.1** Create a step (`POST /v1/steps`) with `action` (`@owner/name`),
+  `process_id`, `partial_args`, `input_schema`, and `required_caller`
+  (`@handle`). The kernel stores `required_caller_user_id`; the UI presents the
+  handle and passes it in `required_caller`.
+* **R6.7.2** List steps (`GET /v1/steps`), filterable by `process_id` and
+  `status` (`waiting` / `running` / `done`); show a single step
+  (`GET /v1/steps/{id}`), including the computed `action` (`@owner/name`).
+* **R6.7.3** Complete a step (`POST /v1/steps/{id}/complete`) — available only
+  to the `required_caller` user. The body carries `args` (defaulting to `{}`);
+  completion merges caller `args` with the step's `partial_args` and executes
+  the call. The response shape is `{result, tx_id, trace_id, step_id}`.
 
 ## 7. Error handling
 
@@ -398,18 +394,11 @@ running kernel; otherwise it stays conditional or is dropped from scope.
   authenticated user queries `GET /v1/actions?owner=@self`, the kernel returns
   all owned actions regardless of active/public state. Unauthenticated or
   cross-user queries still return only active+public actions.
-* **R10.4** *(handle→user-ID — R6.7.1)* Listener create takes a
-  `source_user_id` UUID on the wire, but the UI works in `@handle`. Confirm a
-  documented HTTP path from handle to user ID; if none exists, listener create
-  cannot be satisfied as designed.
-* **R10.5** *(action-reference→action-ID — R6.7.1)* Confirm that
-  `@owner/name` can be resolved to an `action_id` over HTTP (expected via
-  `GET /v1/actions?owner=&name=`), as required for listener target binding.
-* **R10.6** *(OpenAPI ownership proof — R6.4.2)* Confirm whether the kernel
+* **R10.4** *(OpenAPI ownership proof — R6.4.2)* Confirm whether the kernel
   exposes any HTTP protocol for ownership-proof challenge creation, credential
   submission, and proof status. If not, the UI cannot drive a proof flow and
   only surfaces the kernel's rejection on public activation.
-* **R10.7** *(lookup operational status — R6.2.1, R6.2.4)* Confirm whether
+* **R10.5** *(lookup operational status — R6.2.1, R6.2.4)* Confirm whether
   `@sys/lookup` is operational on the running kernel (an embedder is configured)
   or returns `ErrInvalidState`. This does not gate the discovery feature, which
   is mandatory regardless; it determines whether semantic ranking is available
