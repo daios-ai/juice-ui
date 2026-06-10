@@ -26,12 +26,12 @@
 
       {{if .Handle}}
       <nav class="nav" aria-label="Primary">
-        <a href="/" title="Dashboard"><span class="ico" aria-hidden="true">◫</span><span class="lbl">Dashboard</span></a>
-        <a href="/discover" title="Discover"><span class="ico" aria-hidden="true">⌕</span><span class="lbl">Discover</span></a>
-        <a href="/studio" title="Studio"><span class="ico" aria-hidden="true">✎</span><span class="lbl">Studio</span></a>
-        <a href="/processes" title="Sessions"><span class="ico" aria-hidden="true">▤</span><span class="lbl">Sessions</span></a>
-        <a href="/transactions" title="Transactions"><span class="ico" aria-hidden="true">⇄</span><span class="lbl">Transactions</span></a>
-        <a href="/steps" title="Steps"><span class="ico" aria-hidden="true">⌁</span><span class="lbl">Steps</span></a>
+        <a href="/" title="Dashboard"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layout-dashboard"/></svg><span class="lbl">Dashboard</span></a>
+        <a href="/discover" title="Discover"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg><span class="lbl">Discover</span></a>
+        <a href="/studio" title="Studio"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg><span class="lbl">Studio</span></a>
+        <a href="/processes" title="Sessions"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span class="lbl">Sessions</span></a>
+        <a href="/transactions" title="Transactions"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#arrow-left-right"/></svg><span class="lbl">Transactions</span></a>
+        <a href="/steps" title="Steps"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg><span class="lbl">Steps</span></a>
       </nav>
       {{end}}
 
@@ -40,15 +40,15 @@
           {{.CSRFField}}
           <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
           <button type="submit" class="btn-icon" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme" title="Toggle theme">
-            <span class="ico" aria-hidden="true">{{if eq .Theme "dark"}}☼{{else}}☾{{end}}</span><span class="lbl">Theme</span>
+            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg><span class="lbl">Theme</span>
           </button>
         </form>
         {{if .Handle}}
-        <span class="sidebar-item handle" title="{{.Handle}}"><span class="ico" aria-hidden="true">👤</span><span class="lbl mono">{{.Handle}}</span></span>
-        <span class="sidebar-item credits" title="Available credits"><span class="ico" aria-hidden="true">◈</span><span class="lbl money">{{money .Available}}</span></span>
+        <span class="sidebar-item handle" title="{{.Handle}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl mono">{{.Handle}}</span></span>
+        <span class="sidebar-item credits" title="Available credits"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl money">{{money .Available}}</span></span>
         <form method="post" action="/logout" class="logout">
           {{.CSRFField}}
-          <button type="submit" class="btn-quiet" title="Sign out"><span class="ico" aria-hidden="true">⏻</span><span class="lbl">Sign out</span></button>
+          <button type="submit" class="btn-quiet" title="Sign out"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl">Sign out</span></button>
         </form>
         {{end}}
       </div>
