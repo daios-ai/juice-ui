@@ -13,6 +13,7 @@ for (const panel of document.querySelectorAll("[data-run-panel]")) {
     const useRaw = toggle.checked;
     if (fields) fields.hidden = useRaw;
     raw.hidden = !useRaw;
+    if (useRaw) raw.querySelector('textarea')?.dispatchEvent(new Event('input'));
   };
   toggle.addEventListener("change", apply);
   apply();

@@ -35,15 +35,6 @@ for (const ta of document.querySelectorAll('textarea')) {
   resizeTA(ta);
 }
 
-// Keep-session-open checkbox: show/hide the budget field.
-for (const cb of document.querySelectorAll('[data-keep-open-toggle]')) {
-  const budget = cb.closest('form')?.querySelector('[data-keep-open-budget]');
-  if (!budget) continue;
-  const sync = () => { budget.hidden = !cb.checked; };
-  cb.addEventListener('change', sync);
-  sync();
-}
-
 // Optimistic sidebar collapse/expand.
 for (const form of document.querySelectorAll("form.sidebar-collapse")) {
   form.addEventListener("submit", () => {

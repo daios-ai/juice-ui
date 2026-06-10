@@ -45,15 +45,7 @@
     <input id=”new_funds” name=”new_funds” type=”number” min=”0” value=”{{$d.DefaultBudget}}”>
   </div>
   {{else}}
-  <div class=”row”>
-    <input type=”checkbox” id=”keep_open” name=”keep_open” value=”1” data-keep-open-toggle>
-    <label for=”keep_open” style=”margin:0;font-weight:600;cursor:pointer”>Keep session open after call</label>
-  </div>
-  <div class=”field” data-keep-open-budget hidden>
-    <label for=”keep_budget”>Session budget (credits)</label>
-    <p class=”help”>Credits to allocate when opening the session. Refunded on “end &amp; reclaim”.</p>
-    <input id=”keep_budget” name=”budget” type=”number” min=”0” value=”{{$d.DefaultBudget}}”>
-  </div>
+  <p class=”help”>This is a price-0 action. It runs in a funded session ({{money $d.DefaultBudget}} credits) that stays open after the call.</p>
   {{end}}
 
   {{if not $d.Form.UseRawFallback}}

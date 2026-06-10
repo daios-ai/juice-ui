@@ -57,15 +57,13 @@ a:hover { text-decoration: underline; }
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: .35rem; padding-top: .75rem; border-top: 1px solid var(--border); }
 .sidebar-foot .btn-icon { display: flex; align-items: center; gap: .7rem; width: 100%; border: none; background: none; color: var(--text-muted); padding: .5rem .55rem; }
 .sidebar-foot .btn-icon:hover { background: var(--surface-2); color: var(--text); }
-.handle { color: var(--text-muted); font-size: .85rem; padding: 0 .55rem; overflow: hidden; text-overflow: ellipsis; }
-.credits { color: var(--text-muted); font-size: .85rem; padding: 0 .55rem; font-family: var(--font-mono); }
+.sidebar-item { display: flex; align-items: center; gap: .7rem; padding: .5rem .55rem; color: var(--text-muted); font-size: .85rem; white-space: nowrap; }
 .logout { margin: 0; }
 .logout .btn-quiet { display: flex; align-items: center; gap: .7rem; width: 100%; padding: .5rem .55rem; }
 
 /* Collapsed state: icons only (no flash — stamped server-side via data-sidebar). */
 html[data-sidebar="collapsed"] .sidebar { --sb-w: 56px; }
 html[data-sidebar="collapsed"] .sidebar .lbl { display: none; }
-html[data-sidebar="collapsed"] .credits { display: none; }
 
 /* Collapsed header shows just the logo; hovering (or keyboard-focusing the
    button) swaps it for the expand toggle, so the rail stays clean but remains

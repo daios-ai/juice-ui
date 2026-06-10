@@ -387,23 +387,16 @@ func orDefaultStr(v, def string) string {
 
 // runCall executes the action through the funded-session abstraction, opening a
 // new session for paid actions when the user did not pick an existing one.
-// For price-0 actions, "keep_open=1" creates a funded session that is left open
-// so any steps the call creates remain completable.
+// Price-0 actions always use a funded session (default budget) so any steps
+// the call creates have a live process and remain completable.
 func (s *Server) runCall(ctx context.Context, tok string, a client.Action, r *http.Request, args json.RawMessage) (Outcome, error) {
 	if a.Price <= 0 {
-		if r.FormValue("keep_open") == "1" {
-			budget := parseInt64(r.FormValue("budget"))
-			if budget <= 0 {
-				budget = defaultBudgetFromRequest(r)
-			}
-			p, err := s.client.StartProcess(ctx, tok, budget)
-			if err != nil {
-				return Outcome{}, err
-			}
-			// Process left open intentionally; appears in sessions list for manual end.
-			return s.caller.CallFunded(ctx, tok, p.Ident(), a.Action, args)
+		budget := defaultBudgetFromRequest(r)
+		p, err := s.client.StartProcess(ctx, tok, budget)
+		if err != nil {
+			return Outcome{}, err
 		}
-		return s.caller.CallEphemeral(ctx, tok, a.Action, args)
+		return s.caller.CallFunded(ctx, tok, p.Ident(), a.Action, args)
 	}
 	pid := strings.TrimSpace(r.FormValue("process_id"))
 	if pid == "" {

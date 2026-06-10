@@ -44,8 +44,8 @@
           </button>
         </form>
         {{if .Handle}}
-        <span class="handle mono lbl" title="{{.Handle}}">{{.Handle}}</span>
-        <span class="credits lbl" title="Available credits">◈ <span class="money">{{money .Available}}</span></span>
+        <span class="sidebar-item handle" title="{{.Handle}}"><span class="ico" aria-hidden="true">👤</span><span class="lbl mono">{{.Handle}}</span></span>
+        <span class="sidebar-item credits" title="Available credits"><span class="ico" aria-hidden="true">◈</span><span class="lbl money">{{money .Available}}</span></span>
         <form method="post" action="/logout" class="logout">
           {{.CSRFField}}
           <button type="submit" class="btn-quiet" title="Sign out"><span class="ico" aria-hidden="true">⏻</span><span class="lbl">Sign out</span></button>
