@@ -30,24 +30,6 @@
       hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
 
-  {{if $d.IsPaid}}
-  <div class="field">
-    <label for="process_id">Funded session</label>
-    <p class="help">Paid calls draw from a funded session (escrow). Pick one or start a new one.</p>
-    <select id="process_id" name="process_id">
-      {{range $d.Open}}<option value="{{.Ident}}">{{truncate 8 .Ident}}… — {{money .Available}} available</option>{{end}}
-      <option value="">▸ Start a new session</option>
-    </select>
-  </div>
-  <div class=”field”>
-    <label for=”new_funds”>New session funds</label>
-    <p class=”help”>Used only when starting a new session. Refunded on “end &amp; reclaim”.</p>
-    <input id=”new_funds” name=”new_funds” type=”number” min=”0” value=”{{$d.DefaultBudget}}”>
-  </div>
-  {{else}}
-  <p class=”help”>This is a price-0 action. It runs in a funded session ({{money $d.DefaultBudget}} credits) that stays open after the call.</p>
-  {{end}}
-
   {{if not $d.Form.UseRawFallback}}
   <label class="row" style="font-weight:600">
     <input type="checkbox" name="use_raw" value="1" data-raw-toggle style="width:auto"> Edit input as raw JSON

@@ -19,7 +19,6 @@ type loginView struct{ Error, Notice string }
 
 type dashboardView struct {
 	User client.User
-	Open []client.Process
 }
 
 type discoverResult struct {
@@ -39,24 +38,21 @@ type discoverView struct {
 }
 
 type actionView struct {
-	Action        client.Action
-	HasStats      bool
-	Stats         client.Stats
-	Form          FormModel
-	IsOwner       bool
-	IsPaid        bool
-	Open          []client.Process
-	Outcome       *Outcome
-	DefaultBudget int64
-	Error         string
+	Action   client.Action
+	HasStats bool
+	Stats    client.Stats
+	Form     FormModel
+	IsOwner  bool
+	IsPaid   bool
+	Outcome  *Outcome
+	Error    string
 }
 
 type studioView struct {
-	User                client.User
-	Cards               []myActionCardView
-	InsufficientCredits bool
-	Error               string
-	Notice              string
+	User   client.User
+	Cards  []myActionCardView
+	Error  string
+	Notice string
 }
 
 type myActionCardView struct {
@@ -209,25 +205,15 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var user client.User
-	var procs []client.Process
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
 		user = u
-		p, e := s.client.ListProcesses(ctx, tok)
-		if e != nil {
-			return e
-		}
-		procs = p
-		return nil
+		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "dashboard", "Dashboard",
-		dashboardView{User: user, Open: filterStatus(procs, "open", true)})
+	s.renderPage(w, r, http.StatusOK, "dashboard", "Dashboard", dashboardView{User: user})
 }
 
 // ---- discover / marketplace ----
@@ -245,8 +231,8 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 			view.Catalog = cat
 			return nil
 		}
-		// Semantic search via @sys/lookup through the price-0 ephemeral session.
-		out, e := s.caller.CallEphemeral(ctx, tok, "@sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}))
+		// Semantic search via @sys/lookup (price 0; run creates and closes process).
+		out, e := s.caller.Run(ctx, tok, "@sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}))
 		if e != nil {
 			return e
 		}
@@ -291,17 +277,13 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view = actionView{
-			Action:        a,
-			Form:          BuildForm(a.InputSchema),
-			IsOwner:       a.OwnerUserID == me.ID,
-			IsPaid:        a.Price > 0,
-			DefaultBudget: defaultBudgetFromRequest(r),
+			Action:  a,
+			Form:    BuildForm(a.InputSchema),
+			IsOwner: a.OwnerUserID == me.ID,
+			IsPaid:  a.Price > 0,
 		}
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats, view.HasStats = st, true
-		}
-		if p, e := s.client.ListProcesses(ctx, tok); e == nil {
-			view.Open = filterStatus(p, "open", true)
 		}
 		return nil
 	})
@@ -326,16 +308,13 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerUserID == me.ID, IsPaid: a.Price > 0, DefaultBudget: defaultBudgetFromRequest(r)}
+		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerUserID == me.ID, IsPaid: a.Price > 0}
 		if argErr == nil {
-			out, e := s.runCall(ctx, tok, a, r, args)
+			out, e := s.caller.Run(ctx, tok, a.Action, args)
 			if e != nil {
 				return e
 			}
 			view.Outcome = &out
-		}
-		if p, e := s.client.ListProcesses(ctx, tok); e == nil {
-			view.Open = filterStatus(p, "open", true)
 		}
 		return nil
 	})
@@ -385,34 +364,6 @@ func orDefaultStr(v, def string) string {
 	return v
 }
 
-// runCall executes the action through the funded-session abstraction, opening a
-// new session for paid actions when the user did not pick an existing one.
-// Price-0 actions always use a funded session (default budget) so any steps
-// the call creates have a live process and remain completable.
-func (s *Server) runCall(ctx context.Context, tok string, a client.Action, r *http.Request, args json.RawMessage) (Outcome, error) {
-	if a.Price <= 0 {
-		budget := defaultBudgetFromRequest(r)
-		p, err := s.client.StartProcess(ctx, tok, budget)
-		if err != nil {
-			return Outcome{}, err
-		}
-		return s.caller.CallFunded(ctx, tok, p.Ident(), a.Action, args)
-	}
-	pid := strings.TrimSpace(r.FormValue("process_id"))
-	if pid == "" {
-		funds := parseInt64(r.FormValue("new_funds"))
-		if funds <= 0 {
-			funds = defaultBudgetFromRequest(r)
-		}
-		p, err := s.client.StartProcess(ctx, tok, funds)
-		if err != nil {
-			return Outcome{}, err
-		}
-		pid = p.Ident()
-	}
-	return s.caller.CallFunded(ctx, tok, pid, a.Action, args)
-}
-
 // ---- studio ----
 
 func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
@@ -441,11 +392,7 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	for i, a := range acts {
 		cards[i] = myActionCardView{Action: a, CSRFField: csrfField}
 	}
-	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{
-		User:                me,
-		Cards:               cards,
-		InsufficientCredits: me.Available < 20,
-	})
+	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{User: me, Cards: cards})
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
@@ -519,22 +466,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 			view = makeResultView{Error: "A description is required."}
 			return nil
 		}
-		me, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
-		if me.Available < 20 {
-			view = makeResultView{Error: fmt.Sprintf("Fewer than 20 credits available (you have %d). Top up your balance before synthesizing.", me.Available)}
-			return nil
-		}
-		p, e := s.client.StartProcess(ctx, tok, 20)
-		if e != nil {
-			return e
-		}
-		pid := p.Ident()
-		defer func() { _ = s.client.EndProcess(ctx, tok, pid) }()
-
-		out, e := s.caller.CallFunded(ctx, tok, pid, "@sys/make", mustArgs(map[string]any{"description": desc}))
+		out, e := s.caller.Run(ctx, tok, "@sys/make", mustArgs(map[string]any{"description": desc}))
 		if e != nil {
 			return e
 		}
@@ -554,7 +486,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 		if res.Status == "success" {
 			view = makeResultView{
 				Success:   true,
-				ActionRef: me.Handle + "/" + res.ActionName,
+				ActionRef: s.sessions.Handle(ctx) + "/" + res.ActionName,
 				ActionID:  res.ActionID,
 			}
 		} else {
@@ -701,19 +633,6 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "process", "Session", view)
-}
-
-func (s *Server) postFund(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ctx := r.Context()
-	err := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.FundProcess(ctx, tok, id, parseInt64(r.FormValue("funds")))
-		return e
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	http.Redirect(w, r, "/processes/"+id, http.StatusSeeOther)
 }
 
 func (s *Server) postEnd(w http.ResponseWriter, r *http.Request) {

@@ -29,7 +29,6 @@
 <div class="outcome failed" role="status">
   <strong>The action failed — your funds were fully refunded.</strong>
   <p>{{.Message}}</p>
-  {{if .FailureTxID}}<p><a href="/transactions/{{.FailureTxID}}">View failure transaction</a></p>{{end}}
 </div>
 {{else}}
 <div class="outcome success" role="status">
@@ -43,11 +42,11 @@
 
 {{define "_process_row"}}
 <tr>
-  <td class="id mono">{{truncate 8 .Ident}}…</td>
+  <td class="id mono">{{truncate 8 .ID}}…</td>
   <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
   <td class="money">{{money .Available}}</td>
   <td class="money">{{money .Locked}}</td>
-  <td><a href="/processes/{{.Ident}}">open</a></td>
+  <td><a href="/processes/{{.ID}}">open</a></td>
 </tr>
 {{end}}
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -77,7 +76,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /studio/make", s.requireAuth(s.postMakeAction))
 	mux.HandleFunc("GET /processes", s.requireAuth(s.getProcesses))
 	mux.HandleFunc("GET /processes/{id}", s.requireAuth(s.getProcess))
-	mux.HandleFunc("POST /processes/{id}/fund", s.requireAuth(s.postFund))
 	mux.HandleFunc("POST /processes/{id}/end", s.requireAuth(s.postEnd))
 	mux.HandleFunc("GET /transactions", s.requireAuth(s.getTransactions))
 	mux.HandleFunc("GET /transactions/{id}", s.requireAuth(s.getTransaction))
@@ -85,7 +83,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /steps", s.requireAuth(s.getSteps))
 	mux.HandleFunc("POST /steps/create", s.requireAuth(s.postCreateStep))
 	mux.HandleFunc("POST /steps/{id}/complete", s.requireAuth(s.postCompleteStep))
-	mux.HandleFunc("POST /settings/default-budget", s.requireAuth(s.postSetDefaultBudget))
 
 	// Middleware chain (outer to inner): request-id -> logging -> session -> CSRF.
 	csrfMW := csrf.Protect(o.CSRFKey,
@@ -175,15 +172,14 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		flash = c.Value
 	}
 	return Page{
-		Title:         title,
-		Theme:         themeFromRequest(r),
-		Sidebar:       sidebarFromRequest(r),
-		Handle:        s.sessions.Handle(r.Context()),
-		DefaultBudget: defaultBudgetFromRequest(r),
-		CSRFField:     csrf.TemplateField(r),
-		CSRFToken:     csrf.Token(r),
-		Flash:         flash,
-		Data:          data,
+		Title:     title,
+		Theme:     themeFromRequest(r),
+		Sidebar:   sidebarFromRequest(r),
+		Handle:    s.sessions.Handle(r.Context()),
+		CSRFField: csrf.TemplateField(r),
+		CSRFToken: csrf.Token(r),
+		Flash:     flash,
+		Data:      data,
 	}
 }
 
@@ -283,38 +279,6 @@ func sidebarFromRequest(r *http.Request) string {
 		return "collapsed"
 	}
 	return ""
-}
-
-// defaultBudgetFromRequest returns the user-configured default session budget
-// from the "default_budget" cookie, falling back to 100 credits.
-func defaultBudgetFromRequest(r *http.Request) int64 {
-	c, err := r.Cookie("default_budget")
-	if err != nil {
-		return 100
-	}
-	n := parseInt64(c.Value)
-	if n <= 0 {
-		return 100
-	}
-	return n
-}
-
-// postSetDefaultBudget saves the default session budget as a long-lived cookie.
-func (s *Server) postSetDefaultBudget(w http.ResponseWriter, r *http.Request) {
-	budget := parseInt64(r.FormValue("budget"))
-	if budget < 0 {
-		budget = 0
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name: "default_budget", Value: strconv.FormatInt(budget, 10),
-		Path: "/", MaxAge: 365 * 24 * 3600,
-		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
-	})
-	ref := r.Referer()
-	if ref == "" {
-		ref = "/"
-	}
-	http.Redirect(w, r, ref, http.StatusSeeOther)
 }
 
 // newID returns a random hex id for request correlation.

@@ -132,57 +132,29 @@ func TestListActionsNullBecomesEmpty(t *testing.T) {
 	}
 }
 
-func TestCallDefaultsArgsAndEncodesRef(t *testing.T) {
+func TestRunSendsActionAndArgs(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"result":{"ok":true},"tx_id":"t1","trace_id":"tr1"}`
-	rep, err := f.client().Call(context.Background(), "tok", CallRequest{
-		ProcessID: "p1",
-		Action:    "@sys/llm/chat",
-	})
+	f.reply = `{"result":{"ok":true},"tx_id":"t1","trace_id":"tr1","receipt_id":"r1"}`
+	rep, err := f.client().Run(context.Background(), "tok", "@sys/llm/chat", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rep.TxID != "t1" {
 		t.Errorf("tx = %q", rep.TxID)
 	}
-	// args defaulted to {} and action with "/" passed through verbatim in body.
+	if rep.ReceiptID != "r1" {
+		t.Errorf("receipt_id = %q", rep.ReceiptID)
+	}
+	// args nil → defaulted to {} and action with "/" passed through verbatim in body.
 	if !strings.Contains(string(f.lastBody), `"args":{}`) {
 		t.Errorf("args not defaulted: %s", f.lastBody)
 	}
 	if !strings.Contains(string(f.lastBody), `"@sys/llm/chat"`) {
 		t.Errorf("action ref mangled: %s", f.lastBody)
 	}
-}
-
-func TestProcessIdentUnifiesFields(t *testing.T) {
-	// create returns process_id; show returns id.
-	created := Process{}
-	_ = json.Unmarshal([]byte(`{"process_id":"p-create","available":0}`), &created)
-	if created.Ident() != "p-create" {
-		t.Errorf("create Ident = %q", created.Ident())
-	}
-	shown := Process{}
-	_ = json.Unmarshal([]byte(`{"id":"p-show","status":"open"}`), &shown)
-	if shown.Ident() != "p-show" {
-		t.Errorf("show Ident = %q", shown.Ident())
-	}
-}
-
-func TestStartProcessSendsFunds(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.status = 201
-	f.reply = `{"process_id":"p1","available":300,"trace_id":"tr"}`
-	p, err := f.client().StartProcess(context.Background(), "tok", 300)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Available != 300 || p.Ident() != "p1" {
-		t.Fatalf("process = %+v", p)
-	}
-	if !strings.Contains(string(f.lastBody), `"funds":300`) {
-		t.Errorf("funds not sent: %s", f.lastBody)
+	if f.lastPath != "/v1/run" || f.lastMethod != http.MethodPost {
+		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
 	}
 }
 
@@ -201,7 +173,7 @@ func TestErrorResponseClassified(t *testing.T) {
 	defer f.close()
 	f.status = 402
 	f.reply = `{"error":"insufficient user balance"}`
-	_, err := f.client().StartProcess(context.Background(), "tok", 1000)
+	_, err := f.client().Run(context.Background(), "tok", "@sys/lookup", nil)
 	ke, ok := AsKernelError(err)
 	if !ok || ke.Kind != KindInsufficientFunds {
 		t.Fatalf("expected insufficient funds, got %v", err)

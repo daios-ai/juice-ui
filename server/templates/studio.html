@@ -11,9 +11,6 @@
 <div class="card stack">
   <h3 style="margin:0">Synthesize with AI</h3>
   <p class="help" style="margin:0">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 credits</strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}</span> available{{end}}.</p>
-  {{if $d.InsufficientCredits}}
-  <div class="banner">Fewer than 20 credits available. Top up your balance before synthesizing.</div>
-  {{else}}
   <form method="post" action="/studio/make"
         hx-post="/studio/make" hx-target="#make-result" hx-swap="innerHTML"
         hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">
@@ -30,7 +27,6 @@
       </div>
     </div>
   </form>
-  {{end}}
   <div id="make-result"></div>
 </div>
 

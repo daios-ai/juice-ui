@@ -96,42 +96,30 @@ type UpdateActionInput struct {
 	Public       *bool           `json:"public,omitempty"`
 }
 
-// Process is a funded session. The kernel returns process_id on create but id on
-// show (verified live); Ident unifies them.
+// Process is a funded computation lifetime. The kernel returns only `id` on
+// show and list responses; processes are auto-created by run.
 type Process struct {
 	ID          string `json:"id"`
-	PID         string `json:"process_id"`
 	OwnerUserID string `json:"owner_user_id"`
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
 	Status      string `json:"status"`
-	TraceID     string `json:"trace_id"`
 	CreatedAt   string `json:"created_at"`
 	EndedAt     string `json:"ended_at"`
 }
 
-// Ident returns the process identifier regardless of which field the kernel
-// populated.
-func (p Process) Ident() string {
-	if p.ID != "" {
-		return p.ID
-	}
-	return p.PID
+// RunRequest is the body for POST /v1/run.
+type RunRequest struct {
+	Action string          `json:"action"`
+	Args   json.RawMessage `json:"args"`
 }
 
-// CallRequest is the body for POST /v1/call. Args defaults to {} (R4.7).
-type CallRequest struct {
-	ProcessID     string          `json:"process_id"`
-	Action        string          `json:"action"`
-	Args          json.RawMessage `json:"args"`
-	ParentTraceID string          `json:"parent_trace_id,omitempty"`
-}
-
-// CallReply is the success response of POST /v1/call.
+// CallReply is the success response of POST /v1/run.
 type CallReply struct {
-	Result  json.RawMessage `json:"result"`
-	TxID    string          `json:"tx_id"`
-	TraceID string          `json:"trace_id"`
+	Result    json.RawMessage `json:"result"`
+	TxID      string          `json:"tx_id"`
+	TraceID   string          `json:"trace_id"`
+	ReceiptID string          `json:"receipt_id"`
 }
 
 // TransactionRating is the embedded rating on a transaction response.
@@ -166,15 +154,14 @@ type Transaction struct {
 
 // Stats is GET /v1/stats/{action_id}.
 type Stats struct {
-	ActionID    string  `json:"action_id"`
-	Uses        int64   `json:"uses"`
-	Successes   int64   `json:"successes"`
-	Failures    int64   `json:"failures"`
-	RatingCount int64   `json:"rating_count"`
-	CostEstimate    float64 `json:"cost_estimate"`
+	ActionID        string  `json:"action_id"`
+	Uses            int64   `json:"uses"`
+	Successes       int64   `json:"successes"`
+	Failures        int64   `json:"failures"`
+	RatingCount     int64   `json:"rating_count"`
 	LatencyEstimate float64 `json:"latency_estimate"`
 	RatingEstimate  float64 `json:"rating_estimate"`
-	LastUsedAt  string  `json:"last_used_at"`
+	LastUsedAt      string  `json:"last_used_at"`
 }
 
 // Rating is one entry of GET /v1/actions/{id}/ratings (list may be null).
@@ -477,13 +464,7 @@ func (c *Client) ActionRatings(ctx context.Context, token, id string) ([]Rating,
 	return r, err
 }
 
-// ---- processes (funded sessions) ----
-
-func (c *Client) StartProcess(ctx context.Context, token string, funds int64) (Process, error) {
-	var p Process
-	err := c.do(ctx, http.MethodPost, "/v1/processes", token, map[string]int64{"funds": funds}, &p)
-	return p, err
-}
+// ---- processes ----
 
 func (c *Client) ListProcesses(ctx context.Context, token string) ([]Process, error) {
 	var p []Process
@@ -497,22 +478,19 @@ func (c *Client) GetProcess(ctx context.Context, token, id string) (Process, err
 	return p, err
 }
 
-func (c *Client) FundProcess(ctx context.Context, token, id string, funds int64) (Process, error) {
-	var p Process
-	err := c.do(ctx, http.MethodPost, "/v1/processes/"+url.PathEscape(id)+"/fund", token, map[string]int64{"funds": funds}, &p)
-	return p, err
-}
-
 func (c *Client) EndProcess(ctx context.Context, token, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/processes/"+url.PathEscape(id)+"/end", token, nil, nil)
 }
 
-// ---- call ----
+// ---- run ----
 
-func (c *Client) Call(ctx context.Context, token string, req CallRequest) (CallReply, error) {
-	req.Args = emptyArgs(req.Args)
+// Run executes an action via POST /v1/run. The kernel atomically creates a
+// process funded with exactly action.price, issues the call, and closes the
+// process when the root call returns and no steps remain outstanding.
+func (c *Client) Run(ctx context.Context, token, action string, args json.RawMessage) (CallReply, error) {
+	req := RunRequest{Action: action, Args: emptyArgs(args)}
 	var r CallReply
-	err := c.do(ctx, http.MethodPost, "/v1/call", token, req, &r)
+	err := c.do(ctx, http.MethodPost, "/v1/run", token, req, &r)
 	return r, err
 }
 

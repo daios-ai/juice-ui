@@ -10,39 +10,15 @@
     </div>
     <div class="balance">
       <div class="amount money">{{money .Data.User.Locked}}</div>
-      <div class="label">Locked in sessions</div>
+      <div class="label">Locked in active sessions</div>
     </div>
   </div>
   <p class="muted" style="margin-top:1rem">
-    Credit top-ups happen out-of-band (a superuser deposits via the CLI). The UI
-    cannot add credits to your balance; it spends from existing credits and funds
-    sessions from them.
+    Credit top-ups happen out-of-band (a superuser deposits via the CLI). Each
+    <em>run</em> locks exactly the action's price, executes, and releases the lock
+    automatically when the call and any outstanding steps are complete.
   </p>
 </div>
 
-<h2>Settings</h2>
-<div class="card stack">
-  <form method="post" action="/settings/default-budget" class="row" style="align-items:flex-end;gap:1rem">
-    {{.CSRFField}}
-    <div class="field" style="margin:0;flex:0 0 auto">
-      <label for="default_budget">Default session budget (credits)</label>
-      <p class="help">Applied when starting a new session from the Run panel.</p>
-      <input id="default_budget" name="budget" type="number" min="0" value="{{.DefaultBudget}}" style="width:10rem">
-    </div>
-    <button class="btn-primary" type="submit">Save</button>
-  </form>
-</div>
-
-<h2>Open sessions</h2>
-{{if .Data.Open}}
-<table>
-  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th><th></th></tr></thead>
-  <tbody>
-    {{range .Data.Open}}{{template "_process_row" .}}{{end}}
-  </tbody>
-</table>
-{{else}}
-<p class="muted">No open sessions. Start one from any paid action's Run panel.</p>
-{{end}}
-<p style="margin-top:1rem"><a href="/processes">Full session history →</a></p>
+<p style="margin-top:1rem"><a href="/processes">Session history →</a></p>
 {{end}}

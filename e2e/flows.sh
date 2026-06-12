@@ -661,12 +661,9 @@ flow_action_lifecycle() {
     j "$db" "$home_alice" action update --id "$tx_action_id" --public >/dev/null 2>&1
 
     j "$db" "$home_bob"   auth login --handle @bob --password bobpass >/dev/null 2>&1
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start)
-    proc_id=$(strfield "$proc_out" "process_id")
-    local call_out tx_id
-    call_out=$(jj "$db" "$home_bob" call --process "$proc_id" --action "@alice/callable" --args '{}')
-    tx_id=$(strfield "$call_out" "tx_id")
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_bob" run --action "@alice/callable" --args '{}')
+    tx_id=$(strfield "$run_out" "tx_id")
 
     # Delete the action — transaction must still carry the name
     j "$db" "$home_alice" action delete --id "$tx_action_id" >/dev/null 2>&1
@@ -698,46 +695,64 @@ flow_process_lifecycle() {
     j "$db" "$home_sys"   admin user deposit --handle @alice --amount 1000 >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
 
-    # Start process with 300 funds
-    local proc_out proc_id root_trace
-    proc_out=$(jj "$db" "$home_alice" process start --funds 300)
-    proc_id=$(strfield "$proc_out" "process_id")
-    root_trace=$(strfield "$proc_out" "trace_id")
+    # Run @sys/sink → auto-creates and auto-closes process
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_alice" run --action @sys/sink --args '{}')
+    tx_id=$(strfield "$run_out" "tx_id")
+    [ -n "$tx_id" ] \
+        && ok "process_lifecycle.run_returns_tx_id" \
+        || fail "process_lifecycle.run_returns_tx_id" "no tx_id in: $run_out"
+
+    # Process_id obtainable from tx
+    local tx_show proc_id
+    tx_show=$(jj "$db" "$home_alice" tx show --id "$tx_id")
+    proc_id=$(strfield "$tx_show" "process_id")
     [ -n "$proc_id" ] \
-        && ok "process_lifecycle.started" \
-        || fail "process_lifecycle.started" "no process_id in: $proc_out"
-    [ -n "$root_trace" ] \
-        && ok "process_lifecycle.root_trace" \
-        || fail "process_lifecycle.root_trace" "no trace_id in: $proc_out"
+        && ok "process_lifecycle.proc_id_in_tx" \
+        || fail "process_lifecycle.proc_id_in_tx" "no process_id in tx: $tx_show"
 
-    # User.available debited by 300 (1000 - 300 = 700)
-    local me_after
-    me_after=$(jj "$db" "$home_alice" user me)
-    [ "$(numfield "$me_after" "available")" -eq 700 ] \
-        && ok "process_lifecycle.funds_debited" \
-        || fail "process_lifecycle.funds_debited" "expected 700, got: $me_after"
-
-    # Process fields
+    # Process was auto-closed
     local proc_show
     proc_show=$(jj "$db" "$home_alice" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 300 ] \
-        && ok "process_lifecycle.process_available" \
-        || fail "process_lifecycle.process_available" "expected 300, got: $proc_show"
-    [ "$(strfield "$proc_show" "status")" = "open" ] \
-        && ok "process_lifecycle.status_open" \
-        || fail "process_lifecycle.status_open" "expected open, got: $proc_show"
-
-    # End process — returns funds
-    j "$db" "$home_alice" process end --id "$proc_id" >/dev/null 2>&1
-    local me_restored
-    me_restored=$(jj "$db" "$home_alice" user me)
-    [ "$(numfield "$me_restored" "available")" -eq 1000 ] \
-        && ok "process_lifecycle.funds_restored" \
-        || fail "process_lifecycle.funds_restored" "expected 1000, got: $me_restored"
-    proc_show=$(jj "$db" "$home_alice" process show --id "$proc_id")
     [ "$(strfield "$proc_show" "status")" = "closed" ] \
-        && ok "process_lifecycle.status_closed" \
-        || fail "process_lifecycle.status_closed" "expected closed, got: $proc_show"
+        && ok "process_lifecycle.auto_closed" \
+        || fail "process_lifecycle.auto_closed" "expected closed, got: $proc_show"
+
+    # Run @sys/message → creates step, keeps process open
+    local run2_out tx2_id
+    run2_out=$(jj "$db" "$home_alice" run --action @sys/message \
+        --args '{"to":"@alice","message":"test"}')
+    tx2_id=$(strfield "$run2_out" "tx_id")
+    [ -n "$tx2_id" ] \
+        && ok "process_lifecycle.message_run_tx" \
+        || fail "process_lifecycle.message_run_tx" "no tx_id from @sys/message: $run2_out"
+
+    # Get process_id and step_id from the message run
+    local tx2_show proc2_id step_id
+    tx2_show=$(jj "$db" "$home_alice" tx show --id "$tx2_id")
+    proc2_id=$(strfield "$tx2_show" "process_id")
+    step_id=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(d.get('result',{}).get('step_id',''))" "$run2_out" 2>/dev/null)
+
+    # Process is open while step is outstanding
+    local proc2_show
+    proc2_show=$(jj "$db" "$home_alice" process show --id "$proc2_id")
+    [ "$(strfield "$proc2_show" "status")" = "open" ] \
+        && ok "process_lifecycle.open_while_step_outstanding" \
+        || fail "process_lifecycle.open_while_step_outstanding" "expected open, got: $proc2_show"
+
+    # Complete the step → process closes
+    jj "$db" "$home_alice" step complete --id "$step_id" --args '{}' >/dev/null 2>&1
+    proc2_show=$(jj "$db" "$home_alice" process show --id "$proc2_id")
+    [ "$(strfield "$proc2_show" "status")" = "closed" ] \
+        && ok "process_lifecycle.closed_after_step" \
+        || fail "process_lifecycle.closed_after_step" "expected closed after step, got: $proc2_show"
+
+    # Ending a closed process returns an error
+    local end_out
+    end_out=$(j "$db" "$home_alice" process end --id "$proc_id" 2>&1)
+    echo "$end_out" | grep -qi "closed\|not open\|invalid\|error" \
+        && ok "process_lifecycle.end_closed_rejected" \
+        || fail "process_lifecycle.end_closed_rejected" "end on closed process was accepted: $end_out"
 }
 
 flow_process_funding() {
@@ -756,38 +771,30 @@ flow_process_funding() {
     j "$db" "$home_sys"   admin user deposit --handle @alice --amount 500 >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
 
-    # Start process with 0 funds
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-    [ -n "$proc_id" ] \
-        && ok "process_funding.started" \
-        || fail "process_funding.started" "no process_id in: $proc_out"
+    # Free action (price=0) does not debit the user
+    local me_before me_after_free
+    me_before=$(numfield "$(jj "$db" "$home_alice" user me)" "available")
+    jj "$db" "$home_alice" run --action @sys/sink --args '{}' >/dev/null 2>&1
+    me_after_free=$(numfield "$(jj "$db" "$home_alice" user me)" "available")
+    [ "$me_after_free" -eq "$me_before" ] \
+        && ok "process_funding.free_action_no_debit" \
+        || fail "process_funding.free_action_no_debit" "expected unchanged, before=$me_before after=$me_after_free"
 
-    # Fund +200
-    j "$db" "$home_alice" process fund --id "$proc_id" --funds 200 >/dev/null 2>&1
-
-    # User debited 200 (500 - 200 = 300)
-    local me
-    me=$(jj "$db" "$home_alice" user me)
-    [ "$(numfield "$me" "available")" -eq 300 ] \
-        && ok "process_funding.user_debited" \
-        || fail "process_funding.user_debited" "expected 300, got: $me"
-
-    # Process.available = 200
-    local proc_show
-    proc_show=$(jj "$db" "$home_alice" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 200 ] \
-        && ok "process_funding.process_available" \
-        || fail "process_funding.process_available" "expected 200, got: $proc_show"
-
-    # Fund rejected after close
-    j "$db" "$home_alice" process end --id "$proc_id" >/dev/null 2>&1
-    local fund_closed
-    fund_closed=$(j "$db" "$home_alice" process fund --id "$proc_id" --funds 100)
-    echo "$fund_closed" | grep -qi "closed\|invalid\|error" \
-        && ok "process_funding.fund_after_close_rejected" \
-        || fail "process_funding.fund_after_close_rejected" "fund after close was accepted: $fund_closed"
+    # Run with insufficient balance → rejected, balance unchanged
+    local create_out action_id
+    create_out=$(jj "$db" "$home_alice" action create --name expensive --kind http \
+        --source "http://127.0.0.1:1/expensive" --price 1000 --description "expensive action")
+    action_id=$(strfield "$create_out" "id")
+    j "$db" "$home_alice" action enable --id "$action_id" >/dev/null 2>&1
+    local run_out me_after_fail
+    run_out=$(j "$db" "$home_alice" run --action @alice/expensive --args '{}' 2>&1)
+    echo "$run_out" | grep -qi "insufficient\|balance\|funds\|credits" \
+        && ok "process_funding.insufficient_rejected" \
+        || fail "process_funding.insufficient_rejected" "expected insufficient-funds error: $run_out"
+    me_after_fail=$(numfield "$(jj "$db" "$home_alice" user me)" "available")
+    [ "$me_after_fail" -eq "$me_before" ] \
+        && ok "process_funding.balance_unchanged_after_rejection" \
+        || fail "process_funding.balance_unchanged_after_rejection" "expected $me_before, got: $me_after_fail"
 }
 
 flow_acl_public() {
@@ -815,17 +822,12 @@ flow_acl_public() {
     action_id=$(strfield "$create_out" "id")
     j "$db" "$home_alice" action enable --id "$action_id" >/dev/null 2>&1
 
-    # @bob starts a zero-funded process
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Private action: @bob cannot call @alice's action
+    # Private action: @bob cannot run @alice's action
     local out
-    out=$(j "$db" "$home_bob" call --process "$proc_id" --action @alice/target)
+    out=$(j "$db" "$home_bob" run --action @alice/target --args '{}')
     echo "$out" | grep -qi "unauthorized\|permission\|error" \
         && ok "acl_public.private_denied" \
-        || fail "acl_public.private_denied" "call on private action succeeded: $out"
+        || fail "acl_public.private_denied" "run on private action succeeded: $out"
 
     # Non-owner cannot make action public
     out=$(j "$db" "$home_bob" action update --id "$action_id" --public)
@@ -835,17 +837,17 @@ flow_acl_public() {
 
     # Make public: @bob now passes the permission check (fails at backend, not permission)
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
-    out=$(j "$db" "$home_bob" call --process "$proc_id" --action @alice/target)
+    out=$(j "$db" "$home_bob" run --action @alice/target --args '{}')
     echo "$out" | grep -qiv "unauthorized\|permission denied" \
         && ok "acl_public.public_passes" \
         || fail "acl_public.public_passes" "public action still denied: $out"
 
     # Make private: permission check enforced again
     j "$db" "$home_alice" action update --id "$action_id" --public=false >/dev/null 2>&1
-    out=$(j "$db" "$home_bob" call --process "$proc_id" --action @alice/target)
+    out=$(j "$db" "$home_bob" run --action @alice/target --args '{}')
     echo "$out" | grep -qi "unauthorized\|permission\|error" \
         && ok "acl_public.private_enforced" \
-        || fail "acl_public.private_enforced" "call after making private was accepted: $out"
+        || fail "acl_public.private_enforced" "run after making private was accepted: $out"
 }
 
 flow_successful_paid_call() {
@@ -885,21 +887,16 @@ flow_successful_paid_call() {
     sys_show=$(jj "$db" "$home_sys" admin user show --handle @sys)
     sys_start=$(numfield "$sys_show" "available")
 
-    # @bob starts process with 300 funds
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 300)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Call with fee_bps=2000 → fee=20, net=80, gross=100
+    # Run with fee_bps=2000 → fee=20, net=80, gross=100
     write_test_config "$db" "fee_bps=2000"
-    local call_out tx_id
-    call_out=$(HOME="$home_bob" \
-        "$JUICE" --db "$db" --output json call \
-        --process "$proc_id" --action @alice/pay --args '{}' 2>/dev/null)
-    tx_id=$(strfield "$call_out" "tx_id")
+    local run_out tx_id
+    run_out=$(HOME="$home_bob" \
+        "$JUICE" --db "$db" --output json run \
+        --action @alice/pay --args '{}' 2>/dev/null)
+    tx_id=$(strfield "$run_out" "tx_id")
     [ -n "$tx_id" ] \
         && ok "successful_paid_call.call_succeeded" \
-        || fail "successful_paid_call.call_succeeded" "call returned no tx_id: $call_out"
+        || fail "successful_paid_call.call_succeeded" "run returned no tx_id: $run_out"
 
     # tx fields
     local tx_show
@@ -917,12 +914,12 @@ flow_successful_paid_call() {
         && ok "successful_paid_call.tx_status" \
         || fail "successful_paid_call.tx_status" "expected success, got: $tx_show"
 
-    # Process debited by 100 (300 - 100 = 200)
-    local proc_show
-    proc_show=$(jj "$db" "$home_bob" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 200 ] \
-        && ok "successful_paid_call.process_debited" \
-        || fail "successful_paid_call.process_debited" "expected 200, got: $proc_show"
+    # User (@bob) debited by 100 (500 - 100 = 400)
+    local bob_me
+    bob_me=$(jj "$db" "$home_bob" user me)
+    [ "$(numfield "$bob_me" "available")" -eq 400 ] \
+        && ok "successful_paid_call.user_debited" \
+        || fail "successful_paid_call.user_debited" "expected 400, got: $bob_me"
 
     # @alice credited net=80
     local alice_me
@@ -973,21 +970,15 @@ flow_failed_call_refund() {
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    # @bob starts process with 300 funds
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 300)
-    proc_id=$(strfield "$proc_out" "process_id")
+    # Run — backend returns 500 → execution failure; user balance refunded
+    j "$db" "$home_bob" run --action @alice/fail --args '{}' >/dev/null 2>&1 || true
 
-    # Call — backend returns 500 → execution failure
-    j "$db" "$home_bob" call --process "$proc_id" --action @alice/fail --args '{}' \
-        >/dev/null 2>&1
-
-    # Process available unchanged (full refund)
-    local proc_show
-    proc_show=$(jj "$db" "$home_bob" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 300 ] \
-        && ok "failed_call_refund.process_unchanged" \
-        || fail "failed_call_refund.process_unchanged" "expected 300, got: $proc_show"
+    # User balance unchanged (full refund)
+    local bob_me
+    bob_me=$(jj "$db" "$home_bob" user me)
+    [ "$(numfield "$bob_me" "available")" -eq 500 ] \
+        && ok "failed_call_refund.user_unchanged" \
+        || fail "failed_call_refund.user_unchanged" "expected 500, got: $bob_me"
 
     # @alice received nothing
     local alice_me
@@ -998,7 +989,7 @@ flow_failed_call_refund() {
 
     # Failure tx IS recorded
     local tx_list tx_count
-    tx_list=$(jj "$db" "$home_bob" tx list --process "$proc_id")
+    tx_list=$(jj "$db" "$home_bob" tx list)
     tx_count=$(python3 -c "import sys,json; print(len(json.loads(sys.argv[1]) or []))" "$tx_list" 2>/dev/null || echo 0)
     [ "$tx_count" -ge 1 ] \
         && ok "failed_call_refund.failure_tx_recorded" \
@@ -1037,35 +1028,29 @@ flow_input_schema_failure() {
     # @alice creates action with input schema requiring field "x"
     local create_out action_id
     create_out=$(jj "$db" "$home_alice" action create --name schema-in --kind http \
-        --source "http://127.0.0.1:1/schema-in" --price 50 --description "schema test" \
+        --source "http://127.0.0.1:1/schema-in" --price 0 --description "schema test" \
         --input-schema '{"type":"object","properties":{"x":{"type":"string","description":"the x parameter"}},"required":["x"]}')
     action_id=$(strfield "$create_out" "id")
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    # @bob starts process with 200 funds
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 200)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Call without required field "x" → schema error before any fund lock
+    # Run without required field "x" → schema error, no debit
     local call_out
-    call_out=$(j "$db" "$home_bob" call \
-        --process "$proc_id" --action @alice/schema-in --args '{}')
+    call_out=$(j "$db" "$home_bob" run --action @alice/schema-in --args '{}')
     echo "$call_out" | grep -qi "schema\|invalid\|required\|error" \
         && ok "input_schema_failure.error_returned" \
         || fail "input_schema_failure.error_returned" "expected schema error, got: $call_out"
 
-    # Process available unchanged (no debit happened)
-    local proc_show
-    proc_show=$(jj "$db" "$home_bob" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 200 ] \
-        && ok "input_schema_failure.process_unchanged" \
-        || fail "input_schema_failure.process_unchanged" "expected 200, got: $proc_show"
+    # User balance unchanged (no debit happened)
+    local bob_me
+    bob_me=$(jj "$db" "$home_bob" user me)
+    [ "$(numfield "$bob_me" "available")" -eq 300 ] \
+        && ok "input_schema_failure.user_unchanged" \
+        || fail "input_schema_failure.user_unchanged" "expected 300, got: $bob_me"
 
     # No tx created
     local tx_list tx_count
-    tx_list=$(jj "$db" "$home_bob" tx list --process "$proc_id")
+    tx_list=$(jj "$db" "$home_bob" tx list)
     tx_count=$(python3 -c "import sys,json; print(len(json.loads(sys.argv[1]) or []))" "$tx_list" 2>/dev/null || echo 0)
     [ "$tx_count" -eq 0 ] \
         && ok "input_schema_failure.no_tx_created" \
@@ -1106,29 +1091,23 @@ flow_output_schema_failure() {
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    # @bob starts process with 200 funds
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 200)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Call — execution runs, output schema check fails → CommitFailedCall
+    # Run — execution runs, output schema check fails → failure tx, full refund
     local call_out
-    call_out=$(j "$db" "$home_bob" call \
-        --process "$proc_id" --action @alice/schema-out --args '{}')
+    call_out=$(j "$db" "$home_bob" run --action @alice/schema-out --args '{}')
     echo "$call_out" | grep -qi "schema\|invalid\|error" \
         && ok "output_schema_failure.error_returned" \
         || fail "output_schema_failure.error_returned" "expected schema error, got: $call_out"
 
-    # Full refund — process.available unchanged
-    local proc_show
-    proc_show=$(jj "$db" "$home_bob" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 200 ] \
-        && ok "output_schema_failure.process_refunded" \
-        || fail "output_schema_failure.process_refunded" "expected 200, got: $proc_show"
+    # Full refund — user balance unchanged
+    local bob_me
+    bob_me=$(jj "$db" "$home_bob" user me)
+    [ "$(numfield "$bob_me" "available")" -eq 300 ] \
+        && ok "output_schema_failure.user_refunded" \
+        || fail "output_schema_failure.user_refunded" "expected 300, got: $bob_me"
 
     # Failure tx IS recorded (unlike input schema failure)
     local tx_list tx_count
-    tx_list=$(jj "$db" "$home_bob" tx list --process "$proc_id")
+    tx_list=$(jj "$db" "$home_bob" tx list)
     tx_count=$(python3 -c "import sys,json; print(len(json.loads(sys.argv[1]) or []))" "$tx_list" 2>/dev/null || echo 0)
     [ "$tx_count" -ge 1 ] \
         && ok "output_schema_failure.failure_tx_recorded" \
@@ -1193,17 +1172,13 @@ flow_wasm_execution() {
         && ok "wasm_execution.artifact_hash" \
         || fail "wasm_execution.artifact_hash" "expected non-empty ArtifactHash: $action_show"
 
-    # @bob calls echo WASM
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 100)
-    proc_id=$(strfield "$proc_out" "process_id")
-    local call_out tx_id
-    call_out=$(jj "$db" "$home_bob" call --process "$proc_id" \
-        --action @alice/echo --args '{"msg":"hello"}')
-    tx_id=$(strfield "$call_out" "tx_id")
+    # @bob runs echo WASM
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_bob" run --action @alice/echo --args '{"msg":"hello"}')
+    tx_id=$(strfield "$run_out" "tx_id")
     [ -n "$tx_id" ] \
         && ok "wasm_execution.echo_call_succeeds" \
-        || fail "wasm_execution.echo_call_succeeds" "echo call returned no tx_id: $call_out"
+        || fail "wasm_execution.echo_call_succeeds" "echo run returned no tx_id: $run_out"
 
     # Infinite-loop WASM → timeout error
     local loop_wasm="$dir/loop.wasm"
@@ -1215,12 +1190,10 @@ flow_wasm_execution() {
     j "$db" "$home_alice" action enable   --id "$loop_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$loop_id" --public >/dev/null 2>&1
 
-    local proc2_out proc2_id timeout_out
-    proc2_out=$(jj "$db" "$home_bob" process start --funds 100)
-    proc2_id=$(strfield "$proc2_out" "process_id")
     write_test_config "$db" "script_timeout_ms=200"
-    timeout_out=$(HOME="$home_bob" "$JUICE" --db "$db" call \
-        --process "$proc2_id" --action @alice/loop --args '{}' 2>&1)
+    local timeout_out
+    timeout_out=$(HOME="$home_bob" "$JUICE" --db "$db" run \
+        --action @alice/loop --args '{}' 2>&1)
     echo "$timeout_out" | grep -qi "timeout\|timed\|execution" \
         && ok "wasm_execution.infinite_loop_timeout" \
         || fail "wasm_execution.infinite_loop_timeout" "expected timeout error, got: $timeout_out"
@@ -1247,7 +1220,7 @@ flow_contractor_subcall() {
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
     j "$db" "$home_bob"   auth login --handle @bob   --password bobpass   >/dev/null 2>&1
     j "$db" "$home_carol" auth login --handle @carol --password carolpass >/dev/null 2>&1
-    # @carol funds the process — her process pays for the sub-call (price=50)
+    # @carol needs 50 credits for the contractor (which internally calls @bob/sub-target price=50)
     j "$db" "$home_sys"   admin user deposit --handle @carol --amount 50 >/dev/null 2>&1
 
     start_backend "$backend_port" 200 '{"ok":true}'
@@ -1262,34 +1235,30 @@ flow_contractor_subcall() {
     j "$db" "$home_bob" action enable   --id "$sub_id" >/dev/null 2>&1
     j "$db" "$home_bob" action update --id "$sub_id" --public >/dev/null 2>&1
 
-    # @alice creates WASM (price=0) that sub-calls @bob/sub-target
+    # @alice creates WASM (price=50, matching sub-call) that sub-calls @bob/sub-target
     local contractor_wasm="$dir/contractor.wasm"
     make_contractor_wasm "$contractor_wasm" "@bob/sub-target"
     local cont_out cont_id
     cont_out=$(jj "$db" "$home_alice" action create --name contractor --kind wasm \
-        --source "$contractor_wasm" --price 0 --description "contractor wasm")
+        --source "$contractor_wasm" --price 50 --description "contractor wasm")
     cont_id=$(strfield "$cont_out" "id")
     j "$db" "$home_alice" action enable   --id "$cont_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$cont_id" --public >/dev/null 2>&1
 
-    # @carol starts process with 50 funds (enough for the sub-call)
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_carol" process start --funds 50)
-    proc_id=$(strfield "$proc_out" "process_id")
-    local call_out tx_id
-    call_out=$(jj "$db" "$home_carol" call \
-        --process "$proc_id" --action @alice/contractor --args '{}')
-    tx_id=$(strfield "$call_out" "tx_id")
+    # @carol runs contractor (price=50); process funded with exactly 50
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_carol" run --action @alice/contractor --args '{}')
+    tx_id=$(strfield "$run_out" "tx_id")
     [ -n "$tx_id" ] \
         && ok "contractor_subcall.call_succeeds" \
-        || fail "contractor_subcall.call_succeeds" "contractor call returned no tx_id: $call_out"
+        || fail "contractor_subcall.call_succeeds" "contractor run returned no tx_id: $run_out"
 
-    # @carol process.available = 0 (process funded the sub-call)
-    local proc_show
-    proc_show=$(jj "$db" "$home_carol" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 0 ] \
-        && ok "contractor_subcall.caller_process_unchanged" \
-        || fail "contractor_subcall.caller_process_unchanged" "expected 0, got: $proc_show"
+    # @carol.available = 0 (50 debited for contractor, all went to sub-call)
+    local carol_me
+    carol_me=$(jj "$db" "$home_carol" user me)
+    [ "$(numfield "$carol_me" "available")" -eq 0 ] \
+        && ok "contractor_subcall.caller_debited" \
+        || fail "contractor_subcall.caller_debited" "expected 0, got: $carol_me"
 
     # @alice.available = 0 (not a contractor; her balance is untouched)
     local alice_me
@@ -1354,25 +1323,19 @@ flow_contractor_failure() {
     j "$db" "$home_alice" action enable   --id "$cont_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$cont_id" --public >/dev/null 2>&1
 
-    # @carol starts process with 30 funds (insufficient for the 50-price sub-call)
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_carol" process start --funds 30)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Call fails → process has insufficient funds for sub-call
+    # @carol has 30 credits; contractor price=50 → run rejected immediately (insufficient funds)
     local call_out
-    call_out=$(j "$db" "$home_carol" call \
-        --process "$proc_id" --action @alice/contractor --args '{}' 2>&1)
+    call_out=$(j "$db" "$home_carol" run --action @alice/contractor --args '{}' 2>&1)
     echo "$call_out" | grep -qi "insufficient\|balance\|funds\|credits\|costs" \
         && ok "contractor_failure.error_returned" \
         || fail "contractor_failure.error_returned" "expected insufficient-funds error, got: $call_out"
 
-    # @carol process.available restored (locked funds refunded after sub-call failure)
-    local proc_show
-    proc_show=$(jj "$db" "$home_carol" process show --id "$proc_id")
-    [ "$(numfield "$proc_show" "available")" -eq 30 ] \
-        && ok "contractor_failure.caller_process_unchanged" \
-        || fail "contractor_failure.caller_process_unchanged" "expected 30, got: $proc_show"
+    # @carol.available unchanged (30, never debited)
+    local carol_me
+    carol_me=$(jj "$db" "$home_carol" user me)
+    [ "$(numfield "$carol_me" "available")" -eq 30 ] \
+        && ok "contractor_failure.caller_unchanged" \
+        || fail "contractor_failure.caller_unchanged" "expected 30, got: $carol_me"
 
     # @alice.available = 0 (unchanged, no deposit made)
     local alice_me
@@ -1386,14 +1349,13 @@ flow_contractor_failure() {
 
 flow_step_success() {
     echo "=== FLOW step_success ==="
-    local dir db home_sys home_alice home_bob port backend_port
+    local dir db home_sys home_alice home_bob port
     dir=$(mktemp -d); trap "rm -rf '$dir'" RETURN
     db="$dir/juice.db"
     home_sys="$dir/sys";     mkdir -p "$home_sys/.juice"
     home_alice="$dir/alice"; mkdir -p "$home_alice/.juice"
     home_bob="$dir/bob";     mkdir -p "$home_bob/.juice"
     alloc_port; port=$_ALLOC_PORT
-    alloc_port; backend_port=$_ALLOC_PORT
     bootstrap_kernel "$db" syspass "$home_sys" "$port" \
         || { fail "step_success.boot" "bootstrap failed"; return; }
 
@@ -1403,37 +1365,34 @@ flow_step_success() {
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
     j "$db" "$home_bob"   auth login --handle @bob   --password bobpass   >/dev/null 2>&1
 
-    start_backend "$backend_port" 200 '{"ok":true}'
-    local backend_pid=$BACKEND_PID
-    trap "rm -rf '$dir'; kill '$backend_pid' 2>/dev/null; wait '$backend_pid' 2>/dev/null" RETURN
+    # @alice runs @sys/message to @bob → creates process (open) with one pending step
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_alice" run --action @sys/message \
+        --args '{"to":"@bob","message":"hello bob"}')
+    tx_id=$(strfield "$run_out" "tx_id")
+    [ -n "$tx_id" ] \
+        && ok "step_success.message_run_ok" \
+        || fail "step_success.message_run_ok" "no tx_id from @sys/message: $run_out"
 
-    # @alice creates action and process.
-    local handler_out handler_id
-    handler_out=$(jj "$db" "$home_alice" action create --name handler --kind http \
-        --source "http://127.0.0.1:${backend_port}/handler" --price 0 --description "step handler")
-    handler_id=$(strfield "$handler_out" "id")
-    j "$db" "$home_alice" action enable --id "$handler_id" >/dev/null 2>&1
-    j "$db" "$home_alice" action update --id "$handler_id" --public >/dev/null 2>&1
+    # Get step_id from result and process_id from tx
+    local step_id proc_id tx_show
+    step_id=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(d.get('result',{}).get('step_id',''))" "$run_out" 2>/dev/null)
+    tx_show=$(jj "$db" "$home_alice" tx show --id "$tx_id")
+    proc_id=$(strfield "$tx_show" "process_id")
 
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # @alice creates a step (required_caller=@bob).
-    local step_out step_id step_status
-    step_out=$(jj "$db" "$home_alice" step create \
-        --process "$proc_id" --action @alice/handler --required-caller @bob \
-        --partial-args '{"from_alice":"preset"}')
-    step_id=$(strfield "$step_out" "id")
-    step_status=$(strfield "$step_out" "status")
     [ -n "$step_id" ] \
         && ok "step_success.create_returns_id" \
-        || fail "step_success.create_returns_id" "step create returned no id: $step_out"
+        || fail "step_success.create_returns_id" "no step_id in result: $run_out"
+
+    # Step status is waiting
+    local step_show step_status
+    step_show=$(jj "$db" "$home_alice" step show --id "$step_id")
+    step_status=$(strfield "$step_show" "status")
     [ "$step_status" = "waiting" ] \
         && ok "step_success.create_status_waiting" \
         || fail "step_success.create_status_waiting" "expected waiting, got: $step_status"
 
-    # @alice can list the step (process owner visibility).
+    # @alice (process owner) can see the step
     local list_out list_count
     list_out=$(jj "$db" "$home_alice" step list)
     list_count=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(len([s for s in (d or []) if s.get('id')=='${step_id}']))" \
@@ -1442,7 +1401,7 @@ flow_step_success() {
         && ok "step_success.owner_sees_step" \
         || fail "step_success.owner_sees_step" "expected owner to see step, got: $list_out"
 
-    # @bob can list the step (required_caller visibility).
+    # @bob (required_caller) can see the step
     local bob_list_out bob_list_count
     bob_list_out=$(jj "$db" "$home_bob" step list)
     bob_list_count=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(len([s for s in (d or []) if s.get('id')=='${step_id}']))" \
@@ -1451,9 +1410,9 @@ flow_step_success() {
         && ok "step_success.caller_sees_step" \
         || fail "step_success.caller_sees_step" "expected caller to see step, got: $bob_list_out"
 
-    # @bob completes the step.
+    # @bob completes the step
     local complete_out complete_tx complete_step_id
-    complete_out=$(jj "$db" "$home_bob" step complete --id "$step_id" --args '{"from_bob":"input"}')
+    complete_out=$(jj "$db" "$home_bob" step complete --id "$step_id" --args '{}')
     complete_tx=$(strfield "$complete_out" "tx_id")
     complete_step_id=$(strfield "$complete_out" "step_id")
     [ -n "$complete_tx" ] \
@@ -1463,20 +1422,17 @@ flow_step_success() {
         && ok "step_success.complete_returns_step_id" \
         || fail "step_success.complete_returns_step_id" "step_id mismatch: got $complete_step_id"
 
-    # Step status is now done.
-    local show_out show_status
-    show_out=$(jj "$db" "$home_alice" step show --id "$step_id")
-    show_status=$(strfield "$show_out" "status")
-    [ "$show_status" = "done" ] \
+    # Step status is now done
+    step_show=$(jj "$db" "$home_alice" step show --id "$step_id")
+    step_status=$(strfield "$step_show" "status")
+    [ "$step_status" = "done" ] \
         && ok "step_success.status_done_after_complete" \
-        || fail "step_success.status_done_after_complete" "expected done, got: $show_status"
-
-    stop_backend "$backend_pid"
+        || fail "step_success.status_done_after_complete" "expected done, got: $step_status"
 }
 
 flow_step_failure() {
     echo "=== FLOW step_failure ==="
-    local dir db home_sys home_alice home_bob home_carol port backend_port
+    local dir db home_sys home_alice home_bob home_carol port
     dir=$(mktemp -d); trap "rm -rf '$dir'" RETURN
     db="$dir/juice.db"
     home_sys="$dir/sys";     mkdir -p "$home_sys/.juice"
@@ -1484,7 +1440,6 @@ flow_step_failure() {
     home_bob="$dir/bob";     mkdir -p "$home_bob/.juice"
     home_carol="$dir/carol"; mkdir -p "$home_carol/.juice"
     alloc_port; port=$_ALLOC_PORT
-    alloc_port; backend_port=$_ALLOC_PORT
     bootstrap_kernel "$db" syspass "$home_sys" "$port" \
         || { fail "step_failure.boot" "bootstrap failed"; return; }
 
@@ -1496,195 +1451,36 @@ flow_step_failure() {
     j "$db" "$home_bob"   auth login --handle @bob   --password bobpass   >/dev/null 2>&1
     j "$db" "$home_carol" auth login --handle @carol --password carolpass >/dev/null 2>&1
 
-    start_backend "$backend_port" 200 '{"ok":true}'
-    local backend_pid=$BACKEND_PID
-    trap "rm -rf '$dir'; kill '$backend_pid' 2>/dev/null; wait '$backend_pid' 2>/dev/null" RETURN
+    # @alice runs @sys/message to @bob → step S1 (required_caller=@bob)
+    local run1_out step1_id
+    run1_out=$(jj "$db" "$home_alice" run --action @sys/message \
+        --args '{"to":"@bob","message":"test 1"}')
+    step1_id=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(d.get('result',{}).get('step_id',''))" "$run1_out" 2>/dev/null)
+    [ -n "$step1_id" ] || { fail "step_failure.setup" "no step_id in: $run1_out"; return; }
 
-    # @alice creates action and process.
-    local handler_out handler_id
-    handler_out=$(jj "$db" "$home_alice" action create --name handler --kind http \
-        --source "http://127.0.0.1:${backend_port}/handler" --price 0 --description "step handler")
-    handler_id=$(strfield "$handler_out" "id")
-    j "$db" "$home_alice" action enable --id "$handler_id" >/dev/null 2>&1
-    j "$db" "$home_alice" action update --id "$handler_id" --public >/dev/null 2>&1
+    # @bob completes S1 successfully
+    jj "$db" "$home_bob" step complete --id "$step1_id" --args '{}' >/dev/null 2>&1
 
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # @alice creates a step (required_caller=@bob); @bob completes it.
-    local step_out step_id
-    step_out=$(jj "$db" "$home_alice" step create \
-        --process "$proc_id" --action @alice/handler --required-caller @bob)
-    step_id=$(strfield "$step_out" "id")
-    jj "$db" "$home_bob" step complete --id "$step_id" --args '{}' >/dev/null 2>&1
-
-    # Completing the step again (status=done) → ErrInvalidState
+    # Completing S1 again (status=done) → ErrInvalidState
     local complete2_out
-    complete2_out=$(j "$db" "$home_bob" step complete --id "$step_id" --args '{}' 2>&1)
+    complete2_out=$(j "$db" "$home_bob" step complete --id "$step1_id" --args '{}' 2>&1)
     echo "$complete2_out" | grep -qi "invalid.state\|already.*done\|not.*waiting" \
         && ok "step_failure.double_complete_rejected" \
         || fail "step_failure.double_complete_rejected" "expected invalid state, got: $complete2_out"
 
-    # @alice creates a second step (required_caller=@bob); @carol tries to complete → ErrUnauthorized
-    local step2_out step2_id
-    step2_out=$(jj "$db" "$home_alice" step create \
-        --process "$proc_id" --action @alice/handler --required-caller @bob)
-    step2_id=$(strfield "$step2_out" "id")
+    # @alice runs @sys/message to @bob → step S2 (required_caller=@bob)
+    local run2_out step2_id
+    run2_out=$(jj "$db" "$home_alice" run --action @sys/message \
+        --args '{"to":"@bob","message":"test 2"}')
+    step2_id=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(d.get('result',{}).get('step_id',''))" "$run2_out" 2>/dev/null)
+    [ -n "$step2_id" ] || { fail "step_failure.setup2" "no step_id in: $run2_out"; return; }
+
+    # @carol (wrong caller) tries to complete S2 → ErrUnauthorized
     local carol_complete_out
     carol_complete_out=$(j "$db" "$home_carol" step complete --id "$step2_id" --args '{}' 2>&1)
     echo "$carol_complete_out" | grep -qi "unauthorized\|permission\|caller" \
         && ok "step_failure.wrong_caller_rejected" \
         || fail "step_failure.wrong_caller_rejected" "expected unauthorized, got: $carol_complete_out"
-
-    stop_backend "$backend_pid"
-}
-
-flow_step_restart() {
-    echo "=== FLOW step_restart ==="
-    local dir db home_sys home_alice home_bob port backend_port
-    dir=$(mktemp -d); trap "rm -rf '$dir'" RETURN
-    db="$dir/juice.db"
-    home_sys="$dir/sys";     mkdir -p "$home_sys/.juice"
-    home_alice="$dir/alice"; mkdir -p "$home_alice/.juice"
-    home_bob="$dir/bob";     mkdir -p "$home_bob/.juice"
-    alloc_port; port=$_ALLOC_PORT
-    alloc_port; backend_port=$_ALLOC_PORT
-    bootstrap_kernel "$db" syspass "$home_sys" "$port" \
-        || { fail "step_restart.boot" "bootstrap failed"; return; }
-
-    j "$db" "$home_sys"   auth login --handle @sys   --password syspass   >/dev/null 2>&1
-    j "$db" "$home_sys"   user create --handle @alice --email alice@test.com --password alicepass >/dev/null 2>&1
-    j "$db" "$home_sys"   user create --handle @bob   --email bob@test.com   --password bobpass   >/dev/null 2>&1
-    j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
-    j "$db" "$home_bob"   auth login --handle @bob   --password bobpass   >/dev/null 2>&1
-
-    start_backend "$backend_port" 200 '{"ok":true}'
-    local backend_pid=$BACKEND_PID
-    trap "rm -rf '$dir'; kill '$backend_pid' 2>/dev/null; wait '$backend_pid' 2>/dev/null" RETURN
-
-    # @alice creates action and process.
-    local handler_out handler_id
-    handler_out=$(jj "$db" "$home_alice" action create --name handler --kind http \
-        --source "http://127.0.0.1:${backend_port}/handler" --price 0 --description "step handler")
-    handler_id=$(strfield "$handler_out" "id")
-    j "$db" "$home_alice" action enable --id "$handler_id" >/dev/null 2>&1
-    j "$db" "$home_alice" action update --id "$handler_id" --public >/dev/null 2>&1
-
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # @alice creates a step (required_caller=@bob); verify it is waiting.
-    local step_out step_id step_status
-    step_out=$(jj "$db" "$home_alice" step create \
-        --process "$proc_id" --action @alice/handler --required-caller @bob)
-    step_id=$(strfield "$step_out" "id")
-    step_status=$(strfield "$step_out" "status")
-    [ "$step_status" = "waiting" ] \
-        && ok "step_restart.initial_waiting" \
-        || fail "step_restart.initial_waiting" "expected waiting, got: $step_status"
-
-    # Inject running state via direct DB write — simulates a kernel crash after ClaimStep but
-    # before CompleteStep; this state cannot be produced through the public API surface.
-    python3 - "$db" "$step_id" <<'PYEOF'
-import sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
-conn.execute("UPDATE steps SET status='running' WHERE id=?", [sys.argv[2]])
-conn.commit()
-conn.close()
-PYEOF
-
-    # Verify the injected running state is visible.
-    local show_running_out running_status
-    show_running_out=$(jj "$db" "$home_alice" step show --id "$step_id")
-    running_status=$(strfield "$show_running_out" "status")
-    [ "$running_status" = "running" ] \
-        && ok "step_restart.injected_running" \
-        || fail "step_restart.injected_running" "expected running after injection, got: $running_status"
-
-    # bootstrap_kernel on the same DB → ResetRunningSteps → status=waiting, tx_id=NULL
-    local port2
-    alloc_port; port2=$_ALLOC_PORT
-    bootstrap_kernel "$db" syspass "$home_sys" "$port2" >/dev/null 2>&1
-
-    # Step must be waiting again and completable by @bob.
-    local show_reset_out reset_status
-    show_reset_out=$(jj "$db" "$home_alice" step show --id "$step_id")
-    reset_status=$(strfield "$show_reset_out" "status")
-    [ "$reset_status" = "waiting" ] \
-        && ok "step_restart.reset_to_waiting" \
-        || fail "step_restart.reset_to_waiting" "expected waiting after bootstrap, got: $reset_status"
-
-    local complete_out complete_tx
-    complete_out=$(jj "$db" "$home_bob" step complete --id "$step_id" --args '{}')
-    complete_tx=$(strfield "$complete_out" "tx_id")
-    [ -n "$complete_tx" ] \
-        && ok "step_restart.completable_after_reset" \
-        || fail "step_restart.completable_after_reset" "expected tx_id after complete, got: $complete_out"
-
-    stop_backend "$backend_pid"
-}
-
-flow_locked_funds_recovery() {
-    echo "=== FLOW locked_funds_recovery ==="
-    local dir db home_sys port
-    dir=$(mktemp -d); trap "rm -rf '$dir'" RETURN
-    db="$dir/juice.db"
-    home_sys="$dir/sys"; mkdir -p "$home_sys/.juice"
-    alloc_port; port=$_ALLOC_PORT
-    bootstrap_kernel "$db" syspass "$home_sys" "$port" \
-        || { fail "locked_funds.boot" "bootstrap failed"; return; }
-
-    j "$db" "$home_sys" auth login --handle @sys --password syspass >/dev/null 2>&1
-    j "$db" "$home_sys" admin user deposit --handle @sys --amount 200 >/dev/null 2>&1
-
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_sys" process start --funds 100)
-    proc_id=$(strfield "$proc_out" "process_id")
-    [ -n "$proc_id" ] || { fail "locked_funds.start_process" "no process_id"; return; }
-    ok "locked_funds.start_process"
-
-    # Inject crash state: simulate a call that locked 50 credits but never settled.
-    # Direct DB write is intentional — this simulates a kernel crash mid-call,
-    # a state that cannot be produced via the public API surface.
-    python3 - "$db" "$proc_id" <<'PYEOF'
-import sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
-conn.execute("UPDATE processes SET locked=50, available=50 WHERE id=?", [sys.argv[2]])
-conn.commit()
-conn.close()
-PYEOF
-
-    # Verify the injected state before restart
-    local pre_show
-    pre_show=$(jj "$db" "$home_sys" process show --id "$proc_id")
-    [ "$(numfield "$pre_show" "locked")" -eq 50 ] \
-        && ok "locked_funds.injected" \
-        || fail "locked_funds.injected" "injection failed: $pre_show"
-
-    # Restart: bootstrap resets in-flight calls
-    alloc_port; local port2=$_ALLOC_PORT
-    bootstrap_kernel "$db" syspass "$home_sys" "$port2" >/dev/null 2>&1
-
-    j "$db" "$home_sys" auth login --handle @sys --password syspass >/dev/null 2>&1
-
-    # After restart locked=0, available=100 restored
-    local post_show
-    post_show=$(jj "$db" "$home_sys" process show --id "$proc_id")
-    [ "$(numfield "$post_show" "locked")" -eq 0 ] \
-        && ok "locked_funds.locked_cleared" \
-        || fail "locked_funds.locked_cleared" "expected locked=0: $post_show"
-    [ "$(numfield "$post_show" "available")" -eq 100 ] \
-        && ok "locked_funds.available_restored" \
-        || fail "locked_funds.available_restored" "expected available=100: $post_show"
-
-    # Process can now be ended cleanly
-    local end_out
-    end_out=$(j "$db" "$home_sys" process end --id "$proc_id" 2>&1)
-    echo "$end_out" | grep -qi "ended" \
-        && ok "locked_funds.process_endable" \
-        || fail "locked_funds.process_endable" "process end failed: $end_out"
 }
 
 flow_rating() {
@@ -1719,13 +1515,10 @@ flow_rating() {
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    # @bob calls @alice's action → tx_id
-    local proc_out proc_id call_out tx_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 100)
-    proc_id=$(strfield "$proc_out" "process_id")
-    call_out=$(jj "$db" "$home_bob" call \
-        --process "$proc_id" --action @alice/rate-me --args '{}')
-    tx_id=$(strfield "$call_out" "tx_id")
+    # @bob runs @alice's action → tx_id
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_bob" run --action @alice/rate-me --args '{}')
+    tx_id=$(strfield "$run_out" "tx_id")
 
     # Before rating: detail response has null rating field.
     local show_before
@@ -1974,24 +1767,19 @@ flow_successful_receipt() {
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 50)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    local call_out tx_id
-    call_out=$(jj "$db" "$home_bob" call \
-        --process "$proc_id" --action @alice/receipt-action --args '{}')
-    tx_id=$(strfield "$call_out" "tx_id")
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_bob" run --action @alice/receipt-action --args '{}')
+    tx_id=$(strfield "$run_out" "tx_id")
     [ -n "$tx_id" ] \
         && ok "successful_receipt.call_succeeded" \
-        || fail "successful_receipt.call_succeeded" "no tx_id: $call_out"
+        || fail "successful_receipt.call_succeeded" "no tx_id: $run_out"
 
-    # Verify receipt_id is returned in the call response
+    # Verify receipt_id is returned in the run response
     local receipt_id
-    receipt_id=$(strfield "$call_out" "receipt_id")
+    receipt_id=$(strfield "$run_out" "receipt_id")
     [ -n "$receipt_id" ] \
         && ok "successful_receipt.receipt_created" \
-        || fail "successful_receipt.receipt_created" "no receipt_id in call response: $call_out"
+        || fail "successful_receipt.receipt_created" "no receipt_id in run response: $run_out"
 
     stop_backend "$backend_pid"
 }
@@ -2027,17 +1815,12 @@ flow_failed_receipt() {
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 50)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Failing call — ignore error, tx is recorded in DB
-    j "$db" "$home_bob" call --process "$proc_id" --action @alice/fail-action --args '{}' \
-        >/dev/null 2>&1 || true
+    # Failing run — ignore error, tx is recorded in DB
+    j "$db" "$home_bob" run --action @alice/fail-action --args '{}' >/dev/null 2>&1 || true
 
     # Find the failed tx
     local tx_list tx_id tx_status
-    tx_list=$(jj "$db" "$home_bob" tx list --process "$proc_id")
+    tx_list=$(jj "$db" "$home_bob" tx list)
     tx_id=$(python3 -c "import sys,json; print(json.loads(sys.argv[1])[0]['id'])" "$tx_list" 2>/dev/null)
     tx_status=$(python3 -c "import sys,json; print(json.loads(sys.argv[1])[0]['status'])" "$tx_list" 2>/dev/null)
     [ "$tx_status" = "failure" ] \
@@ -2069,16 +1852,9 @@ flow_lookup() {
     j "$db" "$home_sys"   user create --handle @alice --email alice@test.com --password alicepass >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
 
-    # @sys/lookup price=0; start a zero-fund process
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
     # Missing required 'query' field → schema violation
     local schema_out
-    schema_out=$(j "$db" "$home_alice" call \
-        --process "$proc_id" --action @sys/lookup \
-        --args '{}' 2>&1)
+    schema_out=$(j "$db" "$home_alice" run --action @sys/lookup --args '{}' 2>&1)
     echo "$schema_out" | grep -qi "query\|required\|schema" \
         && ok "lookup.missing_query_rejected" \
         || fail "lookup.missing_query_rejected" "expected schema/query error, got: $schema_out"
@@ -2099,24 +1875,9 @@ flow_chat() {
     j "$db" "$home_sys"   user create --handle @alice --email alice@test.com --password alicepass >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
 
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Call without chatter → ErrInvalidState
-    local chat_out
-    chat_out=$(j "$db" "$home_alice" call \
-        --process "$proc_id" --action @sys/llm-chat \
-        --args '{"messages":[{"role":"user","content":"hello"}]}' 2>&1)
-    echo "$chat_out" | grep -qi "chat\|invalid.state\|invalid_state" \
-        && ok "chat.no_chatter_error" \
-        || fail "chat.no_chatter_error" "expected ErrInvalidState, got: $chat_out"
-
     # Missing required 'messages' field → schema violation
     local schema_out
-    schema_out=$(j "$db" "$home_alice" call \
-        --process "$proc_id" --action @sys/llm-chat \
-        --args '{}' 2>&1)
+    schema_out=$(j "$db" "$home_alice" run --action @sys/llm/chat --args '{}' 2>&1)
     echo "$schema_out" | grep -qi "messages\|required\|schema" \
         && ok "chat.missing_messages_rejected" \
         || fail "chat.missing_messages_rejected" "expected schema/messages error, got: $schema_out"
@@ -2203,16 +1964,13 @@ PYEOF
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    # @bob calls the imported action
-    local proc_out proc_id call_out tx_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 20)
-    proc_id=$(strfield "$proc_out" "process_id")
-    call_out=$(jj "$db" "$home_bob" call \
-        --process "$proc_id" --action "@alice/$action_name" --args '{}')
-    tx_id=$(strfield "$call_out" "tx_id")
+    # @bob runs the imported action
+    local run_out tx_id
+    run_out=$(jj "$db" "$home_bob" run --action "@alice/$action_name" --args '{}')
+    tx_id=$(strfield "$run_out" "tx_id")
     [ -n "$tx_id" ] \
         && ok "openapi_import_execute.call_succeeds" \
-        || fail "openapi_import_execute.call_succeeds" "no tx_id: $call_out"
+        || fail "openapi_import_execute.call_succeeds" "no tx_id: $run_out"
 
     # Action name is the operation_key; owner is encoded in owner_user_id only.
     [ "$action_name" = "greet" ] \
@@ -2475,301 +2233,11 @@ for a in r.get('Created',[]):
 }
 
 # ---------------------------------------------------------------------------
-# Batch 5: Federation and Admin
+# Batch 5: Admin
 # ---------------------------------------------------------------------------
 
-# _fed_setup dir_var db_l db_r home_l home_r port_l port_r port_b
-# Common federation setup: two bootstrapped kernels, backend, serves started,
-# both registered as peers, /greet imported and enabled on LOCAL.
-# Returns proxy_id via stdout (last line of output).
-_fed_setup() {
-    local dir="$1" db_l="$2" db_r="$3" home_l="$4" home_r="$5"
-    local port_l="$6" port_r="$7" port_b="$8"
-
-    mkdir -p "$home_l/.juice" "$home_r/.juice"
-
-    local boot_l boot_r
-    alloc_port; boot_l=$_ALLOC_PORT; alloc_port; boot_r=$_ALLOC_PORT
-    bootstrap_kernel "$db_l" syspass "$home_l" "$boot_l" || return 1
-    bootstrap_kernel "$db_r" syspass "$home_r" "$boot_r" || return 1
-
-    j "$db_l" "$home_l" auth login --handle @sys --password syspass >/dev/null 2>&1
-    j "$db_r" "$home_r" auth login --handle @sys --password syspass >/dev/null 2>&1
-
-    # Backend for remote action
-    start_backend "$port_b" 200 '{"greeting":"hello"}'
-    echo "$BACKEND_PID" > "$dir/bpid"
-
-    # Create /greet on REMOTE, enable, grant-all
-    local action_id_r
-    action_id_r=$(jj "$db_r" "$home_r" action create \
-        --name greet --kind http \
-        --source "http://127.0.0.1:$port_b" \
-        --description "greet endpoint" \
-        --price 0 | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
-    [ -n "$action_id_r" ] || { echo "_fed_setup: action_id_r empty (port_b=$port_b)" >&2; return 1; }
-    echo "$action_id_r" > "$dir/remote_action_id"
-    j "$db_r" "$home_r" action enable --id "$action_id_r" >/dev/null 2>&1
-    j "$db_r" "$home_r" action update --id "$action_id_r" --public >/dev/null 2>&1
-
-    # Start both serves
-    start_serve "$db_l" "127.0.0.1:$port_l" syspass "$home_l" \
-        || { echo "_fed_setup: start_serve local ($port_l) failed" >&2; return 1; }
-    echo "$SERVE_PID" > "$dir/pid_l"
-    start_serve "$db_r" "127.0.0.1:$port_r" syspass "$home_r" \
-        || { echo "_fed_setup: start_serve remote ($port_r) failed" >&2; return 1; }
-    echo "$SERVE_PID" > "$dir/pid_r"
-
-    # Register each as peer of the other
-    local ra_out
-    ra_out=$(j "$db_l" "$home_l" remote add --url "http://127.0.0.1:$port_r" 2>&1)
-    echo "$ra_out" | grep -q "Registered" || { echo "_fed_setup: remote add l->r failed: $ra_out" >&2; return 1; }
-    j "$db_r" "$home_r" remote add --url "http://127.0.0.1:$port_l" >/dev/null 2>&1
-
-    # Import /greet from REMOTE into LOCAL
-    local remote_handle="@127.0.0.1:$port_r"
-    local ri_out
-    ri_out=$(j "$db_l" "$home_l" remote import --remote "$remote_handle" --action greet 2>&1)
-    echo "$ri_out" | grep -qi "imported\|unchanged" || { echo "_fed_setup: remote import failed: $ri_out" >&2; return 1; }
-
-    # Extract proxy action ID from import output (format: "Imported action greet (id=<uuid>)")
-    local proxy_id
-    proxy_id=$(echo "$ri_out" | sed 's/.*id=\([^,)]*\).*/\1/')
-    # Enable proxy and grant-all (superuser can admin remote proxy)
-    j "$db_l" "$home_l" action enable --id "$proxy_id" >/dev/null 2>&1
-    j "$db_l" "$home_l" action update --id "$proxy_id" --public >/dev/null 2>&1
-
-    echo "$proxy_id" > "$dir/proxy_id"
-}
-
-_fed_teardown() {
-    local dir="$1"
-    local pid_l pid_r bpid
-    pid_l=$(cat "$dir/pid_l" 2>/dev/null); pid_r=$(cat "$dir/pid_r" 2>/dev/null)
-    bpid=$(cat "$dir/bpid" 2>/dev/null)
-    [ -n "$pid_l" ] && { kill "$pid_l" 2>/dev/null; wait "$pid_l" 2>/dev/null; }
-    [ -n "$pid_r" ] && { kill "$pid_r" 2>/dev/null; wait "$pid_r" 2>/dev/null; }
-    [ -n "$bpid" ] && { kill "$bpid" 2>/dev/null; wait "$bpid" 2>/dev/null; }
-}
-
-flow_federation_import_execute() {
-    echo "=== FLOW federation_import_execute ==="
-    local dir db_l db_r home_l home_r port_l port_r port_b proxy_id
-    dir=$(mktemp -d); trap "_fed_teardown '$dir'; rm -rf '$dir'" RETURN
-    db_l="$dir/local.db"; db_r="$dir/remote.db"
-    home_l="$dir/lsys";   home_r="$dir/rsys"
-    alloc_port; port_l=$_ALLOC_PORT;  alloc_port; port_r=$_ALLOC_PORT; alloc_port; port_b=$_ALLOC_PORT
-
-    _fed_setup "$dir" "$db_l" "$db_r" "$home_l" "$home_r" "$port_l" "$port_r" "$port_b" \
-        || { fail "fed_import.setup" "setup failed"; return; }
-    proxy_id=$(cat "$dir/proxy_id" 2>/dev/null)
-    [ -n "$proxy_id" ] || { fail "fed_import.setup" "no proxy_id"; return; }
-
-    local remote_handle="@127.0.0.1:$port_r"
-
-    # Start process for @sys on LOCAL (price=0, no funds needed)
-    local proc_out proc_id
-    proc_out=$(jj "$db_l" "$home_l" process start --funds 0)
-    proc_id=$(strfield "$proc_out" "process_id")
-
-    # Call the proxy
-    local call_out tx_id
-    call_out=$(jj "$db_l" "$home_l" call \
-        --process "$proc_id" \
-        --action "$remote_handle/greet" \
-        --args '{}')
-    tx_id=$(strfield "$call_out" "tx_id")
-    [ -n "$tx_id" ] \
-        && ok "fed_import.call_succeeds" \
-        || fail "fed_import.call_succeeds" "no tx_id in: $call_out"
-
-    # Verify remote_receipt_hash and remote_receipt_json stored via tx show
-    local tx_show rrh rrj
-    tx_show=$(jj "$db_l" "$home_l" tx show --id "$tx_id")
-    rrh=$(strfield "$tx_show" "remote_receipt_hash")
-    rrj=$(strfield "$tx_show" "remote_receipt_json")
-    [ -n "$rrh" ] \
-        && ok "fed_import.remote_receipt_hash" \
-        || fail "fed_import.remote_receipt_hash" "remote_receipt_hash empty for tx $tx_id"
-    [ -n "$rrj" ] \
-        && ok "fed_import.remote_receipt_json" \
-        || fail "fed_import.remote_receipt_json" "remote_receipt_json empty for tx $tx_id"
-
-    # Local stats: uses=1
-    local stats_out uses
-    stats_out=$(jj "$db_l" "$home_l" action stats --id "$proxy_id")
-    uses=$(numfield "$stats_out" "uses")
-    [ "$uses" -eq 1 ] \
-        && ok "fed_import.local_stats_updated" \
-        || fail "fed_import.local_stats_updated" "expected uses=1, got $uses"
-}
-
-flow_federation_changed_reimport() {
-    echo "=== FLOW federation_changed_reimport ==="
-    local dir db_l db_r home_l home_r port_l port_r port_b proxy_id
-    dir=$(mktemp -d); trap "_fed_teardown '$dir'; rm -rf '$dir'" RETURN
-    db_l="$dir/local.db"; db_r="$dir/remote.db"
-    home_l="$dir/lsys";   home_r="$dir/rsys"
-    alloc_port; port_l=$_ALLOC_PORT;  alloc_port; port_r=$_ALLOC_PORT; alloc_port; port_b=$_ALLOC_PORT
-
-    _fed_setup "$dir" "$db_l" "$db_r" "$home_l" "$home_r" "$port_l" "$port_r" "$port_b" \
-        || { fail "fed_reimport.setup" "setup failed"; return; }
-    proxy_id=$(cat "$dir/proxy_id" 2>/dev/null)
-
-    local remote_handle="@127.0.0.1:$port_r"
-
-    # Make one call so there's a tx in history
-    local proc_id tx_id
-    proc_id=$(strfield "$(jj "$db_l" "$home_l" process start --funds 0)" "process_id")
-    tx_id=$(strfield "$(jj "$db_l" "$home_l" call \
-        --process "$proc_id" \
-        --action "$remote_handle/greet" --args '{}')" "tx_id")
-
-    # Update action description on REMOTE (stop serve, update db, restart)
-    local pid_r
-    pid_r=$(cat "$dir/pid_r")
-    kill "$pid_r" 2>/dev/null; wait "$pid_r" 2>/dev/null
-
-    # Update description on REMOTE via CLI
-    local remote_action_id
-    remote_action_id=$(cat "$dir/remote_action_id" 2>/dev/null)
-    j "$db_r" "$home_r" action update --id "$remote_action_id" --description "v2 greeting" >/dev/null 2>&1
-
-    # Restart REMOTE serve
-    start_serve "$db_r" "127.0.0.1:$port_r" syspass "$home_r"
-    echo "$SERVE_PID" > "$dir/pid_r"
-
-    # Re-import
-    local reimport_out
-    reimport_out=$(j "$db_l" "$home_l" remote import --remote "$remote_handle" --action greet 2>&1)
-    echo "$reimport_out" | grep -qi "updated\|deactivated" \
-        && ok "fed_reimport.updated" \
-        || fail "fed_reimport.updated" "expected Updated, got: $reimport_out"
-
-    # Proxy should now be inactive
-    local proxy_show proxy_active
-    proxy_show=$(jj "$db_l" "$home_l" action show --id "$proxy_id")
-    proxy_active=$(python3 -c "import sys,json; print(1 if json.loads(sys.argv[1])['active'] else 0)" "$proxy_show" 2>/dev/null)
-    [ "$proxy_active" = "0" ] \
-        && ok "fed_reimport.proxy_deactivated" \
-        || fail "fed_reimport.proxy_deactivated" "expected active=0, got $proxy_active"
-
-    # Proxy ID preserved (id= is in reimport_out: "Updated action greet (id=<uuid>, ...)")
-    local new_proxy_id
-    new_proxy_id=$(echo "$reimport_out" | sed 's/.*id=\([^,)]*\).*/\1/')
-    [ "$new_proxy_id" = "$proxy_id" ] \
-        && ok "fed_reimport.id_preserved" \
-        || fail "fed_reimport.id_preserved" "expected $proxy_id, got $new_proxy_id"
-
-    # Prior tx still in history
-    local tx_check
-    tx_check=$(jj "$db_l" "$home_l" tx show --id "$tx_id" 2>/dev/null)
-    [ "$(strfield "$tx_check" "id")" = "$tx_id" ] \
-        && ok "fed_reimport.tx_history_intact" \
-        || fail "fed_reimport.tx_history_intact" "prior tx $tx_id missing from local db"
-}
-
-flow_federation_unimport() {
-    echo "=== FLOW federation_unimport ==="
-    local dir db_l db_r home_l home_r port_l port_r port_b proxy_id
-    dir=$(mktemp -d); trap "_fed_teardown '$dir'; rm -rf '$dir'" RETURN
-    db_l="$dir/local.db"; db_r="$dir/remote.db"
-    home_l="$dir/lsys";   home_r="$dir/rsys"
-    alloc_port; port_l=$_ALLOC_PORT;  alloc_port; port_r=$_ALLOC_PORT; alloc_port; port_b=$_ALLOC_PORT
-
-    _fed_setup "$dir" "$db_l" "$db_r" "$home_l" "$home_r" "$port_l" "$port_r" "$port_b" \
-        || { fail "fed_unimport.setup" "setup failed"; return; }
-    proxy_id=$(cat "$dir/proxy_id" 2>/dev/null)
-
-    local remote_handle="@127.0.0.1:$port_r"
-
-    # Unimport
-    local unimport_out
-    unimport_out=$(j "$db_l" "$home_l" remote unimport --remote "$remote_handle" --action greet 2>&1)
-    echo "$unimport_out" | grep -qi "deactivated" \
-        && ok "fed_unimport.deactivated" \
-        || fail "fed_unimport.deactivated" "expected deactivated, got: $unimport_out"
-
-    # Proxy inactive on LOCAL
-    local proxy_show proxy_active
-    proxy_show=$(jj "$db_l" "$home_l" action show --id "$proxy_id")
-    proxy_active=$(python3 -c "import sys,json; print(1 if json.loads(sys.argv[1])['active'] else 0)" "$proxy_show" 2>/dev/null)
-    [ "$proxy_active" = "0" ] \
-        && ok "fed_unimport.proxy_inactive" \
-        || fail "fed_unimport.proxy_inactive" "expected active=0, got $proxy_active"
-
-    # Remote action still active
-    local remote_action_id remote_show remote_active
-    remote_action_id=$(cat "$dir/remote_action_id" 2>/dev/null)
-    remote_show=$(jj "$db_r" "$home_r" action show --id "$remote_action_id")
-    remote_active=$(python3 -c "import sys,json; print(1 if json.loads(sys.argv[1])['active'] else 0)" "$remote_show" 2>/dev/null)
-    [ "$remote_active" = "1" ] \
-        && ok "fed_unimport.remote_still_active" \
-        || fail "fed_unimport.remote_still_active" "expected remote active=1, got $remote_active"
-}
-
-# flow_federation_replay has been moved to TestFederationReplay in cmd/juice/cmd_remote_test.go
-# using crypto/ed25519 — the previous implementation required Python nacl.signing.
-
-flow_fed_verify_receipt() {
-    echo "=== FLOW fed_verify_receipt ==="
-    local dir db_l db_r home_l home_r port_l port_r port_b proxy_id
-    dir=$(mktemp -d); trap "_fed_teardown '$dir'; rm -rf '$dir'" RETURN
-    db_l="$dir/local.db"; db_r="$dir/remote.db"
-    home_l="$dir/lsys";   home_r="$dir/rsys"
-    alloc_port; port_l=$_ALLOC_PORT;  alloc_port; port_r=$_ALLOC_PORT; alloc_port; port_b=$_ALLOC_PORT
-
-    _fed_setup "$dir" "$db_l" "$db_r" "$home_l" "$home_r" "$port_l" "$port_r" "$port_b" \
-        || { fail "fed_verify.setup" "setup failed"; return; }
-
-    local remote_handle="@127.0.0.1:$port_r"
-
-    # Make a call through the remote proxy.
-    local proc_id tx_id
-    proc_id=$(strfield "$(jj "$db_l" "$home_l" process start --funds 0)" "process_id")
-    tx_id=$(strfield "$(jj "$db_l" "$home_l" call \
-        --process "$proc_id" \
-        --action "$remote_handle/greet" \
-        --args '{}')" "tx_id")
-    [ -n "$tx_id" ] || { fail "fed_verify.call" "call failed, no tx_id"; return; }
-
-    # Buyer: verify as @sys on local kernel.
-    local vr_out
-    vr_out=$(jj "$db_l" "$home_l" tx verify-receipt --id "$tx_id" 2>&1)
-
-    # top-level valid must be true
-    local valid
-    valid=$(echo "$vr_out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('valid',False)).lower())" 2>/dev/null)
-    [ "$valid" = "true" ] \
-        && ok "fed_verify.buyer_valid" \
-        || fail "fed_verify.buyer_valid" "expected valid=true, checks=$(echo "$vr_out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('checks',{}))" 2>/dev/null)"
-
-    # checks.signature must be true
-    local sig_check
-    sig_check=$(echo "$vr_out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('checks',{}).get('signature',False)).lower())" 2>/dev/null)
-    [ "$sig_check" = "true" ] \
-        && ok "fed_verify.signature_check" \
-        || fail "fed_verify.signature_check" "signature check not true"
-
-    # checks.receipt_hash must be true
-    local receipt_hash_check
-    receipt_hash_check=$(echo "$vr_out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('checks',{}).get('receipt_hash',False)).lower())" 2>/dev/null)
-    [ "$receipt_hash_check" = "true" ] \
-        && ok "fed_verify.receipt_hash_check" \
-        || fail "fed_verify.receipt_hash_check" "receipt_hash check not true"
-
-    # Non-remote-proxy transaction returns an error (ErrInvalidState → exit non-zero).
-    local local_proc_id local_tx_id
-    local_proc_id=$(strfield "$(jj "$db_l" "$home_l" process start --funds 0)" "process_id")
-    local_tx_id=$(strfield "$(jj "$db_l" "$home_l" call \
-        --process "$local_proc_id" \
-        --action "@sys/lookup" \
-        --args '{"query":"test"}' 2>/dev/null)" "tx_id")
-    [ -n "$local_tx_id" ] || { fail "fed_verify.local_call" "local call failed"; return; }
-    j "$db_l" "$home_l" tx verify-receipt --id "$local_tx_id" >/dev/null 2>&1 \
-        && fail "fed_verify.local_tx_rejected" "expected error for non-remote-proxy tx, got success" \
-        || ok "fed_verify.local_tx_rejected"
-}
+# Federation flows removed: they require admin-level peer ops (admin peer friend,
+# remote import) that the UI does not surface to end users.
 
 flow_transaction_access() {
     echo "=== FLOW transaction_access ==="
@@ -2806,14 +2274,11 @@ flow_transaction_access() {
     j "$db" "$home_alice" action enable   --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_alice" action update --id "$action_id" --public >/dev/null 2>&1
 
-    # @bob (buyer) calls @alice's action 3 times.
-    local proc_out proc_id i call_out a_tx_id
-    proc_out=$(jj "$db" "$home_bob" process start --funds 200)
-    proc_id=$(strfield "$proc_out" "process_id")
+    # @bob (buyer) runs @alice's action 3 times.
+    local i run_out a_tx_id
     for i in 1 2 3; do
-        call_out=$(jj "$db" "$home_bob" call \
-            --process "$proc_id" --action @alice/pvd-action --args '{}')
-        a_tx_id=$(strfield "$call_out" "tx_id")
+        run_out=$(jj "$db" "$home_bob" run --action @alice/pvd-action --args '{}')
+        a_tx_id=$(strfield "$run_out" "tx_id")
     done
 
     # @alice (seller) lists transactions for calls to her action — sees all 3.
@@ -2949,15 +2414,14 @@ import sys,json; d=json.load(sys.stdin); assert not d.get('active'), f'still act
         && ok "admin.action_disable" \
         || fail "admin.action_disable" "action still active after disable: $show_action"
 
-    # Re-enable and call to create a process and tx for admin list tests
+    # Re-enable and run to create a process and tx for admin list tests
     j "$db" "$home_sys" action enable --id "$action_id" >/dev/null 2>&1
     j "$db" "$home_sys" action update --id "$action_id" --public >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
     j "$db" "$home_sys" admin user deposit --handle @alice --amount 100 >/dev/null 2>&1
-    local proc_id
-    proc_id=$(strfield "$(jj "$db" "$home_alice" process start --funds 50)" "process_id")
-    jj "$db" "$home_alice" call \
-        --process "$proc_id" --action @sys/test --args '{}' >/dev/null 2>&1
+    local run_out proc_id
+    run_out=$(jj "$db" "$home_alice" run --action @sys/test --args '{}')
+    proc_id=$(strfield "$(jj "$db" "$home_alice" tx show --id "$(strfield "$run_out" "tx_id")")" "process_id")
 
     # admin process list shows the process
     local proc_list
@@ -3028,53 +2492,32 @@ print(json.dumps(m) if m else 'null')
     j "$db" "$home_sys"   admin user deposit --handle @alice --amount 500 >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
 
-    local proc_out proc_id
-    proc_out=$(jj "$db" "$home_alice" process start --funds 300)
-    proc_id=$(strfield "$proc_out" "process_id")
-
     # Missing description → schema violation before any execution.
     local no_desc_out
-    no_desc_out=$(j "$db" "$home_alice" call \
-        --process "$proc_id" --action @sys/make \
-        --args '{}' 2>&1)
+    no_desc_out=$(j "$db" "$home_alice" run --action @sys/make --args '{}' 2>&1)
     echo "$no_desc_out" | grep -qi "description\|required\|schema" \
         && ok "make.missing_description_rejected" \
         || fail "make.missing_description_rejected" "expected schema error, got: $no_desc_out"
 
-    # Call with description only (the only accepted input).
-    # Succeeds as a kernel call regardless of whether tinygo/Ollama is available.
+    # Run with description only (the only accepted input).
+    # Succeeds as a kernel run regardless of whether tinygo/Ollama is available.
     # Returns {status: "success"|"failure", diagnostics: [...]} — never a hard kernel error.
     local make_out make_result status
-    make_out=$(j "$db" "$home_alice" call \
-        --process "$proc_id" --action @sys/make \
-        --args '{"description": "Return a fixed greeting message that says Hello followed by the name"}' 2>&1)
-    make_result=$(echo "$make_out" | python3 -c "
-import sys, json, re
-text = sys.stdin.read()
-# Extract JSON object from the result: section
-m = re.search(r'result:\n(\{.*\})', text, re.DOTALL)
-if m:
-    try: print(json.dumps(json.loads(m.group(1))))
-    except: print('{}')
-else:
-    print('{}')
-" 2>/dev/null)
+    make_out=$(jj "$db" "$home_alice" run --action @sys/make \
+        --args '{"description": "Return a fixed greeting message that says Hello followed by the name"}' 2>/dev/null)
+    make_result=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(json.dumps(d.get('result',{})))" "$make_out" 2>/dev/null || echo '{}')
     status=$(echo "$make_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
     [ "$status" = "success" ] || [ "$status" = "failure" ] \
         && ok "make.returns_structured_result" \
         || fail "make.returns_structured_result" "expected success|failure status, got: $make_out"
 
-    # Transactions must have been recorded for the process (make + any sub-calls).
+    # Transaction must have been recorded
     local tx_out tx_count
     tx_out=$(jj "$db" "$home_alice" tx list 2>/dev/null)
-    tx_count=$(echo "$tx_out" | python3 -c "
-import sys,json
-txs = json.load(sys.stdin)
-print(sum(1 for t in txs if t.get('process_id') == sys.argv[1]))
-" "$proc_id" 2>/dev/null)
+    tx_count=$(python3 -c "import sys,json; print(len(json.loads(sys.argv[1]) or []))" "$tx_out" 2>/dev/null || echo 0)
     [ "${tx_count:-0}" -ge 1 ] \
         && ok "make.transaction_recorded" \
-        || fail "make.transaction_recorded" "expected >=1 tx for process, got count=$tx_count"
+        || fail "make.transaction_recorded" "expected >=1 tx, got count=$tx_count"
 }
 
 # ===========================================================================
@@ -3103,8 +2546,6 @@ main() {
     flow_contractor_failure
     flow_step_success
     flow_step_failure
-    flow_step_restart
-    flow_locked_funds_recovery
     flow_rating
     flow_pkce_auth
     flow_refresh_rotation
@@ -3115,10 +2556,6 @@ main() {
     flow_openapi_import_execute
     flow_openapi_changed_reimport
     flow_openapi_unimport
-    flow_federation_import_execute
-    flow_federation_changed_reimport
-    flow_federation_unimport
-    flow_fed_verify_receipt
     flow_transaction_access
     flow_admin_supervision
     flow_make

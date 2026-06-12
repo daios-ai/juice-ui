@@ -57,14 +57,7 @@ func authKernel() *httptest.Server {
 			`"active":` + boolStr(active) + `,"public":` + boolStr(public) + `,"price":0,` +
 			`"input_schema":{"type":"object","properties":{}},"output_schema":{"type":"object"}}`))
 	})
-	mux.HandleFunc("POST /v1/processes", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"process_id":"P1","available":20,"locked":0,"status":"open"}`))
-	})
-	mux.HandleFunc("POST /v1/processes/{id}/end", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("POST /v1/call", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{"status":"success","action_id":"A2","action_name":"synthesized","diagnostics":[]},"tx_id":"TX1","trace_id":"TR1"}`))
 	})
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -351,13 +344,15 @@ func TestStudioMakeActionInsufficientCredits(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	// Studio page must show the insufficient-credits warning instead of the form (R6.3.6).
+	// Studio page shows the synthesis form regardless of balance; the kernel
+	// enforces the credit check at run time (v0.3 behaviour).
 	body := getBody(t, cl, srv.URL+"/studio")
-	if strings.Contains(body, `action="/studio/make"`) {
-		t.Error("synthesis form must be hidden when credits < 20")
+	if !strings.Contains(body, `action="/studio/make"`) {
+		t.Error("synthesis form must always be shown (kernel enforces credit check on run)")
 	}
-	if !strings.Contains(strings.ToLower(body), "fewer than 20") {
-		t.Error("studio must show insufficient-credits message when balance < 20")
+	// The page must surface the user's current balance so they can see they're short.
+	if !strings.Contains(body, "5") {
+		t.Error("studio must show the user's current available balance")
 	}
 }
 
