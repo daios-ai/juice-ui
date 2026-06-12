@@ -52,7 +52,8 @@ server-side.
   templates/      HTML templates (not Go; no test file required)
   static/         CSS and client scripts (not Go; no test file required)
   ```
-
+* Always test a new/updated feature on a live kernel (start a new one if needed, 
+  just clean after).
 * Configuration is loaded from environment variables with safe local defaults.
   At minimum: kernel API base URL (default `http://127.0.0.1:4040`, the kernel's
   listen port), the UI listen address, and a session secret. Commit no secrets.

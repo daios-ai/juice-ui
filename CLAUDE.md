@@ -9,5 +9,6 @@
   - docs/API.md
   - docs/flows.sh
   - docs/juice-requirements.md
-  Never modify them.
+  These are files I write manually, and you must never change them,
+  only commit them.
 - Never attempt to commit before passing all tests and flows/user stories!
