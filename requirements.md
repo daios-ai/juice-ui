@@ -101,7 +101,7 @@ The UI MUST expose every user flow reachable over the kernel HTTP API:
   delete; ACL grant/revoke (`read`/`call`/`admin`); grant-all/revoke-all;
   OpenAPI import/unimport; stats; ratings list.
 * Processes: start, list, show, fund, end.
-* Call execution: `POST /v1/call`.
+* Call execution: `POST /v1/run`.
 * Transactions: list, show, rate.
 * Steps: step create/list/show/complete.
 
@@ -115,9 +115,12 @@ confirmed on the running kernel (§10); until then they are not mandatory:
 These kernel operations are CLI-only and MUST NOT be attempted from the UI:
 
 * **Admin / supervision:** user list/show, suspend/unsuspend, **credit
-  deposits**, admin action/process/transaction listings, admin action disable.
-* **Remote kernels / federation management:** `remote add/list/import/unimport`
-  and the federation import lifecycle.
+  deposits and withdrawals**, admin action/process/transaction listings, admin
+  action disable.
+* **Federation management:** friending/unfriending peers (`POST /v1/peers`,
+  `GET /v1/gossip`) and the remote import lifecycle are HTTP endpoints in v0.3
+  but remain out of scope — they are operator-level concerns with no user-facing
+  flow.
 
 The corresponding `flows.sh` flows are non-goals for this UI: `bootstrap`,
 `suspension`, `deposits`, `admin_supervision`, and all `federation_*` flows.
@@ -149,7 +152,7 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   that response rather than guessing. Destructive operations and `end` return
   204.
 * List responses are bare arrays; pagination metadata is in headers.
-* `POST /v1/call` and `POST /v1/steps/{id}/complete` always include `args`;
+* `POST /v1/run` and `POST /v1/steps/{id}/complete` always include `args`;
   empty input is `{}`.
 
 ## 5. Authentication and session
@@ -188,9 +191,8 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 * *(Mandatory, first-class.)* Action discovery is a core feature of the UI. The
   primary way to find actions is **natural-language search backed by
   `@sys/lookup`**: the user describes what they want, and the UI calls
-  `@sys/lookup` (required `query`, optional `limit`) via the normal call path
-  (`POST /v1/call`, through the funded-session abstraction in §6.5 — lookup is a
-  price-0 native action). Results are ranked `results[]` of `{action_id, name,
+  `@sys/lookup` (required `query`, optional `limit`) via `POST /v1/run` (lookup
+  is a price-0 native action; the process closes immediately). Results are ranked `results[]` of `{action_id, name,
   owner_handle, description, score}` and are presented prominently, each linking
   to the action detail / Run panel (§6.2). Because `action_id`, `owner_handle`,
   and `name` are returned together, lookup results also yield a callable
@@ -230,13 +232,14 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   surface the kernel's rejection clearly rather than reimplement its policy.
 * `@sys/make` is exposed in the creation zone as an AI-synthesis path alongside
   manual creation. The user provides a natural-language description; the BFF
-  provisions an ephemeral 20-credit process (start → `POST /v1/call` `@sys/make`
-  → end), shows synthesis progress, and renders the result inline:
-  `status="success"` → the created action's `@owner/name` linked to its edit
-  view; `status="failure"` → the `diagnostics[]` field as synthesis feedback
-  (not surfaced as a kernel error). The ephemeral process appears in closed
-  history (see §6.1). Fewer than 20 available credits blocks submission with a
-  clear message.
+  calls `POST /v1/run {action: "@sys/make", args: {description: "..."}}` (the
+  kernel atomically creates and closes the process), shows synthesis progress,
+  and renders the result inline from the response
+  `{status, action_id, action_name, diagnostics, tests}`:
+  `status="success"` → `action_name` (`@owner/name`) linked to its edit view;
+  `status="failure"` → the `diagnostics[]` field as synthesis feedback (not
+  surfaced as a kernel error). The closed process appears in history (see §6.1).
+  Fewer than 20 available credits blocks submission with a clear message.
 
 ### 6.4 OpenAPI import
 
@@ -254,20 +257,20 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   (`POST /v1/actions/unimport`) deactivates matching actions without deleting
   history.
 
-### 6.5 Funded sessions and calling actions
+### 6.5 Calling actions
 
-* The process/escrow model is abstracted as a "funded session." For **price-0
-  actions** (including `@sys/lookup` and the native chat action, naming per §4),
-  the BFF auto-provisions a zero-funded ephemeral process, executes the call,
-  and ends it. This process is **hidden from the run UI**, not nonexistent: the
-  kernel still creates it, and once ended it appears as a closed process in
-  history (see §6.1). The UI MUST NOT imply no process occurred.
-* For **paid actions**, the user opens or reuses a funded session
-  (`POST /v1/processes`), and calls draw from it. The UI shows escrow draining,
-  supports top-up (`POST /v1/processes/{id}/fund`), and "end & reclaim"
-  (`POST /v1/processes/{id}/end`) which refunds the remainder.
-* Calls use `POST /v1/call` with `action` as `@owner/name` and `args` defaulting
-  to `{}`. A cost preview is shown before the call.
+* Every call goes through `POST /v1/run {action, args}`. The kernel atomically
+  creates a process funded with exactly `action.price`, executes the root call,
+  and closes the process when the call returns (unless outstanding steps keep it
+  open). The resulting process is **not hidden**: it appears immediately in closed
+  process history (see §6.1), or as an open process while steps remain
+  outstanding. The UI MUST NOT imply no process occurred.
+* A process kept open by outstanding steps appears in the dashboard open-process
+  list. The user can force-abort it (`POST /v1/processes/{id}/end`), which
+  cancels waiting steps and returns their parked funds to the user.
+* A cost preview (action.price) is shown before the call. The user needs
+  sufficient available credits; `ErrInsufficientFunds` is surfaced with a clear
+  message if not.
 * Call input is collected via a form generated from `input_schema` (typed fields,
   required markers, field descriptions as help text), with a raw-JSON escape
   hatch for advanced input. `output_schema` is shown as the expected result
@@ -290,9 +293,10 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   deleted), status, and cost breakdown. The transaction detail page renders as a
   receipt: action ref, buyer and seller parties, gross/fee/net breakdown, inline
   args and result, `reason` on failure, and the rating control for the buyer.
-* *(Conditional — §10.)* Once a receipt-read HTTP route is confirmed, a
-  transaction detail view shows its immutable receipt (hashes, economic fields,
-  signature) for both success and failure.
+* A transaction detail view shows its immutable receipt via
+  `GET /v1/transactions/{id}/receipt-verification`, which returns per-check
+  results (signature validity, hash integrity, settlement amounts,
+  args/reply match) and a top-level `valid` flag, for both success and failure.
 * *(Conditional — §10.)* Once a trace-read HTTP route is confirmed, a transaction
   detail view shows its trace tree with cumulative `cost` and `latency_ms`,
   visualizing contractor sub-calls and step-completed calls as cross-process
@@ -305,9 +309,9 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 ### 6.7 Steps
 
 * Create a step (`POST /v1/steps`) with `action` (`@owner/name`), `process_id`,
-  `partial_args`, `input_schema`, and `required_caller` (`@handle`). The kernel
-  stores `required_caller_user_id`; the UI presents the handle and passes it in
-  `required_caller`.
+  `parent_trace_id`, `partial_args`, `input_schema`, and `required_caller`
+  (`@handle`). The kernel stores `required_caller_user_id`; the UI presents the
+  handle and passes it in `required_caller`.
 * List steps (`GET /v1/steps`), filterable by `process_id` and `status`
   (`waiting` / `running` / `done`); show a single step (`GET /v1/steps/{id}`),
   including the computed `action` (`@owner/name`).
@@ -367,9 +371,9 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
 * Required coverage includes: the typed API client and error mapping; session
   lifecycle including PKCE handshake and single-flight refresh rotation; CSRF
   protection on state-changing routes; JSON-Schema-to-form rendering; the
-  funded-session abstraction (ephemeral price-0 process and paid-session
-  open/fund/end); the three call-outcome classes; and access control of
-  owner-only UI affordances.
+  atomic run primitive (`POST /v1/run`, cost preview, process auto-closure,
+  force-end); the three call-outcome classes; and access control of owner-only
+  UI affordances.
 
 ## 10. Open items to confirm against the running kernel
 
@@ -377,10 +381,10 @@ Each item below is a prerequisite for a feature marked conditional above. The
 feature is mandatory only once the corresponding endpoint is confirmed on the
 running kernel; otherwise it stays conditional or is dropped from scope.
 
-* *(traces & receipts — §6.6)* The exact HTTP routes and response shapes for
-  trace and receipt reads are not listed in `docs/API.md`; confirm them against
-  the running kernel, then make the conditional §6.6 bullets mandatory and update
-  `docs/API.md`.
+* *(traces — §6.6)* No direct trace-read HTTP route is listed in `docs/API.md`;
+  confirm whether one exists on the running kernel, then make the conditional
+  §6.6 trace bullet mandatory and update `docs/API.md`. (Receipts are confirmed
+  and no longer conditional — see `GET /v1/transactions/{id}/receipt-verification`.)
 * *(action naming — §4)* Confirmed: action names may contain `/`. The native
   chat action is `@sys/llm/chat`. The parse rule (split on first `/` after `@`)
   is unambiguous and mandatory.
