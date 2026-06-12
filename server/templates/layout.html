@@ -45,7 +45,7 @@
         </form>
         {{if .Handle}}
         <span class="sidebar-item handle" title="{{.Handle}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl mono">{{.Handle}}</span></span>
-        <span class="sidebar-item credits" title="Available credits"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl money">{{money .Available}}</span></span>
+        <span class="sidebar-item credits" title="{{money .Available}} Credits"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl money">{{money .Available}}</span></span>
         <form method="post" action="/logout" class="logout">
           {{.CSRFField}}
           <button type="submit" class="btn-quiet" title="Sign out"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl">Sign out</span></button>
