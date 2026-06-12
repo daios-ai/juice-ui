@@ -30,41 +30,7 @@
       hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
 
-  {{if not $d.Form.UseRawFallback}}
-  <label class="row" style="font-weight:600">
-    <input type="checkbox" name="use_raw" value="1" data-raw-toggle style="width:auto"> Edit input as raw JSON
-  </label>
-  <div data-fields class="stack">
-    {{range $d.Form.Fields}}
-    <div class="field">
-      <label for="f_{{.Name}}">{{.Name}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</label>
-      {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
-      <input type="hidden" name="t_{{.Name}}" value="{{.Type}}">
-      {{if .Enum}}
-      <select id="f_{{.Name}}" name="f_{{.Name}}">
-        {{range .Enum}}<option value="{{.}}">{{.}}</option>{{end}}
-      </select>
-      {{else if eq .Type "boolean"}}
-      <select id="f_{{.Name}}" name="f_{{.Name}}"><option value="false">false</option><option value="true">true</option></select>
-      {{else if or (eq .Type "integer") (eq .Type "number")}}
-      <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" {{if eq .Type "integer"}}step="1"{{end}}>
-      {{else if or (eq .Type "object") (eq .Type "array")}}
-      <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}">{{.Example}}</textarea>
-      {{else}}
-      <input id="f_{{.Name}}" name="f_{{.Name}}" type="text">
-      {{end}}
-    </div>
-    {{end}}
-  </div>
-  {{end}}
-
-  <div class="field" data-raw{{if not $d.Form.UseRawFallback}} hidden{{end}}>
-    <label for="raw_args">Arguments (JSON)</label>
-    <p class="help">{{if $d.Form.Example}}Pre-filled with the expected shape — edit the values. {{end}}Defaults to <code>{}</code> when empty.</p>
-    <textarea id="raw_args" name="raw_args" placeholder="{}">{{if $d.Form.Example}}{{$d.Form.Example}}{{end}}</textarea>
-  </div>
-
-  {{if not $d.Form.UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
+  {{template "_form_fields" $d.Form}}
   <div class="row">
     <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run ({{money $d.Action.Price}} credits){{else}}Run{{end}}</button>
     <div id="run-progress" class="progress" role="status" aria-live="polite">

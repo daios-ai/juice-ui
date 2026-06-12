@@ -319,6 +319,14 @@ The UI MUST conform to the kernel API design rules in `docs/API.md`:
   `required_caller` user. The body carries `args` (defaulting to `{}`);
   completion merges caller `args` with the step's `partial_args` and executes
   the call. The response shape is `{result, tx_id, trace_id, step_id}`.
+* The steps UI is an **inbox**: waiting steps that require the signed-in user
+  appear as completable cards; all others go to a history table. The
+  create-step form is a developer tool, shown collapsed.
+* The step completion form shares the same schema-driven field rendering and
+  outcome display as the run UI (§6.5); `partial_args` fields are shown
+  read-only as locked context; only fields absent from `partial_args` are
+  editable. When `partial_args` covers all schema fields, the form collapses
+  to a single confirmation button.
 
 ## 7. Error handling
 

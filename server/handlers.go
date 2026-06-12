@@ -89,9 +89,15 @@ type txView struct {
 	Error   string
 }
 
+type stepEntry struct {
+	Step client.Step
+	Form StepFormModel
+}
+
 type stepsView struct {
 	MyID    string
-	Steps   []client.Step
+	Inbox   []stepEntry          // waiting steps that require this user
+	History []client.Step        // completed/running/other steps
 	Actions map[string]client.Action // next_action_id → action, for name display
 	Error   string
 }
@@ -731,7 +737,8 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var myID string
-	var steps []client.Step
+	var inbox []stepEntry
+	var history []client.Step
 	actions := map[string]client.Action{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
@@ -739,19 +746,25 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		myID = me.ID
-		st, e := s.client.ListSteps(ctx, tok, "", "")
+		steps, e := s.client.ListSteps(ctx, tok, "", "")
 		if e != nil {
 			return e
 		}
-		steps = st
 		seen := map[string]bool{}
 		for _, step := range steps {
-			if step.NextActionID == "" || seen[step.NextActionID] {
-				continue
+			if step.NextActionID != "" && !seen[step.NextActionID] {
+				seen[step.NextActionID] = true
+				if a, ae := s.client.GetAction(ctx, tok, step.NextActionID); ae == nil {
+					actions[step.NextActionID] = a
+				}
 			}
-			seen[step.NextActionID] = true
-			if a, ae := s.client.GetAction(ctx, tok, step.NextActionID); ae == nil {
-				actions[step.NextActionID] = a
+			if step.Status == "waiting" && step.RequiredCallerUserID == myID {
+				inbox = append(inbox, stepEntry{
+					Step: step,
+					Form: BuildStepForm(step.InputSchema, step.PartialArgs),
+				})
+			} else {
+				history = append(history, step)
 			}
 		}
 		return nil
@@ -759,7 +772,12 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "steps", "Steps", stepsView{MyID: myID, Steps: steps, Actions: actions})
+	s.renderPage(w, r, http.StatusOK, "steps", "Steps", stepsView{
+		MyID:    myID,
+		Inbox:   inbox,
+		History: history,
+		Actions: actions,
+	})
 }
 
 func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
@@ -797,21 +815,48 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	args, err := rawJSONOrEmpty(r.FormValue("args"))
-	if err != nil {
-		s.flashRedirect(w, r, "/steps", "Arguments must be valid JSON.")
-		return
-	}
-	err = s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.CompleteStep(ctx, tok, id, args)
-		return e
+	args, argErr := buildArgs(r)
+
+	var outcome Outcome
+	err := s.sessions.Do(ctx, func(tok string) error {
+		if argErr != nil {
+			return nil // handled after sessions.Do
+		}
+		out, e := s.caller.CompleteStep(ctx, tok, id, args)
+		if e != nil {
+			return e
+		}
+		outcome = out
+		return nil
 	})
-	if isAuthErr(err) {
-		s.handleErr(w, r, err)
+	if err != nil {
+		if isAuthErr(err) {
+			_ = s.sessions.Logout(ctx)
+			if isHTMX(r) {
+				w.Header().Set("HX-Redirect", "/login")
+				return
+			}
+			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+			return
+		}
+		if isHTMX(r) {
+			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
+			return
+		}
+		s.flashRedirect(w, r, "/steps", userMessage(err))
 		return
 	}
-	if err != nil {
-		s.flashRedirect(w, r, "/steps", userMessage(err))
+	if argErr != nil {
+		msg := "Invalid arguments: " + argErr.Error()
+		if isHTMX(r) {
+			_ = s.render.Fragment(w, http.StatusOK, "_error", msg)
+			return
+		}
+		s.flashRedirect(w, r, "/steps", msg)
+		return
+	}
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
 		return
 	}
 	s.flashRedirect(w, r, "/steps", "Step completed.")

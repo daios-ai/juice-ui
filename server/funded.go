@@ -62,46 +62,62 @@ func NewCaller(c *client.Client) *Caller { return &Caller{c: c} }
 // for the caller to handle generically.
 func (k *Caller) Run(ctx context.Context, token, ref string, args json.RawMessage) (Outcome, error) {
 	reply, err := k.c.Run(ctx, token, ref, args)
-	if err == nil {
-		out := Outcome{
-			Class:   Success,
-			Result:  reply.Result,
-			TxID:    reply.TxID,
-			TraceID: reply.TraceID,
-			Message: "Success.",
-		}
-		if reply.TxID != "" {
-			if tx, e := k.c.GetTransaction(ctx, token, reply.TxID); e == nil {
-				out.Cost = &Cost{Gross: tx.Gross, Fee: tx.Fee, Net: tx.Net}
-			}
-		}
-		return out, nil
+	if err != nil {
+		return classifyErr(err)
 	}
+	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.TraceID), nil
+}
 
+// CompleteStep completes a waiting step. The outcome classification rules are
+// identical to Run: Rejected for input validation failures, Failed for
+// execution errors, Success otherwise.
+func (k *Caller) CompleteStep(ctx context.Context, token, id string, args json.RawMessage) (Outcome, error) {
+	reply, err := k.c.CompleteStep(ctx, token, id, args)
+	if err != nil {
+		return classifyErr(err)
+	}
+	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.TraceID), nil
+}
+
+// successOutcome builds a Success outcome and enriches it with transaction cost
+// details when a TxID is available.
+func (k *Caller) successOutcome(ctx context.Context, token string, result json.RawMessage, txID, traceID string) Outcome {
+	out := Outcome{
+		Class:   Success,
+		Result:  result,
+		TxID:    txID,
+		TraceID: traceID,
+		Message: "Success.",
+	}
+	if txID != "" {
+		if tx, e := k.c.GetTransaction(ctx, token, txID); e == nil {
+			out.Cost = &Cost{Gross: tx.Gross, Fee: tx.Fee, Net: tx.Net}
+		}
+	}
+	return out
+}
+
+// classifyErr maps a kernel error to an Outcome or propagates non-outcome
+// errors (auth, rate-limit, not-found, etc.) to the caller.
+func classifyErr(err error) (Outcome, error) {
 	ke, ok := client.AsKernelError(err)
 	if !ok {
 		return Outcome{}, err
 	}
 	switch ke.Kind {
 	case client.KindInvalidInput:
-		// 422: input-schema rejection (process never created, no charge).
-		// Output-schema violations also surface here; financial outcome is
-		// identical (user not charged either way).
 		return Outcome{
 			Class:   Rejected,
 			Message: "Not sent — you were not charged. " + ke.UserMessage(),
 			Detail:  ke.KernelMessage,
 		}, nil
 	case client.KindExecutionFailed, client.KindTimeout, client.KindInvalidState:
-		// Execution began, failed, and was fully refunded.
 		return Outcome{
 			Class:   Failed,
 			Message: ke.UserMessage(),
 			Detail:  ke.KernelMessage,
 		}, nil
 	default:
-		// Auth, unauthorized, insufficient funds, not found, rate limited:
-		// not outcome classes; let the handler map them.
 		return Outcome{}, err
 	}
 }

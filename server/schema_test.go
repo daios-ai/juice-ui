@@ -136,6 +136,79 @@ func TestSchemaExampleScalars(t *testing.T) {
 	}
 }
 
+func TestBuildStepFormAllEditable(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}},"required":["a"]}`)
+	sfm := BuildStepForm(schema, nil)
+	if sfm.IsApproval {
+		t.Error("should not be approval")
+	}
+	if len(sfm.Locked) != 0 {
+		t.Errorf("expected 0 locked, got %d", len(sfm.Locked))
+	}
+	if len(sfm.Editable.Fields) != 2 {
+		t.Errorf("expected 2 editable, got %d", len(sfm.Editable.Fields))
+	}
+}
+
+func TestBuildStepFormPartialLock(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`)
+	partial := json.RawMessage(`{"a":"hello"}`)
+	sfm := BuildStepForm(schema, partial)
+	if sfm.IsApproval {
+		t.Error("should not be approval — b is still editable")
+	}
+	if len(sfm.Locked) != 1 || sfm.Locked[0].Name != "a" || sfm.Locked[0].Value != `"hello"` {
+		t.Errorf("locked wrong: %+v", sfm.Locked)
+	}
+	if len(sfm.Editable.Fields) != 1 || sfm.Editable.Fields[0].Name != "b" {
+		t.Errorf("editable wrong: %+v", sfm.Editable.Fields)
+	}
+}
+
+func TestBuildStepFormAllLocked(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`)
+	partial := json.RawMessage(`{"a":"hello","b":42}`)
+	sfm := BuildStepForm(schema, partial)
+	if !sfm.IsApproval {
+		t.Error("all fields locked → IsApproval should be true")
+	}
+	if len(sfm.Locked) != 2 {
+		t.Errorf("expected 2 locked, got %d", len(sfm.Locked))
+	}
+	if len(sfm.Editable.Fields) != 0 {
+		t.Errorf("expected 0 editable, got %d", len(sfm.Editable.Fields))
+	}
+}
+
+func TestBuildStepFormInvalidPartial(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"x":{"type":"string"}}}`)
+	for _, bad := range []json.RawMessage{[]byte("not json"), []byte(""), nil} {
+		sfm := BuildStepForm(schema, bad)
+		if sfm.IsApproval {
+			t.Error("invalid partial_args should produce all-editable form")
+		}
+		if len(sfm.Locked) != 0 {
+			t.Errorf("invalid partial_args should produce 0 locked, got %d", len(sfm.Locked))
+		}
+		if len(sfm.Editable.Fields) != 1 {
+			t.Errorf("invalid partial_args should keep all fields editable")
+		}
+	}
+}
+
+func TestBuildStepFormExtraKeysInPartial(t *testing.T) {
+	// partial_args may contain keys not in the schema (forward-compat).
+	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"}}}`)
+	partial := json.RawMessage(`{"a":"v","extra":true}`)
+	sfm := BuildStepForm(schema, partial)
+	if !sfm.IsApproval {
+		t.Error("all schema fields locked → IsApproval should be true")
+	}
+	if len(sfm.Locked) != 2 {
+		t.Errorf("both schema and extra keys locked, expected 2, got %d", len(sfm.Locked))
+	}
+}
+
 func TestFormJSONRoundTrip(t *testing.T) {
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{"q":{"type":"string","description":"d"}},"required":["q"]}`))
 	s, err := fm.FormJSON()

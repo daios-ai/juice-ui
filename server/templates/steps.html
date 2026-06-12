@@ -4,69 +4,109 @@
 
 {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
 
-<h2>Create a step</h2>
-<form class="card stack" method="post" action="/steps/create">
-  {{.CSRFField}}
-  <div class="field">
-    <label for="s_process">Process ID <span class="req">*</span></label>
-    <input id="s_process" name="process_id" type="text" placeholder="UUID" required>
+<h2>Inbox</h2>
+{{if .Data.Inbox}}
+{{range .Data.Inbox}}
+<div class="card stack" id="step-{{.Step.ID}}">
+  <div>
+    <p class="row" style="margin:0;gap:.75rem">
+      <span class="ref mono">{{with index $.Data.Actions .Step.NextActionID}}{{.Ref}}{{else}}{{truncate 8 .Step.NextActionID}}…{{end}}</span>
+      <span class="pill">waiting</span>
+      <span class="muted" style="font-size:.85rem">{{truncate 19 .Step.CreatedAt}}</span>
+    </p>
   </div>
-  <div class="field">
-    <label for="s_action">Action <span class="req">*</span></label>
-    <p class="help">The action to call on completion, as <span class="ref mono">@owner/name</span>.</p>
-    <input id="s_action" name="action" type="text" placeholder="@owner/action" required>
-  </div>
-  <div class="field">
-    <label for="s_partial">Partial args (JSON)</label>
-    <p class="help">Pre-bound input merged with the caller's input on completion. Caller's keys win.</p>
-    <textarea id="s_partial" name="partial_args" rows="3" placeholder="{}"></textarea>
-  </div>
-  <div class="field">
-    <label for="s_schema">Input schema (JSON)</label>
-    <p class="help">Constrains what the caller may supply. Empty allows any input.</p>
-    <textarea id="s_schema" name="input_schema" rows="3" placeholder='{"type":"object"}'></textarea>
-  </div>
-  <div class="field">
-    <label for="s_caller">Required caller <span class="req">*</span></label>
-    <p class="help">Only this user may complete the step, as <span class="ref mono">@handle</span>.</p>
-    <input id="s_caller" name="required_caller" type="text" placeholder="@handle" required>
-  </div>
-  <div class="field">
-    <label for="s_trace">Parent trace ID (optional)</label>
-    <input id="s_trace" name="parent_trace_id" type="text" placeholder="UUID">
-  </div>
-  <button class="btn-primary" type="submit">Create step</button>
-</form>
 
-<h2>Your steps</h2>
-{{if .Data.Steps}}
+  {{if .Form.Locked}}
+  <section>
+    <p class="help" style="margin:0 0 .4rem">Pre-filled by the creator:</p>
+    <dl style="display:grid;grid-template-columns:max-content 1fr;gap:.2rem .75rem;margin:0">
+      {{range .Form.Locked}}
+      <dt class="mono" style="font-weight:600">{{.Name}}</dt>
+      <dd style="margin:0"><code class="mono">{{.Value}}</code></dd>
+      {{end}}
+    </dl>
+  </section>
+  {{end}}
+
+  <div id="step-result-{{.Step.ID}}"></div>
+
+  {{if .Form.IsApproval}}
+  <form method="post" action="/steps/{{.Step.ID}}/complete"
+        hx-post="/steps/{{.Step.ID}}/complete"
+        hx-target="#step-result-{{.Step.ID}}" hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']">
+    {{$.CSRFField}}
+    <button class="btn-primary" type="submit">Confirm</button>
+  </form>
+  {{else}}
+  <form class="stack" method="post" action="/steps/{{.Step.ID}}/complete" data-run-panel
+        hx-post="/steps/{{.Step.ID}}/complete"
+        hx-target="#step-result-{{.Step.ID}}" hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']">
+    {{$.CSRFField}}
+    {{template "_form_fields" .Form.Editable}}
+    <button class="btn-primary" type="submit">Complete</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+{{else}}
+<p class="muted">Your inbox is empty — no steps waiting for you.</p>
+{{end}}
+
+<h2>History</h2>
+{{if .Data.History}}
 <table>
   <thead>
-    <tr><th>ID</th><th>Next action</th><th>Input</th><th>Status</th><th>Caller</th><th>Created</th><th></th></tr>
+    <tr><th>ID</th><th>Action</th><th>Status</th><th>Caller</th><th>Created</th></tr>
   </thead>
   <tbody>
-  {{range .Data.Steps}}
+  {{range .Data.History}}
   <tr>
     <td class="id mono">{{truncate 8 .ID}}…</td>
-    <td class="mono">
-      {{with index $.Data.Actions .NextActionID}}{{.Ref}}{{else}}<span class="muted">{{truncate 8 .NextActionID}}…</span>{{end}}
-    </td>
-    <td style="max-width:24rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" class="mono" title="{{jsonCompact .PartialArgs}}">{{truncate 60 (jsonCompact .PartialArgs)}}</td>
-    <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "running"}}status-escrow{{else}}{{end}}">{{.Status}}</span></td>
+    <td class="mono">{{with index $.Data.Actions .NextActionID}}{{.Ref}}{{else}}<span class="muted">{{truncate 8 .NextActionID}}…</span>{{end}}</td>
+    <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "running"}}status-escrow{{end}}">{{.Status}}</span></td>
     <td class="mono muted">{{if eq .RequiredCallerUserID $.Data.MyID}}you{{else}}{{truncate 8 .RequiredCallerUserID}}…{{end}}</td>
     <td class="muted">{{truncate 19 .CreatedAt}}</td>
-    <td>
-      {{if and (eq .Status "waiting") (eq .RequiredCallerUserID $.Data.MyID)}}
-      <form class="stack" method="post" action="/steps/{{.ID}}/complete" style="min-width:16rem">
-        {{$.CSRFField}}
-        <textarea name="args" rows="2" placeholder="{}" style="font-size:.85rem"></textarea>
-        <button class="btn-primary" type="submit" style="align-self:flex-start">Complete</button>
-      </form>
-      {{end}}
-    </td>
   </tr>
   {{end}}
   </tbody>
 </table>
-{{else}}<p class="muted">No steps yet.</p>{{end}}
+{{else}}<p class="muted">No history yet.</p>{{end}}
+
+<details style="margin-top:1.5rem">
+  <summary style="cursor:pointer;font-weight:600">Create a step (developer tool)</summary>
+  <form class="card stack" method="post" action="/steps/create" style="margin-top:.75rem">
+    {{.CSRFField}}
+    <div class="field">
+      <label for="s_process">Process ID <span class="req">*</span></label>
+      <input id="s_process" name="process_id" type="text" placeholder="UUID" required>
+    </div>
+    <div class="field">
+      <label for="s_action">Action <span class="req">*</span></label>
+      <p class="help">The action to call on completion, as <span class="ref mono">@owner/name</span>.</p>
+      <input id="s_action" name="action" type="text" placeholder="@owner/action" required>
+    </div>
+    <div class="field">
+      <label for="s_partial">Partial args (JSON)</label>
+      <p class="help">Pre-bound input merged with the caller's input on completion. Caller's keys win.</p>
+      <textarea id="s_partial" name="partial_args" rows="3" placeholder="{}"></textarea>
+    </div>
+    <div class="field">
+      <label for="s_schema">Input schema (JSON)</label>
+      <p class="help">Constrains what the caller may supply. Empty allows any input.</p>
+      <textarea id="s_schema" name="input_schema" rows="3" placeholder='{"type":"object"}'></textarea>
+    </div>
+    <div class="field">
+      <label for="s_caller">Required caller <span class="req">*</span></label>
+      <p class="help">Only this user may complete the step, as <span class="ref mono">@handle</span>.</p>
+      <input id="s_caller" name="required_caller" type="text" placeholder="@handle" required>
+    </div>
+    <div class="field">
+      <label for="s_trace">Parent trace ID (optional)</label>
+      <input id="s_trace" name="parent_trace_id" type="text" placeholder="UUID">
+    </div>
+    <button class="btn-primary" type="submit">Create step</button>
+  </form>
+</details>
 {{end}}

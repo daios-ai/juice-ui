@@ -202,6 +202,69 @@ func enumStrings(raw []json.RawMessage) []string {
 	return out
 }
 
+// LockedField is a pre-filled field from the step's partial_args, shown
+// read-only so the completer understands the pre-set context.
+type LockedField struct {
+	Name  string
+	Value string // compact JSON representation of the value
+}
+
+// StepFormModel splits a step's input into what the creator already bound
+// (Locked) and what the required caller must still supply (Editable).
+// IsApproval is true when there are no editable fields and the user only
+// needs to confirm.
+type StepFormModel struct {
+	Editable   FormModel
+	Locked     []LockedField
+	IsApproval bool
+}
+
+// BuildStepForm derives a completion form from the step's input_schema and
+// partial_args. Fields present in partial_args are moved to Locked; fields
+// absent remain in Editable. Nil or invalid partial_args is treated as empty
+// (all fields editable).
+func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
+	full := BuildForm(inputSchema)
+
+	// Parse partial_args into a map. Any failure → treat as empty.
+	bound := map[string]json.RawMessage{}
+	if len(bytes.TrimSpace(partialArgs)) > 0 {
+		_ = json.Unmarshal(partialArgs, &bound)
+	}
+
+	if len(bound) == 0 {
+		return StepFormModel{Editable: full}
+	}
+
+	// Split schema fields into locked (present in partial_args) and editable.
+	var locked []LockedField
+	var editFields []Field
+	inSchema := make(map[string]bool, len(full.Fields))
+	for _, f := range full.Fields {
+		inSchema[f.Name] = true
+		if val, ok := bound[f.Name]; ok {
+			locked = append(locked, LockedField{Name: f.Name, Value: string(val)})
+		} else {
+			editFields = append(editFields, f)
+		}
+	}
+	// Include bound keys not in the schema (no type info, show raw value).
+	for _, k := range orderedKeys(partialArgs) {
+		if !inSchema[k] {
+			locked = append(locked, LockedField{Name: k, Value: string(bound[k])})
+		}
+	}
+
+	editFM := FormModel{
+		Fields:         editFields,
+		UseRawFallback: full.UseRawFallback,
+		Example:        full.Example,
+	}
+	// Approval: structured schema and all fields are locked.
+	isApproval := !full.UseRawFallback && len(editFields) == 0
+	return StepFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
+}
+
 // FormJSON returns the FormModel encoded for the client-side hydrator
 // (schema-form.js reads it from a <script type="application/json"> blob).
 func (fm FormModel) FormJSON() (string, error) {

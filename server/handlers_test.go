@@ -393,6 +393,57 @@ func TestStudioLifecycleHtmxSwap(t *testing.T) {
 	}
 }
 
+func TestStepsInboxShowsWaitingStep(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/steps")
+
+	// S1 is waiting and requires U1 (the signed-in user) → must appear in Inbox.
+	if !strings.Contains(body, "Inbox") {
+		t.Error("steps page must have an Inbox section")
+	}
+	if !strings.Contains(body, `action="/steps/S1/complete"`) {
+		t.Error("inbox must contain the step completion form for S1")
+	}
+}
+
+func TestCompleteStepHTMX(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/steps")
+	tok := csrfTokenFrom(t, body)
+
+	form := url.Values{"raw_args": {"{}"}, "gorilla.csrf.Token": {tok}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/steps/S1/complete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	fragment, _ := io.ReadAll(resp.Body)
+	frag := string(fragment)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("complete step returned %d, body: %s", resp.StatusCode, frag)
+	}
+	if !strings.Contains(frag, "Success") {
+		t.Error("complete step HTMX response must show success outcome")
+	}
+	if strings.Contains(frag, "<html") {
+		t.Error("HTMX complete step must return a fragment, not a full page")
+	}
+}
+
 func TestStepsPageRendersListAndForm(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
