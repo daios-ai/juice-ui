@@ -49,6 +49,12 @@
             <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg><span class="lbl">Theme</span>
           </button>
         </form>
+        <form method="post" action="/logout" class="logout">
+          {{.CSRFField}}
+          <button type="submit" class="btn-icon" title="Sign out">
+            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl">Sign out</span>
+          </button>
+        </form>
       </div>
     </aside>
     {{end}}
@@ -86,19 +92,10 @@
           <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
         </a>
         <div class="account-menu">
-          <span class="handle mono" title="{{.Handle}}">{{.Handle}}</span>
           <span class="credits money">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span>
-          <form method="post" action="/theme" class="theme-toggle">
-            {{.CSRFField}}
-            <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
-            <button type="submit" class="btn-icon" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme" title="Toggle theme">
-              <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
-            </button>
-          </form>
-          <form method="post" action="/logout">
-            {{.CSRFField}}
-            <button type="submit" class="btn-quiet" title="Sign out"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl"> Sign out</span></button>
-          </form>
+          <a href="/wallet" class="topbar-user" title="{{.Handle}}">
+            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
+          </a>
         </div>
       </header>
       {{end}}
