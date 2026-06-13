@@ -1,7 +1,7 @@
 {{define "_action_card"}}
 <article class="card">
   <h3><a href="/actions/{{.ID}}">{{.Name}}</a></h3>
-  <p class="ref mono">{{.Action}}</p>
+  <p class="ref mono">{{.Ref}}</p>
   {{if .Description}}<p>{{truncate 160 .Description}}</p>{{end}}
   <p class="row">
     {{if gt .Price 0}}<span class="money">{{money .Price}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span>{{else}}<span class="muted">free</span>{{end}}
@@ -28,6 +28,8 @@
 <div class="outcome failed" role="status">
   <strong>The action failed — your funds were fully refunded.</strong>
   <p>{{.Message}}</p>
+  {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
+  <p><a href="/wallet">Check your wallet ledger for the refund →</a></p>
 </div>
 {{else}}
 <div class="outcome success" role="status">
@@ -160,5 +162,25 @@
   <p>No diagnostic detail was returned. Try refining your description.</p>
   {{end}}
 </div>
+{{end}}
+{{end}}
+
+{{define "_schema_panel"}}
+{{if not .UseRawFallback}}
+<table class="schema-table">
+  <thead><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr></thead>
+  <tbody>
+  {{range .Fields}}
+  <tr>
+    <td class="mono">{{.Name}}</td>
+    <td class="mono muted">{{.Type}}</td>
+    <td>{{if .Required}}<span title="required" aria-label="required">✓</span>{{end}}</td>
+    <td class="muted">{{.Description}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No structured schema defined.</p>
 {{end}}
 {{end}}

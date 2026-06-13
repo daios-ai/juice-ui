@@ -19,8 +19,9 @@ import (
 type loginView struct{ Error, Notice string }
 
 type walletView struct {
-	User         client.User
-	Transactions []client.Transaction
+	User          client.User
+	Transactions  []client.Transaction
+	OpenProcesses []client.Process
 }
 
 type studioEarnings struct {
@@ -50,6 +51,7 @@ type actionView struct {
 	Action   client.Action
 	HasStats bool
 	Stats    client.Stats
+	Ratings  []client.Rating
 	Form     FormModel
 	IsOwner  bool
 	IsPaid   bool
@@ -61,6 +63,7 @@ type studioView struct {
 	User     client.User
 	Cards    []myActionCardView
 	Earnings studioEarnings
+	Filter   string // "active" | "inactive" | "" (all)
 	Error    string
 	Notice   string
 }
@@ -277,12 +280,14 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		view.User = u
 		txs, _ := s.client.ListTransactions(ctx, tok, "")
 		view.Transactions = txs
+		procs, _ := s.client.ListProcesses(ctx, tok)
+		view.OpenProcesses = filterStatus(procs, "open", true)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view)
+	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.User.Available)
 }
 
 // ---- inbox ----
@@ -290,6 +295,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var myID string
+	var myAvailable int64
 	var inbox []stepEntry
 	var history []client.Step
 	actions := map[string]client.Action{}
@@ -299,6 +305,7 @@ func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		myID = me.ID
+		myAvailable = me.Available
 		steps, e := s.client.ListSteps(ctx, tok, "", "")
 		if e != nil {
 			return e
@@ -330,7 +337,7 @@ func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
 		Inbox:   inbox,
 		History: history,
 		Actions: actions,
-	})
+	}, myAvailable)
 }
 
 const (
@@ -400,6 +407,9 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats, view.HasStats = st, true
 		}
+		if ratings, e := s.client.ActionRatings(ctx, tok, id); e == nil {
+			view.Ratings = ratings
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -425,7 +435,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		}
 		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerUserID == me.ID, IsPaid: a.Price > 0}
 		if argErr == nil {
-			out, e := s.caller.Run(ctx, tok, a.Action, args)
+			out, e := s.caller.Run(ctx, tok, a.Ref(), args)
 			if e != nil {
 				return e
 			}
@@ -436,22 +446,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 	// The Run panel submits via htmx and swaps in just the outcome fragment so a
 	// long call (e.g. chat) shows a progress bar instead of blocking a full-page
 	// reload (R8.2). Without JS the form posts normally and we re-render the page.
-	if err != nil {
-		if isAuthErr(err) {
-			_ = s.sessions.Logout(ctx)
-			if isHTMX(r) {
-				w.Header().Set("HX-Redirect", "/login")
-				return
-			}
-			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
-			return
-		}
-		s.log.Warn("run failed", "request_id", client.RequestIDFromContext(ctx), "err", err)
-		if isHTMX(r) {
-			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
-			return
-		}
-		s.renderPage(w, r, statusFor(err), "error", "Error", errorView{Message: userMessage(err)})
+	if s.handleErrFragment(w, r, err) {
 		return
 	}
 	if argErr != nil {
@@ -483,6 +478,7 @@ func orDefaultStr(v, def string) string {
 
 func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
 	var me client.User
 	var acts []client.Action
 	var txs []client.Transaction
@@ -519,18 +515,24 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	csrfField := csrf.TemplateField(r)
-	cards := make([]myActionCardView, len(acts))
-	for i, a := range acts {
+	var cards []myActionCardView
+	for _, a := range acts {
+		if filter == "active" && !a.Active {
+			continue
+		}
+		if filter == "inactive" && a.Active {
+			continue
+		}
 		var st *client.Stats
-		if s, ok := actionStats[a.ID]; ok && (s.Uses > 0 || s.RatingCount > 0) {
-			cp := s
+		if sv, ok := actionStats[a.ID]; ok && (sv.Uses > 0 || sv.RatingCount > 0) {
+			cp := sv
 			st = &cp
 		}
-		cards[i] = myActionCardView{Action: a, Stats: st, CSRFField: csrfField}
+		cards = append(cards, myActionCardView{Action: a, Stats: st, CSRFField: csrfField})
 	}
 	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{
-		User: me, Cards: cards, Earnings: earn,
-	})
+		User: me, Cards: cards, Earnings: earn, Filter: filter,
+	}, me.Available)
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
@@ -590,6 +592,21 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/studio", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
 }
 
+func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	specURL := strings.TrimSpace(r.FormValue("spec_url"))
+	var deactivated []client.Action
+	err := s.sessions.Do(ctx, func(tok string) error {
+		a, e := s.client.UnimportOpenAPI(ctx, tok, specURL, "")
+		deactivated = a
+		return e
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.flashRedirect(w, r, "/studio", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
+}
+
 // postMakeAction calls @sys/make to synthesize a WASM action from a
 // natural-language description (R6.3.6). It provisions an ephemeral 20-credit
 // process, calls @sys/make, ends the process, then returns an htmx fragment
@@ -604,6 +621,14 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 			view = makeResultView{Error: "A description is required."}
 			return nil
 		}
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		if me.Available < 20 {
+			view = makeResultView{Error: fmt.Sprintf("You need at least 20 credits to synthesize an action. Your balance is %s ¤.", money(me.Available))}
+			return nil
+		}
 		out, e := s.caller.Run(ctx, tok, "@sys/make", mustArgs(map[string]any{"description": desc}))
 		if e != nil {
 			return e
@@ -615,13 +640,15 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 		var res struct {
 			Status      string   `json:"status"`
 			ActionID    string   `json:"action_id"`
-			ActionName  string   `json:"action_name"`
+			ActionName  string   `json:"action_name"` // bare name; kernel does NOT return a full ref
 			Diagnostics []string `json:"diagnostics"`
 		}
 		if e := json.Unmarshal(out.Result, &res); e != nil {
 			return fmt.Errorf("parse @sys/make result: %w", e)
 		}
 		if res.Status == "success" {
+			// action_name is the bare name ("echo-test"), not a full ref; prefix
+			// the signed-in owner's handle to form the callable "@owner/name".
 			view = makeResultView{
 				Success:   true,
 				ActionRef: s.sessions.Handle(ctx) + "/" + res.ActionName,
@@ -632,18 +659,8 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if err != nil {
-		if isAuthErr(err) {
-			_ = s.sessions.Logout(ctx)
-			if isHTMX(r) {
-				w.Header().Set("HX-Redirect", "/login")
-				return
-			}
-			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
-			return
-		}
-		s.log.Warn("make failed", "request_id", client.RequestIDFromContext(ctx), "err", err)
-		view = makeResultView{Error: userMessage(err)}
+	if s.handleErrFragment(w, r, err) {
+		return
 	}
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_make_result", view)
@@ -921,21 +938,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 		outcome = out
 		return nil
 	})
-	if err != nil {
-		if isAuthErr(err) {
-			_ = s.sessions.Logout(ctx)
-			if isHTMX(r) {
-				w.Header().Set("HX-Redirect", "/login")
-				return
-			}
-			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
-			return
-		}
-		if isHTMX(r) {
-			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
-			return
-		}
-		s.flashRedirect(w, r, "/inbox", userMessage(err))
+	if s.handleErrFragment(w, r, err) {
 		return
 	}
 	if argErr != nil {

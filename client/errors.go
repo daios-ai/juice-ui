@@ -166,7 +166,7 @@ func (e *KernelError) UserMessage() string {
 		}
 		return "This action isn't available right now."
 	case KindInsufficientFunds:
-		return "This session doesn't have enough credits. Add funds and try again."
+		return "This session doesn't have enough credits. Credits are added out of band by an operator — contact them to top up your account."
 	case KindExecutionFailed:
 		return "The action failed to run. You were not charged — your funds were fully refunded."
 	case KindTimeout:

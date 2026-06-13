@@ -2,7 +2,8 @@
 {{$d := .Data}}
 <p><a href="/run">← Run</a></p>
 <h1>{{$d.Action.Name}}</h1>
-<p class="subtitle ref mono">{{$d.Action.Action}}</p>
+<p class="subtitle ref mono">{{$d.Action.Ref}}</p>
+<p class="muted">by <a href="/run?q={{$d.Action.OwnerHandle}}" class="mono owner">{{$d.Action.OwnerHandle}}</a></p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
@@ -13,14 +14,27 @@
     <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span>
     <span class="muted" title="Kind">{{$d.Action.Kind}}</span>
     {{if $d.HasStats}}
-    <span title="Runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#play"/></svg> {{$d.Stats.Uses}}</span>
-    <span title="Successes" class="status-credited"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg> {{$d.Stats.Successes}}</span>
-    <span title="Failures" class="status-refunded"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> {{$d.Stats.Failures}}</span>
-    <span title="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#star"/></svg> {{printf "%.1f" $d.Stats.RatingEstimate}} ({{$d.Stats.RatingCount}})</span>
-    <span title="Avg latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" $d.Stats.LatencyEstimate}}ms</span>
+    <span title="Runs" aria-label="Runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#play"/></svg> {{$d.Stats.Uses}}</span>
+    <span title="Successes / total runs" aria-label="Success count" class="status-credited"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg> {{$d.Stats.Successes}}</span>
+    <span title="Rating (mean · count)" aria-label="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#star"/></svg> {{printf "%.1f" $d.Stats.RatingEstimate}} &middot; {{$d.Stats.RatingCount}}</span>
+    <span title="Mean latency" aria-label="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" $d.Stats.LatencyEstimate}}ms</span>
     {{end}}
   </p>
 </div>
+
+{{if $d.Form.Fields}}
+<h2>Input</h2>
+{{template "_schema_panel" $d.Form}}
+{{end}}
+
+{{if $d.Action.OutputSchema}}
+<h2>Output</h2>
+{{template "_schema_panel" (buildForm $d.Action.OutputSchema)}}
+<details style="margin-top:.5rem">
+  <summary class="muted">Raw JSON schema</summary>
+  <pre class="json">{{json $d.Action.OutputSchema}}</pre>
+</details>
+{{end}}
 
 <h2>Run</h2>
 <div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
@@ -39,9 +53,17 @@
   </div>
 </form>
 
-{{if $d.Action.OutputSchema}}
-<h2>Expected result shape</h2>
-<pre class="json">{{json $d.Action.OutputSchema}}</pre>
+{{if $d.Ratings}}
+<h2>Ratings</h2>
+{{range $d.Ratings}}
+<div class="card" style="margin-bottom:.5rem">
+  <p class="row" style="margin:0;gap:.5rem">
+    <span class="pill {{if eq .Rating 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Rating 1}}positive{{else}}negative{{end}}</span>
+    <span class="muted" style="font-size:.85rem">{{.CreatedAt}}</span>
+  </p>
+  {{if .Note}}<p style="margin:.5rem 0 0">{{.Note}}</p>{{end}}
+</div>
+{{end}}
 {{end}}
 
 {{if $d.IsOwner}}

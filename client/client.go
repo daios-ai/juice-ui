@@ -392,10 +392,10 @@ func (c *Client) Me(ctx context.Context, token string) (User, error) {
 
 // ---- actions ----
 
-// ListActions lists public, active actions. owner and name are optional filters
-// ("" to omit). Verified live: this returns only active+public actions, even for
-// the authenticated owner; there is no HTTP surface for an owner's inactive
-// actions (R10.3).
+// ListActions lists actions. owner and name are optional filters ("" to omit).
+// Verified live: unauthenticated or cross-user requests see only active+public
+// actions. Authenticated requests from the matching owner see all owned actions
+// regardless of active/public state (verified 2026-06-05, R10.3 resolved).
 func (c *Client) ListActions(ctx context.Context, token, owner, name string) ([]Action, error) {
 	q := url.Values{}
 	if owner != "" {

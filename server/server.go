@@ -86,6 +86,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /studio", s.requireAuth(s.getStudio))
 	mux.HandleFunc("POST /studio/create", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /studio/import", s.requireAuth(s.postImport))
+	mux.HandleFunc("POST /studio/unimport", s.requireAuth(s.postUnimport))
 	mux.HandleFunc("POST /studio/make", s.requireAuth(s.postMakeAction))
 	mux.HandleFunc("GET /processes", s.requireAuth(s.getProcesses))
 	mux.HandleFunc("GET /processes/{id}", s.requireAuth(s.getProcess))
@@ -196,16 +197,22 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 }
 
 // renderPage writes a full page, clearing any one-shot flash cookie and logging
-// (not surfacing) template errors.
-func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, name, title string, data any) {
+// (not surfacing) template errors. Pass the signed-in user's available balance
+// as the optional last argument to skip a redundant GET /v1/me call when the
+// handler already fetched the user.
+func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, name, title string, data any, available ...int64) {
 	p := s.page(r, title, data)
 	if p.Handle != "" {
-		_ = s.sessions.Do(r.Context(), func(tok string) error {
-			if me, e := s.client.Me(r.Context(), tok); e == nil {
-				p.Available = me.Available
-			}
-			return nil
-		})
+		if len(available) > 0 {
+			p.Available = available[0]
+		} else {
+			_ = s.sessions.Do(r.Context(), func(tok string) error {
+				if me, e := s.client.Me(r.Context(), tok); e == nil {
+					p.Available = me.Available
+				}
+				return nil
+			})
+		}
 	}
 	if p.Flash != "" {
 		http.SetCookie(w, &http.Cookie{Name: "flash", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode})
@@ -214,6 +221,32 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, 
 		s.log.Error("render", "page", name, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
+}
+
+// handleErrFragment handles errors from htmx-capable handlers. Auth errors
+// clear the session and redirect (HX-Redirect for htmx requests, flash-redirect
+// otherwise). Other errors render the _error fragment for htmx or the full
+// error page otherwise. Returns true if it handled the error.
+func (s *Server) handleErrFragment(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	if isAuthErr(err) {
+		_ = s.sessions.Logout(r.Context())
+		if isHTMX(r) {
+			w.Header().Set("HX-Redirect", "/login")
+			return true
+		}
+		s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+		return true
+	}
+	s.log.Warn("operation failed", "request_id", client.RequestIDFromContext(r.Context()), "path", r.URL.Path, "err", err)
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
+		return true
+	}
+	s.renderPage(w, r, statusFor(err), "error", "Error", errorView{Message: userMessage(err)})
+	return true
 }
 
 // isAuthErr reports whether an error means the session is no longer usable.

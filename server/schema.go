@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -265,26 +264,3 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 	return StepFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
 }
 
-// FormJSON returns the FormModel encoded for the client-side hydrator
-// (schema-form.js reads it from a <script type="application/json"> blob).
-func (fm FormModel) FormJSON() (string, error) {
-	type wireField struct {
-		Name        string   `json:"name"`
-		Type        string   `json:"type"`
-		Required    bool     `json:"required"`
-		Description string   `json:"description"`
-		Enum        []string `json:"enum,omitempty"`
-	}
-	wf := make([]wireField, len(fm.Fields))
-	for i, f := range fm.Fields {
-		wf[i] = wireField{f.Name, f.Type, f.Required, f.Description, f.Enum}
-	}
-	b, err := json.Marshal(struct {
-		Fields         []wireField `json:"fields"`
-		UseRawFallback bool        `json:"use_raw_fallback"`
-	}{wf, fm.UseRawFallback})
-	if err != nil {
-		return "", fmt.Errorf("encode form model: %w", err)
-	}
-	return string(b), nil
-}

@@ -3,7 +3,6 @@
 <h1>Studio</h1>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
-{{if .Flash}}<div class="banner">{{.Flash}}</div>{{end}}
 
 {{if gt $d.Earnings.Count 0}}
 <div class="card" style="margin-bottom:1.5rem">
@@ -102,12 +101,28 @@
   <button class="btn" type="submit">Import</button>
 </form>
 
+<h3>Unimport OpenAPI spec</h3>
+<form class="card stack" method="post" action="/studio/unimport">
+  {{.CSRFField}}
+  <div class="field">
+    <label for="unimport_spec_url">OpenAPI spec URL</label>
+    <input id="unimport_spec_url" name="spec_url" type="text" placeholder="https://…/openapi.json">
+  </div>
+  <p class="help">Deactivates matching actions without deleting their history. Changed actions are deactivated and must be re-verified before re-enabling.</p>
+  <button class="btn btn-danger" type="submit">Unimport</button>
+</form>
+
 <h2>Your actions</h2>
+<div class="row" style="gap:.5rem;margin-bottom:1rem">
+  <a href="/studio" class="btn{{if eq $d.Filter ""}} btn-primary{{end}}">All</a>
+  <a href="/studio?filter=active" class="btn{{if eq $d.Filter "active"}} btn-primary{{end}}">Active</a>
+  <a href="/studio?filter=inactive" class="btn{{if eq $d.Filter "inactive"}} btn-primary{{end}}">Inactive</a>
+</div>
 {{if $d.Cards}}
 <div class="grid">
   {{range $d.Cards}}{{template "_my_action_card" .}}{{end}}
 </div>
 {{else}}
-<p class="muted">No active public actions yet. Create one above, then enable and publish it from the action detail page.</p>
+<p class="muted">No actions match this filter.</p>
 {{end}}
 {{end}}

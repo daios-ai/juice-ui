@@ -58,6 +58,7 @@ func NewRenderer() (*Renderer, error) {
 		"statusClass": statusClass,
 		"truncate":    truncate,
 		"costOf":      costOf,
+		"buildForm":   BuildForm, // lets templates derive a FormModel from a raw schema
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {

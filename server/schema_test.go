@@ -208,25 +208,3 @@ func TestBuildStepFormExtraKeysInPartial(t *testing.T) {
 		t.Errorf("both schema and extra keys locked, expected 2, got %d", len(sfm.Locked))
 	}
 }
-
-func TestFormJSONRoundTrip(t *testing.T) {
-	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{"q":{"type":"string","description":"d"}},"required":["q"]}`))
-	s, err := fm.FormJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded struct {
-		Fields []struct {
-			Name        string `json:"name"`
-			Required    bool   `json:"required"`
-			Description string `json:"description"`
-		} `json:"fields"`
-		UseRawFallback bool `json:"use_raw_fallback"`
-	}
-	if err := json.Unmarshal([]byte(s), &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if len(decoded.Fields) != 1 || decoded.Fields[0].Name != "q" || !decoded.Fields[0].Required {
-		t.Errorf("round trip wrong: %s", s)
-	}
-}
