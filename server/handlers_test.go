@@ -217,20 +217,20 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 	}
 }
 
-func TestDashboardShowsBalancesAndDepositNote(t *testing.T) {
+func TestWalletShowsBalancesAndDepositNote(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/")
+	body := getBody(t, cl, srv.URL+"/wallet")
 	if !strings.Contains(body, "500") {
-		t.Error("dashboard should show available balance")
+		t.Error("wallet should show available balance")
 	}
 	// R3.3.1: must state plainly that top-ups happen out-of-band.
 	if !strings.Contains(strings.ToLower(body), "top-up") && !strings.Contains(strings.ToLower(body), "out-of-band") {
-		t.Error("dashboard must explain credit top-ups happen out-of-band")
+		t.Error("wallet must explain credit top-ups happen out-of-band")
 	}
 }
 

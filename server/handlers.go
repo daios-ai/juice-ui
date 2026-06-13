@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/gorilla/csrf"
@@ -17,7 +18,7 @@ import (
 
 type loginView struct{ Error, Notice string }
 
-type dashboardView struct {
+type walletView struct {
 	User client.User
 }
 
@@ -110,7 +111,7 @@ type errorView struct{ Message string }
 
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions.IsAuthenticated(r.Context()) {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, "/run", http.StatusSeeOther)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{})
@@ -123,7 +124,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Error: loginErrorMessage(err)})
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/run", http.StatusSeeOther)
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +141,7 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/run", http.StatusSeeOther)
 }
 
 // doLogin runs the PKCE authorization-code flow: the verifier is generated and
@@ -208,25 +209,9 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-// ---- dashboard ----
+// ---- run room (discover / marketplace) ----
 
-func (s *Server) getDashboard(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var user client.User
-	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.Me(ctx, tok)
-		user = u
-		return e
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "dashboard", "Dashboard", dashboardView{User: user})
-}
-
-// ---- discover / marketplace ----
-
-func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	view := discoverView{Query: q, LookupAvailable: true}
@@ -266,7 +251,114 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "discover", "Discover", view)
+	s.renderPage(w, r, http.StatusOK, "run", "Run", view)
+}
+
+// ---- wallet ----
+
+func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var user client.User
+	err := s.sessions.Do(ctx, func(tok string) error {
+		u, e := s.client.Me(ctx, tok)
+		user = u
+		return e
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", walletView{User: user})
+}
+
+// ---- inbox ----
+
+func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var myID string
+	var inbox []stepEntry
+	var history []client.Step
+	actions := map[string]client.Action{}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		myID = me.ID
+		steps, e := s.client.ListSteps(ctx, tok, "", "")
+		if e != nil {
+			return e
+		}
+		seen := map[string]bool{}
+		for _, step := range steps {
+			if step.NextActionID != "" && !seen[step.NextActionID] {
+				seen[step.NextActionID] = true
+				if a, ae := s.client.GetAction(ctx, tok, step.NextActionID); ae == nil {
+					actions[step.NextActionID] = a
+				}
+			}
+			if step.Status == "waiting" && step.RequiredCallerUserID == myID {
+				inbox = append(inbox, stepEntry{
+					Step: step,
+					Form: BuildStepForm(step.InputSchema, step.PartialArgs),
+				})
+			} else {
+				history = append(history, step)
+			}
+		}
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", stepsView{
+		MyID:    myID,
+		Inbox:   inbox,
+		History: history,
+		Actions: actions,
+	})
+}
+
+const (
+	sessionKeyBadgeCount = "inbox.badge.count"
+	sessionKeyBadgeAt    = "inbox.badge.at"
+	badgeCacheTTL        = 30 * time.Second
+)
+
+func (s *Server) getInboxBadge(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sm := s.sessions.SCS()
+
+	// Use int64 (Unix nanos) for the timestamp — gob can encode basic types
+	// without registration; time.Time stored as interface{} would need gob.Register.
+	cachedAtNano := sm.GetInt64(ctx, sessionKeyBadgeAt)
+	count := sm.GetInt(ctx, sessionKeyBadgeCount)
+	if time.Since(time.Unix(0, cachedAtNano)) > badgeCacheTTL {
+		_ = s.sessions.Do(ctx, func(tok string) error {
+			me, e := s.client.Me(ctx, tok)
+			if e != nil {
+				return e
+			}
+			steps, e := s.client.ListSteps(ctx, tok, "", "")
+			if e != nil {
+				return e
+			}
+			n := 0
+			for _, st := range steps {
+				if st.Status == "waiting" && st.RequiredCallerUserID == me.ID {
+					n++
+				}
+			}
+			count = n
+			sm.Put(ctx, sessionKeyBadgeCount, n)
+			sm.Put(ctx, sessionKeyBadgeAt, time.Now().UnixNano())
+			return nil
+		})
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if count > 0 {
+		fmt.Fprintf(w, "%d", count)
+	}
 }
 
 // ---- action detail & run ----
@@ -740,64 +832,18 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/transactions/"+id, "Thanks for rating.")
 }
 
-// ---- steps ----
-
-func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var myID string
-	var inbox []stepEntry
-	var history []client.Step
-	actions := map[string]client.Action{}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
-		myID = me.ID
-		steps, e := s.client.ListSteps(ctx, tok, "", "")
-		if e != nil {
-			return e
-		}
-		seen := map[string]bool{}
-		for _, step := range steps {
-			if step.NextActionID != "" && !seen[step.NextActionID] {
-				seen[step.NextActionID] = true
-				if a, ae := s.client.GetAction(ctx, tok, step.NextActionID); ae == nil {
-					actions[step.NextActionID] = a
-				}
-			}
-			if step.Status == "waiting" && step.RequiredCallerUserID == myID {
-				inbox = append(inbox, stepEntry{
-					Step: step,
-					Form: BuildStepForm(step.InputSchema, step.PartialArgs),
-				})
-			} else {
-				history = append(history, step)
-			}
-		}
-		return nil
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "steps", "Steps", stepsView{
-		MyID:    myID,
-		Inbox:   inbox,
-		History: history,
-		Actions: actions,
-	})
-}
+// ---- step mutation handlers ----
 
 func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	partialArgs, err := rawJSONOrEmpty(r.FormValue("partial_args"))
 	if err != nil {
-		s.flashRedirect(w, r, "/steps", "Partial args must be valid JSON.")
+		s.flashRedirect(w, r, "/inbox", "Partial args must be valid JSON.")
 		return
 	}
 	inputSchema, err := rawJSONOrEmpty(r.FormValue("input_schema"))
 	if err != nil {
-		s.flashRedirect(w, r, "/steps", "Input schema must be valid JSON.")
+		s.flashRedirect(w, r, "/inbox", "Input schema must be valid JSON.")
 		return
 	}
 	in := client.CreateStepInput{
@@ -817,7 +863,7 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/steps", "Step created.")
+	s.flashRedirect(w, r, "/inbox", "Step created.")
 }
 
 func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
@@ -851,7 +897,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
 			return
 		}
-		s.flashRedirect(w, r, "/steps", userMessage(err))
+		s.flashRedirect(w, r, "/inbox", userMessage(err))
 		return
 	}
 	if argErr != nil {
@@ -860,14 +906,14 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 			_ = s.render.Fragment(w, http.StatusOK, "_error", msg)
 			return
 		}
-		s.flashRedirect(w, r, "/steps", msg)
+		s.flashRedirect(w, r, "/inbox", msg)
 		return
 	}
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
 		return
 	}
-	s.flashRedirect(w, r, "/steps", "Step completed.")
+	s.flashRedirect(w, r, "/inbox", "Step completed.")
 }
 
 // ---- helpers ----

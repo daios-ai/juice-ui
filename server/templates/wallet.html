@@ -1,0 +1,24 @@
+{{define "content"}}
+<h1>Wallet</h1>
+<p class="subtitle">Signed in as <span class="handle mono">{{.Data.User.Handle}}</span></p>
+
+<div class="card">
+  <div class="balances">
+    <div class="balance">
+      <div class="amount money status-credited">{{money .Data.User.Available}}</div>
+      <div class="label">Available credits</div>
+    </div>
+    <div class="balance">
+      <div class="amount money status-escrow">{{money .Data.User.Locked}}</div>
+      <div class="label">Locked in active sessions</div>
+    </div>
+  </div>
+  <p class="muted" style="margin-top:1rem">
+    Credit top-ups happen out-of-band (operator/CLI). Each <em>run</em> locks
+    exactly the action's price and releases automatically when the call and any
+    outstanding steps are complete.
+  </p>
+</div>
+
+<p style="margin-top:1rem"><a href="/transactions">Transaction history →</a></p>
+{{end}}

@@ -16,7 +16,7 @@
   <div class="layout">
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/"><span class="brand-mark">◆</span><span class="lbl">Juice</span></a>
+        <a class="brand" href="/run"><span class="brand-mark">◆</span><span class="lbl">Juice</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
@@ -26,12 +26,19 @@
 
       {{if .Handle}}
       <nav class="nav" aria-label="Primary">
-        <a href="/" title="Dashboard"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layout-dashboard"/></svg><span class="lbl">Dashboard</span></a>
-        <a href="/discover" title="Discover"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg><span class="lbl">Discover</span></a>
+        <a href="/run" title="Run"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span class="lbl">Run</span></a>
+        <a href="/inbox" title="Inbox" class="nav-inbox">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
+          <span class="lbl">Inbox</span>
+          <span id="inbox-badge"
+                hx-get="/inbox/badge"
+                hx-trigger="load, every 30s"
+                hx-swap="innerHTML"
+                class="badge"
+                aria-label="Inbox notifications"></span>
+        </a>
         <a href="/studio" title="Studio"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg><span class="lbl">Studio</span></a>
-        <a href="/processes" title="Sessions"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span class="lbl">Sessions</span></a>
-        <a href="/transactions" title="Transactions"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#arrow-left-right"/></svg><span class="lbl">Transactions</span></a>
-        <a href="/steps" title="Steps"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg><span class="lbl">Steps</span></a>
+        <a href="/wallet" title="Wallet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#wallet"/></svg><span class="lbl">Wallet</span></a>
       </nav>
       {{end}}
 
@@ -43,24 +50,80 @@
             <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg><span class="lbl">Theme</span>
           </button>
         </form>
-        {{if .Handle}}
-        <span class="sidebar-item handle" title="{{.Handle}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl mono">{{.Handle}}</span></span>
-        <span class="sidebar-item credits" title="{{money .Available}} Credits"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl money">{{money .Available}}</span></span>
-        <form method="post" action="/logout" class="logout">
-          {{.CSRFField}}
-          <button type="submit" class="btn-quiet" title="Sign out"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl">Sign out</span></button>
-        </form>
-        {{end}}
       </div>
     </aside>
 
-    <div class="content">
-      {{if .Flash}}<div class="flash" role="status">{{.Flash}}</div>{{end}}
-      <main id="main" class="container">
-        {{block "content" .}}{{end}}
-      </main>
-      <footer class="footer"><span>Juice UI — talks only to the kernel HTTP API.</span></footer>
+    <div class="main-area">
+      <header class="topbar">
+        {{if .Handle}}
+        <details class="mobile-menu">
+          <summary class="btn-icon" aria-label="Menu" title="Menu"><span aria-hidden="true">≡</span></summary>
+          <div class="mobile-drawer">
+            <span class="mono" style="font-size:.9rem">{{.Handle}}</span>
+            <span class="money" style="font-size:.9rem">{{money .Available}} ¤</span>
+            <form method="post" action="/theme">
+              {{.CSRFField}}
+              <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
+              <button type="submit" class="btn-icon" aria-label="Toggle theme">
+                <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
+              </button>
+            </form>
+            <form method="post" action="/logout">
+              {{.CSRFField}}
+              <button type="submit" class="btn-quiet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg> Sign out</button>
+            </form>
+          </div>
+        </details>
+        {{end}}
+
+        <form class="omnibox" action="/run" method="get" role="search">
+          <input type="search" name="q" placeholder="Search actions…" aria-label="Search actions" autocomplete="off">
+          <button type="submit" class="btn-icon" aria-label="Search">
+            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg>
+          </button>
+        </form>
+
+        {{if .Handle}}
+        <a href="/inbox" class="topbar-bell" aria-label="Inbox" title="Inbox">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
+        </a>
+        <div class="account-menu">
+          <span class="handle mono" title="{{.Handle}}">{{.Handle}}</span>
+          <span class="credits money">{{money .Available}} ¤</span>
+          <form method="post" action="/theme" class="theme-toggle">
+            {{.CSRFField}}
+            <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
+            <button type="submit" class="btn-icon" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme" title="Toggle theme">
+              <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
+            </button>
+          </form>
+          <form method="post" action="/logout">
+            {{.CSRFField}}
+            <button type="submit" class="btn-quiet" title="Sign out"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl"> Sign out</span></button>
+          </form>
+        </div>
+        {{end}}
+      </header>
+
+      <div class="content">
+        {{if .Flash}}<div class="flash" role="status">{{.Flash}}</div>{{end}}
+        <main id="main" class="container">
+          {{block "content" .}}{{end}}
+        </main>
+        <footer class="footer"><span>Juice UI — talks only to the kernel HTTP API.</span></footer>
+      </div>
     </div>
   </div>
+
+  {{if .Handle}}
+  <nav class="tab-bar" aria-label="Primary">
+    <a href="/run" class="tab" title="Run"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span>Run</span></a>
+    <a href="/inbox" class="tab" title="Inbox"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg><span>Inbox</span></a>
+    <a href="/studio" class="tab" title="Studio"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg><span>Studio</span></a>
+    <a href="/wallet" class="tab" title="Wallet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#wallet"/></svg><span>Wallet</span></a>
+  </nav>
+  {{end}}
+
+  <div aria-live="polite" aria-atomic="true" id="live-region" class="live-region"></div>
 </body>
 </html>{{end}}

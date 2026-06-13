@@ -60,9 +60,22 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /theme", s.postTheme)
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
+	// Legacy redirects (bookmarks / old links).
+	mux.HandleFunc("GET /{$}", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/run", http.StatusSeeOther)
+	}))
+	mux.HandleFunc("GET /discover", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/run", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /steps", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/inbox", http.StatusMovedPermanently)
+	})
+
 	// Authenticated routes.
-	mux.HandleFunc("GET /{$}", s.requireAuth(s.getDashboard))
-	mux.HandleFunc("GET /discover", s.requireAuth(s.getDiscover))
+	mux.HandleFunc("GET /run", s.requireAuth(s.getRunRoom))
+	mux.HandleFunc("GET /inbox", s.requireAuth(s.getInbox))
+	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getInboxBadge))
+	mux.HandleFunc("GET /wallet", s.requireAuth(s.getWallet))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
 	mux.HandleFunc("POST /actions/{id}/enable", s.requireAuth(s.postActionLifecycle))
@@ -80,7 +93,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /transactions", s.requireAuth(s.getTransactions))
 	mux.HandleFunc("GET /transactions/{id}", s.requireAuth(s.getTransaction))
 	mux.HandleFunc("POST /transactions/{id}/rate", s.requireAuth(s.postRate))
-	mux.HandleFunc("GET /steps", s.requireAuth(s.getSteps))
 	mux.HandleFunc("POST /steps/create", s.requireAuth(s.postCreateStep))
 	mux.HandleFunc("POST /steps/{id}/complete", s.requireAuth(s.postCompleteStep))
 

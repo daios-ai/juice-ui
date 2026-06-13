@@ -1,13 +1,13 @@
 {{define "content"}}
-<h1>Discover actions</h1>
+<h1>Run an action</h1>
 <p class="subtitle">Describe what you want to do, or browse the catalog.</p>
 
 {{if not .Data.LookupAvailable}}
-<div class="banner">Semantic search isn’t available right now, so results come from catalog search instead.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
+<div class="banner">Semantic search isn't available right now, so results come from catalog search instead.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
 {{end}}
 
-<form class="card row" method="get" action="/discover">
-  <div class="field inline grow">
+<form class="card row" method="get" action="/run">
+  <div class="field" style="flex:1; margin:0">
     <label for="q" class="sr-only">Search</label>
     <input id="q" name="q" type="text" value="{{.Data.Query}}" placeholder="e.g. summarize a document, send a payment">
   </div>
@@ -15,7 +15,7 @@
 </form>
 
 {{if .Data.Query}}
-<h2>Results for “{{.Data.Query}}”</h2>
+<h2>Results for "{{.Data.Query}}"</h2>
 {{if .Data.Results}}
 <div class="grid">
   {{range .Data.Results}}
