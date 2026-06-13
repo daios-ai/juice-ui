@@ -27,6 +27,7 @@ a:hover { text-decoration: underline; }
   background: var(--accent); color: var(--accent-contrast); padding: .5rem .75rem;
 }
 .skip-link:focus { left: .5rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -98,6 +99,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 
 h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
 h2 { font-size: 1.2rem; margin: 1.5rem 0 .5rem; }
+h3 { margin: 0 0 .35rem; }
 .subtitle { color: var(--text-muted); margin: 0 0 1.5rem; }
 
 /* Cards & grids */
@@ -108,6 +110,22 @@ h2 { font-size: 1.2rem; margin: 1.5rem 0 .5rem; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+.row.compact { gap: .5rem; }
+.cluster { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 0; }
+.flush { margin: 0; }
+.grow { flex: 1 1 16rem; }
+.small { font-size: .85rem; }
+.tiny { font-size: .8rem; }
+.details-panel { margin-top: 1.5rem; }
+.details-panel summary { cursor: pointer; font-weight: 600; }
+.details-panel form { margin-top: .75rem; }
+.locked-args { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: 0; }
+.locked-args dt { font-weight: 600; }
+.locked-args dd { margin: 0; }
+.parties { width: auto; }
+.parties th { padding-right: 2rem; }
+.action-head h3 { margin-bottom: .2rem; }
+.action-head .ref { margin: 0; }
 
 /* Balances */
 .balances { display: flex; gap: 2rem; flex-wrap: wrap; }
@@ -135,6 +153,7 @@ button, .btn { font-family: inherit; font-size: .95rem; cursor: pointer; }
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: .25rem; }
 .field { margin-bottom: 1rem; }
+.field.inline { margin: 0; }
 .field .help { color: var(--text-muted); font-size: .85rem; font-weight: 400; margin: .1rem 0 .35rem; }
 .req { color: var(--accent); }
 input[type=text], input[type=password], input[type=email], input[type=number],
@@ -158,6 +177,7 @@ textarea { resize: vertical; font-family: var(--font-mono); line-height: inherit
 .cost .g { color: var(--text); }
 .cost .f { color: var(--text-muted); }
 .cost .n { color: var(--credited); }
+.cost-note { font-size: .8rem; }
 
 /* In-flight progress (R8.2). htmx adds .htmx-request to the hx-indicator target
    for the duration of the request; we show an indeterminate bar so long calls

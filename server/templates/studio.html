@@ -9,8 +9,8 @@
 <h2>Create</h2>
 
 <div class="card stack">
-  <h3 style="margin:0">Synthesize with AI</h3>
-  <p class="help" style="margin:0">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 credits</strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}</span> available{{end}}.</p>
+  <h3>Synthesize with AI</h3>
+  <p class="help flush">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 credits</strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}</span> available{{end}}.</p>
   <form method="post" action="/studio/make"
         hx-post="/studio/make" hx-target="#make-result" hx-swap="innerHTML"
         hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">

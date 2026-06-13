@@ -9,7 +9,7 @@
 <div class="card stack">
 
   {{/* Status + action */}}
-  <div class="row" style="align-items:center;gap:1rem">
+  <div class="row">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
     <span class="mono">
       {{if $d.Action}}<a href="/actions/{{$d.Action.ID}}">{{$d.Action.Ref}}</a>
@@ -20,23 +20,23 @@
   {{/* Parties */}}
   <div>
     <h3>Parties</h3>
-    <table style="width:auto">
+    <table class="parties">
       <tr>
-        <th style="padding-right:2rem">Buyer</th>
+        <th>Buyer</th>
         <td class="mono">
           {{if eq $d.Tx.OwnerUserID $d.Me.ID}}{{$d.Me.Handle}}
           {{else}}<span class="muted">{{truncate 8 $d.Tx.OwnerUserID}}…</span>{{end}}
         </td>
       </tr>
       <tr>
-        <th style="padding-right:2rem">Caller</th>
+        <th>Caller</th>
         <td class="mono">
           {{if eq $d.Tx.CallerUserID $d.Me.ID}}{{$d.Me.Handle}}
           {{else}}<span class="muted">{{truncate 8 $d.Tx.CallerUserID}}…</span>{{end}}
         </td>
       </tr>
       <tr>
-        <th style="padding-right:2rem">Seller</th>
+        <th>Seller</th>
         <td class="mono">
           {{if $d.Action}}{{$d.Action.OwnerHandle}}
           {{else}}<span class="muted">{{truncate 8 $d.Tx.TargetUserID}}…</span>{{end}}
@@ -62,9 +62,19 @@
     <pre class="json">{{json $d.Tx.Result}}</pre>
   </div>
 
+  <div>
+    <h3>Receipt verification</h3>
+    {{if $d.Receipt}}
+    <p><span class="pill {{if $d.Receipt.Valid}}status-credited{{else}}status-refunded{{end}}">{{if $d.Receipt.Valid}}valid{{else}}invalid{{end}}</span></p>
+    <pre class="json">{{json $d.Receipt.Checks}}</pre>
+    {{else}}
+    <p class="muted">{{$d.ReceiptMsg}}</p>
+    {{end}}
+  </div>
+
   {{/* Rating */}}
   {{if $d.CanRate}}
-  <form class="col" method="post" action="/transactions/{{$d.Tx.ID}}/rate">
+  <form class="stack" method="post" action="/transactions/{{$d.Tx.ID}}/rate">
     {{.CSRFField}}
     <span>Rate this result:</span>
     <textarea name="note" placeholder="Optional note…" rows="2"></textarea>
@@ -74,15 +84,12 @@
     </div>
   </form>
   {{else if $d.Tx.Rating}}
-  <div class="col muted" style="font-size:.9rem">
+  <div class="stack muted small">
     <span>Rated: {{if eq $d.Tx.Rating.Value 1}}👍 good{{else}}👎 bad{{end}}</span>
     {{if $d.Tx.Rating.Note}}<span>Note: {{$d.Tx.Rating.Note}}</span>{{end}}
   </div>
   {{end}}
 
-  <p class="muted" style="font-size:.8rem">
-    Trace {{$d.Tx.TraceID}}. This kernel exposes no HTTP route for immutable
-    receipts or the full trace tree, so they are not shown here.
-  </p>
+  <p class="muted tiny">Trace {{$d.Tx.TraceID}}. No trace-read HTTP route is confirmed, so the trace tree is not shown.</p>
 </div>
 {{end}}

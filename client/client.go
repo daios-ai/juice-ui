@@ -152,6 +152,13 @@ type Transaction struct {
 	EndedAt       string             `json:"ended_at"`
 }
 
+// ReceiptVerification is the kernel's immutable receipt-verification report.
+// The exact per-check object is kernel-owned, so the BFF renders it as JSON.
+type ReceiptVerification struct {
+	Valid  bool            `json:"valid"`
+	Checks json.RawMessage `json:"checks"`
+}
+
 // Stats is GET /v1/stats/{action_id}.
 type Stats struct {
 	ActionID        string  `json:"action_id"`
@@ -203,7 +210,7 @@ func (s Step) Ref() string {
 // CreateStepInput is the body for POST /v1/steps.
 type CreateStepInput struct {
 	ProcessID      string          `json:"process_id"`
-	Action         string          `json:"action"`          // @owner/name
+	Action         string          `json:"action"` // @owner/name
 	PartialArgs    json.RawMessage `json:"partial_args"`
 	InputSchema    json.RawMessage `json:"input_schema"`
 	RequiredCaller string          `json:"required_caller"` // @handle
@@ -510,6 +517,12 @@ func (c *Client) GetTransaction(ctx context.Context, token, id string) (Transact
 	var t Transaction
 	err := c.do(ctx, http.MethodGet, "/v1/transactions/"+url.PathEscape(id), token, nil, &t)
 	return t, err
+}
+
+func (c *Client) ReceiptVerification(ctx context.Context, token, id string) (ReceiptVerification, error) {
+	var v ReceiptVerification
+	err := c.do(ctx, http.MethodGet, "/v1/transactions/"+url.PathEscape(id)+"/receipt-verification", token, nil, &v)
+	return v, err
 }
 
 // RateTransaction submits a 0/1 rating with an optional note for a transaction.

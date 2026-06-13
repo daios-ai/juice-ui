@@ -180,7 +180,6 @@ func TestErrorResponseClassified(t *testing.T) {
 	}
 }
 
-
 func TestCreateStepSendsFields(t *testing.T) {
 	f := newFake()
 	defer f.close()
@@ -260,5 +259,21 @@ func TestImportResultCaseInsensitive(t *testing.T) {
 	}
 	if len(res.Created) != 1 || res.Created[0].ID != "a1" {
 		t.Fatalf("import result = %+v", res)
+	}
+}
+
+func TestReceiptVerification(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"valid":true,"checks":{"receipt_hash":true}}`
+	v, err := f.client().ReceiptVerification(context.Background(), "tok", "tx/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Valid || !strings.Contains(string(v.Checks), "receipt_hash") {
+		t.Fatalf("verification = %+v", v)
+	}
+	if f.lastPath != "/v1/transactions/tx%2F1/receipt-verification" || f.lastMethod != http.MethodGet {
+		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
 	}
 }
