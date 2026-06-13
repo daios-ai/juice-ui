@@ -96,16 +96,19 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: .75rem;
   background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: .25rem .75rem;
+  padding: .2rem .75rem;
 }
+.topbar .ico { width: 1rem; height: 1rem; display: block; }
+.topbar .btn-icon { padding: .15rem .3rem; line-height: 1; }
+.topbar .btn-quiet { padding: .1rem .3rem; line-height: 1; }
 .omnibox { flex: 1; display: flex; gap: .4rem; align-items: center; }
-.omnibox input[type=search] { flex: 1; margin: 0; width: auto; padding: .2rem .5rem; height: 1.8rem; }
+.omnibox input[type=search] { flex: 1; margin: 0; width: auto; padding: .15rem .45rem; height: 1.5rem; }
 .topbar-bell { display: flex; align-items: center; color: var(--text-muted); text-decoration: none; }
 .topbar-bell:hover { color: var(--text); }
-.topbar-bell .ico { width: 1.3rem; height: 1.3rem; }
+.topbar-bell .ico { width: 1.1rem; height: 1.1rem; }
 .account-menu { display: flex; align-items: center; gap: .6rem; white-space: nowrap; }
-.account-menu .handle { font-size: .9rem; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; }
-.account-menu .credits { font-size: .9rem; }
+.account-menu .handle { font-size: .85rem; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; }
+.account-menu .credits { font-size: .85rem; }
 
 /* Mobile hamburger — hidden on desktop */
 .mobile-menu { display: none; }
