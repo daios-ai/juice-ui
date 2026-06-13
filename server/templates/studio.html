@@ -1,16 +1,36 @@
 {{define "content"}}
 {{$d := .Data}}
 <h1>Studio</h1>
-<p class="subtitle">Author and manage your actions.</p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 {{if .Flash}}<div class="banner">{{.Flash}}</div>{{end}}
 
+{{if gt $d.Earnings.Count 0}}
+<div class="card" style="margin-bottom:1.5rem">
+  <h2 style="margin:0 0 .75rem">Earnings</h2>
+  <div class="balances">
+    <div class="balance">
+      <div class="amount money">{{money $d.Earnings.Gross}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="label">Gross</div>
+    </div>
+    <div class="balance">
+      <div class="amount money status-refunded">{{money $d.Earnings.Fee}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="label">Platform fee</div>
+    </div>
+    <div class="balance">
+      <div class="amount money status-credited">{{money $d.Earnings.Net}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="label">Net received</div>
+    </div>
+  </div>
+  <p class="muted" style="margin-top:.75rem;font-size:.85rem">Across {{$d.Earnings.Count}} completed calls to your actions. <a href="/wallet">Full ledger →</a></p>
+</div>
+{{end}}
+
 <h2>Create</h2>
 
 <div class="card stack">
-  <h3>Synthesize with AI</h3>
-  <p class="help flush">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 credits</strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}</span> available{{end}}.</p>
+  <h3 style="margin:0">Synthesize with AI</h3>
+  <p class="help" style="margin:0">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span> available{{end}}.</p>
   <form method="post" action="/studio/make"
         hx-post="/studio/make" hx-target="#make-result" hx-swap="innerHTML"
         hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">
@@ -52,7 +72,7 @@
     <input id="source" name="source" type="text" placeholder="https://…">
   </div>
   <div class="field">
-    <label for="price">Price (credits)</label>
+    <label for="price">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></label>
     <input id="price" name="price" type="number" min="0" value="0">
   </div>
   <div class="field">

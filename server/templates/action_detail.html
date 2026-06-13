@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$d := .Data}}
-<p><a href="/discover">← Discover</a></p>
+<p><a href="/run">← Run</a></p>
 <h1>{{$d.Action.Name}}</h1>
 <p class="subtitle ref mono">{{$d.Action.Action}}</p>
 
@@ -8,18 +8,18 @@
 
 <div class="card stack">
   {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-  <p class="row">
-    {{if $d.IsPaid}}<span class="money">{{money $d.Action.Price}} credits / call</span>{{else}}<span class="muted">free (price 0)</span>{{end}}
+  <p class="stat-strip">
+    <span title="Price">{{if $d.IsPaid}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg> {{money $d.Action.Price}}{{else}}<span class="muted">free</span>{{end}}</span>
     <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span>
-    <span class="muted">kind: {{$d.Action.Kind}}</span>
+    <span class="muted" title="Kind">{{$d.Action.Kind}}</span>
+    {{if $d.HasStats}}
+    <span title="Runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#play"/></svg> {{$d.Stats.Uses}}</span>
+    <span title="Successes" class="status-credited"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg> {{$d.Stats.Successes}}</span>
+    <span title="Failures" class="status-refunded"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> {{$d.Stats.Failures}}</span>
+    <span title="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#star"/></svg> {{printf "%.1f" $d.Stats.RatingEstimate}} ({{$d.Stats.RatingCount}})</span>
+    <span title="Avg latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" $d.Stats.LatencyEstimate}}ms</span>
+    {{end}}
   </p>
-  {{if $d.HasStats}}
-  <p class="muted">
-    {{$d.Stats.Uses}} uses · {{$d.Stats.Successes}} ok / {{$d.Stats.Failures}} failed ·
-    rating {{printf "%.2f" $d.Stats.RatingEstimate}} ({{$d.Stats.RatingCount}}) ·
-    latency {{printf "%.0f" $d.Stats.LatencyEstimate}}ms
-  </p>
-  {{end}}
 </div>
 
 <h2>Run</h2>
@@ -32,7 +32,7 @@
 
   {{template "_form_fields" $d.Form}}
   <div class="row">
-    <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run ({{money $d.Action.Price}} credits){{else}}Run{{end}}</button>
+    <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run &middot; {{money $d.Action.Price}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg>{{else}}Run{{end}}</button>
     <div id="run-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
     </div>

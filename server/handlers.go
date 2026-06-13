@@ -19,7 +19,15 @@ import (
 type loginView struct{ Error, Notice string }
 
 type walletView struct {
-	User client.User
+	User         client.User
+	Transactions []client.Transaction
+}
+
+type studioEarnings struct {
+	Gross int64
+	Fee   int64
+	Net   int64
+	Count int
 }
 
 type discoverResult struct {
@@ -50,14 +58,16 @@ type actionView struct {
 }
 
 type studioView struct {
-	User   client.User
-	Cards  []myActionCardView
-	Error  string
-	Notice string
+	User     client.User
+	Cards    []myActionCardView
+	Earnings studioEarnings
+	Error    string
+	Notice   string
 }
 
 type myActionCardView struct {
 	Action    client.Action
+	Stats     *client.Stats
 	CSRFField template.HTML
 }
 
@@ -258,16 +268,21 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var user client.User
+	var view walletView
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.Me(ctx, tok)
-		user = u
-		return e
+		if e != nil {
+			return e
+		}
+		view.User = u
+		txs, _ := s.client.ListTransactions(ctx, tok, "")
+		view.Transactions = txs
+		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", walletView{User: user})
+	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view)
 }
 
 // ---- inbox ----
@@ -470,29 +485,52 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var me client.User
 	var acts []client.Action
+	var txs []client.Transaction
+	actionStats := map[string]client.Stats{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
 		me = u
-		// Owner filter with the authenticated user's token returns all owned actions.
 		a, e := s.client.ListActions(ctx, tok, me.Handle, "")
 		if e != nil {
 			return e
 		}
 		acts = a
+		txs, _ = s.client.ListTransactions(ctx, tok, "")
+		for _, action := range acts {
+			if st, e := s.client.ActionStats(ctx, tok, action.ID); e == nil {
+				actionStats[action.ID] = st
+			}
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
+	var earn studioEarnings
+	for _, tx := range txs {
+		if tx.TargetUserID == me.ID && tx.Status == "success" {
+			earn.Gross += tx.Gross
+			earn.Fee += tx.Fee
+			earn.Net += tx.Net
+			earn.Count++
+		}
+	}
 	csrfField := csrf.TemplateField(r)
 	cards := make([]myActionCardView, len(acts))
 	for i, a := range acts {
-		cards[i] = myActionCardView{Action: a, CSRFField: csrfField}
+		var st *client.Stats
+		if s, ok := actionStats[a.ID]; ok && (s.Uses > 0 || s.RatingCount > 0) {
+			cp := s
+			st = &cp
+		}
+		cards[i] = myActionCardView{Action: a, Stats: st, CSRFField: csrfField}
 	}
-	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{User: me, Cards: cards})
+	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{
+		User: me, Cards: cards, Earnings: earn,
+	})
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {

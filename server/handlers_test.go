@@ -468,3 +468,63 @@ func TestStepsPageRendersListAndForm(t *testing.T) {
 		t.Error("steps page must show the Complete button for own waiting steps")
 	}
 }
+
+func TestWalletShowsLedger(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/wallet")
+	// Ledger must show both transactions from authKernel.
+	if !strings.Contains(body, "T1") && !strings.Contains(body, "/transactions/T1") {
+		t.Error("wallet ledger must link to transaction T1")
+	}
+	if !strings.Contains(body, "T2") && !strings.Contains(body, "/transactions/T2") {
+		t.Error("wallet ledger must link to transaction T2")
+	}
+	// Roles must be present.
+	if !strings.Contains(body, "buyer") {
+		t.Error("wallet ledger must show 'buyer' role for T1")
+	}
+	if !strings.Contains(body, "seller") {
+		t.Error("wallet ledger must show 'seller' role for T2")
+	}
+}
+
+func TestStudioShowsEarnings(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/studio")
+	// T2 in authKernel is a seller transaction for U1 (target_user_id=U1, status=success).
+	// Earnings card must appear.
+	if !strings.Contains(body, "Earnings") {
+		t.Error("studio must show Earnings section when seller transactions exist")
+	}
+	if !strings.Contains(body, "Net received") {
+		t.Error("studio Earnings card must show Net received label")
+	}
+}
+
+func TestLoginPageHasNoSidebar(t *testing.T) {
+	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	b := string(body)
+	if strings.Contains(b, "<aside") {
+		t.Error("login page must not render the sidebar")
+	}
+	if strings.Contains(b, `class="topbar"`) {
+		t.Error("login page must not render the topbar")
+	}
+}

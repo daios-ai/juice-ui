@@ -14,6 +14,7 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="layout">
+    {{if .Handle}}
     <aside class="sidebar">
       <div class="sidebar-top">
         <a class="brand" href="/run"><span class="brand-mark">◆</span><span class="lbl">Juice</span></a>
@@ -24,7 +25,6 @@
         </form>
       </div>
 
-      {{if .Handle}}
       <nav class="nav" aria-label="Primary">
         <a href="/run" title="Run"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span class="lbl">Run</span></a>
         <a href="/inbox" title="Inbox" class="nav-inbox">
@@ -40,7 +40,6 @@
         <a href="/studio" title="Studio"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg><span class="lbl">Studio</span></a>
         <a href="/wallet" title="Wallet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#wallet"/></svg><span class="lbl">Wallet</span></a>
       </nav>
-      {{end}}
 
       <div class="sidebar-foot">
         <form method="post" action="/theme" class="theme-toggle">
@@ -52,15 +51,16 @@
         </form>
       </div>
     </aside>
+    {{end}}
 
     <div class="main-area">
+      {{if .Handle}}
       <header class="topbar">
-        {{if .Handle}}
         <details class="mobile-menu">
           <summary class="btn-icon" aria-label="Menu" title="Menu"><span aria-hidden="true">≡</span></summary>
           <div class="mobile-drawer">
             <span class="mono" style="font-size:.9rem">{{.Handle}}</span>
-            <span class="money" style="font-size:.9rem">{{money .Available}} ¤</span>
+            <span class="money" style="font-size:.9rem">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span>
             <form method="post" action="/theme">
               {{.CSRFField}}
               <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
@@ -74,7 +74,6 @@
             </form>
           </div>
         </details>
-        {{end}}
 
         <form class="omnibox" action="/run" method="get" role="search">
           <input type="search" name="q" placeholder="Search actions…" aria-label="Search actions" autocomplete="off">
@@ -83,13 +82,12 @@
           </button>
         </form>
 
-        {{if .Handle}}
         <a href="/inbox" class="topbar-bell" aria-label="Inbox" title="Inbox">
           <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
         </a>
         <div class="account-menu">
           <span class="handle mono" title="{{.Handle}}">{{.Handle}}</span>
-          <span class="credits money">{{money .Available}} ¤</span>
+          <span class="credits money">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span>
           <form method="post" action="/theme" class="theme-toggle">
             {{.CSRFField}}
             <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
@@ -102,15 +100,14 @@
             <button type="submit" class="btn-quiet" title="Sign out"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl"> Sign out</span></button>
           </form>
         </div>
-        {{end}}
       </header>
+      {{end}}
 
       <div class="content">
         {{if .Flash}}<div class="flash" role="status">{{.Flash}}</div>{{end}}
         <main id="main" class="container">
           {{block "content" .}}{{end}}
         </main>
-        <footer class="footer"><span>Juice UI — talks only to the kernel HTTP API.</span></footer>
       </div>
     </div>
   </div>

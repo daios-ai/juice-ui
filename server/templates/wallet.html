@@ -1,24 +1,45 @@
 {{define "content"}}
 <h1>Wallet</h1>
-<p class="subtitle">Signed in as <span class="handle mono">{{.Data.User.Handle}}</span></p>
 
 <div class="card">
   <div class="balances">
     <div class="balance">
-      <div class="amount money status-credited">{{money .Data.User.Available}}</div>
-      <div class="label">Available credits</div>
+      <div class="amount money status-credited">{{money .Data.User.Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="label">Available</div>
     </div>
     <div class="balance">
-      <div class="amount money status-escrow">{{money .Data.User.Locked}}</div>
+      <div class="amount money status-escrow">{{money .Data.User.Locked}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
       <div class="label">Locked in active sessions</div>
     </div>
   </div>
-  <p class="muted" style="margin-top:1rem">
-    Credit top-ups happen out-of-band (operator/CLI). Each <em>run</em> locks
-    exactly the action's price and releases automatically when the call and any
-    outstanding steps are complete.
+  <p class="muted" style="margin-top:1rem;font-size:.85rem">
+    Credits are added out-of-band (operator). Each run locks exactly the action's
+    price and releases automatically when the call and any outstanding steps are complete.
   </p>
 </div>
 
-<p style="margin-top:1rem"><a href="/transactions">Transaction history →</a></p>
+<h2>Transactions</h2>
+{{if .Data.Transactions}}
+<table>
+  <thead>
+    <tr><th>Action</th><th>Role</th><th>Status</th><th>Gross</th><th>Net</th><th>Date</th></tr>
+  </thead>
+  <tbody>
+  {{range .Data.Transactions}}
+  <tr>
+    <td class="mono"><a href="/transactions/{{.ID}}">{{truncate 28 .ActionName}}</a></td>
+    <td class="muted" style="font-size:.85rem">
+      {{if eq .TargetUserID $.Data.User.ID}}seller{{else if eq .OwnerUserID $.Data.User.ID}}buyer{{else}}caller{{end}}
+    </td>
+    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+    <td class="money">{{money .Gross}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></td>
+    <td class="money {{if eq .Status "success"}}status-credited{{end}}">{{if eq .Status "success"}}+{{money .Net}}{{else}}—{{end}}</td>
+    <td class="muted" style="font-size:.85rem">{{truncate 10 .StartedAt}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No transactions yet.</p>
+{{end}}
 {{end}}

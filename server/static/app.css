@@ -85,17 +85,21 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .main-area { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .content { flex: 1 1 auto; display: flex; flex-direction: column; }
 .container { width: 100%; max-width: 980px; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; flex: 1 0 auto; }
-.footer { text-align: center; color: var(--text-muted); font-size: .8rem; padding: 2rem 1rem; }
+.ico-inline { width: 1em; height: 1em; vertical-align: -.15em; display: inline-block; }
+
+/* Stat strips — icon + number pairs in a horizontal row */
+.stat-strip { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; color: var(--text-muted); font-size: .9rem; }
+.stat-strip span { display: flex; align-items: center; gap: .2rem; }
 
 /* Topbar */
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: .75rem;
   background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: .5rem .75rem;
+  padding: .25rem .75rem;
 }
 .omnibox { flex: 1; display: flex; gap: .4rem; align-items: center; }
-.omnibox input[type=search] { flex: 1; margin: 0; width: auto; }
+.omnibox input[type=search] { flex: 1; margin: 0; width: auto; padding: .2rem .5rem; height: 1.8rem; }
 .topbar-bell { display: flex; align-items: center; color: var(--text-muted); text-decoration: none; }
 .topbar-bell:hover { color: var(--text); }
 .topbar-bell .ico { width: 1.3rem; height: 1.3rem; }
@@ -211,7 +215,7 @@ label { display: block; font-weight: 600; margin-bottom: .25rem; }
 .field .help { color: var(--text-muted); font-size: .85rem; font-weight: 400; margin: .1rem 0 .35rem; }
 .req { color: var(--accent); }
 input[type=text], input[type=password], input[type=email], input[type=number],
-textarea, select {
+input[type=search], textarea, select {
   width: 100%; padding: .55rem .65rem; font-family: inherit; font-size: .95rem;
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius);
