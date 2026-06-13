@@ -114,13 +114,6 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
   -webkit-appearance: none; appearance: none;
   padding: 0.375rem 0.65rem; height: auto; font-size: 0.9rem;
 }
-.topbar-bell {
-  display: flex; align-items: center; padding: 0.375rem;
-  color: var(--text-muted); text-decoration: none;
-  border-radius: calc(var(--radius) / 2);
-}
-.topbar-bell:hover { background: var(--surface-2); color: var(--text); }
-.topbar-bell .ico { width: 1rem; height: 1rem; }
 .topbar-user {
   display: flex; align-items: center; padding: 0.375rem;
   color: var(--text-muted); text-decoration: none;
