@@ -1,14 +1,22 @@
 - Never implement anything that violates requirements.md
+
 - Never implement code if I don't ask you directly
+
 - Keep the number of files small because this codebase is critical and must be correct!
+
 - Every GO file must have a corresponding test file
+
 - Never peek into the implementation of the Juice kernel
-- For every flow you want to implement, you must try it out yourself
-  on the kernel first.
+
+- For every user-story/flow you want to implement, you must try it out yourself
+  on a test kernel first (in /tmp). Simulate the surface and double check it works!
+
 - These belong to the official kernel documentation:
   - docs/API.md
   - docs/flows.sh
   - docs/juice-requirements.md
   These are files I write manually, and you must never change them,
   only commit them.
-- Never attempt to commit before passing all tests and flows/user stories!
+
+- When you plan an implementation, always add "pass all unit tests and flows/user-stories".
+  Never attempt to commit before passing all tests and flows!
