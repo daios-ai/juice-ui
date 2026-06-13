@@ -9,20 +9,20 @@
 {{range .Data.Inbox}}
 <div class="card stack" id="step-{{.Step.ID}}">
   <div>
-    <p class="row" style="margin:0;gap:.75rem">
+    <p class="cluster">
       <span class="ref mono">{{with index $.Data.Actions .Step.NextActionID}}{{.Ref}}{{else}}{{truncate 8 .Step.NextActionID}}…{{end}}</span>
       <span class="pill">waiting</span>
-      <span class="muted" style="font-size:.85rem">{{truncate 19 .Step.CreatedAt}}</span>
+      <span class="muted small">{{truncate 19 .Step.CreatedAt}}</span>
     </p>
   </div>
 
   {{if .Form.Locked}}
   <section>
-    <p class="help" style="margin:0 0 .4rem">Pre-filled by the creator:</p>
-    <dl style="display:grid;grid-template-columns:max-content 1fr;gap:.2rem .75rem;margin:0">
+    <p class="help">Pre-filled by the creator:</p>
+    <dl class="locked-args">
       {{range .Form.Locked}}
-      <dt class="mono" style="font-weight:600">{{.Name}}</dt>
-      <dd style="margin:0"><code class="mono">{{.Value}}</code></dd>
+      <dt class="mono">{{.Name}}</dt>
+      <dd><code class="mono">{{.Value}}</code></dd>
       {{end}}
     </dl>
   </section>
@@ -74,9 +74,9 @@
 </table>
 {{else}}<p class="muted">No history yet.</p>{{end}}
 
-<details style="margin-top:1.5rem">
-  <summary style="cursor:pointer;font-weight:600">Create a step (developer tool)</summary>
-  <form class="card stack" method="post" action="/steps/create" style="margin-top:.75rem">
+<details class="details-panel">
+  <summary>Create a step (developer tool)</summary>
+  <form class="card stack" method="post" action="/steps/create">
     {{.CSRFField}}
     <div class="field">
       <label for="s_process">Process ID <span class="req">*</span></label>

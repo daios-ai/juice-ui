@@ -11,7 +11,7 @@
     <div class="balance"><div class="amount"><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></div><div class="label">Status</div></div>
   </div>
   {{if eq $d.Process.Status "open"}}
-  <div class="row" style="margin-top:1rem">
+  <div class="row">
     <form method="post" action="/processes/{{$d.Process.ID}}/end" onsubmit="return confirm('End session and reclaim the remaining balance?')">
       {{.CSRFField}}<button class="btn-primary" type="submit">End &amp; reclaim</button>
     </form>

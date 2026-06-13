@@ -82,11 +82,13 @@ type transactionsView struct {
 }
 
 type txView struct {
-	Tx      client.Transaction
-	Action  *client.Action // nil if action not found (soft-deleted)
-	Me      client.User
-	CanRate bool
-	Error   string
+	Tx         client.Transaction
+	Action     *client.Action // nil if action not found (soft-deleted)
+	Me         client.User
+	CanRate    bool
+	Receipt    *client.ReceiptVerification
+	ReceiptMsg string
+	Error      string
 }
 
 type stepEntry struct {
@@ -96,8 +98,8 @@ type stepEntry struct {
 
 type stepsView struct {
 	MyID    string
-	Inbox   []stepEntry          // waiting steps that require this user
-	History []client.Step        // completed/running/other steps
+	Inbox   []stepEntry              // waiting steps that require this user
+	History []client.Step            // completed/running/other steps
 	Actions map[string]client.Action // next_action_id → action, for name display
 	Error   string
 }
@@ -600,7 +602,6 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/studio", "Action deleted. History is preserved.")
 }
 
-
 // ---- processes ----
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
@@ -706,6 +707,13 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 		// Fetch the action; nil on 404 (soft-deleted action).
 		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
 			view.Action = &a
+		}
+		if receipt, re := s.client.ReceiptVerification(ctx, tok, id); re == nil {
+			view.Receipt = &receipt
+		} else if kerr, ok := re.(*client.KernelError); ok && kerr.Kind == client.KindInvalidState {
+			view.ReceiptMsg = "Receipt verification is not available for this local transaction."
+		} else {
+			view.ReceiptMsg = userMessage(re)
 		}
 		return nil
 	})
