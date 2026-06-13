@@ -13,3 +13,8 @@ coverage.*
 *.env
 .env
 .DS_Store
+
+# Local kernel binary and database
+/juice
+juice.db
+juice.json
