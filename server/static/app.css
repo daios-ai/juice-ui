@@ -180,8 +180,7 @@ h3 { margin: 1.5rem 0 .35rem; }
 .card-sep { border: none; border-top: 1px solid var(--border); margin: .75rem -1.25rem; }
 .action-card { display: flex; flex-direction: column; }
 .action-card-name { margin: 0 0 .1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.action-card-name a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
-.action-card-name a:hover { text-decoration: underline; }
+.action-card-name a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-card-ref { margin: 0 0 .2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; color: var(--text-muted); }
 .action-card-meta { margin: 0 0 .5rem; font-size: .75rem; }
 .action-card .stat-strip { font-size: .75rem; gap: .6rem; margin: 0; }

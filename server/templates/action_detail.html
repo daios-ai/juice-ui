@@ -3,8 +3,8 @@
 <p><a href="/run">← Run</a></p>
 <h1>{{$d.Action.Name}}</h1>
 <p class="subtitle ref mono">{{$d.Action.Ref}}</p>
-<p class="muted">by <a href="/run?q={{$d.Action.OwnerHandle}}" class="mono owner">{{$d.Action.OwnerHandle}}</a></p>
 <p class="action-detail-meta muted">{{$d.Action.Kind}} · <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span> · <span class="pill {{if $d.Action.Public}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Public}}public{{else}}private{{end}}</span></p>
+<p class="muted">by <a href="/run?q={{$d.Action.OwnerHandle}}" class="mono owner">{{$d.Action.OwnerHandle}}</a></p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
