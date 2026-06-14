@@ -230,7 +230,7 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 	view := discoverView{Query: q, LookupAvailable: true}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q == "" {
-			cat, e := s.client.ListActions(ctx, "", "", "")
+			cat, e := s.client.ListActions(ctx, tok, "", "")
 			if e != nil {
 				return e
 			}
@@ -266,7 +266,7 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 			if view.Reason == "" {
 				view.Reason = out.Message
 			}
-			cat, e := s.client.ListActions(ctx, "", "", "")
+			cat, e := s.client.ListActions(ctx, tok, "", "")
 			if e != nil {
 				return e
 			}
