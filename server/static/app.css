@@ -169,8 +169,7 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
 
 h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
 h2 { font-size: 1.2rem; margin: 1.5rem 0 .5rem; }
-h3 { margin: 0 0 .35rem; }
-.section-h3 { margin-top: 1.5rem; }
+h3 { margin: 1.5rem 0 .35rem; }
 .subtitle { color: var(--text-muted); margin: 0 0 1.5rem; }
 
 /* Cards & grids */
@@ -196,7 +195,7 @@ h3 { margin: 0 0 .35rem; }
 .locked-args dd { margin: 0; }
 .parties { width: auto; }
 .parties th { padding-right: 2rem; }
-.action-head h3 { margin-bottom: .2rem; }
+.action-head h3 { margin: 0 0 .2rem; }
 .action-head .ref { margin: 0; }
 
 /* Balances */
