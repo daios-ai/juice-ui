@@ -27,7 +27,6 @@
     </div>
     <hr class="card-sep">
     <p class="stat-strip">
-      {{if gt .Score 0.0}}<span class="score">relevance {{printf "%.2f" .Score}}</span>{{end}}
       {{if .Stats}}
       <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
       {{if gt $r.Stats.RatingCount 0}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct $r.Stats.RatingEstimate $r.Stats.RatingCount}}% ({{$r.Stats.RatingCount}})</span>{{else}}<span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
