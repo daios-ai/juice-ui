@@ -184,6 +184,7 @@ h3 { margin: 1.5rem 0 .35rem; }
 .action-card-name a:hover { text-decoration: underline; }
 .action-card-ref { margin: 0 0 .2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; color: var(--text-muted); }
 .action-card-meta { margin: 0 0 .5rem; font-size: .75rem; }
+.action-card .stat-strip { font-size: .75rem; gap: .6rem; }
 .action-card-body { flex: 1; }
 .action-card-desc { margin: .35rem 0 0; font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
