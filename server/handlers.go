@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,17 +67,11 @@ type actionView struct {
 
 type studioView struct {
 	User     client.User
-	Cards    []myActionCardView
+	Cards    []actionCardView
 	Earnings studioEarnings
 	Filter   string // "active" | "inactive" | "" (all)
 	Error    string
 	Notice   string
-}
-
-type myActionCardView struct {
-	Action    client.Action
-	Stats     *client.Stats
-	CSRFField template.HTML
 }
 
 type makeResultView struct {
@@ -547,8 +540,7 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 			earn.Count++
 		}
 	}
-	csrfField := csrf.TemplateField(r)
-	var cards []myActionCardView
+	var cards []actionCardView
 	for _, a := range acts {
 		if filter == "active" && !a.Active {
 			continue
@@ -561,7 +553,7 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 			cp := sv
 			st = &cp
 		}
-		cards = append(cards, myActionCardView{Action: a, Stats: st, CSRFField: csrfField})
+		cards = append(cards, actionCardView{Action: a, Stats: st})
 	}
 	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{
 		User: me, Cards: cards, Earnings: earn, Filter: filter,
@@ -714,32 +706,19 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	op := lastSegment(r.URL.Path)
 	ctx := r.Context()
-	htmx := isHTMX(r)
-	var updated client.Action
 	err := s.sessions.Do(ctx, func(tok string) error {
 		switch op {
 		case "enable":
-			if e := s.client.EnableAction(ctx, tok, id); e != nil {
-				return e
-			}
+			return s.client.EnableAction(ctx, tok, id)
 		case "disable":
-			if e := s.client.DisableAction(ctx, tok, id); e != nil {
-				return e
-			}
+			return s.client.DisableAction(ctx, tok, id)
 		case "make-public":
 			pub := true
-			a, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
-			updated = a
+			_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
 			return e
 		case "make-private":
 			pub := false
-			a, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
-			updated = a
-			return e
-		}
-		if htmx {
-			a, e := s.client.GetAction(ctx, tok, id)
-			updated = a
+			_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
 			return e
 		}
 		return nil
@@ -747,25 +726,10 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if isAuthErr(err) {
 			_ = s.sessions.Logout(ctx)
-			if htmx {
-				w.Header().Set("HX-Redirect", "/login")
-				return
-			}
 			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
 			return
 		}
-		if htmx {
-			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
-			return
-		}
 		s.handleErr(w, r, err)
-		return
-	}
-	if htmx {
-		_ = s.render.Fragment(w, http.StatusOK, "_my_action_card", myActionCardView{
-			Action:    updated,
-			CSRFField: csrf.TemplateField(r),
-		})
 		return
 	}
 	http.Redirect(w, r, "/actions/"+id, http.StatusSeeOther)

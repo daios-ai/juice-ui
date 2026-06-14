@@ -270,17 +270,9 @@ func TestStudioPageTwoZones(t *testing.T) {
 	if !strings.Contains(body, "draft") {
 		t.Error("studio must list inactive/private own actions (R10.3 resolved)")
 	}
-	// Inactive pill visible for the draft action.
+	// Inactive status visible for the draft action (shown in card meta line).
 	if !strings.Contains(body, "inactive") {
-		t.Error("studio must show the inactive pill for an inactive action")
-	}
-	// Toggle buttons for lifecycle management (R6.3.3): active action shows Disable.
-	if !strings.Contains(body, "Disable") {
-		t.Error("studio action card must show Disable toggle for an active action")
-	}
-	// Inactive action shows Enable.
-	if !strings.Contains(body, "Enable") {
-		t.Error("studio action card must show Enable toggle for an inactive action")
+		t.Error("studio must show the inactive status for an inactive action")
 	}
 }
 
@@ -356,7 +348,7 @@ func TestStudioMakeActionInsufficientCredits(t *testing.T) {
 	}
 }
 
-func TestStudioLifecycleHtmxSwap(t *testing.T) {
+func TestStudioLifecycleRedirect(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -367,29 +359,30 @@ func TestStudioLifecycleHtmxSwap(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/studio")
 	tok := csrfTokenFrom(t, body)
 
-	// htmx disable request on action A1: must return a card fragment, not a redirect.
+	// Disable action A1: must redirect to the action detail page.
 	form := url.Values{"gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/disable", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("HX-Request", "true")
-	resp, err := cl.Do(req)
+
+	noRedirect := &http.Client{
+		Jar: cl.Jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	fragment, _ := io.ReadAll(resp.Body)
-	frag := string(fragment)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("lifecycle htmx returned %d, body: %s", resp.StatusCode, frag)
+	if resp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("lifecycle POST returned %d, expected 303: %s", resp.StatusCode, body)
 	}
-	// Response must be a card fragment (article element), not a redirect page.
-	if !strings.Contains(frag, `id="action-A1"`) {
-		t.Error("htmx lifecycle response must be a card fragment with the action id")
-	}
-	// Card must contain toggle buttons (R6.3.3).
-	if !strings.Contains(frag, "Enable") && !strings.Contains(frag, "Disable") {
-		t.Error("card fragment must contain lifecycle toggle buttons")
+	loc := resp.Header.Get("Location")
+	if !strings.Contains(loc, "/actions/A1") {
+		t.Errorf("lifecycle redirect must go to action detail page, got Location=%q", loc)
 	}
 }
 

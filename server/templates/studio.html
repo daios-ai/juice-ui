@@ -120,7 +120,7 @@
 </div>
 {{if $d.Cards}}
 <div class="grid">
-  {{range $d.Cards}}{{template "_my_action_card" .}}{{end}}
+  {{range $d.Cards}}{{template "_action_card" .}}{{end}}
 </div>
 {{else}}
 <p class="muted">No actions match this filter.</p>

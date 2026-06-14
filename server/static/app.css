@@ -178,6 +178,14 @@ h3 { margin: 1.5rem 0 .35rem; }
   border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow);
 }
 .card-sep { border: none; border-top: 1px solid var(--border); margin: .75rem -1.25rem; }
+.action-card { display: flex; flex-direction: column; }
+.action-card-name { margin: 0 0 .1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.action-card-name a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
+.action-card-name a:hover { text-decoration: underline; }
+.action-card-ref { margin: 0 0 .2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; color: var(--text-muted); }
+.action-card-meta { margin: 0 0 .5rem; font-size: .75rem; }
+.action-card-body { flex: 1; }
+.action-card-desc { margin: .35rem 0 0; font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
