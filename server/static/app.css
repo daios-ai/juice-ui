@@ -206,6 +206,7 @@ h3 { margin: 1.5rem 0 .35rem; }
 .parties th { padding-right: 2rem; }
 .action-head h3 { margin: 0 0 .2rem; }
 .action-head .ref { margin: 0; }
+.action-detail-meta { font-size: .85rem; margin: .2rem 0 0; }
 
 /* Balances */
 .balances { display: flex; gap: 2rem; flex-wrap: wrap; }
