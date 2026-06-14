@@ -472,6 +472,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 				return e
 			}
 			view.Outcome = &out
+			view.Outcome.CSRFField = csrf.TemplateField(r)
 		}
 		return nil
 	})
@@ -931,7 +932,15 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if isHTMX(r) {
+			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
+			return
+		}
 		s.flashRedirect(w, r, "/transactions/"+id, userMessage(err))
+		return
+	}
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_rated", nil)
 		return
 	}
 	s.flashRedirect(w, r, "/transactions/"+id, "Thanks for rating.")
@@ -986,6 +995,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		outcome = out
+		outcome.CSRFField = csrf.TemplateField(r)
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {

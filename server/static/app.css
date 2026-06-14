@@ -98,8 +98,10 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .price { color: var(--accent); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* Stat strips — icon + number pairs in a horizontal row */
-.stat-strip { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; color: var(--text-muted); font-size: .9rem; }
+.stat-strip { display: flex; gap: 1rem; flex-wrap: nowrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: .9rem; }
 .stat-strip span { display: flex; align-items: center; gap: .2rem; }
+
+td.money { text-align: right; }
 
 /* Generic floating menu panel — pair with <details><summary> or [data-menu] button */
 .menu {
@@ -108,6 +110,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
   border-radius: var(--radius); box-shadow: 0 4px 20px rgba(0,0,0,.15);
   padding: .3rem; display: flex; flex-direction: column;
 }
+.menu[hidden] { display: none; }
 .menu-item {
   display: flex; align-items: center; gap: .55rem;
   width: 100%; padding: .45rem .6rem; border-radius: calc(var(--radius) - 2px);
@@ -122,12 +125,9 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 
 /* Mobile hamburger — hidden on desktop, floats at top of main-area */
 .mobile-menu { display: none; position: relative; }
-.mobile-drawer {
-  position: absolute; top: 100%; left: 0; z-index: 20; min-width: 200px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: 0 4px 20px rgba(0,0,0,.15);
-  padding: .75rem 1rem; display: flex; flex-direction: column; gap: .75rem;
-}
+details.mobile-menu > summary { list-style: none; }
+details.mobile-menu > summary::-webkit-details-marker { display: none; }
+.mobile-drawer { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; }
 
 /* Inbox badge */
 .badge {
@@ -170,6 +170,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
 h2 { font-size: 1.2rem; margin: 1.5rem 0 .5rem; }
 h3 { margin: 0 0 .35rem; }
+.section-h3 { margin-top: 1.5rem; }
 .subtitle { color: var(--text-muted); margin: 0 0 1.5rem; }
 
 /* Cards & grids */
@@ -177,6 +178,7 @@ h3 { margin: 0 0 .35rem; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow);
 }
+.card-sep { border: none; border-top: 1px solid var(--border); margin: .75rem -1.25rem; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }

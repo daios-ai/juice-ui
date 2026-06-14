@@ -67,6 +67,13 @@ document.addEventListener('mousedown', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
 
+// Close mobile drawer when clicking outside it.
+document.addEventListener('click', (e) => {
+  for (const d of document.querySelectorAll('details.mobile-menu[open]')) {
+    if (!d.contains(e.target)) d.removeAttribute('open');
+  }
+});
+
 // Optimistic sidebar collapse/expand.
 for (const form of document.querySelectorAll("form.sidebar-collapse")) {
   form.addEventListener("submit", () => {

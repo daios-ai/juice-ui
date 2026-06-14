@@ -10,7 +10,7 @@
 <div class="card stack">
   {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
   <p class="stat-strip">
-    {{if $d.IsPaid}}<span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}</span>{{else}}<span class="muted">free</span>{{end}}
+    <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}</span>
     <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span>
     <span class="muted" title="Kind">{{$d.Action.Kind}}</span>
     {{if $d.HasStats}}
@@ -26,8 +26,6 @@
 </div>
 
 <h2>Run</h2>
-<div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
-
 <form class="card stack" method="post" action="/actions/{{$d.Action.ID}}/run" data-run-panel
       hx-post="/actions/{{$d.Action.ID}}/run" hx-target="#run-result" hx-swap="innerHTML"
       hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
@@ -41,6 +39,7 @@
     </div>
   </div>
 </form>
+<div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>

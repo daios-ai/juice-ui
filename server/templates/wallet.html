@@ -49,21 +49,22 @@
 {{if .Data.Transactions}}
 <table>
   <thead>
-    <tr><th>Action</th><th>Role</th><th>Status</th><th>Gross</th><th>Net</th><th>Date</th></tr>
+    <tr><th>ID</th><th>Action</th><th>Role</th><th>Status</th><th>Gross</th><th>Net</th><th>Date</th></tr>
   </thead>
   <tbody>
   {{range .Data.Transactions}}
   {{$isSeller := eq .TargetUserID $.Data.User.ID}}
   {{$isBuyer := eq .OwnerUserID $.Data.User.ID}}
   <tr>
-    <td class="mono"><a href="/transactions/{{.ID}}">{{truncate 28 .ActionName}}</a></td>
+    <td class="id mono"><a href="/transactions/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+    <td class="mono"><a href="/actions/{{.ActionID}}">{{truncate 28 .ActionName}}</a></td>
     <td class="muted" style="font-size:.85rem">
       {{if $isSeller}}seller{{else if $isBuyer}}buyer{{else}}caller{{end}}
     </td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
     <td class="money">{{money .Gross}}</td>
     <td class="money {{if eq .Status "success"}}{{if $isBuyer}}status-refunded{{else}}status-credited{{end}}{{end}}">
-      {{if eq .Status "success"}}{{if $isBuyer}}-{{money .Gross}}{{else}}+{{money .Net}}{{end}}{{else}}—{{end}}
+      {{if eq .Status "success"}}{{if $isBuyer}}{{if gt .Gross 0}}-{{end}}{{money .Gross}}{{else}}{{if gt .Net 0}}+{{end}}{{money .Net}}{{end}}{{else}}—{{end}}
     </td>
     <td class="muted" style="font-size:.85rem">{{truncate 10 .StartedAt}}</td>
   </tr>

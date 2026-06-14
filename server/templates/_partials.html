@@ -1,10 +1,13 @@
 {{define "_action_card"}}
 <article class="card">
-  <h3><a href="/actions/{{.Action.ID}}">{{.Action.Name}}</a></h3>
-  <p class="ref mono">{{.Action.Ref}}</p>
+  <div class="action-head">
+    <h3><a href="/actions/{{.Action.ID}}">{{.Action.Name}}</a></h3>
+    <p class="ref mono">{{.Action.Ref}}</p>
+  </div>
   {{if .Action.Description}}<p>{{truncate 160 .Action.Description}}</p>{{end}}
+  <hr class="card-sep">
   <p class="stat-strip">
-    {{if gt .Action.Price 0}}<span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Action.Price}}</span>{{else}}<span class="muted">free</span>{{end}}
+    <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Action.Price}}</span>
     {{if not .Action.Active}}<span class="pill status-escrow">inactive</span>{{end}}
     {{if .Stats}}
     <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
@@ -44,8 +47,22 @@
 <div class="outcome success" role="status">
   <strong>Success.</strong>
   <pre class="json">{{json .Result}}</pre>
-  {{if .Cost}}{{template "_cost_breakdown" .Cost}}{{end}}
-  {{if .TxID}}<p><a href="/transactions/{{.TxID}}">View transaction &amp; receipt</a></p>{{end}}
+  {{if .TxID}}
+  <div class="row compact" style="margin-top:.75rem">
+    <a class="btn" href="/transactions/{{.TxID}}">Receipt</a>
+    <form class="row compact" style="flex:1;min-width:0" method="post" action="/transactions/{{.TxID}}/rate"
+          hx-post="/transactions/{{.TxID}}/rate" hx-target="this" hx-swap="outerHTML">
+      {{.CSRFField}}
+      <input type="text" name="note" placeholder="Optional comment…" style="flex:1;min-width:0">
+      <button class="btn-icon" name="rating" value="1" type="submit" aria-label="Good">
+        <svg class="ico"><use href="/static/icons.svg#thumb-up"/></svg>
+      </button>
+      <button class="btn-icon" name="rating" value="0" type="submit" aria-label="Bad">
+        <svg class="ico"><use href="/static/icons.svg#thumb-down"/></svg>
+      </button>
+    </form>
+  </div>
+  {{end}}
 </div>
 {{end}}
 {{end}}
@@ -65,19 +82,15 @@
 {{end}}
 
 {{define "_my_action_card"}}
-<article class="card stack" id="action-{{.Action.ID}}">
+<article class="card" id="action-{{.Action.ID}}">
   <div class="action-head">
     <h3><a href="/actions/{{.Action.ID}}">{{.Action.Name}}</a></h3>
     <p class="ref mono">{{.Action.Ref}}</p>
   </div>
-  {{if .Action.Description}}<p style="margin:0">{{truncate 120 .Action.Description}}</p>{{end}}
-  <p class="row" style="margin:0;gap:.5rem">
-    <span class="muted" style="font-size:.85rem">{{.Action.Kind}}</span>
-    {{if gt .Action.Price 0}}<span class="price" style="font-size:.85rem"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Action.Price}}</span>{{else}}<span class="muted" style="font-size:.85rem">free</span>{{end}}
-    <span class="pill {{if .Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Active}}active{{else}}inactive{{end}}</span>
-    <span class="pill {{if .Action.Public}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Public}}public{{else}}private{{end}}</span>
-  </p>
-  <p class="stat-strip" style="margin:0;font-size:.8rem">
+  {{if .Action.Description}}<p>{{truncate 120 .Action.Description}}</p>{{end}}
+  <hr class="card-sep">
+  <p class="stat-strip">
+    <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Action.Price}}</span>
     {{if .Stats}}
     <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
     {{if gt .Stats.RatingCount 0}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}% ({{.Stats.RatingCount}})</span>{{else}}<span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
@@ -88,7 +101,13 @@
     <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
     {{end}}
   </p>
-  <div class="row" style="gap:.5rem;margin:0">
+  <hr class="card-sep">
+  <p class="row" style="gap:.5rem;margin:.25rem 0 .5rem;justify-content:center">
+    <span class="muted" style="font-size:.85rem">{{.Action.Kind}}</span>
+    <span class="pill {{if .Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Active}}active{{else}}inactive{{end}}</span>
+    <span class="pill {{if .Action.Public}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Public}}public{{else}}private{{end}}</span>
+  </p>
+  <div class="row" style="gap:.5rem;margin:0;justify-content:center">
     {{if .Action.Active}}
     <form method="post" action="/actions/{{.Action.ID}}/disable"
           hx-post="/actions/{{.Action.ID}}/disable"
@@ -176,6 +195,8 @@
 </div>
 {{end}}
 {{end}}
+
+{{define "_rated"}}<span class="muted" style="font-size:.85rem">Rated ✓</span>{{end}}
 
 {{define "_schema_panel"}}
 {{if not .UseRawFallback}}

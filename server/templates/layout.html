@@ -74,20 +74,28 @@
     <div class="main-area">
       {{if .Handle}}
       <details class="mobile-menu">
-        <summary class="btn-icon" aria-label="Menu" title="Menu"><span aria-hidden="true">≡</span></summary>
-        <div class="mobile-drawer">
-          <span class="mono" style="font-size:.9rem">{{.Handle}}</span>
-          <span class="money" style="font-size:.9rem"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</span>
+        <summary class="btn-icon" aria-label="Account menu" title="Account menu">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
+        </summary>
+        <div class="menu mobile-drawer" role="menu">
+          <div class="menu-caption mono">{{.Handle}}</div>
+          <div class="menu-caption money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</div>
+          <div class="menu-divider"></div>
           <form method="post" action="/theme" class="theme-toggle">
             {{.CSRFField}}
             <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
-            <button type="submit" class="btn-icon" aria-label="Toggle theme">
+            <button type="submit" class="menu-item" role="menuitem" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme">
               <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
+              Theme
             </button>
           </form>
+          <div class="menu-divider"></div>
           <form method="post" action="/logout">
             {{.CSRFField}}
-            <button type="submit" class="btn-quiet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg> Sign out</button>
+            <button type="submit" class="menu-item" role="menuitem">
+              <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg>
+              Sign out
+            </button>
           </form>
         </div>
       </details>

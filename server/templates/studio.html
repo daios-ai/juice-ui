@@ -49,7 +49,7 @@
   <div id="make-result"></div>
 </div>
 
-<h3>Manual creation</h3>
+<h3 class="section-h3">Manual creation</h3>
 <form class="card stack" method="post" action="/studio/create">
   {{.CSRFField}}
   <div class="field">
@@ -90,7 +90,7 @@
   <button class="btn" type="submit">Create action</button>
 </form>
 
-<h3>Import from OpenAPI</h3>
+<h3 class="section-h3">Import from OpenAPI</h3>
 <form class="card stack" method="post" action="/studio/import">
   {{.CSRFField}}
   <div class="field">
@@ -101,7 +101,7 @@
   <button class="btn" type="submit">Import</button>
 </form>
 
-<h3>Unimport OpenAPI spec</h3>
+<h3 class="section-h3">Unimport OpenAPI spec</h3>
 <form class="card stack" method="post" action="/studio/unimport">
   {{.CSRFField}}
   <div class="field">

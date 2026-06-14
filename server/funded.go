@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 
 	"github.com/daios-ai/juice-ui/client"
 )
@@ -29,13 +30,14 @@ type Cost struct {
 
 // Outcome is the rendered result of a call through POST /v1/run.
 type Outcome struct {
-	Class   OutcomeClass
-	Result  json.RawMessage // success result
-	TxID    string          // success transaction
-	TraceID string
-	Cost    *Cost  // success only
-	Message string // user-facing explanation
-	Detail  string // raw kernel error message (for diagnostics; never includes secrets)
+	Class     OutcomeClass
+	Result    json.RawMessage // success result
+	TxID      string          // success transaction
+	TraceID   string
+	Cost      *Cost         // success only
+	Message   string        // user-facing explanation
+	Detail    string        // raw kernel error message (for diagnostics; never includes secrets)
+	CSRFField template.HTML // injected by the handler for the inline rating form
 }
 
 // IsSuccess reports a successful call outcome (template helper).

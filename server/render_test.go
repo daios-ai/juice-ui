@@ -106,12 +106,12 @@ func TestRenderFragment(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	out := Outcome{Class: Success, Result: json.RawMessage(`{"ok":true}`), TxID: "tx1", Cost: &Cost{Gross: 100, Fee: 20, Net: 80}}
+	out := Outcome{Class: Success, Result: json.RawMessage(`{"ok":true}`), TxID: "tx1"}
 	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Success") || !strings.Contains(body, "80") {
+	if !strings.Contains(body, "Success") || !strings.Contains(body, "/transactions/tx1") {
 		t.Errorf("fragment render missing content: %s", body)
 	}
 }
