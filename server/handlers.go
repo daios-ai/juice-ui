@@ -511,8 +511,10 @@ func orDefaultStr(v, def string) string {
 func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
+	newID := r.URL.Query().Get("new")
 	var me client.User
 	var acts []client.Action
+	var newAction *client.Action
 	var txs []client.Transaction
 	actionStats := map[string]client.Stats{}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -532,6 +534,22 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 				actionStats[action.ID] = st
 			}
 		}
+		// Kernel bug: private/inactive owned actions are not returned by ListActions.
+		// Fetch the newly created action explicitly so it appears in the studio.
+		if newID != "" {
+			found := false
+			for _, a := range acts {
+				if a.ID == newID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if a, e := s.client.GetAction(ctx, tok, newID); e == nil {
+					newAction = &a
+				}
+			}
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -548,6 +566,9 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	}
 	csrfField := csrf.TemplateField(r)
 	var cards []myActionCardView
+	if newAction != nil {
+		cards = append(cards, myActionCardView{Action: *newAction, Stats: nil, CSRFField: csrfField})
+	}
 	for _, a := range acts {
 		if filter == "active" && !a.Active {
 			continue
@@ -605,8 +626,9 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/studio", userMessage(err))
 		return
 	}
-	// Created inactive; jump to its detail page (it won't appear in the list).
-	s.flashRedirect(w, r, "/actions/"+created.ID, "Action created (inactive). Enable it when ready.")
+	// Redirect to studio with new= param so the action appears even if the kernel
+	// doesn't return private/inactive owned actions in the list.
+	s.flashRedirect(w, r, "/studio?new="+created.ID, "Action '"+created.Name+"' created (inactive). Enable it when ready.")
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {

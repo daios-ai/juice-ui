@@ -51,20 +51,19 @@ function closeAllMenus() {
 }
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-menu]');
-  if (btn) {
-    const menu = document.getElementById(btn.dataset.menu);
-    if (!menu) return;
-    const opening = menu.hidden;
-    closeAllMenus();
-    if (opening) {
-      menu.hidden = false;
-      btn.setAttribute('aria-expanded', 'true');
-      positionMenu(btn, menu);
-    }
-    e.stopPropagation();
-    return;
+  if (!btn) return;
+  const menu = document.getElementById(btn.dataset.menu);
+  if (!menu) return;
+  const opening = menu.hidden;
+  closeAllMenus();
+  if (opening) {
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    requestAnimationFrame(() => positionMenu(btn, menu));
   }
-  if (!e.target.closest('.menu')) closeAllMenus();
+});
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.menu') && !e.target.closest('[data-menu]')) closeAllMenus();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
 

@@ -10,6 +10,10 @@
     <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
     {{with ratingPct .Stats.RatingEstimate .Stats.RatingCount}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{.}}% ({{$.Stats.RatingCount}})</span>{{end}}
     <span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" .Stats.LatencyEstimate}}ms</span>
+    {{else}}
+    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
+    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
+    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
     {{end}}
   </p>
 </article>
@@ -73,13 +77,17 @@
     <span class="pill {{if .Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Active}}active{{else}}inactive{{end}}</span>
     <span class="pill {{if .Action.Public}}status-credited{{else}}status-escrow{{end}}">{{if .Action.Public}}public{{else}}private{{end}}</span>
   </p>
-  {{if .Stats}}
   <p class="stat-strip" style="margin:0;font-size:.8rem">
+    {{if .Stats}}
     <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
     {{with ratingPct .Stats.RatingEstimate .Stats.RatingCount}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{.}}% ({{$.Stats.RatingCount}})</span>{{end}}
     <span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" .Stats.LatencyEstimate}}ms</span>
+    {{else}}
+    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
+    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
+    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
+    {{end}}
   </p>
-  {{end}}
   <div class="row" style="gap:.5rem;margin:0">
     {{if .Action.Active}}
     <form method="post" action="/actions/{{.Action.ID}}/disable"

@@ -48,7 +48,7 @@
         </button>
         <div class="menu" id="profile-popup" role="menu" hidden>
           <div class="menu-caption mono">{{.Handle}}</div>
-          <div class="menu-caption money">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></div>
+          <div class="menu-caption money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</div>
           <div class="menu-divider"></div>
           <form method="post" action="/theme" class="theme-toggle">
             {{.CSRFField}}
@@ -77,7 +77,7 @@
         <summary class="btn-icon" aria-label="Menu" title="Menu"><span aria-hidden="true">≡</span></summary>
         <div class="mobile-drawer">
           <span class="mono" style="font-size:.9rem">{{.Handle}}</span>
-          <span class="money" style="font-size:.9rem">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></span>
+          <span class="money" style="font-size:.9rem"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</span>
           <form method="post" action="/theme" class="theme-toggle">
             {{.CSRFField}}
             <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
