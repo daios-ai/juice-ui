@@ -9,15 +9,15 @@
   <h2 style="margin:0 0 .75rem">Earnings</h2>
   <div class="balances">
     <div class="balance">
-      <div class="amount money">{{money $d.Earnings.Gross}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="amount money">{{money $d.Earnings.Gross}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></div>
       <div class="label">Gross</div>
     </div>
     <div class="balance">
-      <div class="amount money status-refunded">{{money $d.Earnings.Fee}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="amount money status-refunded">{{money $d.Earnings.Fee}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></div>
       <div class="label">Platform fee</div>
     </div>
     <div class="balance">
-      <div class="amount money status-credited">{{money $d.Earnings.Net}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></div>
+      <div class="amount money status-credited">{{money $d.Earnings.Net}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></div>
       <div class="label">Net received</div>
     </div>
   </div>
@@ -29,7 +29,7 @@
 
 <div class="card stack">
   <h3 style="margin:0">Synthesize with AI</h3>
-  <p class="help" style="margin:0">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span> available{{end}}.</p>
+  <p class="help" style="margin:0">Describe what you want the action to do. The kernel compiles a WebAssembly action for you. Costs <strong>20 <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></strong>{{if $d.User.Available}} — you have <span class="money">{{money $d.User.Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></span> available{{end}}.</p>
   <form method="post" action="/studio/make"
         hx-post="/studio/make" hx-target="#make-result" hx-swap="innerHTML"
         hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">
@@ -71,7 +71,7 @@
     <input id="source" name="source" type="text" placeholder="https://…">
   </div>
   <div class="field">
-    <label for="price">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></label>
+    <label for="price">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
     <input id="price" name="price" type="number" min="0" value="0">
   </div>
   <div class="field">

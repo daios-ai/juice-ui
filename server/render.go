@@ -59,6 +59,8 @@ func NewRenderer() (*Renderer, error) {
 		"truncate":    truncate,
 		"costOf":      costOf,
 		"buildForm":   BuildForm, // lets templates derive a FormModel from a raw schema
+		"pct":         pct,
+		"ratingPct":   ratingPct,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -194,4 +196,22 @@ func truncate(n int, s string) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// pct formats the ratio n/d as a whole-number percentage string (e.g. "97").
+// Returns "—" when d is zero to avoid division by zero.
+func pct(n, d int64) string {
+	if d == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f", float64(n)/float64(d)*100)
+}
+
+// ratingPct converts a 0–5 mean rating estimate to a 0–100 percentage string.
+// Returns "" when count is zero (no ratings yet).
+func ratingPct(estimate float64, count int64) string {
+	if count == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.0f", estimate/5*100)
 }

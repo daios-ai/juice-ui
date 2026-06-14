@@ -78,6 +78,28 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	}
 }
 
+func TestPct(t *testing.T) {
+	cases := []struct{ n, d int64; want string }{{138, 142, "97"}, {0, 0, "—"}, {0, 10, "0"}, {10, 10, "100"}}
+	for _, c := range cases {
+		if got := pct(c.n, c.d); got != c.want {
+			t.Errorf("pct(%d,%d) = %q want %q", c.n, c.d, got, c.want)
+		}
+	}
+}
+
+func TestRatingPct(t *testing.T) {
+	cases := []struct {
+		est   float64
+		count int64
+		want  string
+	}{{4.8, 23, "96"}, {0, 0, ""}, {5.0, 1, "100"}, {2.5, 10, "50"}}
+	for _, c := range cases {
+		if got := ratingPct(c.est, c.count); got != c.want {
+			t.Errorf("ratingPct(%v,%d) = %q want %q", c.est, c.count, got, c.want)
+		}
+	}
+}
+
 func TestRenderFragment(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {

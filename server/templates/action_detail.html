@@ -10,31 +10,16 @@
 <div class="card stack">
   {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
   <p class="stat-strip">
-    <span title="Price">{{if $d.IsPaid}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg> {{money $d.Action.Price}}{{else}}<span class="muted">free</span>{{end}}</span>
+    {{if $d.IsPaid}}<span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}</span>{{else}}<span class="muted">free</span>{{end}}
     <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span>
     <span class="muted" title="Kind">{{$d.Action.Kind}}</span>
     {{if $d.HasStats}}
-    <span title="Runs" aria-label="Runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#play"/></svg> {{$d.Stats.Uses}}</span>
-    <span title="Successes / total runs" aria-label="Success count" class="status-credited"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg> {{$d.Stats.Successes}}</span>
-    <span title="Rating (mean · count)" aria-label="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#star"/></svg> {{printf "%.1f" $d.Stats.RatingEstimate}} &middot; {{$d.Stats.RatingCount}}</span>
+    <span title="Success rate (total runs)" aria-label="Success rate"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct $d.Stats.Successes $d.Stats.Uses}}% ({{$d.Stats.Uses}})</span>
+    {{with ratingPct $d.Stats.RatingEstimate $d.Stats.RatingCount}}<span title="Rating (rater count)" aria-label="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{.}}% ({{$d.Stats.RatingCount}})</span>{{end}}
     <span title="Mean latency" aria-label="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" $d.Stats.LatencyEstimate}}ms</span>
     {{end}}
   </p>
 </div>
-
-{{if $d.Form.Fields}}
-<h2>Input</h2>
-{{template "_schema_panel" $d.Form}}
-{{end}}
-
-{{if $d.Action.OutputSchema}}
-<h2>Output</h2>
-{{template "_schema_panel" (buildForm $d.Action.OutputSchema)}}
-<details style="margin-top:.5rem">
-  <summary class="muted">Raw JSON schema</summary>
-  <pre class="json">{{json $d.Action.OutputSchema}}</pre>
-</details>
-{{end}}
 
 <h2>Run</h2>
 <div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
@@ -46,7 +31,7 @@
 
   {{template "_form_fields" $d.Form}}
   <div class="row">
-    <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run &middot; {{money $d.Action.Price}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg>{{else}}Run{{end}}</button>
+    <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run &middot; {{money $d.Action.Price}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg>{{else}}Run{{end}}</button>
     <div id="run-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
     </div>

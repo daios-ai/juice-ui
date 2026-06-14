@@ -53,20 +53,25 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted); white-space: nowrap;
 }
 .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
-.nav .ico, .sidebar-foot .ico { width: 1.1rem; height: 1.1rem; flex: 0 0 auto; display: block; }
+.nav .ico { width: 1.1rem; height: 1.1rem; flex: 0 0 auto; display: block; }
 
-.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: .35rem; padding-top: .75rem; border-top: 1px solid var(--border); }
-.sidebar-foot .btn-icon { display: flex; align-items: center; gap: .7rem; width: 100%; border: none; background: none; color: var(--text-muted); padding: .5rem .55rem; }
-.sidebar-foot .btn-icon:hover { background: var(--surface-2); color: var(--text); }
-.sidebar-item { display: flex; align-items: center; gap: .7rem; padding: .5rem .55rem; color: var(--text-muted); font-size: .85rem; white-space: nowrap; }
-.logout { margin: 0; }
-.logout .btn-quiet { display: flex; align-items: center; gap: .7rem; width: 100%; padding: .5rem .55rem; }
+/* Profile menu trigger at sidebar bottom */
+.profile-menu { margin-top: auto; }
+.profile-trigger {
+  display: flex; align-items: center; gap: .7rem; width: 100%;
+  padding: .5rem .55rem; border-radius: var(--radius);
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-family: inherit; font-size: inherit; white-space: nowrap;
+  border-top: 1px solid var(--border); padding-top: .75rem; margin-top: .35rem;
+}
+.profile-trigger:hover { background: var(--surface-2); color: var(--text); }
+.profile-trigger .ico { width: 1.1rem; height: 1.1rem; flex: 0 0 auto; display: block; }
+html[data-sidebar="collapsed"] .profile-trigger { justify-content: center; padding-left: 0; padding-right: 0; }
 
 /* Collapsed state: icons only (no flash — stamped server-side via data-sidebar). */
 html[data-sidebar="collapsed"] .sidebar { --sb-w: 56px; }
 html[data-sidebar="collapsed"] .sidebar .lbl { display: none; }
 html[data-sidebar="collapsed"] .nav a { justify-content: center; padding-left: 0; padding-right: 0; }
-html[data-sidebar="collapsed"] .sidebar-foot .btn-icon { justify-content: center; padding-left: 0; padding-right: 0; }
 
 /* Collapsed header shows just the logo; hovering (or keyboard-focusing the
    button) swaps it for the expand toggle, so the rail stays clean but remains
@@ -89,47 +94,38 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .container { width: 100%; max-width: 980px; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; flex: 1 0 auto; }
 .ico-inline { width: 1em; height: 1em; vertical-align: -.15em; display: inline-block; }
 
+/* Price uses accent color — same signal as the Run button */
+.price { color: var(--accent); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
 /* Stat strips — icon + number pairs in a horizontal row */
 .stat-strip { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; color: var(--text-muted); font-size: .9rem; }
 .stat-strip span { display: flex; align-items: center; gap: .2rem; }
 
-/* Topbar */
-.topbar {
-  position: sticky; top: 0; z-index: 10;
-  display: flex; align-items: center; gap: 0.75rem;
-  background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: 0 1rem; height: 3rem;
+/* Generic floating menu panel — pair with <details><summary> or [data-menu] button */
+.menu {
+  position: fixed; z-index: 200; min-width: 180px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 4px 20px rgba(0,0,0,.15);
+  padding: .3rem; display: flex; flex-direction: column;
 }
-.topbar .ico { width: 1rem; height: 1rem; display: block; }
-.topbar .btn-icon {
-  background: none; border: none; padding: 0.375rem;
-  color: var(--text-muted); border-radius: calc(var(--radius) / 2); line-height: 1;
+.menu-item {
+  display: flex; align-items: center; gap: .55rem;
+  width: 100%; padding: .45rem .6rem; border-radius: calc(var(--radius) - 2px);
+  background: none; border: none; text-align: left;
+  color: var(--text-muted); font-family: inherit; font-size: .9rem; cursor: pointer;
+  text-decoration: none; white-space: nowrap;
 }
-.topbar .btn-icon:hover { background: var(--surface-2); color: var(--text); }
-.topbar .btn-quiet { padding: 0.375rem 0.5rem; color: var(--text-muted); line-height: 1; }
-.topbar .btn-quiet:hover { color: var(--text); text-decoration: none; }
-.omnibox { flex: 1; display: flex; gap: 0.5rem; align-items: center; }
-.omnibox input[type=search] {
-  flex: 1; width: auto; margin: 0;
-  -webkit-appearance: none; appearance: none;
-  padding: 0.375rem 0.65rem; height: auto; font-size: 0.9rem;
-}
-.topbar-user {
-  display: flex; align-items: center; padding: 0.375rem;
-  color: var(--text-muted); text-decoration: none;
-  border-radius: calc(var(--radius) / 2);
-}
-.topbar-user:hover { background: var(--surface-2); color: var(--text); }
-.topbar-user .ico { width: 1rem; height: 1rem; }
-.account-menu { display: flex; align-items: center; gap: 0.75rem; white-space: nowrap; }
-.account-menu .credits { font-size: 0.875rem; }
+.menu-item:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.menu-item .ico { width: 1rem; height: 1rem; flex: 0 0 auto; }
+.menu-caption { padding: .35rem .6rem; font-size: .82rem; color: var(--text-muted); white-space: nowrap; }
+.menu-divider { height: 1px; background: var(--border); margin: .2rem 0; }
 
-/* Mobile hamburger — hidden on desktop */
-.mobile-menu { display: none; }
-.mobile-menu[open] { position: relative; }
+/* Mobile hamburger — hidden on desktop, floats at top of main-area */
+.mobile-menu { display: none; position: relative; }
 .mobile-drawer {
-  position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
-  background: var(--surface); border-bottom: 1px solid var(--border);
+  position: absolute; top: 100%; left: 0; z-index: 20; min-width: 200px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 4px 20px rgba(0,0,0,.15);
   padding: .75rem 1rem; display: flex; flex-direction: column; gap: .75rem;
 }
 
@@ -166,8 +162,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 /* Narrow screens: hide sidebar, show bottom tab bar */
 @media (max-width: 720px) {
   .sidebar { display: none; }
-  .mobile-menu { display: block; }
-  .account-menu { display: none; }
+  .mobile-menu { display: block; padding: .5rem; }
   .tab-bar { display: flex; }
   .container { padding-bottom: 5.5rem; }
 }

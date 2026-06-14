@@ -79,13 +79,13 @@
     <span>Rate this result:</span>
     <textarea name="note" placeholder="Optional note…" rows="2"></textarea>
     <div class="row">
-      <button class="btn" name="rating" value="1" type="submit">👍 good</button>
-      <button class="btn" name="rating" value="0" type="submit">👎 bad</button>
+      <button class="btn-icon" name="rating" value="1" type="submit" title="Good"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg></button>
+      <button class="btn-icon" name="rating" value="0" type="submit" title="Bad"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#thumb-down"/></svg></button>
     </div>
   </form>
   {{else if $d.Tx.Rating}}
   <div class="stack muted small">
-    <span>Rated: {{if eq $d.Tx.Rating.Value 1}}👍 good{{else}}👎 bad{{end}}</span>
+    <span>Rated: {{if eq $d.Tx.Rating.Value 1}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg>{{else}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-down"/></svg>{{end}}</span>
     {{if $d.Tx.Rating.Note}}<span>Note: {{$d.Tx.Rating.Note}}</span>{{end}}
   </div>
   {{end}}

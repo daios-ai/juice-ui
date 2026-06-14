@@ -18,11 +18,19 @@
 {{if .Data.Results}}
 <div class="grid">
   {{range .Data.Results}}
+  {{$r := .}}
   <article class="card">
     <h3><a href="/actions/{{.ActionID}}">{{.Name}}</a></h3>
     <p class="ref mono">{{.OwnerHandle}}/{{.Name}}</p>
     {{if .Description}}<p>{{truncate 160 .Description}}</p>{{end}}
-    {{if gt .Score 0.0}}<p class="score">relevance {{printf "%.2f" .Score}}</p>{{end}}
+    <p class="stat-strip">
+      {{if gt .Score 0.0}}<span class="score">relevance {{printf "%.2f" .Score}}</span>{{end}}
+      {{if .Stats}}
+      <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
+      {{with ratingPct $r.Stats.RatingEstimate $r.Stats.RatingCount}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{.}}% ({{$r.Stats.RatingCount}})</span>{{end}}
+      <span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" .Stats.LatencyEstimate}}ms</span>
+      {{end}}
+    </p>
   </article>
   {{end}}
 </div>

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -37,6 +38,12 @@ type discoverResult struct {
 	OwnerHandle string
 	Description string
 	Score       float64
+	Stats       *client.Stats
+}
+
+type actionCardView struct {
+	Action client.Action
+	Stats  *client.Stats
 }
 
 type discoverView struct {
@@ -44,7 +51,7 @@ type discoverView struct {
 	LookupAvailable bool
 	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []discoverResult
-	Catalog         []client.Action
+	Catalog         []actionCardView
 }
 
 type actionView struct {
@@ -234,7 +241,20 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
-			view.Catalog = cat
+			cards := make([]actionCardView, len(cat))
+			var wg sync.WaitGroup
+			for i, a := range cat {
+				cards[i] = actionCardView{Action: a}
+				wg.Add(1)
+				go func(i int, id string) {
+					defer wg.Done()
+					if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
+						cards[i].Stats = &st
+					}
+				}(i, a.ID)
+			}
+			wg.Wait()
+			view.Catalog = cards
 			return nil
 		}
 		// Semantic search via @sys/lookup (price 0; run creates and closes process).
@@ -244,21 +264,33 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 		}
 		if out.IsSuccess() {
 			view.Results = parseLookup(out.Result)
-			return nil
+		} else {
+			// Degrade honestly to catalog search (R6.2.4). Surface the kernel's own
+			// reason rather than guessing the cause (it may be a missing embedder,
+			// or @sys/lookup failing for another reason).
+			view.LookupAvailable = false
+			view.Reason = out.Detail
+			if view.Reason == "" {
+				view.Reason = out.Message
+			}
+			cat, e := s.client.ListActions(ctx, "", "", "")
+			if e != nil {
+				return e
+			}
+			view.Results = catalogAsResults(cat, q)
 		}
-		// Degrade honestly to catalog search (R6.2.4). Surface the kernel's own
-		// reason rather than guessing the cause (it may be a missing embedder,
-		// or @sys/lookup failing for another reason).
-		view.LookupAvailable = false
-		view.Reason = out.Detail
-		if view.Reason == "" {
-			view.Reason = out.Message
+		// Fetch stats concurrently for all search results.
+		var wg sync.WaitGroup
+		for i := range view.Results {
+			wg.Add(1)
+			go func(i int, id string) {
+				defer wg.Done()
+				if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
+					view.Results[i].Stats = &st
+				}
+			}(i, view.Results[i].ActionID)
 		}
-		cat, e := s.client.ListActions(ctx, "", "", "")
-		if e != nil {
-			return e
-		}
-		view.Results = catalogAsResults(cat, q)
+		wg.Wait()
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1073,7 +1105,13 @@ func parseLookup(result json.RawMessage) []discoverResult {
 	_ = json.Unmarshal(result, &lr)
 	out := make([]discoverResult, 0, len(lr.Results))
 	for _, r := range lr.Results {
-		out = append(out, discoverResult(r))
+		out = append(out, discoverResult{
+			ActionID:    r.ActionID,
+			Name:        r.Name,
+			OwnerHandle: r.OwnerHandle,
+			Description: r.Description,
+			Score:       r.Score,
+		})
 	}
 	return out
 }

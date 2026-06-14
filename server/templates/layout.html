@@ -41,60 +41,56 @@
         <a href="/wallet" title="Wallet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#wallet"/></svg><span class="lbl">Wallet</span></a>
       </nav>
 
-      <div class="sidebar-foot">
-        <form method="post" action="/theme" class="theme-toggle">
-          {{.CSRFField}}
-          <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
-          <button type="submit" class="btn-icon" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme" title="Toggle theme">
-            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg><span class="lbl">Theme</span>
-          </button>
-        </form>
-        <form method="post" action="/logout" class="logout">
-          {{.CSRFField}}
-          <button type="submit" class="btn-icon" title="Sign out">
-            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg><span class="lbl">Sign out</span>
-          </button>
-        </form>
+      <div class="profile-menu">
+        <button class="profile-trigger" data-menu="profile-popup" aria-haspopup="menu" aria-expanded="false">
+          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
+          <span class="lbl">{{.Handle}}</span>
+        </button>
+        <div class="menu" id="profile-popup" role="menu" hidden>
+          <div class="menu-caption mono">{{.Handle}}</div>
+          <div class="menu-caption money">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></div>
+          <div class="menu-divider"></div>
+          <form method="post" action="/theme" class="theme-toggle">
+            {{.CSRFField}}
+            <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
+            <button type="submit" class="menu-item" role="menuitem" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme">
+              <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
+              Theme
+            </button>
+          </form>
+          <div class="menu-divider"></div>
+          <form method="post" action="/logout">
+            {{.CSRFField}}
+            <button type="submit" class="menu-item" role="menuitem">
+              <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg>
+              Sign out
+            </button>
+          </form>
+        </div>
       </div>
     </aside>
     {{end}}
 
     <div class="main-area">
       {{if .Handle}}
-      <header class="topbar">
-        <details class="mobile-menu">
-          <summary class="btn-icon" aria-label="Menu" title="Menu"><span aria-hidden="true">≡</span></summary>
-          <div class="mobile-drawer">
-            <span class="mono" style="font-size:.9rem">{{.Handle}}</span>
-            <span class="money" style="font-size:.9rem">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span>
-            <form method="post" action="/theme">
-              {{.CSRFField}}
-              <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
-              <button type="submit" class="btn-icon" aria-label="Toggle theme">
-                <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
-              </button>
-            </form>
-            <form method="post" action="/logout">
-              {{.CSRFField}}
-              <button type="submit" class="btn-quiet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg> Sign out</button>
-            </form>
-          </div>
-        </details>
-
-        <form class="omnibox" action="/run" method="get" role="search">
-          <input type="search" name="q" placeholder="Search actions…" aria-label="Search actions" autocomplete="off">
-          <button type="submit" class="btn-icon" aria-label="Search">
-            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg>
-          </button>
-        </form>
-
-<div class="account-menu">
-          <span class="credits money">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg></span>
-          <a href="/wallet" class="topbar-user" title="{{.Handle}}">
-            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
-          </a>
+      <details class="mobile-menu">
+        <summary class="btn-icon" aria-label="Menu" title="Menu"><span aria-hidden="true">≡</span></summary>
+        <div class="mobile-drawer">
+          <span class="mono" style="font-size:.9rem">{{.Handle}}</span>
+          <span class="money" style="font-size:.9rem">{{money .Available}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></span>
+          <form method="post" action="/theme" class="theme-toggle">
+            {{.CSRFField}}
+            <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
+            <button type="submit" class="btn-icon" aria-label="Toggle theme">
+              <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
+            </button>
+          </form>
+          <form method="post" action="/logout">
+            {{.CSRFField}}
+            <button type="submit" class="btn-quiet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg> Sign out</button>
+          </form>
         </div>
-      </header>
+      </details>
       {{end}}
 
       <div class="content">

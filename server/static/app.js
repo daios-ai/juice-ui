@@ -35,6 +35,39 @@ for (const ta of document.querySelectorAll('textarea')) {
   resizeTA(ta);
 }
 
+// Floating menu: buttons with [data-menu="panel-id"] toggle fixed-position panels.
+function positionMenu(btn, menu) {
+  const r = btn.getBoundingClientRect();
+  const mh = menu.offsetHeight;
+  const top = r.top - mh - 6;
+  menu.style.top = (top < 8 ? r.bottom + 6 : top) + 'px';
+  menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
+}
+function closeAllMenus() {
+  for (const m of document.querySelectorAll('.menu:not([hidden])')) {
+    m.hidden = true;
+    document.querySelector(`[data-menu="${m.id}"]`)?.setAttribute('aria-expanded', 'false');
+  }
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-menu]');
+  if (btn) {
+    const menu = document.getElementById(btn.dataset.menu);
+    if (!menu) return;
+    const opening = menu.hidden;
+    closeAllMenus();
+    if (opening) {
+      menu.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      positionMenu(btn, menu);
+    }
+    e.stopPropagation();
+    return;
+  }
+  if (!e.target.closest('.menu')) closeAllMenus();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
+
 // Optimistic sidebar collapse/expand.
 for (const form of document.querySelectorAll("form.sidebar-collapse")) {
   form.addEventListener("submit", () => {
