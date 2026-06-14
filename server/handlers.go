@@ -508,13 +508,46 @@ func orDefaultStr(v, def string) string {
 
 // ---- studio ----
 
+// ownedCookie tracks action IDs the user has created or operated on so that
+// inactive/private owned actions (not returned by ListActions due to a kernel
+// bug) can be fetched individually and shown in the Studio.
+const ownedCookie = "juice_owned"
+
+func ownedActionIDs(r *http.Request) []string {
+	c, _ := r.Cookie(ownedCookie)
+	if c == nil || c.Value == "" {
+		return nil
+	}
+	return strings.Split(c.Value, "|")
+}
+
+func trackOwnedAction(w http.ResponseWriter, r *http.Request, id string) {
+	ids := ownedActionIDs(r)
+	for _, e := range ids {
+		if e == id {
+			// Already present; refresh TTL.
+			http.SetCookie(w, &http.Cookie{
+				Name: ownedCookie, Value: strings.Join(ids, "|"),
+				Path: "/", MaxAge: 365 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			})
+			return
+		}
+	}
+	ids = append(ids, id)
+	if len(ids) > 50 {
+		ids = ids[len(ids)-50:]
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: ownedCookie, Value: strings.Join(ids, "|"),
+		Path: "/", MaxAge: 365 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	})
+}
+
 func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
-	newID := r.URL.Query().Get("new")
 	var me client.User
 	var acts []client.Action
-	var newAction *client.Action
 	var txs []client.Transaction
 	actionStats := map[string]client.Stats{}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -534,19 +567,19 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 				actionStats[action.ID] = st
 			}
 		}
-		// Kernel bug: private/inactive owned actions are not returned by ListActions.
-		// Fetch the newly created action explicitly so it appears in the studio.
-		if newID != "" {
+		// Kernel bug: ListActions omits private/inactive owned actions.
+		// Supplement with any IDs we've tracked via cookie.
+		for _, kid := range ownedActionIDs(r) {
 			found := false
 			for _, a := range acts {
-				if a.ID == newID {
+				if a.ID == kid {
 					found = true
 					break
 				}
 			}
 			if !found {
-				if a, e := s.client.GetAction(ctx, tok, newID); e == nil {
-					newAction = &a
+				if a, e := s.client.GetAction(ctx, tok, kid); e == nil {
+					acts = append(acts, a)
 				}
 			}
 		}
@@ -566,9 +599,6 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	}
 	csrfField := csrf.TemplateField(r)
 	var cards []myActionCardView
-	if newAction != nil {
-		cards = append(cards, myActionCardView{Action: *newAction, Stats: nil, CSRFField: csrfField})
-	}
 	for _, a := range acts {
 		if filter == "active" && !a.Active {
 			continue
@@ -626,9 +656,8 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/studio", userMessage(err))
 		return
 	}
-	// Redirect to studio with new= param so the action appears even if the kernel
-	// doesn't return private/inactive owned actions in the list.
-	s.flashRedirect(w, r, "/studio?new="+created.ID, "Action '"+created.Name+"' created (inactive). Enable it when ready.")
+	trackOwnedAction(w, r, created.ID)
+	s.flashRedirect(w, r, "/studio", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
@@ -783,6 +812,7 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 		s.handleErr(w, r, err)
 		return
 	}
+	trackOwnedAction(w, r, id)
 	if htmx {
 		_ = s.render.Fragment(w, http.StatusOK, "_my_action_card", myActionCardView{
 			Action:    updated,
@@ -791,6 +821,25 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/actions/"+id, http.StatusSeeOther)
+}
+
+func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+	price := parseInt64(r.FormValue("price"))
+	if price < 0 {
+		s.flashRedirect(w, r, "/actions/"+id, "Price must be non-negative.")
+		return
+	}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Price: &price})
+		return e
+	})
+	if err != nil {
+		s.flashRedirect(w, r, "/actions/"+id, userMessage(err))
+		return
+	}
+	s.flashRedirect(w, r, "/actions/"+id, "Price updated. Action is now inactive.")
 }
 
 func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {

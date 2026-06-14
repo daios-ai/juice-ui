@@ -511,6 +511,33 @@ func TestStudioShowsEarnings(t *testing.T) {
 	}
 }
 
+func TestUpdateActionPrice(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/actions/A1")
+	tok := csrfTokenFrom(t, body)
+
+	form := url.Values{"gorilla.csrf.Token": {tok}, "price": {"50"}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/update-price", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update-price returned %d, want 200 (after redirect)", resp.StatusCode)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(page), "Price updated") {
+		t.Error("update-price must show flash message containing 'Price updated'")
+	}
+}
+
 func TestLoginPageHasNoSidebar(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
