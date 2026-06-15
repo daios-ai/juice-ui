@@ -49,68 +49,74 @@
   <div id="make-result"></div>
 </div>
 
-<h3>Manual creation</h3>
-<form class="card stack" method="post" action="/studio/create">
-  {{.CSRFField}}
-  <div class="field">
-    <label for="name">Name <span class="req">*</span></label>
-    <p class="help">May contain "/" for hierarchy (e.g. <code>llm/chat</code>).</p>
-    <input id="name" name="name" type="text" required>
-  </div>
-  <div class="field">
-    <label for="kind">Kind <span class="req">*</span></label>
-    <select id="kind" name="kind">
-      <option value="http">http</option>
-      <option value="wasm">wasm</option>
-    </select>
-    <p class="help">wasm artifacts compile on enable; compilation failures surface as a typed error.</p>
-  </div>
-  <div class="field">
-    <label for="source">Source URL</label>
-    <p class="help">The kernel rejects non-HTTP(S), loopback, and private addresses.</p>
-    <input id="source" name="source" type="text" placeholder="https://…">
-  </div>
-  <div class="field">
-    <label for="price">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
-    <input id="price" name="price" type="number" min="0" value="0">
-  </div>
-  <div class="field">
-    <label for="description">Description</label>
-    <input id="description" name="description" type="text">
-  </div>
-  <div class="field">
-    <label for="input_schema">Input schema (JSON)</label>
-    <textarea id="input_schema" name="input_schema" placeholder='{"type":"object","properties":{}}'></textarea>
-  </div>
-  <div class="field">
-    <label for="output_schema">Output schema (JSON)</label>
-    <textarea id="output_schema" name="output_schema" placeholder='{"type":"object"}'></textarea>
-  </div>
-  <p class="help">Actions are created inactive. Editing source, schema, kind, or price deactivates an action, matching kernel update rules.</p>
-  <button class="btn" type="submit">Create action</button>
-</form>
+<details class="details-panel">
+  <summary>Manual creation</summary>
+  <form class="card stack" method="post" action="/studio/create">
+    {{.CSRFField}}
+    <div class="field">
+      <label for="name">Name <span class="req">*</span></label>
+      <p class="help">May contain "/" for hierarchy (e.g. <code>llm/chat</code>).</p>
+      <input id="name" name="name" type="text" required>
+    </div>
+    <div class="field">
+      <label for="kind">Kind <span class="req">*</span></label>
+      <select id="kind" name="kind">
+        <option value="http">http</option>
+        <option value="wasm">wasm</option>
+      </select>
+      <p class="help">wasm artifacts compile on enable; compilation failures surface as a typed error.</p>
+    </div>
+    <div class="field">
+      <label for="source">Source URL</label>
+      <p class="help">The kernel rejects non-HTTP(S), loopback, and private addresses.</p>
+      <input id="source" name="source" type="text" placeholder="https://…">
+    </div>
+    <div class="field">
+      <label for="price">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
+      <input id="price" name="price" type="number" min="0" value="0">
+    </div>
+    <div class="field">
+      <label for="description">Description</label>
+      <input id="description" name="description" type="text">
+    </div>
+    <div class="field">
+      <label for="input_schema">Input schema (JSON)</label>
+      <textarea id="input_schema" name="input_schema" placeholder='{"type":"object","properties":{}}'></textarea>
+    </div>
+    <div class="field">
+      <label for="output_schema">Output schema (JSON)</label>
+      <textarea id="output_schema" name="output_schema" placeholder='{"type":"object"}'></textarea>
+    </div>
+    <p class="help">Actions are created inactive. Editing source, schema, kind, or price deactivates an action, matching kernel update rules.</p>
+    <button class="btn" type="submit">Create action</button>
+  </form>
+</details>
 
-<h3>Import from OpenAPI</h3>
-<form class="card stack" method="post" action="/studio/import">
-  {{.CSRFField}}
-  <div class="field">
-    <label for="spec_url">OpenAPI spec URL</label>
-    <input id="spec_url" name="spec_url" type="text" placeholder="https://…/openapi.json">
-  </div>
-  <p class="help">Import is idempotent and creates inactive actions. The kernel requires API-ownership proof before public activation.</p>
-  <button class="btn" type="submit">Import</button>
-</form>
+<details class="details-panel">
+  <summary>Import from OpenAPI</summary>
+  <form class="card stack" method="post" action="/studio/import">
+    {{.CSRFField}}
+    <div class="field">
+      <label for="spec_url">OpenAPI spec URL</label>
+      <input id="spec_url" name="spec_url" type="text" placeholder="https://…/openapi.json">
+    </div>
+    <p class="help">Import is idempotent and creates inactive actions. The kernel requires API-ownership proof before public activation.</p>
+    <button class="btn" type="submit">Import</button>
+  </form>
+</details>
 
-<h3>Unimport OpenAPI spec</h3>
-<form class="card stack" method="post" action="/studio/unimport">
-  {{.CSRFField}}
-  <div class="field">
-    <label for="unimport_spec_url">OpenAPI spec URL</label>
-    <input id="unimport_spec_url" name="spec_url" type="text" placeholder="https://…/openapi.json">
-  </div>
-  <p class="help">Deactivates matching actions without deleting their history. Changed actions are deactivated and must be re-verified before re-enabling.</p>
-  <button class="btn btn-danger" type="submit">Unimport</button>
-</form>
+<details class="details-panel">
+  <summary>Unimport OpenAPI spec</summary>
+  <form class="card stack" method="post" action="/studio/unimport">
+    {{.CSRFField}}
+    <div class="field">
+      <label for="unimport_spec_url">OpenAPI spec URL</label>
+      <input id="unimport_spec_url" name="spec_url" type="text" placeholder="https://…/openapi.json">
+    </div>
+    <p class="help">Deactivates matching actions without deleting their history. Changed actions are deactivated and must be re-verified before re-enabling.</p>
+    <button class="btn btn-danger" type="submit">Unimport</button>
+  </form>
+</details>
 
 <h2>Your actions</h2>
 <div class="row compact btn-row">
