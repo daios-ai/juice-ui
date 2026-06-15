@@ -76,6 +76,7 @@ type Action struct {
 func (a Action) Ref() string { return a.OwnerHandle + "/" + a.Name }
 
 // CreateActionInput is the body for POST /v1/actions. Schemas are inline JSON.
+// Auth is write-only upstream credential config {scheme, config, secrets}; never returned by the kernel.
 type CreateActionInput struct {
 	Name         string          `json:"name"`
 	Kind         string          `json:"kind"`
@@ -84,6 +85,7 @@ type CreateActionInput struct {
 	Price        int64           `json:"price"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	Auth         json.RawMessage `json:"auth,omitempty"`
 }
 
 // UpdateActionInput is the body for PUT /v1/actions/{id}. All fields optional.

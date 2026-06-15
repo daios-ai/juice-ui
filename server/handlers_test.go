@@ -654,3 +654,133 @@ func TestCatalogAsResults(t *testing.T) {
 		t.Fatalf("empty query should return all %d actions, got %d", len(actions), len(all))
 	}
 }
+
+// TestCreateActionAuth verifies that postCreateAction forwards the correct auth
+// JSON for each supported scheme, and omits the field when no scheme is chosen.
+func TestCreateActionAuth(t *testing.T) {
+	cases := []struct {
+		name   string
+		fields url.Values
+		// wantAuth is the expected parsed auth object; nil means auth must be absent.
+		wantScheme  string
+		wantSecrets map[string]string
+		wantConfig  map[string]string
+	}{
+		{
+			name:        "no scheme",
+			fields:      url.Values{"name": {"act1"}, "kind": {"http"}, "auth_scheme": {""}},
+			wantScheme:  "",
+		},
+		{
+			name:        "bearer",
+			fields:      url.Values{"name": {"act2"}, "kind": {"http"}, "auth_scheme": {"bearer"}, "auth_bearer_token": {"tok123"}},
+			wantScheme:  "bearer",
+			wantSecrets: map[string]string{"token": "tok123"},
+		},
+		{
+			name:        "basic",
+			fields:      url.Values{"name": {"act3"}, "kind": {"http"}, "auth_scheme": {"basic"}, "auth_basic_username": {"user"}, "auth_basic_password": {"pass"}},
+			wantScheme:  "basic",
+			wantSecrets: map[string]string{"username": "user", "password": "pass"},
+		},
+		{
+			name:        "header",
+			fields:      url.Values{"name": {"act4"}, "kind": {"http"}, "auth_scheme": {"header"}, "auth_param_name": {"X-Api-Key"}, "auth_param_value": {"hval"}},
+			wantScheme:  "header",
+			wantConfig:  map[string]string{"name": "X-Api-Key"},
+			wantSecrets: map[string]string{"value": "hval"},
+		},
+		{
+			name:        "query",
+			fields:      url.Values{"name": {"act5"}, "kind": {"http"}, "auth_scheme": {"query"}, "auth_param_name": {"api_key"}, "auth_param_value": {"qval"}},
+			wantScheme:  "query",
+			wantConfig:  map[string]string{"name": "api_key"},
+			wantSecrets: map[string]string{"value": "qval"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody []byte
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"redirect":"?code=CODE"}`))
+			})
+			mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+			})
+			mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"id":"U1","handle":"@alice","available":500,"locked":0}`))
+			})
+			mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`[]`))
+			})
+			mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`[]`))
+			})
+			mux.HandleFunc("POST /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+				gotBody, _ = io.ReadAll(r.Body)
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"id":"A9","owner_user_id":"U1","owner_handle":"@alice","name":"act","kind":"http","active":false,"public":false,"price":0}`))
+			})
+			kernel := httptest.NewServer(mux)
+			defer kernel.Close()
+			srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+			defer srv.Close()
+			cl := loginClient(t, srv.URL)
+
+			studioBody := getBody(t, cl, srv.URL+"/studio")
+			csrfTok := csrfTokenFrom(t, studioBody)
+			tc.fields.Set("gorilla.csrf.Token", csrfTok)
+
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/studio/create", strings.NewReader(tc.fields.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := cl.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+
+			if gotBody == nil {
+				t.Fatal("kernel POST /v1/actions was not called")
+			}
+
+			var parsed struct {
+				Scheme  string            `json:"scheme"`
+				Config  map[string]string `json:"config"`
+				Secrets map[string]string `json:"secrets"`
+			}
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(gotBody, &body); err != nil {
+				t.Fatalf("kernel received invalid JSON: %v", err)
+			}
+
+			authRaw, hasAuth := body["auth"]
+			if tc.wantScheme == "" {
+				if hasAuth {
+					t.Errorf("auth must be absent when no scheme is selected, got: %s", authRaw)
+				}
+				return
+			}
+			if !hasAuth {
+				t.Fatalf("auth field missing in kernel request for scheme %q", tc.wantScheme)
+			}
+			if err := json.Unmarshal(authRaw, &parsed); err != nil {
+				t.Fatalf("auth JSON invalid: %v", err)
+			}
+			if parsed.Scheme != tc.wantScheme {
+				t.Errorf("scheme: want %q, got %q", tc.wantScheme, parsed.Scheme)
+			}
+			for k, v := range tc.wantSecrets {
+				if parsed.Secrets[k] != v {
+					t.Errorf("secrets[%q]: want %q, got %q", k, v, parsed.Secrets[k])
+				}
+			}
+			for k, v := range tc.wantConfig {
+				if parsed.Config[k] != v {
+					t.Errorf("config[%q]: want %q, got %q", k, v, parsed.Config[k])
+				}
+			}
+		})
+	}
+}

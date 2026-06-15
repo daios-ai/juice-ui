@@ -315,7 +315,8 @@ open (parked steps), the result MUST say so and link to the Wallet.
     credits MUST block submission.
   * Manual: `POST /v1/actions` (inactive by default), with the schema-driven
     editors used elsewhere, schema linting as hints only, and WASM build errors on
-    enable.
+    enable. Upstream auth (`auth`) MUST follow the same write-only treatment as the
+    import wizard: secret fields are masked inputs, never pre-populated.
 * OpenAPI import MUST be a wizard: spec URL → preview table of importable
   operations with per-operation validation messages → `POST /v1/actions/import`
   (idempotent) → created/updated/deactivated results. Reimport MUST be presented

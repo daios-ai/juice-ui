@@ -664,6 +664,38 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		*f.dst = json.RawMessage(raw)
 	}
 
+	if scheme := r.FormValue("auth_scheme"); scheme != "" {
+		var authJSON []byte
+		switch scheme {
+		case "bearer":
+			token := strings.TrimSpace(r.FormValue("auth_bearer_token"))
+			authJSON, _ = json.Marshal(map[string]any{
+				"scheme":  "bearer",
+				"secrets": map[string]string{"token": token},
+			})
+		case "basic":
+			authJSON, _ = json.Marshal(map[string]any{
+				"scheme":  "basic",
+				"secrets": map[string]string{"username": r.FormValue("auth_basic_username"), "password": r.FormValue("auth_basic_password")},
+			})
+		case "header":
+			authJSON, _ = json.Marshal(map[string]any{
+				"scheme":  "header",
+				"config":  map[string]string{"name": strings.TrimSpace(r.FormValue("auth_param_name"))},
+				"secrets": map[string]string{"value": r.FormValue("auth_param_value")},
+			})
+		case "query":
+			authJSON, _ = json.Marshal(map[string]any{
+				"scheme":  "query",
+				"config":  map[string]string{"name": strings.TrimSpace(r.FormValue("auth_param_name"))},
+				"secrets": map[string]string{"value": r.FormValue("auth_param_value")},
+			})
+		}
+		if len(authJSON) > 0 {
+			in.Auth = json.RawMessage(authJSON)
+		}
+	}
+
 	var created client.Action
 	err := s.sessions.Do(ctx, func(tok string) error {
 		a, e := s.client.CreateAction(ctx, tok, in)
