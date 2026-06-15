@@ -69,7 +69,7 @@
     {{else}}
     <form method="post" action="/actions/{{$d.Action.ID}}/make-public">{{$.CSRFField}}<button class="btn-primary" type="submit">Make public</button></form>
     {{end}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/delete" onsubmit="return confirm('Delete this action? History is preserved.')">{{$.CSRFField}}<button class="btn btn-danger" type="submit">Delete</button></form>
+    <form method="post" action="/actions/{{$d.Action.ID}}/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<button class="btn btn-danger" type="submit">Delete</button></form>
   </div>
   <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">
     {{$.CSRFField}}

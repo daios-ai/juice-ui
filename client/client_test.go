@@ -277,3 +277,30 @@ func TestReceiptVerification(t *testing.T) {
 		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
 	}
 }
+
+func TestUpdateMeSendsFields(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"id":"U1","handle":"@alice","email":"new@test.com"}`
+	inp := UpdateMeInput{Email: "new@test.com"}
+	u, err := f.client().UpdateMe(context.Background(), "tok", inp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "new@test.com" {
+		t.Errorf("email = %q", u.Email)
+	}
+	if f.lastMethod != http.MethodPut || f.lastPath != "/v1/me" {
+		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
+	}
+	var sent UpdateMeInput
+	if err := json.Unmarshal(f.lastBody, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.Email != "new@test.com" {
+		t.Errorf("sent email = %q", sent.Email)
+	}
+	if sent.CurrentPassword != "" || sent.Password != "" {
+		t.Error("omitempty: password fields must be absent when empty")
+	}
+}

@@ -390,6 +390,18 @@ func (c *Client) Me(ctx context.Context, token string) (User, error) {
 	return u, err
 }
 
+type UpdateMeInput struct {
+	Email           string `json:"email,omitempty"`
+	CurrentPassword string `json:"current_password,omitempty"`
+	Password        string `json:"password,omitempty"`
+}
+
+func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (User, error) {
+	var u User
+	err := c.do(ctx, http.MethodPut, "/v1/me", token, in, &u)
+	return u, err
+}
+
 // ---- actions ----
 
 // ListActions lists actions. owner and name are optional filters ("" to omit).

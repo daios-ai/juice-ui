@@ -76,6 +76,8 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /inbox", s.requireAuth(s.getInbox))
 	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getInboxBadge))
 	mux.HandleFunc("GET /wallet", s.requireAuth(s.getWallet))
+	mux.HandleFunc("GET /settings", s.requireAuth(s.getSettings))
+	mux.HandleFunc("POST /settings", s.requireAuth(s.postSettings))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
 	mux.HandleFunc("POST /actions/{id}/enable", s.requireAuth(s.postActionLifecycle))

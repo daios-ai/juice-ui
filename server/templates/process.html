@@ -12,7 +12,7 @@
   </div>
   {{if eq $d.Process.Status "open"}}
   <div class="row">
-    <form method="post" action="/processes/{{$d.Process.ID}}/end" onsubmit="return confirm('End session and reclaim the remaining balance?')">
+    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="End session and reclaim the remaining balance?">
       {{.CSRFField}}<button class="btn-primary" type="submit">End &amp; reclaim</button>
     </form>
   </div>

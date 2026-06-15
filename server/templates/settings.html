@@ -1,0 +1,56 @@
+{{define "content"}}
+<h1>Settings</h1>
+
+{{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
+
+<div class="stack">
+
+  <div class="card stack">
+    <h2>Account</h2>
+    <div class="field">
+      <label>Handle</label>
+      <p class="help">Handles are permanent and cannot be changed.</p>
+      <input type="text" value="{{.Data.User.Handle}}" disabled class="mono">
+    </div>
+    <hr class="card-sep">
+    <form method="post" action="/settings" class="stack">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" value="{{.Data.User.Email}}"
+               autocomplete="email" required>
+      </div>
+      <div>
+        <button class="btn-primary" type="submit">Update email</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card stack">
+    <h2>Change password</h2>
+    <form method="post" action="/settings" class="stack">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="current-pw">Current password</label>
+        <input id="current-pw" name="current_password" type="password"
+               autocomplete="current-password" required>
+      </div>
+      <div class="field">
+        <label for="new-pw">New password</label>
+        <input id="new-pw" name="password" type="password"
+               autocomplete="new-password" required
+               oninput="var c=document.getElementById('confirm-pw'); c.setCustomValidity(c.value&&c.value!==this.value?'Passwords do not match.':'')">
+      </div>
+      <div class="field">
+        <label for="confirm-pw">Confirm new password</label>
+        <input id="confirm-pw" type="password" autocomplete="new-password" required
+               oninput="this.setCustomValidity(this.value!==document.getElementById('new-pw').value?'Passwords do not match.':'')">
+      </div>
+      <div>
+        <button class="btn" type="submit">Change password</button>
+      </div>
+    </form>
+  </div>
+
+</div>
+{{end}}

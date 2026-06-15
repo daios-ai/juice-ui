@@ -34,7 +34,7 @@
     <td class="muted small">{{truncate 10 .CreatedAt}}</td>
     <td>
       <form method="post" action="/processes/{{.ID}}/end"
-            onsubmit="return confirm('Force-end this session? Waiting steps will be cancelled and parked credits refunded.')">
+            data-confirm="Force-end this session? Waiting steps will be cancelled and parked credits refunded.">
         {{$.CSRFField}}
         <button class="btn btn-danger" type="submit">Force end — refunds {{money .Locked}} ¤</button>
       </form>

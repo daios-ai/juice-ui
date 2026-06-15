@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/daios-ai/juice-ui/client"
 )
 
 // authKernel is a fake kernel sufficient to drive the PKCE login flow and a few
@@ -22,7 +25,19 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"@alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("PUT /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		var inp struct {
+			CurrentPassword string `json:"current_password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&inp)
+		if inp.CurrentPassword == "wrongpass" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"invalid current password"}`))
+			return
+		}
+		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"new@test.com","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[]`))
@@ -546,5 +561,96 @@ func TestLoginPageHasNoSidebar(t *testing.T) {
 	}
 	if strings.Contains(b, `class="topbar"`) {
 		t.Error("login page must not render the topbar")
+	}
+}
+
+func TestSettingsPage(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/settings")
+	if !strings.Contains(body, "alice@test.com") {
+		t.Error("settings page must show current email")
+	}
+	if !strings.Contains(body, "@alice") {
+		t.Error("settings page must show handle")
+	}
+	tok := csrfTokenFrom(t, body)
+
+	// Email update — success path.
+	form := url.Values{"gorilla.csrf.Token": {tok}, "email": {"new@test.com"}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("settings email update: want 200, got %d", resp.StatusCode)
+	}
+
+	// Password change — wrong current password shows inline error, no redirect.
+	body2 := getBody(t, cl, srv.URL+"/settings")
+	tok2 := csrfTokenFrom(t, body2)
+	form2 := url.Values{
+		"gorilla.csrf.Token": {tok2},
+		"current_password":   {"wrongpass"},
+		"password":           {"newpass"},
+	}
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/settings", strings.NewReader(form2.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp2, err := cl.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	page2, _ := io.ReadAll(resp2.Body)
+	if !strings.Contains(string(page2), "incorrect") {
+		t.Error("wrong current_password must show 'incorrect' error inline")
+	}
+}
+
+func TestParseLookup(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"results": []map[string]any{
+			{"action_id": "A1", "name": "hello", "owner_handle": "@alice", "description": "greet", "score": 0.9},
+			{"action_id": "A2", "name": "bye", "owner_handle": "@bob", "description": "", "score": 0.5},
+		},
+	})
+	got := parseLookup(raw)
+	if len(got) != 2 {
+		t.Fatalf("want 2 results, got %d", len(got))
+	}
+	if got[0].Action.ID != "A1" || got[0].Action.Name != "hello" || got[0].Action.OwnerHandle != "@alice" {
+		t.Errorf("first result fields wrong: %+v", got[0].Action)
+	}
+	if got[0].Action.Kind != "" {
+		t.Error("parseLookup must leave Kind empty so the goroutine fetches it via GetAction")
+	}
+}
+
+func TestCatalogAsResults(t *testing.T) {
+	actions := []client.Action{
+		{ID: "A1", Name: "hello", OwnerHandle: "@alice", Kind: "wasm", Active: true, Public: true, Price: 50},
+		{ID: "A2", Name: "goodbye", OwnerHandle: "@bob", Kind: "ai", Active: true, Public: true, Price: 0},
+	}
+	got := catalogAsResults(actions, "hello")
+	if len(got) != 1 {
+		t.Fatalf("want 1 filtered result, got %d", len(got))
+	}
+	if got[0].Action.Price != 50 {
+		t.Errorf("catalogAsResults must preserve full Action including Price, got %d", got[0].Action.Price)
+	}
+	if got[0].Action.Kind != "wasm" {
+		t.Errorf("catalogAsResults must preserve Kind, got %q", got[0].Action.Kind)
+	}
+
+	all := catalogAsResults(actions, "")
+	if len(all) != 2 {
+		t.Fatalf("empty query should return all %d actions, got %d", len(actions), len(all))
 	}
 }

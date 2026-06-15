@@ -74,6 +74,57 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Confirmation modal — forms with data-confirm="message" show a styled dialog.
+(function() {
+  const backdrop = document.getElementById('modal-backdrop');
+  if (!backdrop) return;
+  const msg = document.getElementById('modal-msg');
+  const btnConfirm = document.getElementById('modal-confirm');
+  const btnCancel = document.getElementById('modal-cancel');
+  let pending = null;
+  let confirming = false;
+
+  function openModal(text) {
+    msg.textContent = text;
+    backdrop.hidden = false;
+    backdrop.removeAttribute('aria-hidden');
+    btnConfirm.focus();
+  }
+  function closeModal() {
+    backdrop.hidden = true;
+    backdrop.setAttribute('aria-hidden', 'true');
+    pending = null;
+  }
+
+  document.addEventListener('submit', (e) => {
+    if (confirming) return;
+    const form = e.target.closest('form[data-confirm]');
+    if (!form) return;
+    e.preventDefault();
+    pending = form;
+    openModal(form.dataset.confirm);
+  }, true);
+
+  btnConfirm.addEventListener('click', () => {
+    if (!pending) return;
+    const form = pending;
+    closeModal();
+    confirming = true;
+    form.requestSubmit();
+    confirming = false;
+  });
+
+  btnCancel.addEventListener('click', closeModal);
+
+  backdrop.addEventListener('click', (e) => {
+    if (!e.target.closest('.modal-box')) closeModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !backdrop.hidden) closeModal();
+  });
+})();
+
 // Optimistic sidebar collapse/expand.
 for (const form of document.querySelectorAll("form.sidebar-collapse")) {
   form.addEventListener("submit", () => {

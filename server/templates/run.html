@@ -17,28 +17,7 @@
 <h2>Results for "{{.Data.Query}}"</h2>
 {{if .Data.Results}}
 <div class="grid">
-  {{range .Data.Results}}
-  {{$r := .}}
-  <article class="card action-card">
-    <p class="action-card-name"><a href="/actions/{{.ActionID}}" title="{{.Name}}">{{.Name}}</a></p>
-    <p class="action-card-ref mono" title="{{.OwnerHandle}}/{{.Name}}">{{.OwnerHandle}}/{{.Name}}</p>
-    <div class="action-card-body">
-      {{if .Description}}<p class="action-card-desc" title="{{.Description}}">{{.Description}}</p>{{end}}
-    </div>
-    <hr class="card-sep">
-    <p class="stat-strip">
-      {{if .Stats}}
-      <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
-      {{if gt $r.Stats.RatingCount 0}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct $r.Stats.RatingEstimate $r.Stats.RatingCount}}% ({{$r.Stats.RatingCount}})</span>{{else}}<span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
-      <span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" .Stats.LatencyEstimate}}ms</span>
-      {{else}}
-      <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
-      <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
-      <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
-      {{end}}
-    </p>
-  </article>
-  {{end}}
+  {{range .Data.Results}}{{template "_action_card" .}}{{end}}
 </div>
 {{else}}
 <p class="muted">No matches.</p>

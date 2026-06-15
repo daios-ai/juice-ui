@@ -105,6 +105,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 /* Stat strips — icon + number pairs in a horizontal row */
 .stat-strip { display: flex; gap: 1rem; flex-wrap: nowrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: .9rem; }
 .stat-strip span { display: flex; align-items: center; gap: .2rem; }
+.stat-strip svg { pointer-events: none; }
 
 td.money { text-align: right; }
 
@@ -165,6 +166,27 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
   max-width: 400px; width: 90%; z-index: 40; pointer-events: none;
 }
 .live-region:empty { display: none; }
+
+/* Confirmation modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 400;
+  background: rgba(0,0,0,.45); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 8px 40px rgba(0,0,0,.3);
+  padding: 1.5rem; max-width: 380px; width: 90%; display: flex;
+  flex-direction: column; gap: 1.25rem;
+  animation: modal-in .15s ease;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(-8px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+.modal-msg { margin: 0; font-size: 1rem; line-height: 1.5; }
+.modal-actions { display: flex; gap: .6rem; justify-content: flex-end; }
 
 /* Narrow screens: hide sidebar, show bottom tab bar */
 @media (max-width: 720px) {

@@ -31,15 +31,6 @@ type studioEarnings struct {
 	Count int
 }
 
-type discoverResult struct {
-	ActionID    string
-	Name        string
-	OwnerHandle string
-	Description string
-	Score       float64
-	Stats       *client.Stats
-}
-
 type actionCardView struct {
 	Action client.Action
 	Stats  *client.Stats
@@ -49,7 +40,7 @@ type discoverView struct {
 	Query           string
 	LookupAvailable bool
 	Reason          string // why semantic search fell back (kernel's own message)
-	Results         []discoverResult
+	Results         []actionCardView
 	Catalog         []actionCardView
 }
 
@@ -119,6 +110,12 @@ type stepsView struct {
 }
 
 type errorView struct{ Message string }
+
+type settingsView struct {
+	User   client.User
+	Error  string
+	Notice string
+}
 
 // ---- auth ----
 
@@ -272,16 +269,21 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Results = catalogAsResults(cat, q)
 		}
-		// Fetch stats concurrently for all search results.
+		// Fetch stats (and full action data for partial lookup entries) concurrently.
 		var wg sync.WaitGroup
 		for i := range view.Results {
 			wg.Add(1)
 			go func(i int, id string) {
 				defer wg.Done()
+				if view.Results[i].Action.Kind == "" {
+					if a, e := s.client.GetAction(ctx, tok, id); e == nil {
+						view.Results[i].Action = a
+					}
+				}
 				if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 					view.Results[i].Stats = &st
 				}
-			}(i, view.Results[i].ActionID)
+			}(i, view.Results[i].Action.ID)
 		}
 		wg.Wait()
 		return nil
@@ -290,6 +292,84 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "run", "Run", view)
+}
+
+// ---- settings ----
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var view settingsView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		u, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		view.User = u
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "settings", "Settings", view, view.User.Available)
+}
+
+func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	email := strings.TrimSpace(r.FormValue("email"))
+	currentPw := r.FormValue("current_password")
+	newPw := r.FormValue("password")
+
+	inp := client.UpdateMeInput{Email: email, CurrentPassword: currentPw, Password: newPw}
+	if inp.Email == "" && inp.Password == "" {
+		s.flashRedirect(w, r, "/settings", "Nothing to update.")
+		return
+	}
+
+	passwordChange := currentPw != ""
+	var apiErr error
+	var updated client.User
+	outerErr := s.sessions.Do(ctx, func(tok string) error {
+		u, e := s.client.UpdateMe(ctx, tok, inp)
+		if e != nil {
+			if passwordChange {
+				apiErr = e
+				return nil
+			}
+			return e
+		}
+		updated = u
+		return nil
+	})
+	if isAuthErr(outerErr) {
+		s.handleErr(w, r, outerErr)
+		return
+	}
+	if outerErr != nil {
+		apiErr = outerErr
+	}
+	if apiErr != nil {
+		msg := userMessage(apiErr)
+		if ke, ok := client.AsKernelError(apiErr); ok && ke.Kind == client.KindUnauthenticated {
+			msg = "Current password is incorrect."
+		}
+		var view settingsView
+		view.Error = msg
+		_ = s.sessions.Do(ctx, func(tok string) error {
+			view.User, _ = s.client.Me(ctx, tok)
+			return nil
+		})
+		s.renderPage(w, r, http.StatusOK, "settings", "Settings", view, view.User.Available)
+		return
+	}
+
+	notice := "Settings updated."
+	if email != "" && newPw == "" {
+		notice = "Email updated."
+	} else if newPw != "" {
+		notice = "Password changed."
+	}
+	_ = updated
+	s.flashRedirect(w, r, "/settings", notice)
 }
 
 // ---- wallet ----
@@ -1084,7 +1164,9 @@ func coerce(typ, val string) (json.RawMessage, error) {
 	}
 }
 
-func parseLookup(result json.RawMessage) []discoverResult {
+// parseLookup converts a @sys/lookup result into partial actionCardViews.
+// Kind is left empty; the goroutine in getRunRoom fills it via GetAction.
+func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {
 		Results []struct {
 			ActionID    string  `json:"action_id"`
@@ -1095,34 +1177,28 @@ func parseLookup(result json.RawMessage) []discoverResult {
 		} `json:"results"`
 	}
 	_ = json.Unmarshal(result, &lr)
-	out := make([]discoverResult, 0, len(lr.Results))
+	out := make([]actionCardView, 0, len(lr.Results))
 	for _, r := range lr.Results {
-		out = append(out, discoverResult{
-			ActionID:    r.ActionID,
+		out = append(out, actionCardView{Action: client.Action{
+			ID:          r.ActionID,
 			Name:        r.Name,
 			OwnerHandle: r.OwnerHandle,
 			Description: r.Description,
-			Score:       r.Score,
-		})
+		}})
 	}
 	return out
 }
 
-// catalogAsResults adapts catalog actions to the result shape, filtering by a
+// catalogAsResults adapts catalog actions to actionCardViews, filtering by a
 // case-insensitive substring match so the fallback "search" is meaningful.
-func catalogAsResults(actions []client.Action, q string) []discoverResult {
+func catalogAsResults(actions []client.Action, q string) []actionCardView {
 	ql := strings.ToLower(q)
-	var out []discoverResult
+	var out []actionCardView
 	for _, a := range actions {
 		if ql != "" && !strings.Contains(strings.ToLower(a.Name+" "+a.Description), ql) {
 			continue
 		}
-		out = append(out, discoverResult{
-			ActionID:    a.ID,
-			Name:        a.Name,
-			OwnerHandle: a.OwnerHandle,
-			Description: a.Description,
-		})
+		out = append(out, actionCardView{Action: a})
 	}
 	return out
 }
