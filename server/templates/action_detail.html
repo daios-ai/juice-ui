@@ -10,7 +10,7 @@
 
 <div class="card stack">
   {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-  <p class="stat-strip" style="justify-content:flex-start">
+  <p class="stat-strip left">
     <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}</span>
     {{if $d.HasStats}}
     <span title="Success rate (total runs)" aria-label="Success rate"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct $d.Stats.Successes $d.Stats.Uses}}% ({{$d.Stats.Uses}})</span>
@@ -42,15 +42,17 @@
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>
+<div class="card-list">
 {{range $d.Ratings}}
-<div class="card" style="margin-bottom:.5rem">
-  <p class="row" style="margin:0;gap:.5rem">
+<div class="card">
+  <p class="row compact flush">
     <span class="pill {{if eq .Rating 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Rating 1}}positive{{else}}negative{{end}}</span>
-    <span class="muted" style="font-size:.85rem">{{.CreatedAt}}</span>
+    <span class="muted small">{{.CreatedAt}}</span>
   </p>
   {{if .Note}}<p style="margin:.5rem 0 0">{{.Note}}</p>{{end}}
 </div>
 {{end}}
+</div>
 {{end}}
 
 {{if $d.IsOwner}}
@@ -69,13 +71,13 @@
     {{end}}
     <form method="post" action="/actions/{{$d.Action.ID}}/delete" onsubmit="return confirm('Delete this action? History is preserved.')">{{$.CSRFField}}<button class="btn btn-danger" type="submit">Delete</button></form>
   </div>
-  <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row" style="align-items:center;gap:.5rem">
+  <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">
     {{$.CSRFField}}
-    <label for="new-price" style="margin:0">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
-    <input id="new-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" style="width:6rem">
+    <label for="new-price" class="flush">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
+    <input id="new-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
     <button class="btn" type="submit">Update price</button>
   </form>
-  <p class="help muted" style="margin:0">Changing price deactivates the action.</p>
+  <p class="help muted flush">Changing price deactivates the action.</p>
 </div>
 {{end}}
 {{end}}

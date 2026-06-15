@@ -1,4 +1,9 @@
-/* Components reference design tokens only (R8.5). */
+/*
+  UI GRAMMAR — strict rule: no inline style="" in templates.
+  Every visual decision is a named class here.
+  Utilities: .small .tiny .flush .stretch .input-sm .muted .mono .row .row.compact
+  Icon+badge: wrap icon in .ico-badge-wrap, place .badge inside.
+*/
 
 * { box-sizing: border-box; }
 
@@ -130,11 +135,13 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
 .mobile-drawer { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; }
 
 /* Inbox badge */
+.ico-badge-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
 .badge {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 1.1rem; height: 1.1rem; padding: 0 .25rem;
+  min-width: 1rem; height: 1rem; padding: 0 .2rem;
   border-radius: 999px; background: var(--accent); color: var(--accent-contrast);
-  font-size: .7rem; font-weight: 700; line-height: 1; margin-left: .25rem;
+  font-size: .65rem; font-weight: 700; line-height: 1;
+  position: absolute; top: -5px; right: -6px;
 }
 .badge:empty { display: none; }
 
@@ -193,8 +200,17 @@ h3 { margin: 1.5rem 0 .35rem; }
 .cluster { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 0; }
 .flush { margin: 0; }
 .grow { flex: 1 1 16rem; }
+.stretch { flex: 1; min-width: 0; }
 .small { font-size: .85rem; }
 .tiny { font-size: .8rem; }
+.input-sm { width: 6rem; }
+.stat-strip.left { justify-content: flex-start; }
+.card > h2 { margin: 0 0 .75rem; }
+.card > h3 { margin: 0 0 .35rem; }
+.card-list > .card + .card { margin-top: .5rem; }
+.card-note { font-size: .85rem; color: var(--text-muted); margin-top: .75rem; }
+.outcome > .row { margin-top: .75rem; }
+.btn-row { margin-bottom: 1rem; }
 .details-panel { margin-top: 1.5rem; }
 .details-panel summary { cursor: pointer; font-weight: 600; }
 .details-panel form { margin-top: .75rem; }

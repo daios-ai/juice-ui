@@ -48,12 +48,12 @@
   <strong>Success.</strong>
   <pre class="json">{{json .Result}}</pre>
   {{if .TxID}}
-  <div class="row compact" style="margin-top:.75rem">
+  <div class="row compact">
     <a class="btn" href="/transactions/{{.TxID}}">Receipt</a>
-    <form class="row compact" style="flex:1;min-width:0" method="post" action="/transactions/{{.TxID}}/rate"
+    <form class="row compact stretch" method="post" action="/transactions/{{.TxID}}/rate"
           hx-post="/transactions/{{.TxID}}/rate" hx-target="this" hx-swap="outerHTML">
       {{.CSRFField}}
-      <input type="text" name="note" placeholder="Optional comment…" style="flex:1;min-width:0">
+      <input type="text" name="note" placeholder="Optional comment…" class="stretch">
       <button class="btn-icon" name="rating" value="1" type="submit" aria-label="Good">
         <svg class="ico"><use href="/static/icons.svg#thumb-up"/></svg>
       </button>
@@ -139,7 +139,29 @@
 {{end}}
 {{end}}
 
-{{define "_rated"}}<span class="muted" style="font-size:.85rem">Rated ✓</span>{{end}}
+{{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
+
+{{define "_menu_content"}}
+<div class="menu-caption mono">{{.Handle}}</div>
+<div class="menu-caption money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</div>
+<div class="menu-divider"></div>
+<form method="post" action="/theme" class="theme-toggle">
+  {{.CSRFField}}
+  <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
+  <button type="submit" class="menu-item" role="menuitem" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme">
+    <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
+    Theme
+  </button>
+</form>
+<div class="menu-divider"></div>
+<form method="post" action="/logout">
+  {{.CSRFField}}
+  <button type="submit" class="menu-item" role="menuitem">
+    <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg>
+    Sign out
+  </button>
+</form>
+{{end}}
 
 {{define "_schema_panel"}}
 {{if not .UseRawFallback}}

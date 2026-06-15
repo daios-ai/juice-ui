@@ -12,7 +12,7 @@
       <div class="label">Locked in active sessions</div>
     </div>
   </div>
-  <p class="muted" style="margin-top:1rem;font-size:.85rem">
+  <p class="muted card-note">
     Credits are added out-of-band (operator). Each run locks exactly the action's
     price and releases automatically when the call and any outstanding steps are complete.
   </p>
@@ -20,7 +20,7 @@
 
 {{if .Data.OpenProcesses}}
 <h2>Parked funds</h2>
-<p class="muted" style="font-size:.85rem">Credits locked in open sessions. Force-ending a session cancels waiting steps and refunds parked prices.</p>
+<p class="muted small">Credits locked in open sessions. Force-ending a session cancels waiting steps and refunds parked prices.</p>
 <table>
   <thead>
     <tr><th>Session</th><th>Available</th><th>Locked</th><th>Started</th><th></th></tr>
@@ -31,7 +31,7 @@
     <td class="mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a></td>
     <td class="money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</td>
     <td class="money status-escrow"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Locked}}</td>
-    <td class="muted" style="font-size:.85rem">{{truncate 10 .CreatedAt}}</td>
+    <td class="muted small">{{truncate 10 .CreatedAt}}</td>
     <td>
       <form method="post" action="/processes/{{.ID}}/end"
             onsubmit="return confirm('Force-end this session? Waiting steps will be cancelled and parked credits refunded.')">
@@ -58,7 +58,7 @@
   <tr>
     <td class="id mono"><a href="/transactions/{{.ID}}">{{truncate 8 .ID}}…</a></td>
     <td class="mono"><a href="/actions/{{.ActionID}}">{{truncate 28 .ActionName}}</a></td>
-    <td class="muted" style="font-size:.85rem">
+    <td class="muted small">
       {{if $isSeller}}seller{{else if $isBuyer}}buyer{{else}}caller{{end}}
     </td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
@@ -66,7 +66,7 @@
     <td class="money {{if eq .Status "success"}}{{if $isBuyer}}status-refunded{{else}}status-credited{{end}}{{end}}">
       {{if eq .Status "success"}}{{if $isBuyer}}{{if gt .Gross 0}}-{{end}}{{money .Gross}}{{else}}{{if gt .Net 0}}+{{end}}{{money .Net}}{{end}}{{else}}—{{end}}
     </td>
-    <td class="muted" style="font-size:.85rem">{{truncate 10 .StartedAt}}</td>
+    <td class="muted small">{{truncate 10 .StartedAt}}</td>
   </tr>
   {{end}}
   </tbody>
