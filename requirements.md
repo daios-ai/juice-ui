@@ -393,6 +393,12 @@ open (parked steps), the result MUST say so and link to the Wallet.
   (e.g. "Action disabled," "Copied," the 429 "slow down"): no history, no
   stacking, no counterparty text, auto-dismissing. The Inbox badge is the sole
   async attention signal.
+* **CSS grammar.** All visual decisions MUST live in named CSS classes in
+  `app.css`; inline `style="..."` attributes are forbidden in templates. Utilities
+  (`.small`, `.tiny`, `.flush`, `.stretch`, `.input-sm`, `.row.compact`, etc.)
+  MUST be defined once and composed. Icon-plus-badge layouts MUST use
+  `.ico-badge-wrap` + `.badge`. Components MUST reference design tokens only,
+  never raw colors or sizes.
 * **Other.** Long-running calls MUST show progress against historical latency and
   MUST NOT hang on an indefinite spinner. No secrets or tokens in HTML, URLs,
   client storage, or logs. Structured logs (`log/slog`) to stderr MUST carry a
