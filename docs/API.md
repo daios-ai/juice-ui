@@ -88,7 +88,7 @@ Log lines, progress messages, and error text go to stderr. The only content writ
 | Operation | HTTP | CLI |
 |-----------|------|-----|
 | Password login | `POST /v1/auth/token` `{handle, password}` → `{token}` | `juice auth login --handle [--password]` |
-| PKCE authorize | `POST /v1/auth/authorize` `{handle, password, code_challenge, [redirect_uri]}` → `{redirect}` | `juice auth login --handle --pkce --server <url>` |
+| PKCE authorize | `POST /v1/auth/authorize` `{handle, password, code_challenge, [redirect_uri]}` → `302` if `redirect_uri` provided, else `200 {"redirect":"?code=CODE"}` | `juice auth login --handle --pkce --server <url>` |
 | PKCE token exchange | `POST /v1/auth/token` `{grant_type:"authorization_code", code, code_verifier, [redirect_uri]}` → `{access_token, refresh_token}` | (handled internally by `--pkce` login) |
 | Refresh token | `POST /v1/auth/refresh` `{refresh_token}` → `{access_token, refresh_token}` | `juice auth refresh` |
 | Logout | `POST /v1/auth/logout` `{refresh_token}` → 204 | `juice auth logout` |
@@ -99,15 +99,16 @@ Log lines, progress messages, and error text go to stderr. The only content writ
 |-----------|------|-----|
 | Create user | `POST /v1/users` `{handle, email, password}` → 201 user | `juice user create --handle --email [--password]` |
 | Get self | `GET /v1/me` → user (`id`, `handle`, `email`, `available`, `locked`) | `juice user me` |
+| Update self | `PUT /v1/me` `{[email], [current_password, password]}` → user | `juice user update [--email] [--password]` |
 
-Proxy users (federation peers) cannot be created here, cannot log in, and hold no tokens; they exist only through peer acceptance and authenticate per request by federation signature.
+`handle` is immutable. `email` and `password` are updatable by the authenticated user; `password` change requires `current_password` to verify the existing credential. At least one of `email` or `password` must be provided. Proxy users (federation peers) cannot be created here, cannot log in, and hold no tokens; they exist only through peer acceptance, authenticate per request by federation signature, and cannot use `PUT /v1/me`.
 
 ### Actions
 
 | Operation | HTTP | CLI |
 |-----------|------|-----|
 | Create action | `POST /v1/actions` `{name, kind, [source, description, price, input_schema, output_schema, auth]}` → 201 action | `juice action create --name --kind [--source --description --price --input-schema --output-schema --auth]` |
-| List public actions | `GET /v1/actions[?owner=&name=]` → action[] | `juice action list [--all --limit --offset]` |
+| List actions | `GET /v1/actions[?owner=&name=]` → action[]; unauthenticated → active public actions; authenticated → active public actions plus caller's own active actions; `?owner=` filters by owner handle; `?name=` filters by name | `juice action list [--all --limit --offset]` |
 | Show action | `GET /v1/actions/{id}` → action | `juice action show --id` |
 | Update action | `PUT /v1/actions/{id}` `{[price, description, source, input_schema, output_schema, public, auth]}` → action | `juice action update --id [--price --description --source --input-schema --output-schema --public --auth]` |
 | Enable action | `POST /v1/actions/{id}/enable` → `{active:true}` | `juice action enable --id` |
