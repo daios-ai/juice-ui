@@ -230,9 +230,28 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 	view := discoverView{Query: q, LookupAvailable: true}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q == "" {
-			cat, e := s.client.ListActions(ctx, tok, "", "")
+			me, e := s.client.Me(ctx, tok)
 			if e != nil {
 				return e
+			}
+			pub, e := s.client.ListActions(ctx, tok, "", "")
+			if e != nil {
+				return e
+			}
+			own, e := s.client.ListActions(ctx, tok, me.Handle, "")
+			if e != nil {
+				return e
+			}
+			// Merge own actions into public list, dedup by ID.
+			seen := make(map[string]bool, len(pub))
+			for _, a := range pub {
+				seen[a.ID] = true
+			}
+			cat := pub
+			for _, a := range own {
+				if !seen[a.ID] {
+					cat = append(cat, a)
+				}
 			}
 			cards := make([]actionCardView, len(cat))
 			var wg sync.WaitGroup
