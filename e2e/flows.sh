@@ -397,7 +397,9 @@ flow_local_auth() {
 
     # Login stores tokens
     j "$db" "$home_sys" auth login --handle @sys --password syspass >/dev/null 2>&1
-    [ -f "$home_sys/.juice/token" ] \
+    local tok_dir
+    tok_dir=$(find "$home_sys/.juice/tokens" -name token -printf '%h\n' 2>/dev/null | head -1)
+    [ -f "$tok_dir/token" ] \
         && ok "local_auth.token_stored" \
         || fail "local_auth.token_stored" "token file missing"
 
@@ -410,12 +412,12 @@ flow_local_auth() {
 
     # Save old refresh token before rotation
     local old_rt=""
-    [ -f "$home_sys/.juice/refresh_token" ] && old_rt=$(cat "$home_sys/.juice/refresh_token")
+    [ -f "$tok_dir/refresh_token" ] && old_rt=$(cat "$tok_dir/refresh_token")
 
     # Refresh rotates both tokens
     j "$db" "$home_sys" auth refresh >/dev/null 2>&1
     local new_rt=""
-    [ -f "$home_sys/.juice/refresh_token" ] && new_rt=$(cat "$home_sys/.juice/refresh_token")
+    [ -f "$tok_dir/refresh_token" ] && new_rt=$(cat "$tok_dir/refresh_token")
     [ -n "$new_rt" ] && [ "$new_rt" != "$old_rt" ] \
         && ok "local_auth.refresh_rotates_token" \
         || fail "local_auth.refresh_rotates_token" "refresh token not rotated"
@@ -428,19 +430,19 @@ flow_local_auth() {
 
     # Restoring the old refresh token and refreshing again must fail
     if [ -n "$old_rt" ]; then
-        echo "$old_rt" > "$home_sys/.juice/refresh_token"
+        echo "$old_rt" > "$tok_dir/refresh_token"
         local reuse_out
         reuse_out=$(j "$db" "$home_sys" auth refresh 2>&1)
         echo "$reuse_out" | grep -qi "expired\|invalid\|error\|failed" \
             && ok "local_auth.refresh_token_rotation_enforced" \
             || fail "local_auth.refresh_token_rotation_enforced" "reused refresh token was accepted"
         # Restore new token so logout works
-        echo "$new_rt" > "$home_sys/.juice/refresh_token"
+        echo "$new_rt" > "$tok_dir/refresh_token"
     fi
 
     # Logout revokes and removes tokens
     j "$db" "$home_sys" auth logout >/dev/null 2>&1
-    [ ! -f "$home_sys/.juice/token" ] \
+    [ ! -f "$tok_dir/token" ] \
         && ok "local_auth.logout_removes_token" \
         || fail "local_auth.logout_removes_token" "token file still present after logout"
 
@@ -1702,9 +1704,14 @@ flow_refresh_rotation() {
     j "$db" "$home_sys"   user create --handle @alice --email alice@test.com --password alicepass >/dev/null 2>&1
     j "$db" "$home_alice" auth login --handle @alice --password alicepass >/dev/null 2>&1
 
+    # Resolve the per-server token subdirectory and its hash.
+    local alice_tok_dir hash
+    alice_tok_dir=$(find "$home_alice/.juice/tokens" -name token -printf '%h\n' 2>/dev/null | head -1)
+    hash=$(basename "$alice_tok_dir")
+
     # Capture RT1 before refresh
     local rt1
-    rt1=$(cat "$home_alice/.juice/refresh_token" 2>/dev/null)
+    rt1=$(cat "$alice_tok_dir/refresh_token" 2>/dev/null)
 
     # Refresh → RT1 rotated to RT2
     local refresh_out
@@ -1714,11 +1721,12 @@ flow_refresh_rotation() {
         || fail "refresh_rotation.refresh_succeeds" "unexpected output: $refresh_out"
 
     local rt2
-    rt2=$(cat "$home_alice/.juice/refresh_token" 2>/dev/null)
+    rt2=$(cat "$alice_tok_dir/refresh_token" 2>/dev/null)
 
     # Old RT1 rejected
-    local home_old="$dir/old"; mkdir -p "$home_old/.juice"
-    echo "$rt1" > "$home_old/.juice/refresh_token"
+    local home_old="$dir/old"
+    mkdir -p "$home_old/.juice/tokens/$hash"
+    echo "$rt1" > "$home_old/.juice/tokens/$hash/refresh_token"
     local bad_refresh
     bad_refresh=$(j "$db" "$home_old" auth refresh 2>&1)
     echo "$bad_refresh" | grep -qi "invalid\|expired\|unauthenticated" \
@@ -1727,8 +1735,9 @@ flow_refresh_rotation() {
 
     # Logout (revokes RT2) → RT2 rejected
     j "$db" "$home_alice" auth logout >/dev/null 2>&1
-    local home_rt2="$dir/rt2"; mkdir -p "$home_rt2/.juice"
-    echo "$rt2" > "$home_rt2/.juice/refresh_token"
+    local home_rt2="$dir/rt2"
+    mkdir -p "$home_rt2/.juice/tokens/$hash"
+    echo "$rt2" > "$home_rt2/.juice/tokens/$hash/refresh_token"
     local after_logout
     after_logout=$(j "$db" "$home_rt2" auth refresh 2>&1)
     echo "$after_logout" | grep -qi "invalid\|expired\|unauthenticated" \
