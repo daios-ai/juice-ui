@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -183,9 +184,14 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 // page builds the common page envelope (theme, handle, CSRF, flash) for a
 // request.
 func (s *Server) page(r *http.Request, title string, data any) Page {
-	flash := ""
+	var flash, flashKind string
 	if c, err := r.Cookie("flash"); err == nil {
-		flash = c.Value
+		if i := strings.IndexByte(c.Value, '|'); i >= 0 {
+			flashKind = c.Value[:i]
+			flash = c.Value[i+1:]
+		} else {
+			flash = c.Value
+		}
 	}
 	return Page{
 		Title:     title,
@@ -195,6 +201,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		CSRFField: csrf.TemplateField(r),
 		CSRFToken: csrf.Token(r),
 		Flash:     flash,
+		FlashKind: flashKind,
 		Data:      data,
 	}
 }
@@ -240,7 +247,7 @@ func (s *Server) handleErrFragment(w http.ResponseWriter, r *http.Request, err e
 			w.Header().Set("HX-Redirect", "/login")
 			return true
 		}
-		s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+		s.flashRedirect(w, r, "/login", "error", "Your session has expired. Please sign in again.")
 		return true
 	}
 	s.log.Warn("operation failed", "request_id", client.RequestIDFromContext(r.Context()), "path", r.URL.Path, "err", err)
@@ -267,7 +274,7 @@ func (s *Server) handleErr(w http.ResponseWriter, r *http.Request, err error) bo
 	}
 	if isAuthErr(err) {
 		_ = s.sessions.Logout(r.Context())
-		s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+		s.flashRedirect(w, r, "/login", "error", "Your session has expired. Please sign in again.")
 		return true
 	}
 	s.log.Warn("operation failed", "request_id", client.RequestIDFromContext(r.Context()), "path", r.URL.Path, "err", err)
@@ -297,10 +304,11 @@ func userMessage(err error) string {
 	return "Something went wrong. Please try again."
 }
 
-// flashRedirect sets a one-shot flash cookie and redirects.
-func (s *Server) flashRedirect(w http.ResponseWriter, r *http.Request, to, msg string) {
+// flashRedirect sets a one-shot flash cookie and redirects. kind must be one
+// of "success", "error", or "info".
+func (s *Server) flashRedirect(w http.ResponseWriter, r *http.Request, to, kind, msg string) {
 	http.SetCookie(w, &http.Cookie{
-		Name: "flash", Value: msg, Path: "/", MaxAge: 30,
+		Name: "flash", Value: kind + "|" + msg, Path: "/", MaxAge: 30,
 		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, to, http.StatusSeeOther)

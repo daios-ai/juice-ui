@@ -322,7 +322,11 @@ th, td { text-align: left; padding: .55rem .5rem; border-bottom: 1px solid var(-
 th { color: var(--text-muted); font-weight: 600; }
 
 .flash { background: var(--surface-2); border-bottom: 1px solid var(--border); padding: .6rem 1.25rem; color: var(--text); }
+.flash-success { border-bottom-color: var(--credited); color: var(--credited); }
+.flash-error   { border-bottom-color: var(--danger);   color: var(--danger); }
 .banner { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .75rem 1rem; color: var(--text-muted); }
+.banner-error { border-color: var(--danger); color: var(--danger); }
+.banner-info  { border-color: var(--border-strong); color: var(--text-muted); }
 
 .muted { color: var(--text-muted); }
 .score { color: var(--text-muted); font-size: .85rem; }

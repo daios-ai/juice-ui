@@ -3,7 +3,7 @@
 <p class="subtitle">Server-rendered, secure session. Your tokens stay on the server.</p>
 
 {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
-{{if .Data.Notice}}<div class="banner">{{.Data.Notice}}</div>{{end}}
+{{if .Data.Notice}}<div class="banner banner-info" role="status">{{.Data.Notice}}</div>{{end}}
 
 <div class="grid">
   <form class="card stack" method="post" action="/login">

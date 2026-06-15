@@ -39,6 +39,7 @@ type Page struct {
 	CSRFField template.HTML // hidden CSRF input for no-JS forms
 	CSRFToken string        // raw token for the <meta> tag htmx reads
 	Flash     string        // transient user message
+	FlashKind string        // "success" | "error" | "info" | ""
 	Data      any           // page-specific view model
 }
 

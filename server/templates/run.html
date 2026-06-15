@@ -2,7 +2,7 @@
 <h1>Run</h1>
 
 {{if not .Data.LookupAvailable}}
-<div class="banner">Semantic search isn't available right now, so results come from catalog search instead.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
+<div class="banner banner-info" role="status">Semantic search isn't available right now, so results come from catalog search instead.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
 {{end}}
 
 <form class="card row" method="get" action="/run">

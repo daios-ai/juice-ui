@@ -321,7 +321,7 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 
 	inp := client.UpdateMeInput{Email: email, CurrentPassword: currentPw, Password: newPw}
 	if inp.Email == "" && inp.Password == "" {
-		s.flashRedirect(w, r, "/settings", "Nothing to update.")
+		s.flashRedirect(w, r, "/settings", "info", "Nothing to update.")
 		return
 	}
 
@@ -369,7 +369,7 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 		notice = "Password changed."
 	}
 	_ = updated
-	s.flashRedirect(w, r, "/settings", notice)
+	s.flashRedirect(w, r, "/settings", "success", notice)
 }
 
 // ---- wallet ----
@@ -658,7 +658,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !json.Valid([]byte(raw)) {
-			s.flashRedirect(w, r, "/studio", "The "+f.key+" is not valid JSON.")
+			s.flashRedirect(w, r, "/studio", "error", "The "+f.key+" is not valid JSON.")
 			return
 		}
 		*f.dst = json.RawMessage(raw)
@@ -675,10 +675,10 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.flashRedirect(w, r, "/studio", userMessage(err))
+		s.flashRedirect(w, r, "/studio", "error", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/studio", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
+	s.flashRedirect(w, r, "/studio", "success", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
@@ -693,7 +693,7 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/studio", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
+	s.flashRedirect(w, r, "/studio", "success", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
 }
 
 func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
@@ -708,7 +708,7 @@ func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/studio", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
+	s.flashRedirect(w, r, "/studio", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
 }
 
 // postMakeAction calls @sys/make to synthesize a WASM action from a
@@ -772,14 +772,14 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 	}
 	// No-JS fallback: redirect with flash.
 	if view.Success {
-		s.flashRedirect(w, r, "/actions/"+view.ActionID, "Action synthesized.")
+		s.flashRedirect(w, r, "/actions/"+view.ActionID, "success", "Action synthesized.")
 		return
 	}
 	msg := view.Error
 	if msg == "" {
 		msg = "Synthesis failed. Refine your description and try again."
 	}
-	s.flashRedirect(w, r, "/studio", msg)
+	s.flashRedirect(w, r, "/studio", "error", msg)
 }
 
 func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
@@ -806,7 +806,7 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if isAuthErr(err) {
 			_ = s.sessions.Logout(ctx)
-			s.flashRedirect(w, r, "/login", "Your session has expired. Please sign in again.")
+			s.flashRedirect(w, r, "/login", "error", "Your session has expired. Please sign in again.")
 			return
 		}
 		s.handleErr(w, r, err)
@@ -820,7 +820,7 @@ func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	price := parseInt64(r.FormValue("price"))
 	if price < 0 {
-		s.flashRedirect(w, r, "/actions/"+id, "Price must be non-negative.")
+		s.flashRedirect(w, r, "/actions/"+id, "error", "Price must be non-negative.")
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -828,10 +828,10 @@ func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 		return e
 	})
 	if err != nil {
-		s.flashRedirect(w, r, "/actions/"+id, userMessage(err))
+		s.flashRedirect(w, r, "/actions/"+id, "error", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/actions/"+id, "Price updated. Action is now inactive.")
+	s.flashRedirect(w, r, "/actions/"+id, "success", "Price updated. Action is now inactive.")
 }
 
 func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
@@ -841,7 +841,7 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/studio", "Action deleted. History is preserved.")
+	s.flashRedirect(w, r, "/studio", "success", "Action deleted. History is preserved.")
 }
 
 // ---- processes ----
@@ -891,7 +891,7 @@ func (s *Server) postEnd(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/processes", "Session ended; remaining balance reclaimed.")
+	s.flashRedirect(w, r, "/processes", "success", "Session ended; remaining balance reclaimed.")
 }
 
 // ---- transactions ----
@@ -980,14 +980,14 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 			_ = s.render.Fragment(w, http.StatusOK, "_error", userMessage(err))
 			return
 		}
-		s.flashRedirect(w, r, "/transactions/"+id, userMessage(err))
+		s.flashRedirect(w, r, "/transactions/"+id, "error", userMessage(err))
 		return
 	}
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_rated", nil)
 		return
 	}
-	s.flashRedirect(w, r, "/transactions/"+id, "Thanks for rating.")
+	s.flashRedirect(w, r, "/transactions/"+id, "success", "Thanks for rating.")
 }
 
 // ---- step mutation handlers ----
@@ -996,12 +996,12 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	partialArgs, err := rawJSONOrEmpty(r.FormValue("partial_args"))
 	if err != nil {
-		s.flashRedirect(w, r, "/inbox", "Partial args must be valid JSON.")
+		s.flashRedirect(w, r, "/inbox", "error", "Partial args must be valid JSON.")
 		return
 	}
 	inputSchema, err := rawJSONOrEmpty(r.FormValue("input_schema"))
 	if err != nil {
-		s.flashRedirect(w, r, "/inbox", "Input schema must be valid JSON.")
+		s.flashRedirect(w, r, "/inbox", "error", "Input schema must be valid JSON.")
 		return
 	}
 	in := client.CreateStepInput{
@@ -1021,7 +1021,7 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/inbox", "Step created.")
+	s.flashRedirect(w, r, "/inbox", "success", "Step created.")
 }
 
 func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
@@ -1051,14 +1051,14 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 			_ = s.render.Fragment(w, http.StatusOK, "_error", msg)
 			return
 		}
-		s.flashRedirect(w, r, "/inbox", msg)
+		s.flashRedirect(w, r, "/inbox", "error", msg)
 		return
 	}
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
 		return
 	}
-	s.flashRedirect(w, r, "/inbox", "Step completed.")
+	s.flashRedirect(w, r, "/inbox", "success", "Step completed.")
 }
 
 // ---- helpers ----

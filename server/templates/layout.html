@@ -68,7 +68,7 @@
       {{end}}
 
       <div class="content">
-        {{if .Flash}}<div class="flash" role="status">{{.Flash}}</div>{{end}}
+        {{if .Flash}}<div class="flash{{if .FlashKind}} flash-{{.FlashKind}}{{end}}" role="{{if eq .FlashKind "error"}}alert{{else}}status{{end}}">{{.Flash}}</div>{{end}}
         <main id="main" class="container">
           {{block "content" .}}{{end}}
         </main>

@@ -28,6 +28,7 @@
   --credited: #2f7d4f;        /* money in */
   --refunded: #2563a6;        /* money returned */
   --escrow: #6d4ca6;          /* funds held pending */
+  --danger: #9a3028;          /* errors and destructive actions */
 
   --radius: 10px;
   --shadow: 0 1px 2px rgba(43, 38, 32, 0.06), 0 4px 16px rgba(43, 38, 32, 0.05);
@@ -53,6 +54,7 @@
     --credited: #5fbd84;
     --refunded: #6aa6e0;
     --escrow: #b196e6;
+    --danger: #e07268;
 
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
   }
@@ -91,5 +93,6 @@
   --credited: #5fbd84;
   --refunded: #6aa6e0;
   --escrow: #b196e6;
+  --danger: #e07268;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
 }
