@@ -44,7 +44,7 @@ function positionMenu(btn, menu) {
   menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
 }
 function closeAllMenus() {
-  for (const m of document.querySelectorAll('.menu:not([hidden])')) {
+  for (const m of document.querySelectorAll('.menu:not([hidden]):not(.mobile-drawer)')) {
     m.hidden = true;
     document.querySelector(`[data-menu="${m.id}"]`)?.setAttribute('aria-expanded', 'false');
   }
