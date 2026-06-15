@@ -136,3 +136,18 @@ for (const form of document.querySelectorAll("form.sidebar-collapse")) {
     }
   });
 }
+
+// Auth scheme: show only the credential fields for the selected scheme.
+// Inputs in hidden sections are disabled so they are not submitted.
+for (const sel of document.querySelectorAll('select[name="auth_scheme"]')) {
+  const panel = sel.closest('details');
+  function update() {
+    for (const sec of panel.querySelectorAll('[data-auth-scheme]')) {
+      const match = sec.dataset.authScheme === sel.value;
+      sec.hidden = !match;
+      for (const inp of sec.querySelectorAll('input')) inp.disabled = !match;
+    }
+  }
+  sel.addEventListener('change', update);
+  update();
+}

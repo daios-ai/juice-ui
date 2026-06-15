@@ -236,6 +236,8 @@ h3 { margin: 1.5rem 0 .35rem; }
 .details-panel { margin-top: 1.5rem; }
 .details-panel summary { cursor: pointer; font-weight: 600; }
 .details-panel form { margin-top: .75rem; }
+.auth-panel { margin-top: .5rem; margin-bottom: 1rem; }
+.auth-panel summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
 .locked-args { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: 0; }
 .locked-args dt { font-weight: 600; }
 .locked-args dd { margin: 0; }

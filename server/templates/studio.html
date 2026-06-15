@@ -71,37 +71,56 @@
       <p class="help">The kernel rejects non-HTTP(S), loopback, and private addresses.</p>
       <input id="source" name="source" type="text" placeholder="https://…">
     </div>
-    <div class="field">
-      <label for="auth_scheme">Upstream auth</label>
-      <p class="help">Credentials the kernel injects when calling the source URL. Leave "None" if the source is public. Values are write-only and never re-displayed.</p>
-      <select id="auth_scheme" name="auth_scheme">
-        <option value="">None</option>
-        <option value="bearer">Bearer token</option>
-        <option value="basic">HTTP Basic</option>
-        <option value="header">Static header</option>
-        <option value="query">Query parameter</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="auth_bearer_token">Token</label>
-      <input id="auth_bearer_token" name="auth_bearer_token" type="password" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="auth_basic_username">Username</label>
-      <input id="auth_basic_username" name="auth_basic_username" type="text" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="auth_basic_password">Password</label>
-      <input id="auth_basic_password" name="auth_basic_password" type="password" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="auth_param_name">Header / parameter name</label>
-      <input id="auth_param_name" name="auth_param_name" type="text" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="auth_param_value">Value</label>
-      <input id="auth_param_value" name="auth_param_value" type="password" autocomplete="off">
-    </div>
+    <details class="auth-panel">
+      <summary>Upstream auth <span class="muted small">(optional)</span></summary>
+      <div class="field">
+        <label for="auth_scheme">Scheme</label>
+        <p class="help">Credentials the kernel injects when calling the source URL. Write-only — never re-displayed.</p>
+        <select id="auth_scheme" name="auth_scheme">
+          <option value="">None</option>
+          <option value="bearer">Bearer token</option>
+          <option value="basic">HTTP Basic</option>
+          <option value="header">Static header</option>
+          <option value="query">Query parameter</option>
+        </select>
+      </div>
+      <div data-auth-scheme="bearer" hidden>
+        <div class="field">
+          <label for="auth_bearer_token">Token</label>
+          <input id="auth_bearer_token" name="auth_bearer_token" type="password" autocomplete="off" disabled>
+        </div>
+      </div>
+      <div data-auth-scheme="basic" hidden>
+        <div class="field">
+          <label for="auth_basic_username">Username</label>
+          <input id="auth_basic_username" name="auth_basic_username" type="text" autocomplete="off" disabled>
+        </div>
+        <div class="field">
+          <label for="auth_basic_password">Password</label>
+          <input id="auth_basic_password" name="auth_basic_password" type="password" autocomplete="off" disabled>
+        </div>
+      </div>
+      <div data-auth-scheme="header" hidden>
+        <div class="field">
+          <label for="auth_header_name">Header name</label>
+          <input id="auth_header_name" name="auth_param_name" type="text" autocomplete="off" disabled>
+        </div>
+        <div class="field">
+          <label for="auth_header_value">Value</label>
+          <input id="auth_header_value" name="auth_param_value" type="password" autocomplete="off" disabled>
+        </div>
+      </div>
+      <div data-auth-scheme="query" hidden>
+        <div class="field">
+          <label for="auth_query_name">Parameter name</label>
+          <input id="auth_query_name" name="auth_param_name" type="text" autocomplete="off" disabled>
+        </div>
+        <div class="field">
+          <label for="auth_query_value">Value</label>
+          <input id="auth_query_value" name="auth_param_value" type="password" autocomplete="off" disabled>
+        </div>
+      </div>
+    </details>
     <div class="field">
       <label for="price">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
       <input id="price" name="price" type="number" min="0" value="0">
