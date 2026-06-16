@@ -13,13 +13,13 @@
   <p class="stat-strip left">
     <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}</span>
     {{if $d.HasStats}}
-    <span title="Success rate (total runs)" aria-label="Success rate"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct $d.Stats.Successes $d.Stats.Uses}}% ({{$d.Stats.Uses}})</span>
-    {{if gt $d.Stats.RatingCount 0}}<span title="Rating (rater count)" aria-label="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct $d.Stats.RatingEstimate $d.Stats.RatingCount}}% ({{$d.Stats.RatingCount}})</span>{{else}}<span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
-    <span title="Mean latency" aria-label="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" $d.Stats.LatencyEstimate}}ms</span>
+    · <span title="Success rate (total runs)" aria-label="Success rate"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct $d.Stats.Successes $d.Stats.Uses}}% ({{$d.Stats.Uses}})</span>
+    · {{if gt $d.Stats.RatingCount 0}}<span title="Rating (rater count)" aria-label="Rating"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct $d.Stats.RatingEstimate $d.Stats.RatingCount}}% ({{$d.Stats.RatingCount}})</span>{{else}}<span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
+    · <span title="Mean latency" aria-label="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.0f" $d.Stats.LatencyEstimate}}ms</span>
     {{else}}
-    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
-    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
-    <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
+    · <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
+    · <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
+    · <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
     {{end}}
   </p>
 </div>
