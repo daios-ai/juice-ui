@@ -79,7 +79,7 @@ func csrfKey(secret string) (key []byte, ephemeral bool, err error) {
 // build wires all dependencies into an http.Handler. Separated from main for
 // testability.
 func build(cfg Config, log *slog.Logger) (http.Handler, error) {
-	kernel := client.New(cfg.KernelBaseURL, &http.Client{Timeout: 60 * time.Second})
+	kernel := client.New(cfg.KernelBaseURL, &http.Client{Timeout: 5 * time.Minute})
 
 	sm := scs.New()
 	sm.Lifetime = 24 * time.Hour
