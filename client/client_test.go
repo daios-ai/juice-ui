@@ -180,36 +180,6 @@ func TestErrorResponseClassified(t *testing.T) {
 	}
 }
 
-func TestCreateStepSendsFields(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.status = 201
-	f.reply = `{"id":"s1","process_id":"p1","required_caller_user_id":"u1","next_action_id":"a1","status":"waiting","created_at":"2026-01-01T00:00:00Z"}`
-	in := CreateStepInput{
-		ProcessID:      "p1",
-		Action:         "@sys/lookup",
-		PartialArgs:    json.RawMessage(`{"q":"hi"}`),
-		InputSchema:    json.RawMessage(`{"type":"object"}`),
-		RequiredCaller: "@alice",
-	}
-	s, err := f.client().CreateStep(context.Background(), "tok", in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.ID != "s1" || s.Status != "waiting" {
-		t.Errorf("step = %+v", s)
-	}
-	if f.lastPath != "/v1/steps" || f.lastMethod != "POST" {
-		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
-	}
-	if !strings.Contains(string(f.lastBody), `"@sys/lookup"`) {
-		t.Errorf("action not sent: %s", f.lastBody)
-	}
-	if !strings.Contains(string(f.lastBody), `"@alice"`) {
-		t.Errorf("required_caller not sent: %s", f.lastBody)
-	}
-}
-
 func TestCompleteStepAlwaysSendsArgs(t *testing.T) {
 	f := newFake()
 	defer f.close()

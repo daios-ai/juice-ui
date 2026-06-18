@@ -88,11 +88,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","owner_user_id":"U1","owner_handle":"@alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"S1","process_id":"P1","required_caller_user_id":"U1","next_action_id":"A1","status":"waiting","created_at":"2026-01-01T00:00:00Z"}]`))
-	})
-	mux.HandleFunc("POST /v1/steps", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":"S2","process_id":"P1","required_caller_user_id":"U1","next_action_id":"A1","status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
+		w.Write([]byte(`[{"id":"S1","required_caller_user_id":"U1","action_id":"A1","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}]`))
 	})
 	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","step_id":"` + r.PathValue("id") + `"}`))
@@ -452,7 +448,7 @@ func TestCompleteStepHTMX(t *testing.T) {
 	}
 }
 
-func TestStepsPageRendersListAndForm(t *testing.T) {
+func TestInboxPageRendersSteps(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -461,19 +457,16 @@ func TestStepsPageRendersListAndForm(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/steps")
 
-	// Create form must be present.
-	if !strings.Contains(body, "/steps/create") {
-		t.Error("steps page must have the create form")
-	}
-	if !strings.Contains(body, "required_caller") {
-		t.Error("steps page must have the required_caller field")
-	}
 	// Step S1 (status=waiting, required_caller=U1=current user) must appear with complete form.
 	if !strings.Contains(body, "waiting") {
-		t.Error("steps page must show steps with status")
+		t.Error("inbox page must show steps with status")
 	}
 	if !strings.Contains(body, "Complete") {
-		t.Error("steps page must show the Complete button for own waiting steps")
+		t.Error("inbox page must show the Complete button for own waiting steps")
+	}
+	// Create form must be absent.
+	if strings.Contains(body, "/steps/create") {
+		t.Error("inbox page must not have a step-create form")
 	}
 }
 

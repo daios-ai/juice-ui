@@ -187,14 +187,13 @@ type Rating struct {
 // designated caller completes by supplying the remaining input.
 type Step struct {
 	ID                   string          `json:"id"`
-	ProcessID            string          `json:"process_id"`
 	ParentTraceID        string          `json:"parent_trace_id"`
 	RequiredCallerUserID string          `json:"required_caller_user_id"`
-	NextActionID         string          `json:"next_action_id"`
+	ActionID             string          `json:"action_id"`
 	Action               string          `json:"action"` // computed @owner/name; absent in list responses
+	Price                int64           `json:"price"`
 	PartialArgs          json.RawMessage `json:"partial_args"`
-	InputSchema          json.RawMessage `json:"input_schema"`
-	Status               string          `json:"status"` // waiting|running|done
+	Status               string          `json:"status"` // waiting|running|done|cancelled
 	TxID                 string          `json:"tx_id"`
 	CreatedAt            string          `json:"created_at"`
 }
@@ -207,16 +206,6 @@ func (s Step) Ref() string {
 		return s.Action[1:]
 	}
 	return s.Action
-}
-
-// CreateStepInput is the body for POST /v1/steps.
-type CreateStepInput struct {
-	ProcessID      string          `json:"process_id"`
-	Action         string          `json:"action"` // @owner/name
-	PartialArgs    json.RawMessage `json:"partial_args"`
-	InputSchema    json.RawMessage `json:"input_schema"`
-	RequiredCaller string          `json:"required_caller"` // @handle
-	ParentTraceID  string          `json:"parent_trace_id,omitempty"`
 }
 
 // StepCompleteReply is the response of POST /v1/steps/{id}/complete.
@@ -549,12 +538,6 @@ func (c *Client) RateTransaction(ctx context.Context, token, id string, rating i
 }
 
 // ---- steps ----
-
-func (c *Client) CreateStep(ctx context.Context, token string, in CreateStepInput) (Step, error) {
-	var s Step
-	err := c.do(ctx, http.MethodPost, "/v1/steps", token, in, &s)
-	return s, err
-}
 
 func (c *Client) ListSteps(ctx context.Context, token, processID, status string) ([]Step, error) {
 	q := url.Values{}

@@ -105,7 +105,7 @@ type stepsView struct {
 	MyID    string
 	Inbox   []stepEntry              // waiting steps that require this user
 	History []client.Step            // completed/running/other steps
-	Actions map[string]client.Action // next_action_id → action, for name display
+	Actions map[string]client.Action // action_id → action, for name display
 	Error   string
 }
 
@@ -417,16 +417,16 @@ func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
 		}
 		seen := map[string]bool{}
 		for _, step := range steps {
-			if step.NextActionID != "" && !seen[step.NextActionID] {
-				seen[step.NextActionID] = true
-				if a, ae := s.client.GetAction(ctx, tok, step.NextActionID); ae == nil {
-					actions[step.NextActionID] = a
+			if step.ActionID != "" && !seen[step.ActionID] {
+				seen[step.ActionID] = true
+				if a, ae := s.client.GetAction(ctx, tok, step.ActionID); ae == nil {
+					actions[step.ActionID] = a
 				}
 			}
 			if step.Status == "waiting" && step.RequiredCallerUserID == myID {
 				inbox = append(inbox, stepEntry{
 					Step: step,
-					Form: BuildStepForm(step.InputSchema, step.PartialArgs),
+					Form: BuildStepForm(actions[step.ActionID].InputSchema, step.PartialArgs),
 				})
 			} else {
 				history = append(history, step)
@@ -1023,38 +1023,6 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- step mutation handlers ----
-
-func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	partialArgs, err := rawJSONOrEmpty(r.FormValue("partial_args"))
-	if err != nil {
-		s.flashRedirect(w, r, "/inbox", "error", "Partial args must be valid JSON.")
-		return
-	}
-	inputSchema, err := rawJSONOrEmpty(r.FormValue("input_schema"))
-	if err != nil {
-		s.flashRedirect(w, r, "/inbox", "error", "Input schema must be valid JSON.")
-		return
-	}
-	in := client.CreateStepInput{
-		ProcessID:      strings.TrimSpace(r.FormValue("process_id")),
-		Action:         strings.TrimSpace(r.FormValue("action")),
-		PartialArgs:    partialArgs,
-		InputSchema:    inputSchema,
-		RequiredCaller: strings.TrimSpace(r.FormValue("required_caller")),
-	}
-	if pt := strings.TrimSpace(r.FormValue("parent_trace_id")); pt != "" {
-		in.ParentTraceID = pt
-	}
-	err = s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.CreateStep(ctx, tok, in)
-		return e
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.flashRedirect(w, r, "/inbox", "success", "Step created.")
-}
 
 func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

@@ -1,6 +1,6 @@
 # Juice Kernel Requirements
 
-Version: 0.3
+Version: 0.4
 Status: implementation requirements
 Codename: `juice`
 
@@ -12,13 +12,13 @@ Juice is a Go production kernel and research platform for callable actions. Exec
 run(action, args)        // action is @owner/name
 ```
 
-which atomically creates a process funded with exactly `action.price` (the subtree bound, §6), locked from the caller's available balance, and issues the root call. Its sole execution primitive is:
+which atomically creates a process funded with exactly `action.price` (the subtree bound, §6), locked from the caller's available balance, creates and funds the root trace from that process, and issues the root call. Its sole dispatch primitive is:
 
 ```text
-Call(caller, process, action, args)
+Call(caller, trace, action, args)
 ```
 
-Every `run` is a `Call` with a freshly created process; the process closes automatically when the root call has returned and no Steps remain outstanding (§10).
+The `trace` carries the funding wallet, process (`trace.process_id`), and causal parent — so no separate process argument is needed. Every `run` is a `Call` on a freshly created and funded root trace; the process closes automatically when the root call has returned and no Steps remain outstanding (§10).
 
 For every call, define:
 
@@ -48,7 +48,7 @@ These meanings are fixed. In a transaction, `owner_user_id` is the process owner
 
 All execution paths use `Call()`: root calls (via `run`), native actions, WASM `juice.call`, step completion, OpenAPI-imported HTTP actions, and remote proxies. `Call()` dispatches by `action.kind`, not by action-owner identity.
 
-Supervision operations never route through `Call()`; they manage users, actions, processes, ratings, deposits, OpenAPI imports, and remote imports. Execution code must not rate outputs or propagate ratings.
+Supervision operations never route through `Call()`; they manage users, actions, processes, ratings, deposits, OpenAPI imports, and federation peering. Execution code must not rate outputs or propagate ratings.
 
 Juice is meant to be a kernel like an OS kernel: only minimal but general and robust primitives, the rest lives on the application layer (actions).
 
@@ -75,18 +75,18 @@ Package names such as `sqlite`, `wazero`, and `ollama` are forbidden. Implementa
 All IDs are stable opaque identifiers. Action IDs are globally unique. Credit balances and prices are non-negative indivisible integers.
 
 | Object              | Fields                                                                                                                                                                                                                                                                           | Rules                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `User`              | `id`, `handle`, `email`, `available`, `locked`, `suspended_at`, `denied_at`, `public_key`, `remote_base_url`, `created_at`, `updated_at`                                                                                                                                         | `handle` is unique and contains no `/`. Suspended users are rejected at every authenticated request with `ErrUnauthenticated`. `public_key`, when set, is a unique base64url Ed25519 32-byte public key. Every user is local (null `public_key`/`remote_base_url`; authenticates by password or token) or a proxy (both set; authenticates only by federation signature, per request; §13). The kind is fixed at creation; proxy users cannot log in, hold tokens, or be created by `user create`. `denied_at` marks an unfriended peer key whose requests are rejected (§13).                                                                                                                                                                                                                                          |
 | `Action`            | `id`, `owner_user_id`, `name`, `kind`, `active`, `public`, `price`, `description`, `input_schema`, `output_schema`, `source`, `auth_json`, `artifact_hash`, `remote_action_id`, `created_at`, `updated_at`                                                                       | `owner_user_id` is the action owner. `kind ∈ {http, wasm, native, remote_proxy}`. `(owner_user_id,name)` is unique. `/` is allowed in `name`; handles cannot contain `/`, so `@owner/name` is unambiguous. Inactive actions are not callable. `GET /v1/actions` unauthenticated returns active public actions; authenticated returns active public actions plus the caller's own active actions (union, deduplicated by `id`). Action owners may list all their own actions regardless of `active` or `public` via the `?owner=` filter when it resolves to themselves. Authorized users may inspect script source. `artifact_hash` content-addresses compiled artifacts. `auth_json` is the write-only upstream credential config, encrypted at rest, never returned by any read path (§8). For `remote_proxy`, `source` is the federation call URL, `remote_action_id` is the action ID on the remote kernel, and `artifact_hash` stores the signed manifest hash. Active actions require non-empty natural-language `description`, valid schemas, and schema field descriptions sufficient for lookup and LLM function calling. |
-| `Process`           | `id`, `owner_user_id`, `available`, `locked`, `status`, `created_at`, `ended_at`                                                                                                                                                                                                 | `owner_user_id` is the process owner and payer. `status ∈ {open,closed}`. A process is created by `run`, funded with exactly the root action's price, parked from the owner's `available` into the owner's `locked` (§6); the process holds it as `available`. Enforcement is per call, on the call's trace (§6); the process's `available + locked` is the total held across its calls' wallets and parked steps. It closes automatically when the root call has returned and no Steps of the process are outstanding; closing returns remaining funds to the process owner and releases the owner's lock. Closed processes cannot call.                                                                                                                                                                              |
-| `Trace`             | `id`, `process_id`, `parent_trace_id`, `action_owner_id`, `available`, `locked`, `idempotency_key`, `dispatch_json`, `latency_ms`, `created_at`                                                                                                                                  | `action_owner_id` is the action owner of the action executing in the trace; used for trace-scoped process authority. Root traces have null parent. Every `Call()` creates exactly one child trace. A trace is the call's wallet: `available` starts as the action's price at entry and is the call's remaining allocation; `locked` is what the call has committed to its direct subcalls and steps. Calling something of price `q` requires `available ≥ q` and moves `q` from this trace's `available` into its `locked`, becoming the callee's `available` (§6). Settlement pays out the trace's remaining `available` (§6). `idempotency_key` and `dispatch_json` are null except on a remote-proxy trace, where the outbound key and request payload are recorded atomically with dispatch; while set and unsettled, the call is awaiting its receipt and restart resumes its retry (§5, §13). |
+| `Process`           | `id`, `owner_user_id`, `available`, `locked`, `status`, `created_at`, `ended_at`                                                                                                                                                                                                 | `owner_user_id` is the process owner and payer. `status ∈ {open,closed}`. A process is created by `run`, funded with exactly the root action's price, parked from the owner's `available` into the owner's `locked` (§6); the process holds it as `available`. It is bijective with its root trace and exists as a longer-lived wallet only because traces settle eagerly (§6): it absorbs refunds destined for already-settled traces and holds parked steps. Enforcement is per call, on the call's trace (§6); the process's `available + locked` is the total held across its calls' wallets and parked steps. It closes automatically when the root call has returned and no Steps of the process are outstanding; closing returns remaining funds to the process owner and releases the owner's lock. Closed processes cannot call.                                                                                                                                                                              |
+| `Trace`             | `id`, `process_id`, `parent_trace_id`, `action_owner_id`, `available`, `locked`, `idempotency_key`, `dispatch_json`, `created_at`                                                                                                                                  | `action_owner_id` is the action owner of the action executing in the trace; used for trace-scoped process authority. `process_id` is denormalized (derivable by walking `parent_trace_id` to the root). Root traces have null parent. Every `Call()` creates exactly one child trace. A trace is the call's wallet: `available` starts as the action's price at entry and is the call's remaining allocation; `locked` is what the call has committed to its direct subcalls and steps. Calling something of price `q` requires `available ≥ q` and moves `q` from this trace's `available` into its `locked`, becoming the callee's `available` (§6). Settlement pays out the trace's remaining `available` (§6). A call's own latency is `transaction.ended_at − transaction.started_at`; there is no cached latency field (§11). `idempotency_key` and `dispatch_json` are null except on a remote-proxy trace, where the outbound key and request payload are recorded atomically with dispatch; while set and unsettled, the call is awaiting its receipt and restart resumes its retry (§5, §13). |
 | `Transaction`       | `id`, `process_id`, `trace_id`, `parent_trace_id`, `owner_user_id`, `caller_user_id`, `target_user_id`, `action_id`, `action_name`, `args_json`, `reply_json`, `status`, `gross`, `net`, `fee`, `reason`, `remote_receipt_hash`, `remote_receipt_json`, `started_at`, `ended_at` | `status ∈ {success,failure}`. Every attempted call creates one immutable transaction. Fields obey the role law. `action_name` is captured at creation so history remains self-contained after action deletion. Local calls have null remote receipt fields. Remote-proxy commits atomically store full remote receipt JSON and `SHA-256(remote_receipt_json)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `Stats`             | `uses`, `successes`, `failures`, `rating_count`, `latency_estimate`, `rating_estimate`, `last_used_at`                                                                                                                                                                           | Missing stats have defined defaults. `uses = successes + failures`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `StatTag`           | `action_id`, `key`, `value`, `source`, `updated_at`                                                                                                                                                                                                                              | Optional lookup-experiment data, namespaced by source, never execution semantics.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `Step`              | `id`, `process_id`, `parent_trace_id`, `required_caller_user_id`, `next_action_id`, `price`, `partial_args`, `input_schema`, `status`, `tx_id`, `created_at`                                                                                                                       | `status ∈ {waiting, running, done, cancelled}`. `required_caller_user_id` is mandatory; open completion is not supported. `partial_args` is pre-bound input merged with the caller-supplied input at completion (`input` overwrites `partial_args` on key collision). `input_schema` constrains what the completer may supply. `tx_id` is recorded atomically when status transitions to `done`. `price` is `next_action.price` snapshotted at step creation: the amount parked in the process's `locked`, spent when the step completes and refunded if it is cancelled. `EndProcess` atomically cancels all `waiting` steps tied to the process in the same transaction as closure; `cancelled` is terminal and carries no `tx_id`. An outstanding (`waiting` or `running`) step keeps its process open, its allocation parked in the process's `locked` (§10). |
+| `Step`              | `id`, `parent_trace_id`, `required_caller_user_id`, `action_id`, `price`, `partial_args`, `status`, `tx_id`, `created_at`                                                       | `status ∈ {waiting, running, done, cancelled}`. `parent_trace_id` is the creating/funding trace and derives the process (`Trace(parent_trace_id).process_id`); it is inherited by the completion trace. `required_caller_user_id` is mandatory; open completion is not supported. `partial_args` is pre-bound input merged with the caller-supplied input at completion (`input` overwrites `partial_args` on key collision). The completer's allowed input is derived as `action.input_schema \ keys(partial_args)`, not stored (§10); this is safe because changing an action's schema deactivates it and completing against a changed or deactivated action resets the step to `waiting` (§10), so the derivation never sees a moving target. `tx_id` is recorded atomically when status transitions to `done`. `price` is `action.price` snapshotted at step creation: the amount parked in the process's `locked`, the completion call's allocation and `gross`, spent when the step completes and refunded if it is cancelled. `EndProcess` atomically cancels all `waiting` steps tied to the process in the same transaction as closure; `cancelled` is terminal and carries no `tx_id`. An outstanding (`waiting` or `running`) step keeps its process open, its allocation parked in the process's `locked` (§10). |
 | `Deposit`           | `id`, `operator_user_id`, `target_user_id`, `amount`, `reason`, `created_at`                                                                                                                                                                                                     | Immutable audit record for a positive out-of-band superuser credit grant.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Withdrawal`        | `id`, `operator_user_id`, `target_user_id`, `amount`, `reason`, `created_at`                                                                                                                                                                                                     | Immutable audit record for a positive superuser credit redemption obliging an out-of-band payout (§12).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `Receipt`           | `id`, `issuer_user_id`, `tx_id`, `trace_id`, `action_id`, `caller_user_id`, `process_id`, `args_hash`, `reply_hash`, `status`, `gross`, `net`, `fee`, `charge`, `reason`, `started_at`, `created_at`, `signature`                                                                | Immutable signed record for exactly one committed call. `caller_user_id` is the call caller. `started_at` is call start; `created_at` is settlement. `charge` is the amount actually drawn from the caller's funds: `= gross` on success, `≤ gross` on failure (settled descendants stay paid, §6), `0` on rejection.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `Receipt`           | `id`, `issuer_user_id`, `tx_id`, `trace_id`, `action_id`, `caller_user_id`, `process_id`, `args_hash`, `reply_hash`, `status`, `gross`, `net`, `fee`, `charge`, `reason`, `started_at`, `created_at`, `signature`                                                                | Immutable signed record for exactly one committed call. `caller_user_id` is the call caller. `started_at` is call start; `created_at` is settlement. `charge` is the amount actually drawn from the caller's funds: `= gross` on success, `≤ gross` on failure (settled descendants stay paid, §6), `0` on rejection.                                                                                                                                                                                                                                                                  |
 | `Rating`            | `id`, `rated_tx_id`, `rated_receipt_id`, `rater_user_id`, `rating`, `note`, `created_at`, `signature`                                                                                                                                                                            | Immutable signed feedback record. `rating ∈ {0,1}`. At most one rating exists per transaction. `rated_receipt_id` may be null only for pre-receipt transactions. `note` is optional, nullable, human-readable, and included in the single Ed25519 rating signature payload.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `IdempotencyRecord` | `id`, `idempotency_key`, `counterparty_user_id`, `receipt_id`, `status`, `result_json`, `created_at`, `expires_at`                                                                                                                                                               | Cross-kernel only. `status ∈ {pending,complete}`. Insert pending before execution; complete atomically with transaction and receipt. Completion stores `result_json`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `DiscoveredKernel`  | `public_key`, `handle`, `base_url`, `introduced_by`, `stats_json`, `first_seen`, `updated_at`                                                                                                                                                                                    | One row per (kernel, introducer); accumulated from gossip (§13). Information only — never execution semantics, callability, pricing, or settlement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -114,7 +114,7 @@ Check call preconditions in this exact order and return the typed error for the 
 5. action exists
 6. CanCall(P, action)
 7. args satisfy action.input_schema
-8. funds: caller wallet available >= action.price (§6) — the process for a root call, the parent trace for a subcall; a step completion is funded by its parked price instead (§10)
+8. funds: the passed trace's `available` >= action.price (§6) — for a root call this is the root trace `run` funded from the process; a step completion is funded by its parked price instead (§10)
 ```
 
 Precondition 4 controls spending authority over the process. Precondition 6 controls action access by the process owner.
@@ -125,28 +125,41 @@ Trace relation:
 | --------------------- | ---------------------- | -------------------------- |
 | Root trace            | null                   | owning process             |
 | Subcall trace         | executing action trace | same as parent             |
-| Step-completion trace | step.parent_trace_id   | step.process_id            |
+| Step-completion trace | step.parent_trace_id   | Trace(step.parent_trace_id).process_id |
 
-`process_id` determines payment. `parent_trace_id` records causality only. Each completed descendant transaction updates ancestor `latency_ms`.
+`process_id` determines payment. `parent_trace_id` records causality only. There is no cached per-trace latency; a call's own latency is its transaction's elapsed time and subtree latency is a query over descendant transactions (§11).
 
 ## 5. Persistence and atomicity
 
 Use file-backed SQLite with WAL by default. Migrations are deterministic and stored in the repository. Tests use temporary SQLite databases. No production feature may depend on an in-memory-only store. `kernel` depends on a store interface, never SQLite.
 
-Store interface:
+Store interface. Each monetary transition commits together with its audit record (transaction, receipt, stats, step/idempotency state) inside one store call, so the atomic write-sets below are atomic at the store boundary rather than coordinated above it. The money-path methods are therefore **compound atomic operations**, not fine-grained primitives; reads and supervision are ordinary methods. The listing is representative, not exhaustive:
 
 ```text
-CreateUser ReadUser ReadUserByPublicKey ListUsers SuspendUser UnsuspendUser UpdateUser
-CreateAction ReadAction UpdateAction DeleteAction ListAllActions
-CreateProcess ReadProcess EndProcess ListAllProcesses
-CreateTrace CreateTransaction ListTransactions ListAllTransactions
-ReadStats UpdateStats
-CreateStep ReadStep ListSteps ClaimStep CompleteStep ResetRunningSteps
-GetConfig SetConfig CreateDeposit CreateWithdrawal
-CreateReceipt ReadReceipt
-CreateRating ReadRating ListRatings
-CreateIdempotencyRecord ReadIdempotencyRecord
-CreateOrUpdateDiscoveredKernel ListDiscoveredKernels
+Money paths (each commits a monetary transition + its audit record atomically):
+  BeginRun            user-wallet park + process creation/funding + root trace funded
+  BeginSubcall        parent-trace move (available → locked) + child trace funded
+  BeginStepCall       unpark step.price + completion trace funded + step waiting → running
+  CommitCall          success transaction + receipt + payout + lock release + stats (+ step/idempotency)
+  CommitFailedCall    failure transaction + receipt + subtree refund/cancellation + stats (+ step/idempotency)
+  CommitRemoteSettlement  remote-proxy settlement on a signed receipt (charge/duty/refund) + transaction + receipt
+  EndProcess          cancel waiting steps + return funds + close process
+  CreateStep          step record + park step.price from the creating trace
+  CreateDeposit CreateWithdrawal  out-of-band credit grant / redemption with its audit record
+  CreateRatingAndUpdateStats  rating record + rating stats
+Reads / supervision (no monetary mutation):
+  CreateUser ReadUser ReadUserByHandle ReadUserByPublicKey ListUsers SuspendUser UnsuspendUser UpdateUser
+  CreateAction ReadAction ReadActionByOwnerName UpdateAction UpdateActionAndResetStats DeleteAction ListAllActions
+  ReadProcess ListProcesses ListAllProcesses
+  ReadTrace ReadRootTrace ListTraces
+  ReadTransaction ListTransactions ListAllTransactions
+  ReadStats UpsertStats
+  ReadStep ListSteps ResetStepAndRepark ResetRunningSteps
+  ReadReceipt ReadReceiptByTxID
+  ReadRatingByTxID ListRatings
+  InsertPendingIdempotencyRecord ReadIdempotencyRecord CompleteIdempotencyRecordIfPending DeleteIdempotencyRecord
+  GetConfig SetConfig InitFirstBoot
+  CreateOrUpdateDiscoveredKernel ListDiscoveredKernels DenyPeerCascade CreateProxyUser
 ```
 
 `UpdateTransaction` is forbidden. Transactions are immutable after creation.
@@ -155,7 +168,7 @@ Atomic write sets:
 
 | Operation       | Atomic writes                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------------ |
-| run             | user-wallet park (available → locked), process creation and funding; the root trace is created by the root `Call` (§6) |
+| run             | user-wallet park (available → locked), process creation and funding, root trace creation funded from the process; the root `Call` then dispatches on it (§6) |
 | Call entry      | caller-wallet move (available → locked), child trace creation with its allocation                |
 | Successful call | transaction, receipt, payout of the trace's available (target net, platform fee), caller lock release, metrics, stats |
 | Failed call     | transaction, receipt, subtree rollup (refund to caller's available, cancellation of outstanding steps beneath), caller lock release, metrics, stats |
@@ -176,13 +189,13 @@ Recovery is atomicity's crash-side guarantee. At startup, every trace without a 
 
 `action.price` is a **subtree bound**: the maximum total cost of the call and everything it calls, advertised worst-case by the provider. The caller pays at most `price` for the whole tree under the call.
 
-Every wallet in the chain — user, process, trace — has `available` and `locked`, and money moves the same way at every level: `run` parks the price in the user's `locked` and the process holds it as `available` — the same caller/child move as every call; process closure releases the user's lock, returning remaining funds to `available`. The root call moves the price from the process into the root trace; a subcall moves it from the parent trace into the child trace.
+Every wallet in the chain — user, process, trace — has `available` and `locked`, and money moves the same way at every level: `run` parks the price in the user's `locked`, the process holds it as `available`, and the root trace is funded from the process — the same caller/child move as every call; process closure releases the user's lock, returning remaining funds to `available`. Thereafter a subcall moves the price from the parent trace into the child trace. Every `Call` is funded from the trace it is handed.
 
 For `q = action.price`, every `Call` runs:
 
 ```text
-require caller wallet available >= q          // root: the process; subcall: the parent trace
-caller.available -= q;  caller.locked += q
+require trace.available >= q                  // the trace handed to Call (root trace pre-funded by run)
+trace.available -= q;  trace.locked += q
 create child trace with action_owner_id = A, available = q, locked = 0
 execute action by dispatching on action.kind
 validate output against action.output_schema
@@ -219,14 +232,14 @@ Schemas exist for every action. Unsupported JSON Schema subset forms fail action
 Subcall law:
 
 ```text
-juice.call(target_action,args) from parent_action in parent_process
-= Call(parent_action.owner_user_id, parent_process, target_action, args)
+juice.call(target_action,args) from parent_action in parent_trace
+= Call(parent_action.owner_user_id, parent_trace, target_action, args)
 ```
 
 Subcall transaction:
 
 ```text
-owner_user_id  = parent_process.owner_user_id
+owner_user_id  = parent_trace.process.owner_user_id
 caller_user_id = parent_action.owner_user_id
 target_user_id = target_action.owner_user_id
 ```
@@ -297,7 +310,7 @@ Inbound webhook payloads enter through the standard authenticated call path: ext
 
 ### Remote
 
-`remote import` fetches a signed manifest and creates or updates a local `kind=remote_proxy` action owned by the local remote-peer user row. It does not copy implementation.
+`peer friend` fetches the remote's active public actions, verifies each signed manifest, and creates or updates local `kind=remote_proxy` actions owned by the local remote-peer user row. Imported actions are immediately enabled and public. It does not copy implementation.
 
 Manifest required fields:
 
@@ -318,7 +331,7 @@ Remote contract fields:
 action_id artifact_hash description input_schema kind name output_schema owner_handle price
 ```
 
-Manifest stats and `updated_at` do not affect contract comparison; manifest stats never overwrite local `Stats` and are not stored as `StatTag`. Invalid signatures reject import. Missing, inactive, or non-public remote actions deactivate the proxy and reset current local stats. Unimport deactivates the proxy, does not contact the remote kernel, and preserves all history.
+Manifest stats and `updated_at` do not affect contract comparison; manifest stats never overwrite local `Stats` and are not stored as `StatTag`. Invalid signatures skip that action. A second `peer friend` re-syncs: new actions are imported, changed-contract actions are updated (re-enabled), and actions no longer active/public on the remote are deactivated and their stats reset. `peer unfriend` deactivates all proxies from that peer and preserves all history.
 
 The proxy's local `price` is `manifest.price` plus the worst-case import duty: `price = mp + ceil(mp * import_bps / 10000)` (§13). The local caller sees one price bounding the whole remote call, duty included; settlement charges duty on the actual remote charge and refunds the difference (§13). A change of the local `import_bps` recomputes proxy prices but is not a manifest contract change and does not deactivate.
 
@@ -349,12 +362,16 @@ Native actions are standard actions shipped alongside the kernel as a platform s
 
 | Action          | Rules                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@sys/lookup`   | Public; action owner `@sys`; price 0 (configurable, `native.lookup`, §14); callable only through `Call()`. Rank active actions by tested formula combining semantic similarity and stats. Replaceable ranking storage; brute-force cosine acceptable. Input: required `query`, optional `limit=10`. Output: `results[]` with `action_id`, `name`, `owner_handle`, `description`, `score`. Direct lookup only for diagnostics, not user-facing APIs or WASM hosts.                                                                                                                                                                                                                                                                                                                                       |
-| `@sys/llm/chat` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Input: `messages[]` of `{role,content}` plus optional `system`. Output: `message{role,content}`. `ErrInvalidState` if chat unconfigured.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `@sys/lookup`   | Public; action owner `@sys`; price 0 (configurable, `native.lookup`, §14); callable only through `Call()`. Rank active actions by tested formula combining semantic similarity and stats. Replaceable ranking storage; brute-force cosine acceptable. Input: required `query`, optional `limit=10`. Output: `results[]` with `action_id`, `action` (`@owner/name`), `description`, `score`, `input_schema`, `output_schema`. Direct lookup only for diagnostics, not user-facing APIs or WASM hosts.                                                                                                                                                                                                                                                                                                       |
+| `@sys/llm/chat` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Input: `messages[]` of `{role,content}` plus optional `system`. Output: `message{role,content}`. `ErrInvalidState` if chat unconfigured.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `@sys/llm/embed` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Input: required `text` (string). Output: `embedding` (array of numbers). `ErrInvalidInput` if `text` is empty. `ErrInvalidState` if embedder unconfigured. |
+| `@sys/llm/json` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Input: `messages[]` of `{role,content}`, optional `system`, required `output_schema`. Output: `value` (JSON value). Validates model output locally against `output_schema`. `ErrSchemaViolation` for unsupported schema. `ErrInvalidState` if structured output unavailable. `ErrExecutionFailed` if no valid JSON produced. |
+| `@sys/llm/decide` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Given a conversation and a set of Juice actions, asks the LLM to select one and propose args — does not execute the call. Input: `messages[]` of `{role, content?, tool?}` where `role` is one of `system`, `user`, `assistant`, `tool` and `tool` is an optional object `{action?, args?, result?}`; required `actions[]` (list of `@owner/name`). Kernel fetches each action's canonical description, `input_schema`, and price from the DB. Output: `action` (`@owner/name`), `args` (validated against that action's `input_schema`), optional `message`. `ErrNotFound` if any action reference is unknown. `ErrInvalidState` if LLM tool calling unavailable. `ErrExecutionFailed` if no valid selection produced. |
 | `@sys/make`     | Public; action owner `@sys`; price 20 (configurable, `native.make`, §14); callable through `Call()`. Synthesizes a WASM action from a natural-language description using the platform LLM and TinyGo compiler. Input required `description`; empty gives `ErrInvalidInput`; missing LLM/compiler gives `ErrInvalidState`. Up to `maxSteps=5` (configurable): derive contract, search catalog, generate TinyGo, compile, validate WASM imports/exports, smoke-test with stub host. Success registers and activates action under `C` of the `@sys/make` call. Return `status="success"`, `action_id`, `action_name`, `diagnostics`, `tests`. Name collision returns `status="failure"` without alternate-name retry. Synthesis failures use output failure status, not kernel errors. Worker subcalls follow role law: `owner_user_id=same process owner`, `caller_user_id=@sys`, `target_user_id=worker action owner`. |
 | `@sys/time`     | Public; action owner `@sys`; price 0 (configurable, `native.time`, §14); callable through `Call()`. No input required. Output: `unix` (integer seconds since UTC epoch), `iso` (RFC 3339 string). |
-| `@sys/sink`     | Public; action owner `@sys`; price 0 (configurable, `native.sink`, §14); callable through `Call()`. Accepts any input, returns `{}`. Universal no-op sink for steps that require a `next_action` but no further computation. |
-| `@sys/message`  | Public; action owner `@sys`; price 0 (configurable, `native.message`, §14); callable through `Call()`. Sends a message to another platform user by creating a Step they must acknowledge. Input: required `to` (`@handle` of recipient), required `message`. Output: `step_id`. The Step sets `required_caller_user_id` to the resolved target user and `partial_args` to `{"message":"..."}` so the recipient can read it via `step list`. Uses `@sys/sink` as the step's `next_action`. `ErrInvalidInput` if `to` cannot be resolved. |
+| `@sys/sink`     | Public; action owner `@sys`; price 0 (configurable, `native.sink`, §14); callable through `Call()`. Accepts any input, returns `{}`. Universal no-op sink for steps that require an onward action but no further computation. |
+| `@sys/message`  | Public; action owner `@sys`; price 0 (configurable, `native.message`, §14); callable through `Call()`. Sends a message to another platform user by creating a Step they must acknowledge. Input: required `to` (`@handle` of recipient), required `message`. Output: `step_id`. The Step sets `required_caller_user_id` to the resolved target user and `partial_args` to `{"message":"..."}` so the recipient can read it via `step list`. Uses `@sys/sink` as the step's `action`. `ErrInvalidInput` if `to` cannot be resolved. |
+| `@sys/random`   | Public; action owner `@sys`; price 0 (configurable, `native.random`, §14); callable through `Call()`. No input required. Output: `value` (float in `[0, 1)`). Exists to provide randomness to WASM scripts, which have no ambient access to the OS random source. |
 
 Stats use:
 
@@ -362,7 +379,7 @@ Stats use:
 mean_(n+1) = mean_n + (x_(n+1)-mean_n)/(n+1)
 ```
 
-`latency_estimate` is the arithmetic mean over completed calls, with denominator `uses`.
+`latency_estimate` is the arithmetic mean over completed calls, with denominator `uses`; each sample is the call's own elapsed time, `transaction.ended_at − transaction.started_at`. Buyer-experienced subtree latency (including step dormancy) is not a stat — it is a query over descendant transactions (§11).
 `rating_estimate` is the arithmetic mean over rated calls only, with denominator `rating_count`.
 There is no cost estimate: an action's all-in cost is its advertised `price` (§6), known in advance; lookup ranks on it directly.
 
@@ -373,13 +390,11 @@ A Step is a partially applied future Call: a suspended computation boundary that
 ```text
 Step {
   id
-  process_id
-  parent_trace_id
+  parent_trace_id          // creating/funding trace; derives process; inherited by completion trace
   required_caller_user_id
-  next_action_id
+  action_id
   price
   partial_args
-  input_schema
   status           // waiting | running | done | cancelled
   tx_id
   created_at
@@ -389,12 +404,12 @@ Step {
 Core invariant:
 
 ```text
-CompleteStep(caller, id, input) = Call(caller, process_id, next_action_id, partial_args ⊕ input)
+CompleteStep(caller, id, input) = Call(caller, step.parent_trace_id, action_id, partial_args ⊕ input)
 ```
 
-A step is funded at creation: `next_action.price` is snapshotted as `step.price` and moved from the creating trace's `available` into its `locked` (§6). The parked price is the completion call's allocation — completion never checks funds, because the money is already reserved. Cancellation returns the parked price (§6: with the creator's failure rollup, or at process closure to the process owner).
+A step is funded at creation: `action.price` is snapshotted as `step.price` and moved from the creating trace's `available` into its `locked` (§6). The parked price is the completion call's allocation — completion never checks funds, because the money is already reserved. Cancellation returns the parked price (§6: with the creator's failure rollup, or at process closure to the process owner).
 
-`partial_args ⊕ input` is a shallow object merge. Keys in `input` overwrite keys in `partial_args`. Only keys allowed by `input_schema` may appear in `input`. Final arguments are validated against `next_action.input_schema` by the underlying `Call`.
+`partial_args ⊕ input` is a shallow object merge. Keys in `input` overwrite keys in `partial_args`. The completer's allowed input is `action.input_schema \ keys(partial_args)` — the action's input keys not already bound — derived live rather than stored; only those keys may appear in `input`. Final arguments are validated against `action.input_schema` by the underlying `Call`. Live derivation is safe because an action's schema cannot change under an active step: a schema change deactivates the action (§7), and a completion against a deactivated or contract-changed action resets the step to `waiting` (below).
 
 `required_caller_user_id` is mandatory. Open completion is not supported.
 
@@ -415,7 +430,7 @@ Startup recovery: `ResetRunningSteps` sets all steps with `status=running` and `
 
 ### Operations
 
-`CreateStep(caller, process_id, parent_trace_id, next_action_id, partial_args, input_schema, required_caller_user_id)`: caller must be authenticated and non-suspended. Process must exist and be open. Caller must be permitted to use the process (precondition 4 of §4). `next_action_id` must exist. `CanCall(process.owner_user_id, next_action)` must hold. Requires `Trace(parent_trace_id).process_id = process_id`: the funding trace and the step belong to the same process, so the parked price is always the recorded payer's money. Requires `Trace(parent_trace_id).available ≥ next_action.price`; creation parks that amount from that trace (§6). In-execution creation passes the current trace; external creation may target any trace it is authorized to use (precondition 4 of §4). Returns a `waiting` step.
+`CreateStep(required_caller, trace, action, partial_args) -> step_id`: the creating authority is the trace's action owner (`Trace(trace).action_owner_id`), so in-execution creation is implicit. For external creation (`POST /v1/steps`) the service layer requires that the authenticated, non-suspended user be permitted to use `trace` (precondition 4 of §4) before invoking the primitive. The process is `Trace(trace).process_id` and must be open; `CanCall(process.owner_user_id, action)` must hold. Requires `Trace(trace).available ≥ action.price`; creation parks that amount from `trace` (§6), so the parked price is always the recorded payer's money. The completer's allowed input is derived (above), not supplied. Returns a `waiting` step.
 
 `ReadStep(caller, id)`: requires `CanReadStep`.
 
@@ -428,31 +443,30 @@ Startup recovery: `ResetRunningSteps` sets all steps with `status=running` and `
 2. status = waiting
 3. process exists and is open
 4. caller = required_caller_user_id  (no superuser exception; IsSuperuser does not permit completing another user's step)
-5. input satisfies input_schema  (a violation rejects the completion and leaves the step waiting; it is never recorded as a failure of the action)
+5. input satisfies the step's allowed input (`action.input_schema \ keys(partial_args)`)  (a violation rejects the completion and leaves the step waiting; it is never recorded as a failure of the action)
 ```
 
 `ClaimStep` atomically transitions `waiting→running`. Then executes:
 
 ```text
-Call(caller, process_id, next_action_id, partial_args ⊕ input)
-with parent_trace_id = step.parent_trace_id
+Call(caller, step.parent_trace_id, action_id, partial_args ⊕ input)
 ```
 
-The resumed `Call` takes the step's parked price as its allocation — `creator.locked -= p`, new trace `available = p` — in place of §6's caller-wallet entry move; no availability check occurs. The completion call's allocation and transaction `gross` are `step.price`, not the action's current price. On `Call` completion (success or failure), atomically records `status=done` and `tx_id`. If `Call` rejects before creating a transaction (action deactivated, `CanCall` lost, malformed input), the step is reset to `waiting` — its parked price stays parked. Funds exhaustion cannot occur.
+The resumed `Call` takes the step's parked price as its allocation — `creator.locked -= p`, new trace `available = p` — in place of §6's trace-entry move; no availability check occurs. The completion call's allocation and transaction `gross` are `step.price`, not the action's current price. On `Call` completion (success or failure), atomically records `status=done` and `tx_id`. If `Call` rejects before creating a transaction (action deactivated, `CanCall` lost, malformed input), the step is reset to `waiting` — its parked price stays parked. Funds exhaustion cannot occur.
 
 Completion transaction role law:
 
 ```text
 owner_user_id  = step's process owner
 caller_user_id = required_caller_user_id
-target_user_id = next_action.owner_user_id
+target_user_id = action.owner_user_id
 ```
 
 ### Access rules
 
 ```text
 CanListStep(u, k) :=
-  u = Process(k.process_id).owner_user_id
+  u = Process(Trace(k.parent_trace_id).process_id).owner_user_id
   ∨ u = k.required_caller_user_id
   ∨ IsSuperuser(u)
 
@@ -462,7 +476,7 @@ CanReadStep(u, k) := CanListStep(u, k)
 ### WASM host functions
 
 ```text
-juice.step_create(partial_args, input_schema, required_caller_user_id, next_action_id) -> step_id
+juice.step_create(partial_args, required_caller_user_id, action_id) -> step_id
 ```
 
 Creates a waiting step bound to the current process and current trace (as `parent_trace_id`). Arguments are JSON-encoded strings.
@@ -484,13 +498,14 @@ No special webhook-registration endpoint exists in the kernel.
 
 ## 11. Receipts, ratings, signatures, transaction access
 
-Every transaction references a trace. Trace lookup by process returns the execution tree. Trace deletion must not remove transaction history. On descendant completion:
+Every transaction references a trace. Trace lookup by process returns the execution tree. Trace deletion must not remove transaction history. Latency is derived from transaction timestamps, not cached on the trace:
 
 ```text
-trace.latency_ms = elapsed from trace creation to latest descendant completion
+own-call latency    = transaction.ended_at − transaction.started_at
+buyer-experienced   = max(descendant.ended_at) − root.started_at   // a query over the subtree
 ```
 
-Latency is buyer-experienced wall time: it includes step dormancy (e.g. human approvals), and is updated retroactively as late descendants complete. Ranking must treat it accordingly (§9); it is not a measure of compute time.
+Buyer-experienced (subtree) latency is wall time: it includes step dormancy (e.g. human approvals) and is always current — a query reflects late descendants the moment they complete, with no retroactive write. Ranking must treat it accordingly (§9); it is not a measure of compute time.
 
 Only `tx.owner_user_id` may rate the transaction. Rating is supervision, immutable, non-cascading, duplicate-rejected with `ErrInvalidInput`, and never routed through `Call()`.
 
@@ -540,7 +555,7 @@ config.jwt_secret          = 32 random bytes, hex
 
 Private signing key and JWT secret are never logged or returned. Partial first boot is rerunnable. `JUICE_SECRET_KEY` overrides stored JWT secret at runtime only.
 
-Every startup reads `config.superuser_handle` to confirm first boot and identify `@sys`; it verifies signing keys and aborts if either is absent. It then registers, enables, and makes public `@sys/lookup`, `@sys/llm/chat`, `@sys/make`, `@sys/time`, `@sys/sink`, and `@sys/message` if absent, and reconciles their configurable fields (price and action-specific settings) from config on every startup. It then runs recovery (§5).
+Every startup reads `config.superuser_handle` to confirm first boot and identify `@sys`; it verifies signing keys and aborts if either is absent. It then registers, enables, and makes public `@sys/lookup`, `@sys/llm/chat`, `@sys/llm/embed`, `@sys/llm/json`, `@sys/llm/decide`, `@sys/make`, `@sys/time`, `@sys/sink`, `@sys/message`, and `@sys/random` if absent, and reconciles their configurable fields (price and action-specific settings) from config on every startup. It then runs recovery (§5).
 
 Bootstrap is idempotent. Supervision operations are not native actions.
 
@@ -565,10 +580,10 @@ A proxy user's handle is a **local alias** chosen at acceptance (default: the pe
 Two kernels transact only as **friends**: a reciprocal relation with the proxy-user pair (`@B` on A, `@A` on B).
 
 ```text
-juice admin peer friend <url|handle|key>   request friendship — and accept it (same verb both ways)
-juice admin peer unfriend <handle>         end the relation
-juice admin peer list                      friends, pending requests, balances; --gossip for the opinion list
-juice admin peer gossip <url|handle>       ask a kernel about itself and its friends
+juice peer friend <url>      register peer + bulk-import all their active public actions
+juice peer unfriend <user>   end the relation; deny future requests; deactivate all proxies (user is @handle)
+juice peer list              known peers and balances
+juice peer inspect <url>     view remote identity, public actions, and transacted friends (no DB write)
 ```
 
 All `peer` commands are superuser supervision, CLI-only (§14). `POST /v1/peers` is the inbound protocol endpoint, authenticated by federation signature — not a local API.
@@ -603,7 +618,7 @@ The proxy user's balance is the bilateral account: `@B`'s balance on A rises whe
 
 ### Calls, receipts, settlement
 
-Outbound: a remote-proxy call follows normal role law (`owner` = local process owner, `caller` = local call caller, `target` = the proxy user) and normal wallet mechanics, funded with the proxy's local price `mp + maxduty` (§8). The handler records the UUID v4 `idempotency_key` and the outbound request payload (`dispatch_json`) on the proxy trace atomically with dispatch (§3, §5) — the stored payload is what makes retry after restart possible. On the remote kernel it is an ordinary inbound call by this kernel's proxy user there, paid from the prepaid balance, executed wholly under that kernel's §6.
+Outbound: a remote-proxy call follows normal role law (`owner` = local process owner, `caller` = local call caller, `target` = the proxy user) and normal wallet mechanics, funded with the proxy's local price `mp + maxduty` (§8). The handler records the UUID v4 `idempotency_key` and the outbound request payload (`dispatch_json`) on the proxy trace atomically with dispatch (§3, §5) — the stored payload is what makes retry after restart possible. On the remote kernel it arrives at `POST /v1/federation/call`, authenticated by the per-request federation signature (not a bearer token), and is then an ordinary inbound call by this kernel's proxy user there, paid from the prepaid balance, executed wholly under that kernel's §6.
 
 A proxy call settles **only on a signed remote receipt** — never on a network timeout:
 
@@ -634,7 +649,7 @@ Inbound: calls sign `JCS({action, counterparty, idempotency_key, timestamp, args
 
 ## 14. CLI, HTTP, logging, config
 
-HTTP API is primary. Every exposed endpoint has a CLI command. CLI uses the same service layer, supports human-readable and JSON output, works directly against local SQLite where feasible, and each command has at least one test. Admin is CLI-only.
+HTTP API is primary. Every exposed endpoint has a CLI command. CLI uses the same service layer, supports human-readable and JSON output, works directly against local SQLite where feasible, and each command has at least one test. Admin is CLI-only. A command's primary identifier is a positional argument by its natural key — a user is `@handle` (never an id), an action is `@owner/name` (an id is also accepted), and processes, steps, and transactions are ids; a second mandatory value (amount, rating) is the second positional. CLI human-readable output exposes the same fields as the corresponding HTTP response; `--json` selects the canonical JSON form (the HTTP shape).
 
 CLI handlers and HTTP handlers are thin wires: parse input, call the service layer, format output. All kernel calls, enrichment, validation, and transformation live in the service layer. No kernel calls outside the service layer.
 
@@ -642,45 +657,44 @@ Required commands:
 
 ```text
 juice serve
-juice user create                         juice user me
+juice user create <user> <email>          juice user me
 juice user update
-juice auth login                          juice auth logout
-juice action create                       juice action update
-juice action delete                       juice action enable
-juice action disable                      juice action list
-juice action import                       juice action unimport
-juice action stats
-juice process list                        juice process show
-juice process end                         juice run
-juice step create                         juice step list
-juice step show                           juice step complete
-juice tx list                             juice tx show
-juice tx rate                             juice tx verify-receipt
+juice auth login <user>                    juice auth logout
+juice action create <name>                 juice action update <action>
+juice action delete <action>              juice action enable <action>
+juice action disable <action>             juice action list
+juice action import <spec-url>            juice action unimport <spec-url>
+juice action stats <action>
+juice process list                        juice process show <id>
+juice process end <id>                    juice run <action> [json]
+juice step create <action>                juice step list
+juice step show <id>                      juice step complete <id> [json]
+juice tx list                             juice tx show <id>
+juice tx rate <id> <0|1>                  juice tx verify <id>
 juice health
-juice admin user list                     juice admin user show
-juice admin user suspend                  juice admin user unsuspend
-juice admin user deposit                  juice admin user withdraw
-juice admin action list
-juice admin action disable                juice admin process list
-juice admin tx list                       juice admin step list
-juice admin peer friend                   juice admin peer unfriend
-juice admin peer list                     juice admin peer gossip
-juice remote import                       juice remote unimport
+juice admin users                         juice admin show <user>
+juice admin suspend <user>                juice admin unsuspend <user>
+juice admin deposit <user> <amount>       juice admin withdraw <user> <amount>
+juice admin actions
+juice admin disable <action>              juice admin processes
+juice admin txs                           juice admin steps
+juice peer friend <url>                   juice peer unfriend <user>
+juice peer list                           juice peer inspect <url>
 ```
 
-OpenAPI commands:
+OpenAPI commands (the OpenAPI spec URL is the positional argument):
 
 ```text
-juice action import --openapi <spec-url>
-juice action unimport --openapi <spec-url>
-juice action unimport --openapi <spec-url> --name <action-name>
+juice action import <spec-url>
+juice action unimport <spec-url>
+juice action unimport <spec-url> --name <action-name>
 ```
 
 `juice serve` handles `SIGTERM`/`SIGINT`, stops accepting new requests, drains in-flight calls, exits cleanly. No `juice stop`.
 
 Server logs request, caller, process, trace, action, and transaction IDs where available; maps distinct auth, authorization, invalid input, insufficient funds, missing resource, and internal failures to distinct statuses; rate-limits auth, account creation, and peer requests per IP with 429. Action read/list responses include computed `action=@owner/name`.
 
-Endpoint rules:
+Endpoint rules (notable rules only; the complete HTTP endpoint list is in `API.md`):
 
 | Endpoint                                         | Rule                                                                                                            |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
@@ -690,6 +704,7 @@ Endpoint rules:
 | `GET /v1/actions/{id}/manifest`                  | signed public-action manifest; served to friends in good standing per the exposure lever (§13)                  |
 | `GET /v1/gossip`                                 | unauthenticated; identity, own actions with manifests and stats, transacted friends with stats (§13)            |
 | `POST /v1/peers`                                 | signed friend request (§13); rate-limited per IP                                                                |
+| `POST /v1/federation/call`                       | inbound proxy call (§13); `?action=@owner/name`, `?counterparty=` peer key; `X-Signature`/`X-Timestamp`/`X-Idempotency-Key` headers; per-request federation signature over the request, `args_hash` must match the body — not bearer-authenticated |
 | `GET /v1/me`                                     | authenticated `id`, `handle`, `email`, `available`, `locked`; suspended rejected before handler                 |
 | `PUT /v1/me`                                     | authenticated local user only; `{[email], [current_password, password]}`; `password` requires `current_password`; at least one field required; returns updated `id`, `handle`, `email`, `available`, `locked`; proxy user returns `ErrInvalidState` |
 | `PUT /v1/actions/{id}`                           | action-owner update; `public` updatable; deactivation rules apply                                               |
@@ -698,7 +713,7 @@ Endpoint rules:
 | `POST /v1/actions/unimport`                      | action-owner import-provenance deactivation                                                                     |
 | `GET /v1/processes`                              | process owner's processes, descending `created_at`                                                              |
 | `GET /v1/steps`                                  | authenticated; returns steps visible to caller per `CanListStep`; optional `?process_id=` and `?status=` filters |
-| `POST /v1/steps`                                 | authenticated; creates a waiting step; requires `process_id`, `parent_trace_id`, `next_action_id`, `required_caller`, `partial_args`, `input_schema` |
+| `POST /v1/steps`                                 | authenticated; creates a waiting step; requires `trace_id` (funding trace), `action_id`, `required_caller`, `partial_args`; the authenticated user must be authorized to use `trace_id` (§4 precondition 4) |
 | `GET /v1/steps/{id}`                             | `CanReadStep`; returns step fields                                                                              |
 | `POST /v1/steps/{id}/complete`                   | `CanReadStep`; `args` required (`{}` valid); absent gives `ErrInvalidInput`; returns `result`, `tx_id`, `trace_id`, `step_id` |
 | `POST /v1/run`                                   | requires `args`; `{}` valid; absent gives `ErrInvalidInput`; action is `@owner/name`                            |
@@ -736,7 +751,8 @@ Config lives in `juice.json` (path from `JUICE_CONFIG`, default `./juice.json`).
     "lookup":  { "default_limit": 10, "price": 0 },
     "time":    { "price": 0 },
     "sink":    { "price": 0 },
-    "message": { "price": 0 }
+    "message": { "price": 0 },
+    "random":  { "price": 0 }
   }
 }
 ```
@@ -796,14 +812,32 @@ wasm host function call (juice.call, juice.step_create, juice.step_complete)
 script timeout
 script memory limit
 lookup ranking with fake embeddings
+lookup results include action (@owner/name), input_schema, and output_schema
 stats update
 CLI commands
+CLI primary identifiers are positional natural keys (user=@handle, action=@owner/name)
+CLI human-readable output exposes the same fields as the corresponding HTTP response
 logging smoke test
 superuser first-boot prompt and config storage
 suspended user rejected at authentication
 direct buyer can rate transaction
 non-buyer cannot rate transaction
 native action callable through Call()
+@sys/random returns value in [0, 1)
+wasm script can call @sys/random to obtain a random value
+@sys/llm/embed returns embedding array for valid text
+@sys/llm/embed with empty text returns ErrInvalidInput
+@sys/llm/embed with unconfigured embedder returns ErrInvalidState
+@sys/llm/json returns value matching output_schema for valid input
+@sys/llm/json with unsupported output_schema returns ErrSchemaViolation
+@sys/llm/json with unconfigured structured output returns ErrInvalidState
+@sys/llm/json rejects model output that fails schema validation
+@sys/llm/decide returns selected action and validated args
+@sys/llm/decide fetches action contract from DB by @owner/name
+@sys/llm/decide rejects unknown action reference with ErrNotFound
+@sys/llm/decide rejects returned args that fail action input_schema
+@sys/llm/decide with unconfigured tool calling returns ErrInvalidState
+@sys/llm/decide with no valid selection returns ErrExecutionFailed
 non-superuser rejected from admin CLI commands
 active public action callable by any caller
 active private action callable only by owner
@@ -823,27 +857,28 @@ subcall trace has same process_id and parent_trace_id pointing to caller trace
 root trace has null parent_trace_id
 step create returns waiting step with correct fields and parked price
 step complete merges partial_args with caller input (input keys overwrite partial_args keys)
-step complete input validated against input_schema before merge
-step complete final args validated against next_action.input_schema by Call
+step complete input validated against derived allowed input (action.input_schema minus partial_args keys) before merge
+step complete final args validated against action.input_schema by Call
 step complete with wrong caller returns ErrUnauthorized
 step complete against running or done step returns ErrInvalidState
 step complete resets to waiting when Call rejects before creating a transaction
 step complete with deactivated action resets step to waiting
 step complete with private action (CanCall lost) resets step to waiting
-step complete input_schema violation rejects, leaves step waiting, no action failure recorded
+step complete disallowed-key (derived-schema) violation rejects, leaves step waiting, no action failure recorded
 step tx_id recorded atomically with status=done
 step-completion trace has parent_trace_id equal to step.parent_trace_id
-step-completion trace has process_id equal to step.process_id
+step-completion trace process_id derived from step.parent_trace_id
 step-completion transaction has owner_user_id = step process owner
 step-completion transaction has caller_user_id = required_caller_user_id
-step-completion transaction has target_user_id = next_action owner
+step-completion transaction has target_user_id = action owner
 step completion gross equals step.price snapshot
+step allowed input is action.input_schema minus partial_args keys (derived, not stored)
 CanListStep: process owner sees own step
 CanListStep: required_caller_user_id user sees step
 CanListStep: unrelated user denied
 CanReadStep: same rules as CanListStep
 wasm juice.step_create returns step_id bound to current process and trace
-wasm juice.step_complete executes next action and returns result, tx_id, trace_id
+wasm juice.step_complete executes the step's action and returns result, tx_id, trace_id
 webhook caller authenticates as registered user and calls POST /v1/run directly
 webhook caller completes a pre-created step via POST /v1/steps/{id}/complete
 startup reads config.superuser_handle to confirm first boot and identify @sys
@@ -910,7 +945,7 @@ failed call's refund equals gross minus fee+net totals of its settled descendant
 root traces have parent_trace_id = null
 subcall traces share their parent's process_id
 step-completion traces have parent_trace_id equal to step.parent_trace_id
-step-completion traces have process_id equal to step.process_id
+step-completion traces have process_id derived from step.parent_trace_id
 a step without tx_id is never done; tx_id is set atomically with status=done
 waiting steps are cancelled with parked prices refunded when their process closes or their creating call fails; cancelled steps carry no tx_id
 an outstanding step keeps its process open
@@ -967,7 +1002,7 @@ caller rates a transaction with a note; the note and rating value appear in tran
 — Federation —
 two kernels friend each other (auto-accept); operator A deposits B's proxy (and vice versa);
   B imports A's action; B's user runs it; charge lands in A's proxy balance on B, duty to B's @sys,
-  difference refunded; both sides' tx verify-receipt passes all checks
+  difference refunded; both sides' tx verify passes all checks
 kernel gossips a transacted peer; third kernel reads the gossip, sees earned stats, friends the
   subject directly, imports, runs — its own Stats start at defaults and accumulate
 A unfriends B: B's proxies deactivate, B's next inbound call gets a signed rejection receipt,
@@ -985,7 +1020,7 @@ Subtree pricing makes a price a price: the caller pays one advertised number, co
 
 Federation incentives are aligned in both directions. A kernel federates because its users gain a larger action space and its providers gain outside demand; its operator's reward is the import duty. The domestic fee (default 20%) deliberately exceeds the import duty (default 5%), so a kernel always earns more on local supply than on imports — federation complements local providers rather than undercutting them. Discipline is self-enforcing without enforcement machinery: a kernel whose counterparty account runs dry stops serving it manifests, because executing unpaid work loses money twice — once in service, once in the failure stats that sink its rank abroad; funding restores exposure. And because gossip carries only trade-backed opinions, reliable behavior compounds into discoverability: reputation is the long-run asset a kernel earns by settling honestly.
 
-Replaceable lookup ranking permits research changes without changing kernel semantics. Fixed stats plus optional tags preserve deterministic baseline metrics while isolating experiments. Automatic latency aggregates keep buyer-experienced wall time visible without subtree queries.
+Replaceable lookup ranking permits research changes without changing kernel semantics. Fixed stats plus optional tags preserve deterministic baseline metrics while isolating experiments. Latency is derived from transaction timestamps rather than cached on traces, so buyer-experienced wall time is always current — a subtree query reflects late descendants without a retroactive write — at the cost of that query at read time.
 
 Fixed `@sys` and signing keys give stable system action names and verifiable receipts/manifests. Structured logs make production operation and research reproduction reconstructable.
 
