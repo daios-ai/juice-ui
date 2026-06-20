@@ -208,11 +208,11 @@ func pct(n, d int64) string {
 	return fmt.Sprintf("%.0f", float64(n)/float64(d)*100)
 }
 
-// ratingPct converts a 0–5 mean rating estimate to a 0–100 percentage string.
+// ratingPct converts a 0–1 mean rating estimate to a 0–100 percentage string.
 // Returns "" when count is zero (no ratings yet).
 func ratingPct(estimate float64, count int64) string {
 	if count == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%.0f", estimate/5*100)
+	return fmt.Sprintf("%.0f", estimate*100)
 }

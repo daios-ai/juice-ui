@@ -92,7 +92,7 @@ func TestRatingPct(t *testing.T) {
 		est   float64
 		count int64
 		want  string
-	}{{4.8, 23, "96"}, {0, 0, ""}, {5.0, 1, "100"}, {2.5, 10, "50"}}
+	}{{0.96, 23, "96"}, {0, 0, ""}, {1.0, 1, "100"}, {0.5, 10, "50"}}
 	for _, c := range cases {
 		if got := ratingPct(c.est, c.count); got != c.want {
 			t.Errorf("ratingPct(%v,%d) = %q want %q", c.est, c.count, got, c.want)

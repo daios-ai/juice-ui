@@ -103,7 +103,7 @@
     {{else if or (eq .Type "object") (eq .Type "array")}}
     <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}">{{.Example}}</textarea>
     {{else}}
-    <input id="f_{{.Name}}" name="f_{{.Name}}" type="text">
+    <textarea id="f_{{.Name}}" name="f_{{.Name}}"></textarea>
     {{end}}
   </div>
   {{end}}
