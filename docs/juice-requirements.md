@@ -84,8 +84,7 @@ All IDs are stable opaque identifiers. Action IDs are globally unique. Credit ba
 | `Stats`             | `uses`, `successes`, `failures`, `rating_count`, `latency_estimate`, `rating_estimate`, `last_used_at`                                                                                                                                                                           | Missing stats have defined defaults. `uses = successes + failures`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `StatTag`           | `action_id`, `key`, `value`, `source`, `updated_at`                                                                                                                                                                                                                              | Optional lookup-experiment data, namespaced by source, never execution semantics.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `Step`              | `id`, `parent_trace_id`, `required_caller_user_id`, `action_id`, `price`, `partial_args`, `status`, `tx_id`, `created_at`                                                       | `status ∈ {waiting, running, done, cancelled}`. `parent_trace_id` is the creating/funding trace and derives the process (`Trace(parent_trace_id).process_id`); it is inherited by the completion trace. `required_caller_user_id` is mandatory; open completion is not supported. `partial_args` is pre-bound input merged with the caller-supplied input at completion (`input` overwrites `partial_args` on key collision). The completer's allowed input is derived as `action.input_schema \ keys(partial_args)`, not stored (§10); this is safe because changing an action's schema deactivates it and completing against a changed or deactivated action resets the step to `waiting` (§10), so the derivation never sees a moving target. `tx_id` is recorded atomically when status transitions to `done`. `price` is `action.price` snapshotted at step creation: the amount parked in the process's `locked`, the completion call's allocation and `gross`, spent when the step completes and refunded if it is cancelled. `EndProcess` atomically cancels all `waiting` steps tied to the process in the same transaction as closure; `cancelled` is terminal and carries no `tx_id`. An outstanding (`waiting` or `running`) step keeps its process open, its allocation parked in the process's `locked` (§10). |
-| `Deposit`           | `id`, `operator_user_id`, `target_user_id`, `amount`, `reason`, `created_at`                                                                                                                                                                                                     | Immutable audit record for a positive out-of-band superuser credit grant.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `Withdrawal`        | `id`, `operator_user_id`, `target_user_id`, `amount`, `reason`, `created_at`                                                                                                                                                                                                     | Immutable audit record for a positive superuser credit redemption obliging an out-of-band payout (§12).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `Adjustment`        | `id`, `operator_user_id`, `target_user_id`, `direction`, `amount`, `reason`, `external_key`, `created_at`                                                                                                                                                                                                     | Immutable audit record for a superuser balance change. `direction ∈ {credit, debit}`: a credit is a positive out-of-band grant; a debit is a credit redemption obliging an out-of-band payout (§12). `amount` is positive. `external_key` is an optional opaque idempotency token from the out-of-band system. When present it is globally unique; a create with an existing `external_key` returns the existing record without applying the balance change again. Juice never interprets it, keeping the kernel payment-rail agnostic.                                                                                                                                                                                                                                                                                                                                                              |
 | `Receipt`           | `id`, `issuer_user_id`, `tx_id`, `trace_id`, `action_id`, `caller_user_id`, `process_id`, `args_hash`, `reply_hash`, `status`, `gross`, `net`, `fee`, `charge`, `reason`, `started_at`, `created_at`, `signature`                                                                | Immutable signed record for exactly one committed call. `caller_user_id` is the call caller. `started_at` is call start; `created_at` is settlement. `charge` is the amount actually drawn from the caller's funds: `= gross` on success, `≤ gross` on failure (settled descendants stay paid, §6), `0` on rejection.                                                                                                                                                                                                                                                                  |
 | `Rating`            | `id`, `rated_tx_id`, `rated_receipt_id`, `rater_user_id`, `rating`, `note`, `created_at`, `signature`                                                                                                                                                                            | Immutable signed feedback record. `rating ∈ {0,1}`. At most one rating exists per transaction. `rated_receipt_id` may be null only for pre-receipt transactions. `note` is optional, nullable, human-readable, and included in the single Ed25519 rating signature payload.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `IdempotencyRecord` | `id`, `idempotency_key`, `counterparty_user_id`, `receipt_id`, `status`, `result_json`, `created_at`, `expires_at`                                                                                                                                                               | Cross-kernel only. `status ∈ {pending,complete}`. Insert pending before execution; complete atomically with transaction and receipt. Completion stores `result_json`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -96,10 +95,10 @@ OpenAPI registration and federation create or update ordinary `Action` rows. The
 ## 4. Authorization, call validity, and traces
 
 ```text
-CanCall(P, a) := active(a) ∧ (public(a) ∨ P = a.owner_user_id)
+CanCall(P, a) := active(a) ∧ ¬suspended(a.owner_user_id) ∧ (public(a) ∨ P = a.owner_user_id)
 ```
 
-`CanCall` is about the process owner `P`, not the call caller `C`. Public actions are callable by any process owner. Private actions are callable only when the process owner is the action owner. The call caller may differ from both only if process-use authority permits it.
+`CanCall` is about the process owner `P`, not the call caller `C`. Public actions are callable by any process owner. Private actions are callable only when the process owner is the action owner. The call caller may differ from both only if process-use authority permits it. An action whose owner is suspended fails `CanCall` regardless of `active`/`public` state: a suspended owner's actions are not callable and are excluded from action listings (§14); unsuspending restores them, since suspension preserves data (§12).
 
 Check call preconditions in this exact order and return the typed error for the first failure:
 
@@ -145,7 +144,7 @@ Money paths (each commits a monetary transition + its audit record atomically):
   CommitRemoteSettlement  remote-proxy settlement on a signed receipt (charge/duty/refund) + transaction + receipt
   EndProcess          cancel waiting steps + return funds + close process
   CreateStep          step record + park step.price from the creating trace
-  CreateDeposit CreateWithdrawal  out-of-band credit grant / redemption with its audit record
+  CreateAdjustment    out-of-band credit grant / redemption with its audit record
   CreateRatingAndUpdateStats  rating record + rating stats
 Reads / supervision (no monetary mutation):
   CreateUser ReadUser ReadUserByHandle ReadUserByPublicKey ListUsers SuspendUser UnsuspendUser UpdateUser
@@ -173,8 +172,8 @@ Atomic write sets:
 | Successful call | transaction, receipt, payout of the trace's available (target net, platform fee), caller lock release, metrics, stats |
 | Failed call     | transaction, receipt, subtree rollup (refund to caller's available, cancellation of outstanding steps beneath), caller lock release, metrics, stats |
 | Process closure | process closed, remaining funds returned to process owner                                        |
-| Deposit         | user credit, deposit record                                                                      |
-| Withdrawal      | user debit, withdrawal record                                                                    |
+| Deposit         | user credit, adjustment record (credit)                                                          |
+| Withdrawal      | user debit, adjustment record (debit)                                                            |
 | Rating          | rating record                                                                                    |
 | User update     | user email and/or password hash                                                                  |
 | Step creation   | creator-trace move (available → locked), step record                                             |
@@ -248,7 +247,7 @@ No ephemeral process is created. All subcalls spend from their parent call's tra
 
 ## 7. Action lifecycle
 
-`CreateAction`: inactive by default. Validate action owner, name, kind, non-negative price. `description`, schemas, and source are required at activation. WASM creation validates or compiles only when an executor is configured. HTTP creation validates endpoint configuration without calling it unless requested. Reject non-HTTP(S), loopback, RFC 1918 private, and link-local `169.254.x.x` source URLs at creation and activation. Normal `CreateAction` rejects `kind=native`.
+`CreateAction`: inactive by default. Validate action owner, name, kind, non-negative price. `description`, schemas, and source are required at activation. WASM creation validates or compiles only when an executor is configured. HTTP creation validates endpoint configuration without calling it unless requested; every `kind=http` action — manual or imported — stores one structured source (verb, base URL, path, parameter bindings), with an optional verb (default POST) and explicit or implicit field routing (§8). Reject non-HTTP(S), loopback, RFC 1918 private, and link-local `169.254.x.x` source URLs at creation and activation. Normal `CreateAction` rejects `kind=native`.
 
 `RegisterNativeAction`: bootstrap-only; caller is responsible for `@sys` ownership.
 
@@ -274,7 +273,7 @@ Shared reconciliation: import is idempotent over its match key. Reimport compare
 Call(args: JSON object) -> JSON object
 ```
 
-Allowed methods: GET, POST, PUT, PATCH, DELETE. Method is stored in `Action.source`, not `Call()` semantics.
+Allowed methods: GET, POST, PUT, PATCH, DELETE. Method is stored in `Action.source`, not `Call()` semantics. Imports and manual `kind=http` actions share one source representation, distinguished only by `source.type` (`openapi` vs `http`); import reconciliation (§8 match key) is scoped to `source.type=openapi` rows and never touches manual actions.
 
 Required or rejected/kept inactive with validation messages: `operationId` or `x-juice-name`; `description` or `summary`; parameters and/or requestBody schema; 2xx JSON response schema; optional `x-juice-price` defaulting to 0. Path, query, and JSON body fields compile into one canonical `input_schema`; selected 2xx JSON response schema becomes `output_schema`.
 
@@ -337,7 +336,7 @@ The proxy's local `price` is `manifest.price` plus the worst-case import duty: `
 
 ## 9. Adapters, native actions, and stats
 
-WASM uses wazero. Scripts receive no ambient filesystem, network, environment, process access, or raw user tokens. They receive only explicit host functions, each execution having memory limit, timeout, deterministic context cancellation, and artifact-hash compiled-module cache. Store source and artifact; authorized users may inspect source; activation should precompile; compilation failures are typed.
+WASM uses wazero. Scripts receive no ambient filesystem, network, environment, process access, or raw user tokens. They receive only explicit host functions, each execution having memory limit, timeout, deterministic context cancellation, and artifact-hash compiled-module cache. The network is reachable only mediated, never ambient: a script holds no sockets and reaches the web solely by calling the read-only, SSRF-restricted `@sys/web` action (or a provider's pinned `kind=http` action) through `Call()`, charged like any other call. Store source and artifact; authorized users may inspect source; activation should precompile; compilation failures are typed.
 
 Host surface:
 
@@ -367,11 +366,13 @@ Native actions are standard actions shipped alongside the kernel as a platform s
 | `@sys/llm/embed` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Input: required `text` (string). Output: `embedding` (array of numbers). `ErrInvalidInput` if `text` is empty. `ErrInvalidState` if embedder unconfigured. |
 | `@sys/llm/json` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Input: `messages[]` of `{role,content}`, optional `system`, required `output_schema`. Output: `value` (JSON value). Validates model output locally against `output_schema`. `ErrSchemaViolation` for unsupported schema. `ErrInvalidState` if structured output unavailable. `ErrExecutionFailed` if no valid JSON produced. |
 | `@sys/llm/decide` | Public; action owner `@sys`; price 0 (configurable, `native.llm`, §14); callable through `Call()`. Given a conversation and a set of Juice actions, asks the LLM to select one and propose args — does not execute the call. Input: `messages[]` of `{role, content?, tool?}` where `role` is one of `system`, `user`, `assistant`, `tool` and `tool` is an optional object `{action?, args?, result?}`; required `actions[]` (list of `@owner/name`). Kernel fetches each action's canonical description, `input_schema`, and price from the DB. Output: `action` (`@owner/name`), `args` (validated against that action's `input_schema`), optional `message`. `ErrNotFound` if any action reference is unknown. `ErrInvalidState` if LLM tool calling unavailable. `ErrExecutionFailed` if no valid selection produced. |
-| `@sys/make`     | Public; action owner `@sys`; price 20 (configurable, `native.make`, §14); callable through `Call()`. Synthesizes a WASM action from a natural-language description using the platform LLM and TinyGo compiler. Input required `description`; empty gives `ErrInvalidInput`; missing LLM/compiler gives `ErrInvalidState`. Up to `maxSteps=5` (configurable): derive contract, search catalog, generate TinyGo, compile, validate WASM imports/exports, smoke-test with stub host. Success registers and activates action under `C` of the `@sys/make` call. Return `status="success"`, `action_id`, `action_name`, `diagnostics`, `tests`. Name collision returns `status="failure"` without alternate-name retry. Synthesis failures use output failure status, not kernel errors. Worker subcalls follow role law: `owner_user_id=same process owner`, `caller_user_id=@sys`, `target_user_id=worker action owner`. |
+| `@sys/make`     | Public; action owner `@sys`; price 20 (configurable, `native.make`, §14); callable through `Call()`. Synthesizes a WASM action from a natural-language description using the platform LLM and TinyGo compiler. Input required `description`; empty gives `ErrInvalidInput`; missing LLM/compiler gives `ErrInvalidState`. Up to `maxSteps=5` (configurable): derive contract, search catalog, generate TinyGo, compile, validate WASM imports/exports, smoke-test with stub host. Success registers and activates action under `C` of the `@sys/make` call. Return `status="success"`, `action_id`, `action_name`, `diagnostics`, `tests`. A name collision with a live action bumps a numeric suffix (`name`, `name-2`, … up to `name-100`) and registers under the first free name, mirroring proxy-handle allocation (§13); soft-deleted actions do not reserve a name. Synthesis failures use output failure status, not kernel errors. Worker subcalls follow role law: `owner_user_id=same process owner`, `caller_user_id=@sys`, `target_user_id=worker action owner`. |
 | `@sys/time`     | Public; action owner `@sys`; price 0 (configurable, `native.time`, §14); callable through `Call()`. No input required. Output: `unix` (integer seconds since UTC epoch), `iso` (RFC 3339 string). |
 | `@sys/sink`     | Public; action owner `@sys`; price 0 (configurable, `native.sink`, §14); callable through `Call()`. Accepts any input, returns `{}`. Universal no-op sink for steps that require an onward action but no further computation. |
 | `@sys/message`  | Public; action owner `@sys`; price 0 (configurable, `native.message`, §14); callable through `Call()`. Sends a message to another platform user by creating a Step they must acknowledge. Input: required `to` (`@handle` of recipient), required `message`. Output: `step_id`. The Step sets `required_caller_user_id` to the resolved target user and `partial_args` to `{"message":"..."}` so the recipient can read it via `step list`. Uses `@sys/sink` as the step's `action`. `ErrInvalidInput` if `to` cannot be resolved. |
 | `@sys/random`   | Public; action owner `@sys`; price 0 (configurable, `native.random`, §14); callable through `Call()`. No input required. Output: `value` (float in `[0, 1)`). Exists to provide randomness to WASM scripts, which have no ambient access to the OS random source. |
+| `@sys/web`      | Public; action owner `@sys`; price 0 (configurable, `native.web`, §14); callable through `Call()`. Read-only fetch of a public web page. Input: required `url` (string); a scheme-less `url` defaults to `https` (HTTPS-first, like a browser), and an explicit `http`/`https` scheme is respected and never silently downgraded. Output: `status` (HTTP status integer), `body` (response body string), `content_type` (response `Content-Type` string), `final_url` (the URL actually fetched, after scheme defaulting and redirects). GET only; no caller-supplied headers or auth, so nothing sensitive enters args/receipts/logs. A fixed, configurable descriptive `User-Agent` is set by the action itself. Same SSRF discipline as `kind=http` (§7): loopback, RFC 1918 private, and link-local `169.254.x.x` hosts are rejected with `ErrInvalidInput` unless `allow_local_sources` is set. Non-2xx statuses are returned in `status`, not raised as errors, so crawlers can react to them; 10 MiB response cap. `ErrInvalidInput` for empty `url`; `ErrInvalidState` if the fetcher is unconfigured; `ErrExecutionFailed` on transport failure. The mediated path by which WASM scripts read the network: scripts still receive no ambient sockets — they reach the web only by calling this action through `Call()`, charged and SSRF-restricted to public hosts (§9). |
+| `@sys/tinygo/compile` | Public; action owner `@sys`; price 5 (configurable, `native.tinygo`, §14); callable through `Call()`. Compiles author-supplied TinyGo to a WASM artifact using the platform TinyGo compiler, prepending the Juice WASM SDK so the author writes only `func Handle(in map[string]any) (map[string]any, error)` (the SDK owns `package`, imports, `alloc`, `run`, `main`). Input: required `source`. Output: `status` (`success`/`failure`), `artifact` (base64 WASM, on success), `artifact_hash` (SHA-256 hex, on success), `diagnostics` (array). Empty `source` gives `ErrInvalidInput`; an unavailable compiler toolchain gives `ErrInvalidState` (platform misconfiguration — the call fails and is not charged). Author compile errors and import/export-validation failures use output failure status, not kernel errors (so the attempt is charged), mirroring `@sys/make`. Registration is separate supervision: pass the returned artifact to `action create --kind wasm --artifact` (§14). |
 
 Stats use:
 
@@ -555,15 +556,15 @@ config.jwt_secret          = 32 random bytes, hex
 
 Private signing key and JWT secret are never logged or returned. Partial first boot is rerunnable. `JUICE_SECRET_KEY` overrides stored JWT secret at runtime only.
 
-Every startup reads `config.superuser_handle` to confirm first boot and identify `@sys`; it verifies signing keys and aborts if either is absent. It then registers, enables, and makes public `@sys/lookup`, `@sys/llm/chat`, `@sys/llm/embed`, `@sys/llm/json`, `@sys/llm/decide`, `@sys/make`, `@sys/time`, `@sys/sink`, `@sys/message`, and `@sys/random` if absent, and reconciles their configurable fields (price and action-specific settings) from config on every startup. It then runs recovery (§5).
+Every startup reads `config.superuser_handle` to confirm first boot and identify `@sys`; it verifies signing keys and aborts if either is absent. It then registers, enables, and makes public `@sys/lookup`, `@sys/llm/chat`, `@sys/llm/embed`, `@sys/llm/json`, `@sys/llm/decide`, `@sys/make`, `@sys/time`, `@sys/sink`, `@sys/message`, `@sys/random`, `@sys/web`, and `@sys/tinygo/compile` if absent, and reconciles their configurable fields (price and action-specific settings) from config on every startup. It then runs recovery (§5).
 
 Bootstrap is idempotent. Supervision operations are not native actions.
 
-The superuser may suspend or unsuspend users. Suspension preserves data and makes every authenticated request return `ErrUnauthenticated`.
+The superuser may suspend or unsuspend users. Suspension preserves data and makes every authenticated request return `ErrUnauthenticated`. It also excludes the suspended user's actions from action listings and makes them uncallable (`CanCall` fails on a suspended owner, §4); their data survives and unsuspending restores listing and callability.
 
-`Kernel.Deposit(operator_user_id,target_user_id,amount,reason)` is admin-CLI-only supervision. It requires configured superuser and positive amount, then atomically credits `user.available` with a deposit record. `reason` is optional and stored when provided. No HTTP endpoint exists.
+`Kernel.Deposit(operator_user_id,target_user_id,amount,reason)` is admin-CLI-only supervision. It requires configured superuser and positive amount, then atomically credits `user.available` with a credit adjustment record. `reason` is optional and stored when provided. The operation is idempotent over `external_key` when supplied. No HTTP endpoint exists.
 
-`Kernel.Withdraw(operator_user_id,target_user_id,amount,reason)` is admin-CLI-only supervision: the mirror of `Deposit`. It requires configured superuser, positive amount, and `target.available ≥ amount`, then atomically debits `user.available` with an immutable withdrawal record — the user's credits are redeemed and the operator owes the out-of-band payout. No HTTP endpoint exists.
+`Kernel.Withdraw(operator_user_id,target_user_id,amount,reason)` is admin-CLI-only supervision: the mirror of `Deposit`. It requires configured superuser, positive amount, and `target.available ≥ amount`, then atomically debits `user.available` with an immutable debit adjustment record — the user's credits are redeemed and the operator owes the out-of-band payout. The operation is idempotent over `external_key` when supplied: a replay returns the existing adjustment record before the `target.available ≥ amount` check runs, so a replayed withdrawal never fails on a balance that has since dropped. No HTTP endpoint exists.
 
 `Kernel.UpdateUser(callerUserID, email, currentPassword, newPassword)` is user self-service: only the authenticated, non-suspended local user may update their own account. `email` and `newPassword` are both optional; at least one must be provided. When `newPassword` is non-empty, `currentPassword` must match the stored hash; mismatch returns `ErrUnauthenticated`. Proxy users have no stored password and cannot use this operation (`ErrInvalidState`). `handle` is immutable. The update is atomic.
 
@@ -700,7 +701,7 @@ Endpoint rules (notable rules only; the complete HTTP endpoint list is in `API.m
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `GET /health`                                    | unauthenticated                                                                                                 |
 | `GET /.well-known/juice-kernel.json`             | unauthenticated; `public_key`, handle (`@sys`), `base_url` (§13)                                                |
-| `GET /v1/actions[?owner=&name=]`                 | unauthenticated → active public actions; authenticated → active public actions plus caller's own active actions (union, deduplicated); `?owner=` further filters by that owner's handle; `?name=` filters by name |
+| `GET /v1/actions[?owner=&name=]`                 | unauthenticated → active public actions; authenticated → active public actions plus caller's own active actions (union, deduplicated); a suspended owner's actions are excluded (§12); `?owner=` further filters by that owner's handle; `?name=` filters by name |
 | `GET /v1/actions/{id}/manifest`                  | signed public-action manifest; served to friends in good standing per the exposure lever (§13)                  |
 | `GET /v1/gossip`                                 | unauthenticated; identity, own actions with manifests and stats, transacted friends with stats (§13)            |
 | `POST /v1/peers`                                 | signed friend request (§13); rate-limited per IP                                                                |
@@ -737,7 +738,7 @@ time level event request_id caller_user_id process_id trace_id action_id tx_id
 status duration_ms error
 ```
 
-Config lives in `juice.json` (path from `JUICE_CONFIG`, default `./juice.json`). Top-level kernel keys: `db_path`, `fee_bps`, `import_bps`, `peer_auto_accept`, auth issuer/audience/token TTL, log file/format/level, script timeout and memory limits. All native-action configuration lives under `native.<action>`; no deeper nesting:
+Config lives in `juice.json` (path from `JUICE_CONFIG`, default `./juice.json`). Top-level kernel keys: `db_path`, `fee_bps`, `import_bps`, `peer_auto_accept`, auth issuer/audience/token TTL, log file/format/level, script timeout and memory limits, plus the federation identity and credential keys this kernel needs to satisfy §8 and §13: `server_url` and `peer_handle` (this kernel's advertised base URL and handle for the §13 `.well-known` document and reciprocal friend requests), `credentials_key` (the §8 base64url AES-256-GCM key for `auth_json`, auto-generated at first boot), and `allow_local_sources`/`allow_local_peer_urls` (dev-only escape hatches over §7's loopback/private/link-local URL rejection, default `false`). All native-action configuration lives under `native.<action>`; no deeper nesting:
 
 ```json
 {
@@ -745,6 +746,11 @@ Config lives in `juice.json` (path from `JUICE_CONFIG`, default `./juice.json`).
   "fee_bps": 2000,
   "import_bps": 500,
   "peer_auto_accept": true,
+  "server_url": "",
+  "peer_handle": "",
+  "credentials_key": "",
+  "allow_local_sources": false,
+  "allow_local_peer_urls": false,
   "native": {
     "llm":     { "url": "http://localhost:11434", "chat_model": "gemma4:26b", "embed_model": "nomic-embed-text", "price": 0 },
     "make":    { "compiler": "tinygo", "max_steps": 5, "price": 20 },
@@ -752,7 +758,9 @@ Config lives in `juice.json` (path from `JUICE_CONFIG`, default `./juice.json`).
     "time":    { "price": 0 },
     "sink":    { "price": 0 },
     "message": { "price": 0 },
-    "random":  { "price": 0 }
+    "random":  { "price": 0 },
+    "web":     { "price": 0, "user_agent": "juice-kernel/0.4 (+https://github.com/daios-ai/juice)" },
+    "tinygo":  { "price": 5 }
   }
 }
 ```
@@ -762,11 +770,17 @@ Safe local defaults apply when the file or a key is absent; invalid startup conf
 Environment variables are bootstrap and overrides only:
 
 ```text
-JUICE_CONFIG       path to juice.json
-JUICE_DB_PATH      database path override
-JUICE_SECRET_KEY   JWT secret override, runtime only (§12)
-JUICE_LOG_LEVEL    log level override
+JUICE_CONFIG               path to juice.json
+JUICE_DB_PATH              database path override
+JUICE_SECRET_KEY           JWT secret override, runtime only (§12)
+JUICE_LOG_LEVEL            log level override
+JUICE_CREDENTIALS_KEY      AES credentials key override, runtime only (§8)
+JUICE_BOOTSTRAP_PASSWORD   superuser password for unattended first boot (§12)
+JUICE_BOOTSTRAP_PEER_HANDLE  peer handle for unattended first boot (§13)
+JUICE_ALLOW_LOCAL_SOURCES  dev-only: permit loopback/private/link-local source and peer URLs (§7)
 ```
+
+All other settings are configured through `juice.json` only; there are no further environment overrides.
 
 ## 15. Required automated tests
 
@@ -825,6 +839,12 @@ non-buyer cannot rate transaction
 native action callable through Call()
 @sys/random returns value in [0, 1)
 wasm script can call @sys/random to obtain a random value
+@sys/web returns status, body, and content_type for a public URL (fake fetcher)
+@sys/web with missing or empty url returns ErrInvalidInput
+@sys/web with unconfigured fetcher returns ErrInvalidState
+@sys/web rejects loopback/private/link-local URLs unless allow_local_sources
+@sys/tinygo/compile returns base64 artifact and hash for valid source; status=failure with diagnostics on compile or import-validation error; empty source returns ErrInvalidInput
+action create --artifact registers a wasm action from a pre-compiled base64 artifact
 @sys/llm/embed returns embedding array for valid text
 @sys/llm/embed with empty text returns ErrInvalidInput
 @sys/llm/embed with unconfigured embedder returns ErrInvalidState
@@ -842,6 +862,7 @@ non-superuser rejected from admin CLI commands
 active public action callable by any caller
 active private action callable only by owner
 inactive action not callable
+suspended owner's active public action is excluded from GET /v1/actions and uncallable (ErrInvalidState); unsuspend restores both
 bootstrap is idempotent
 subcall uses parent process, not an ephemeral process
 subcall caller is parent action owner and owner is original process owner
