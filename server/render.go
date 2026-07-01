@@ -56,6 +56,7 @@ func NewRenderer() (*Renderer, error) {
 		"money":       money,
 		"json":        prettyJSON,
 		"jsonCompact": jsonCompact,
+		"jsonEdit":    jsonEdit,
 		"statusClass": statusClass,
 		"truncate":    truncate,
 		"costOf":      costOf,
@@ -163,6 +164,20 @@ func jsonCompact(raw json.RawMessage) string {
 func prettyJSON(raw json.RawMessage) string {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return "—"
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		return string(raw)
+	}
+	return buf.String()
+}
+
+// jsonEdit renders a raw JSON value for prefilling an editable <textarea>:
+// indented when present, empty string when absent (so the field stays blank
+// rather than showing prettyJSON's "—" placeholder).
+func jsonEdit(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, raw, "", "  "); err != nil {

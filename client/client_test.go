@@ -274,3 +274,75 @@ func TestUpdateMeSendsFields(t *testing.T) {
 		t.Error("omitempty: password fields must be absent when empty")
 	}
 }
+
+func TestActionHTTPUnmarshal(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	// kind=http single read carries the decomposed http object (verified live).
+	f.reply = `{"id":"a1","name":"weather","kind":"http","http":{"method":"GET","url":"https://api.x/{city}","params":[{"name":"city","in":"path"},{"name":"units","in":"query"}]}}`
+	a, err := f.client().GetAction(context.Background(), "tok", "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.HTTP == nil {
+		t.Fatal("HTTP must be populated for kind=http")
+	}
+	if a.HTTP.Method != "GET" || a.HTTP.URL != "https://api.x/{city}" {
+		t.Errorf("http = %+v", a.HTTP)
+	}
+	if len(a.HTTP.Params) != 2 || a.HTTP.Params[0] != (HTTPParam{Name: "city", In: "path"}) {
+		t.Errorf("params = %+v", a.HTTP.Params)
+	}
+
+	// Non-http kinds omit http entirely -> nil pointer.
+	f.reply = `{"id":"t1","name":"time","kind":"native"}`
+	a, err = f.client().GetAction(context.Background(), "tok", "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.HTTP != nil {
+		t.Errorf("HTTP must be nil for non-http kind, got %+v", a.HTTP)
+	}
+
+	// Implicit routing: http present but params omitted.
+	f.reply = `{"id":"a2","name":"ping","kind":"http","http":{"method":"POST","url":"https://api.x/ping"}}`
+	a, err = f.client().GetAction(context.Background(), "tok", "a2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.HTTP == nil || a.HTTP.Params != nil {
+		t.Errorf("expected http with nil params, got %+v", a.HTTP)
+	}
+}
+
+func TestCreateActionMarshalsMethodParams(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"id":"a1","name":"weather","kind":"http"}`
+	in := CreateActionInput{
+		Name:   "weather",
+		Kind:   "http",
+		Source: "https://api.x/{city}",
+		Method: "GET",
+		Params: []HTTPParam{{Name: "city", In: "path"}, {Name: "units", In: "query"}},
+	}
+	if _, err := f.client().CreateAction(context.Background(), "tok", in); err != nil {
+		t.Fatal(err)
+	}
+	var sent CreateActionInput
+	if err := json.Unmarshal(f.lastBody, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.Method != "GET" || len(sent.Params) != 2 || sent.Params[1] != (HTTPParam{Name: "units", In: "query"}) {
+		t.Errorf("sent = %+v", sent)
+	}
+
+	// omitempty: implicit routing sends neither method nor params.
+	f.reply = `{"id":"a2","name":"plain","kind":"http"}`
+	if _, err := f.client().CreateAction(context.Background(), "tok", CreateActionInput{Name: "plain", Kind: "http"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(f.lastBody), `"method"`) || strings.Contains(string(f.lastBody), `"params"`) {
+		t.Errorf("empty method/params must be omitted: %s", f.lastBody)
+	}
+}

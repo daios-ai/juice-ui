@@ -151,3 +151,40 @@ for (const sel of document.querySelectorAll('select[name="auth_scheme"]')) {
   sel.addEventListener('change', update);
   update();
 }
+
+// Kind: reveal the http-only fields (method, params) only for kind=http.
+// Inputs in the hidden section are disabled so they are not submitted and the
+// param_name/param_in rows stay index-aligned for server-side pairing.
+for (const sel of document.querySelectorAll('select[name="kind"]')) {
+  const form = sel.closest('form');
+  function update() {
+    const show = sel.value === 'http';
+    for (const sec of form.querySelectorAll('[data-http-only]')) {
+      sec.hidden = !show;
+      for (const el of sec.querySelectorAll('input, select')) el.disabled = !show;
+    }
+  }
+  sel.addEventListener('change', update);
+  update();
+}
+
+// Repeatable parameter rows (create and edit forms): clone the first row on add,
+// drop a row on remove. Cloned rows inherit the template's disabled state, so
+// they stay consistent with the kind toggle above.
+for (const box of document.querySelectorAll('[data-param-rows]')) {
+  const tmpl = box.querySelector('[data-param-row]');
+  const wire = (row) => {
+    const rm = row.querySelector('[data-param-remove]');
+    if (rm) rm.addEventListener('click', () => row.remove());
+  };
+  box.querySelectorAll('[data-param-row]').forEach(wire);
+  const add = box.parentElement.querySelector('[data-param-add]');
+  if (add && tmpl) {
+    add.addEventListener('click', () => {
+      const row = tmpl.cloneNode(true);
+      for (const i of row.querySelectorAll('input')) i.value = '';
+      wire(row);
+      box.appendChild(row);
+    });
+  }
+}

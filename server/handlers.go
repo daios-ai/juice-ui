@@ -649,19 +649,20 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		Description: r.FormValue("description"),
 		Price:       parseInt64(r.FormValue("price")),
 	}
+	if in.Kind == "http" {
+		in.Method = strings.TrimSpace(r.FormValue("method"))
+		in.Params = parseHTTPParams(r)
+	}
 	for _, f := range []struct {
 		key string
 		dst *json.RawMessage
 	}{{"input_schema", &in.InputSchema}, {"output_schema", &in.OutputSchema}} {
-		raw := strings.TrimSpace(r.FormValue(f.key))
-		if raw == "" {
-			continue
-		}
-		if !json.Valid([]byte(raw)) {
-			s.flashRedirect(w, r, "/studio", "error", "The "+f.key+" is not valid JSON.")
+		raw, err := schemaFromForm(r, f.key)
+		if err != nil {
+			s.flashRedirect(w, r, "/studio", "error", err.Error())
 			return
 		}
-		*f.dst = json.RawMessage(raw)
+		*f.dst = raw
 	}
 
 	if scheme := r.FormValue("auth_scheme"); scheme != "" {
@@ -864,6 +865,85 @@ func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.flashRedirect(w, r, "/actions/"+id, "success", "Price updated. Action is now inactive.")
+}
+
+// schemaFromForm reads and validates a JSON-schema form field. An empty field
+// is valid and returns nil (meaning "leave unset"); invalid JSON returns an
+// error. Shared by action create and update so the rule is defined once.
+func schemaFromForm(r *http.Request, key string) (json.RawMessage, error) {
+	raw := strings.TrimSpace(r.FormValue(key))
+	if raw == "" {
+		return nil, nil
+	}
+	if !json.Valid([]byte(raw)) {
+		return nil, fmt.Errorf("The %s is not valid JSON.", key)
+	}
+	return json.RawMessage(raw), nil
+}
+
+// parseHTTPParams reads the repeated param_name/param_in form rows into ordered
+// {name, in} bindings. Rows are paired by index (the http-only section enables
+// its inputs as a unit, so the two slices stay aligned); blank-name rows are
+// skipped and an unset location defaults to body. No rows means implicit routing.
+func parseHTTPParams(r *http.Request) []client.HTTPParam {
+	names := r.Form["param_name"]
+	ins := r.Form["param_in"]
+	var params []client.HTTPParam
+	for i, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		loc := "body"
+		if i < len(ins) && ins[i] != "" {
+			loc = ins[i]
+		}
+		params = append(params, client.HTTPParam{Name: n, In: loc})
+	}
+	return params
+}
+
+func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+	if err := r.ParseForm(); err != nil {
+		s.flashRedirect(w, r, "/actions/"+id, "error", "Could not read the form.")
+		return
+	}
+	desc := r.FormValue("description")
+	in := client.UpdateActionInput{Description: &desc}
+	for _, f := range []struct {
+		key string
+		dst *json.RawMessage
+	}{{"input_schema", &in.InputSchema}, {"output_schema", &in.OutputSchema}} {
+		raw, err := schemaFromForm(r, f.key)
+		if err != nil {
+			s.flashRedirect(w, r, "/actions/"+id, "error", err.Error())
+			return
+		}
+		*f.dst = raw
+	}
+	// Source/method/params come only from the http subsection, which renders the
+	// method select. Absent it (e.g. a wasm action), leave the request untouched.
+	if r.PostForm.Has("method") {
+		source := strings.TrimSpace(r.FormValue("source"))
+		in.Source = &source
+		in.Method = strings.TrimSpace(r.FormValue("method"))
+		in.Params = parseHTTPParams(r)
+	}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.UpdateAction(ctx, tok, id, in)
+		return e
+	})
+	if err != nil {
+		if isAuthErr(err) {
+			s.handleErr(w, r, err)
+			return
+		}
+		s.flashRedirect(w, r, "/actions/"+id, "error", userMessage(err))
+		return
+	}
+	s.flashRedirect(w, r, "/actions/"+id, "success", "Action updated. It is now inactive.")
 }
 
 func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {

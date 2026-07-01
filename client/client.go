@@ -49,9 +49,30 @@ type User struct {
 	Locked    int64  `json:"locked"`
 }
 
+// HTTPParam binds an action input field to a location in the upstream HTTP
+// request. Verified live (2026-06-30): the kernel serializes params as an array
+// of {name, in} objects, with in in {path, query, body}.
+type HTTPParam struct {
+	Name string `json:"name"`
+	In   string `json:"in"`
+}
+
+// HTTPSpec is the decomposed view of a kind=http action's request (R8): the verb,
+// the full URL (with {placeholders}), and the field bindings. Identical shape for
+// manually-created and OpenAPI-imported actions. Present only on kind=http reads
+// (absent for other kinds, hence a pointer); Params is omitted when the action
+// uses implicit routing.
+type HTTPSpec struct {
+	Method string      `json:"method"`
+	URL    string      `json:"url"`
+	Params []HTTPParam `json:"params,omitempty"`
+}
+
 // Action carries both id (for management) and action ("@owner/name", for
-// calling) per R8. source is RawMessage because it is a URL string for kind=http
-// but an object for OpenAPI-imported actions.
+// calling) per R8. For kind=http, Source is a JSON-encoded descriptor string
+// (present on single reads, omitted on list reads); do not interpret it for
+// display. Instead, kind=http reads carry a decomposed HTTP object (absent for
+// other kinds), which is the structured view the UI renders.
 type Action struct {
 	ID           string          `json:"id"`
 	Action       string          `json:"action"`
@@ -66,6 +87,7 @@ type Action struct {
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	Source       json.RawMessage `json:"source,omitempty"`
+	HTTP         *HTTPSpec       `json:"http,omitempty"`
 	CreatedAt    string          `json:"created_at"`
 	UpdatedAt    string          `json:"updated_at"`
 }
@@ -81,6 +103,8 @@ type CreateActionInput struct {
 	Name         string          `json:"name"`
 	Kind         string          `json:"kind"`
 	Source       string          `json:"source,omitempty"`
+	Method       string          `json:"method,omitempty"`
+	Params       []HTTPParam     `json:"params,omitempty"`
 	Description  string          `json:"description,omitempty"`
 	Price        int64           `json:"price"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
@@ -93,6 +117,8 @@ type UpdateActionInput struct {
 	Price        *int64          `json:"price,omitempty"`
 	Description  *string         `json:"description,omitempty"`
 	Source       *string         `json:"source,omitempty"`
+	Method       string          `json:"method,omitempty"`
+	Params       []HTTPParam     `json:"params,omitempty"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	Public       *bool           `json:"public,omitempty"`

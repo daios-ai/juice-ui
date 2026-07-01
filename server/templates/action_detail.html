@@ -10,6 +10,15 @@
 
 <div class="card stack">
   {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
+  {{if $d.Action.HTTP}}
+  <dl class="locked-args">
+    <dt>Method</dt><dd class="mono">{{$d.Action.HTTP.Method}}</dd>
+    <dt>URL</dt><dd class="mono">{{$d.Action.HTTP.URL}}</dd>
+    {{if $d.Action.HTTP.Params}}
+    <dt>Params</dt><dd>{{range $d.Action.HTTP.Params}}<span class="mono">{{.Name}}:{{.In}}</span> {{end}}</dd>
+    {{end}}
+  </dl>
+  {{end}}
   <p class="stat-strip left">
     <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}</span>
     {{if $d.HasStats}}
@@ -78,6 +87,72 @@
     <button class="btn" type="submit">Update price</button>
   </form>
   <p class="help muted flush">Changing price deactivates the action.</p>
+  <details class="details-panel">
+    <summary>Edit action</summary>
+    <form class="stack" method="post" action="/actions/{{$d.Action.ID}}/update">
+      {{$.CSRFField}}
+      <div class="field">
+        <label for="edit-description">Description</label>
+        <input id="edit-description" name="description" type="text" value="{{$d.Action.Description}}">
+      </div>
+      <div class="field">
+        <label for="edit-input-schema">Input schema (JSON)</label>
+        <p class="help">Schema hints only; the kernel validates. Leave blank to keep the current schema.</p>
+        <textarea id="edit-input-schema" name="input_schema" placeholder='{"type":"object","properties":{}}'>{{jsonEdit $d.Action.InputSchema}}</textarea>
+      </div>
+      <div class="field">
+        <label for="edit-output-schema">Output schema (JSON)</label>
+        <textarea id="edit-output-schema" name="output_schema" placeholder='{"type":"object"}'>{{jsonEdit $d.Action.OutputSchema}}</textarea>
+      </div>
+      {{if $d.Action.HTTP}}
+      <div class="field">
+        <label for="edit-source">Source URL</label>
+        <input id="edit-source" name="source" type="text" value="{{$d.Action.HTTP.URL}}">
+      </div>
+      <div class="field">
+        <label for="edit-method">Method</label>
+        <select id="edit-method" name="method">
+          {{$m := $d.Action.HTTP.Method}}
+          <option value="POST" {{if eq $m "POST"}}selected{{end}}>POST</option>
+          <option value="GET" {{if eq $m "GET"}}selected{{end}}>GET</option>
+          <option value="PUT" {{if eq $m "PUT"}}selected{{end}}>PUT</option>
+          <option value="PATCH" {{if eq $m "PATCH"}}selected{{end}}>PATCH</option>
+          <option value="DELETE" {{if eq $m "DELETE"}}selected{{end}}>DELETE</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Parameter bindings</label>
+        <p class="help">Bind input fields to the request. Remove all for implicit routing.</p>
+        <div data-param-rows>
+          {{range $d.Action.HTTP.Params}}
+          <div class="row compact" data-param-row>
+            <input class="stretch" name="param_name" type="text" value="{{.Name}}" autocomplete="off">
+            <select class="input-sm" name="param_in">
+              <option value="path" {{if eq .In "path"}}selected{{end}}>path</option>
+              <option value="query" {{if eq .In "query"}}selected{{end}}>query</option>
+              <option value="body" {{if eq .In "body"}}selected{{end}}>body</option>
+            </select>
+            <button type="button" class="btn-quiet" data-param-remove>Remove</button>
+          </div>
+          {{else}}
+          <div class="row compact" data-param-row>
+            <input class="stretch" name="param_name" type="text" placeholder="field name" autocomplete="off">
+            <select class="input-sm" name="param_in">
+              <option value="path">path</option>
+              <option value="query">query</option>
+              <option value="body" selected>body</option>
+            </select>
+            <button type="button" class="btn-quiet" data-param-remove>Remove</button>
+          </div>
+          {{end}}
+        </div>
+        <button type="button" class="btn" data-param-add>Add parameter</button>
+      </div>
+      {{end}}
+      <button class="btn" type="submit">Save changes</button>
+      <p class="help muted flush">Saving deactivates the action until you re-enable it.</p>
+    </form>
+  </details>
 </div>
 {{end}}
 {{end}}

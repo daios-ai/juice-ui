@@ -34,6 +34,17 @@ func TestPrettyJSONNoDoubleEncode(t *testing.T) {
 	}
 }
 
+func TestJSONEdit(t *testing.T) {
+	out := jsonEdit(json.RawMessage(`{"a":1}`))
+	if !strings.Contains(out, "\"a\": 1") {
+		t.Errorf("jsonEdit = %q, want indented", out)
+	}
+	// Empty input must yield "" (blank textarea), not prettyJSON's "—".
+	if jsonEdit(nil) != "" || jsonEdit(json.RawMessage("  ")) != "" {
+		t.Error("empty json must render as empty string for textarea prefill")
+	}
+}
+
 func TestStatusClassesDistinct(t *testing.T) {
 	// The three financial states must map to three distinct classes (R8.7).
 	c := map[string]string{
@@ -79,7 +90,10 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 }
 
 func TestPct(t *testing.T) {
-	cases := []struct{ n, d int64; want string }{{138, 142, "97"}, {0, 0, "—"}, {0, 10, "0"}, {10, 10, "100"}}
+	cases := []struct {
+		n, d int64
+		want string
+	}{{138, 142, "97"}, {0, 0, "—"}, {0, 10, "0"}, {10, 10, "100"}}
 	for _, c := range cases {
 		if got := pct(c.n, c.d); got != c.want {
 			t.Errorf("pct(%d,%d) = %q want %q", c.n, c.d, got, c.want)

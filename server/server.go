@@ -87,6 +87,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /actions/{id}/make-public", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/{id}/make-private", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/{id}/update-price", s.requireAuth(s.postUpdateActionPrice))
+	mux.HandleFunc("POST /actions/{id}/update", s.requireAuth(s.postUpdateAction))
 	mux.HandleFunc("GET /studio", s.requireAuth(s.getStudio))
 	mux.HandleFunc("POST /studio/create", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /studio/import", s.requireAuth(s.postImport))

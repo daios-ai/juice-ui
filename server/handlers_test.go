@@ -7,6 +7,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -539,6 +540,91 @@ func TestUpdateActionPrice(t *testing.T) {
 	}
 }
 
+// actionDetailKernel serves a single owned action A1 (given as raw JSON) plus the
+// endpoints the action page and post-login dashboard need.
+func actionDetailKernel(actionJSON string) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"@alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions/A1", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(actionJSON)) })
+	return mux
+}
+
+func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
+	kernel := httptest.NewServer(actionDetailKernel(
+		`{"id":"A1","owner_user_id":"U1","owner_handle":"@alice","name":"weather","kind":"http",` +
+			`"active":true,"public":true,"price":0,"description":"Weather lookup",` +
+			`"input_schema":{"type":"object"},"output_schema":{"type":"string"},` +
+			`"http":{"method":"GET","url":"https://api.x/{city}","params":[{"name":"city","in":"path"},{"name":"units","in":"query"}]}}`))
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	page := getBody(t, cl, srv.URL+"/actions/A1")
+
+	// Decomposed http object is rendered inertly.
+	for _, want := range []string{"GET", "https://api.x/{city}", "city:path", "units:query"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("action page missing %q", want)
+		}
+	}
+	// General edit form: routed to /update, with prefilled schemas + http subsection.
+	for _, want := range []string{
+		`action="/actions/A1/update"`,
+		`name="input_schema"`,
+		`name="output_schema"`,
+		`name="source"`,
+		"Saving deactivates the action",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("edit form missing %q", want)
+		}
+	}
+	// Schema textareas are prefilled from the action's current schemas (indented,
+	// with quotes HTML-escaped by the textarea RCDATA context).
+	if !strings.Contains(page, `&#34;type&#34;: &#34;object&#34;`) || !strings.Contains(page, `&#34;type&#34;: &#34;string&#34;`) {
+		t.Error("schema textareas must be prefilled with the current schemas")
+	}
+	// Security (§8): the counterparty URL must not become an auto-link.
+	if strings.Contains(page, `href="https://api.x`) {
+		t.Error("counterparty URL must render inert, never as a link")
+	}
+}
+
+func TestActionDetailWasmEditFormHasSchemasNoHTTP(t *testing.T) {
+	kernel := httptest.NewServer(actionDetailKernel(
+		`{"id":"A1","owner_user_id":"U1","owner_handle":"@alice","name":"calc","kind":"wasm",` +
+			`"active":true,"public":true,"price":0,"input_schema":{"type":"object"}}`))
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	page := getBody(t, cl, srv.URL+"/actions/A1")
+
+	// Schema editing is available for wasm too.
+	if !strings.Contains(page, `action="/actions/A1/update"`) || !strings.Contains(page, `name="input_schema"`) {
+		t.Error("wasm action must offer the general edit form with schema fields")
+	}
+	// But no http-only fields (method/params/source) for a non-http action.
+	for _, absent := range []string{`name="method"`, `name="param_name"`} {
+		if strings.Contains(page, absent) {
+			t.Errorf("wasm edit form must not contain http field %q", absent)
+		}
+	}
+}
+
 func TestLoginPageHasNoSidebar(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
@@ -660,9 +746,9 @@ func TestCreateActionAuth(t *testing.T) {
 		wantConfig  map[string]string
 	}{
 		{
-			name:        "no scheme",
-			fields:      url.Values{"name": {"act1"}, "kind": {"http"}, "auth_scheme": {""}},
-			wantScheme:  "",
+			name:       "no scheme",
+			fields:     url.Values{"name": {"act1"}, "kind": {"http"}, "auth_scheme": {""}},
+			wantScheme: "",
 		},
 		{
 			name:        "bearer",
@@ -775,5 +861,201 @@ func TestCreateActionAuth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// actionCreateKernel returns a kernel mux that captures the POST /v1/actions body.
+func actionCreateKernel(gotBody *[]byte) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"@alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("POST /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		*gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"A9","owner_user_id":"U1","owner_handle":"@alice","name":"act","kind":"http"}`))
+	})
+	return mux
+}
+
+func TestCreateActionHTTPParams(t *testing.T) {
+	cases := []struct {
+		name       string
+		fields     url.Values
+		wantMethod string
+		wantParams []client.HTTPParam
+	}{
+		{
+			name:       "method and two params",
+			fields:     url.Values{"name": {"weather"}, "kind": {"http"}, "source": {"https://api.x/{city}"}, "method": {"GET"}, "param_name": {"city", "units"}, "param_in": {"path", "query"}},
+			wantMethod: "GET",
+			wantParams: []client.HTTPParam{{Name: "city", In: "path"}, {Name: "units", In: "query"}},
+		},
+		{
+			name:       "blank name row skipped, in defaults to body",
+			fields:     url.Values{"name": {"w2"}, "kind": {"http"}, "method": {"POST"}, "param_name": {"", "note"}, "param_in": {"path", ""}},
+			wantMethod: "POST",
+			wantParams: []client.HTTPParam{{Name: "note", In: "body"}},
+		},
+		{
+			name:       "no rows no method omits both",
+			fields:     url.Values{"name": {"plain"}, "kind": {"http"}},
+			wantMethod: "",
+			wantParams: nil,
+		},
+		{
+			name:       "wasm ignores method and params",
+			fields:     url.Values{"name": {"w"}, "kind": {"wasm"}, "method": {"GET"}, "param_name": {"x"}, "param_in": {"query"}},
+			wantMethod: "",
+			wantParams: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody []byte
+			kernel := httptest.NewServer(actionCreateKernel(&gotBody))
+			defer kernel.Close()
+			srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+			defer srv.Close()
+			cl := loginClient(t, srv.URL)
+
+			csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/studio"))
+			tc.fields.Set("gorilla.csrf.Token", csrfTok)
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/studio/create", strings.NewReader(tc.fields.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := cl.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+
+			if gotBody == nil {
+				t.Fatal("kernel POST /v1/actions was not called")
+			}
+			var sent client.CreateActionInput
+			if err := json.Unmarshal(gotBody, &sent); err != nil {
+				t.Fatalf("kernel received invalid JSON: %v", err)
+			}
+			if sent.Method != tc.wantMethod {
+				t.Errorf("method: want %q, got %q", tc.wantMethod, sent.Method)
+			}
+			if !reflect.DeepEqual(sent.Params, tc.wantParams) {
+				t.Errorf("params: want %+v, got %+v", tc.wantParams, sent.Params)
+			}
+		})
+	}
+}
+
+// updateActionKernel drives login and captures the PUT /v1/actions/A1 body
+// (nil until the kernel is called).
+func updateActionKernel(gotBody *[]byte) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"@alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("PUT /v1/actions/A1", func(w http.ResponseWriter, r *http.Request) {
+		*gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"id":"A1","owner_handle":"@alice","name":"weather","kind":"http","active":false}`))
+	})
+	return mux
+}
+
+func TestUpdateAction(t *testing.T) {
+	var gotBody []byte
+	kernel := httptest.NewServer(updateActionKernel(&gotBody))
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	// A CSRF token is valid session-wide; any page with a form yields one.
+	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/studio"))
+	fields := url.Values{
+		"gorilla.csrf.Token": {csrfTok},
+		"description":        {"Weather lookup"},
+		"input_schema":       {`{"type":"object"}`},
+		"output_schema":      {`{"type":"string"}`},
+		"source":             {"https://api.x/{city}"},
+		"method":             {"PUT"},
+		"param_name":         {"city", "units"},
+		"param_in":           {"path", "query"},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/update", strings.NewReader(fields.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if gotBody == nil {
+		t.Fatal("kernel PUT /v1/actions/A1 was not called")
+	}
+	var sent client.UpdateActionInput
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("kernel received invalid JSON: %v", err)
+	}
+	if sent.Description == nil || *sent.Description != "Weather lookup" {
+		t.Errorf("description = %v", sent.Description)
+	}
+	if string(sent.InputSchema) != `{"type":"object"}` || string(sent.OutputSchema) != `{"type":"string"}` {
+		t.Errorf("schemas = %s / %s", sent.InputSchema, sent.OutputSchema)
+	}
+	if sent.Source == nil || *sent.Source != "https://api.x/{city}" {
+		t.Errorf("source = %v", sent.Source)
+	}
+	if sent.Method != "PUT" {
+		t.Errorf("method = %q", sent.Method)
+	}
+	want := []client.HTTPParam{{Name: "city", In: "path"}, {Name: "units", In: "query"}}
+	if !reflect.DeepEqual(sent.Params, want) {
+		t.Errorf("params: want %+v, got %+v", want, sent.Params)
+	}
+}
+
+func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
+	var gotBody []byte
+	kernel := httptest.NewServer(updateActionKernel(&gotBody))
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/studio"))
+	fields := url.Values{
+		"gorilla.csrf.Token": {csrfTok},
+		"input_schema":       {`{not json`},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/update", strings.NewReader(fields.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if gotBody != nil {
+		t.Error("invalid schema must not reach the kernel")
+	}
+	if !strings.Contains(string(page), "not valid JSON") {
+		t.Error("invalid schema must surface a flash error")
 	}
 }

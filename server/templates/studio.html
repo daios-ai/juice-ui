@@ -71,6 +71,34 @@
       <p class="help">The kernel rejects non-HTTP(S), loopback, and private addresses.</p>
       <input id="source" name="source" type="text" placeholder="https://…">
     </div>
+    <div data-http-only>
+      <div class="field">
+        <label for="method">Method</label>
+        <select id="method" name="method">
+          <option value="POST" selected>POST</option>
+          <option value="GET">GET</option>
+          <option value="PUT">PUT</option>
+          <option value="PATCH">PATCH</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Parameter bindings</label>
+        <p class="help">Bind input fields to the request. Omit all for implicit routing: <code>{name}</code> placeholders in the URL are filled, the rest go to the query (GET/DELETE) or JSON body.</p>
+        <div data-param-rows>
+          <div class="row compact" data-param-row>
+            <input class="stretch" name="param_name" type="text" placeholder="field name" autocomplete="off">
+            <select class="input-sm" name="param_in">
+              <option value="path">path</option>
+              <option value="query">query</option>
+              <option value="body" selected>body</option>
+            </select>
+            <button type="button" class="btn-quiet" data-param-remove>Remove</button>
+          </div>
+        </div>
+        <button type="button" class="btn" data-param-add>Add parameter</button>
+      </div>
+    </div>
     <details class="auth-panel">
       <summary>Upstream auth <span class="muted small">(optional)</span></summary>
       <div class="field">
