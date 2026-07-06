@@ -200,20 +200,15 @@ func TestCompleteStepAlwaysSendsArgs(t *testing.T) {
 	}
 }
 
-func TestStepRefStripsDoubleAt(t *testing.T) {
-	// Kernel returns @@owner/name; Ref() strips the extra @.
-	s := Step{Action: "@@sys/lookup"}
+func TestStepRef(t *testing.T) {
+	// The kernel now returns a clean single-@ computed action on list and single
+	// reads (the old @@ double-prefix quirk is fixed), so Ref() is the field itself.
+	s := Step{Action: "@sys/lookup"}
 	if got := s.Ref(); got != "@sys/lookup" {
 		t.Errorf("Ref() = %q want @sys/lookup", got)
 	}
-	// Single @ is returned as-is.
-	s2 := Step{Action: "@sys/lookup"}
-	if got := s2.Ref(); got != "@sys/lookup" {
-		t.Errorf("Ref() single-@ = %q want @sys/lookup", got)
-	}
 	// Empty action.
-	s3 := Step{}
-	if got := s3.Ref(); got != "" {
+	if got := (Step{}).Ref(); got != "" {
 		t.Errorf("Ref() empty = %q want empty", got)
 	}
 }

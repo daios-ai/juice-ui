@@ -46,6 +46,40 @@ func TestLoadConfigOverrides(t *testing.T) {
 	}
 }
 
+func TestTrustedOriginsDefaultsAndConfig(t *testing.T) {
+	// Defaults trust localhost/127.0.0.1 on the bound port.
+	cfg, err := LoadConfig(env(map[string]string{"JUICE_UI_ADDR": "127.0.0.1:8080"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasHost(cfg.TrustedOrigins, "localhost:8080") || !hasHost(cfg.TrustedOrigins, "127.0.0.1:8080") {
+		t.Errorf("default trusted origins missing localhost/127 on port: %v", cfg.TrustedOrigins)
+	}
+	// Operator-declared hosts are normalised to bare hosts and appended.
+	cfg2, err := LoadConfig(env(map[string]string{
+		"JUICE_UI_ADDR":            "127.0.0.1:8080",
+		"JUICE_UI_TRUSTED_ORIGINS": "https://ui.example.com, 192.168.1.9:8080 ,",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasHost(cfg2.TrustedOrigins, "ui.example.com") {
+		t.Errorf("URL origin not normalised to host: %v", cfg2.TrustedOrigins)
+	}
+	if !hasHost(cfg2.TrustedOrigins, "192.168.1.9:8080") {
+		t.Errorf("host:port origin not carried through: %v", cfg2.TrustedOrigins)
+	}
+}
+
+func hasHost(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLoadConfigRejectsBadURL(t *testing.T) {
 	for _, bad := range []string{"not-a-url", "ftp://x", "://nohost", "/relative"} {
 		if _, err := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": bad})); err == nil {

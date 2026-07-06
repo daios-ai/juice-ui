@@ -1,7 +1,22 @@
 # Juice Web UI Requirements
 
-Version: 0.4
+Version: 0.5
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.5.** The interface is reorganised so its navigation
+> **mirrors the juice CLI command hierarchy** (`run`, `action`, `process`, `tx`,
+> `step`, `user`, and a superuser-only `admin`) instead of four fixed rooms. The
+> visual language becomes a **crisp terminal**: a monospace UI face and multiple
+> selectable colour themes, each defined by a **Ghostty 16-colour ANSI palette**,
+> replacing the single warm-ivory/charcoal pair (the accent, formerly "clay",
+> keeps its spend-only discipline). All create/edit operations open **floating
+> modal forms** with a no-JS `?form=` fallback, and the whole surface is
+> **keyboard-navigable** (a Ctrl/Cmd+K command palette plus vim-style shortcuts).
+> Admin/supervision is now **in scope**, gated to the `@sys` superuser, because
+> the kernel exposes it over HTTP (`/control/*`). Invariants that predate 0.5 —
+> the BFF architecture, session/token rules, spend-button discipline, inert
+> counterparty rendering, the single aria-live region, monospace tabular money,
+> the CSP, and the test discipline — are unchanged.
 Codename: `juice-ui`
 
 > **Gating condition.** A UI feature is mandatory only if it maps to an HTTP
@@ -35,16 +50,20 @@ server-side.
   responses and never reproduces kernel business logic (fees, settlement, schema
   validation): the UI presents kernel results; the kernel decides.
 
-**Navigation model.** The UI MUST present exactly four destinations — Run,
-Inbox, Studio, Wallet. Processes, traces, transactions, and receipts MUST NOT
-appear as navigation destinations; they are reachable only as evidence within
-those four rooms, and traces only behind the Engine-room control on the receipt
-page. The kernel creates and closes processes automatically, and the UI MUST NOT
-expose that bookkeeping.
+**Navigation model.** The UI's navigation MUST mirror the juice CLI command
+hierarchy. The primary groups are `run`, `action`, `process`, `tx`, `step`, and
+`user`, plus an `admin` group shown **only to the `@sys` superuser**. Each group
+presents its concept, not a raw command dump: `run` is discovery + execution,
+`action` is the catalog and provider workspace, `process` and `tx` are evidence
+(computation lifetimes and the immutable ledger), `step` is work addressed to the
+user (carrying the sole attention badge), `user` is identity + wallet, and
+`admin` is operator supervision. The kernel still creates and closes processes
+automatically; the UI MUST NOT ask the user to manage that bookkeeping, but it
+MAY surface a process's parked funds and awaiting-receipt state as evidence.
 
 **Reference discipline.** Each cross-cutting rule is defined once and applies
 wherever relevant without per-use citation: the API contract in §4, session and
-token rules in §5, the visual language (clay, button vocabulary, status signals,
+token rules in §5, the visual language (the accent, button vocabulary, status signals,
 feedback) in §7, the security rules (including inert rendering of counterparty
 content) in §8. An obligation marked *Conditional* is indexed in §10; the feature
 is mandatory only once its prerequisite is confirmed. Where a reference is
@@ -100,31 +119,39 @@ detectable.
 
 ## 3. Scope
 
-### 3.1 In scope (HTTP-reachable), organized by room
+### 3.1 In scope (HTTP-reachable), organized by CLI group
 
-* **Run** — server status (`GET /health`) and federation metadata
-  (`GET /.well-known/juice-kernel.json`), read-only; natural-language discovery
+* **run** — server status (`GET /health`), read-only; natural-language discovery
   via `@sys/lookup`; catalog browse (`GET /v1/actions`); action detail; call
-  execution (`POST /v1/run`).
-* **Inbox** — steps: list/show/complete; step creation as a developer
-  affordance.
-* **Studio** — owner-private action management: create, list/show (including
-  inactive, via `GET /v1/actions?owner=@self`), update, enable, disable, delete;
-  public/private visibility toggle; AI synthesis via `@sys/make`; OpenAPI
-  import/unimport; stats; ratings list.
-* **Wallet** — self profile and balances (`GET /v1/me`, `available`/`locked`);
-  transactions list/show/rate; receipt verification
-  (`GET /v1/transactions/{id}/receipt-verification`).
+  execution (`POST /v1/run`), including run-by-ref from the palette.
+* **action** — catalog browse plus owner action management: create, list/show
+  (including inactive, via `GET /v1/actions?owner=@self`), update, enable,
+  disable, delete; public/private visibility toggle; AI synthesis via
+  `@sys/make`; OpenAPI import/unimport; stats; ratings list; earnings folded from
+  the owner's transactions.
+* **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
+  surfacing parked funds and awaiting-receipt state.
+* **tx** — the immutable ledger: transactions list/show/rate; receipt
+  verification (`GET /v1/transactions/{id}/receipt-verification`), on demand.
+* **step** — steps: list/show/complete; step creation as a developer affordance.
+* **user** — self profile, balances (`GET /v1/me`, `available`/`locked`), and
+  update (`PUT /v1/me`); the ledger of the user's own transactions.
 
 *Conditional:* the trace tree on the receipt page.
 
+* **Admin / supervision (superuser only):** the `admin` group, visible only to
+  `@sys`, covers user list/show, suspend/unsuspend, credit deposits and
+  withdrawals, and federation trust (friend/unfriend, peers, this kernel's
+  identity). The kernel serves these over HTTP on `/control/*`, gated by an
+  `IsSuperuser` check on the `@sys` bearer (API.md C13); the UI is an ordinary
+  client of that surface. Superuser **scope** on the normal list pages (a `@sys`
+  session sees all actions/processes/tx/steps) is indicated quietly on those
+  pages, not duplicated as separate admin listings.
+
 ### 3.2 Out of scope (no user-facing flow)
 
-* **Admin / supervision:** user list/show, suspend/unsuspend, credit deposits and
-  withdrawals, admin listings, admin action disable. CLI-only.
-* **Federation management:** friending/unfriending, gossip, and the remote-import
-  lifecycle. These are operator-level concerns with no user-facing flow, and stay
-  out even where an HTTP route exists.
+* **Trace inspection:** no trace-read HTTP route is confirmed, so the Engine-room
+  trace tree stays conditional (§10).
 
 ### 3.3 Known limitations
 
@@ -176,22 +203,36 @@ detectable.
 
 ### 6.1 Information architecture
 
-* The UI MUST present a left sidebar with the four destinations (Run, Inbox,
-  Studio, Wallet), default-expanded with labels, collapsible, with collapse state
-  persisted server-side. The Inbox entry MUST carry its count badge in every
-  state.
-* A top bar MUST be present on every page, holding the omnibox and the inbox bell
-  plus account menu, and nothing that is itself a destination.
+* The UI MUST present a left sidebar whose entries mirror the CLI command groups
+  (`run`, `action`, `process`, `tx`, `step`, `user`, and `admin` for `@sys`),
+  default-expanded with labels, collapsible, with collapse state persisted
+  server-side. The active group MUST carry `aria-current`. The `step` entry MUST
+  carry its waiting-count badge in every state.
+* The account menu (handle, balance, the theme picker, and sign-out) lives in a
+  popover at the sidebar foot; nothing that is itself a destination sits there.
 * Mobile MUST reflow the same layout: the sidebar becomes a fixed bottom tab bar
-  (four destinations, Inbox badge intact); the top bar slims to
-  hamburger · omnibox · bell, with secondary items (settings, theme, logout) in a
-  drawer.
-* The Inbox badge MUST be the only attention-demanding affordance in the UI. It
+  (the primary groups, step badge intact), with secondary items (theme, account,
+  logout) in a drawer.
+* The step badge MUST be the only attention-demanding affordance in the UI. It
   MUST reflect waiting steps for the signed-in user, sourced from a single
-  server-side poll of `GET /v1/steps?status=waiting` per session, fanned out to
-  open tabs — not one polling loop per tab.
+  server-side poll of `GET /v1/steps?status=waiting` per session (a per-session
+  cache), fanned out to open tabs — not one polling loop per tab.
+* All create and edit operations MUST open **floating modal forms** — native
+  `<dialog>` elements opened client-side with `showModal()`. Each modal trigger
+  MUST also be a real link (`?form=NAME`); without JavaScript the server renders
+  the named dialog already `[open]` as an in-flow card, so every flow stays
+  operable with JS off. The `?form=` value MUST be validated server-side against a
+  per-page whitelist before rendering.
+* The UI MUST be keyboard-navigable as a first-class affordance: a Ctrl/Cmd+K
+  command palette whose entries mirror the CLI (and are gated — admin commands
+  appear only for `@sys`), `g`+letter section navigation, `/` to focus search,
+  `?` for a shortcuts overlay, `j`/`k`/`Enter` to move through and open table
+  rows, and `Esc` to close the top layer. The command registry MUST be delivered
+  as inert JSON data (a `type="application/json"` block), never executable inline
+  script, to satisfy the CSP. Every palette command MUST target a real link or
+  form, so the keyboard layer adds no capability unreachable without it.
 
-### 6.2 Run — discovery, action page, payment sheet
+### 6.2 run — discovery, action page, payment sheet
 
 **Discovery.**
 
@@ -223,7 +264,7 @@ detectable.
 
 * Run on the action page MUST open a modal payment sheet. The sheet's confirm
   MUST be the only money-moving control in the flow; the Run control that opens
-  it MUST NOT move money and MUST NOT use clay.
+  it MUST NOT move money and MUST NOT use the accent.
 * The confirm button MUST state the amount (e.g. "Pay 12 ¤ & Run").
 * Inputs MUST be generated from `input_schema` (typed fields, required markers,
   descriptions as help text, client-side hints only; the kernel validates). A
@@ -262,7 +303,7 @@ Long-running calls MUST show elapsed time against the action's historical latenc
 and MUST NOT show an indefinite spinner. If a call returns with the process still
 open (parked steps), the result MUST say so and link to the Wallet.
 
-### 6.3 Inbox — steps
+### 6.3 step — the inbox of work addressed to you
 
 * A waiting step whose `required_caller` is the signed-in user MUST render as a
   completable card; all other steps MUST go to a history table. Filters by
@@ -284,7 +325,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
   `partial_args`, `input_schema`, `required_caller`) MUST be present but collapsed
   by default.
 
-### 6.4 Studio — provider workspace
+### 6.4 action — catalog and provider workspace
 
 * Studio MUST present, in order: earnings, action list, creation zone.
 * Earnings MUST be computed in the BFF by folding the user's own transactions;
@@ -303,7 +344,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * Source-URL input MAY be preflighted for obvious non-HTTP(S)/loopback cases; the
   UI MUST surface the kernel's URL rejection verbatim and MUST NOT reimplement the
   policy.
-* The creation zone MUST offer two paths, each with a clay spend button stating
+* The creation zone MUST offer two paths, each with a the accent spend button stating
   the price:
   * `@sys/make`: `POST /v1/run {action: "@sys/make", args: {description}}`,
     button `[ Synthesize · 20 ¤ ]` (price from `native.make.price`). The call is
@@ -327,7 +368,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
   *Conditional:* a UI-driven ownership-proof flow for public activation; until
   then the UI MUST surface the kernel's rejection rather than drive a proof.
 
-### 6.5 Wallet — money and receipts
+### 6.5 user & tx — money, ledger, and receipts
 
 * The Wallet MUST show three balances using the credited / refunded /
   escrow-pending signals: **Available**; **Parked** (locked: open processes and
@@ -358,33 +399,44 @@ open (parked steps), the result MUST say so and link to the Wallet.
 
 ## 7. Visual language and non-functional requirements
 
-* **Clay is exclusive.** Clay MUST appear only on the control that authorizes a
+* **The accent is exclusive.** The accent MUST appear only on the control that authorizes a
   settling `Call` paying a provider — the terminal, priced, parties-visible
   confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
-  clay.
-* **Button vocabulary (closed set).** Spend: clay, solid, names the amount (e.g.
+  the accent.
+* **Button vocabulary (closed set).** Spend: the accent, solid, names the amount (e.g.
   "Pay 12 ¤ & Run", "Synthesize · 20 ¤", "Do it · 40 ¤"). Primary non-spend:
-  solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from clay —
+  solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist.
 * **Money and identity typography.** Money, IDs, hashes, and `@owner/name` MUST
   render in monospace with tabular figures; the unit is `¤`. Ledger rows MUST
   carry explicit `−`/`+`; spend buttons MUST state the unsigned gross. The owner
   segment of `@owner/name` MUST be weight-emphasized in a confusable-distinct
-  monospace face and MUST NOT use clay.
+  monospace face and MUST NOT use the accent.
 * **Status signals.** The credited, refunded, and escrow-pending states MUST be
-  mutually distinct and distinct from clay in both themes, each pairing a color
+  mutually distinct and distinct from the accent in both themes, each pairing a color
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
-* **Themes.** Light and dark themes MUST derive from one set of semantic design
-  tokens (CSS custom properties); components MUST reference tokens only, never raw
-  colors. Warm charcoal dark and warm ivory light; clay reserved for spend-verbs.
-  Theme defaults to `prefers-color-scheme`; an explicit choice MUST be persisted
-  server-side (a `theme` cookie) and stamped at render time, with no flash and a
-  toggle that works without JavaScript. Both themes MUST meet WCAG AA (≥4.5:1
-  body, ≥3:1 large text and UI affordances). `prefers-reduced-motion` MUST be
-  respected.
+* **Themes.** The UI ships **multiple selectable terminal themes**, each defined
+  by a **Ghostty 16-colour ANSI palette** (`palette 0–15` plus
+  background/foreground/cursor/selection). Every theme MUST derive from one set of
+  semantic design tokens (CSS custom properties) mapped from the palette
+  (`--bg`←background, `--text`←foreground, money signals from the ANSI
+  green/blue/magenta/red slots, `--accent` from a non-status hue slot, surfaces
+  and borders mixed between bg and fg); components MUST reference tokens only,
+  never raw colours. The token stylesheet MUST be generated from the palettes by a
+  committed tool and guarded by a drift test. A theme applies by default from
+  `prefers-color-scheme` (a designated default light and dark theme); an explicit
+  choice MUST be persisted server-side (a `theme` cookie carrying the slug) and
+  stamped on `<html data-theme>` at render time, with no flash and a picker that
+  works without JavaScript. Every shipped theme MUST meet WCAG AA (≥4.5:1 body and
+  muted text, ≥3:1 status signals and UI affordances) — enforced by test; a theme
+  that cannot is not shipped. The accent MUST stay visually distinct from every
+  money-status colour. `prefers-reduced-motion` MUST be respected.
+* **Typography.** The UI face is the **system monospace stack** throughout — the
+  terminal identity — with tabular figures for money, IDs, hashes, and
+  `@owner/name`. Spacing is tight and corners near-square; no drop shadows.
 * **Icons.** One set (Heroicons, outline/solid for inactive/active), recolorable
   to tokens, never emoji. Every icon-only control MUST carry an `aria-label`;
   hover tooltips are enhancement only.
@@ -412,16 +464,19 @@ open (parked steps), the result MUST say so and link to the Wallet.
 refresh, logout-revocation, and cookie/CSRF rules of §5, and additionally MUST:
 route all browser traffic through the BFF as the sole kernel client; serve a
 strict `Content-Security-Policy` (no inline script, self-hosted htmx, no
-third-party origins) with `frame-ancestors 'none'` and
-`Referrer-Policy: no-referrer`; render only through auto-escaping templates; and
-ship no client framework.
+third-party origins) with `frame-ancestors 'none'` and `Referrer-Policy:
+same-origin` (leaks no referrer to any other origin, while preserving the
+same-origin `Origin` header that `gorilla/csrf` validates — `no-referrer` MUST
+NOT be used, as it makes browsers send `Origin: null` and breaks every
+state-changing form); render only through auto-escaping templates; and ship no
+client framework.
 
 **Marketplace-threat layer.** Counterparty-authored content (action names,
 descriptions, schemas, lookup results, args, results, `partial_args`, failure
 `reason`) is untrusted input, wherever it is shown. The UI MUST:
 
 1. Render every counterparty-authored string escaped and quarantined from chrome:
-   no markdown, no auto-links, no bold, no clay, never adjacent to or styled like
+   no markdown, no auto-links, no bold, no the accent, never adjacent to or styled like
    a button; result JSON in a non-interpreted code block. The chrome vocabulary
    defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
@@ -467,6 +522,12 @@ Every production `.go` file has a `_test.go` file with independent tests.
 Features marked *Conditional* elsewhere are indexed here; each is mandatory only
 once its prerequisite is confirmed on the running kernel.
 
+* **Duplicate-user signup leaks a raw 500.** `POST /v1/users` with an existing
+  handle/email returns `500 {"code":"internal","error":"…UNIQUE constraint
+  failed…"}` instead of a clean `409`/`422`. The BFF detects this by message and
+  shows a friendly "already registered" line; if the kernel later returns a typed
+  conflict, simplify the detection. The kernel also does not enforce a minimum
+  password length, so the BFF requires ≥8 characters on new passwords.
 * **`@sys/register-action` — dropped.** Not in the final kernel spec. The
   registration-approval Inbox card and the asynchronous "draft reviewed before
   going live" synthesis flow are removed; `@sys/make` is synchronous and
@@ -501,7 +562,7 @@ about those activities. Money borrows the most over-tested patterns on the web:
 the checkout and the order receipt. The kernel's "a price is a price" — one number
 up front, one receipt at the end, refund on failure — is the mental model of
 buying something online, which is why the payment sheet and receipt page are the
-two load-bearing artifacts, and why the clay spend-verb captures consent
+two load-bearing artifacts, and why the the accent spend-verb captures consent
 atomically with the amount, mirroring the kernel's park-before-execute.
 
 The marketplace is treated as untrusted: counterparty content is hostile input,

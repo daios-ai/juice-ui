@@ -55,7 +55,7 @@ func TestUnauthRedirectsToLogin(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
 	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/", "/run", "/inbox", "/wallet", "/studio", "/processes", "/transactions"} {
+	for _, path := range []string{"/", "/run", "/actions", "/steps", "/user", "/processes", "/transactions"} {
 		resp, err := cl.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -71,14 +71,14 @@ func TestThemeStampedNoFlash(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/login", nil)
-	req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
+	req.AddCookie(&http.Cookie{Name: "theme", Value: "dracula"})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `data-theme="dark"`) {
+	if !strings.Contains(string(body), `data-theme="dracula"`) {
 		t.Error("explicit theme cookie not stamped onto the document (would cause flash)")
 	}
 }
@@ -135,4 +135,3 @@ func TestStaticServed(t *testing.T) {
 		t.Errorf("static css status = %d", resp.StatusCode)
 	}
 }
-

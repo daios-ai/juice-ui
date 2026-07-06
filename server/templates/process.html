@@ -1,35 +1,38 @@
 {{define "content"}}
 {{$d := .Data}}
-<p><a href="/processes">← Sessions</a></p>
-<h1>Session</h1>
+<p><a href="/processes">← process</a></p>
+<h1>process</h1>
 <p class="subtitle id mono">{{$d.Process.ID}}</p>
 
 <div class="card">
   <div class="balances">
     <div class="balance"><div class="amount money">{{money $d.Process.Available}}</div><div class="label">Available</div></div>
-    <div class="balance"><div class="amount money">{{money $d.Process.Locked}}</div><div class="label">Locked (steps)</div></div>
+    <div class="balance"><div class="amount money">{{money $d.Process.Locked}}</div><div class="label">Parked (steps)</div></div>
     <div class="balance"><div class="amount"><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></div><div class="label">Status</div></div>
   </div>
+  {{if $d.Process.AwaitingReceipt}}
+  <p class="banner banner-info">Awaiting a remote receipt — funds are parked on a possibly-offline peer{{if $d.Process.AwaitingReceiptSince}} since {{shortTime $d.Process.AwaitingReceiptSince}}{{end}}.</p>
+  {{end}}
   {{if eq $d.Process.Status "open"}}
   <div class="row">
-    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="End session and reclaim the remaining balance?">
-      {{.CSRFField}}<button class="btn-primary" type="submit">End &amp; reclaim</button>
+    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="Force-end this process? Waiting steps are cancelled and their parked prices refunded to you.">
+      {{.CSRFField}}<button class="btn-danger" type="submit">Force-end &amp; refund parked prices</button>
     </form>
   </div>
   {{end}}
 </div>
 
-<h2>Transactions in this session</h2>
+<h2>Transactions in this process</h2>
 {{if $d.Transactions}}
 <table>
   <thead><tr><th>Status</th><th>Gross</th><th>Net</th><th>When</th><th></th></tr></thead>
   <tbody>
   {{range $d.Transactions}}
-  <tr>
+  <tr class="rowable" tabindex="-1" data-href="/transactions/{{.ID}}">
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
     <td class="money">{{money .Gross}}</td>
     <td class="money">{{money .Net}}</td>
-    <td class="muted">{{.StartedAt}}</td>
+    <td class="muted">{{shortTime .StartedAt}}</td>
     <td><a href="/transactions/{{.ID}}">view</a></td>
   </tr>
   {{end}}

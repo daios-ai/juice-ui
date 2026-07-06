@@ -1,10 +1,9 @@
 {{define "content"}}
 {{$d := .Data}}
-<p><a href="/run">← Run</a></p>
+<p><a href="/actions">← action</a></p>
 <h1>{{$d.Action.Name}}</h1>
-<p class="subtitle ref mono">{{$d.Action.Ref}}</p>
+<p class="subtitle">{{template "_ref" $d.Action.Ref}}</p>
 <p class="action-detail-meta muted">{{$d.Action.Kind}} · <span class="pill {{if $d.Action.Active}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Active}}active{{else}}inactive{{end}}</span> · <span class="pill {{if $d.Action.Public}}status-credited{{else}}status-escrow{{end}}">{{if $d.Action.Public}}public{{else}}private{{end}}</span></p>
-<p class="muted">by <a href="/run?q={{$d.Action.OwnerHandle}}" class="mono owner">{{$d.Action.OwnerHandle}}</a></p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
@@ -38,57 +37,56 @@
       hx-post="/actions/{{$d.Action.ID}}/run" hx-target="#run-result" hx-swap="innerHTML"
       hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
-
   {{template "_form_fields" $d.Form}}
   <div class="row">
-    <button class="btn-primary" type="submit">{{if $d.IsPaid}}Run &middot; <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money $d.Action.Price}}{{else}}Run{{end}}</button>
+    <button class="{{if $d.IsPaid}}btn-money{{else}}btn-primary{{end}}" type="submit">{{if $d.IsPaid}}Pay {{money $d.Action.Price}} ¤ &amp; run{{else}}Run{{end}}</button>
     <div id="run-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
     </div>
   </div>
+  {{if $d.IsPaid}}<p class="help muted flush">Price is the maximum, all-in. Refunded in full if it fails.</p>{{end}}
 </form>
 <div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>
+<p class="muted small">Ratings from paid calls, newest first.</p>
 <div class="card-list">
 {{range $d.Ratings}}
 <div class="card">
   <p class="row compact flush">
     <span class="pill {{if eq .Rating 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Rating 1}}positive{{else}}negative{{end}}</span>
-    <span class="muted small">{{.CreatedAt}}</span>
+    <span class="muted small">{{shortTime .CreatedAt}}</span>
   </p>
-  {{if .Note}}<p style="margin:.5rem 0 0">{{.Note}}</p>{{end}}
+  {{if .Note}}<p class="card-note">{{.Note}}</p>{{end}}
 </div>
 {{end}}
 </div>
 {{end}}
 
 {{if $d.IsOwner}}
-<h2>Manage (owner)</h2>
+<h2>Manage</h2>
 <div class="card stack">
-  <div class="row">
+  <div class="cluster">
     {{if $d.Action.Active}}
     <form method="post" action="/actions/{{$d.Action.ID}}/disable">{{$.CSRFField}}<button class="btn" type="submit">Disable</button></form>
     {{else}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/enable">{{$.CSRFField}}<button class="btn-primary" type="submit">Enable</button></form>
+    <form method="post" action="/actions/{{$d.Action.ID}}/enable">{{$.CSRFField}}<button class="btn" type="submit">Enable</button></form>
     {{end}}
     {{if $d.Action.Public}}
     <form method="post" action="/actions/{{$d.Action.ID}}/make-private">{{$.CSRFField}}<button class="btn" type="submit">Make private</button></form>
     {{else}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/make-public">{{$.CSRFField}}<button class="btn-primary" type="submit">Make public</button></form>
+    <form method="post" action="/actions/{{$d.Action.ID}}/make-public">{{$.CSRFField}}<button class="btn" type="submit">Make public</button></form>
     {{end}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<button class="btn btn-danger" type="submit">Delete</button></form>
+    <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
+    <form method="post" action="/actions/{{$d.Action.ID}}/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<button class="btn-danger" type="submit">Delete</button></form>
   </div>
-  <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">
-    {{$.CSRFField}}
-    <label for="new-price" class="flush">Price <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg></label>
-    <input id="new-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
-    <button class="btn" type="submit">Update price</button>
-  </form>
-  <p class="help muted flush">Changing price deactivates the action.</p>
-  <details class="details-panel">
-    <summary>Edit action</summary>
+  <p class="help muted flush">Editing source, schema, or price deactivates the action until you re-enable it.</p>
+</div>
+
+<dialog id="form-action-edit" class="modal-form"{{if eq $d.OpenForm "action-edit"}} open{{end}} aria-label="Edit action">
+  <div class="modal-head"><h2>Edit {{$d.Action.Name}}</h2><a class="modal-close" href="/actions/{{$d.Action.ID}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
     <form class="stack" method="post" action="/actions/{{$d.Action.ID}}/update">
       {{$.CSRFField}}
       <div class="field">
@@ -98,11 +96,11 @@
       <div class="field">
         <label for="edit-input-schema">Input schema (JSON)</label>
         <p class="help">Schema hints only; the kernel validates. Leave blank to keep the current schema.</p>
-        <textarea id="edit-input-schema" name="input_schema" placeholder='{"type":"object","properties":{}}'>{{jsonEdit $d.Action.InputSchema}}</textarea>
+        <textarea id="edit-input-schema" name="input_schema" placeholder='{"type":"object","properties":{}}' rows="1">{{jsonEdit $d.Action.InputSchema}}</textarea>
       </div>
       <div class="field">
         <label for="edit-output-schema">Output schema (JSON)</label>
-        <textarea id="edit-output-schema" name="output_schema" placeholder='{"type":"object"}'>{{jsonEdit $d.Action.OutputSchema}}</textarea>
+        <textarea id="edit-output-schema" name="output_schema" placeholder='{"type":"object"}' rows="1">{{jsonEdit $d.Action.OutputSchema}}</textarea>
       </div>
       {{if $d.Action.HTTP}}
       <div class="field">
@@ -149,10 +147,25 @@
         <button type="button" class="btn" data-param-add>Add parameter</button>
       </div>
       {{end}}
-      <button class="btn" type="submit">Save changes</button>
+      <div class="field">
+        <label for="edit-price">Price ¤</label>
+        <input id="edit-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
+        <p class="help">Submitting the price separately: use the price control if you only want to change price.</p>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Save changes</button>
+        <a class="btn" href="/actions/{{$d.Action.ID}}" data-modal-close>Cancel</a>
+      </div>
       <p class="help muted flush">Saving deactivates the action until you re-enable it.</p>
     </form>
-  </details>
-</div>
+    <hr class="card-sep">
+    <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">
+      {{$.CSRFField}}
+      <label for="new-price" class="flush">Price only ¤</label>
+      <input id="new-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
+      <button class="btn" type="submit">Update price</button>
+    </form>
+  </div>
+</dialog>
 {{end}}
 {{end}}

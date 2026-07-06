@@ -16,12 +16,46 @@ import (
 
 // ---- view models ----
 
-type loginView struct{ Error, Notice string }
+type loginView struct {
+	Error, Notice string
+	Tab           string // "signin" | "signup" — the active entry tab (also the no-JS ?tab= state)
+}
 
-type walletView struct {
+// minPasswordLen is the minimum length the BFF enforces for a new password (the
+// kernel enforces none).
+const minPasswordLen = 8
+
+// validateNewPassword returns a user-facing error message when a newly-defined
+// password fails confirmation or length, or "" when it is acceptable. Used by
+// both signup and the change-password flow.
+func validateNewPassword(password, confirm string) string {
+	if len(password) < minPasswordLen {
+		return fmt.Sprintf("Password must be at least %d characters.", minPasswordLen)
+	}
+	if password != confirm {
+		return "The passwords don't match."
+	}
+	return ""
+}
+
+// loginTab returns the whitelisted entry tab from the request, defaulting to signin.
+func loginTab(r *http.Request) string {
+	if r.URL.Query().Get("tab") == "signup" {
+		return "signup"
+	}
+	return "signin"
+}
+
+// userView is the account room: identity, balances, and provider earnings folded
+// from the user's own transactions.
+type userView struct {
 	User          client.User
 	Transactions  []client.Transaction
 	OpenProcesses []client.Process
+	Parked        int64 // locked funds across open processes
+	OpenForm      string
+	Error         string
+	Notice        string
 }
 
 type studioEarnings struct {
@@ -42,6 +76,7 @@ type discoverView struct {
 	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []actionCardView
 	Catalog         []actionCardView
+	OpenForm        string
 }
 
 type actionView struct {
@@ -53,16 +88,23 @@ type actionView struct {
 	IsOwner  bool
 	IsPaid   bool
 	Outcome  *Outcome
+	OpenForm string
 	Error    string
 }
 
-type studioView struct {
-	User     client.User
-	Cards    []actionCardView
-	Earnings studioEarnings
-	Filter   string // "active" | "inactive" | "" (all)
-	Error    string
-	Notice   string
+// actionsView is the action room: browse everyone's catalog and manage your own,
+// with earnings folded in. Scope="all" for a superuser shows the whole catalog.
+type actionsView struct {
+	User      client.User
+	Mine      []actionCardView // the signed-in user's own actions (management)
+	Catalog   []actionCardView // public catalog (browse)
+	Earnings  studioEarnings
+	Filter    string // "active" | "inactive" | "" (all) — applies to Mine
+	Scope     string // "" (own+public) | "all" (superuser sees every action)
+	Superuser bool
+	OpenForm  string
+	Error     string
+	Notice    string
 }
 
 type makeResultView struct {
@@ -73,7 +115,10 @@ type makeResultView struct {
 	Error       string   // kernel or validation error
 }
 
-type processesView struct{ Open, Closed []client.Process }
+type processesView struct {
+	Open, Closed []client.Process
+	Superuser    bool
+}
 
 type processView struct {
 	Process      client.Process
@@ -83,7 +128,8 @@ type processView struct {
 type transactionsView struct {
 	Transactions []client.Transaction
 	Actions      map[string]client.Action // action_id → Action; missing if deleted
-	MyID         string
+	MyHandle     string
+	Superuser    bool
 }
 
 type txView struct {
@@ -102,20 +148,24 @@ type stepEntry struct {
 }
 
 type stepsView struct {
-	MyID    string
-	Inbox   []stepEntry              // waiting steps that require this user
-	History []client.Step            // completed/running/other steps
-	Actions map[string]client.Action // action_id → action, for name display
-	Error   string
+	MyHandle  string
+	Inbox     []stepEntry              // waiting steps that require this user
+	History   []client.Step            // completed/running/other steps
+	Actions   map[string]client.Action // action_id → action, for name display
+	Filter    string                   // status filter
+	Superuser bool
+	OpenForm  string
+	Error     string
+}
+
+type stepView struct {
+	Step        client.Step
+	Action      *client.Action
+	Form        StepFormModel
+	CanComplete bool
 }
 
 type errorView struct{ Message string }
-
-type settingsView struct {
-	User   client.User
-	Error  string
-	Notice string
-}
 
 // ---- auth ----
 
@@ -124,14 +174,14 @@ func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/run", http.StatusSeeOther)
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{})
+	s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: loginTab(r)})
 }
 
 func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	handle, password := r.FormValue("handle"), r.FormValue("password")
 	if err := s.doLogin(r.Context(), handle, password); err != nil {
 		s.log.Warn("login failed", "err", err)
-		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Error: loginErrorMessage(err)})
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
 		return
 	}
 	http.Redirect(w, r, "/run", http.StatusSeeOther)
@@ -140,12 +190,20 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 	handle, email, password := r.FormValue("handle"), r.FormValue("email"), r.FormValue("password")
 	ctx := r.Context()
+	// Validate the password locally: confirmation match and minimum length (the
+	// kernel enforces neither). Stay on the create-account tab on error.
+	if msg := validateNewPassword(password, r.FormValue("confirm_password")); msg != "" {
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: msg})
+		return
+	}
 	if _, err := s.client.CreateUser(ctx, handle, email, password); err != nil {
-		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Error: signupErrorMessage(err)})
+		// Stay on the create-account tab so the user sees the error in context.
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: signupErrorMessage(err)})
 		return
 	}
 	if err := s.doLogin(ctx, handle, password); err != nil {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{
+			Tab:    "signin",
 			Notice: "Account created. Please sign in.",
 			Error:  loginErrorMessage(err),
 		})
@@ -189,11 +247,15 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {
 	theme := r.FormValue("theme")
-	if theme != "light" && theme != "dark" {
+	// An empty or unknown slug clears the cookie (defer to prefers-color-scheme);
+	// a valid slug is stamped on <html data-theme> at the next render.
+	maxAge := 31536000
+	if !ValidTheme(theme) {
 		theme = ""
+		maxAge = -1
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: "theme", Value: theme, Path: "/", MaxAge: 31536000,
+		Name: "theme", Value: theme, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
 	})
 	to := r.Header.Get("Referer")
@@ -221,10 +283,10 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 
 // ---- run room (discover / marketplace) ----
 
-func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	view := discoverView{Query: q, LookupAvailable: true}
+	view := discoverView{Query: q, LookupAvailable: true, OpenForm: openForm(r, "run")}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q == "" {
 			cat, e := s.client.ListActions(ctx, tok, "", "")
@@ -294,26 +356,71 @@ func (s *Server) getRunRoom(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "run", "Run", view)
 }
 
-// ---- settings ----
-
-func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+// postRunByRef runs an action named by "@owner/name" (the palette / run-page
+// path). It resolves the action to confirm the price, then executes; the caller
+// is expected to have passed through the priced confirm form.
+func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var view settingsView
+	ref := strings.TrimSpace(r.FormValue("action"))
+	args, argErr := buildArgs(r)
+	if ref == "" {
+		s.flashRedirect(w, r, "/run", "error", "No action specified.")
+		return
+	}
+	if argErr != nil {
+		s.flashRedirect(w, r, "/run", "error", "Invalid JSON in arguments: "+argErr.Error())
+		return
+	}
+	var outcome Outcome
+	err := s.sessions.Do(ctx, func(tok string) error {
+		out, e := s.caller.Run(ctx, tok, ref, args)
+		if e != nil {
+			return e
+		}
+		outcome = out
+		outcome.CSRFField = csrf.TemplateField(r)
+		return nil
+	})
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
+		return
+	}
+	if outcome.TxID != "" {
+		http.Redirect(w, r, "/transactions/"+outcome.TxID, http.StatusSeeOther)
+		return
+	}
+	s.flashRedirect(w, r, "/run", "info", outcome.Message)
+}
+
+// ---- user (account + wallet) ----
+
+func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	view := userView{OpenForm: openForm(r, "user")}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
 		view.User = u
+		view.Transactions, _ = s.client.ListTransactions(ctx, tok, "")
+		procs, _ := s.client.ListProcesses(ctx, tok)
+		view.OpenProcesses = filterStatus(procs, "open", true)
+		for _, p := range view.OpenProcesses {
+			view.Parked += p.Locked
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "settings", "Settings", view, view.User.Available)
+	s.renderPage(w, r, http.StatusOK, "user", "Account", view, view.User.Available)
 }
 
-func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	email := strings.TrimSpace(r.FormValue("email"))
 	currentPw := r.FormValue("current_password")
@@ -321,15 +428,21 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 
 	inp := client.UpdateMeInput{Email: email, CurrentPassword: currentPw, Password: newPw}
 	if inp.Email == "" && inp.Password == "" {
-		s.flashRedirect(w, r, "/settings", "info", "Nothing to update.")
+		s.flashRedirect(w, r, "/user", "info", "Nothing to update.")
 		return
+	}
+	// Validate a new password (confirmation + length) before touching the kernel.
+	if newPw != "" {
+		if msg := validateNewPassword(newPw, r.FormValue("confirm_password")); msg != "" {
+			s.flashRedirect(w, r, "/user", "error", msg)
+			return
+		}
 	}
 
 	passwordChange := currentPw != ""
 	var apiErr error
-	var updated client.User
 	outerErr := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.UpdateMe(ctx, tok, inp)
+		_, e := s.client.UpdateMe(ctx, tok, inp)
 		if e != nil {
 			if passwordChange {
 				apiErr = e
@@ -337,7 +450,6 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			return e
 		}
-		updated = u
 		return nil
 	})
 	if isAuthErr(outerErr) {
@@ -352,84 +464,52 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 		if ke, ok := client.AsKernelError(apiErr); ok && ke.Kind == client.KindUnauthenticated {
 			msg = "Current password is incorrect."
 		}
-		var view settingsView
-		view.Error = msg
-		_ = s.sessions.Do(ctx, func(tok string) error {
-			view.User, _ = s.client.Me(ctx, tok)
-			return nil
-		})
-		s.renderPage(w, r, http.StatusOK, "settings", "Settings", view, view.User.Available)
+		s.flashRedirect(w, r, "/user", "error", msg)
 		return
 	}
 
-	notice := "Settings updated."
+	notice := "Account updated."
 	if email != "" && newPw == "" {
 		notice = "Email updated."
 	} else if newPw != "" {
 		notice = "Password changed."
 	}
-	_ = updated
-	s.flashRedirect(w, r, "/settings", "success", notice)
+	s.flashRedirect(w, r, "/user", "success", notice)
 }
 
-// ---- wallet ----
+// ---- steps ----
 
-func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var view walletView
-	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
-		view.User = u
-		txs, _ := s.client.ListTransactions(ctx, tok, "")
-		view.Transactions = txs
-		procs, _ := s.client.ListProcesses(ctx, tok)
-		view.OpenProcesses = filterStatus(procs, "open", true)
-		return nil
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.User.Available)
-}
-
-// ---- inbox ----
-
-func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var myID string
+	filter := r.URL.Query().Get("status")
+	view := stepsView{Actions: map[string]client.Action{}, Filter: filter, Superuser: s.isSuperuser(r), OpenForm: openForm(r, "step")}
 	var myAvailable int64
-	var inbox []stepEntry
-	var history []client.Step
-	actions := map[string]client.Action{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
-		myID = me.ID
+		view.MyHandle = me.Handle
 		myAvailable = me.Available
-		steps, e := s.client.ListSteps(ctx, tok, "", "")
+		steps, e := s.client.ListSteps(ctx, tok, "", filter)
 		if e != nil {
 			return e
 		}
-		seen := map[string]bool{}
 		for _, step := range steps {
-			if step.ActionID != "" && !seen[step.ActionID] {
-				seen[step.ActionID] = true
-				if a, ae := s.client.GetAction(ctx, tok, step.ActionID); ae == nil {
-					actions[step.ActionID] = a
+			if step.ActionID != "" {
+				if _, ok := view.Actions[step.ActionID]; !ok {
+					if a, ae := s.client.GetAction(ctx, tok, step.ActionID); ae == nil {
+						view.Actions[step.ActionID] = a
+					}
 				}
 			}
-			if step.Status == "waiting" && step.RequiredCallerUserID == myID {
-				inbox = append(inbox, stepEntry{
+			if step.Status == "waiting" && step.RequiredCallerHandle == me.Handle {
+				view.Inbox = append(view.Inbox, stepEntry{
 					Step: step,
-					Form: BuildStepForm(actions[step.ActionID].InputSchema, step.PartialArgs),
+					Form: BuildStepForm(view.Actions[step.ActionID].InputSchema, step.PartialArgs),
 				})
 			} else {
-				history = append(history, step)
+				view.History = append(view.History, step)
 			}
 		}
 		return nil
@@ -437,21 +517,76 @@ func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", stepsView{
-		MyID:    myID,
-		Inbox:   inbox,
-		History: history,
-		Actions: actions,
-	}, myAvailable)
+	s.renderPage(w, r, http.StatusOK, "steps", "Steps", view, myAvailable)
+}
+
+func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+	var view stepView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		st, e := s.client.GetStep(ctx, tok, id)
+		if e != nil {
+			return e
+		}
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		view.Step = st
+		view.CanComplete = st.Status == "waiting" && st.RequiredCallerHandle == me.Handle
+		if a, ae := s.client.GetAction(ctx, tok, st.ActionID); ae == nil {
+			view.Action = &a
+			view.Form = BuildStepForm(a.InputSchema, st.PartialArgs)
+		}
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "step_detail", "Step", view)
+}
+
+// postCreateStep creates a waiting step (a developer affordance): it needs the
+// funding trace, next action, required caller, and any partial args.
+func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	in := client.CreateStepInput{
+		TraceID:        strings.TrimSpace(r.FormValue("trace_id")),
+		ActionID:       strings.TrimSpace(r.FormValue("action_id")),
+		RequiredCaller: strings.TrimSpace(r.FormValue("required_caller")),
+	}
+	partial, err := rawJSONOrEmpty(r.FormValue("partial_args"))
+	if err != nil {
+		s.flashRedirect(w, r, "/steps", "error", "Invalid JSON in partial args.")
+		return
+	}
+	in.PartialArgs = partial
+	var created client.Step
+	oErr := s.sessions.Do(ctx, func(tok string) error {
+		st, e := s.client.CreateStep(ctx, tok, in)
+		created = st
+		return e
+	})
+	if isAuthErr(oErr) {
+		s.handleErr(w, r, oErr)
+		return
+	}
+	if oErr != nil {
+		s.flashRedirect(w, r, "/steps", "error", userMessage(oErr))
+		return
+	}
+	_ = created
+	s.flashRedirect(w, r, "/steps", "success", "Step created.")
 }
 
 const (
-	sessionKeyBadgeCount = "inbox.badge.count"
-	sessionKeyBadgeAt    = "inbox.badge.at"
+	sessionKeyBadgeCount = "steps.badge.count"
+	sessionKeyBadgeAt    = "steps.badge.at"
 	badgeCacheTTL        = 30 * time.Second
 )
 
-func (s *Server) getInboxBadge(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sm := s.sessions.SCS()
 
@@ -465,13 +600,13 @@ func (s *Server) getInboxBadge(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
-			steps, e := s.client.ListSteps(ctx, tok, "", "")
+			steps, e := s.client.ListSteps(ctx, tok, "", "waiting")
 			if e != nil {
 				return e
 			}
 			n := 0
 			for _, st := range steps {
-				if st.Status == "waiting" && st.RequiredCallerUserID == me.ID {
+				if st.Status == "waiting" && st.RequiredCallerHandle == me.Handle {
 					n++
 				}
 			}
@@ -504,10 +639,11 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view = actionView{
-			Action:  a,
-			Form:    BuildForm(a.InputSchema),
-			IsOwner: a.OwnerUserID == me.ID,
-			IsPaid:  a.Price > 0,
+			Action:   a,
+			Form:     BuildForm(a.InputSchema),
+			IsOwner:  a.OwnerHandle == me.Handle,
+			IsPaid:   a.Price > 0,
+			OpenForm: openForm(r, "action-detail"),
 		}
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats, view.HasStats = st, true
@@ -538,7 +674,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerUserID == me.ID, IsPaid: a.Price > 0}
+		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerHandle == me.Handle, IsPaid: a.Price > 0}
 		if argErr == nil {
 			out, e := s.caller.Run(ctx, tok, a.Ref(), args)
 			if e != nil {
@@ -582,11 +718,19 @@ func orDefaultStr(v, def string) string {
 
 // ---- studio ----
 
-func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
+// getActions is the action room: manage your own actions (with earnings folded
+// from your transactions) and browse the public catalog. A superuser can widen
+// the management list to every action with ?scope=all.
+func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
-	var me client.User
-	var acts []client.Action
+	scope := r.URL.Query().Get("scope")   // "" | "all" (superuser)
+	super := s.isSuperuser(r)
+	if scope == "all" && !super {
+		scope = ""
+	}
+	view := actionsView{Filter: filter, Scope: scope, Superuser: super, OpenForm: openForm(r, "action")}
+	var mine, catalog []client.Action
 	var txs []client.Transaction
 	actionStats := map[string]client.Stats{}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -594,14 +738,22 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		me = u
-		a, e := s.client.ListActions(ctx, tok, me.Handle, "")
+		view.User = u
+		ownerFilter := u.Handle
+		if scope == "all" {
+			ownerFilter = "" // whole catalog; superuser sees all rows
+		}
+		a, e := s.client.ListActions(ctx, tok, ownerFilter, "")
 		if e != nil {
 			return e
 		}
-		acts = a
+		mine = a
+		if scope != "all" {
+			// Browse: the public catalog (everyone's active/public actions).
+			catalog, _ = s.client.ListActions(ctx, tok, "", "")
+		}
 		txs, _ = s.client.ListTransactions(ctx, tok, "")
-		for _, action := range acts {
+		for _, action := range mine {
 			if st, e := s.client.ActionStats(ctx, tok, action.ID); e == nil {
 				actionStats[action.ID] = st
 			}
@@ -611,17 +763,15 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	var earn studioEarnings
 	for _, tx := range txs {
-		if tx.TargetUserID == me.ID && tx.Status == "success" {
-			earn.Gross += tx.Gross
-			earn.Fee += tx.Fee
-			earn.Net += tx.Net
-			earn.Count++
+		if tx.TargetHandle == view.User.Handle && tx.Status == "success" {
+			view.Earnings.Gross += tx.Gross
+			view.Earnings.Fee += tx.Fee
+			view.Earnings.Net += tx.Net
+			view.Earnings.Count++
 		}
 	}
-	var cards []actionCardView
-	for _, a := range acts {
+	for _, a := range mine {
 		if filter == "active" && !a.Active {
 			continue
 		}
@@ -633,11 +783,16 @@ func (s *Server) getStudio(w http.ResponseWriter, r *http.Request) {
 			cp := sv
 			st = &cp
 		}
-		cards = append(cards, actionCardView{Action: a, Stats: st})
+		view.Mine = append(view.Mine, actionCardView{Action: a, Stats: st})
 	}
-	s.renderPage(w, r, http.StatusOK, "studio", "Studio", studioView{
-		User: me, Cards: cards, Earnings: earn, Filter: filter,
-	}, me.Available)
+	// Catalog excludes the user's own actions (already in Mine) for a cleaner browse.
+	for _, a := range catalog {
+		if a.OwnerHandle == view.User.Handle {
+			continue
+		}
+		view.Catalog = append(view.Catalog, actionCardView{Action: a})
+	}
+	s.renderPage(w, r, http.StatusOK, "actions", "Actions", view, view.User.Available)
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
@@ -659,7 +814,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 	}{{"input_schema", &in.InputSchema}, {"output_schema", &in.OutputSchema}} {
 		raw, err := schemaFromForm(r, f.key)
 		if err != nil {
-			s.flashRedirect(w, r, "/studio", "error", err.Error())
+			s.flashRedirect(w, r, "/actions", "error", err.Error())
 			return
 		}
 		*f.dst = raw
@@ -708,10 +863,10 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.flashRedirect(w, r, "/studio", "error", userMessage(err))
+		s.flashRedirect(w, r, "/actions", "error", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/studio", "success", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
+	s.flashRedirect(w, r, "/actions", "success", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
@@ -726,7 +881,7 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/studio", "success", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
+	s.flashRedirect(w, r, "/actions", "success", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
 }
 
 func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
@@ -741,7 +896,7 @@ func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/studio", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
+	s.flashRedirect(w, r, "/actions", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
 }
 
 // postMakeAction calls @sys/make to synthesize a WASM action from a
@@ -812,7 +967,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 	if msg == "" {
 		msg = "Synthesis failed. Refine your description and try again."
 	}
-	s.flashRedirect(w, r, "/studio", "error", msg)
+	s.flashRedirect(w, r, "/actions", "error", msg)
 }
 
 func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
@@ -912,6 +1067,12 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 	}
 	desc := r.FormValue("description")
 	in := client.UpdateActionInput{Description: &desc}
+	if r.PostForm.Has("price") {
+		p := parseInt64(r.FormValue("price"))
+		if p >= 0 {
+			in.Price = &p
+		}
+	}
 	for _, f := range []struct {
 		key string
 		dst *json.RawMessage
@@ -953,7 +1114,7 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/studio", "success", "Action deleted. History is preserved.")
+	s.flashRedirect(w, r, "/actions", "success", "Action deleted. History is preserved.")
 }
 
 // ---- processes ----
@@ -969,9 +1130,10 @@ func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "processes", "Sessions", processesView{
-		Open:   filterStatus(procs, "open", true),
-		Closed: filterStatus(procs, "open", false),
+	s.renderPage(w, r, http.StatusOK, "processes", "Processes", processesView{
+		Open:      filterStatus(procs, "open", true),
+		Closed:    filterStatus(procs, "open", false),
+		Superuser: s.isSuperuser(r),
 	})
 }
 
@@ -1012,13 +1174,13 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var txs []client.Transaction
 	actions := map[string]client.Action{}
-	var myID string
+	var myHandle string
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
-		myID = me.ID
+		myHandle = me.Handle
 		t, e := s.client.ListTransactions(ctx, tok, "")
 		if e != nil {
 			return e
@@ -1040,7 +1202,9 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{Transactions: txs, Actions: actions, MyID: myID})
+	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{
+		Transactions: txs, Actions: actions, MyHandle: myHandle, Superuser: s.isSuperuser(r),
+	})
 }
 
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
@@ -1057,8 +1221,36 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		// The buyer (process owner) may rate a successful, unrated transaction (R6.6.4).
-		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerUserID == me.ID && tx.Rating == nil}
-		// Fetch the action; nil on 404 (soft-deleted action).
+		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerHandle == me.Handle && tx.Rating == nil}
+		// Fetch the action; nil on 404 (soft-deleted action). Receipt verification
+		// is on demand (the Verify control → getTxVerify), not fetched eagerly.
+		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
+			view.Action = &a
+		}
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "transaction", "Transaction", view)
+}
+
+// getTxVerify runs receipt verification on demand and returns the _receipt
+// fragment (htmx) or the full transaction page (no-JS) with the result attached.
+func (s *Server) getTxVerify(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+	var view txView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		tx, e := s.client.GetTransaction(ctx, tok, id)
+		if e != nil {
+			return e
+		}
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerHandle == me.Handle && tx.Rating == nil}
 		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
 			view.Action = &a
 		}
@@ -1071,7 +1263,11 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_receipt", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "transaction", "Transaction", view)
@@ -1131,17 +1327,40 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 			_ = s.render.Fragment(w, http.StatusOK, "_error", msg)
 			return
 		}
-		s.flashRedirect(w, r, "/inbox", "error", msg)
+		s.flashRedirect(w, r, "/steps", "error", msg)
 		return
 	}
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
 		return
 	}
-	s.flashRedirect(w, r, "/inbox", "success", "Step completed.")
+	s.flashRedirect(w, r, "/steps", "success", "Step completed.")
 }
 
 // ---- helpers ----
+
+// formWhitelist maps a page group to the modal forms it may open via ?form=.
+// The no-JS fallback renders the named dialog with the [open] attribute, so the
+// value is validated here before it ever reaches a template.
+var formWhitelist = map[string]map[string]bool{
+	"run":           {},
+	"action":        {"action-create": true, "action-make": true, "action-import": true, "action-unimport": true},
+	"action-detail": {"action-edit": true},
+	"user":          {"user-update": true},
+	"step":          {"step-create": true},
+	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-friend": true},
+}
+
+// openForm returns the requested ?form value if it is whitelisted for the page
+// group, else "". With JS the anchor opens the dialog client-side and this is
+// unused; without JS the handler renders the named dialog already open.
+func openForm(r *http.Request, group string) string {
+	name := r.URL.Query().Get("form")
+	if name != "" && formWhitelist[group][name] {
+		return name
+	}
+	return ""
+}
 
 func filterStatus(procs []client.Process, status string, match bool) []client.Process {
 	var out []client.Process
@@ -1300,7 +1519,17 @@ func signupErrorMessage(err error) string {
 		if ke.Kind == client.KindRateLimited {
 			return "Too many sign-up attempts from your network. Please wait a moment and try again."
 		}
-		return ke.UserMessage()
+		// A duplicate handle/email surfaces as a raw 500 (the kernel leaks its
+		// UNIQUE-constraint failure). Detect it by the message and translate to a
+		// friendly line — never the run-outcome UserMessage() ("action failed /
+		// refunded"), which makes no sense for account creation, and never the raw
+		// constraint text.
+		m := strings.ToLower(ke.KernelMessage)
+		for _, hint := range []string{"constraint", "unique", "already", "exists", "duplicate", "email", "handle"} {
+			if strings.Contains(m, hint) {
+				return "That handle or email is already registered — try signing in, or use different details."
+			}
+		}
 	}
-	return "Could not create the account. Please try again."
+	return "Could not create the account. Please check your details and try again."
 }

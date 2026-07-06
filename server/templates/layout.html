@@ -5,11 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <title>{{if .Title}}{{.Title}} · {{end}}Juice</title>
+  <link rel="stylesheet" href="/static/themes.css">
   <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" type="module"></script>
   <script src="/static/schema-form.js" type="module"></script>
+  <script src="/static/keys.js" type="module"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -17,7 +19,7 @@
     {{if .Handle}}
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/run"><span class="brand-mark">◆</span><span class="lbl">Juice</span></a>
+        <a class="brand" href="/run"><span class="brand-mark">◆</span><span class="lbl">juice</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
@@ -26,27 +28,32 @@
       </div>
 
       <nav class="nav" aria-label="Primary">
-        <a href="/run" title="Run"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span class="lbl">Run</span></a>
-        <a href="/inbox" title="Inbox" class="nav-inbox">
+        <a href="/run" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span class="lbl">run</span></a>
+        <a href="/actions" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span class="lbl">action</span></a>
+        <a href="/processes" title="Processes"{{if eq .Active "process"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layout-dashboard"/></svg><span class="lbl">process</span></a>
+        <a href="/transactions" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl">tx</span></a>
+        <a href="/steps" title="Steps" class="nav-inbox"{{if eq .Active "step"}} aria-current="page"{{end}}>
           <span class="ico-badge-wrap">
             <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
             <span id="inbox-badge"
-                  hx-get="/inbox/badge"
+                  hx-get="/steps/badge"
                   hx-trigger="load, every 30s"
                   hx-swap="innerHTML"
                   class="badge"
-                  aria-label="Inbox notifications"></span>
+                  aria-label="Waiting steps"></span>
           </span>
-          <span class="lbl">Inbox</span>
+          <span class="lbl">step</span>
         </a>
-        <a href="/studio" title="Studio"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg><span class="lbl">Studio</span></a>
-        <a href="/wallet" title="Wallet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#wallet"/></svg><span class="lbl">Wallet</span></a>
+        <a href="/user" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl">user</span></a>
+        {{if .IsSuperuser}}
+        <a href="/admin" title="Admin"{{if eq .Active "admin"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg><span class="lbl">admin</span></a>
+        {{end}}
       </nav>
 
       <div class="profile-menu">
         <button class="profile-trigger" data-menu="profile-popup" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu" title="Account menu">
           <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
-          <span class="lbl">{{.Handle}}</span>
+          <span class="lbl mono">{{.Handle}}</span>
         </button>
         <div class="menu" id="profile-popup" role="menu" hidden>
           {{template "_menu_content" .}}
@@ -78,21 +85,45 @@
 
   {{if .Handle}}
   <nav class="tab-bar" aria-label="Primary">
-    <a href="/run" class="tab" title="Run"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span>Run</span></a>
-    <a href="/inbox" class="tab" title="Inbox"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg><span>Inbox</span></a>
-    <a href="/studio" class="tab" title="Studio"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg><span>Studio</span></a>
-    <a href="/wallet" class="tab" title="Wallet"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#wallet"/></svg><span>Wallet</span></a>
+    <a href="/run" class="tab" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span>run</span></a>
+    <a href="/actions" class="tab" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span>action</span></a>
+    <a href="/steps" class="tab" title="Steps"{{if eq .Active "step"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg><span>step</span></a>
+    <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>tx</span></a>
+    <a href="/user" class="tab" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span>user</span></a>
   </nav>
   {{end}}
 
   <div aria-live="polite" aria-atomic="true" id="live-region" class="live-region"></div>
+
+  {{if .Handle}}
+  <!-- Keyboard command palette (Ctrl/Cmd+K). Registry is inert JSON data (CSP-safe). -->
+  <script type="application/json" id="command-registry">{{.Commands}}</script>
+  <dialog id="palette" class="palette" aria-label="Command palette">
+    <input type="text" class="palette-input" id="palette-input" placeholder="Type a command…  (e.g. action create, tx list, theme nord)" aria-label="Command" autocomplete="off">
+    <ul class="palette-list" id="palette-list" role="listbox"></ul>
+  </dialog>
+  <dialog id="help" class="palette" aria-label="Keyboard shortcuts">
+    <div class="modal-head"><h2>Keyboard shortcuts</h2><button class="modal-close" data-modal-close aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <dl class="help-grid">
+        <dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette</dd>
+        <dt><kbd>g</kbd> then <kbd>r a p t s u</kbd></dt><dd>Go to run · action · process · tx · step · user</dd>
+        <dt><kbd>/</kbd></dt><dd>Focus search</dd>
+        <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
+        <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>
+        <dt><kbd>?</kbd></dt><dd>This help</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Close the top layer</dd>
+      </dl>
+    </div>
+  </dialog>
+  {{end}}
 
   <div id="modal-backdrop" class="modal-backdrop" hidden aria-hidden="true">
     <div class="modal-box" role="alertdialog" aria-modal="true" aria-labelledby="modal-msg">
       <p id="modal-msg" class="modal-msg"></p>
       <div class="modal-actions">
         <button id="modal-cancel" class="btn">Cancel</button>
-        <button id="modal-confirm" class="btn btn-danger">Confirm</button>
+        <button id="modal-confirm" class="btn-danger">Confirm</button>
       </div>
     </div>
   </div>

@@ -10,10 +10,14 @@ document.addEventListener("htmx:configRequest", (e) => {
   }
 });
 
-// Optimistic theme toggle.
-for (const form of document.querySelectorAll("form.theme-toggle")) {
-  form.addEventListener("submit", () => {
-    document.documentElement.setAttribute("data-theme", form.querySelector('input[name="theme"]').value);
+// Theme picker: apply the chosen terminal theme instantly, then persist it via
+// the real form POST (which also works with JS off). An empty value clears the
+// data-theme attribute so the OS preference takes over.
+for (const sel of document.querySelectorAll("[data-theme-select]")) {
+  sel.addEventListener("change", () => {
+    if (sel.value) document.documentElement.setAttribute("data-theme", sel.value);
+    else document.documentElement.removeAttribute("data-theme");
+    sel.closest("form")?.requestSubmit();
   });
 }
 
@@ -138,9 +142,10 @@ for (const form of document.querySelectorAll("form.sidebar-collapse")) {
 }
 
 // Auth scheme: show only the credential fields for the selected scheme.
-// Inputs in hidden sections are disabled so they are not submitted.
+// Inputs in hidden sections are disabled so they are not submitted. Scoped to the
+// enclosing form so it works inside a <details> panel or a <dialog> modal alike.
 for (const sel of document.querySelectorAll('select[name="auth_scheme"]')) {
-  const panel = sel.closest('details');
+  const panel = sel.closest('form') || sel.closest('details');
   function update() {
     for (const sec of panel.querySelectorAll('[data-auth-scheme]')) {
       const match = sec.dataset.authScheme === sel.value;
@@ -186,5 +191,74 @@ for (const box of document.querySelectorAll('[data-param-rows]')) {
       wire(row);
       box.appendChild(row);
     });
+  }
+}
+
+// Password confirmation: in a form marked [data-confirm-password], the
+// confirm field must equal the password field. Uses native constraint validation
+// (setCustomValidity) so submit is blocked with the browser's own message — no
+// eval, CSP-safe. The server re-validates regardless (JS may be off).
+for (const form of document.querySelectorAll('form[data-confirm-password]')) {
+  const pw = form.querySelector('[name="password"]');
+  const confirm = form.querySelector('[name="confirm_password"]');
+  if (!pw || !confirm) continue;
+  const check = () => confirm.setCustomValidity(
+    confirm.value && confirm.value !== pw.value ? "The passwords don't match." : ''
+  );
+  pw.addEventListener('input', check);
+  confirm.addEventListener('input', check);
+}
+
+// Entry-screen tabs: swap the sign-in / create-account panels client-side.
+// The tabs are real /login?tab= links, so with JS off the server just renders
+// the requested tab (no-JS fallback); here we avoid the reload.
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest('.auth-tab[data-tab]');
+  if (!tab) return;
+  e.preventDefault();
+  const want = tab.dataset.tab;
+  for (const t of document.querySelectorAll('.auth-tab')) t.classList.toggle('active', t.dataset.tab === want);
+  for (const p of document.querySelectorAll('.auth-panel')) p.hidden = p.dataset.panel !== want;
+  if (window.history) history.replaceState(null, '', '/login?tab=' + want);
+});
+
+// Floating modal forms. A trigger <a data-modal="dialog-id" href="?form=…">
+// opens the native <dialog> as a modal (focus trap, Esc, top-layer stacking) and
+// strips the ?form= param from the URL so a reload doesn't reopen it. Without JS
+// the anchor navigates and the server renders the dialog already [open].
+export function openDialog(dlg) {
+  if (!dlg || dlg.open) return;
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  else dlg.setAttribute('open', '');
+}
+document.addEventListener('click', (e) => {
+  const trigger = e.target.closest('[data-modal]');
+  if (trigger) {
+    const dlg = document.getElementById(trigger.dataset.modal);
+    if (dlg) {
+      e.preventDefault();
+      openDialog(dlg);
+      if (window.history && location.search.includes('form=')) {
+        history.replaceState(null, '', location.pathname);
+      }
+    }
+    return;
+  }
+  const closer = e.target.closest('[data-modal-close]');
+  if (closer) {
+    const dlg = closer.closest('dialog');
+    if (dlg) { e.preventDefault(); dlg.close(); }
+  }
+});
+// A dialog server-rendered [open] (no-JS fallback path reached with JS on): if it
+// is not already modal, close and reopen it modally so the backdrop and focus
+// trap apply, and clean the URL.
+for (const dlg of document.querySelectorAll('dialog.modal-form[open]')) {
+  if (!dlg.matches(':modal') && typeof dlg.showModal === 'function') {
+    dlg.close();
+    dlg.showModal();
+    if (window.history && location.search.includes('form=')) {
+      history.replaceState(null, '', location.pathname);
+    }
   }
 }

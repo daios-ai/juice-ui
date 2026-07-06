@@ -1,98 +1,28 @@
 /*
-  Semantic design tokens (R8.5–8.7). Components reference these custom
-  properties only, never raw colors, so the light and dark themes stay in
-  lockstep. Default theme follows the OS via prefers-color-scheme; an explicit
-  choice is stamped on <html data-theme> at render time (no flash, R8.6).
+  Structural design tokens — the theme-independent half of the token system.
+  Color tokens live in the generated themes.css (one 16-color Ghostty ANSI
+  palette per selectable theme, mapped to the same semantic names below).
+  Components reference these custom properties only, never raw values, so a new
+  terminal theme is purely a palette swap.
 
-  Aesthetic: warm ivory light / warm charcoal dark (not pure white / blue-black),
-  with a muted terracotta "clay" accent reserved strictly for primary actions.
-  The three financial-status colors (credited / refunded / escrow-pending) are
-  mutually distinct and distinct from clay in both themes (R8.7 trust signal).
-  Values tuned by eye; inspired-by, not a replica of any brand's tokens.
+  Aesthetic: a crisp terminal. Monospace throughout, tight spacing, near-square
+  corners, no drop shadows — the chrome reads like a well-set TUI, and the
+  counterparty content sits inside it as plain, inert text.
 */
 
 :root {
-  --bg: #faf7f1;
-  --surface: #ffffff;
-  --surface-2: #f3ede3;
-  --text: #2b2620;
-  --text-muted: #6c6358;
-  --border: #e4dccd;
-  --border-strong: #d2c7b3;
+  --radius: 2px;
+  --shadow: none;
 
-  --accent: #b1532c;          /* clay — primary/brand only */
-  --accent-hover: #9c4624;
-  --accent-contrast: #ffffff;
-  --focus: #b1532c;
-
-  --credited: #2f7d4f;        /* money in */
-  --refunded: #2563a6;        /* money returned */
-  --escrow: #6d4ca6;          /* funds held pending */
-  --danger: #9a3028;          /* errors and destructive actions */
-
-  --radius: 10px;
-  --shadow: 0 1px 2px rgba(43, 38, 32, 0.06), 0 4px 16px rgba(43, 38, 32, 0.05);
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* One monospace family for the whole UI (R7 terminal identity). Money, IDs,
+     hashes, and @owner/name inherit it and add tabular figures. */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+    Menlo, Consolas, "Liberation Mono", monospace;
+  --font-ui: var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    --bg: #211e1b;
-    --surface: #2b2723;
-    --surface-2: #332e29;
-    --text: #efe9e0;
-    --text-muted: #b3a899;
-    --border: #3a342e;
-    --border-strong: #4a423a;
-
-    --accent: #cf6a40;
-    --accent-hover: #dd7a4f;
-    --accent-contrast: #1a1714;
-    --focus: #cf6a40;
-
-    --credited: #5fbd84;
-    --refunded: #6aa6e0;
-    --escrow: #b196e6;
-    --danger: #e07268;
-
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
-  }
-}
-
-/* Explicit choices override the OS preference. Declared last so they win. */
-[data-theme="light"] {
-  --bg: #faf7f1;
-  --surface: #ffffff;
-  --surface-2: #f3ede3;
-  --text: #2b2620;
-  --text-muted: #6c6358;
-  --border: #e4dccd;
-  --border-strong: #d2c7b3;
-  --accent: #b1532c;
-  --accent-hover: #9c4624;
-  --accent-contrast: #ffffff;
-  --focus: #b1532c;
-  --credited: #2f7d4f;
-  --refunded: #2563a6;
-  --escrow: #6d4ca6;
-}
-
-[data-theme="dark"] {
-  --bg: #211e1b;
-  --surface: #2b2723;
-  --surface-2: #332e29;
-  --text: #efe9e0;
-  --text-muted: #b3a899;
-  --border: #3a342e;
-  --border-strong: #4a423a;
-  --accent: #cf6a40;
-  --accent-hover: #dd7a4f;
-  --accent-contrast: #1a1714;
-  --focus: #cf6a40;
-  --credited: #5fbd84;
-  --refunded: #6aa6e0;
-  --escrow: #b196e6;
-  --danger: #e07268;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+html {
+  /* Hint form controls and scrollbars to match the active theme's polarity.
+     Explicit theme choices are stamped on <html data-theme>. */
+  color-scheme: light dark;
 }

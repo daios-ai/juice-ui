@@ -1,0 +1,58 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <div>
+    <h1>action</h1>
+    <p class="subtitle">Browse the catalog and manage your own actions.{{if $d.Superuser}} <span class="scope-note">superuser scope available</span>{{end}}</p>
+  </div>
+  <div class="cluster">
+    <a class="btn-primary" href="/actions?form=action-create" data-modal="form-action-create">Create</a>
+    <a class="btn-primary" href="/actions?form=action-make" data-modal="form-action-make">Synthesize</a>
+    <a class="btn-primary" href="/actions?form=action-import" data-modal="form-action-import">Import</a>
+    <a class="btn-primary" href="/actions?form=action-unimport" data-modal="form-action-unimport">Unimport</a>
+  </div>
+</div>
+
+{{if $d.Error}}{{template "_error" $d.Error}}{{end}}
+
+{{/* Earnings — folded from your transactions (BFF, not kernel settlement). */}}
+{{if gt $d.Earnings.Count 0}}
+<div class="card">
+  <h2>Earnings</h2>
+  <div class="balances">
+    <div class="balance"><div class="amount money sig-credited">{{money $d.Earnings.Net}}</div><div class="label">net received</div></div>
+    <div class="balance"><div class="amount money">{{money $d.Earnings.Gross}}</div><div class="label">gross</div></div>
+    <div class="balance"><div class="amount money">{{money $d.Earnings.Fee}}</div><div class="label">platform fee</div></div>
+    <div class="balance"><div class="amount">{{$d.Earnings.Count}}</div><div class="label">paid calls</div></div>
+  </div>
+  <p class="card-note"><a href="/transactions">See the underlying transactions →</a></p>
+</div>
+{{end}}
+
+<h2>Your actions</h2>
+<div class="cluster control-row">
+  <a class="btn small{{if eq $d.Filter ""}} btn-primary{{end}}" href="/actions">all</a>
+  <a class="btn small{{if eq $d.Filter "active"}} btn-primary{{end}}" href="/actions?filter=active">active</a>
+  <a class="btn small{{if eq $d.Filter "inactive"}} btn-primary{{end}}" href="/actions?filter=inactive">inactive</a>
+  {{if $d.Superuser}}<a class="btn small{{if eq $d.Scope "all"}} btn-primary{{end}}" href="/actions?scope=all">all actions (superuser)</a>{{end}}
+</div>
+{{if $d.Mine}}
+<div class="grid">
+  {{range $d.Mine}}{{template "_action_card" .}}{{end}}
+</div>
+{{else}}
+<p class="muted">No actions yet. Create one, synthesize one, or import an OpenAPI spec.</p>
+{{end}}
+
+{{if $d.Catalog}}
+<h2>Catalog</h2>
+<div class="grid">
+  {{range $d.Catalog}}{{template "_action_card" .}}{{end}}
+</div>
+{{end}}
+
+{{template "_form_action_create" .}}
+{{template "_form_action_make" .}}
+{{template "_form_action_import" .}}
+{{template "_form_action_unimport" .}}
+{{end}}

@@ -1,0 +1,43 @@
+{{define "content"}}
+{{$d := .Data}}
+<p><a href="/steps">← step</a></p>
+<h1>step</h1>
+<p class="subtitle id mono">{{$d.Step.ID}}</p>
+
+<div class="card stack">
+  <div class="row">
+    <span class="mono">{{template "_ref" $d.Step.Ref}}</span>
+    <span class="pill {{if eq $d.Step.Status "done"}}status-credited{{else if eq $d.Step.Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{$d.Step.Status}}</span>
+    <span class="price" title="Parked price">◷ {{money $d.Step.Price}} ¤</span>
+    {{if $d.Step.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
+  </div>
+  <div>
+    <h3>Required caller</h3>
+    <p class="mono">{{$d.Step.RequiredCallerHandle}}</p>
+  </div>
+  {{if $d.Step.PartialArgs}}
+  <div>
+    <h3>Pre-bound arguments</h3>
+    <pre class="json">{{json $d.Step.PartialArgs}}</pre>
+  </div>
+  {{end}}
+</div>
+
+{{if $d.CanComplete}}
+<h2>Complete</h2>
+<div class="card stack">
+  <p class="card-note">Completing spends the parked {{money $d.Step.Price}} ¤.</p>
+  <form method="post" action="/steps/{{$d.Step.ID}}/complete"
+        hx-post="/steps/{{$d.Step.ID}}/complete" hx-target="#step-result" hx-swap="innerHTML">
+    {{.CSRFField}}
+    {{if $d.Form.IsApproval}}
+    <p class="muted small">No further input needed — just acknowledge.</p>
+    {{else}}
+    {{template "_form_fields" $d.Form.Editable}}
+    {{end}}
+    <button class="{{if gt $d.Step.Price 0}}btn-money{{else}}btn-primary{{end}}" type="submit">{{if gt $d.Step.Price 0}}Complete · {{money $d.Step.Price}} ¤{{else}}Complete step{{end}}</button>
+  </form>
+  <div id="step-result"></div>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,60 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <div>
+    <h1>user</h1>
+    <p class="subtitle">Your identity and wallet.</p>
+  </div>
+  <div class="cluster">
+    <a class="btn-primary" href="/user?form=user-update" data-modal="form-user-update">Update account</a>
+  </div>
+</div>
+
+{{if $d.Error}}{{template "_error" $d.Error}}{{end}}
+
+<div class="card">
+  <dl class="locked-args">
+    <dt>Handle</dt><dd class="mono">{{$d.User.Handle}}</dd>
+    <dt>Email</dt><dd class="mono">{{$d.User.Email}}</dd>
+  </dl>
+</div>
+
+<h2>Wallet</h2>
+<div class="card">
+  <div class="balances">
+    <div class="balance"><div class="amount money sig-credited">{{money $d.User.Available}}</div><div class="label">available</div></div>
+    <div class="balance"><div class="amount money sig-escrow">{{money $d.Parked}}</div><div class="label">parked (open processes)</div></div>
+    <div class="balance"><div class="amount money">{{money $d.User.Locked}}</div><div class="label">locked (total)</div></div>
+  </div>
+  <p class="card-note muted">Top-ups happen out of band — an operator deposits credits after payment. The UI can't add credits.</p>
+</div>
+
+{{if $d.OpenProcesses}}
+<h2>Open processes</h2>
+<table>
+  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th><th></th></tr></thead>
+  <tbody>{{range $d.OpenProcesses}}{{template "_process_row" .}}{{end}}</tbody>
+</table>
+{{end}}
+
+<h2>Ledger</h2>
+{{if $d.Transactions}}
+<table>
+  <thead><tr><th>ID</th><th>Status</th><th>Gross</th><th>Net</th><th>When</th></tr></thead>
+  <tbody>
+  {{range $d.Transactions}}
+  <tr class="rowable" tabindex="-1" data-href="/transactions/{{.ID}}">
+    <td class="id mono"><a href="/transactions/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+    <td class="money">{{money .Gross}}</td>
+    <td class="money">{{money .Net}}</td>
+    <td class="muted">{{shortTime .StartedAt}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+<p class="card-note"><a href="/transactions">Full transaction ledger →</a></p>
+{{else}}<p class="muted">No transactions yet.</p>{{end}}
+
+{{template "_form_user_update" .}}
+{{end}}

@@ -1,0 +1,216 @@
+{{/*
+  Floating modal forms. Each is a native <dialog> rendered closed; a trigger
+  anchor (href="?form=NAME" data-modal="form-NAME") opens it — with JS via
+  showModal(), without JS by the server rendering it [open] (dialog[open]:not(:modal)
+  falls back to an in-flow card). Partials receive the Page (.), so .CSRFField and
+  .Data.OpenForm are both in scope. The only accent (spend) button in this file is
+  the @sys/make synthesize button, which names the amount.
+*/}}
+
+{{define "_form_action_create"}}
+<dialog id="form-action-create" class="modal-form"{{if eq .Data.OpenForm "action-create"}} open{{end}} aria-label="Create action">
+  <div class="modal-head"><h2>Create action</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/actions">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="c-name">Name</label>
+        <input id="c-name" name="name" type="text" placeholder="my-action" required>
+      </div>
+      <div class="field">
+        <label for="c-kind">Kind</label>
+        <select id="c-kind" name="kind">
+          <option value="http">http</option>
+          <option value="wasm">wasm</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="c-source">Source</label>
+        <p class="help">For http: the endpoint URL. For wasm: a base64 artifact from @sys/tinygo/compile.</p>
+        <input id="c-source" name="source" type="text" placeholder="https://api.example.com/v1/thing">
+      </div>
+      <div data-http-only>
+        <div class="field">
+          <label for="c-method">Method</label>
+          <select id="c-method" name="method">
+            <option value="POST">POST</option><option value="GET">GET</option>
+            <option value="PUT">PUT</option><option value="PATCH">PATCH</option><option value="DELETE">DELETE</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Parameter bindings</label>
+          <p class="help">Bind input fields to path/query/body. Leave empty for implicit routing.</p>
+          <div data-param-rows>
+            <div class="row compact" data-param-row>
+              <input class="stretch" name="param_name" type="text" placeholder="field name" autocomplete="off">
+              <select class="input-sm" name="param_in">
+                <option value="path">path</option><option value="query">query</option><option value="body" selected>body</option>
+              </select>
+              <button type="button" class="btn-quiet" data-param-remove>Remove</button>
+            </div>
+          </div>
+          <button type="button" class="btn" data-param-add>Add parameter</button>
+        </div>
+        <details class="auth-panel">
+          <summary>Upstream authentication (optional)</summary>
+          <div class="field">
+            <label for="c-auth-scheme">Scheme</label>
+            <select id="c-auth-scheme" name="auth_scheme">
+              <option value="">none</option>
+              <option value="bearer">bearer</option>
+              <option value="basic">basic</option>
+              <option value="header">header</option>
+              <option value="query">query</option>
+            </select>
+          </div>
+          <div data-auth-scheme="bearer" hidden>
+            <div class="field flush"><label for="c-auth-bearer">Bearer token</label><input id="c-auth-bearer" name="auth_bearer_token" type="password" autocomplete="off"></div>
+          </div>
+          <div data-auth-scheme="basic" hidden>
+            <div class="field"><label for="c-auth-user">Username</label><input id="c-auth-user" name="auth_basic_username" type="text" autocomplete="off"></div>
+            <div class="field flush"><label for="c-auth-pass">Password</label><input id="c-auth-pass" name="auth_basic_password" type="password" autocomplete="off"></div>
+          </div>
+          <div data-auth-scheme="header" hidden>
+            <div class="field"><label for="c-auth-hname">Header name</label><input id="c-auth-hname" name="auth_param_name" type="text" autocomplete="off"></div>
+            <div class="field flush"><label for="c-auth-hval">Header value</label><input id="c-auth-hval" name="auth_param_value" type="password" autocomplete="off"></div>
+          </div>
+          <div data-auth-scheme="query" hidden>
+            <div class="field"><label for="c-auth-qname">Query name</label><input id="c-auth-qname" name="auth_param_name" type="text" autocomplete="off"></div>
+            <div class="field flush"><label for="c-auth-qval">Query value</label><input id="c-auth-qval" name="auth_param_value" type="password" autocomplete="off"></div>
+          </div>
+          <p class="help muted">Secrets are write-only — stored encrypted, never shown again.</p>
+        </details>
+      </div>
+      <div class="field">
+        <label for="c-desc">Description</label>
+        <textarea id="c-desc" name="description" placeholder="What this action does — used for discovery and function calling." rows="1"></textarea>
+      </div>
+      <div class="field">
+        <label for="c-price">Price ¤</label>
+        <input id="c-price" name="price" type="number" min="0" value="0" class="input-sm">
+      </div>
+      <div class="field">
+        <label for="c-in">Input schema (JSON)</label>
+        <textarea id="c-in" name="input_schema" placeholder='{"type":"object","properties":{}}' rows="1"></textarea>
+      </div>
+      <div class="field">
+        <label for="c-out">Output schema (JSON)</label>
+        <textarea id="c-out" name="output_schema" placeholder='{"type":"object"}' rows="1"></textarea>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Create action</button>
+        <a class="btn" href="/actions" data-modal-close>Cancel</a>
+      </div>
+      <p class="help muted flush">Created inactive. Enable it when the contract is ready.</p>
+    </form>
+  </div>
+</dialog>
+{{end}}
+
+{{define "_form_action_make"}}
+<dialog id="form-action-make" class="modal-form"{{if eq .Data.OpenForm "action-make"}} open{{end}} aria-label="Synthesize an action">
+  <div class="modal-head"><h2>Synthesize an action</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/actions/make"
+          hx-post="/actions/make" hx-target="#make-result" hx-swap="innerHTML"
+          hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="m-desc">Describe the action</label>
+        <p class="help">@sys/make writes, compiles, and activates a WASM action for you.</p>
+        <textarea id="m-desc" name="description" placeholder="e.g. Given a list of numbers, return their mean and standard deviation." required rows="1"></textarea>
+      </div>
+      <div class="row">
+        <button class="btn-money" type="submit">Synthesize · 20 ¤</button>
+        <div id="make-progress" class="progress" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>Synthesizing… this can take a minute.</span></div>
+      </div>
+      <p class="help muted flush">Costs 20 ¤. Refunded in full if synthesis fails.</p>
+    </form>
+    <div id="make-result"></div>
+  </div>
+</dialog>
+{{end}}
+
+{{define "_form_action_import"}}
+<dialog id="form-action-import" class="modal-form"{{if eq .Data.OpenForm "action-import"}} open{{end}} aria-label="Import OpenAPI">
+  <div class="modal-head"><h2>Import OpenAPI</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/actions/import">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="i-url">Spec URL</label>
+        <p class="help">Representable operations import as inactive http actions. Reimport reconciles by provenance.</p>
+        <input id="i-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json" required>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Import</button>
+        <a class="btn" href="/actions" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
+
+{{define "_form_action_unimport"}}
+<dialog id="form-action-unimport" class="modal-form"{{if eq .Data.OpenForm "action-unimport"}} open{{end}} aria-label="Unimport OpenAPI">
+  <div class="modal-head"><h2>Unimport OpenAPI</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/actions/unimport">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="u-url">Spec URL</label>
+        <p class="help">Deactivates matching actions. History is preserved.</p>
+        <input id="u-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json" required>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Unimport</button>
+        <a class="btn" href="/actions" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
+
+{{define "_form_step_create"}}
+<dialog id="form-step-create" class="modal-form"{{if eq .Data.OpenForm "step-create"}} open{{end}} aria-label="Create step">
+  <div class="modal-head"><h2>Create step</h2><a class="modal-close" href="/steps" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/steps">
+      {{.CSRFField}}
+      <p class="help muted">A developer affordance: a funded continuation addressed to a caller.</p>
+      <div class="field"><label for="s-trace">Funding trace ID</label><input id="s-trace" name="trace_id" type="text" required></div>
+      <div class="field"><label for="s-action">Next action ID</label><input id="s-action" name="action_id" type="text" required></div>
+      <div class="field"><label for="s-caller">Required caller (@handle)</label><input id="s-caller" name="required_caller" type="text" placeholder="@handle" required></div>
+      <div class="field"><label for="s-partial">Partial args (JSON)</label><textarea id="s-partial" name="partial_args" placeholder="{}" rows="1"></textarea></div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Create step</button>
+        <a class="btn" href="/steps" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
+
+{{define "_form_user_update"}}
+<dialog id="form-user-update" class="modal-form"{{if eq .Data.OpenForm "user-update"}} open{{end}} aria-label="Update account">
+  <div class="modal-head"><h2>Update account</h2><a class="modal-close" href="/user" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/user" data-confirm-password>
+      {{.CSRFField}}
+      <div class="field">
+        <label for="u-email">Email</label>
+        <input id="u-email" name="email" type="email" value="{{.Data.User.Email}}">
+      </div>
+      <hr class="card-sep">
+      <p class="help muted flush">To change your password, enter the current one and a new one (twice). Leave blank to keep your current password.</p>
+      <div class="field"><label for="u-cur">Current password</label><input id="u-cur" name="current_password" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="u-new">New password</label><input id="u-new" name="password" type="password" autocomplete="new-password" minlength="8"></div>
+      <div class="field"><label for="u-new2">Confirm new password</label><input id="u-new2" name="confirm_password" type="password" autocomplete="new-password" minlength="8"></div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Save changes</button>
+        <a class="btn" href="/user" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}

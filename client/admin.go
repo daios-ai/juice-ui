@@ -1,0 +1,202 @@
+package client
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+)
+
+// Admin (superuser) operations. The kernel serves these on the same TCP API as
+// everything else, under /control/*, gated by an IsSuperuser check on the @sys
+// bearer token (API.md C13). A non-superuser bearer is rejected 403
+// ("superuser required") → KindUnauthorized. Routes and shapes verified live
+// (2026-07-06). These never touch the kernel DB directly; the BFF is an ordinary
+// HTTP client of the control surface.
+
+// AdminUser is a user row from the control surface. suspended_at/denied_at are
+// present on single reads; a non-zero timestamp (not the RFC3339 zero value)
+// means the state is set.
+type AdminUser struct {
+	ID          string `json:"id"`
+	Handle      string `json:"handle"`
+	Email       string `json:"email"`
+	Available   int64  `json:"available"`
+	Locked      int64  `json:"locked"`
+	SuspendedAt string `json:"suspended_at,omitempty"`
+	DeniedAt    string `json:"denied_at,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// Suspended reports whether the user is currently suspended.
+func (u AdminUser) Suspended() bool { return isSetTime(u.SuspendedAt) }
+
+// Adjustment is the audit record returned by deposit/withdraw.
+type Adjustment struct {
+	Direction      string `json:"direction"` // "credit" | "debit"
+	Amount         int64  `json:"amount"`
+	Reason         string `json:"reason"`
+	ExternalKey    string `json:"external_key,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	OperatorHandle string `json:"operator_handle"`
+	TargetHandle   string `json:"target_handle"`
+}
+
+// Peer is a friend (proxy user) row from the control surface.
+type Peer struct {
+	Handle    string `json:"handle"`
+	PublicKey string `json:"public_key"`
+	Available int64  `json:"available"`
+	Locked    int64  `json:"locked"`
+}
+
+// Peers is the /control/peers response: friends plus (with gossip) the
+// known-network roster.
+type Peers struct {
+	Peers  []Peer             `json:"peers"`
+	Roster []DiscoveredKernel `json:"roster,omitempty"`
+}
+
+// ActionStat is one action's advertised/earned figures inside a roster or
+// inspection (verified live: action_id/name/description/price/uses/rating).
+type ActionStat struct {
+	ActionID    string `json:"action_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Price       int64  `json:"price"`
+	Uses        int64  `json:"uses"`
+	Rating      int64  `json:"rating"`
+}
+
+// RosterSource is one attribution for a discovered kernel: the introducer's key,
+// whether it is the kernel's own manifest claim (self_reported) or hearsay via
+// the introducer, and the actions seen from that source.
+type RosterSource struct {
+	IntroducedBy string       `json:"introduced_by"`
+	SelfReported bool         `json:"self_reported"`
+	Actions      []ActionStat `json:"actions"`
+}
+
+// DiscoveredKernel is one entry in the gossip roster: a kernel learned about via
+// the DHT directory or a friend's gossip. Own is this operator's first-party
+// earned stats for it (the "you" group), distinct from gossiped opinion.
+type DiscoveredKernel struct {
+	PublicKey string         `json:"public_key"`
+	Handle    string         `json:"handle"`
+	Own       []ActionStat   `json:"own,omitempty"`
+	Sources   []RosterSource `json:"sources"`
+}
+
+// Reachability describes how a remote kernel is currently reached.
+type Reachability struct {
+	Path      string   `json:"path"` // "direct" | "relayed" | …
+	RTTMillis int64    `json:"rtt_millis"`
+	Protocols []string `json:"protocols"`
+}
+
+// Inspection is GET /control/peers/inspect?key= — a remote kernel's identity,
+// public actions, transacted friends, and reachability.
+type Inspection struct {
+	Handle       string       `json:"handle"`
+	PublicKey    string       `json:"public_key"`
+	Actions      []ActionStat `json:"actions"`
+	Friends      []Peer       `json:"friends"`
+	Reachability Reachability `json:"reachability"`
+}
+
+// Identity is this kernel's own federation identity (/control/identity).
+type Identity struct {
+	Handle    string   `json:"handle"`
+	PublicKey string   `json:"public_key"`
+	Addrs     []string `json:"addrs"`
+}
+
+// AdminListUsers returns every user (GET /control/users).
+func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser, error) {
+	var out []AdminUser
+	err := c.do(ctx, http.MethodGet, "/control/users", token, nil, &out)
+	return out, err
+}
+
+// AdminGetUser returns one user by handle (GET /control/users/{handle}).
+func (c *Client) AdminGetUser(ctx context.Context, token, handle string) (AdminUser, error) {
+	var u AdminUser
+	err := c.do(ctx, http.MethodGet, "/control/users/"+url.PathEscape(normalizeHandle(handle)), token, nil, &u)
+	return u, err
+}
+
+// AdminSuspendUser suspends a user (POST /control/users/{handle}/suspend).
+func (c *Client) AdminSuspendUser(ctx context.Context, token, handle string) error {
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/suspend", token, nil, nil)
+}
+
+// AdminUnsuspendUser lifts a suspension (POST /control/users/{handle}/unsuspend).
+func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) error {
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/unsuspend", token, nil, nil)
+}
+
+// AdminDeposit credits a user's balance (POST /control/deposit).
+func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
+	return c.adjust(ctx, token, "/control/deposit", handle, amount, reason, externalKey)
+}
+
+// AdminWithdraw debits a user's balance (POST /control/withdraw).
+func (c *Client) AdminWithdraw(ctx context.Context, token, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
+	return c.adjust(ctx, token, "/control/withdraw", handle, amount, reason, externalKey)
+}
+
+func (c *Client) adjust(ctx context.Context, token, path, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
+	body := map[string]any{"handle": normalizeHandle(handle), "amount": amount}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	if externalKey != "" {
+		body["external_key"] = externalKey
+	}
+	var a Adjustment
+	err := c.do(ctx, http.MethodPost, path, token, body, &a)
+	return a, err
+}
+
+// AdminListPeers returns friends, optionally with the gossip roster
+// (GET /control/peers[?gossip=1]). The kernel requires the value "1" — "true"
+// is read as false and returns no roster (verified live).
+func (c *Client) AdminListPeers(ctx context.Context, token string, gossip bool) (Peers, error) {
+	path := "/control/peers"
+	if gossip {
+		path += "?gossip=1"
+	}
+	var p Peers
+	err := c.do(ctx, http.MethodGet, path, token, nil, &p)
+	return p, err
+}
+
+// AdminIdentity returns this kernel's federation identity (GET /control/identity).
+func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, error) {
+	var id Identity
+	err := c.do(ctx, http.MethodGet, "/control/identity", token, nil, &id)
+	return id, err
+}
+
+// AdminFriend befriends a kernel by public key (POST /control/peers/friend).
+func (c *Client) AdminFriend(ctx context.Context, token, key string) error {
+	return c.do(ctx, http.MethodPost, "/control/peers/friend", token, map[string]string{"key": key}, nil)
+}
+
+// AdminUnfriend ends a peer relation by handle or key (POST /control/peers/unfriend).
+func (c *Client) AdminUnfriend(ctx context.Context, token, handleOrKey string) error {
+	return c.do(ctx, http.MethodPost, "/control/peers/unfriend", token, map[string]string{"handle": handleOrKey}, nil)
+}
+
+// AdminInspect inspects a remote kernel by key (GET /control/peers/inspect?key=).
+func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspection, error) {
+	var out Inspection
+	err := c.do(ctx, http.MethodGet, "/control/peers/inspect?key="+url.QueryEscape(key), token, nil, &out)
+	return out, err
+}
+
+// isSetTime reports whether an RFC3339 timestamp string represents a set value
+// (not empty and not the Go zero time the kernel emits for "unset").
+func isSetTime(s string) bool {
+	return s != "" && s != "0001-01-01T00:00:00Z"
+}

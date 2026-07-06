@@ -1,0 +1,108 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <div>
+    <h1>peers</h1>
+    <p class="subtitle">Federation: discover kernels, inspect them, and trust them. A friend can call your actions only once you deposit credits to their proxy. <span class="scope-note">superuser only</span></p>
+  </div>
+  <div class="cluster">
+    <a class="btn-primary" href="/admin/peers?form=admin-friend" data-modal="form-admin-friend">Friend a kernel</a>
+    <a class="btn" href="/admin">Users</a>
+  </div>
+</div>
+
+<h2>This kernel</h2>
+<div class="card">
+  <dl class="locked-args">
+    <dt>Handle</dt><dd class="mono">{{$d.Identity.Handle}}</dd>
+    <dt>Public key</dt><dd class="mono hash">{{$d.Identity.PublicKey}}</dd>
+  </dl>
+  {{if $d.Identity.Addrs}}
+  <details class="details-panel">
+    <summary>Listen addresses</summary>
+    <ul class="mono tiny">{{range $d.Identity.Addrs}}<li>{{.}}</li>{{end}}</ul>
+  </details>
+  {{end}}
+</div>
+
+<h2>Friends</h2>
+{{if $d.Peers}}
+<table>
+  <thead><tr><th>Handle</th><th>Public key</th><th>Available</th><th>Locked</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Peers}}
+  <tr>
+    <td class="mono">{{.Handle}}</td>
+    <td class="mono hash">{{truncate 16 .PublicKey}}…</td>
+    <td class="money">{{money .Available}}</td>
+    <td class="money">{{money .Locked}}</td>
+    <td class="cluster">
+      <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
+      <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{.Handle}}? Their proxies deactivate; balance and history are preserved.">
+        {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-danger small" type="submit">Unfriend</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="muted">No friends yet. Befriend a kernel by its public key, or from the known network below.</p>{{end}}
+
+<h2>Known network</h2>
+<p class="subtitle">Kernels discovered through gossip — you may not be friends with them yet. Your own earned stats are shown as <span class="mono">you</span>, distinct from what each kernel self-reports and what peers say about it.</p>
+{{if $d.Roster}}
+<div class="card-list">
+  {{range $d.Roster}}
+  {{$isFriend := index $d.FriendKeys .PublicKey}}
+  <details class="card roster-kernel">
+    <summary>
+      <span class="mono"><b>{{.Handle}}</b> <span class="hash muted">{{truncate 16 .PublicKey}}…</span></span>
+      {{if $isFriend}}<span class="pill status-credited">friend</span>{{end}}
+      <span class="cluster roster-actions">
+        <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
+        {{if not $isFriend}}
+        <form method="post" action="/admin/peers/friend" data-confirm="Befriend {{.Handle}}? Their active public actions import immediately.">
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-primary small" type="submit">Befriend</button>
+        </form>
+        {{end}}
+      </span>
+    </summary>
+    <div class="stack roster-stats">
+      {{if .Own}}
+      <div>
+        <h3 class="flush">you <span class="muted small">— your earned stats</span></h3>
+        {{template "_action_stats" .Own}}
+      </div>
+      {{end}}
+      {{range .Sources}}
+      <div>
+        <h3 class="flush">{{if .SelfReported}}self-reported <span class="muted small">— the kernel's own manifest</span>{{else}}via <span class="mono hash">{{truncate 12 .IntroducedBy}}…</span> <span class="muted small">— gossiped</span>{{end}}</h3>
+        {{template "_action_stats" .Actions}}
+      </div>
+      {{end}}
+    </div>
+  </details>
+  {{end}}
+</div>
+{{else}}
+<p class="muted">No kernels discovered yet. The known network fills in as your friends transact and the discovery loop runs.</p>
+{{end}}
+
+<dialog id="form-admin-friend" class="modal-form"{{if eq $d.OpenForm "admin-friend"}} open{{end}} aria-label="Friend a kernel">
+  <div class="modal-head"><h2>Friend a kernel</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/admin/peers/friend">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="fr-key">Peer public key</label>
+        <p class="help">The peer's base64url Ed25519 key (the global name). Their active public actions import immediately.</p>
+        <input id="fr-key" name="key" type="text" required>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Send friend request</button>
+        <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}

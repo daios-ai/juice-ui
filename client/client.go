@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -72,11 +71,11 @@ type HTTPSpec struct {
 // calling) per R8. For kind=http, Source is a JSON-encoded descriptor string
 // (present on single reads, omitted on list reads); do not interpret it for
 // display. Instead, kind=http reads carry a decomposed HTTP object (absent for
-// other kinds), which is the structured view the UI renders.
+// other kinds), which is the structured view the UI renders. Identity is by
+// handle: the kernel returns owner_handle (not a user id) on every read.
 type Action struct {
 	ID           string          `json:"id"`
 	Action       string          `json:"action"`
-	OwnerUserID  string          `json:"owner_user_id"`
 	OwnerHandle  string          `json:"owner_handle"`
 	Name         string          `json:"name"`
 	Kind         string          `json:"kind"`
@@ -92,10 +91,15 @@ type Action struct {
 	UpdatedAt    string          `json:"updated_at"`
 }
 
-// Ref returns "@owner/name" for this action. The kernel's computed Action
-// field is null on the live kernel (verified 2026-06-04), so we derive it
-// from OwnerHandle (which already carries "@") and Name.
-func (a Action) Ref() string { return a.OwnerHandle + "/" + a.Name }
+// Ref returns "@owner/name" for this action. The kernel now populates the
+// computed Action field, but we derive from OwnerHandle + Name so a partial
+// record (e.g. a lookup result without the computed field) still resolves.
+func (a Action) Ref() string {
+	if a.Action != "" {
+		return a.Action
+	}
+	return a.OwnerHandle + "/" + a.Name
+}
 
 // CreateActionInput is the body for POST /v1/actions. Schemas are inline JSON.
 // Auth is write-only upstream credential config {scheme, config, secrets}; never returned by the kernel.
@@ -124,16 +128,19 @@ type UpdateActionInput struct {
 	Public       *bool           `json:"public,omitempty"`
 }
 
-// Process is a funded computation lifetime. The kernel returns only `id` on
-// show and list responses; processes are auto-created by run.
+// Process is a funded computation lifetime. Processes are auto-created by run.
+// The kernel identifies the owner by handle and flags a process parked on a
+// remote receipt (funds locked on a possibly-offline peer) via AwaitingReceipt.
 type Process struct {
-	ID          string `json:"id"`
-	OwnerUserID string `json:"owner_user_id"`
-	Available   int64  `json:"available"`
-	Locked      int64  `json:"locked"`
-	Status      string `json:"status"`
-	CreatedAt   string `json:"created_at"`
-	EndedAt     string `json:"ended_at"`
+	ID                   string `json:"id"`
+	OwnerHandle          string `json:"owner_handle"`
+	Available            int64  `json:"available"`
+	Locked               int64  `json:"locked"`
+	Status               string `json:"status"`
+	AwaitingReceipt      bool   `json:"awaiting_receipt"`
+	AwaitingReceiptSince string `json:"awaiting_receipt_since,omitempty"`
+	CreatedAt            string `json:"created_at"`
+	EndedAt              string `json:"ended_at"`
 }
 
 // RunRequest is the body for POST /v1/run.
@@ -156,16 +163,18 @@ type TransactionRating struct {
 	Note  string `json:"note"`
 }
 
-// Transaction is the settled record of a call. gross/net/fee are integer
-// credits. result is null on failure; reason is set on failure.
+// Transaction is the settled record of a call. gross/net/fee/refund are integer
+// credits. result is null on failure; reason is set on failure. Parties are
+// identified by handle (owner=payer, caller=requester, target=payee); the kernel
+// never returns raw user ids.
 type Transaction struct {
 	ID            string             `json:"id"`
 	ProcessID     string             `json:"process_id"`
 	TraceID       string             `json:"trace_id"`
 	ParentTraceID string             `json:"parent_trace_id"`
-	OwnerUserID   string             `json:"owner_user_id"`
-	CallerUserID  string             `json:"caller_user_id"`
-	TargetUserID  string             `json:"target_user_id"`
+	OwnerHandle   string             `json:"owner_handle"`
+	CallerHandle  string             `json:"caller_handle"`
+	TargetHandle  string             `json:"target_handle"`
 	ActionID      string             `json:"action_id"`
 	ActionName    string             `json:"action_name"`
 	Args          json.RawMessage    `json:"args"`
@@ -174,6 +183,7 @@ type Transaction struct {
 	Gross         int64              `json:"gross"`
 	Net           int64              `json:"net"`
 	Fee           int64              `json:"fee"`
+	Refund        int64              `json:"refund"`
 	Reason        string             `json:"reason"`
 	Rating        *TransactionRating `json:"rating"`
 	StartedAt     string             `json:"started_at"`
@@ -210,29 +220,26 @@ type Rating struct {
 }
 
 // Step is a suspended computation boundary: a pre-baked future Call that a
-// designated caller completes by supplying the remaining input.
+// designated caller completes by supplying the remaining input. The required
+// caller is identified by handle; the computed action ("@owner/name") is present
+// on both list and single reads. WaitingOnPeer flags a waiting step whose caller
+// is a federation peer (work parked on a possibly-offline kernel).
 type Step struct {
 	ID                   string          `json:"id"`
 	ParentTraceID        string          `json:"parent_trace_id"`
-	RequiredCallerUserID string          `json:"required_caller_user_id"`
+	RequiredCallerHandle string          `json:"required_caller_handle"`
 	ActionID             string          `json:"action_id"`
-	Action               string          `json:"action"` // computed @owner/name; absent in list responses
+	Action               string          `json:"action"`
 	Price                int64           `json:"price"`
 	PartialArgs          json.RawMessage `json:"partial_args"`
 	Status               string          `json:"status"` // waiting|running|done|cancelled
+	WaitingOnPeer        bool            `json:"waiting_on_peer"`
 	TxID                 string          `json:"tx_id"`
 	CreatedAt            string          `json:"created_at"`
 }
 
-// Ref returns "@owner/name" for this step's next action. The kernel returns the
-// action field only on single-step GET and with a double-@ quirk (verified
-// 2026-06-08): "@@sys/lookup" instead of "@sys/lookup". We strip the extra "@".
-func (s Step) Ref() string {
-	if strings.HasPrefix(s.Action, "@@") {
-		return s.Action[1:]
-	}
-	return s.Action
-}
+// Ref returns "@owner/name" for this step's next action.
+func (s Step) Ref() string { return s.Action }
 
 // StepCompleteReply is the response of POST /v1/steps/{id}/complete.
 // The kernel also returns receipt_id and gross but they are not used by the BFF.
@@ -585,6 +592,25 @@ func (c *Client) ListSteps(ctx context.Context, token, processID, status string)
 func (c *Client) GetStep(ctx context.Context, token, id string) (Step, error) {
 	var s Step
 	err := c.do(ctx, http.MethodGet, "/v1/steps/"+url.PathEscape(id), token, nil, &s)
+	return s, err
+}
+
+// CreateStepInput is the body for POST /v1/steps: a waiting step is a funded
+// continuation bound to the funding trace, addressed to a required caller.
+type CreateStepInput struct {
+	TraceID        string          `json:"trace_id"`
+	ActionID       string          `json:"action_id"`
+	RequiredCaller string          `json:"required_caller"`
+	PartialArgs    json.RawMessage `json:"partial_args"`
+}
+
+// CreateStep creates a waiting step (POST /v1/steps → 201).
+func (c *Client) CreateStep(ctx context.Context, token string, in CreateStepInput) (Step, error) {
+	if len(in.PartialArgs) == 0 {
+		in.PartialArgs = json.RawMessage(`{}`)
+	}
+	var s Step
+	err := c.do(ctx, http.MethodPost, "/v1/steps", token, in, &s)
 	return s, err
 }
 

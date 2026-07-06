@@ -263,4 +263,3 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 	isApproval := !full.UseRawFallback && len(editFields) == 0
 	return StepFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
 }
-

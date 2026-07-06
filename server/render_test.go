@@ -68,17 +68,17 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{
-		Title:     "Wallet",
-		Theme:     "dark",
+		Title:     "Account",
+		Theme:     "dracula",
 		Handle:    "@alice",
 		Available: 1000,
-		Data:      walletView{User: client.User{Handle: "@alice", Available: 1000, Locked: 250}},
+		Data:      userView{User: client.User{Handle: "@alice", Available: 1000, Locked: 250}},
 	}
-	if err := r.Render(rec, 200, "wallet", p); err != nil {
+	if err := r.Render(rec, 200, "user", p); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `data-theme="dark"`) {
+	if !strings.Contains(body, `data-theme="dracula"`) {
 		t.Error("theme not stamped onto <html>")
 	}
 	if !strings.Contains(body, "1,000") {

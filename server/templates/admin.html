@@ -1,0 +1,88 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <div>
+    <h1>admin</h1>
+    <p class="subtitle">Operator supervision — money, access, and federation trust. <span class="scope-note">superuser only</span></p>
+  </div>
+  <div class="cluster">
+    <a class="btn-primary" href="/admin?form=admin-deposit" data-modal="form-admin-deposit">Deposit</a>
+    <a class="btn-primary" href="/admin?form=admin-withdraw" data-modal="form-admin-withdraw">Withdraw</a>
+    <a class="btn" href="/admin/peers">Peers</a>
+  </div>
+</div>
+
+<h2>Users</h2>
+{{if $d.Users}}
+<table>
+  <thead><tr><th>Handle</th><th>Email</th><th>Available</th><th>Locked</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Users}}
+  <tr>
+    <td class="mono">{{.Handle}}</td>
+    <td class="mono muted">{{.Email}}</td>
+    <td class="money">{{money .Available}}</td>
+    <td class="money">{{money .Locked}}</td>
+    <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>
+    <td>
+      {{if .Suspended}}
+      <form method="post" action="/admin/users/{{.Handle}}/unsuspend">{{$.CSRFField}}<button class="btn small" type="submit">Unsuspend</button></form>
+      {{else}}
+      <form method="post" action="/admin/users/{{.Handle}}/suspend" data-confirm="Suspend {{.Handle}}? They cannot authenticate and their actions become uncallable until unsuspended.">{{$.CSRFField}}<button class="btn-danger small" type="submit">Suspend</button></form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="muted">No users.</p>{{end}}
+
+<h2>This kernel</h2>
+<div class="card">
+  <dl class="locked-args">
+    <dt>Handle</dt><dd class="mono">{{$d.Identity.Handle}}</dd>
+    <dt>Public key</dt><dd class="mono hash">{{$d.Identity.PublicKey}}</dd>
+  </dl>
+</div>
+
+{{template "_form_admin_deposit" .}}
+{{template "_form_admin_withdraw" .}}
+{{end}}
+
+{{define "_form_admin_deposit"}}
+<dialog id="form-admin-deposit" class="modal-form"{{if eq .Data.OpenForm "admin-deposit"}} open{{end}} aria-label="Deposit credits">
+  <div class="modal-head"><h2>Deposit credits</h2><a class="modal-close" href="/admin" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/admin/deposit" data-confirm="Deposit credits? This grants credits after out-of-band payment.">
+      {{.CSRFField}}
+      <div class="field"><label for="dep-handle">User (@handle)</label><input id="dep-handle" name="handle" type="text" placeholder="@handle" required></div>
+      <div class="field"><label for="dep-amount">Amount ¤</label><input id="dep-amount" name="amount" type="number" min="1" required class="input-sm"></div>
+      <div class="field"><label for="dep-reason">Reason (optional)</label><input id="dep-reason" name="reason" type="text"></div>
+      <div class="field"><label for="dep-key">External key (optional, idempotency)</label><input id="dep-key" name="external_key" type="text"></div>
+      <div class="cluster">
+        <button class="btn-money" type="submit">Deposit credits</button>
+        <a class="btn" href="/admin" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
+
+{{define "_form_admin_withdraw"}}
+<dialog id="form-admin-withdraw" class="modal-form"{{if eq .Data.OpenForm "admin-withdraw"}} open{{end}} aria-label="Withdraw credits">
+  <div class="modal-head"><h2>Withdraw credits</h2><a class="modal-close" href="/admin" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/admin/withdraw" data-confirm="Withdraw credits? This redeems the user's credits and obliges an out-of-band payout.">
+      {{.CSRFField}}
+      <div class="field"><label for="wd-handle">User (@handle)</label><input id="wd-handle" name="handle" type="text" placeholder="@handle" required></div>
+      <div class="field"><label for="wd-amount">Amount ¤</label><input id="wd-amount" name="amount" type="number" min="1" required class="input-sm"></div>
+      <div class="field"><label for="wd-reason">Reason (optional)</label><input id="wd-reason" name="reason" type="text"></div>
+      <div class="field"><label for="wd-key">External key (optional, idempotency)</label><input id="wd-key" name="external_key" type="text"></div>
+      <div class="cluster">
+        <button class="btn-money" type="submit">Withdraw credits</button>
+        <a class="btn" href="/admin" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}

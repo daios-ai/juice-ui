@@ -31,16 +31,20 @@ func StaticFS() fs.FS {
 
 // Page is the data passed to the layout for a full-page render.
 type Page struct {
-	Title     string
-	Theme     string        // "light" | "dark" | "" (defer to prefers-color-scheme)
-	Sidebar   string        // "collapsed" | "" (expanded); stamped to avoid flash
-	Handle    string        // signed-in handle for the nav, or "" when anonymous
-	Available int64         // signed-in user's available balance; 0 when unauthenticated or unknown
-	CSRFField template.HTML // hidden CSRF input for no-JS forms
-	CSRFToken string        // raw token for the <meta> tag htmx reads
-	Flash     string        // transient user message
-	FlashKind string        // "success" | "error" | "info" | ""
-	Data      any           // page-specific view model
+	Title       string
+	Theme       string        // theme slug, or "" to defer to prefers-color-scheme
+	Sidebar     string        // "collapsed" | "" (expanded); stamped to avoid flash
+	Active      string        // active nav group ("run"|"action"|…) for aria-current
+	Handle      string        // signed-in handle for the nav, or "" when anonymous
+	IsSuperuser bool          // handle == "@sys": show the admin group and admin scope
+	Available   int64         // signed-in user's available balance; 0 when unknown
+	Themes      []ANSIPalette // selectable terminal themes for the picker
+	CSRFField   template.HTML // hidden CSRF input for no-JS forms
+	CSRFToken   string        // raw token for the <meta> tag htmx reads
+	Commands    template.JS   // JSON command registry for the keyboard palette (inert data)
+	Flash       string        // transient user message
+	FlashKind   string        // "success" | "error" | "info" | ""
+	Data        any           // page-specific view model
 }
 
 // Renderer holds parsed templates. Each page is parsed together with the layout
@@ -63,6 +67,9 @@ func NewRenderer() (*Renderer, error) {
 		"buildForm":   BuildForm, // lets templates derive a FormModel from a raw schema
 		"pct":         pct,
 		"ratingPct":   ratingPct,
+		"refOwner":    refOwner,
+		"refName":     refName,
+		"shortTime":   shortTime,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -230,4 +237,32 @@ func ratingPct(estimate float64, count int64) string {
 		return ""
 	}
 	return fmt.Sprintf("%.0f", estimate*100)
+}
+
+// refOwner returns the owner segment of "@owner/name" (including the leading @),
+// split on the first slash — names may contain slashes (e.g. @sys/llm/chat), but
+// handles never do, so the first slash is unambiguous. The owner segment is
+// emphasized in the UI and links to the owner's actions.
+func refOwner(ref string) string {
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		return ref[:i]
+	}
+	return ref
+}
+
+// refName returns the name segment of "@owner/name" (everything after the first
+// slash), or "" if there is no slash.
+func refName(ref string) string {
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		return ref[i+1:]
+	}
+	return ""
+}
+
+// shortTime trims an RFC3339 timestamp to "YYYY-MM-DD HH:MM" for compact display.
+func shortTime(ts string) string {
+	if len(ts) < 16 {
+		return ts
+	}
+	return ts[:10] + " " + ts[11:16]
 }

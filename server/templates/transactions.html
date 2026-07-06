@@ -1,28 +1,32 @@
 {{define "content"}}
-<h1>Transactions</h1>
-<p class="subtitle">Calls you made (buyer), calls you initiated (caller), and calls to your actions (seller).</p>
+<div class="page-head">
+  <div>
+    <h1>tx</h1>
+    <p class="subtitle">The immutable ledger — calls you paid for (buyer), initiated (caller), or provided (seller).{{if .Data.Superuser}} <span class="scope-note">superuser scope: all transactions</span>{{end}}</p>
+  </div>
+</div>
 {{if .Data.Transactions}}
 <table>
   <thead><tr><th>ID</th><th>Action</th><th>Role</th><th>Status</th><th>Gross</th><th>Fee</th><th>Net</th><th>When</th></tr></thead>
   <tbody>
   {{range .Data.Transactions}}
   {{$action := index $.Data.Actions .ActionID}}
-  <tr>
+  <tr class="rowable" tabindex="-1" data-href="/transactions/{{.ID}}">
     <td class="id mono"><a href="/transactions/{{.ID}}">{{truncate 8 .ID}}…</a></td>
-    <td class="mono">
-      {{if $action.ID}}<a href="/actions/{{$action.ID}}">{{$action.Ref}}</a>
-      {{else}}<span class="muted">{{truncate 8 .ActionID}}…</span>{{end}}
+    <td>
+      {{if $action.ID}}{{template "_ref" $action.Ref}}
+      {{else}}<span class="muted mono">{{truncate 8 .ActionID}}…</span>{{end}}
     </td>
     <td>
-      {{if eq .OwnerUserID $.Data.MyID}}<span class="pill">buyer</span>{{end}}
-      {{if and (eq .CallerUserID $.Data.MyID) (ne .CallerUserID .OwnerUserID)}}<span class="pill status-escrow">caller</span>{{end}}
-      {{if eq .TargetUserID $.Data.MyID}}<span class="pill status-credited">seller</span>{{end}}
+      {{if eq .OwnerHandle $.Data.MyHandle}}<span class="pill">buyer</span>{{end}}
+      {{if and (eq .CallerHandle $.Data.MyHandle) (ne .CallerHandle .OwnerHandle)}}<span class="pill status-escrow">caller</span>{{end}}
+      {{if eq .TargetHandle $.Data.MyHandle}}<span class="pill status-credited">seller</span>{{end}}
     </td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
     <td class="money">{{money .Gross}}</td>
     <td class="money">{{money .Fee}}</td>
     <td class="money">{{money .Net}}</td>
-    <td class="muted">{{.StartedAt}}</td>
+    <td class="muted">{{shortTime .StartedAt}}</td>
   </tr>
   {{end}}
   </tbody>

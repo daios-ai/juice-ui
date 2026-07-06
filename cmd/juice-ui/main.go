@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,10 +30,11 @@ var (
 // Config is the BFF's runtime configuration, loaded from the environment with
 // safe local defaults (R2.4). No secrets are committed.
 type Config struct {
-	KernelBaseURL string
-	ListenAddr    string
-	SessionSecret string // optional; derives the CSRF key. Empty -> ephemeral key.
-	Secure        bool   // Secure flag on cookies; enable behind HTTPS.
+	KernelBaseURL  string
+	ListenAddr     string
+	SessionSecret  string   // optional; derives the CSRF key. Empty -> ephemeral key.
+	Secure         bool     // Secure flag on cookies; enable behind HTTPS.
+	TrustedOrigins []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
 }
 
 // LoadConfig reads configuration via getenv (injected for testability) and
@@ -51,7 +53,42 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if cfg.ListenAddr == "" {
 		return Config{}, fmt.Errorf("JUICE_UI_ADDR must not be empty")
 	}
+	// gorilla/csrf rejects any request whose browser Origin host isn't recognised.
+	// Trust localhost/127.0.0.1 on the bound port out of the box, plus any hosts the
+	// operator declares (comma-separated) for access via a proxy, LAN IP, or a
+	// hostname (e.g. a Tailscale/dev domain) that differs from the listen host.
+	cfg.TrustedOrigins = append(defaultTrustedOrigins(cfg.ListenAddr), parseOrigins(getenv("JUICE_UI_TRUSTED_ORIGINS"))...)
 	return cfg, nil
+}
+
+// defaultTrustedOrigins trusts localhost and 127.0.0.1 on the listen port, so the
+// common "typed localhost, bound 127.0.0.1" (and vice-versa) case just works.
+func defaultTrustedOrigins(listenAddr string) []string {
+	_, port, err := net.SplitHostPort(listenAddr)
+	if err != nil || port == "" {
+		return nil
+	}
+	return []string{"localhost:" + port, "127.0.0.1:" + port}
+}
+
+// parseOrigins splits a comma-separated origins list into bare hosts. Each entry
+// may be a full URL ("https://ui.example.com") or a host ("ui.example.com:8080");
+// gorilla/csrf compares against the Origin header's host, so we normalise to that.
+func parseOrigins(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.Contains(p, "://") {
+			if u, err := url.Parse(p); err == nil && u.Host != "" {
+				p = u.Host
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func orDefault(v, def string) string {
@@ -104,12 +141,13 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		log.Warn("JUICE_UI_SESSION_SECRET not set; using an ephemeral key — sessions reset on restart and this is unsafe for production")
 	}
 	return server.New(server.Options{
-		Client:   kernel,
-		Sessions: sessions,
-		Renderer: renderer,
-		Logger:   log,
-		CSRFKey:  key,
-		Secure:   cfg.Secure,
+		Client:         kernel,
+		Sessions:       sessions,
+		Renderer:       renderer,
+		Logger:         log,
+		CSRFKey:        key,
+		Secure:         cfg.Secure,
+		TrustedOrigins: cfg.TrustedOrigins,
 	})
 }
 

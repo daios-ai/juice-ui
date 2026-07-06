@@ -44,10 +44,10 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`[]`))
 	})
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
-		// T1: U1 is buyer; T2: U1 is seller. Both reference action "owned".
+		// T1: @alice is buyer; T2: @alice is seller. Both reference action "owned".
 		w.Write([]byte(`[
-			{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","caller_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
-			{"id":"T2","action_id":"owned","owner_user_id":"U2","target_user_id":"U1","caller_user_id":"U2","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
+			{"id":"T1","action_id":"owned","owner_handle":"@alice","target_handle":"@bob","caller_handle":"@alice","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
+			{"id":"T2","action_id":"owned","owner_handle":"@bob","target_handle":"@alice","caller_handle":"@bob","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
 		]`))
 	})
 	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -56,28 +56,27 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		// Authenticated owner query returns all own actions (active+public and inactive/private).
 		w.Write([]byte(`[` +
-			`{"id":"A1","owner_user_id":"U1","owner_handle":"@alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0},` +
-			`{"id":"A3","owner_user_id":"U1","owner_handle":"@alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0}` +
+			`{"id":"A1","action":"@alice/hello","owner_handle":"@alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0},` +
+			`{"id":"A3","action":"@alice/draft","owner_handle":"@alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0}` +
 			`]`))
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		// "owned" is owned by U1 (the signed-in user); anything else by U2.
-		owner := "U2"
-		active := true
-		public := true
+		// "owned"/"A1" belong to @alice (the signed-in user); anything else to @bob.
+		owner := "@bob"
+		name := "x"
 		if r.PathValue("id") == "owned" || r.PathValue("id") == "A1" {
-			owner = "U1"
+			owner = "@alice"
 		}
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"@alice/x","owner_user_id":"` + owner +
-			`","owner_handle":"@alice","name":"x","kind":"http",` +
-			`"active":` + boolStr(active) + `,"public":` + boolStr(public) + `,"price":0,` +
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"` + owner + `/` + name +
+			`","owner_handle":"` + owner + `","name":"` + name + `","kind":"http",` +
+			`"active":true,"public":true,"price":0,` +
 			`"input_schema":{"type":"object","properties":{}},"output_schema":{"type":"object"}}`))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{"status":"success","action_id":"A2","action_name":"synthesized","diagnostics":[]},"tx_id":"TX1","trace_id":"TR1"}`))
 	})
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_user_id":"U1","target_user_id":"U2","caller_user_id":"U1","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
+		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_handle":"@alice","target_handle":"@bob","caller_handle":"@alice","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/actions/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"active":true}`))
@@ -86,10 +85,66 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"active":false}`))
 	})
 	mux.HandleFunc("PUT /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","owner_user_id":"U1","owner_handle":"@alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"@alice/x","owner_handle":"@alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"S1","required_caller_user_id":"U1","action_id":"A1","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}]`))
+		w.Write([]byte(`[{"id":"S1","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}]`))
+	})
+	mux.HandleFunc("GET /v1/steps/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
+	})
+	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {
+		// A "dupe" email/handle simulates the kernel's raw UNIQUE-constraint 500.
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "dupe") {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"code":"internal","error":"create user: constraint failed: UNIQUE constraint failed: users.email (2067)"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"U9","handle":"@new","email":"new@test.com","available":0,"locked":0}`))
+	})
+	mux.HandleFunc("GET /control/users", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0}]`))
+	})
+	mux.HandleFunc("GET /control/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"` + r.PathValue("handle") + `","email":"x@test.com","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("POST /control/users/{handle}/suspend", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("POST /control/users/{handle}/unsuspend", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("POST /control/deposit", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"direction":"credit","amount":100,"operator_handle":"@sys","target_handle":"@alice"}`))
+	})
+	mux.HandleFunc("POST /control/withdraw", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"direction":"debit","amount":10,"operator_handle":"@sys","target_handle":"@alice"}`))
+	})
+	mux.HandleFunc("GET /control/peers", func(w http.ResponseWriter, r *http.Request) {
+		// With gossip=1, return a friend plus a known-network roster (verified shape).
+		if r.URL.Query().Get("gossip") == "1" {
+			// Roster carries @kernelc (not a friend) and @peerb (already a friend).
+			w.Write([]byte(`{"peers":[{"handle":"@peerb","public_key":"KEYB","available":50,"locked":0}],
+			 "roster":[{"public_key":"KEYC","handle":"@kernelc","own":[{"action_id":"a1","name":"@sys/time","description":"","price":0,"uses":3,"rating":1}],
+			  "sources":[{"introduced_by":"KEYC","self_reported":true,"actions":[{"action_id":"a2","name":"@sys/make","description":"synth","price":20,"uses":0,"rating":0}]},
+			             {"introduced_by":"KEYB","self_reported":false,"actions":[{"action_id":"a1","name":"@sys/time","description":"","price":0,"uses":1,"rating":0}]}]},
+			           {"public_key":"KEYB","handle":"@peerb","sources":[{"introduced_by":"KEYB","self_reported":true,"actions":[]}]}]}`))
+			return
+		}
+		w.Write([]byte(`{"peers":[{"handle":"@peerb","public_key":"KEYB","available":50,"locked":0}]}`))
+	})
+	mux.HandleFunc("GET /control/peers/inspect", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"handle":"@kernelc","public_key":"` + r.URL.Query().Get("key") + `",
+		 "actions":[{"action_id":"a2","name":"@sys/make","description":"synth","price":20,"uses":0,"rating":0}],
+		 "friends":[{"handle":"@peerb","public_key":"KEYB"}],
+		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
+	})
+	mux.HandleFunc("POST /control/peers/friend", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("POST /control/peers/unfriend", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /control/identity", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"handle":"@kernel","public_key":"KEY","addrs":[]}`))
 	})
 	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","step_id":"` + r.PathValue("id") + `"}`))
@@ -142,6 +197,120 @@ func loginClient(t *testing.T, base string) *http.Client {
 	return cl
 }
 
+func TestLoginTabsAndNoJSFallback(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+
+	// Default: both panels rendered, sign-in active, sign-up hidden.
+	def := getBody(t, &http.Client{}, srv.URL+"/login")
+	if !strings.Contains(def, `data-panel="signin"`) || !strings.Contains(def, `data-panel="signup"`) {
+		t.Fatal("login must render both auth panels")
+	}
+	if !strings.Contains(def, `data-panel="signup" data-confirm-password hidden`) {
+		t.Error("signup panel must be hidden by default (signin active)")
+	}
+	// Tabs are real ?tab= links (no-JS operable).
+	if !strings.Contains(def, `href="/login?tab=signup"`) || !strings.Contains(def, `href="/login?tab=signin"`) {
+		t.Error("tabs must be real ?tab= links for the no-JS fallback")
+	}
+	// ?tab=signup: signup active, signin hidden (server renders the active tab).
+	up := getBody(t, &http.Client{}, srv.URL+"/login?tab=signup")
+	if !strings.Contains(up, `data-panel="signin" hidden`) {
+		t.Error("?tab=signup must hide the signin panel (fallback active tab)")
+	}
+	if strings.Contains(up, `data-panel="signup" hidden`) {
+		t.Error("?tab=signup must show the signup panel")
+	}
+	// Each auth panel's action is a normal-op primary (not money/danger). The
+	// per-form submit is btn-primary; a "Sign in" and "Create account" button exist.
+	if !strings.Contains(def, `class="btn-primary" type="submit">Sign in<`) {
+		t.Error("sign-in panel must have a btn-primary Sign in action")
+	}
+	if !strings.Contains(def, `class="btn-primary" type="submit">Create account<`) {
+		t.Error("signup panel must have a btn-primary Create account action")
+	}
+}
+
+// postForm posts a form (with a fresh CSRF token from /login) and returns the
+// response body. Used by the signup tests.
+func signupPost(t *testing.T, srv *httptest.Server, form url.Values) (int, string) {
+	t.Helper()
+	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	jar, _ := cookiejar.New(nil)
+	cl.Jar = jar
+	page := getBody(t, cl, srv.URL+"/login?tab=signup")
+	form.Set("gorilla.csrf.Token", csrfTokenFrom(t, page))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/signup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestSignupDuplicateShowsFriendlyError(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+
+	// "dupe" email → kernel returns a raw UNIQUE-constraint 500.
+	_, body := signupPost(t, srv, url.Values{
+		"handle": {"@x"}, "email": {"dupe@test.com"},
+		"password": {"password1"}, "confirm_password": {"password1"},
+	})
+	if !strings.Contains(body, "already registered") {
+		t.Error("duplicate signup must show a friendly 'already registered' message")
+	}
+	// Must NOT show the run-outcome text or leak the raw constraint string.
+	if strings.Contains(body, "fully refunded") || strings.Contains(body, "action failed to run") {
+		t.Error("duplicate signup must not show the run/refund message")
+	}
+	if strings.Contains(body, "constraint") || strings.Contains(body, "UNIQUE") {
+		t.Error("must not leak the raw kernel constraint text")
+	}
+	// Stays on the create-account tab.
+	if !strings.Contains(body, `data-panel="signin" hidden`) {
+		t.Error("error should keep the user on the signup tab")
+	}
+}
+
+func TestSignupPasswordValidation(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+
+	// Mismatch → blocked with a clear message, never reaches the kernel.
+	_, mismatch := signupPost(t, srv, url.Values{
+		"handle": {"@x"}, "email": {"ok@test.com"},
+		"password": {"password1"}, "confirm_password": {"password2"},
+	})
+	if !strings.Contains(mismatch, "don&#39;t match") && !strings.Contains(mismatch, "don't match") {
+		t.Errorf("mismatched passwords must be rejected: %s", firstError(mismatch))
+	}
+	// Too short → min-length message.
+	_, short := signupPost(t, srv, url.Values{
+		"handle": {"@x"}, "email": {"ok@test.com"},
+		"password": {"short"}, "confirm_password": {"short"},
+	})
+	if !strings.Contains(short, "at least 8") {
+		t.Errorf("short password must be rejected: %s", firstError(short))
+	}
+}
+
+func firstError(body string) string {
+	if i := strings.Index(body, "banner-error"); i >= 0 {
+		return body[i:min(i+120, len(body))]
+	}
+	return "(no error banner)"
+}
+
 func getBody(t *testing.T, cl *http.Client, urlStr string) string {
 	t.Helper()
 	resp, err := cl.Get(urlStr)
@@ -162,13 +331,13 @@ func TestOwnerOnlyAffordances(t *testing.T) {
 
 	// Owner sees the management controls.
 	owned := getBody(t, cl, srv.URL+"/actions/owned")
-	if !strings.Contains(owned, "Manage (owner)") {
+	if !strings.Contains(owned, ">Manage<") {
 		t.Error("owner should see the Manage (owner) section")
 	}
 
 	// Non-owner does not.
 	other := getBody(t, cl, srv.URL+"/actions/other")
-	if strings.Contains(other, "Manage (owner)") {
+	if strings.Contains(other, ">Manage<") {
 		t.Error("non-owner must NOT see the Manage (owner) section")
 	}
 }
@@ -205,9 +374,10 @@ func TestTransactionsShowsBuyerAndSellerRoles(t *testing.T) {
 	if !strings.Contains(body, "seller") {
 		t.Error("transactions page must show 'seller' role for transactions where I am target_user_id")
 	}
-	// Action ref should appear (action "owned" has owner_handle "@alice", name "x")
-	if !strings.Contains(body, "@alice/x") {
-		t.Error("transactions page must show the action ref (@owner/name) for each transaction")
+	// Action ref should appear with the owner segment emphasized (_ref wraps the
+	// owner handle in its own span, so the ref isn't a contiguous substring).
+	if !strings.Contains(body, `class="owner">@alice`) {
+		t.Error("transactions page must show the action ref with owner emphasized")
 	}
 }
 
@@ -219,11 +389,11 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/transactions/T1")
-	// Action ref
-	if !strings.Contains(body, "@alice/x") {
+	// Action ref with owner emphasis
+	if !strings.Contains(body, `class="owner">@alice`) {
 		t.Error("transaction detail must show the action ref")
 	}
-	// Buyer: current user (U1 = @alice) is the buyer
+	// Buyer: current user (@alice) is the buyer party
 	if !strings.Contains(body, "@alice") {
 		t.Error("transaction detail must show the buyer handle when current user is buyer")
 	}
@@ -236,7 +406,7 @@ func TestWalletShowsBalancesAndDepositNote(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/wallet")
+	body := getBody(t, cl, srv.URL+"/user")
 	if !strings.Contains(body, "500") {
 		t.Error("wallet should show available balance")
 	}
@@ -263,16 +433,16 @@ func TestStudioPageTwoZones(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/studio")
+	body := getBody(t, cl, srv.URL+"/actions")
 	// Creation zone: AI synthesis form present (R6.3.6).
-	if !strings.Contains(body, "Synthesize with AI") {
+	if !strings.Contains(body, "Synthesize") {
 		t.Error("studio must show AI synthesis creation zone")
 	}
-	if !strings.Contains(body, "/studio/make") {
+	if !strings.Contains(body, "/actions/make") {
 		t.Error("studio must have the @sys/make form action")
 	}
 	// Manual creation form present.
-	if !strings.Contains(body, "/studio/create") {
+	if !strings.Contains(body, "/actions") {
 		t.Error("studio must have the manual creation form")
 	}
 	// Action management list: both active+public "hello" and inactive+private "draft" appear.
@@ -296,12 +466,12 @@ func TestStudioMakeActionSuccess(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// Get CSRF token from studio page.
-	body := getBody(t, cl, srv.URL+"/studio")
+	body := getBody(t, cl, srv.URL+"/actions")
 	tok := csrfTokenFrom(t, body)
 
 	// POST to /studio/make with htmx headers.
 	form := url.Values{"description": {"Return a fixed greeting"}, "gorilla.csrf.Token": {tok}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/studio/make", strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/make", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
 	resp, err := cl.Do(req)
@@ -350,8 +520,8 @@ func TestStudioMakeActionInsufficientCredits(t *testing.T) {
 
 	// Studio page shows the synthesis form regardless of balance; the kernel
 	// enforces the credit check at run time (v0.3 behaviour).
-	body := getBody(t, cl, srv.URL+"/studio")
-	if !strings.Contains(body, `action="/studio/make"`) {
+	body := getBody(t, cl, srv.URL+"/actions")
+	if !strings.Contains(body, `action="/actions/make"`) {
 		t.Error("synthesis form must always be shown (kernel enforces credit check on run)")
 	}
 	// The page must surface the user's current balance so they can see they're short.
@@ -368,7 +538,7 @@ func TestStudioLifecycleRedirect(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// Get CSRF token.
-	body := getBody(t, cl, srv.URL+"/studio")
+	body := getBody(t, cl, srv.URL+"/actions")
 	tok := csrfTokenFrom(t, body)
 
 	// Disable action A1: must redirect to the action detail page.
@@ -408,7 +578,7 @@ func TestStepsInboxShowsWaitingStep(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/steps")
 
 	// S1 is waiting and requires U1 (the signed-in user) → must appear in Inbox.
-	if !strings.Contains(body, "Inbox") {
+	if !strings.Contains(body, "Waiting for you") {
 		t.Error("steps page must have an Inbox section")
 	}
 	if !strings.Contains(body, `action="/steps/S1/complete"`) {
@@ -458,16 +628,17 @@ func TestInboxPageRendersSteps(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/steps")
 
-	// Step S1 (status=waiting, required_caller=U1=current user) must appear with complete form.
-	if !strings.Contains(body, "waiting") {
-		t.Error("inbox page must show steps with status")
+	// Step S1 (status=waiting, required_caller=@alice=current user) appears as a
+	// completable card showing its parked price.
+	if !strings.Contains(body, "parked") {
+		t.Error("inbox must attribute the parked price on the waiting step card")
 	}
 	if !strings.Contains(body, "Complete") {
 		t.Error("inbox page must show the Complete button for own waiting steps")
 	}
-	// Create form must be absent.
+	// Old inline step-create endpoint must be absent (creation is a modal to POST /steps).
 	if strings.Contains(body, "/steps/create") {
-		t.Error("inbox page must not have a step-create form")
+		t.Error("inbox page must not use the old step-create endpoint")
 	}
 }
 
@@ -478,7 +649,7 @@ func TestWalletShowsLedger(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/wallet")
+	body := getBody(t, cl, srv.URL+"/user")
 	// Ledger must show both transactions from authKernel.
 	if !strings.Contains(body, "T1") && !strings.Contains(body, "/transactions/T1") {
 		t.Error("wallet ledger must link to transaction T1")
@@ -486,12 +657,14 @@ func TestWalletShowsLedger(t *testing.T) {
 	if !strings.Contains(body, "T2") && !strings.Contains(body, "/transactions/T2") {
 		t.Error("wallet ledger must link to transaction T2")
 	}
-	// Roles must be present.
-	if !strings.Contains(body, "buyer") {
-		t.Error("wallet ledger must show 'buyer' role for T1")
+	// Roles are shown on the dedicated transactions ledger (the account page keeps
+	// a compact ledger without per-row roles).
+	txBody := getBody(t, cl, srv.URL+"/transactions")
+	if !strings.Contains(txBody, "buyer") {
+		t.Error("transactions ledger must show 'buyer' role for T1")
 	}
-	if !strings.Contains(body, "seller") {
-		t.Error("wallet ledger must show 'seller' role for T2")
+	if !strings.Contains(txBody, "seller") {
+		t.Error("transactions ledger must show 'seller' role for T2")
 	}
 }
 
@@ -502,13 +675,13 @@ func TestStudioShowsEarnings(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/studio")
+	body := getBody(t, cl, srv.URL+"/actions")
 	// T2 in authKernel is a seller transaction for U1 (target_user_id=U1, status=success).
 	// Earnings card must appear.
 	if !strings.Contains(body, "Earnings") {
 		t.Error("studio must show Earnings section when seller transactions exist")
 	}
-	if !strings.Contains(body, "Net received") {
+	if !strings.Contains(strings.ToLower(body), "net received") {
 		t.Error("studio Earnings card must show Net received label")
 	}
 }
@@ -650,7 +823,7 @@ func TestSettingsPage(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/settings")
+	body := getBody(t, cl, srv.URL+"/user")
 	if !strings.Contains(body, "alice@test.com") {
 		t.Error("settings page must show current email")
 	}
@@ -661,7 +834,7 @@ func TestSettingsPage(t *testing.T) {
 
 	// Email update — success path.
 	form := url.Values{"gorilla.csrf.Token": {tok}, "email": {"new@test.com"}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/settings", strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/user", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := cl.Do(req)
 	if err != nil {
@@ -673,14 +846,17 @@ func TestSettingsPage(t *testing.T) {
 	}
 
 	// Password change — wrong current password shows inline error, no redirect.
-	body2 := getBody(t, cl, srv.URL+"/settings")
+	// The new password is valid locally (≥8, confirmed) so it reaches the kernel,
+	// which rejects the wrong current_password.
+	body2 := getBody(t, cl, srv.URL+"/user")
 	tok2 := csrfTokenFrom(t, body2)
 	form2 := url.Values{
 		"gorilla.csrf.Token": {tok2},
 		"current_password":   {"wrongpass"},
-		"password":           {"newpass"},
+		"password":           {"newpassword"},
+		"confirm_password":   {"newpassword"},
 	}
-	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/settings", strings.NewReader(form2.Encode()))
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/user", strings.NewReader(form2.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp2, err := cl.Do(req2)
 	if err != nil {
@@ -808,11 +984,11 @@ func TestCreateActionAuth(t *testing.T) {
 			defer srv.Close()
 			cl := loginClient(t, srv.URL)
 
-			studioBody := getBody(t, cl, srv.URL+"/studio")
+			studioBody := getBody(t, cl, srv.URL+"/actions")
 			csrfTok := csrfTokenFrom(t, studioBody)
 			tc.fields.Set("gorilla.csrf.Token", csrfTok)
 
-			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/studio/create", strings.NewReader(tc.fields.Encode()))
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(tc.fields.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			resp, err := cl.Do(req)
 			if err != nil {
@@ -928,9 +1104,9 @@ func TestCreateActionHTTPParams(t *testing.T) {
 			defer srv.Close()
 			cl := loginClient(t, srv.URL)
 
-			csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/studio"))
+			csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions"))
 			tc.fields.Set("gorilla.csrf.Token", csrfTok)
-			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/studio/create", strings.NewReader(tc.fields.Encode()))
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(tc.fields.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			resp, err := cl.Do(req)
 			if err != nil {
@@ -986,7 +1162,7 @@ func TestUpdateAction(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// A CSRF token is valid session-wide; any page with a form yields one.
-	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/studio"))
+	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions"))
 	fields := url.Values{
 		"gorilla.csrf.Token": {csrfTok},
 		"description":        {"Weather lookup"},
@@ -1038,7 +1214,7 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/studio"))
+	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions"))
 	fields := url.Values{
 		"gorilla.csrf.Token": {csrfTok},
 		"input_schema":       {`{not json`},

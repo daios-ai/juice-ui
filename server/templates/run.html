@@ -1,5 +1,10 @@
 {{define "content"}}
-<h1>Run</h1>
+<div class="page-head">
+  <div>
+    <h1>run</h1>
+    <p class="subtitle">Discover an action and run it. Search by what you want done, or browse the catalog.</p>
+  </div>
+</div>
 
 {{if not .Data.LookupAvailable}}
 <div class="banner banner-info" role="status">Semantic search isn't available right now, so results come from catalog search instead.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>

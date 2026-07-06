@@ -1,41 +1,51 @@
 {{define "content"}}
-<h1>Sign in to Juice</h1>
-<p class="subtitle">Server-rendered, secure session. Your tokens stay on the server.</p>
+{{$tab := or .Data.Tab "signin"}}
+<div class="auth">
+  <div class="card auth-card">
+    <div class="auth-brand"><span class="brand-mark">◆</span> juice</div>
+    <p class="subtitle auth-subtitle">A terminal for callable actions. Your session and tokens stay on the server.</p>
 
-{{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
-{{if .Data.Notice}}<div class="banner banner-info" role="status">{{.Data.Notice}}</div>{{end}}
+    {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
+    {{if .Data.Notice}}<div class="banner banner-info" role="status">{{.Data.Notice}}</div>{{end}}
 
-<div class="grid">
-  <form class="card stack" method="post" action="/login">
-    {{.CSRFField}}
-    <h2>Existing account</h2>
-    <div class="field">
-      <label for="handle">Handle</label>
-      <input id="handle" name="handle" type="text" placeholder="@you" autocomplete="username" required>
+    <div class="auth-tabs" role="tablist">
+      <a class="auth-tab{{if eq $tab "signin"}} active{{end}}" href="/login?tab=signin" data-tab="signin" role="tab"{{if eq $tab "signin"}} aria-current="page"{{end}}>Sign in</a>
+      <a class="auth-tab{{if eq $tab "signup"}} active{{end}}" href="/login?tab=signup" data-tab="signup" role="tab"{{if eq $tab "signup"}} aria-current="page"{{end}}>Create account</a>
     </div>
-    <div class="field">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-    </div>
-    <button class="btn-primary" type="submit">Sign in</button>
-  </form>
 
-  <form class="card stack" method="post" action="/signup">
-    {{.CSRFField}}
-    <h2>Create account</h2>
-    <div class="field">
-      <label for="c_handle">Handle</label>
-      <input id="c_handle" name="handle" type="text" placeholder="@you" required>
-    </div>
-    <div class="field">
-      <label for="c_email">Email</label>
-      <input id="c_email" name="email" type="email" required>
-    </div>
-    <div class="field">
-      <label for="c_password">Password</label>
-      <input id="c_password" name="password" type="password" autocomplete="new-password" required>
-    </div>
-    <button class="btn" type="submit">Create account &amp; sign in</button>
-  </form>
+    <form class="auth-panel stack" method="post" action="/login" data-panel="signin"{{if ne $tab "signin"}} hidden{{end}}>
+      {{.CSRFField}}
+      <div class="field">
+        <label for="handle">Handle</label>
+        <input id="handle" name="handle" type="text" placeholder="@you" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn-primary" type="submit">Sign in</button>
+    </form>
+
+    <form class="auth-panel stack" method="post" action="/signup" data-panel="signup" data-confirm-password{{if ne $tab "signup"}} hidden{{end}}>
+      {{.CSRFField}}
+      <div class="field">
+        <label for="c_handle">Handle</label>
+        <input id="c_handle" name="handle" type="text" placeholder="@you" required>
+      </div>
+      <div class="field">
+        <label for="c_email">Email</label>
+        <input id="c_email" name="email" type="email" required>
+      </div>
+      <div class="field">
+        <label for="c_password">Password</label>
+        <input id="c_password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div class="field">
+        <label for="c_password2">Confirm password</label>
+        <input id="c_password2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button class="btn-primary" type="submit">Create account</button>
+    </form>
+  </div>
 </div>
 {{end}}

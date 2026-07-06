@@ -1,0 +1,21 @@
+{{define "content"}}
+{{$u := .Data.User}}
+<p><a href="/admin">← admin</a></p>
+<h1>{{$u.Handle}}</h1>
+<div class="card">
+  <dl class="locked-args">
+    <dt>Handle</dt><dd class="mono">{{$u.Handle}}</dd>
+    <dt>Email</dt><dd class="mono">{{$u.Email}}</dd>
+    <dt>Available</dt><dd class="money">{{money $u.Available}}</dd>
+    <dt>Locked</dt><dd class="money">{{money $u.Locked}}</dd>
+    <dt>State</dt><dd>{{if $u.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
+  </dl>
+  <div class="cluster">
+    {{if $u.Suspended}}
+    <form method="post" action="/admin/users/{{$u.Handle}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
+    {{else}}
+    <form method="post" action="/admin/users/{{$u.Handle}}/suspend" data-confirm="Suspend {{$u.Handle}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
+    {{end}}
+  </div>
+</div>
+{{end}}

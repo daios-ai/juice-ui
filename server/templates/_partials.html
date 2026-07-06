@@ -41,7 +41,7 @@
   <strong>The action failed — your funds were fully refunded.</strong>
   <p>{{.Message}}</p>
   {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
-  <p><a href="/wallet">Check your wallet ledger for the refund →</a></p>
+  <p><a href="/user">Check your account ledger for the refund →</a></p>
 </div>
 {{else}}
 <div class="outcome success" role="status">
@@ -68,17 +68,39 @@
 {{end}}
 
 {{define "_process_row"}}
-<tr>
+<tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
   <td class="id mono">{{truncate 8 .ID}}…</td>
-  <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+  <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">◷ awaiting</span>{{end}}</td>
   <td class="money">{{money .Available}}</td>
   <td class="money">{{money .Locked}}</td>
   <td><a href="/processes/{{.ID}}">open</a></td>
 </tr>
 {{end}}
 
+{{/* _ref renders @owner/name with the owner segment weight-emphasized and
+     confusable-distinct (mono), never styled as chrome. */}}
+{{define "_ref"}}<span class="ref mono"><span class="owner">{{refOwner .}}</span>/{{refName .}}</span>{{end}}
+
 {{define "_error"}}
 <div class="banner banner-error" role="alert">{{.}}</div>
+{{end}}
+
+{{/* _action_stats renders a compact table of a federation kernel's actions
+     (name/price/uses/rating). Input: []client.ActionStat. */}}
+{{define "_action_stats"}}
+<table class="stats-table">
+  <thead><tr><th>action</th><th>price</th><th>uses</th><th>rating</th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td>{{template "_ref" .Name}}</td>
+    <td class="money">{{money .Price}}</td>
+    <td class="money">{{.Uses}}</td>
+    <td class="money">{{if gt .Uses 0}}{{.Rating}}{{else}}—{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
 {{end}}
 
 {{define "_form_fields"}}
@@ -101,9 +123,9 @@
     {{else if or (eq .Type "integer") (eq .Type "number")}}
     <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" {{if eq .Type "integer"}}step="1"{{end}}>
     {{else if or (eq .Type "object") (eq .Type "array")}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}">{{.Example}}</textarea>
+    <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}" rows="1">{{.Example}}</textarea>
     {{else}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}"></textarea>
+    <textarea id="f_{{.Name}}" name="f_{{.Name}}" rows="1"></textarea>
     {{end}}
   </div>
   {{end}}
@@ -112,7 +134,7 @@
 <div class="field" data-raw{{if not .UseRawFallback}} hidden{{end}}>
   <label>Arguments (JSON)</label>
   <p class="help">{{if .Example}}Pre-filled with the expected shape — edit the values. {{end}}Defaults to <code>{}</code> when empty.</p>
-  <textarea name="raw_args" placeholder="{}">{{if .Example}}{{.Example}}{{end}}</textarea>
+  <textarea name="raw_args" placeholder="{}" rows="1">{{if .Example}}{{.Example}}{{end}}</textarea>
 </div>
 {{if not .UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
 {{end}}
@@ -145,19 +167,26 @@
 <div class="menu-caption mono">{{.Handle}}</div>
 <div class="menu-caption money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</div>
 <div class="menu-divider"></div>
-<form method="post" action="/theme" class="theme-toggle">
+<form method="post" action="/theme" class="theme-picker menu-field" data-theme-form>
   {{.CSRFField}}
-  <input type="hidden" name="theme" value="{{if eq .Theme "dark"}}light{{else}}dark{{end}}">
-  <button type="submit" class="menu-item" role="menuitem" aria-label="Switch to {{if eq .Theme "dark"}}light{{else}}dark{{end}} theme">
-    <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#{{if eq .Theme "dark"}}sun{{else}}moon{{end}}"/></svg>
-    Theme
-  </button>
+  <label class="tiny muted" for="theme-select">Theme</label>
+  <select name="theme" id="theme-select" data-theme-select aria-label="Terminal theme">
+    <option value=""{{if eq .Theme ""}} selected{{end}}>System default</option>
+    {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+  <noscript><button type="submit" class="btn small">Apply</button></noscript>
 </form>
-<a href="/settings" class="menu-item" role="menuitem">
-  <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg>
-  Settings
-</a>
 <div class="menu-divider"></div>
+<a href="/user" class="menu-item" role="menuitem">
+  <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg>
+  Account
+</a>
+{{if .IsSuperuser}}
+<a href="/admin" class="menu-item" role="menuitem">
+  <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg>
+  Admin
+</a>
+{{end}}
 <form method="post" action="/logout">
   {{.CSRFField}}
   <button type="submit" class="menu-item" role="menuitem">
@@ -165,6 +194,18 @@
     Sign out
   </button>
 </form>
+{{end}}
+
+{{/* _receipt renders on-demand receipt verification (the Verify control). */}}
+{{define "_receipt"}}
+{{if .Receipt}}
+<div class="outcome {{if .Receipt.Valid}}success{{else}}failed{{end}}" role="status">
+  <strong>{{if .Receipt.Valid}}Receipt verified.{{else}}Verification failed.{{end}}</strong>
+  <pre class="json">{{json .Receipt.Checks}}</pre>
+</div>
+{{else if .ReceiptMsg}}
+<div class="banner banner-info" role="status">{{.ReceiptMsg}}</div>
+{{end}}
 {{end}}
 
 {{define "_schema_panel"}}

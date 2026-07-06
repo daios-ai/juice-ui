@@ -1,58 +1,39 @@
 {{define "content"}}
 {{$d := .Data}}
-<p><a href="/transactions">← Transactions</a></p>
-<h1>Transaction</h1>
+{{$me := $d.Me.Handle}}
+<p><a href="/transactions">← tx</a></p>
+<h1>tx</h1>
 <p class="subtitle id mono">{{$d.Tx.ID}}</p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
 <div class="card stack">
 
-  {{/* Status + action */}}
   <div class="row">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
-    <span class="mono">
-      {{if $d.Action}}<a href="/actions/{{$d.Action.ID}}">{{$d.Action.Ref}}</a>
-      {{else}}<span class="muted">{{truncate 8 $d.Tx.ActionID}}… (deleted)</span>{{end}}
-    </span>
+    {{if $d.Action}}<a href="/actions/{{$d.Action.ID}}">{{template "_ref" $d.Action.Ref}}</a>
+    {{else}}<span class="muted mono">{{truncate 8 $d.Tx.ActionID}}… (deleted)</span>{{end}}
   </div>
 
-  {{/* Parties */}}
+  {{/* Parties — kernel-captured handles; the viewer's own role emphasized */}}
   <div>
     <h3>Parties</h3>
     <table class="parties">
-      <tr>
-        <th>Buyer</th>
-        <td class="mono">
-          {{if eq $d.Tx.OwnerUserID $d.Me.ID}}{{$d.Me.Handle}}
-          {{else}}<span class="muted">{{truncate 8 $d.Tx.OwnerUserID}}…</span>{{end}}
-        </td>
-      </tr>
-      <tr>
-        <th>Caller</th>
-        <td class="mono">
-          {{if eq $d.Tx.CallerUserID $d.Me.ID}}{{$d.Me.Handle}}
-          {{else}}<span class="muted">{{truncate 8 $d.Tx.CallerUserID}}…</span>{{end}}
-        </td>
-      </tr>
-      <tr>
-        <th>Seller</th>
-        <td class="mono">
-          {{if $d.Action}}{{$d.Action.OwnerHandle}}
-          {{else}}<span class="muted">{{truncate 8 $d.Tx.TargetUserID}}…</span>{{end}}
-        </td>
-      </tr>
+      <tr><th>Buyer</th><td class="mono">{{$d.Tx.OwnerHandle}}{{if eq $d.Tx.OwnerHandle $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Caller</th><td class="mono">{{$d.Tx.CallerHandle}}{{if eq $d.Tx.CallerHandle $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Seller</th><td class="mono">{{$d.Tx.TargetHandle}}{{if eq $d.Tx.TargetHandle $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
     </table>
   </div>
 
   {{/* Cost */}}
   {{if eq $d.Tx.Status "success"}}
   {{template "_cost_breakdown" (costOf $d.Tx)}}
+  <p class="cost-note muted">Fee is charged on value added.</p>
   {{else}}
   <div class="outcome failed"><strong>Failed — fully refunded.</strong>{{if $d.Tx.Reason}}<p>{{$d.Tx.Reason}}</p>{{end}}</div>
   {{end}}
 
-  {{/* Args / Result */}}
+  {{/* Args / Result — counterparty content, inert */}}
   <div>
     <h3>Arguments</h3>
     <pre class="json">{{json $d.Tx.Args}}</pre>
@@ -62,22 +43,20 @@
     <pre class="json">{{json $d.Tx.Result}}</pre>
   </div>
 
+  {{/* Receipt verification — on demand (Verify control) */}}
   <div>
     <h3>Receipt verification</h3>
-    {{if $d.Receipt}}
-    <p><span class="pill {{if $d.Receipt.Valid}}status-credited{{else}}status-refunded{{end}}">{{if $d.Receipt.Valid}}valid{{else}}invalid{{end}}</span></p>
-    <pre class="json">{{json $d.Receipt.Checks}}</pre>
-    {{else}}
-    <p class="muted">{{$d.ReceiptMsg}}</p>
-    {{end}}
+    <div id="receipt-result">{{template "_receipt" $d}}</div>
+    <p><a class="btn" href="/transactions/{{$d.Tx.ID}}/verify"
+          hx-get="/transactions/{{$d.Tx.ID}}/verify" hx-target="#receipt-result" hx-swap="innerHTML">Verify receipt</a></p>
   </div>
 
-  {{/* Rating */}}
+  {{/* Rating — buyer only, once */}}
   {{if $d.CanRate}}
   <form class="stack" method="post" action="/transactions/{{$d.Tx.ID}}/rate">
     {{.CSRFField}}
     <span>Rate this result:</span>
-    <textarea name="note" placeholder="Optional note…" rows="2"></textarea>
+    <textarea name="note" placeholder="Optional note…" rows="1"></textarea>
     <div class="row">
       <button class="btn-icon" name="rating" value="1" type="submit" title="Good"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg></button>
       <button class="btn-icon" name="rating" value="0" type="submit" title="Bad"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#thumb-down"/></svg></button>
