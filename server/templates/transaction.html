@@ -18,11 +18,13 @@
   {{/* Parties — kernel-captured handles; the viewer's own role emphasized */}}
   <div>
     <h3>Parties</h3>
+    <div class="table-scroll">
     <table class="parties">
       <tr><th>Buyer</th><td class="mono">{{$d.Tx.OwnerHandle}}{{if eq $d.Tx.OwnerHandle $me}} <span class="pill">you</span>{{end}}</td></tr>
       <tr><th>Caller</th><td class="mono">{{$d.Tx.CallerHandle}}{{if eq $d.Tx.CallerHandle $me}} <span class="pill">you</span>{{end}}</td></tr>
       <tr><th>Seller</th><td class="mono">{{$d.Tx.TargetHandle}}{{if eq $d.Tx.TargetHandle $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
     </table>
+    </div>
   </div>
 
   {{/* Cost */}}

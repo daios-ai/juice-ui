@@ -4,10 +4,34 @@ The single source of truth for the interface. Every screen is built from the
 canvas and components below; nothing is styled ad hoc. **Rules are normative
 (MUST).** Code conforms to this document, not the other way round.
 
-Two laws underpin everything:
+Three laws underpin everything:
 - **No inline styles.** Every visual decision is a named class in `app.css`.
 - **Tokens only.** Components reference semantic CSS custom properties (§2),
   never raw colors or sizes.
+- **Closed component set.** All UI composes the registry below; there is no
+  extra button style, no bespoke widget. Adding a component means adding it here
+  *and* to the drift guard (`server/grammar_test.go`). A small, fixed set is what
+  makes runtime user customization tractable.
+- **Content-first, calm.** Title → content. Commands live quietly *with* the
+  content they act on (never a floating page-head cluster); color appears only at
+  the real money/danger moment. Hierarchy comes from position and whitespace, not
+  from filled buttons.
+
+**Component registry** (the whole vocabulary):
+
+| Component | Class(es) | Role |
+|---|---|---|
+| Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-quiet` | actions |
+| **Linkbar** | `.linkbar` (muted links, active bolded) | in-content view switching: list filters, admin `users · peers` |
+| Tabs | `.tabs` + `.tab` | **login only** — the sign in / create account toggle |
+| Tab bar | `.tab-bar` + `.tab` | the fixed mobile bottom nav |
+| Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
+| Card / grid / table | `.card` · `.grid` · `.card-list` · `table` (`.rowable`, `.stats-table`) | containers & data |
+| Field | `.field` + inputs/select/textarea | forms |
+| Dialog | `dialog.modal-form` · `#modal-backdrop` confirm · `dialog.palette` | overlays |
+| Status | `.pill` (+state) · `.sig-*` money signals | trust signals |
+| Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
+| Ref | `_ref` partial | `@owner/name` |
 
 ---
 
@@ -20,7 +44,7 @@ The frame every page renders into. Defined in `layout.html`.
 │ SIDEBAR│  flash bar (one-shot, when present)       │
 │ brand  ├─────────────────────────────────────────┤
 │ ◆ juice│  ┌── page-head ───────────────────────┐  │
-│        │  │ title + subtitle      [ toolbar ]  │  │
+│        │  │ title + subtitle                   │  │
 │ ▸ run  │  └────────────────────────────────────┘  │
 │ ▸ action  │  content (container, max 1000px)      │
 │ ▸ process │                                        │
@@ -39,14 +63,15 @@ The frame every page renders into. Defined in `layout.html`.
 | **Nav** | `run · action · process · tx · step · user` + `admin` (only `@sys`) | Mirrors the CLI command groups. Active group carries `aria-current="page"`. `step` carries the badge. Icon + lowercase label; label hidden when collapsed. |
 | **Profile popover** | handle, balance, theme picker, Account, Sign out | Opens from the sidebar foot (`[data-menu]`). The theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width 1000px`, centered, padding `1.25rem 1.5rem 4rem`. |
-| **page-head** | title block (left) + toolbar `.cluster` (right) | Present on every **index** page (§3). |
+| **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
 | **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · tx · user`); top hamburger → **drawer** (theme, Account, Sign out, and **Admin when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin MUST remain reachable in the drawer for `@sys`. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
-card (`◆ juice`) with a **Sign in / Create account** tab toggle and one primary
-action per tab. Tabs are real `/login?tab=` links (server renders the active tab
-with JS off); app.js swaps panels client-side.
+card (`◆ juice`) whose **Sign in / Create account** toggle is the `.tabs`
+component (§5.2, its one retained use), one action per tab. Tabs are real
+`/login?tab=` links (server renders the active tab with JS off); app.js swaps
+panels client-side.
 
 **Layer order** (all native `<dialog>` except the menu/flash; `Esc` closes the
 topmost): content < flash < menu/popover < modal form & confirm modal < command
@@ -92,7 +117,8 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 - **Money, IDs, hashes, `@owner/name`:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**
-  - *Index* = `page-head` (title + subtitle left, toolbar right) → filters → list.
+  - *Index* = `page-head` (title + subtitle) → section `<h2>` → a control row
+    (quiet inline command + `.linkbar` filters) → list.
   - *Detail* = back-link → `<h1>` → `.subtitle` (the id) → cards.
 
 ---
@@ -118,31 +144,66 @@ templates.
 
 ## 5. Components
 
-### 5.1 Buttons — one geometry, three tiers + helpers
+### 5.1 Buttons — one neutral, plus money & danger
 
-All buttons share **one geometry** (padding, height, radius, font-size); only
-fill/weight-of-hue changes, so siblings never read as "different types."
+All buttons share **one geometry** (padding, height, radius, font-size).
+**Color is reserved for the real money/danger moment**; everything else is the
+single neutral `.btn`, so two ordinary buttons never read as "different types."
 
 | Class | Tier | Fill | Use |
 |---|---|---|---|
-| `.btn` | **secondary** (neutral, ghost) | transparent + border | cancel, filters, lifecycle toggles (enable/disable, public/private), inspect (read), navigate, add-row |
-| `.btn-primary` | **normal op** (solid neutral) | `--surface-2` + strong border, weight 600 | the main non-money action: create, save, import, unimport, complete, update account, create step, sign in |
+| `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, befriend, inspect, navigate, add-row |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **MUST name the amount** (e.g. `Pay 12 ¤ & run`, `Synthesize · 20 ¤`) |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, unfriend, force-end |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
-| `.btn-quiet` | inline text button | — | tertiary inline (e.g. remove param row) |
+| `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 
 **Rules.** These are the *only* button styles. The money tier is the **authorizing
 control** — the form submit that actually moves credits (`Pay 12 ¤ & run`,
-`Synthesize · 20 ¤`, Deposit/Withdraw, `Complete · 5 ¤`). A toolbar *opener* that
-merely opens such a form is a normal op (`.btn-primary`) — so Create / Synthesize
-/ Import / Unimport read uniformly; the money color appears on the confirm inside.
-**Danger beats money** (an op that is both destructive and monetary is danger —
-e.g. force-end). Money buttons state the amount when it is fixed/known; when the
-operator types the amount (deposit/withdraw) the adjacent field is the amount.
-Destructive buttons that can't be undone use `data-confirm` (§5.6).
+`Synthesize · 20 ¤`, Deposit/Withdraw, `Complete · 5 ¤`). An *opener* that merely
+opens such a form is a quiet `.btn-quiet`, not a colored button — the money color
+appears on the confirm inside the modal. **Danger beats money** (an op that is
+both destructive and monetary is danger — e.g. force-end). Money buttons state
+the amount when it is fixed/known; when the operator types the amount
+(deposit/withdraw) the adjacent field is the amount. Destructive buttons that
+can't be undone use `data-confirm` (§5.8).
 
-### 5.2 Forms
+### 5.2 View switching — the Linkbar (and the login Tabs)
+
+In-content view switching is the **`.linkbar`**: a quiet row of muted text links,
+the active one **bolded** (`.active` + `aria-current`) — no underline band, no
+fill, no color. Middot separators come from CSS; links are real (work with JS
+off). It replaces every button-row filter and every sub-nav.
+
+```
++ new action              all · active · inactive
+```
+
+| Use | Markup | Active |
+|---|---|---|
+| **List filters** | `.linkbar` on the section's control row — action `all/active/inactive` (+`all actions` for `@sys`), step `all/done/cancelled` | selected filter |
+| **Admin switch** | `.linkbar` `users · peers` under the subtitle (minor nav between two admin views; the primary nav is the sidebar) | current page |
+
+The **`.tabs`** underline component is retained for exactly one place: the entry
+screen's Sign in / Create account toggle (§1) — a genuine two-panel switch on an
+otherwise empty page. The fixed mobile bottom nav is `.tab-bar`. Neither is used
+for in-content switching.
+
+### 5.3 Commands are inline & quiet
+
+The `page-head` carries **no commands** — just the title and subtitle. A command
+lives **inline, with the content it acts on**, as a single quiet affordance:
+`+ new action` above the actions list, `update account` by the identity card,
+`+ deposit credits` in the users section. All are `.btn-quiet` (or a plain link);
+none float, none are colored.
+
+- When one group has several create paths, the quiet opener is a `+ new … `
+  `[data-menu]` trigger opening a `.menu` (§5.12) of the methods — not a row of
+  equal buttons (see the action page's four creation methods).
+- Money moves stay deliberate: the quiet opener launches a modal (§5.8) whose
+  confirm is the `.btn-money` that names the amount.
+
+### 5.4 Forms
 
 - `.field` (bottom `1rem`) wraps `label` (weight 600) + optional `.help` (muted
   `.85`) + control. Required marker: `.req` (`*`, accent).
@@ -156,27 +217,41 @@ Destructive buttons that can't be undone use `data-confirm` (§5.6).
   disable hidden inputs so they aren't submitted. Secrets are masked, write-only,
   never pre-filled.
 
-### 5.3 Cards, grids, tables
+### 5.5 Cards, grids, tables
 
 - `.card` (surface, border, radius, pad); `.action-card` for catalog items;
   `.grid` for card collections; `.card-list` for stacked cards.
 - **Tables:** full width, hairline row borders, muted `th`. A clickable row is
   `.rowable` + `tabindex="-1"` + `data-href`; navigable with `j`/`k`/`Enter`.
+- **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
+  table scrolls inside its own box and the page body never scrolls sideways.
+- **Record rows** (the same record type wherever it appears) render through **one
+  shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.
+  Row rules:
+  - The **truncated id is the link** to the record (`/transactions/{id}`, …).
+    No separate "open"/"view" link column.
+  - **Every referenced entity is a link** to its page when a route exists — the
+    action ref → the action, an admin handle → the user page. Refs with no route
+    stay plain text (don't invent routes).
+  - **Money is the signed, perspective amount** (§5.6): what the call did to the
+    viewer's balance — `+`earned / `−`paid / `↩`refunded / `◷`parked — not raw
+    gross/net/fee. `@sys` sees `+fee` (its tax). Gross, fee and the full party
+    list belong to the **detail** page, not the list.
 
-### 5.4 Status, pills, money
+### 5.6 Status, pills, money
 
 - `.pill` — square, bordered, `currentColor`. State variants:
   `.status-credited / -refunded / -escrow / -danger`.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
 
-### 5.5 Refs
+### 5.7 Refs
 
 `@owner/name` renders via the `_ref` partial: `<span class="ref mono">` with the
 owner in `.owner` (weight-emphasized, confusable-distinct, **not** accent),
 split on the first `/`.
 
-### 5.6 Modals & floating forms
+### 5.8 Modals & floating forms
 
 - **Every create/edit opens a floating modal:** native `<dialog class="modal-form">`.
   Trigger is a real link `href="?form=NAME" data-modal="form-NAME"`; JS opens it
@@ -186,7 +261,7 @@ split on the first `/`.
 - **Destructive confirm:** `form[data-confirm="…"]` routes through the shared
   confirm modal (`#modal-backdrop`), whose message names the consequence.
 
-### 5.7 Command palette & keyboard
+### 5.9 Command palette & keyboard
 
 - **Ctrl/Cmd+K** opens the palette (`<dialog class="palette">`). Its registry is
   **inert JSON** (`<script type="application/json">`, CSP-safe), built
@@ -195,7 +270,7 @@ split on the first `/`.
   `j/k/Enter` (rows) · `Esc` (close topmost). Every command targets a real
   link/form — the keyboard layer adds no capability unreachable without it.
 
-### 5.8 Feedback
+### 5.10 Feedback
 
 | Element | Use |
 |---|---|
@@ -206,10 +281,12 @@ split on the first `/`.
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
 | `.badge` | round, accent, **only** on the `step` nav — the sole async attention signal |
 
-### 5.9 Federation (admin)
+### 5.11 Federation (admin)
 
-The `peers` page is a discovery → inspect → trust journey, all in the table
-grammar: **this kernel** (identity to share) · **friends** (direct peers, each
+Admin is two sibling pages reached through a quiet `users · peers` `.linkbar`
+switch (§5.2), not toolbar links. The `peers` page is a discovery → inspect → trust
+journey, all in the table grammar: **this kernel** (identity to share) ·
+**friends** (direct peers, each
 with Inspect + Unfriend) · **known network** (the gossip roster: one block per
 discovered kernel showing *your* earned stats — labeled `you` — distinct from the
 kernel's `self-reported` manifest and hearsay grouped `via <introducer>`; each has
@@ -217,7 +294,7 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
 (direct/relayed + rtt), public actions, and transacted friends. Roster requires
 `?gossip=1` from the kernel (not `true`).
 
-### 5.10 Menus & icons
+### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
   profile popover and mobile drawer.
@@ -236,7 +313,12 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   affordances key on kernel-captured fields, never payload shape.
 - No spend reachable from a list view or a GET; money moves only through a
   confirm that names the amount.
-- Lowercase CLI titles; `page-head` on index, back-link on detail.
+- Record lists share one row partial per record type; the truncated id is the
+  link to the record; referenced entities link to their pages; list money is the
+  signed perspective amount (gross/fee/parties live on the detail page). Every
+  `<table>` sits in a `.table-scroll`.
+- Lowercase CLI titles; `page-head` (title + subtitle only) on index, back-link
+  on detail. Commands are quiet and inline — never a floating page-head cluster.
 - One `aria-live` region; the `step` badge is the only async attention signal;
   no notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
@@ -244,5 +326,12 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
 - CSP: no inline script; palette registry is inert JSON; `Referrer-Policy:
   same-origin` (never `no-referrer` — it nulls the Origin and breaks CSRF).
 - Floating forms degrade to the `?form=` no-JS path.
+- **Closed component set** (§0 registry): new UI composes existing components;
+  adding one means updating the registry **and** the drift guard. Color is
+  money/danger only — no neutral-emphasis button tier. Filters and sibling-view
+  navigation are the quiet `.linkbar` (§5.2), never buttons or tabs. The
+  `page-head` carries no command cluster (§5.3).
 - **Drift guard:** a test scans templates and fails on any button class outside
-  §5.1 or any inline `style=`.
+  §5.1 (incl. the retired `.btn-primary`), any inline `style=`, any `.toolbar`,
+  any `.tabs`/tablist outside `login.html`, the superseded `auth-tab` class, and
+  any `<table>` not wrapped in a `.table-scroll`.

@@ -51,6 +51,8 @@ func loginTab(r *http.Request) string {
 type userView struct {
 	User          client.User
 	Transactions  []client.Transaction
+	Actions       map[string]client.Action // action_id → Action for ledger refs
+	MyHandle      string
 	OpenProcesses []client.Process
 	Parked        int64 // locked funds across open processes
 	OpenForm      string
@@ -123,6 +125,8 @@ type processesView struct {
 type processView struct {
 	Process      client.Process
 	Transactions []client.Transaction
+	Actions      map[string]client.Action // action_id → Action; missing if deleted
+	MyHandle     string
 }
 
 type transactionsView struct {
@@ -130,6 +134,24 @@ type transactionsView struct {
 	Actions      map[string]client.Action // action_id → Action; missing if deleted
 	MyHandle     string
 	Superuser    bool
+}
+
+// actionsByID fetches each transaction's action once (deduped) so lists can
+// render the full @owner/name ref and link it. Deleted actions (404) are simply
+// absent from the map; the row falls back to the bare id.
+func (s *Server) actionsByID(ctx context.Context, tok string, txs []client.Transaction) map[string]client.Action {
+	actions := map[string]client.Action{}
+	seen := map[string]bool{}
+	for _, tx := range txs {
+		if tx.ActionID == "" || seen[tx.ActionID] {
+			continue
+		}
+		seen[tx.ActionID] = true
+		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
+			actions[tx.ActionID] = a
+		}
+	}
+	return actions
 }
 
 type txView struct {
@@ -406,7 +428,9 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.User = u
+		view.MyHandle = u.Handle
 		view.Transactions, _ = s.client.ListTransactions(ctx, tok, "")
+		view.Actions = s.actionsByID(ctx, tok, view.Transactions)
 		procs, _ := s.client.ListProcesses(ctx, tok)
 		view.OpenProcesses = filterStatus(procs, "open", true)
 		for _, p := range view.OpenProcesses {
@@ -1147,8 +1171,10 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Process = p
+		view.MyHandle = s.sessions.Handle(ctx)
 		if txs, e := s.client.ListTransactions(ctx, tok, id); e == nil {
 			view.Transactions = txs
+			view.Actions = s.actionsByID(ctx, tok, txs)
 		}
 		return nil
 	})
@@ -1186,17 +1212,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		txs = t
-		// Fetch each unique action once; skip silently on 404 (deleted action).
-		seen := map[string]bool{}
-		for _, tx := range txs {
-			if tx.ActionID == "" || seen[tx.ActionID] {
-				continue
-			}
-			seen[tx.ActionID] = true
-			if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
-				actions[tx.ActionID] = a
-			}
-		}
+		actions = s.actionsByID(ctx, tok, txs)
 		return nil
 	})
 	if s.handleErr(w, r, err) {

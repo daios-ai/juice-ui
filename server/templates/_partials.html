@@ -69,11 +69,26 @@
 
 {{define "_process_row"}}
 <tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
-  <td class="id mono">{{truncate 8 .ID}}…</td>
+  <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a></td>
   <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">◷ awaiting</span>{{end}}</td>
   <td class="money">{{money .Available}}</td>
   <td class="money">{{money .Locked}}</td>
-  <td><a href="/processes/{{.ID}}">open</a></td>
+</tr>
+{{end}}
+
+{{/* _tx_row — one row for every transaction list (tx index, user ledger,
+     process detail). Input: a txRow (via the `txrow` helper) carrying the tx,
+     the viewer handle, and the resolved action ref. The truncated id links to
+     the record; the action ref links to the action; the amount is signed from
+     the viewer's perspective (see txAmount). Gross/fee/parties → detail page. */}}
+{{define "_tx_row"}}
+{{$tx := .Tx}}
+<tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
+  <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}…</a></td>
+  <td>{{if .Ref}}<a href="/actions/{{$tx.ActionID}}">{{template "_ref" .Ref}}</a>{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
+  <td class="money">{{txAmount $tx .Viewer}}</td>
+  <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
+  <td class="muted">{{shortTime $tx.StartedAt}}</td>
 </tr>
 {{end}}
 
@@ -88,6 +103,7 @@
 {{/* _action_stats renders a compact table of a federation kernel's actions
      (name/price/uses/rating). Input: []client.ActionStat. */}}
 {{define "_action_stats"}}
+<div class="table-scroll">
 <table class="stats-table">
   <thead><tr><th>action</th><th>price</th><th>uses</th><th>rating</th></tr></thead>
   <tbody>
@@ -101,6 +117,7 @@
   {{end}}
   </tbody>
 </table>
+</div>
 {{end}}
 
 {{define "_form_fields"}}
@@ -210,6 +227,7 @@
 
 {{define "_schema_panel"}}
 {{if not .UseRawFallback}}
+<div class="table-scroll">
 <table class="schema-table">
   <thead><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr></thead>
   <tbody>
@@ -223,6 +241,7 @@
   {{end}}
   </tbody>
 </table>
+</div>
 {{else}}
 <p class="muted">No structured schema defined.</p>
 {{end}}

@@ -223,13 +223,13 @@ func TestLoginTabsAndNoJSFallback(t *testing.T) {
 	if strings.Contains(up, `data-panel="signup" hidden`) {
 		t.Error("?tab=signup must show the signup panel")
 	}
-	// Each auth panel's action is a normal-op primary (not money/danger). The
-	// per-form submit is btn-primary; a "Sign in" and "Create account" button exist.
-	if !strings.Contains(def, `class="btn-primary" type="submit">Sign in<`) {
-		t.Error("sign-in panel must have a btn-primary Sign in action")
+	// Each auth panel's action is the single neutral .btn (color is money/danger
+	// only); a "Sign in" and a "Create account" submit exist.
+	if !strings.Contains(def, `class="btn" type="submit">Sign in<`) {
+		t.Error("sign-in panel must have a neutral .btn Sign in action")
 	}
-	if !strings.Contains(def, `class="btn-primary" type="submit">Create account<`) {
-		t.Error("signup panel must have a btn-primary Create account action")
+	if !strings.Contains(def, `class="btn" type="submit">Create account<`) {
+		t.Error("signup panel must have a neutral .btn Create account action")
 	}
 }
 
@@ -360,7 +360,7 @@ func TestAuthenticatedStateChangeStillNeedsCSRF(t *testing.T) {
 	}
 }
 
-func TestTransactionsShowsBuyerAndSellerRoles(t *testing.T) {
+func TestTransactionsUnifiedRow(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -368,16 +368,50 @@ func TestTransactionsShowsBuyerAndSellerRoles(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/transactions")
-	if !strings.Contains(body, "buyer") {
-		t.Error("transactions page must show 'buyer' role for transactions where I am owner_user_id")
+	// Signed, perspective amounts: @alice is buyer on T1 (−gross) and seller on
+	// T2 (+net) — the Role/Gross/Fee columns are gone (they live on the detail).
+	if !strings.Contains(body, "-100") {
+		t.Error("buyer transaction must show the negative gross (−100)")
 	}
-	if !strings.Contains(body, "seller") {
-		t.Error("transactions page must show 'seller' role for transactions where I am target_user_id")
+	if !strings.Contains(body, "+45") || !strings.Contains(body, "sig-credited") {
+		t.Error("seller transaction must show the positive net (+45) as credited")
 	}
-	// Action ref should appear with the owner segment emphasized (_ref wraps the
-	// owner handle in its own span, so the ref isn't a contiguous substring).
+	for _, gone := range []string{"<th>Role</th>", "<th>Fee</th>", "<th>Gross</th>"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("transactions list must not carry the %q column", gone)
+		}
+	}
+	// The id links to the record; the action ref links to the action (owner
+	// emphasized via _ref, so it isn't a contiguous substring).
+	if !strings.Contains(body, `href="/transactions/T1"`) {
+		t.Error("transaction id must link to the record")
+	}
+	if !strings.Contains(body, `href="/actions/owned"`) {
+		t.Error("action ref must link to the action")
+	}
 	if !strings.Contains(body, `class="owner">@alice`) {
-		t.Error("transactions page must show the action ref with owner emphasized")
+		t.Error("action ref must render via _ref with owner emphasized")
+	}
+}
+
+// The user ledger and the tx index share _tx_row, so the ledger now carries the
+// action ref (previously missing) and the same signed amounts.
+func TestUserLedgerUsesUnifiedRow(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/user")
+	if !strings.Contains(body, `href="/actions/owned"`) {
+		t.Error("user ledger must link the action ref (was missing before)")
+	}
+	if !strings.Contains(body, "-100") || !strings.Contains(body, "+45") {
+		t.Error("user ledger must show the signed perspective amounts")
+	}
+	if strings.Contains(body, "<th>Gross</th>") {
+		t.Error("user ledger must not carry the Gross column")
 	}
 }
 
@@ -455,6 +489,51 @@ func TestStudioPageTwoZones(t *testing.T) {
 	// Inactive status visible for the draft action (shown in card meta line).
 	if !strings.Contains(body, "inactive") {
 		t.Error("studio must show the inactive status for an inactive action")
+	}
+}
+
+func TestActionsCommandAndFilters(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	body := getBody(t, cl, srv.URL+"/actions")
+
+	// Content-first: no floating command chrome, and color stays money/danger only.
+	if strings.Contains(body, `class="toolbar"`) {
+		t.Error("actions page must not carry a page-head toolbar")
+	}
+	if strings.Contains(body, "btn-primary") {
+		t.Error("actions page must not use the retired btn-primary tier")
+	}
+
+	// The create command is one quiet inline "+ new action" menu trigger opening
+	// the four creation methods (each a real ?form= link).
+	if !strings.Contains(body, `id="menu-new-action"`) || !strings.Contains(body, "+ new action") {
+		t.Error("actions create command must be a quiet + new action menu")
+	}
+	if !strings.Contains(body, `class="btn-quiet" data-menu="menu-new-action"`) {
+		t.Error("+ new action must be a quiet menu trigger, not a solid button")
+	}
+	for _, form := range []string{"action-create", "action-make", "action-import", "action-unimport"} {
+		if !strings.Contains(body, "?form="+form) {
+			t.Errorf("+ new action menu missing the %q method", form)
+		}
+	}
+
+	// Filters are the quiet .linkbar, not .tabs and not buttons.
+	if strings.Contains(body, `class="tabs"`) {
+		t.Error("action filters must be a .linkbar, not the .tabs component")
+	}
+	if !strings.Contains(body, `class="linkbar"`) {
+		t.Error("action filters must render as a .linkbar")
+	}
+	if !strings.Contains(body, `class="active" href="/actions" aria-current="page">all`) {
+		t.Error("action linkbar must mark 'all' active")
+	}
+	if !strings.Contains(body, `href="/actions?filter=active"`) {
+		t.Error("action linkbar must offer the 'active' filter")
 	}
 }
 

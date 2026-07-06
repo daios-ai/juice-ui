@@ -55,6 +55,11 @@ func New(o Options) (http.Handler, error) {
 	mux := http.NewServeMux()
 	// Static assets (open).
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(StaticFS()))))
+	// Bare /favicon.ico for browsers that probe the root (and older ones that
+	// ignore the SVG <link rel=icon>); the raster fallback lives in static.
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, StaticFS(), "favicon.ico")
+	})
 
 	// Public auth routes.
 	mux.HandleFunc("GET /login", s.getLogin)

@@ -24,19 +24,11 @@
 
 <h2>Transactions in this process</h2>
 {{if $d.Transactions}}
+<div class="table-scroll">
 <table>
-  <thead><tr><th>Status</th><th>Gross</th><th>Net</th><th>When</th><th></th></tr></thead>
-  <tbody>
-  {{range $d.Transactions}}
-  <tr class="rowable" tabindex="-1" data-href="/transactions/{{.ID}}">
-    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
-    <td class="money">{{money .Gross}}</td>
-    <td class="money">{{money .Net}}</td>
-    <td class="muted">{{shortTime .StartedAt}}</td>
-    <td><a href="/transactions/{{.ID}}">view</a></td>
-  </tr>
-  {{end}}
-  </tbody>
+  <thead><tr><th>ID</th><th>Action</th><th>Amount</th><th>Status</th><th>When</th></tr></thead>
+  <tbody>{{range $d.Transactions}}{{template "_tx_row" (txrow . $d.MyHandle $d.Actions)}}{{end}}</tbody>
 </table>
+</div>
 {{else}}<p class="muted">No transactions.</p>{{end}}
 {{end}}

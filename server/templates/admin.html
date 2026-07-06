@@ -1,25 +1,28 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <div>
-    <h1>admin</h1>
-    <p class="subtitle">Operator supervision — money, access, and federation trust. <span class="scope-note">superuser only</span></p>
-  </div>
-  <div class="cluster">
-    <a class="btn-primary" href="/admin?form=admin-deposit" data-modal="form-admin-deposit">Deposit</a>
-    <a class="btn-primary" href="/admin?form=admin-withdraw" data-modal="form-admin-withdraw">Withdraw</a>
-    <a class="btn" href="/admin/peers">Peers</a>
-  </div>
+  <h1>admin</h1>
+  <p class="subtitle">Operator supervision — money, access, and federation trust. <span class="scope-note">superuser only</span></p>
 </div>
 
+<nav class="linkbar" aria-label="Admin sections">
+  <a class="active" href="/admin" aria-current="page">users</a>
+  <a href="/admin/peers">peers</a>
+</nav>
+
 <h2>Users</h2>
+<div class="row control-row">
+  <a class="btn-quiet" href="/admin?form=admin-deposit" data-modal="form-admin-deposit">+ deposit credits</a>
+  <a class="btn-quiet" href="/admin?form=admin-withdraw" data-modal="form-admin-withdraw">+ withdraw credits</a>
+</div>
 {{if $d.Users}}
+<div class="table-scroll">
 <table>
   <thead><tr><th>Handle</th><th>Email</th><th>Available</th><th>Locked</th><th>State</th><th></th></tr></thead>
   <tbody>
   {{range $d.Users}}
   <tr>
-    <td class="mono">{{.Handle}}</td>
+    <td class="mono"><a href="/admin/users/{{.Handle}}">{{.Handle}}</a></td>
     <td class="mono muted">{{.Email}}</td>
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
@@ -35,6 +38,7 @@
   {{end}}
   </tbody>
 </table>
+</div>
 {{else}}<p class="muted">No users.</p>{{end}}
 
 <h2>This kernel</h2>

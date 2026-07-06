@@ -1,13 +1,8 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <div>
-    <h1>user</h1>
-    <p class="subtitle">Your identity and wallet.</p>
-  </div>
-  <div class="cluster">
-    <a class="btn-primary" href="/user?form=user-update" data-modal="form-user-update">Update account</a>
-  </div>
+  <h1>user</h1>
+  <p class="subtitle">Your identity and wallet.</p>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
@@ -17,6 +12,7 @@
     <dt>Handle</dt><dd class="mono">{{$d.User.Handle}}</dd>
     <dt>Email</dt><dd class="mono">{{$d.User.Email}}</dd>
   </dl>
+  <p class="card-note"><a href="/user?form=user-update" data-modal="form-user-update">Update account →</a></p>
 </div>
 
 <h2>Wallet</h2>
@@ -31,28 +27,22 @@
 
 {{if $d.OpenProcesses}}
 <h2>Open processes</h2>
+<div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th></tr></thead>
   <tbody>{{range $d.OpenProcesses}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
+</div>
 {{end}}
 
 <h2>Ledger</h2>
 {{if $d.Transactions}}
+<div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th>Gross</th><th>Net</th><th>When</th></tr></thead>
-  <tbody>
-  {{range $d.Transactions}}
-  <tr class="rowable" tabindex="-1" data-href="/transactions/{{.ID}}">
-    <td class="id mono"><a href="/transactions/{{.ID}}">{{truncate 8 .ID}}…</a></td>
-    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
-    <td class="money">{{money .Gross}}</td>
-    <td class="money">{{money .Net}}</td>
-    <td class="muted">{{shortTime .StartedAt}}</td>
-  </tr>
-  {{end}}
-  </tbody>
+  <thead><tr><th>ID</th><th>Action</th><th>Amount</th><th>Status</th><th>When</th></tr></thead>
+  <tbody>{{range $d.Transactions}}{{template "_tx_row" (txrow . $d.MyHandle $d.Actions)}}{{end}}</tbody>
 </table>
+</div>
 <p class="card-note"><a href="/transactions">Full transaction ledger →</a></p>
 {{else}}<p class="muted">No transactions yet.</p>{{end}}
 

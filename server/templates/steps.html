@@ -1,13 +1,8 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <div>
-    <h1>step</h1>
-    <p class="subtitle">Work addressed to you — waiting steps you can complete, and the history of the rest.{{if $d.Superuser}} <span class="scope-note">superuser scope: all steps</span>{{end}}</p>
-  </div>
-  <div class="cluster">
-    <a class="btn-primary" href="/steps?form=step-create" data-modal="form-step-create">Create step</a>
-  </div>
+  <h1>step</h1>
+  <p class="subtitle">Work addressed to you — waiting steps you can complete, and the history of the rest.{{if $d.Superuser}} <span class="scope-note">superuser scope: all steps</span>{{end}}</p>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
@@ -36,7 +31,7 @@
       {{else}}
       {{template "_form_fields" .Form.Editable}}
       {{end}}
-      <button class="{{if gt $step.Price 0}}btn-money{{else}}btn-primary{{end}}" type="submit">{{if gt $step.Price 0}}Complete · {{money $step.Price}} ¤{{else}}Complete step{{end}}</button>
+      <button class="{{if gt $step.Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{if gt $step.Price 0}}Complete · {{money $step.Price}} ¤{{else}}Complete step{{end}}</button>
     </form>
     <div id="step-result-{{$step.ID}}"></div>
   </div>
@@ -47,19 +42,23 @@
 {{end}}
 
 <h2>History</h2>
-<div class="cluster control-row">
-  <a class="btn small{{if eq $d.Filter ""}} btn-primary{{end}}" href="/steps">all</a>
-  <a class="btn small{{if eq $d.Filter "done"}} btn-primary{{end}}" href="/steps?status=done">done</a>
-  <a class="btn small{{if eq $d.Filter "cancelled"}} btn-primary{{end}}" href="/steps?status=cancelled">cancelled</a>
+<div class="row control-row">
+  <a class="btn-quiet" href="/steps?form=step-create" data-modal="form-step-create">+ new step</a>
+  <nav class="linkbar" aria-label="Filter step history">
+    <a class="{{if eq $d.Filter ""}}active{{end}}" href="/steps"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
+    <a class="{{if eq $d.Filter "done"}}active{{end}}" href="/steps?status=done"{{if eq $d.Filter "done"}} aria-current="page"{{end}}>done</a>
+    <a class="{{if eq $d.Filter "cancelled"}}active{{end}}" href="/steps?status=cancelled"{{if eq $d.Filter "cancelled"}} aria-current="page"{{end}}>cancelled</a>
+  </nav>
 </div>
 {{if $d.History}}
+<div class="table-scroll">
 <table>
   <thead><tr><th>ID</th><th>Action</th><th>Status</th><th>Price</th><th>Caller</th></tr></thead>
   <tbody>
   {{range $d.History}}
   <tr class="rowable" tabindex="-1" data-href="/steps/{{.ID}}">
     <td class="id mono"><a href="/steps/{{.ID}}">{{truncate 8 .ID}}…</a></td>
-    <td>{{if .Action}}{{template "_ref" .Action}}{{else}}<span class="muted mono">{{truncate 8 .ActionID}}…</span>{{end}}</td>
+    <td>{{if .Action}}<a href="/actions/{{.ActionID}}">{{template "_ref" .Action}}</a>{{else}}<span class="muted mono">{{truncate 8 .ActionID}}…</span>{{end}}</td>
     <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{.Status}}</span></td>
     <td class="money">{{money .Price}}</td>
     <td class="mono muted">{{.RequiredCallerHandle}}</td>
@@ -67,6 +66,7 @@
   {{end}}
   </tbody>
 </table>
+</div>
 {{else}}<p class="muted">No step history yet.</p>{{end}}
 
 {{template "_form_step_create" .}}

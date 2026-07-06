@@ -35,7 +35,7 @@
     {{else}}
     {{template "_form_fields" $d.Form.Editable}}
     {{end}}
-    <button class="{{if gt $d.Step.Price 0}}btn-money{{else}}btn-primary{{end}}" type="submit">{{if gt $d.Step.Price 0}}Complete · {{money $d.Step.Price}} ¤{{else}}Complete step{{end}}</button>
+    <button class="{{if gt $d.Step.Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{if gt $d.Step.Price 0}}Complete · {{money $d.Step.Price}} ¤{{else}}Complete step{{end}}</button>
   </form>
   <div id="step-result"></div>
 </div>

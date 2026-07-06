@@ -6,17 +6,21 @@
 
 <h2>Open</h2>
 {{if .Data.Open}}
+<div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th></tr></thead>
   <tbody>{{range .Data.Open}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
+</div>
 {{else}}<p class="muted">No open processes.</p>{{end}}
 
 <h2>History (closed)</h2>
 {{if .Data.Closed}}
+<div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th></tr></thead>
   <tbody>{{range .Data.Closed}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
+</div>
 {{else}}<p class="muted">No closed processes yet.</p>{{end}}
 {{end}}

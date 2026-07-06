@@ -70,6 +70,8 @@ func NewRenderer() (*Renderer, error) {
 		"refOwner":    refOwner,
 		"refName":     refName,
 		"shortTime":   shortTime,
+		"txAmount":    txAmount,
+		"txrow":       txRowOf,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -265,4 +267,78 @@ func shortTime(ts string) string {
 		return ts
 	}
 	return ts[:10] + " " + ts[11:16]
+}
+
+// txRow bundles a transaction with the viewer's handle and the resolved action
+// ref, so one partial (_tx_row) renders every transaction list identically.
+// Built in-template via the `txrow` helper.
+type txRow struct {
+	Tx     client.Transaction
+	Viewer string
+	Ref    string // full "@owner/name" when the action is known, else ""
+}
+
+// txRowOf resolves the action ref (via the actions map, keyed by action id) and
+// pairs the transaction with the viewer handle.
+func txRowOf(tx client.Transaction, viewer string, actions map[string]client.Action) txRow {
+	ref := ""
+	if a, ok := actions[tx.ActionID]; ok && a.ID != "" {
+		ref = a.Ref()
+	}
+	return txRow{Tx: tx, Viewer: viewer, Ref: ref}
+}
+
+// amountDash is the amount cell for a viewer with no stake in a transaction.
+const amountDash = template.HTML(`<span class="muted">—</span>`)
+
+// txAmount renders a transaction's signed, perspective-relative amount as seen
+// by `viewer` — "what did this call do to my balance". On a settled call the
+// seller sees +net, the buyer −gross, and the platform (@sys) +fee; a viewer
+// occupying several roles sees the sum (a self-call nets to −fee; @sys's own fee
+// returns to it). A failed call shows the buyer the ↩ refund; an open call shows
+// the buyer the ◷ parked gross. A viewer with no stake sees an em dash. Gross,
+// fee and the full party list live on the transaction detail page.
+func txAmount(tx client.Transaction, viewer string) template.HTML {
+	switch tx.Status {
+	case "failure":
+		if viewer == tx.OwnerHandle {
+			return sigAmount("sig-refunded", "↩ ", tx.Gross)
+		}
+		return amountDash
+	case "open":
+		if viewer == tx.OwnerHandle {
+			return sigAmount("sig-escrow", "◷ ", tx.Gross)
+		}
+		return amountDash
+	default: // success / settled
+		var amt int64
+		if viewer == tx.OwnerHandle {
+			amt -= tx.Gross
+		}
+		if viewer == tx.TargetHandle {
+			amt += tx.Net
+		}
+		if viewer == superuserHandle {
+			amt += tx.Fee
+		}
+		switch {
+		case amt > 0:
+			return sigAmount("sig-credited", "+", amt)
+		case amt < 0:
+			return sigAmount("", "", amt) // money() already prints the leading −
+		default:
+			return amountDash
+		}
+	}
+}
+
+// sigAmount builds a money cell: an optional signal class + glyph before the
+// formatted amount. Inputs are constant-controlled or numeric, so the result is
+// safe HTML.
+func sigAmount(sig, glyph string, n int64) template.HTML {
+	cls := "money"
+	if sig != "" {
+		cls += " " + sig
+	}
+	return template.HTML(`<span class="` + cls + `">` + glyph + template.HTMLEscapeString(money(n)) + `</span>`)
 }

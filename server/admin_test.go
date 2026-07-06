@@ -82,9 +82,36 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(body, "@alice") {
 		t.Error("superuser /admin must list users from /control/users")
 	}
+	// The user handle is a doorway to that user's admin page.
+	if !strings.Contains(body, `href="/admin/users/@alice"`) {
+		t.Error("/admin user handle must link to the user's detail page")
+	}
 	// Nav shows the admin group.
 	if !strings.Contains(body, `href="/admin"`) {
 		t.Error("superuser nav must link to /admin")
+	}
+	// Users/Peers is a quiet .linkbar switch (navigation), not tabs or buttons;
+	// users active on /admin.
+	if !strings.Contains(body, `class="linkbar"`) || !strings.Contains(body, `class="active" href="/admin" aria-current="page">users`) {
+		t.Error("/admin must render the users·peers .linkbar with users active")
+	}
+	if !strings.Contains(body, `href="/admin/peers">peers`) {
+		t.Error("/admin switch must link to peers")
+	}
+	// Content-first: no floating command chrome; credits are quiet inline commands.
+	if strings.Contains(body, `class="toolbar"`) || strings.Contains(body, "btn-primary") {
+		t.Error("/admin must not carry a page-head toolbar or btn-primary")
+	}
+	for _, form := range []string{"admin-deposit", "admin-withdraw"} {
+		if !strings.Contains(body, "?form="+form) {
+			t.Errorf("/admin must offer the %q command inline", form)
+		}
+	}
+
+	// The peers sub-page marks peers active in the same .linkbar switch.
+	pbody := getBody(t, cl, srv.URL+"/admin/peers")
+	if !strings.Contains(pbody, `class="active" href="/admin/peers" aria-current="page">peers`) {
+		t.Error("/admin/peers must mark the peers link active")
 	}
 }
 

@@ -211,13 +211,14 @@ for (const form of document.querySelectorAll('form[data-confirm-password]')) {
 
 // Entry-screen tabs: swap the sign-in / create-account panels client-side.
 // The tabs are real /login?tab= links, so with JS off the server just renders
-// the requested tab (no-JS fallback); here we avoid the reload.
+// the requested tab (no-JS fallback); here we avoid the reload. Scoped to
+// [data-tab] tabs (the entry screen); other .tabs are plain navigation links.
 document.addEventListener('click', (e) => {
-  const tab = e.target.closest('.auth-tab[data-tab]');
+  const tab = e.target.closest('.tabs .tab[data-tab]');
   if (!tab) return;
   e.preventDefault();
   const want = tab.dataset.tab;
-  for (const t of document.querySelectorAll('.auth-tab')) t.classList.toggle('active', t.dataset.tab === want);
+  for (const t of document.querySelectorAll('.tabs .tab[data-tab]')) t.classList.toggle('active', t.dataset.tab === want);
   for (const p of document.querySelectorAll('.auth-panel')) p.hidden = p.dataset.panel !== want;
   if (window.history) history.replaceState(null, '', '/login?tab=' + want);
 });
@@ -237,6 +238,7 @@ document.addEventListener('click', (e) => {
     const dlg = document.getElementById(trigger.dataset.modal);
     if (dlg) {
       e.preventDefault();
+      closeAllMenus(); // a trigger may live inside a dropdown (e.g. New action ▾)
       openDialog(dlg);
       if (window.history && location.search.includes('form=')) {
         history.replaceState(null, '', location.pathname);

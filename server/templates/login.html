@@ -2,15 +2,15 @@
 {{$tab := or .Data.Tab "signin"}}
 <div class="auth">
   <div class="card auth-card">
-    <div class="auth-brand"><span class="brand-mark">◆</span> juice</div>
-    <p class="subtitle auth-subtitle">A terminal for callable actions. Your session and tokens stay on the server.</p>
+    <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
+    <p class="subtitle auth-subtitle">A terminal for callable actions.</p>
 
     {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
     {{if .Data.Notice}}<div class="banner banner-info" role="status">{{.Data.Notice}}</div>{{end}}
 
-    <div class="auth-tabs" role="tablist">
-      <a class="auth-tab{{if eq $tab "signin"}} active{{end}}" href="/login?tab=signin" data-tab="signin" role="tab"{{if eq $tab "signin"}} aria-current="page"{{end}}>Sign in</a>
-      <a class="auth-tab{{if eq $tab "signup"}} active{{end}}" href="/login?tab=signup" data-tab="signup" role="tab"{{if eq $tab "signup"}} aria-current="page"{{end}}>Create account</a>
+    <div class="tabs" role="tablist">
+      <a class="tab{{if eq $tab "signin"}} active{{end}}" href="/login?tab=signin" data-tab="signin" role="tab"{{if eq $tab "signin"}} aria-current="page"{{end}}>Sign in</a>
+      <a class="tab{{if eq $tab "signup"}} active{{end}}" href="/login?tab=signup" data-tab="signup" role="tab"{{if eq $tab "signup"}} aria-current="page"{{end}}>Create account</a>
     </div>
 
     <form class="auth-panel stack" method="post" action="/login" data-panel="signin"{{if ne $tab "signin"}} hidden{{end}}>
@@ -23,7 +23,7 @@
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
-      <button class="btn-primary" type="submit">Sign in</button>
+      <button class="btn" type="submit">Sign in</button>
     </form>
 
     <form class="auth-panel stack" method="post" action="/signup" data-panel="signup" data-confirm-password{{if ne $tab "signup"}} hidden{{end}}>
@@ -44,7 +44,7 @@
         <label for="c_password2">Confirm password</label>
         <input id="c_password2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
       </div>
-      <button class="btn-primary" type="submit">Create account</button>
+      <button class="btn" type="submit">Create account</button>
     </form>
   </div>
 </div>

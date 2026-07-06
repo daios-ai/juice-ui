@@ -19,7 +19,7 @@
     <span class="pill status-credited">friend</span>
     {{else}}
     <form method="post" action="/admin/peers/friend" data-confirm="Befriend {{$i.Handle}}? Their active public actions import immediately.">
-      {{.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn-primary" type="submit">Befriend</button>
+      {{.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Befriend</button>
     </form>
     {{end}}
   </div>
@@ -30,6 +30,7 @@
 
 <h2>Transacted friends</h2>
 {{if $i.Friends}}
+<div class="table-scroll">
 <table>
   <thead><tr><th>Handle</th><th>Public key</th></tr></thead>
   <tbody>
@@ -38,5 +39,6 @@
   {{end}}
   </tbody>
 </table>
+</div>
 {{else}}<p class="muted">None reported — this kernel has no settled traffic to gossip about yet.</p>{{end}}
 {{end}}

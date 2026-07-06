@@ -54,7 +54,7 @@ a:hover { text-decoration: underline; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .1rem .35rem .7rem; }
 .brand { display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1rem; letter-spacing: .04em; color: var(--text); white-space: nowrap; }
 .brand:hover { text-decoration: none; }
-.brand-mark { color: var(--accent); }
+.brand-logo { height: 1.5rem; width: auto; display: block; flex: 0 0 auto; }
 
 .nav { display: flex; flex-direction: column; gap: .1rem; }
 .nav a {
@@ -155,20 +155,31 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
 }
 .badge:empty { display: none; }
 
+/* .tabs — retained ONLY for the entry screen's sign in / create account toggle
+   (a genuine two-panel view switch on an otherwise empty page). In-content view
+   switching everywhere else is the quiet .linkbar; the mobile bar is .tab-bar. */
+.tabs { display: flex; gap: .25rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tabs .tab {
+  padding: .4rem .75rem; color: var(--text-muted); text-decoration: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 600;
+}
+.tabs .tab:hover { color: var(--text); text-decoration: none; }
+.tabs .tab.active, .tabs .tab[aria-current] { color: var(--text); border-bottom-color: var(--accent); }
+
 /* Mobile bottom tab bar — hidden on desktop */
 .tab-bar {
   display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
   background: var(--surface); border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
-.tab {
+.tab-bar .tab {
   flex: 1; display: flex; flex-direction: column; align-items: center;
   gap: .1rem; padding: .4rem .5rem; color: var(--text-muted);
   font-size: .7rem; text-decoration: none;
 }
-.tab .ico { width: 1.3rem; height: 1.3rem; }
-.tab:hover { color: var(--text); text-decoration: none; }
-.tab[aria-current="page"] { color: var(--accent); }
+.tab-bar .tab .ico { width: 1.3rem; height: 1.3rem; }
+.tab-bar .tab:hover { color: var(--text); text-decoration: none; }
+.tab-bar .tab[aria-current="page"] { color: var(--accent); }
 
 /* Accessible aria-live announcement region */
 .live-region {
@@ -252,26 +263,32 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .auth { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
 .auth-card { width: 100%; max-width: 360px; }
 .auth-brand { display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1.3rem; letter-spacing: .04em; }
-.auth-brand .brand-mark { color: var(--accent); }
+.auth-brand .brand-logo { height: 2rem; }
 .auth-subtitle { margin: .4rem 0 1.1rem; font-size: .85rem; }
-.auth-tabs { display: flex; gap: .25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
-.auth-tab {
-  flex: 1; text-align: center; padding: .5rem .5rem; color: var(--text-muted);
-  border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 600;
-}
-.auth-tab:hover { color: var(--text); text-decoration: none; }
-.auth-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.auth-card .tabs .tab { flex: 1; text-align: center; } /* entry tabs fill the card width */
 .auth-panel[hidden] { display: none; }
-.auth-panel .btn-primary { width: 100%; }
+.auth-panel .btn { width: 100%; }
 
 h1 { font-size: 1.4rem; margin: 0 0 .25rem; letter-spacing: .01em; }
 h2 { font-size: 1.1rem; margin: 1.4rem 0 .5rem; letter-spacing: .01em; }
 h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .subtitle { color: var(--text-muted); margin: 0 0 1.4rem; }
 
-/* Page header row (title + actions) */
-.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.page-head .cluster { margin-top: .1rem; }
+/* Page header: just the title block (title + subtitle). Commands do NOT live
+   here — they sit inline with the content they act on (grammar §3, §5.1). */
+.page-head { margin-bottom: .5rem; }
+
+/* .linkbar — a quiet row of muted text links for in-content view switching:
+   list filters (all · active · inactive) and the admin users · peers switch.
+   The active link is bolded (current color); no underline band, no fill, no
+   color. Inline flow so it wraps naturally; middot separators come from CSS. */
+.linkbar { font-size: .85rem; }
+.linkbar a { color: var(--text-muted); }
+.linkbar a:hover { color: var(--text); }
+.linkbar a.active, .linkbar a[aria-current] { color: var(--text); font-weight: 600; }
+.linkbar a + a::before { content: "·"; color: var(--text-muted); margin: 0 .5rem; font-weight: 400; }
+/* When a linkbar shares a row with an inline command, push it to the right. */
+.row > .linkbar { margin-left: auto; }
 
 /* Cards & grids */
 .card {
@@ -328,29 +345,32 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .balance .amount { font-size: 1.7rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .balance .label { color: var(--text-muted); font-size: .85rem; }
 
-/* Buttons — ONE geometry, three tiers (grammar §5.1). Only fill/weight change,
-   so siblings never read as "different types". Tiers:
-     .btn         secondary/neutral (ghost)
-     .btn-primary normal op (solid neutral)
+/* Buttons — ONE geometry (grammar §5.1). Color is reserved for the real
+   money/danger moment; everything else is the single neutral .btn, so two
+   ordinary buttons never read as "different types":
+     .btn         the one neutral button — every ordinary action & form submit
      .btn-money   money movement (solid accent) — always names the amount
      .btn-danger  critical (solid danger)
-   Helpers: .btn-icon (icon-only, needs aria-label), .btn-quiet (inline). */
-button, .btn, .btn-primary, .btn-money, .btn-danger {
+   Helpers: .btn-icon (icon-only, needs aria-label), .btn-quiet (inline text —
+   Cancel, remove-row, and the quiet "+ new …" / "update account" affordances). */
+/* Bare <button> gets only a reset — the tier geometry below must NOT leak onto
+   non-tier buttons (.menu-item, .profile-trigger, .btn-icon, .btn-quiet), or it
+   centers their content. */
+button { font-family: inherit; cursor: pointer; }
+.btn, .btn-money, .btn-danger {
   font-family: inherit; font-size: .9rem; line-height: 1.2;
   padding: .5rem 1rem; border-radius: var(--radius);
   border: 1px solid transparent; cursor: pointer; text-decoration: none;
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
 }
-.btn { background: none; color: var(--text); border-color: var(--border-strong); font-weight: 400; }
+.btn { background: none; color: var(--text); border-color: var(--border-strong); font-weight: 500; }
 .btn:hover { border-color: var(--text-muted); text-decoration: none; }
-.btn-primary { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); font-weight: 600; }
-.btn-primary:hover { border-color: var(--text-muted); text-decoration: none; }
 .btn-money { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); font-weight: 600; }
 .btn-money:hover { background: var(--accent-hover); border-color: var(--accent-hover); text-decoration: none; }
 .btn-danger { background: var(--danger); color: var(--danger-contrast); border-color: var(--danger); font-weight: 600; }
 .btn-danger:hover { filter: brightness(1.08); text-decoration: none; }
 /* .small keeps the same shape at reduced scale */
-.btn.small, .btn-primary.small, .btn-money.small, .btn-danger.small { padding: .3rem .6rem; font-size: .8rem; }
+.btn.small, .btn-money.small, .btn-danger.small { padding: .3rem .6rem; font-size: .8rem; }
 .btn-quiet { background: none; border: none; color: var(--text-muted); padding: .25rem .5rem; cursor: pointer; font-family: inherit; font-size: .9rem; }
 .btn-quiet:hover { color: var(--text); text-decoration: underline; }
 .btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: .35rem .5rem; color: var(--text); font-size: 1rem; cursor: pointer; }
@@ -415,6 +435,10 @@ textarea {
 pre.json { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem; overflow: auto; font-family: var(--font-mono); font-size: .85rem; }
 
 /* Tables */
+/* .table-scroll — every list table lives in one. A wide table scrolls inside
+   this box (its own horizontal scrollbar) so the page body never scrolls
+   sideways. Tokens only; no inline styles. */
+.table-scroll { overflow-x: auto; max-width: 100%; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .5rem .5rem; border-bottom: 1px solid var(--border); font-size: .9rem; }
 th { color: var(--text-muted); font-weight: 600; }

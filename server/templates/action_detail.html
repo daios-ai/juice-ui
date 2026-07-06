@@ -39,7 +39,7 @@
   {{.CSRFField}}
   {{template "_form_fields" $d.Form}}
   <div class="row">
-    <button class="{{if $d.IsPaid}}btn-money{{else}}btn-primary{{end}}" type="submit">{{if $d.IsPaid}}Pay {{money $d.Action.Price}} ¤ &amp; run{{else}}Run{{end}}</button>
+    <button class="{{if $d.IsPaid}}btn-money{{else}}btn{{end}}" type="submit">{{if $d.IsPaid}}Pay {{money $d.Action.Price}} ¤ &amp; run{{else}}Run{{end}}</button>
     <div id="run-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
     </div>
@@ -153,7 +153,7 @@
         <p class="help">Submitting the price separately: use the price control if you only want to change price.</p>
       </div>
       <div class="cluster">
-        <button class="btn-primary" type="submit">Save changes</button>
+        <button class="btn" type="submit">Save changes</button>
         <a class="btn" href="/actions/{{$d.Action.ID}}" data-modal-close>Cancel</a>
       </div>
       <p class="help muted flush">Saving deactivates the action until you re-enable it.</p>

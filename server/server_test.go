@@ -135,3 +135,18 @@ func TestStaticServed(t *testing.T) {
 		t.Errorf("static css status = %d", resp.StatusCode)
 	}
 }
+
+// The bare /favicon.ico probe (older browsers, and default requests) serves the
+// raster fallback so it never 404s.
+func TestFaviconServed(t *testing.T) {
+	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/favicon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("/favicon.ico status = %d want 200", resp.StatusCode)
+	}
+}

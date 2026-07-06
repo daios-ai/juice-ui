@@ -1,15 +1,14 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <div>
-    <h1>peers</h1>
-    <p class="subtitle">Federation: discover kernels, inspect them, and trust them. A friend can call your actions only once you deposit credits to their proxy. <span class="scope-note">superuser only</span></p>
-  </div>
-  <div class="cluster">
-    <a class="btn-primary" href="/admin/peers?form=admin-friend" data-modal="form-admin-friend">Friend a kernel</a>
-    <a class="btn" href="/admin">Users</a>
-  </div>
+  <h1>peers</h1>
+  <p class="subtitle">Federation: discover kernels, inspect them, and trust them. A friend can call your actions only once you deposit credits to their proxy. <span class="scope-note">superuser only</span></p>
 </div>
+
+<nav class="linkbar" aria-label="Admin sections">
+  <a href="/admin">users</a>
+  <a class="active" href="/admin/peers" aria-current="page">peers</a>
+</nav>
 
 <h2>This kernel</h2>
 <div class="card">
@@ -26,7 +25,11 @@
 </div>
 
 <h2>Friends</h2>
+<div class="row control-row">
+  <a class="btn-quiet" href="/admin/peers?form=admin-friend" data-modal="form-admin-friend">+ friend a kernel</a>
+</div>
 {{if $d.Peers}}
+<div class="table-scroll">
 <table>
   <thead><tr><th>Handle</th><th>Public key</th><th>Available</th><th>Locked</th><th></th></tr></thead>
   <tbody>
@@ -46,6 +49,7 @@
   {{end}}
   </tbody>
 </table>
+</div>
 {{else}}<p class="muted">No friends yet. Befriend a kernel by its public key, or from the known network below.</p>{{end}}
 
 <h2>Known network</h2>
@@ -62,7 +66,7 @@
         <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{if not $isFriend}}
         <form method="post" action="/admin/peers/friend" data-confirm="Befriend {{.Handle}}? Their active public actions import immediately.">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-primary small" type="submit">Befriend</button>
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn small" type="submit">Befriend</button>
         </form>
         {{end}}
       </span>
@@ -99,7 +103,7 @@
         <input id="fr-key" name="key" type="text" required>
       </div>
       <div class="cluster">
-        <button class="btn-primary" type="submit">Send friend request</button>
+        <button class="btn" type="submit">Send friend request</button>
         <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
       </div>
     </form>

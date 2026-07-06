@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <title>{{if .Title}}{{.Title}} · {{end}}Juice</title>
+  <link rel="icon" href="/static/juice-logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/themes.css">
   <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/app.css">
@@ -19,7 +22,7 @@
     {{if .Handle}}
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/run"><span class="brand-mark">◆</span><span class="lbl">juice</span></a>
+        <a class="brand" href="/run"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">juice</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">

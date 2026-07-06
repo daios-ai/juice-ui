@@ -114,6 +114,47 @@ func TestRatingPct(t *testing.T) {
 	}
 }
 
+func TestTxAmount(t *testing.T) {
+	// @buyer pays gross, @seller earns net, @sys (platform) earns fee; a viewer
+	// occupying several roles sees the sum. gross = net + fee, so the three
+	// viewpoints of a settled call sum to zero.
+	mk := func(status string, gross, net, fee int64) client.Transaction {
+		return client.Transaction{OwnerHandle: "@buyer", TargetHandle: "@seller", Status: status, Gross: gross, Net: net, Fee: fee}
+	}
+	cases := []struct {
+		name, viewer string
+		tx           client.Transaction
+		want         []string // substrings the rendered cell must contain
+	}{
+		{"buyer pays gross", "@buyer", mk("success", 100, 90, 10), []string{"-100"}},
+		{"seller earns net", "@seller", mk("success", 100, 90, 10), []string{"sig-credited", "+90"}},
+		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+10"}},
+		{"no stake shows dash", "@bystander", mk("success", 100, 90, 10), []string{"—"}},
+		{"failed refunds buyer", "@buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "100"}},
+		{"failed non-buyer dash", "@seller", mk("failure", 100, 0, 0), []string{"—"}},
+		{"open parks buyer", "@buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "100"}},
+	}
+	for _, c := range cases {
+		got := string(txAmount(c.tx, c.viewer))
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: txAmount = %q, want substring %q", c.name, got, w)
+			}
+		}
+	}
+
+	// Self-call by a normal user (buyer == seller): nets to −fee.
+	self := client.Transaction{OwnerHandle: "@a", TargetHandle: "@a", Status: "success", Gross: 100, Net: 90, Fee: 10}
+	if got := string(txAmount(self, "@a")); !strings.Contains(got, "-10") {
+		t.Errorf("self-call = %q, want -10 (the fee)", got)
+	}
+	// @sys as the seller collects net + fee = gross.
+	sysSell := client.Transaction{OwnerHandle: "@a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
+	if got := string(txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+100") {
+		t.Errorf("@sys-as-seller = %q, want +100 (net+fee)", got)
+	}
+}
+
 func TestRenderFragment(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
