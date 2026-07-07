@@ -14,8 +14,8 @@
     {{if .Data.Notice}}<div class="banner banner-info" role="status">{{.Data.Notice}}</div>{{end}}
 
     <div class="tabs" role="tablist">
-      <a class="tab{{if eq $tab "signin"}} active{{end}}" href="/login?tab=signin" data-tab="signin" role="tab"{{if eq $tab "signin"}} aria-current="page"{{end}}>Sign in</a>
-      <a class="tab{{if eq $tab "signup"}} active{{end}}" href="/login?tab=signup" data-tab="signup" role="tab"{{if eq $tab "signup"}} aria-current="page"{{end}}>Create account</a>
+      {{template "_tab" (paneltab "Sign in" "signin" (eq $tab "signin"))}}
+      {{template "_tab" (paneltab "Create account" "signup" (eq $tab "signup"))}}
     </div>
 
     <form class="auth-panel stack" method="post" action="/login" data-panel="signin"{{if ne $tab "signin"}} hidden{{end}}>

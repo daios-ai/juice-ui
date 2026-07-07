@@ -82,6 +82,22 @@ func TestNoLinkbar(t *testing.T) {
 	}
 }
 
+// TestTabsGoThroughRenderer ensures no template hand-writes a tab's active state
+// (`class="tab{{if …`) — every .tabs tab must go through the single _tab partial,
+// so the class and aria-current can never diverge. The _tab definition itself
+// (in _partials.html) is the one allowed occurrence.
+func TestTabsGoThroughRenderer(t *testing.T) {
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		if f == "templates/_partials.html" {
+			continue // the _tab renderer lives here
+		}
+		if strings.Contains(string(mustRead(t, f)), `class="tab{{if`) {
+			t.Errorf("%s: hand-written tab active state — render tabs via {{template \"_tab\" (tab …)}}", f)
+		}
+	}
+}
+
 // TestNoLegacyTabClass ensures the superseded auth-tab class is gone.
 func TestNoLegacyTabClass(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")

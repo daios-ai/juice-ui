@@ -603,6 +603,34 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	}
 }
 
+// The superuser ownership scope is its own switch (yours | everyone), separate
+// from the state-filter row — so the old "all actions" tab that double-lit with
+// "all" is gone, and the two axes preserve each other.
+func TestActionsScopeSwitch(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "@sys")
+	body := getBody(t, cl, srv.URL+"/actions?scope=all")
+
+	if strings.Contains(body, ">all actions<") {
+		t.Error("the confusing 'all actions' filter tab must be gone (scope is its own switch)")
+	}
+	if !strings.Contains(body, `>everyone</a>`) || !strings.Contains(body, `>yours</a>`) {
+		t.Error("superuser must get a yours|everyone scope switch")
+	}
+	// everyone active on ?scope=all…
+	if !strings.Contains(body, `class="tab active" href="/actions?scope=all" aria-current="page">everyone`) {
+		t.Error("the 'everyone' scope tab must be active on ?scope=all")
+	}
+	// …and the state-filter tabs preserve the scope (carry scope=all; html/template
+	// escapes the & in the href).
+	if !strings.Contains(body, `href="/actions?filter=active&amp;scope=all"`) {
+		t.Error("filter tabs must preserve the scope (carry scope=all)")
+	}
+}
+
 func TestStudioMakeActionSuccess(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()

@@ -43,9 +43,9 @@
 
 <h2>History</h2>
 <nav class="tabs control-tabs" aria-label="Step history">
-  <a class="tab{{if eq $d.Filter ""}} active{{end}}" href="/steps"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
-  <a class="tab{{if eq $d.Filter "done"}} active{{end}}" href="/steps?status=done"{{if eq $d.Filter "done"}} aria-current="page"{{end}}>done</a>
-  <a class="tab{{if eq $d.Filter "cancelled"}} active{{end}}" href="/steps?status=cancelled"{{if eq $d.Filter "cancelled"}} aria-current="page"{{end}}>cancelled</a>
+  {{template "_tab" (tab "all" "/steps" (eq $d.Filter ""))}}
+  {{template "_tab" (tab "done" "/steps?status=done" (eq $d.Filter "done"))}}
+  {{template "_tab" (tab "cancelled" "/steps?status=cancelled" (eq $d.Filter "cancelled"))}}
   <a class="btn-quiet tabs-action" href="/steps?form=step-create" data-modal="form-step-create">+ new step</a>
 </nav>
 {{if $d.History}}

@@ -209,6 +209,49 @@ func TestAccountMenuHasNoNav(t *testing.T) {
 	}
 }
 
+func TestTabRenderer(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(tb Tab) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_tab", tb); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	// Active: class active AND aria-current, from one bool (can't diverge).
+	on := render(tab("all", "/actions", true))
+	if !strings.Contains(on, `class="tab active"`) || !strings.Contains(on, `aria-current="page"`) {
+		t.Errorf("active tab = %q, want active class + aria-current", on)
+	}
+	// Inactive: neither active class nor aria-current (label "active" aside).
+	off := render(tab("active", "/actions?filter=active", false))
+	if strings.Contains(off, `class="tab active"`) || strings.Contains(off, "aria-current") {
+		t.Errorf("inactive tab = %q, want neither active class nor aria-current", off)
+	}
+	// paneltab (login): adds data-tab + role=tab and the /login?tab= href.
+	p := render(paneltab("Sign in", "signin", true))
+	if !strings.Contains(p, `data-tab="signin"`) || !strings.Contains(p, `role="tab"`) || !strings.Contains(p, `href="/login?tab=signin"`) {
+		t.Errorf("paneltab = %q, want data-tab + role=tab + login href", p)
+	}
+}
+
+func TestActionsHref(t *testing.T) {
+	cases := []struct{ scope, filter, want string }{
+		{"", "", "/actions"},
+		{"all", "", "/actions?scope=all"},
+		{"", "active", "/actions?filter=active"},
+		{"all", "inactive", "/actions?filter=inactive&scope=all"},
+	}
+	for _, c := range cases {
+		if got := actionsHref(c.scope, c.filter); got != c.want {
+			t.Errorf("actionsHref(%q,%q) = %q want %q", c.scope, c.filter, got, c.want)
+		}
+	}
+}
+
 func TestKeyFingerprint(t *testing.T) {
 	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
 	if got, want := keyFingerprint(long), "ABCDEFGHIJ…abcd"; got != want {

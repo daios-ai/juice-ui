@@ -173,10 +173,11 @@ can't be undone use `data-confirm` (§5.8).
 
 ### 5.2 View switching — one component: `.tabs`
 
-All view switching is the **`.tabs`** underline component: `.tab` links in a row
-with a hairline baseline; the active tab carries `.active` **and**
-`aria-current`, drawn with an accent underline. There is no second switch
-component.
+All view switching is the **`.tabs`** underline component. Every tab renders
+through the single **`_tab`** partial (built via the `tab` / `paneltab` helpers):
+`.active` **and** `aria-current` come from **one bool**, so they can never
+diverge, and adding a tab can't reintroduce that class of bug. No template
+hand-writes `class="tab{{if …`; a drift guard enforces it.
 
 ```
 ┌ .tabs ─────────────────────────────────────────┐
@@ -184,10 +185,15 @@ component.
 └──────────────────────────────────────────────────┘
 ```
 
-| Use | Markup | Active |
+| Use | Renderer | Active |
 |---|---|---|
-| **Entry toggle** | `.auth-card .tabs` — Sign in / Create account (real `?tab=` links; JS swaps panels **and moves `aria-current`** so only one is lit) | requested tab |
-| **List filters** | `.tabs.control-tabs` on the section — action `all/active/inactive` (+`all actions` for `@sys`), step `all/done/cancelled` (real query-string links, reload) | selected filter |
+| **Entry toggle** | `paneltab` in `.auth-card .tabs` — Sign in / Create account (real `?tab=` links; JS swaps panels **and moves `aria-current`** so only one is lit) | requested tab |
+| **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive`, step `all/done/cancelled` (real query-string links, reload) | selected filter |
+
+**Distinct axes get distinct rows, never mixed.** The actions page's *ownership
+scope* (`yours | everyone`, `@sys`) is its **own** switch on the heading, not a
+peer of the state filters — mixing them let two tabs on different variables both
+light up. Each axis preserves the other's value (`actionsHref`).
 
 A filter row may carry **one** inline command (`+ new action`) as a
 `.btn-quiet.tabs-action`, right-aligned and not styled as a tab. The fixed mobile

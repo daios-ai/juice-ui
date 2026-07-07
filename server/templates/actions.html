@@ -21,12 +21,19 @@
 </div>
 {{end}}
 
-<h2>Your actions</h2>
-<nav class="tabs control-tabs" aria-label="Your actions">
-  <a class="tab{{if eq $d.Filter ""}} active{{end}}" href="/actions"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
-  <a class="tab{{if eq $d.Filter "active"}} active{{end}}" href="/actions?filter=active"{{if eq $d.Filter "active"}} aria-current="page"{{end}}>active</a>
-  <a class="tab{{if eq $d.Filter "inactive"}} active{{end}}" href="/actions?filter=inactive"{{if eq $d.Filter "inactive"}} aria-current="page"{{end}}>inactive</a>
-  {{if $d.Superuser}}<a class="tab{{if eq $d.Scope "all"}} active{{end}}" href="/actions?scope=all"{{if eq $d.Scope "all"}} aria-current="page"{{end}}>all actions</a>{{end}}
+<div class="subhead">
+  <h2>{{if eq $d.Scope "all"}}All actions{{else}}Your actions{{end}}</h2>
+  {{if $d.Superuser}}
+  <nav class="tabs" aria-label="Scope">
+    {{template "_tab" (tab "yours" (actionsHref "" $d.Filter) (ne $d.Scope "all"))}}
+    {{template "_tab" (tab "everyone" (actionsHref "all" $d.Filter) (eq $d.Scope "all"))}}
+  </nav>
+  {{end}}
+</div>
+<nav class="tabs control-tabs" aria-label="Filter actions">
+  {{template "_tab" (tab "all" (actionsHref $d.Scope "") (eq $d.Filter ""))}}
+  {{template "_tab" (tab "active" (actionsHref $d.Scope "active") (eq $d.Filter "active"))}}
+  {{template "_tab" (tab "inactive" (actionsHref $d.Scope "inactive") (eq $d.Filter "inactive"))}}
   <button class="btn-quiet tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
   <div class="menu" id="menu-new-action" role="menu" hidden>
     <a class="menu-item" role="menuitem" href="/actions?form=action-create" data-modal="form-action-create">Create manually</a>

@@ -171,6 +171,11 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
    to the right and not styled as a tab. */
 .control-tabs { align-items: center; }
 .tabs .tabs-action { margin-left: auto; border-bottom: 0; }
+/* Section heading with an inline secondary switch on the right (e.g. the
+   actions scope: yours | everyone). The switch is a bare tab group, no band. */
+.subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 1.4rem; }
+.subhead h2 { margin: 0; }
+.subhead .tabs { margin: 0; border-bottom: 0; }
 
 /* Mobile bottom tab bar — hidden on desktop */
 .tab-bar {

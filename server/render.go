@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -75,6 +76,9 @@ func NewRenderer() (*Renderer, error) {
 		"txAmount":    txAmount,
 		"txrow":       txRowOf,
 		"kindBadge":   kindBadge,
+		"tab":         tab,
+		"paneltab":    paneltab,
+		"actionsHref": actionsHref,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -262,6 +266,40 @@ func refName(ref string) string {
 		return ref[i+1:]
 	}
 	return ""
+}
+
+// Tab is one rendered tab for the _tab partial. Active drives both the class and
+// aria-current, so they can't diverge. A non-empty Data marks a JS panel toggle
+// (login) — it adds data-tab + role="tab". Built via tab / paneltab.
+type Tab struct {
+	Label, Href, Data string
+	Active            bool
+}
+
+// tab builds a plain navigation tab (list filters, scope switch).
+func tab(label, href string, active bool) Tab { return Tab{Label: label, Href: href, Active: active} }
+
+// paneltab builds a login toggle tab: its href is /login?tab=<key> and its Data
+// (the panel key) makes _tab emit data-tab + role="tab" for the JS swap.
+func paneltab(label, key string, active bool) Tab {
+	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
+}
+
+// actionsHref builds the /actions URL for a given ownership scope ("" | "all")
+// and state filter ("" | "active" | "inactive"), so a tab in one axis preserves
+// the other axis's current value.
+func actionsHref(scope, filter string) string {
+	q := url.Values{}
+	if scope == "all" {
+		q.Set("scope", "all")
+	}
+	if filter != "" {
+		q.Set("filter", filter)
+	}
+	if len(q) == 0 {
+		return "/actions"
+	}
+	return "/actions?" + q.Encode()
 }
 
 // KindBadge is the single-letter attribute chip for an action's execution kind.

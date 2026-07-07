@@ -101,6 +101,12 @@
      confusable-distinct (mono), never styled as chrome. */}}
 {{define "_ref"}}<span class="ref mono"><span class="owner">{{refOwner .}}</span>/{{refName .}}</span>{{end}}
 
+{{/* _tab — THE single tab renderer. Active drives both the class and
+     aria-current from one bool, so they can never diverge. A non-empty .Data
+     marks a JS panel toggle (login): it adds data-tab + role="tab". Build one
+     via the `tab` / `paneltab` helpers. */}}
+{{define "_tab"}}<a class="tab{{if .Active}} active{{end}}" href="{{.Href}}"{{with .Data}} data-tab="{{.}}" role="tab"{{end}}{{if .Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+
 {{define "_error"}}
 <div class="banner banner-error" role="alert">{{.}}</div>
 {{end}}
