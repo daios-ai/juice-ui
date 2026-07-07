@@ -125,6 +125,18 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
+// TestNoCurrencyGlyph enforces §5.1: the money accent color conveys "credits", so
+// no template renders the ¤ glyph. Money buttons read `verb (N)`; where the unit
+// must appear in prose it is spelled "credits".
+func TestNoCurrencyGlyph(t *testing.T) {
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		if i := strings.IndexRune(string(mustRead(t, f)), '¤'); i >= 0 {
+			t.Errorf("%s: forbidden ¤ glyph — money buttons read `verb (N)`, prose says \"credits\" (grammar §5.1)", f)
+		}
+	}
+}
+
 func mustRead(t *testing.T, f string) []byte {
 	t.Helper()
 	b, err := tmplFS.ReadFile(f)

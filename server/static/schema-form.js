@@ -7,14 +7,19 @@ for (const panel of document.querySelectorAll("[data-run-panel]")) {
   const toggle = panel.querySelector("[data-raw-toggle]");
   const fields = panel.querySelector("[data-fields]");
   const raw = panel.querySelector("[data-raw]");
+  const hasFields = panel.querySelector('[name="has_fields"]');
   if (!toggle || !raw) continue;
 
-  const apply = () => {
-    const useRaw = toggle.checked;
+  const apply = (useRaw) => {
+    toggle.setAttribute("aria-pressed", String(useRaw));
+    toggle.textContent = useRaw ? "structured" : "edit as JSON";
     if (fields) fields.hidden = useRaw;
     raw.hidden = !useRaw;
+    // The server chooses raw vs structured from has_fields; disabling it while
+    // raw is active makes the raw editor authoritative on submit.
+    if (hasFields) hasFields.disabled = useRaw;
     if (useRaw) raw.querySelector('textarea')?.dispatchEvent(new Event('input'));
   };
-  toggle.addEventListener("change", apply);
-  apply();
+  toggle.addEventListener("click", () => apply(toggle.getAttribute("aria-pressed") !== "true"));
+  apply(false);
 }

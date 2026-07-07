@@ -60,25 +60,27 @@ type Renderer struct {
 // NewRenderer parses all embedded templates.
 func NewRenderer() (*Renderer, error) {
 	funcs := template.FuncMap{
-		"money":       money,
-		"json":        prettyJSON,
-		"jsonCompact": jsonCompact,
-		"jsonEdit":    jsonEdit,
-		"statusClass": statusClass,
-		"truncate":    truncate,
-		"costOf":      costOf,
-		"buildForm":   BuildForm, // lets templates derive a FormModel from a raw schema
-		"pct":         pct,
-		"ratingPct":   ratingPct,
-		"refOwner":    refOwner,
-		"refName":     refName,
-		"shortTime":   shortTime,
-		"txAmount":    txAmount,
-		"txrow":       txRowOf,
-		"kindBadge":   kindBadge,
-		"tab":         tab,
-		"paneltab":    paneltab,
-		"actionsHref": actionsHref,
+		"money":        money,
+		"json":         prettyJSON,
+		"jsonCompact":  jsonCompact,
+		"jsonEdit":     jsonEdit,
+		"statusClass":  statusClass,
+		"truncate":     truncate,
+		"costOf":       costOf,
+		"buildForm":    BuildForm, // lets templates derive a FormModel from a raw schema
+		"pct":          pct,
+		"ratingPct":    ratingPct,
+		"refOwner":     refOwner,
+		"refName":      refName,
+		"shortTime":    shortTime,
+		"txAmount":     txAmount,
+		"txrow":        txRowOf,
+		"kindBadge":    kindBadge,
+		"tab":          tab,
+		"paneltab":     paneltab,
+		"actionsHref":  actionsHref,
+		"runForm":      runForm,
+		"completeForm": completeForm,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {

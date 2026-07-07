@@ -57,6 +57,41 @@ func (o Outcome) IsRejected() bool { return o.Class == Rejected }
 // action can run (template helper).
 func (o Outcome) IsGrantRequired() bool { return o.Class == GrantRequired }
 
+// CallForm drives the shared _call_form partial for both running an action and
+// completing a step — conceptually the same act (execute an action). Locked
+// (a step's pre-bound args) renders through the result renderer; Editable is the
+// remaining input; the result renders below the form with progress + disable.
+type CallForm struct {
+	CSRFField  template.HTML
+	PostURL    string
+	Verb       string          // "Run" | "Complete"
+	Price      int64           // >0 → money button "Verb (N)"; 0 → plain "Verb"
+	Locked     json.RawMessage // pre-bound args (steps); nil for a plain run
+	Editable   FormModel
+	IsApproval bool   // no editable input — just acknowledge
+	ResultID   string // id of the below-form result target
+	Outcome    *Outcome
+	OneShot    bool // completion is spent once (steps); a run repeats (actions)
+}
+
+// runForm builds a CallForm for running an action (repeatable, no locked args).
+func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome) CallForm {
+	return CallForm{
+		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", Verb: "Run",
+		Price: price, Editable: editable, ResultID: "run-result", Outcome: outcome,
+	}
+}
+
+// completeForm builds a CallForm for completing a step (one-shot; locked args on
+// top). ResultID is per-step so many inbox forms don't collide.
+func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked json.RawMessage, outcome *Outcome) CallForm {
+	return CallForm{
+		CSRFField: csrf, PostURL: "/steps/" + stepID + "/complete", Verb: "Complete",
+		Price: price, Locked: locked, Editable: editable, IsApproval: isApproval,
+		ResultID: "step-result-" + stepID, Outcome: outcome, OneShot: true,
+	}
+}
+
 // Caller executes actions via POST /v1/run.
 type Caller struct {
 	c *client.Client

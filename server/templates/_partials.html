@@ -111,6 +111,32 @@
      confusable-distinct (mono), never styled as chrome. */}}
 {{define "_ref"}}<span class="ref mono"><span class="owner">{{refOwner .}}</span>/{{refName .}}</span>{{end}}
 
+{{/* _call_form — THE run/complete form. Running an action and completing a step
+     are the same act, so both render here: locked args (a step's pre-bound input)
+     via the result renderer, the remaining input as fields (with the quiet JSON
+     toggle), one money-labeled button with progress, and the result BELOW the
+     form. A step form is one-shot (disabled on success by app.js). */}}
+{{define "_call_form"}}
+<form class="card stack" method="post" action="{{.PostURL}}" data-run-panel {{if .OneShot}}data-oneshot="true"{{end}}
+      hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
+      hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
+  {{.CSRFField}}
+  {{if .Locked}}<pre class="json">{{json .Locked}}</pre>{{end}}
+  {{if .IsApproval}}
+  <p class="muted small">No further input needed — just acknowledge.</p>
+  {{else}}
+  {{template "_form_fields" .Editable}}
+  {{end}}
+  <div class="row">
+    <button class="{{if gt .Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if gt .Price 0}} ({{money .Price}}){{end}}</button>
+    <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
+      <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
+    </div>
+  </div>
+</form>
+<div id="{{.ResultID}}">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
+{{end}}
+
 {{/* _tab — THE single tab renderer. Active drives both the class and
      aria-current from one bool, so they can never diverge. A non-empty .Data
      marks a JS panel toggle (login): it adds data-tab + role="tab". Build one
@@ -143,9 +169,7 @@
 
 {{define "_form_fields"}}
 {{if not .UseRawFallback}}
-<label class="row compact">
-  <input type="checkbox" name="use_raw" value="1" data-raw-toggle> Edit input as raw JSON
-</label>
+<div class="raw-switch"><button type="button" class="btn-quiet" data-raw-toggle aria-pressed="false">edit as JSON</button></div>
 <div data-fields class="stack">
   {{range .Fields}}
   <div class="field">

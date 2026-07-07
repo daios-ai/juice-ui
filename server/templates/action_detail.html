@@ -33,20 +33,8 @@
 </div>
 
 <h2>Run</h2>
-<form class="card stack" method="post" action="/actions/{{$d.Action.ID}}/run" data-run-panel
-      hx-post="/actions/{{$d.Action.ID}}/run" hx-target="#run-result" hx-swap="innerHTML"
-      hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
-  {{.CSRFField}}
-  {{template "_form_fields" $d.Form}}
-  <div class="row">
-    <button class="{{if $d.IsPaid}}btn-money{{else}}btn{{end}}" type="submit">{{if $d.IsPaid}}Pay {{money $d.Action.Price}} ¤ &amp; run{{else}}Run{{end}}</button>
-    <div id="run-progress" class="progress" role="status" aria-live="polite">
-      <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
-    </div>
-  </div>
-  {{if $d.IsPaid}}<p class="help muted flush">Price is the maximum, all-in. Refunded in full if it fails.</p>{{end}}
-</form>
-<div id="run-result">{{if $d.Outcome}}{{template "_call_outcome" $d.Outcome}}{{end}}</div>
+{{template "_call_form" (runForm $.CSRFField $d.Action.ID $d.Action.Price $d.Form $d.Outcome)}}
+{{if $d.IsPaid}}<p class="help muted">Price is the maximum, all-in — refunded in full if it fails.</p>{{end}}
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>
@@ -148,7 +136,7 @@
       </div>
       {{end}}
       <div class="field">
-        <label for="edit-price">Price ¤</label>
+        <label for="edit-price">Price</label>
         <input id="edit-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
         <p class="help">Submitting the price separately: use the price control if you only want to change price.</p>
       </div>
@@ -161,7 +149,7 @@
     <hr class="card-sep">
     <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">
       {{$.CSRFField}}
-      <label for="new-price" class="flush">Price only ¤</label>
+      <label for="new-price" class="flush">Price only</label>
       <input id="new-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
       <button class="btn" type="submit">Update price</button>
     </form>

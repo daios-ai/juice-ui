@@ -169,15 +169,22 @@ type stepEntry struct {
 	Form StepFormModel
 }
 
+// stepGroup buckets waiting inbox steps by their creating action (created_by).
+// CreatedBy "" is the unattributed bucket (manually-created steps).
+type stepGroup struct {
+	CreatedBy string
+	Steps     []stepEntry
+}
+
 type stepsView struct {
-	MyHandle  string
-	Inbox     []stepEntry              // waiting steps that require this user
-	History   []client.Step            // completed/running/other steps
-	Actions   map[string]client.Action // action_id → action, for name display
-	Filter    string                   // status filter
-	Superuser bool
-	OpenForm  string
-	Error     string
+	MyHandle    string
+	InboxGroups []stepGroup              // waiting steps that require this user, grouped by created_by
+	History     []client.Step            // completed/running/other steps
+	Actions     map[string]client.Action // action_id → action, for name display
+	Filter      string                   // status filter
+	Superuser   bool
+	OpenForm    string
+	Error       string
 }
 
 type stepView struct {
@@ -585,6 +592,7 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
+		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
 		for _, step := range steps {
 			if step.ActionID != "" {
 				if _, ok := view.Actions[step.ActionID]; !ok {
@@ -594,10 +602,17 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if step.Status == "waiting" && step.RequiredCallerHandle == me.Handle {
-				view.Inbox = append(view.Inbox, stepEntry{
+				entry := stepEntry{
 					Step: step,
 					Form: BuildStepForm(view.Actions[step.ActionID].InputSchema, step.PartialArgs),
-				})
+				}
+				i, ok := groupIdx[step.CreatedBy]
+				if !ok {
+					i = len(view.InboxGroups)
+					groupIdx[step.CreatedBy] = i
+					view.InboxGroups = append(view.InboxGroups, stepGroup{CreatedBy: step.CreatedBy})
+				}
+				view.InboxGroups[i].Steps = append(view.InboxGroups[i].Steps, entry)
 			} else {
 				view.History = append(view.History, step)
 			}
@@ -1008,7 +1023,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		if me.Available < 20 {
-			view = makeResultView{Error: fmt.Sprintf("You need at least 20 credits to synthesize an action. Your balance is %s ¤.", money(me.Available))}
+			view = makeResultView{Error: fmt.Sprintf("You need at least 20 credits to synthesize an action. Your balance is %s credits.", money(me.Available))}
 			return nil
 		}
 		out, e := s.caller.Run(ctx, tok, "@sys/make", mustArgs(map[string]any{"description": desc}))

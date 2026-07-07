@@ -10,6 +10,16 @@ document.addEventListener("htmx:configRequest", (e) => {
   }
 });
 
+// A one-shot call form (a step completion) is spent once it succeeds: when its
+// result swaps in a success outcome, hide the form so only the result remains
+// (a reload moves the step to History). Failures/rejections leave the form up.
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  const form = e.target.previousElementSibling;
+  if (form && form.dataset?.oneshot === "true" && e.target.querySelector(".outcome.success")) {
+    form.hidden = true;
+  }
+});
+
 // Theme picker: apply the chosen terminal theme instantly, then persist it via
 // the real form POST (which also works with JS off). An empty value clears the
 // data-theme attribute so the OS preference takes over.

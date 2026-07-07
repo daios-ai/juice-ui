@@ -398,6 +398,13 @@ button { font-family: inherit; cursor: pointer; }
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: .25rem; }
 .field { margin-bottom: 1rem; }
+/* Quiet "edit as JSON" mode toggle — sits above the fields, right-aligned, and
+   reads as a control, not another input. */
+.raw-switch { display: flex; justify-content: flex-end; margin-bottom: .1rem; }
+.raw-switch .btn-quiet { font-size: .8rem; }
+/* Inbox grouped by the creating action (§ steps). */
+.inbox-group { color: var(--text-muted); margin: 1.4rem 0 .5rem; }
+.step-item + .step-item { margin-top: 1rem; }
 .field.inline { margin: 0; }
 .field.flush  { margin: 0; }
 .field .help { color: var(--text-muted); font-size: .85rem; font-weight: 400; margin: .1rem 0 .35rem; }

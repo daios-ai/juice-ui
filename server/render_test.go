@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -279,6 +280,69 @@ func TestKeyFingerprint(t *testing.T) {
 	// Short keys are returned as-is (nothing to shorten).
 	if got := keyFingerprint("short"); got != "short" {
 		t.Errorf("keyFingerprint(short) = %q want %q", got, "short")
+	}
+}
+
+// TestCallFormRun renders the shared _call_form for an action run: a repeatable
+// money button reading "Run (12)" (no ¤), no locked block, and the result target
+// sitting below the form (not nested inside it).
+func TestCallFormRun(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil)
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatalf("Fragment: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run (12)") {
+		t.Errorf("run form must have a money button reading %q: %s", "Run (12)", body)
+	}
+	if strings.ContainsRune(body, '¤') {
+		t.Error("money button must not render the ¤ glyph")
+	}
+	if strings.Contains(body, `data-oneshot="true"`) {
+		t.Error("action run form must repeat, not be one-shot")
+	}
+	// Result target must sit after the closing </form>, not inside it.
+	form := strings.Index(body, "</form>")
+	target := strings.Index(body, `id="run-result"`)
+	if form < 0 || target < 0 || target < form {
+		t.Errorf("result target must render below the form: form@%d target@%d", form, target)
+	}
+}
+
+// TestCallFormComplete renders the shared _call_form for a step completion: a
+// one-shot money button "Complete (5)" and the pre-bound (locked) args shown via
+// the result renderer (<pre class="json">), with no verbal "prefilled" label.
+func TestCallFormComplete(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	locked := json.RawMessage(`{"to":"@bob"}`)
+	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil)
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatalf("Fragment: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Complete (5)") {
+		t.Errorf("completion form button must read %q: %s", "Complete (5)", body)
+	}
+	if !strings.Contains(body, `data-oneshot="true"`) {
+		t.Error("step completion form must be one-shot")
+	}
+	if !strings.Contains(body, `<pre class="json">`) || !strings.Contains(body, "@bob") {
+		t.Errorf("locked args must render via the result renderer (pre.json): %s", body)
+	}
+	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
+		t.Error("locked args carry no verbal label — the visual contrast is the signposting")
+	}
+	if !strings.Contains(body, `id="step-result-S1"`) {
+		t.Errorf("completion result target must be step-result-S1: %s", body)
 	}
 }
 

@@ -129,7 +129,7 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 	if op == "withdraw" {
 		verb = "Withdrew"
 	}
-	s.flashRedirect(w, r, "/admin", "success", verb+" "+money(amount)+" ¤ · "+handle+".")
+	s.flashRedirect(w, r, "/admin", "success", verb+" "+money(amount)+" credits · "+handle+".")
 }
 
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {

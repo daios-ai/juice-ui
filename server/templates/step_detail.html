@@ -8,7 +8,7 @@
   <div class="row">
     <span class="mono">{{template "_ref" $d.Step.Ref}}</span>
     <span class="pill {{if eq $d.Step.Status "done"}}status-credited{{else if eq $d.Step.Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{$d.Step.Status}}</span>
-    <span class="price" title="Parked price">◷ {{money $d.Step.Price}} ¤</span>
+    <span class="price" title="Parked price">◷ {{money $d.Step.Price}}</span>
     {{if $d.Step.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
   </div>
   {{if $d.Step.CreatedBy}}
@@ -31,19 +31,6 @@
 
 {{if $d.CanComplete}}
 <h2>Complete</h2>
-<div class="card stack">
-  <p class="card-note">Completing spends the parked {{money $d.Step.Price}} ¤.</p>
-  <form method="post" action="/steps/{{$d.Step.ID}}/complete"
-        hx-post="/steps/{{$d.Step.ID}}/complete" hx-target="#step-result" hx-swap="innerHTML">
-    {{.CSRFField}}
-    {{if $d.Form.IsApproval}}
-    <p class="muted small">No further input needed — just acknowledge.</p>
-    {{else}}
-    {{template "_form_fields" $d.Form.Editable}}
-    {{end}}
-    <button class="{{if gt $d.Step.Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{if gt $d.Step.Price 0}}Complete · {{money $d.Step.Price}} ¤{{else}}Complete step{{end}}</button>
-  </form>
-  <div id="step-result"></div>
-</div>
+{{template "_call_form" (completeForm $.CSRFField $d.Step.ID $d.Step.Price $d.Form.Editable $d.Form.IsApproval nil nil)}}
 {{end}}
 {{end}}

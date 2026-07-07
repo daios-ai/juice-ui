@@ -8,36 +8,24 @@
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
 <h2>Waiting for you</h2>
-{{if $d.Inbox}}
+{{if $d.InboxGroups}}
+{{$multi := gt (len $d.InboxGroups) 1}}
+{{range $d.InboxGroups}}
+{{if $multi}}<h3 class="inbox-group">{{if .CreatedBy}}Requested by {{template "_ref" .CreatedBy}}{{else}}Directly created{{end}}</h3>{{end}}
 <div class="stack">
-  {{range $d.Inbox}}
-  {{$step := .Step}}{{$action := index $d.Actions $step.ActionID}}
-  <div class="card stack">
+  {{range .Steps}}
+  {{$step := .Step}}
+  <div class="stack step-item">
     <div class="row">
       <span class="mono">{{template "_ref" $step.Ref}}</span>
-      <span class="price" title="Parked price">◷ {{money $step.Price}} ¤ parked</span>
+      <span class="price" title="Parked price">◷ {{money $step.Price}} parked</span>
       {{if $step.WaitingOnPeer}}<span class="sig-escrow" title="Required caller is a peer">peer</span>{{end}}
-      {{if $step.CreatedBy}}<span class="muted small" title="Created by">from {{template "_ref" $step.CreatedBy}}</span>{{end}}
     </div>
-    {{if .Form.Locked}}
-    <dl class="locked-args">
-      {{range .Form.Locked}}<dt class="mono">{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}
-    </dl>
-    {{end}}
-    <form method="post" action="/steps/{{$step.ID}}/complete"
-          hx-post="/steps/{{$step.ID}}/complete" hx-target="#step-result-{{$step.ID}}" hx-swap="innerHTML">
-      {{$.CSRFField}}
-      {{if .Form.IsApproval}}
-      <p class="muted small">No further input needed — just acknowledge.</p>
-      {{else}}
-      {{template "_form_fields" .Form.Editable}}
-      {{end}}
-      <button class="{{if gt $step.Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{if gt $step.Price 0}}Complete · {{money $step.Price}} ¤{{else}}Complete step{{end}}</button>
-    </form>
-    <div id="step-result-{{$step.ID}}"></div>
+    {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval $step.PartialArgs nil)}}
   </div>
   {{end}}
 </div>
+{{end}}
 {{else}}
 <p class="muted">Nothing waiting for you.</p>
 {{end}}

@@ -97,7 +97,10 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"@alice/x","owner_handle":"@alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"S1","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}]`))
+		w.Write([]byte(`[
+			{"id":"S1","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"status":"waiting","created_by":"@alice/dispatch","created_at":"2026-01-01T00:00:00Z"},
+			{"id":"S2","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":3,"status":"waiting","created_by":"@bob/relay","created_at":"2026-01-02T00:00:00Z"}
+		]`))
 	})
 	mux.HandleFunc("GET /v1/steps/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
@@ -781,6 +784,33 @@ func TestStepsInboxShowsWaitingStep(t *testing.T) {
 	}
 	if !strings.Contains(body, `action="/steps/S1/complete"`) {
 		t.Error("inbox must contain the step completion form for S1")
+	}
+}
+
+func TestInboxGroupsByCreatingAction(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/steps")
+
+	// Two waiting steps requested by two different creating actions → the inbox
+	// groups them under a heading naming each creating action (not the human caller).
+	if strings.Count(body, `class="inbox-group"`) != 2 {
+		t.Error("inbox must group waiting steps by creating action when there is more than one")
+	}
+	// _ref splits owner/name with markup, so assert the distinguishing name fragments.
+	if !strings.Contains(body, "/dispatch") || !strings.Contains(body, "/relay") {
+		t.Errorf("each group heading must name its creating action: %s", body)
+	}
+	if strings.Count(body, "Requested by") != 2 {
+		t.Errorf("each group renders a 'Requested by <action>' heading: %s", body)
+	}
+	// Both completion forms are still present, one per step.
+	if !strings.Contains(body, `action="/steps/S1/complete"`) || !strings.Contains(body, `action="/steps/S2/complete"`) {
+		t.Error("every waiting step keeps its own completion form")
 	}
 }
 

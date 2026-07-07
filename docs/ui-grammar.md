@@ -156,18 +156,20 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, befriend, inspect, navigate, add-row |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **MUST name the amount** (e.g. `Pay 12 ¤ & run`, `Synthesize · 20 ¤`) |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`, `Complete (5)`); the accent color conveys it's credits, so **no `¤` glyph** |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, unfriend, force-end |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 
 **Rules.** These are the *only* button styles. The money tier is the **authorizing
-control** — the form submit that actually moves credits (`Pay 12 ¤ & run`,
-`Synthesize · 20 ¤`, Deposit/Withdraw, `Complete · 5 ¤`). An *opener* that merely
+control** — the form submit that actually moves credits (`Run (12)`,
+`Synthesize (20)`, Deposit/Withdraw, `Complete (5)`). An *opener* that merely
 opens such a form is a quiet `.btn-quiet`, not a colored button — the money color
 appears on the confirm inside the modal. **Danger beats money** (an op that is
 both destructive and monetary is danger — e.g. force-end). Money buttons state
-the amount when it is fixed/known; when the operator types the amount
+the amount in parens when it is fixed/known — `verb (N)`, **never** a `¤` glyph
+(the accent color already says "credits"); where the unit must be spelled in prose
+(help text, flashes, errors), write "N credits". When the operator types the amount
 (deposit/withdraw) the adjacent field is the amount. Destructive buttons that
 can't be undone use `data-confirm` (§5.8).
 
@@ -226,6 +228,18 @@ none float, none are colored.
   scheme reveal (`[data-auth-scheme]`), kind reveal (`[data-http-only]`) — all
   disable hidden inputs so they aren't submitted. Secrets are masked, write-only,
   never pre-filled.
+- **Call form** (`_call_form`) — **one** component for *every* action execution
+  (action run **and** step completion): they are the same act, so they render the
+  same. Top to bottom: an optional **locked block** for pre-bound args rendered
+  with the **result renderer** (`<pre class="json">` — same as an outcome, no
+  "prefilled/remaining" labels; the JSON-vs-fields-vs-JSON visual contrast is the
+  only signposting), the **editable fields** (schema − locked, with the quiet
+  `edit as JSON` toggle), **one money button** (`verb (N)`, §5.1) with an
+  `hx-indicator` `.progress` and `hx-disabled-elt`, and the **result target
+  below** the form (`.outcome`, never nested inside the form). The step variant is
+  **one-shot** (`data-oneshot` — JS hides the form once its result swaps in a
+  success, since a spent step moves to History on reload); the action variant
+  repeats.
 
 ### 5.5 Cards, grids, tables
 
