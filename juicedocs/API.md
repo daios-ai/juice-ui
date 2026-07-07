@@ -82,7 +82,7 @@ Every command runs by calling the server over HTTP; the base URL resolves from `
 
 | Operation | HTTP | CLI |
 |-----------|------|-----|
-| Health check | `GET /health` (open) → `{status}` | `juice health [--url]` |
+| Health check | `GET /health` (open) → `{status, handle, public_key}`; identity banner — see which kernel you're on before login | `juice health [--url]` |
 
 Federation has no HTTP surface: peer identity, gossip, manifests, the friend handshake, and inbound calls travel over the cross-kernel transport (§13), not over this API. The known network (discovered kernels) is seeded automatically at `serve` from the bootstrap peers and grown by DHT provider-record enumeration; `admin peers --gossip` renders it as a grouped roster (kernel → introducer → action, with your own earned stats shown distinctly), and a remote kernel is inspected with `admin inspect <key>`.
 
@@ -101,17 +101,27 @@ Federation has no HTTP surface: peer identity, gossip, manifests, the friend han
 | Operation | HTTP | CLI |
 |-----------|------|-----|
 | Create user | `POST /v1/users` `{handle, email, password}` → 201 user | `juice user create <user> <email> [--password]` |
-| Get self | `GET /v1/me` → user (`id`, `handle`, `email`, `available`, `locked`) | `juice user me` |
+| Get self | `GET /v1/me` → user (`id`, `handle`, `email`, `available`, `locked`, `grants`) | `juice user me` |
 | Update self | `PUT /v1/me` `{[email], [current_password, password]}` → user | `juice user update [--email] [--password]` |
 
 `handle` is immutable. `email` and `password` are updatable by the authenticated user; `password` change requires `current_password` to verify the existing credential. At least one of `email` or `password` must be provided. Proxy users (federation peers) cannot be created here, cannot log in, and hold no tokens; they exist only through peer acceptance, authenticate per request by federation signature, and cannot use `PUT /v1/me`.
+
+### Grants (delegated OAuth)
+
+| Operation | HTTP | CLI |
+|-----------|------|-----|
+| Start consent | `POST /v1/grants/start` `{action, [redirect_uri], [flow]}` → `{state, authorize_url}` (code) or `{state, verification_uri, user_code, interval, expires_in}` (device) | `juice user connect <action> [--device]` |
+| Complete consent | `POST /v1/grants/complete` `{state, [code]}` → `{status, action, created_at}` or `{status: "pending"}` | (driven by `user connect`) |
+| Disconnect | `DELETE /v1/grants?action=@owner/name` → `{revoked, action}` | `juice user disconnect <action>` |
+
+A `Grant` delegates the caller's upstream OAuth identity to one `oauth_delegated` action (§8). The client hosts the redirect target — a loopback listener for local clients (CLI/desktop), a registered callback for hosted ones — and the server holds only in-memory PKCE/device state and performs the token exchange, so the refresh token never transits the client. Running an action that lacks a grant returns `grant_required` (403) with the action in `meta`, so a client can offer consent inline; the CLI (`juice run`) does exactly that on an interactive terminal and otherwise prints a `juice user connect` hint. Grants are listed token-free under `grants` in `GET /v1/me` and are never otherwise readable.
 
 ### Actions
 
 | Operation | HTTP | CLI |
 |-----------|------|-----|
 | Create action | `POST /v1/actions` `{name, kind, [source, method, params, description, price, input_schema, output_schema, auth]}` → 201 action | `juice action create <name> --kind [--source --method --param --description --price --input-schema --output-schema --auth]` |
-| List actions | `GET /v1/actions[?owner=&name=]` → action[]; unauthenticated → active public actions; authenticated → active public actions plus caller's own active actions; **superuser → all actions**; `?owner=` filters by owner handle; `?name=` filters by name | `juice action list [--all --limit --offset]` |
+| List actions | `GET /v1/actions[?owner=&name=&all=]` → action[]; active-only by default (unauthenticated → active public; authenticated → + own active; superuser → all owners' active); `?all=1` includes inactive/private in scope; `?owner=`/`?name=` filter | `juice action list [--all --limit --offset]` |
 | Show action | `GET /v1/actions/{id}` → action | `juice action show <action>` |
 | Update action | `PUT /v1/actions/{id}` `{[price, description, source, method, params, input_schema, output_schema, public, auth]}` → action | `juice action update <action> [--price --description --source --method --param --input-schema --output-schema --public --auth]` |
 | Enable action | `POST /v1/actions/{id}/enable` → `{active:true}` | `juice action enable <action>` |
@@ -160,8 +170,8 @@ Remote-proxy transactions include `remote_receipt_hash` and `remote_receipt_json
 | Operation | HTTP | CLI |
 |-----------|------|-----|
 | Create step | `POST /v1/steps` `{trace_id, action_id, partial_args, required_caller}` → 201 step | `juice step create <action> --trace --required-caller <user> [--partial-args]` |
-| List steps | `GET /v1/steps[?process_id=&status=]` → step[] | `juice step list [--process --status]` |
-| Show step | `GET /v1/steps/{id}` → step | `juice step show <id>` |
+| List steps | `GET /v1/steps[?process_id=&status=]` → step[]; each carries `created_by` (the creating action `@owner/name`, from the parent trace) alongside `action` (the completion target) | `juice step list [--process --status]` |
+| Show step | `GET /v1/steps/{id}` → step (incl. `created_by`) | `juice step show <id>` |
 | Complete step | `POST /v1/steps/{id}/complete` `{args}` → `{result, tx_id, trace_id, step_id}` | `juice step complete <id> [json]` |
 
 A step is a funded continuation: creation snapshots the action's price as `step.price` and parks it from `trace_id`; the process is derived from `Trace(trace_id).process_id`. Completion spends the parked price — no funds check occurs, and the completion's allocation and transaction `gross` are `step.price`. `required_caller` is a `@handle`; the server resolves it to `required_caller_user_id`. Step listing returns the caller's own steps (as process owner or required caller), or all of them for a superuser. `status` filter accepts `waiting`, `running`, `done`, or `cancelled`. The `args` field in the complete request is merged with the step's `partial_args` (completion `args` overwrites on key collision); the allowed completion input is derived as `action.input_schema \ keys(partial_args)` — a violation rejects the completion and leaves the step `waiting`, never recorded as an action failure. Step read and list responses include `price`, `action_id`, a computed `action` field (`@owner/name`), `required_caller_handle` (the required caller as a `@handle`, not the raw `required_caller_user_id`), and `waiting_on_peer` on a waiting step whose required caller is a peer. An outstanding step keeps its process open.
@@ -187,7 +197,7 @@ Native actions registered at bootstrap, owned by `@sys`, public, runnable like a
 
 ### Federation
 
-Friending a peer imports its actions owner-qualified, so a peer action is addressed `@peer/owner/name` and is called through `POST /v1/run` like any local action; there are no federation HTTP endpoints. Trust and peering are managed via the admin commands below. The cross-kernel transport is an implementation detail (§13).
+Friending a peer imports its actions owner-qualified, so a peer action is addressed `@peer/owner/name` and is called through `POST /v1/run` like any local action; there are no federation HTTP endpoints. A kernel exposes only its **own** actions to peers — a peer's own imports are never re-advertised, so friendship is non-transitive (reach a peer's imported action by friending its true owner). Trust and peering are managed via the admin commands below. The cross-kernel transport is an implementation detail (§13).
 
 ### Admin (superuser-gated TCP routes)
 
@@ -203,8 +213,8 @@ The operator verbs no ordinary user performs — money, access, federation trust
 | Withdraw credits | `juice admin withdraw <user\|key> <amount> [--reason --external-key]` |
 | Friend a kernel | `juice admin friend <key>` |
 | Unfriend a kernel | `juice admin unfriend <user\|key>` |
-| List peers | `juice admin peers [--gossip]` — friends (`handle`, `public_key`, `available`, `locked`; no internal id); `--gossip` adds the known-network directory roster |
-| Inspect a kernel | `juice admin inspect <key\|user>` — by key, or `@handle` if already friended; identity, public actions, transacted friends, and reachability |
+| List peers | `juice admin peers [--gossip] [--all]` — friended peers by default (`handle`, `public_key`, `available`, `locked`; no internal id); `--all` (`?all=1`) also lists denied/unfriended peers; `--gossip` adds the known-network directory roster |
+| Inspect a kernel | `juice admin inspect <key\|user>` — identity, public actions, transacted friends, reachability. `source` is `live`/`local`/`none`: an offline but friended peer degrades to last-known local data (`online:false`) |
 | Show own identity | `juice admin identity` — this kernel's public key, handle, listen addresses |
 
 `<user>` is a `@handle` — or, for a peer, its base64url public key (the global name); `<action>` is `@owner/name` (or an id); `<key>` is a peer's base64url public key. `withdraw` requires `target.available ≥ amount`; it redeems credits and obliges the out-of-band payout. `admin friend <key>` on a denied key clears the denial and restarts the handshake. `admin unfriend` deny-lists the key, deactivates the peer's proxies, cancels steps addressed to it (parked prices refunded), and preserves balance and history.
