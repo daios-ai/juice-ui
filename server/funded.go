@@ -19,6 +19,9 @@ const (
 	Failed
 	// Success: result plus a gross/fee/net cost breakdown.
 	Success
+	// GrantRequired: the action needs a delegated OAuth grant — rejected before
+	// any charge; the UI offers inline consent.
+	GrantRequired
 )
 
 // Cost is the gross/fee/net breakdown of a successful call.
@@ -37,6 +40,7 @@ type Outcome struct {
 	Cost      *Cost         // success only
 	Message   string        // user-facing explanation
 	Detail    string        // raw kernel error message (for diagnostics; never includes secrets)
+	ActionRef string        // the action ref, for a GrantRequired outcome's Connect affordance
 	CSRFField template.HTML // injected by the handler for the inline rating form
 }
 
@@ -48,6 +52,10 @@ func (o Outcome) IsFailed() bool { return o.Class == Failed }
 
 // IsRejected reports an input-rejected, not-charged outcome (template helper).
 func (o Outcome) IsRejected() bool { return o.Class == Rejected }
+
+// IsGrantRequired reports an outcome needing a delegated OAuth grant before the
+// action can run (template helper).
+func (o Outcome) IsGrantRequired() bool { return o.Class == GrantRequired }
 
 // Caller executes actions via POST /v1/run.
 type Caller struct {
@@ -65,7 +73,13 @@ func NewCaller(c *client.Client) *Caller { return &Caller{c: c} }
 func (k *Caller) Run(ctx context.Context, token, ref string, args json.RawMessage) (Outcome, error) {
 	reply, err := k.c.Run(ctx, token, ref, args)
 	if err != nil {
-		return classifyErr(err)
+		out, oerr := classifyErr(err)
+		// The action being run is known here; use it if the error's metadata
+		// didn't carry the ref for the Connect affordance.
+		if oerr == nil && out.Class == GrantRequired && out.ActionRef == "" {
+			out.ActionRef = ref
+		}
+		return out, oerr
 	}
 	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.TraceID), nil
 }
@@ -118,6 +132,12 @@ func classifyErr(err error) (Outcome, error) {
 			Class:   Failed,
 			Message: ke.UserMessage(),
 			Detail:  ke.KernelMessage,
+		}, nil
+	case client.KindGrantRequired:
+		return Outcome{
+			Class:     GrantRequired,
+			ActionRef: ke.GrantAction,
+			Message:   "This action needs a connected account before it can run.",
 		}, nil
 	default:
 		return Outcome{}, err

@@ -92,6 +92,8 @@ type Reachability struct {
 	Path      string   `json:"path"` // "direct" | "relayed" | …
 	RTTMillis int64    `json:"rtt_millis"`
 	Protocols []string `json:"protocols"`
+	Online    bool     `json:"online"` // false when a friended peer is currently unreachable
+	Source    string   `json:"source"` // "live" | "local" (last-known) | "none"
 }
 
 // Inspection is GET /control/peers/inspect?key= — a remote kernel's identity,

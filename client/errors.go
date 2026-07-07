@@ -26,6 +26,7 @@ const (
 	KindTimeout                // 504
 	KindRateLimited            // 429 (per-IP auth/user-create limiting, R5.6)
 	KindInternal               // 500 (kernel bug / unrecoverable)
+	KindGrantRequired          // 403 code="grant_required": needs a delegated OAuth grant
 )
 
 // KernelError is the typed error returned by every client call on a non-2xx
@@ -36,6 +37,8 @@ type KernelError struct {
 	Status        int
 	KernelMessage string // raw {"error":...} text; safe to log, used as form detail
 	Field         string // best-effort offending field for 422 validation errors
+	Code          string // machine code when the kernel sets one (e.g. "grant_required")
+	GrantAction   string // the action ref carried in a grant_required error's meta
 }
 
 func (e *KernelError) Error() string {
@@ -64,6 +67,7 @@ var (
 	ErrTimeout           = &KernelError{Kind: KindTimeout}
 	ErrRateLimited       = &KernelError{Kind: KindRateLimited}
 	ErrInternal          = &KernelError{Kind: KindInternal}
+	ErrGrantRequired     = &KernelError{Kind: KindGrantRequired}
 )
 
 func (k Kind) String() string {
@@ -88,6 +92,8 @@ func (k Kind) String() string {
 		return "rate_limited"
 	case KindInternal:
 		return "internal"
+	case KindGrantRequired:
+		return "grant_required"
 	default:
 		return "unknown"
 	}
@@ -106,6 +112,10 @@ func classify(status int, body []byte) error {
 	}
 	var wire struct {
 		Error string `json:"error"`
+		Code  string `json:"code"`
+		Meta  struct {
+			Action string `json:"action"`
+		} `json:"meta"`
 	}
 	_ = json.Unmarshal(body, &wire)
 	msg := strings.TrimSpace(wire.Error)
@@ -113,7 +123,7 @@ func classify(status int, body []byte) error {
 		msg = strings.TrimSpace(string(body))
 	}
 
-	e := &KernelError{Status: status, KernelMessage: msg}
+	e := &KernelError{Status: status, KernelMessage: msg, Code: wire.Code}
 	switch status {
 	case http.StatusUnauthorized:
 		e.Kind = KindUnauthenticated
@@ -121,6 +131,10 @@ func classify(status int, body []byte) error {
 		e.Kind = KindInsufficientFunds
 	case http.StatusForbidden:
 		e.Kind = KindUnauthorized
+		if wire.Code == "grant_required" {
+			e.Kind = KindGrantRequired
+			e.GrantAction = wire.Meta.Action
+		}
 	case http.StatusNotFound:
 		e.Kind = KindNotFound
 	case http.StatusConflict:
@@ -173,6 +187,8 @@ func (e *KernelError) UserMessage() string {
 		return "The action timed out. You were not charged — your funds were fully refunded."
 	case KindRateLimited:
 		return "Too many attempts. Please wait a moment and try again."
+	case KindGrantRequired:
+		return "This action needs a connected account. Connect it and try again."
 	default:
 		return "Something went wrong. Please try again."
 	}

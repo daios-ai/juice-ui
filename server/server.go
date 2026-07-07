@@ -27,16 +27,18 @@ type Options struct {
 	CSRFKey        []byte   // 32 bytes
 	Secure         bool     // set Secure flag on CSRF/session cookies (false for local http)
 	TrustedOrigins []string // extra hosts accepted as the request Origin (proxied hostnames)
+	PublicURL      string   // absolute base URL of this BFF, for OAuth redirect_uri; "" derives from the request
 }
 
 // Server holds dependencies and serves the BFF.
 type Server struct {
-	client   *client.Client
-	sessions *session.Manager
-	caller   *Caller
-	render   *Renderer
-	log      *slog.Logger
-	secure   bool
+	client    *client.Client
+	sessions  *session.Manager
+	caller    *Caller
+	render    *Renderer
+	log       *slog.Logger
+	secure    bool
+	publicURL string // configured absolute base URL; "" → derive from the request
 
 	// Cached kernel identity (handle + key fingerprint) from the open /health,
 	// so the login page and sidebar can name/verify the kernel. Fetched once on
@@ -69,6 +71,21 @@ func (s *Server) kernelIdentity(ctx context.Context) (handle, fp string) {
 	return handle, fp
 }
 
+// publicBaseURL is the absolute base URL of this BFF, used to build the OAuth
+// grant redirect_uri. It uses the configured PublicURL when set (for reverse
+// proxies), else derives scheme+host from the request — which "just works" for
+// direct access over localhost or Tailscale.
+func (s *Server) publicBaseURL(r *http.Request) string {
+	if s.publicURL != "" {
+		return s.publicURL
+	}
+	scheme := "http"
+	if s.secure {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
 // keyFingerprint shortens a base64url public key to a head…tail form for
 // eyeball verification. The key itself is the canonical global name, so a
 // truncation of it is the value to compare against (no hashing).
@@ -86,12 +103,13 @@ func New(o Options) (http.Handler, error) {
 		o.Logger = slog.Default()
 	}
 	s := &Server{
-		client:   o.Client,
-		sessions: o.Sessions,
-		caller:   NewCaller(o.Client),
-		render:   o.Renderer,
-		log:      o.Logger,
-		secure:   o.Secure,
+		client:    o.Client,
+		sessions:  o.Sessions,
+		caller:    NewCaller(o.Client),
+		render:    o.Renderer,
+		log:       o.Logger,
+		secure:    o.Secure,
+		publicURL: strings.TrimRight(o.PublicURL, "/"),
 	}
 
 	mux := http.NewServeMux()
@@ -167,6 +185,11 @@ func New(o Options) (http.Handler, error) {
 	// User — identity + wallet.
 	mux.HandleFunc("GET /user", s.requireAuth(s.getUser))
 	mux.HandleFunc("POST /user", s.requireAuth(s.postUser))
+
+	// Delegated OAuth grants (connect an upstream account to an action).
+	mux.HandleFunc("POST /grants/start", s.requireAuth(s.postGrantStart))
+	mux.HandleFunc("GET /grants/callback", s.requireAuth(s.getGrantCallback))
+	mux.HandleFunc("POST /grants/disconnect", s.requireAuth(s.postGrantDisconnect))
 
 	// Admin — superuser-only supervision (money, access, federation trust).
 	mux.HandleFunc("GET /admin", s.requireSuperuser(s.getAdmin))

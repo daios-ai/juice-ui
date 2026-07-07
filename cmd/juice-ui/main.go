@@ -35,6 +35,7 @@ type Config struct {
 	SessionSecret  string   // optional; derives the CSRF key. Empty -> ephemeral key.
 	Secure         bool     // Secure flag on cookies; enable behind HTTPS.
 	TrustedOrigins []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
+	PublicURL      string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
 }
 
 // LoadConfig reads configuration via getenv (injected for testability) and
@@ -45,6 +46,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		ListenAddr:    orDefault(getenv("JUICE_UI_ADDR"), "127.0.0.1:8080"),
 		SessionSecret: strings.TrimSpace(getenv("JUICE_UI_SESSION_SECRET")),
 		Secure:        strings.EqualFold(strings.TrimSpace(getenv("JUICE_UI_SECURE")), "true"),
+		PublicURL:     strings.TrimSpace(getenv("JUICE_UI_PUBLIC_URL")),
 	}
 	u, err := url.Parse(cfg.KernelBaseURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -148,6 +150,7 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		CSRFKey:        key,
 		Secure:         cfg.Secure,
 		TrustedOrigins: cfg.TrustedOrigins,
+		PublicURL:      cfg.PublicURL,
 	})
 }
 

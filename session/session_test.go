@@ -62,6 +62,22 @@ func TestPKCEHandshake(t *testing.T) {
 	}
 }
 
+func TestGrantState(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	if _, _, ok := m.TakeGrantState(ctx); ok {
+		t.Fatal("no state stored yet")
+	}
+	m.PutGrantState(ctx, "S1", "@sys/gmail-send")
+	state, action, ok := m.TakeGrantState(ctx)
+	if !ok || state != "S1" || action != "@sys/gmail-send" {
+		t.Fatalf("got %q %q ok=%v", state, action, ok)
+	}
+	// single-use: a second take (and thus a replayed callback) finds nothing.
+	if _, _, ok := m.TakeGrantState(ctx); ok {
+		t.Error("grant state should be cleared after TakeGrantState")
+	}
+}
+
 func TestLoginLogout(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
 	if m.IsAuthenticated(ctx) {

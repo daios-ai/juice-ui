@@ -25,6 +25,31 @@
   <p class="card-note muted">Top-ups happen out of band — an operator deposits credits after payment. The UI can't add credits.</p>
 </div>
 
+<h2>Connected accounts</h2>
+<div class="card">
+  {{if $d.User.Grants}}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Action</th><th>Scopes</th><th>Connected</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.User.Grants}}
+    <tr>
+      <td>{{template "_ref" .Action}}</td>
+      <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
+      <td class="muted">{{shortTime .CreatedAt}}</td>
+      <td>
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}? Running it will ask you to connect again.">
+          {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger small" type="submit">Disconnect</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}<p class="muted flush">No connected accounts. Actions that need an upstream account (e.g. an OAuth API) will prompt you to connect when you run them.</p>{{end}}
+</div>
+
 {{if $d.OpenProcesses}}
 <h2>Open processes</h2>
 <div class="table-scroll">

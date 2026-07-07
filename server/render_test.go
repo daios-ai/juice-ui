@@ -252,6 +252,25 @@ func TestActionsHref(t *testing.T) {
 	}
 }
 
+func TestCallOutcomeGrantRequired(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	out := Outcome{Class: GrantRequired, ActionRef: "@sys/gmail-send", Message: "needs a connected account"}
+	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="/grants/start"`) || !strings.Contains(body, `value="@sys/gmail-send"`) {
+		t.Errorf("grant_required outcome must render a Connect form for the action: %s", body)
+	}
+	if !strings.Contains(body, "Connect") || strings.Contains(body, "failed") {
+		t.Error("grant_required must read as a Connect affordance, not a failure")
+	}
+}
+
 func TestKeyFingerprint(t *testing.T) {
 	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
 	if got, want := keyFingerprint(long), "ABCDEFGHIJ…abcd"; got != want {

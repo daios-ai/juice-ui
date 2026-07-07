@@ -30,7 +30,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"status":"ok","handle":"@testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0,"grants":[{"action":"@sys/gmail-send","scopes":["send"],"created_at":"2024-01-01T00:00:00Z"}]}`))
 	})
 	mux.HandleFunc("PUT /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		var inp struct {
@@ -58,11 +58,16 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"action_id":"x"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		// Authenticated owner query returns all own actions (active+public and inactive/private).
-		w.Write([]byte(`[` +
-			`{"id":"A1","action":"@alice/hello","owner_handle":"@alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0},` +
-			`{"id":"A3","action":"@alice/draft","owner_handle":"@alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0}` +
-			`]`))
+		// The kernel returns active rows by default; the inactive/private draft
+		// (A3) appears only with ?all=1 — so tests that see the draft prove the UI
+		// threads all=1 for the owner's own list.
+		a1 := `{"id":"A1","action":"@alice/hello","owner_handle":"@alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0}`
+		a3 := `{"id":"A3","action":"@alice/draft","owner_handle":"@alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0}`
+		if r.URL.Query().Get("all") == "1" {
+			w.Write([]byte("[" + a1 + "," + a3 + "]"))
+		} else {
+			w.Write([]byte("[" + a1 + "]"))
+		}
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		// "owned"/"A1" belong to @alice (the signed-in user); anything else to @bob.
@@ -497,6 +502,26 @@ func TestStudioPageTwoZones(t *testing.T) {
 	// Inactive status visible for the draft action (the inactive chip).
 	if !strings.Contains(body, "inactive") {
 		t.Error("studio must show the inactive status for an inactive action")
+	}
+}
+
+func TestUserShowsGrants(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	body := getBody(t, cl, srv.URL+"/user")
+
+	if !strings.Contains(body, "Connected accounts") {
+		t.Error("/user must show the connected accounts section")
+	}
+	// The grant from /v1/me renders via _ref with a disconnect form.
+	if !strings.Contains(body, `class="owner">@sys`) {
+		t.Error("/user must list the grant's action ref")
+	}
+	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="@sys/gmail-send"`) {
+		t.Error("/user must offer a disconnect for each grant")
 	}
 }
 

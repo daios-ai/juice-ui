@@ -107,7 +107,7 @@ func TestListActionsEncodesFilters(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `[{"id":"a1","action":"@alice/greet","name":"greet"}]`
-	acts, err := f.client().ListActions(context.Background(), "tok", "alice", "greet")
+	acts, err := f.client().ListActions(context.Background(), "tok", "alice", "greet", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,13 +117,72 @@ func TestListActionsEncodesFilters(t *testing.T) {
 	if !strings.Contains(f.lastPath, "owner=%40alice") || !strings.Contains(f.lastPath, "name=greet") {
 		t.Errorf("filters not encoded: %s", f.lastPath)
 	}
+	// all=true includes the caller's own inactive/private rows.
+	if !strings.Contains(f.lastPath, "all=1") {
+		t.Errorf("all flag not encoded: %s", f.lastPath)
+	}
+}
+
+func TestMeDecodesGrants(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"handle":"@alice","grants":[{"action":"@sys/gmail-send","scopes":["send"],"created_at":"2026-07-07T00:00:00Z"}]}`
+	u, err := f.client().Me(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Grants) != 1 || u.Grants[0].Action != "@sys/gmail-send" || len(u.Grants[0].Scopes) != 1 {
+		t.Fatalf("grants = %+v", u.Grants)
+	}
+}
+
+func TestGrantMethods(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"state":"S1","authorize_url":"https://prov/auth?x=1"}`
+	url, state, err := f.client().StartGrant(context.Background(), "tok", "@sys/gmail-send", "http://ui/grants/callback")
+	if err != nil || url != "https://prov/auth?x=1" || state != "S1" {
+		t.Fatalf("start = %q %q %v", url, state, err)
+	}
+	if f.lastAuth != "Bearer tok" {
+		t.Errorf("StartGrant must send the access token, got %q", f.lastAuth)
+	}
+	if f.lastPath != "/v1/grants/start" {
+		t.Errorf("start path = %q", f.lastPath)
+	}
+	f.reply = `{}`
+	if err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) {
+		t.Errorf("complete body = %s", f.lastBody)
+	}
+	if err := f.client().DeleteGrant(context.Background(), "tok", "@sys/gmail-send"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "action=%40sys%2Fgmail-send") {
+		t.Errorf("delete = %s %s", f.lastMethod, f.lastPath)
+	}
+}
+
+func TestStepDecodesCreatedBy(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"id":"S1","action":"@a/target","created_by":"@a/maker","status":"waiting"}`
+	st, err := f.client().GetStep(context.Background(), "tok", "S1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.CreatedBy != "@a/maker" {
+		t.Errorf("CreatedBy = %q", st.CreatedBy)
+	}
 }
 
 func TestListActionsNullBecomesEmpty(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `null` // kernel returns null for empty lists (verified live)
-	acts, err := f.client().ListActions(context.Background(), "tok", "", "")
+	acts, err := f.client().ListActions(context.Background(), "tok", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

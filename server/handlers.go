@@ -267,6 +267,72 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
+// ---- delegated OAuth grants ----
+
+// postGrantStart begins the consent for an oauth_delegated action: it asks the
+// kernel for the provider authorize URL, stashes the opaque state server-side,
+// and redirects the browser to the provider. The provider returns to
+// getGrantCallback. (Mirrors doLogin's two-step split across requests.)
+func (s *Server) postGrantStart(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	action := strings.TrimSpace(r.FormValue("action"))
+	if action == "" {
+		s.flashRedirect(w, r, "/user", "error", "No action to connect.")
+		return
+	}
+	redirectURI := s.publicBaseURL(r) + "/grants/callback"
+	var authorizeURL, state string
+	err := s.sessions.Do(ctx, func(tok string) error {
+		u, st, e := s.client.StartGrant(ctx, tok, action, redirectURI)
+		authorizeURL, state = u, st
+		return e
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.sessions.PutGrantState(ctx, state, action)
+	http.Redirect(w, r, authorizeURL, http.StatusSeeOther)
+}
+
+// getGrantCallback receives the provider's redirect (?code&state), verifies the
+// state against the one we stored, exchanges the code for the stored grant, and
+// returns the user to /user. GET is correct: an external provider can't supply a
+// CSRF token, so the opaque state is the anti-forgery guard instead.
+func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	want, action, ok := s.sessions.TakeGrantState(ctx)
+	if !ok || state == "" || state != want {
+		s.flashRedirect(w, r, "/user", "error", "Couldn't verify that connection request. Please try again.")
+		return
+	}
+	if e := r.URL.Query().Get("error"); e != "" {
+		s.flashRedirect(w, r, "/user", "error", "Connection was cancelled or denied.")
+		return
+	}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		return s.client.CompleteGrant(ctx, tok, state, code)
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.flashRedirect(w, r, "/user", "success", "Connected "+action+".")
+}
+
+// postGrantDisconnect revokes the caller's grant for an action.
+func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	action := strings.TrimSpace(r.FormValue("action"))
+	err := s.sessions.Do(ctx, func(tok string) error {
+		return s.client.DeleteGrant(ctx, tok, action)
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.flashRedirect(w, r, "/user", "success", "Disconnected "+action+".")
+}
+
 func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {
 	theme := r.FormValue("theme")
 	// An empty or unknown slug clears the cookie (defer to prefers-color-scheme);
@@ -311,7 +377,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	view := discoverView{Query: q, LookupAvailable: true, OpenForm: openForm(r, "run")}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q == "" {
-			cat, e := s.client.ListActions(ctx, tok, "", "")
+			cat, e := s.client.ListActions(ctx, tok, "", "", false)
 			if e != nil {
 				return e
 			}
@@ -347,7 +413,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			if view.Reason == "" {
 				view.Reason = out.Message
 			}
-			cat, e := s.client.ListActions(ctx, tok, "", "")
+			cat, e := s.client.ListActions(ctx, tok, "", "", false)
 			if e != nil {
 				return e
 			}
@@ -767,14 +833,14 @@ func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 		if scope == "all" {
 			ownerFilter = "" // whole catalog; superuser sees all rows
 		}
-		a, e := s.client.ListActions(ctx, tok, ownerFilter, "")
+		a, e := s.client.ListActions(ctx, tok, ownerFilter, "", true)
 		if e != nil {
 			return e
 		}
 		mine = a
 		if scope != "all" {
 			// Browse: the public catalog (everyone's active/public actions).
-			catalog, _ = s.client.ListActions(ctx, tok, "", "")
+			catalog, _ = s.client.ListActions(ctx, tok, "", "", false)
 		}
 		txs, _ = s.client.ListTransactions(ctx, tok, "")
 		for _, action := range mine {

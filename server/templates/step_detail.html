@@ -11,6 +11,12 @@
     <span class="price" title="Parked price">◷ {{money $d.Step.Price}} ¤</span>
     {{if $d.Step.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
   </div>
+  {{if $d.Step.CreatedBy}}
+  <div>
+    <h3>Created by</h3>
+    <p>{{template "_ref" $d.Step.CreatedBy}}</p>
+  </div>
+  {{end}}
   <div>
     <h3>Required caller</h3>
     <p class="mono">{{$d.Step.RequiredCallerHandle}}</p>

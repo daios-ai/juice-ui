@@ -36,6 +36,22 @@ func TestClassifyByStatus(t *testing.T) {
 	}
 }
 
+func TestClassifyGrantRequired(t *testing.T) {
+	// A 403 with code=grant_required is a distinct kind carrying the action ref;
+	// a plain 403 stays Unauthorized.
+	err := classify(403, []byte(`{"error":"grant required","code":"grant_required","meta":{"action":"@sys/gmail-send"}}`))
+	ke, _ := AsKernelError(err)
+	if ke.Kind != KindGrantRequired {
+		t.Errorf("kind = %v want KindGrantRequired", ke.Kind)
+	}
+	if ke.GrantAction != "@sys/gmail-send" {
+		t.Errorf("GrantAction = %q want @sys/gmail-send", ke.GrantAction)
+	}
+	if plain, _ := AsKernelError(classify(403, []byte(`{"error":"nope"}`))); plain.Kind != KindUnauthorized {
+		t.Errorf("plain 403 kind = %v want KindUnauthorized", plain.Kind)
+	}
+}
+
 func TestClassify2xxIsNil(t *testing.T) {
 	for _, s := range []int{200, 201, 204} {
 		if err := classify(s, nil); err != nil {

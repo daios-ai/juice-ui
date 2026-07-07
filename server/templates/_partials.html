@@ -48,6 +48,16 @@
   {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
   <p><a href="/user">Check your account ledger for the refund →</a></p>
 </div>
+{{else if .IsGrantRequired}}
+<div class="outcome rejected" role="status">
+  <strong>Connect an account to run this.</strong>
+  <p>{{.Message}} You weren't charged.</p>
+  <form method="post" action="/grants/start" class="row compact">
+    {{.CSRFField}}
+    <input type="hidden" name="action" value="{{.ActionRef}}">
+    <button class="btn" type="submit">Connect {{template "_ref" .ActionRef}}</button>
+  </form>
+</div>
 {{else}}
 <div class="outcome success" role="status">
   <strong>Success.</strong>

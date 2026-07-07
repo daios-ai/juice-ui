@@ -11,10 +11,12 @@ import (
 
 // session value keys.
 const (
-	keyAccess   = "access_token"
-	keyRefresh  = "refresh_token"
-	keyVerifier = "pkce_verifier"
-	keyHandle   = "handle" // the signed-in user's handle, for display only
+	keyAccess      = "access_token"
+	keyRefresh     = "refresh_token"
+	keyVerifier    = "pkce_verifier"
+	keyHandle      = "handle"       // the signed-in user's handle, for display only
+	keyGrantState  = "grant_state"  // opaque state for an in-flight OAuth grant consent
+	keyGrantAction = "grant_action" // the action the in-flight grant is for (for the return redirect)
 )
 
 // ErrNoSession is returned by Do when no authenticated session is present.
@@ -103,6 +105,28 @@ func (m *Manager) TakeVerifier(ctx context.Context) (string, bool) {
 	}
 	m.sm.Remove(ctx, keyVerifier)
 	return v, true
+}
+
+// PutGrantState stashes the opaque state (and target action) for an in-flight
+// OAuth grant consent, server-side, keyed by the session cookie — so it survives
+// from the start redirect to the provider callback and never reaches the browser
+// as anything the browser can forge.
+func (m *Manager) PutGrantState(ctx context.Context, state, action string) {
+	m.sm.Put(ctx, keyGrantState, state)
+	m.sm.Put(ctx, keyGrantAction, action)
+}
+
+// TakeGrantState returns and clears the stored grant state + action. The caller
+// must require an exact state match against the callback's state parameter.
+func (m *Manager) TakeGrantState(ctx context.Context) (state, action string, ok bool) {
+	state = m.sm.GetString(ctx, keyGrantState)
+	if state == "" {
+		return "", "", false
+	}
+	action = m.sm.GetString(ctx, keyGrantAction)
+	m.sm.Remove(ctx, keyGrantState)
+	m.sm.Remove(ctx, keyGrantAction)
+	return state, action, true
 }
 
 // Do runs fn with the current access token. If fn returns ErrUnauthenticated,

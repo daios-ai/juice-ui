@@ -17,6 +17,7 @@
       <span class="mono">{{template "_ref" $step.Ref}}</span>
       <span class="price" title="Parked price">◷ {{money $step.Price}} ¤ parked</span>
       {{if $step.WaitingOnPeer}}<span class="sig-escrow" title="Required caller is a peer">peer</span>{{end}}
+      {{if $step.CreatedBy}}<span class="muted small" title="Created by">from {{template "_ref" $step.CreatedBy}}</span>{{end}}
     </div>
     {{if .Form.Locked}}
     <dl class="locked-args">

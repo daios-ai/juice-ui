@@ -91,6 +91,36 @@ func TestRunExecutionFailed(t *testing.T) {
 	}
 }
 
+func TestRunGrantRequired(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: 403,
+		runBody:   `{"error":"grant required","code":"grant_required","meta":{"action":"@sys/gmail-send"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "@sys/gmail-send", nil)
+	if err != nil {
+		t.Fatalf("grant_required must be an outcome, not an error: %v", err)
+	}
+	if out.Class != GrantRequired || !out.IsGrantRequired() {
+		t.Fatalf("class = %v want GrantRequired", out.Class)
+	}
+	if out.ActionRef != "@sys/gmail-send" {
+		t.Errorf("ActionRef = %q want @sys/gmail-send", out.ActionRef)
+	}
+}
+
+func TestRunGrantRequiredFallsBackToRunRef(t *testing.T) {
+	// If the error metadata omits the action, the ref being run is used.
+	f := &fakeKernel{runStatus: 403, runBody: `{"error":"grant required","code":"grant_required"}`}
+	c, stop := f.start(t)
+	defer stop()
+	out, _ := NewCaller(c).Run(context.Background(), "tok", "@sys/gmail-send", nil)
+	if out.ActionRef != "@sys/gmail-send" {
+		t.Errorf("ActionRef fallback = %q want @sys/gmail-send", out.ActionRef)
+	}
+}
+
 func TestRunInsufficientFundsIsError(t *testing.T) {
 	f := &fakeKernel{
 		runStatus: 402,

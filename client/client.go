@@ -41,11 +41,20 @@ type Tokens struct {
 // User is the self profile (GET /v1/me) and the create-user response. Money is
 // integer credits. Verified live: id, handle, email, available, locked.
 type User struct {
-	ID        string `json:"id"`
-	Handle    string `json:"handle"`
-	Email     string `json:"email"`
-	Available int64  `json:"available"`
-	Locked    int64  `json:"locked"`
+	ID        string  `json:"id"`
+	Handle    string  `json:"handle"`
+	Email     string  `json:"email"`
+	Available int64   `json:"available"`
+	Locked    int64   `json:"locked"`
+	Grants    []Grant `json:"grants"` // delegated upstream OAuth consents (no token material)
+}
+
+// Grant is a delegated upstream OAuth consent for one action, as listed by
+// GET /v1/me. It is a consent record only — never any token material.
+type Grant struct {
+	Action    string   `json:"action"` // @owner/name of the granted action
+	Scopes    []string `json:"scopes"`
+	CreatedAt string   `json:"created_at"`
 }
 
 // HTTPParam binds an action input field to a location in the upstream HTTP
@@ -236,6 +245,7 @@ type Step struct {
 	WaitingOnPeer        bool            `json:"waiting_on_peer"`
 	TxID                 string          `json:"tx_id"`
 	CreatedAt            string          `json:"created_at"`
+	CreatedBy            string          `json:"created_by"` // creating action @owner/name (from the parent trace)
 }
 
 // Ref returns "@owner/name" for this step's next action.
@@ -402,6 +412,36 @@ func (c *Client) Logout(ctx context.Context, refreshToken string) error {
 	return c.do(ctx, http.MethodPost, "/v1/auth/logout", "", map[string]string{"refresh_token": refreshToken}, nil)
 }
 
+// ---- grants (delegated OAuth consent) ----
+
+// StartGrant begins the delegated-OAuth consent for one action. redirectURI is
+// the client's own callback URL the provider will send the code back to. Returns
+// the provider authorize URL to send the browser to, plus the opaque state to
+// hold and match on the callback. Authenticated as the grantor.
+func (c *Client) StartGrant(ctx context.Context, token, action, redirectURI string) (authorizeURL, state string, err error) {
+	body := map[string]string{"action": action, "redirect_uri": redirectURI}
+	var resp struct {
+		State        string `json:"state"`
+		AuthorizeURL string `json:"authorize_url"`
+	}
+	if err = c.do(ctx, http.MethodPost, "/v1/grants/start", token, body, &resp); err != nil {
+		return "", "", err
+	}
+	return resp.AuthorizeURL, resp.State, nil
+}
+
+// CompleteGrant exchanges the provider code for the stored grant. state must be
+// the value from StartGrant.
+func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) error {
+	return c.do(ctx, http.MethodPost, "/v1/grants/complete", token, map[string]string{"state": state, "code": code}, nil)
+}
+
+// DeleteGrant revokes the caller's grant for an action.
+func (c *Client) DeleteGrant(ctx context.Context, token, action string) error {
+	q := url.Values{"action": {action}}
+	return c.do(ctx, http.MethodDelete, "/v1/grants?"+q.Encode(), token, nil, nil)
+}
+
 // ---- users ----
 
 func (c *Client) CreateUser(ctx context.Context, handle, email, password string) (User, error) {
@@ -432,16 +472,20 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 // ---- actions ----
 
 // ListActions lists actions. owner and name are optional filters ("" to omit).
-// Verified live: unauthenticated or cross-user requests see only active+public
-// actions. Authenticated requests from the matching owner see all owned actions
-// regardless of active/public state (verified 2026-06-14, R10.3 confirmed).
-func (c *Client) ListActions(ctx context.Context, token, owner, name string) ([]Action, error) {
+// The kernel returns active rows by default (unauthenticated → active public;
+// authenticated → + own active; superuser → all owners' active); pass all=true
+// (?all=1) to include the caller's own inactive/private rows — required to show
+// a user their inactive drafts.
+func (c *Client) ListActions(ctx context.Context, token, owner, name string, all bool) ([]Action, error) {
 	q := url.Values{}
 	if owner != "" {
 		q.Set("owner", normalizeHandle(owner))
 	}
 	if name != "" {
 		q.Set("name", name)
+	}
+	if all {
+		q.Set("all", "1") // include the caller's own inactive/private rows (else active-only)
 	}
 	path := "/v1/actions"
 	if len(q) > 0 {
