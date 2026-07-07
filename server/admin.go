@@ -15,7 +15,6 @@ import (
 
 type adminView struct {
 	Users    []client.AdminUser
-	Identity client.Identity
 	OpenForm string
 }
 
@@ -46,9 +45,6 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Users = u
-		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
-			view.Identity = id
-		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {

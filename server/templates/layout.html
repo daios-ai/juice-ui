@@ -50,6 +50,7 @@
         <a href="/user" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl">user</span></a>
         {{if .IsSuperuser}}
         <a href="/admin" title="Admin"{{if eq .Active "admin"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg><span class="lbl">admin</span></a>
+        <a href="/admin/peers" title="Peers"{{if eq .Active "peers"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#share-2"/></svg><span class="lbl">peers</span></a>
         {{end}}
       </nav>
 
@@ -59,7 +60,7 @@
           <span class="lbl mono">{{.Handle}}</span>
         </button>
         <div class="menu" id="profile-popup" role="menu" hidden>
-          {{template "_menu_content" .}}
+          {{template "_menu_account" .}}
         </div>
       </div>
     </aside>

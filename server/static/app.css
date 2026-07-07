@@ -157,9 +157,9 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
 }
 .badge:empty { display: none; }
 
-/* .tabs — retained ONLY for the entry screen's sign in / create account toggle
-   (a genuine two-panel view switch on an otherwise empty page). In-content view
-   switching everywhere else is the quiet .linkbar; the mobile bar is .tab-bar. */
+/* .tabs — THE view-switch component: the entry screen's sign in / create
+   account toggle and in-content list filters (all/active/inactive, …). The
+   mobile bottom bar is a separate component (.tab-bar). */
 .tabs { display: flex; gap: .25rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .tabs .tab {
   padding: .4rem .75rem; color: var(--text-muted); text-decoration: none;
@@ -167,6 +167,10 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
 }
 .tabs .tab:hover { color: var(--text); text-decoration: none; }
 .tabs .tab.active, .tabs .tab[aria-current] { color: var(--text); border-bottom-color: var(--accent); }
+/* A filter tab row can carry one inline command (e.g. "+ new action"), pushed
+   to the right and not styled as a tab. */
+.control-tabs { align-items: center; }
+.tabs .tabs-action { margin-left: auto; border-bottom: 0; }
 
 /* Mobile bottom tab bar — hidden on desktop */
 .tab-bar {
@@ -285,17 +289,6 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
    here — they sit inline with the content they act on (grammar §3, §5.1). */
 .page-head { margin-bottom: .5rem; }
 
-/* .linkbar — a quiet row of muted text links for in-content view switching:
-   list filters (all · active · inactive) and the admin users · peers switch.
-   The active link is bolded (current color); no underline band, no fill, no
-   color. Inline flow so it wraps naturally; middot separators come from CSS. */
-.linkbar { font-size: .85rem; }
-.linkbar a { color: var(--text-muted); }
-.linkbar a:hover { color: var(--text); }
-.linkbar a.active, .linkbar a[aria-current] { color: var(--text); font-weight: 600; }
-.linkbar a + a::before { content: "·"; color: var(--text-muted); margin: 0 .5rem; font-weight: 400; }
-/* When a linkbar shares a row with an inline command, push it to the right. */
-.row > .linkbar { margin-left: auto; }
 
 /* Cards & grids */
 .card {

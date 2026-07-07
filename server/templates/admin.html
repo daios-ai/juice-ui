@@ -2,13 +2,8 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>admin</h1>
-  <p class="subtitle">Operator supervision — money, access, and federation trust. <span class="scope-note">superuser only</span></p>
+  <p class="subtitle">Operator supervision — users, money, and access. <span class="scope-note">superuser only</span></p>
 </div>
-
-<nav class="linkbar" aria-label="Admin sections">
-  <a class="active" href="/admin" aria-current="page">users</a>
-  <a href="/admin/peers">peers</a>
-</nav>
 
 <h2>Users</h2>
 <div class="row control-row">
@@ -40,14 +35,6 @@
 </table>
 </div>
 {{else}}<p class="muted">No users.</p>{{end}}
-
-<h2>This kernel</h2>
-<div class="card">
-  <dl class="locked-args">
-    <dt>Handle</dt><dd class="mono">{{$d.Identity.Handle}}</dd>
-    <dt>Public key</dt><dd class="mono hash">{{$d.Identity.PublicKey}}</dd>
-  </dl>
-</div>
 
 {{template "_form_admin_deposit" .}}
 {{template "_form_admin_withdraw" .}}

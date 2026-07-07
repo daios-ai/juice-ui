@@ -71,18 +71,13 @@ func TestNoFloatingCommandChrome(t *testing.T) {
 	}
 }
 
-// TestTabsOnlyOnLogin ensures the .tabs component and its tablist roles are used
-// nowhere but the entry screen's sign in / create account toggle. In-content
-// view switching (filters, admin users·peers) is the quiet .linkbar instead.
-func TestTabsOnlyOnLogin(t *testing.T) {
+// TestNoLinkbar ensures the retired .linkbar component never reappears — .tabs
+// is the single view-switch component (login panels and list filters).
+func TestNoLinkbar(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
-		if f == "templates/login.html" {
-			continue
-		}
-		src := string(mustRead(t, f))
-		if strings.Contains(src, `class="tabs"`) || strings.Contains(src, `role="tablist"`) || strings.Contains(src, `role="tab"`) {
-			t.Errorf("%s: .tabs/tablist is login-only — use .linkbar for in-content view switching", f)
+		if strings.Contains(string(mustRead(t, f)), "linkbar") {
+			t.Errorf("%s: uses retired '.linkbar' — use the .tabs view-switch component", f)
 		}
 	}
 }
@@ -92,7 +87,7 @@ func TestNoLegacyTabClass(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		if strings.Contains(string(mustRead(t, f)), "auth-tab") {
-			t.Errorf("%s: uses legacy 'auth-tab' — use the .tabs toggle (login) or .linkbar", f)
+			t.Errorf("%s: uses legacy 'auth-tab' — use the .tabs view-switch component", f)
 		}
 	}
 }

@@ -218,7 +218,13 @@ document.addEventListener('click', (e) => {
   if (!tab) return;
   e.preventDefault();
   const want = tab.dataset.tab;
-  for (const t of document.querySelectorAll('.tabs .tab[data-tab]')) t.classList.toggle('active', t.dataset.tab === want);
+  for (const t of document.querySelectorAll('.tabs .tab[data-tab]')) {
+    const on = t.dataset.tab === want;
+    t.classList.toggle('active', on);
+    // Move aria-current with .active — the CSS highlights on either, so a stale
+    // aria-current would keep the old tab lit.
+    if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+  }
   for (const p of document.querySelectorAll('.auth-panel')) p.hidden = p.dataset.panel !== want;
   if (window.history) history.replaceState(null, '', '/login?tab=' + want);
 });

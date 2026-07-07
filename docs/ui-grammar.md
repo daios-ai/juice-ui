@@ -22,8 +22,7 @@ Three laws underpin everything:
 | Component | Class(es) | Role |
 |---|---|---|
 | Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-quiet` | actions |
-| **Linkbar** | `.linkbar` (muted links, active bolded) | in-content view switching: list filters, admin `users · peers` |
-| Tabs | `.tabs` + `.tab` | **login only** — the sign in / create account toggle |
+| **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
 | Tab bar | `.tab-bar` + `.tab` | the fixed mobile bottom nav |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
 | Card / grid / table | `.card` · `.grid` · `.card-list` · `table` (`.rowable`, `.stats-table`) | containers & data |
@@ -60,12 +59,12 @@ The frame every page renders into. Defined in `layout.html`.
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand → `/run`; collapse toggle; nav groups; profile popover at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `run · action · process · tx · step · user` + `admin` (only `@sys`) | Mirrors the CLI command groups. Active group carries `aria-current="page"`. `step` carries the badge. Icon + lowercase label; label hidden when collapsed. |
-| **Profile popover** | handle, balance, theme picker, Account, Sign out | Opens from the sidebar foot (`[data-menu]`). The theme picker is a `<select>` of the shipped themes + "System default". |
+| **Nav** | `run · action · process · tx · step · user` + `admin · peers` (only `@sys`) | Mirrors the CLI command groups — with **`peers` elevated to its own slot** (a deliberate exception: federation is distinct enough to warrant it). Active group carries `aria-current="page"`. `step` carries the badge. Icon + lowercase label; label hidden when collapsed. |
+| **Profile popover** | handle, balance, theme picker, Sign out — **no navigation** | Opens from the sidebar foot (`[data-menu]`). Nav destinations live in the sidebar, not here (the mobile drawer, which replaces the sidebar, keeps them). Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width 1000px`, centered, padding `1.25rem 1.5rem 4rem`. |
 | **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · tx · user`); top hamburger → **drawer** (theme, Account, Sign out, and **Admin when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin MUST remain reachable in the drawer for `@sys`. |
+| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · tx · user`); top hamburger → **drawer** (Account, theme, Sign out, and **Admin + Peers when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin/Peers MUST remain reachable in the drawer for `@sys` (no sidebar there). |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -121,8 +120,8 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 - **Money, IDs, hashes, `@owner/name`:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**
-  - *Index* = `page-head` (title + subtitle) → section `<h2>` → a control row
-    (quiet inline command + `.linkbar` filters) → list.
+  - *Index* = `page-head` (title + subtitle) → section `<h2>` → a `.tabs` filter
+    row (with an optional inline `+ new …` command) → list.
   - *Detail* = back-link → `<h1>` → `.subtitle` (the id) → cards.
 
 ---
@@ -172,26 +171,27 @@ the amount when it is fixed/known; when the operator types the amount
 (deposit/withdraw) the adjacent field is the amount. Destructive buttons that
 can't be undone use `data-confirm` (§5.8).
 
-### 5.2 View switching — the Linkbar (and the login Tabs)
+### 5.2 View switching — one component: `.tabs`
 
-In-content view switching is the **`.linkbar`**: a quiet row of muted text links,
-the active one **bolded** (`.active` + `aria-current`) — no underline band, no
-fill, no color. Middot separators come from CSS; links are real (work with JS
-off). It replaces every button-row filter and every sub-nav.
+All view switching is the **`.tabs`** underline component: `.tab` links in a row
+with a hairline baseline; the active tab carries `.active` **and**
+`aria-current`, drawn with an accent underline. There is no second switch
+component.
 
 ```
-+ new action              all · active · inactive
+┌ .tabs ─────────────────────────────────────────┐
+│  all   active   inactive            + new action │
+└──────────────────────────────────────────────────┘
 ```
 
 | Use | Markup | Active |
 |---|---|---|
-| **List filters** | `.linkbar` on the section's control row — action `all/active/inactive` (+`all actions` for `@sys`), step `all/done/cancelled` | selected filter |
-| **Admin switch** | `.linkbar` `users · peers` under the subtitle (minor nav between two admin views; the primary nav is the sidebar) | current page |
+| **Entry toggle** | `.auth-card .tabs` — Sign in / Create account (real `?tab=` links; JS swaps panels **and moves `aria-current`** so only one is lit) | requested tab |
+| **List filters** | `.tabs.control-tabs` on the section — action `all/active/inactive` (+`all actions` for `@sys`), step `all/done/cancelled` (real query-string links, reload) | selected filter |
 
-The **`.tabs`** underline component is retained for exactly one place: the entry
-screen's Sign in / Create account toggle (§1) — a genuine two-panel switch on an
-otherwise empty page. The fixed mobile bottom nav is `.tab-bar`. Neither is used
-for in-content switching.
+A filter row may carry **one** inline command (`+ new action`) as a
+`.btn-quiet.tabs-action`, right-aligned and not styled as a tab. The fixed mobile
+bottom nav is a separate component (`.tab-bar`). The `.linkbar` is retired.
 
 ### 5.3 Commands are inline & quiet
 
@@ -298,11 +298,13 @@ split on the first `/`.
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
 | `.badge` | round, accent, **only** on the `step` nav — the sole async attention signal |
 
-### 5.11 Federation (admin)
+### 5.11 Federation (peers)
 
-Admin is two sibling pages reached through a quiet `users · peers` `.linkbar`
-switch (§5.2), not toolbar links. The `peers` page is a discovery → inspect → trust
-journey, all in the table grammar: **this kernel** (identity to share) ·
+`admin` (users, money, access) and `peers` (federation) are **two separate
+top-level nav entries** (`@sys` only), not one page with a sub-nav — federation
+is a distinct concern. `peers` owns the **this kernel** identity card. The
+`peers` page is a discovery → inspect → trust journey, all in the table grammar:
+**this kernel** (identity to share) ·
 **friends** (direct peers, each
 with Inspect + Unfriend) · **known network** (the gossip roster: one block per
 discovered kernel showing *your* earned stats — labeled `you` — distinct from the
@@ -345,10 +347,10 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
 - Floating forms degrade to the `?form=` no-JS path.
 - **Closed component set** (§0 registry): new UI composes existing components;
   adding one means updating the registry **and** the drift guard. Color is
-  money/danger only — no neutral-emphasis button tier. Filters and sibling-view
-  navigation are the quiet `.linkbar` (§5.2), never buttons or tabs. The
+  money/danger only — no neutral-emphasis button tier. All view switching is
+  `.tabs` (§5.2), never buttons; the retired `.linkbar` must not reappear. The
   `page-head` carries no command cluster (§5.3).
 - **Drift guard:** a test scans templates and fails on any button class outside
   §5.1 (incl. the retired `.btn-primary`), any inline `style=`, any `.toolbar`,
-  any `.tabs`/tablist outside `login.html`, the superseded `auth-tab` class, and
+  any `.linkbar`, the superseded `auth-tab` class, and
   any `<table>` not wrapped in a `.table-scroll`.

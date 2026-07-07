@@ -86,17 +86,19 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(body, `href="/admin/users/@alice"`) {
 		t.Error("/admin user handle must link to the user's detail page")
 	}
-	// Nav shows the admin group.
-	if !strings.Contains(body, `href="/admin"`) {
-		t.Error("superuser nav must link to /admin")
+	// Admin and Peers are now separate top-level sidebar entries (not a sub-nav).
+	if !strings.Contains(body, `href="/admin" title="Admin"`) {
+		t.Error("superuser sidebar must have an Admin nav entry")
 	}
-	// Users/Peers is a quiet .linkbar switch (navigation), not tabs or buttons;
-	// users active on /admin.
-	if !strings.Contains(body, `class="linkbar"`) || !strings.Contains(body, `class="active" href="/admin" aria-current="page">users`) {
-		t.Error("/admin must render the users·peers .linkbar with users active")
+	if !strings.Contains(body, `href="/admin/peers" title="Peers"`) || !strings.Contains(body, "#share-2") {
+		t.Error("superuser sidebar must have a separate Peers nav entry (share-2 icon)")
 	}
-	if !strings.Contains(body, `href="/admin/peers">peers`) {
-		t.Error("/admin switch must link to peers")
+	if strings.Contains(body, "linkbar") {
+		t.Error("/admin must not carry the retired users·peers sub-nav")
+	}
+	// Federation identity moved to the peers page — no "This kernel" on /admin.
+	if strings.Contains(body, "This kernel") {
+		t.Error("/admin must not show the 'This kernel' identity (it lives on /admin/peers)")
 	}
 	// Content-first: no floating command chrome; credits are quiet inline commands.
 	if strings.Contains(body, `class="toolbar"`) || strings.Contains(body, "btn-primary") {
@@ -108,10 +110,13 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		}
 	}
 
-	// The peers sub-page marks peers active in the same .linkbar switch.
+	// The peers page carries "This kernel" and highlights the peers nav entry.
 	pbody := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(pbody, `class="active" href="/admin/peers" aria-current="page">peers`) {
-		t.Error("/admin/peers must mark the peers link active")
+	if !strings.Contains(pbody, "This kernel") {
+		t.Error("/admin/peers must render the 'This kernel' identity card")
+	}
+	if !strings.Contains(pbody, `href="/admin/peers" title="Peers" aria-current="page"`) {
+		t.Error("/admin/peers must mark the Peers nav entry active")
 	}
 }
 

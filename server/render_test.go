@@ -181,6 +181,34 @@ func TestKindBadge(t *testing.T) {
 	}
 }
 
+// The desktop popover (_menu_account) is identity + prefs + sign-out with NO
+// navigation; the mobile drawer (_menu_content) adds the nav links.
+func TestAccountMenuHasNoNav(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := Page{Handle: "@sys", IsSuperuser: true, Themes: ThemeList()}
+	acctRec, fullRec := httptest.NewRecorder(), httptest.NewRecorder()
+	if err := r.Fragment(acctRec, 200, "_menu_account", data); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Fragment(fullRec, 200, "_menu_content", data); err != nil {
+		t.Fatal(err)
+	}
+	acct, full := acctRec.Body.String(), fullRec.Body.String()
+	if strings.Contains(acct, `href="/admin"`) || strings.Contains(acct, `href="/user"`) {
+		t.Error("desktop popover (_menu_account) must not contain nav links")
+	}
+	if !strings.Contains(acct, "Sign out") {
+		t.Error("_menu_account must have Sign out")
+	}
+	// The mobile drawer keeps the nav (it replaces the sidebar).
+	if !strings.Contains(full, `href="/admin"`) || !strings.Contains(full, `href="/admin/peers"`) {
+		t.Error("mobile drawer (_menu_content) must carry Admin + Peers nav")
+	}
+}
+
 func TestKeyFingerprint(t *testing.T) {
 	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
 	if got, want := keyFingerprint(long), "ABCDEFGHIJ…abcd"; got != want {

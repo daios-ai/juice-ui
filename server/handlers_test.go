@@ -579,8 +579,8 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	if !strings.Contains(body, `id="menu-new-action"`) || !strings.Contains(body, "+ new action") {
 		t.Error("actions create command must be a quiet + new action menu")
 	}
-	if !strings.Contains(body, `class="btn-quiet" data-menu="menu-new-action"`) {
-		t.Error("+ new action must be a quiet menu trigger, not a solid button")
+	if !strings.Contains(body, `class="btn-quiet tabs-action" data-menu="menu-new-action"`) {
+		t.Error("+ new action must be a quiet menu trigger on the tab row, not a solid button")
 	}
 	for _, form := range []string{"action-create", "action-make", "action-import", "action-unimport"} {
 		if !strings.Contains(body, "?form="+form) {
@@ -588,18 +588,18 @@ func TestActionsCommandAndFilters(t *testing.T) {
 		}
 	}
 
-	// Filters are the quiet .linkbar, not .tabs and not buttons.
-	if strings.Contains(body, `class="tabs"`) {
-		t.Error("action filters must be a .linkbar, not the .tabs component")
+	// Filters are the unified .tabs view-switch component (not the retired linkbar).
+	if strings.Contains(body, "linkbar") {
+		t.Error("filters must use .tabs, not the retired .linkbar")
 	}
-	if !strings.Contains(body, `class="linkbar"`) {
-		t.Error("action filters must render as a .linkbar")
+	if !strings.Contains(body, `class="tabs control-tabs"`) {
+		t.Error("action filters must render as a .tabs row")
 	}
-	if !strings.Contains(body, `class="active" href="/actions" aria-current="page">all`) {
-		t.Error("action linkbar must mark 'all' active")
+	if !strings.Contains(body, `class="tab active" href="/actions" aria-current="page">all`) {
+		t.Error("action filter tabs must mark 'all' active")
 	}
 	if !strings.Contains(body, `href="/actions?filter=active"`) {
-		t.Error("action linkbar must offer the 'active' filter")
+		t.Error("action filter tabs must offer the 'active' filter")
 	}
 }
 

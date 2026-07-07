@@ -391,6 +391,8 @@ func activeGroup(path string) string {
 		return "step"
 	case strings.HasPrefix(path, "/user"):
 		return "user"
+	case strings.HasPrefix(path, "/admin/peers"):
+		return "peers"
 	case strings.HasPrefix(path, "/admin"):
 		return "admin"
 	}

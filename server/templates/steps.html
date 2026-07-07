@@ -42,14 +42,12 @@
 {{end}}
 
 <h2>History</h2>
-<div class="row control-row">
-  <a class="btn-quiet" href="/steps?form=step-create" data-modal="form-step-create">+ new step</a>
-  <nav class="linkbar" aria-label="Filter step history">
-    <a class="{{if eq $d.Filter ""}}active{{end}}" href="/steps"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
-    <a class="{{if eq $d.Filter "done"}}active{{end}}" href="/steps?status=done"{{if eq $d.Filter "done"}} aria-current="page"{{end}}>done</a>
-    <a class="{{if eq $d.Filter "cancelled"}}active{{end}}" href="/steps?status=cancelled"{{if eq $d.Filter "cancelled"}} aria-current="page"{{end}}>cancelled</a>
-  </nav>
-</div>
+<nav class="tabs control-tabs" aria-label="Step history">
+  <a class="tab{{if eq $d.Filter ""}} active{{end}}" href="/steps"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
+  <a class="tab{{if eq $d.Filter "done"}} active{{end}}" href="/steps?status=done"{{if eq $d.Filter "done"}} aria-current="page"{{end}}>done</a>
+  <a class="tab{{if eq $d.Filter "cancelled"}} active{{end}}" href="/steps?status=cancelled"{{if eq $d.Filter "cancelled"}} aria-current="page"{{end}}>cancelled</a>
+  <a class="btn-quiet tabs-action" href="/steps?form=step-create" data-modal="form-step-create">+ new step</a>
+</nav>
 {{if $d.History}}
 <div class="table-scroll">
 <table>

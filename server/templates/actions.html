@@ -22,8 +22,12 @@
 {{end}}
 
 <h2>Your actions</h2>
-<div class="row control-row">
-  <button class="btn-quiet" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
+<nav class="tabs control-tabs" aria-label="Your actions">
+  <a class="tab{{if eq $d.Filter ""}} active{{end}}" href="/actions"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
+  <a class="tab{{if eq $d.Filter "active"}} active{{end}}" href="/actions?filter=active"{{if eq $d.Filter "active"}} aria-current="page"{{end}}>active</a>
+  <a class="tab{{if eq $d.Filter "inactive"}} active{{end}}" href="/actions?filter=inactive"{{if eq $d.Filter "inactive"}} aria-current="page"{{end}}>inactive</a>
+  {{if $d.Superuser}}<a class="tab{{if eq $d.Scope "all"}} active{{end}}" href="/actions?scope=all"{{if eq $d.Scope "all"}} aria-current="page"{{end}}>all actions</a>{{end}}
+  <button class="btn-quiet tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
   <div class="menu" id="menu-new-action" role="menu" hidden>
     <a class="menu-item" role="menuitem" href="/actions?form=action-create" data-modal="form-action-create">Create manually</a>
     <a class="menu-item" role="menuitem" href="/actions?form=action-make" data-modal="form-action-make">Synthesize · 20 ¤</a>
@@ -31,13 +35,7 @@
     <div class="menu-divider"></div>
     <a class="menu-item" role="menuitem" href="/actions?form=action-unimport" data-modal="form-action-unimport">Unimport a spec…</a>
   </div>
-  <nav class="linkbar" aria-label="Filter your actions">
-    <a class="{{if eq $d.Filter ""}}active{{end}}" href="/actions"{{if eq $d.Filter ""}} aria-current="page"{{end}}>all</a>
-    <a class="{{if eq $d.Filter "active"}}active{{end}}" href="/actions?filter=active"{{if eq $d.Filter "active"}} aria-current="page"{{end}}>active</a>
-    <a class="{{if eq $d.Filter "inactive"}}active{{end}}" href="/actions?filter=inactive"{{if eq $d.Filter "inactive"}} aria-current="page"{{end}}>inactive</a>
-    {{if $d.Superuser}}<a class="{{if eq $d.Scope "all"}}active{{end}}" href="/actions?scope=all"{{if eq $d.Scope "all"}} aria-current="page"{{end}}>all actions</a>{{end}}
-  </nav>
-</div>
+</nav>
 {{if $d.Mine}}
 <div class="grid">
   {{range $d.Mine}}{{template "_action_card" .}}{{end}}

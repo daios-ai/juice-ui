@@ -46,8 +46,8 @@ func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 			Command{Name: "admin users", Hint: "List and manage users", Kind: "nav", Href: "/admin"},
 			Command{Name: "admin deposit", Hint: "Credit a user's balance", Kind: "form", Href: "/admin?form=admin-deposit"},
 			Command{Name: "admin withdraw", Hint: "Debit a user's balance", Kind: "form", Href: "/admin?form=admin-withdraw"},
-			Command{Name: "admin peers", Hint: "Federation peers and identity", Kind: "nav", Href: "/admin/peers"},
-			Command{Name: "admin friend", Hint: "Befriend a kernel by key", Kind: "form", Href: "/admin/peers?form=admin-friend"},
+			Command{Name: "peers", Hint: "Federation peers and this kernel's identity", Kind: "nav", Href: "/admin/peers"},
+			Command{Name: "peers friend", Hint: "Befriend a kernel by key", Kind: "form", Href: "/admin/peers?form=admin-friend"},
 		)
 	}
 	for _, t := range themes {
