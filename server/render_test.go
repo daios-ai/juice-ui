@@ -346,6 +346,53 @@ func TestCallFormComplete(t *testing.T) {
 	}
 }
 
+// TestFormFieldsStructuredSwitch renders _form_fields for a structured schema: it
+// carries the segmented fields|JSON field-switch (not the retired "edit as JSON"
+// text button) and the has_fields marker.
+func TestFormFieldsStructuredSwitch(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	fm := FormModel{Fields: []Field{{Name: "to", Type: "string"}}}
+	if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
+		t.Fatalf("Fragment: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-raw-seg="fields"`) || !strings.Contains(body, `data-raw-seg="json"`) {
+		t.Errorf("structured form must render the fields|JSON field-switch: %s", body)
+	}
+	if strings.Contains(body, "edit as JSON") {
+		t.Error("retired 'edit as JSON' text button must be gone")
+	}
+	if !strings.Contains(body, `name="has_fields"`) {
+		t.Error("structured form must emit the has_fields marker")
+	}
+}
+
+// TestCallFormApproval renders an approval _call_form (a step with nothing left to
+// fill): the acknowledge line, the Complete button, and NO raw-JSON input.
+func TestCallFormApproval(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	locked := json.RawMessage(`{"message":"hi"}`)
+	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil)
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatalf("Fragment: %v", err)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `name="raw_args"`) {
+		t.Errorf("an approval form must not render a raw-args box: %s", body)
+	}
+	if !strings.Contains(body, "acknowledge") || !strings.Contains(body, "Complete (1)") {
+		t.Errorf("approval form must show the acknowledge line and Complete button: %s", body)
+	}
+}
+
 func TestRenderFragment(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {

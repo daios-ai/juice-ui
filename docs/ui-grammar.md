@@ -229,17 +229,15 @@ none float, none are colored.
   disable hidden inputs so they aren't submitted. Secrets are masked, write-only,
   never pre-filled.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
-  (action run **and** step completion): they are the same act, so they render the
-  same. Top to bottom: an optional **locked block** for pre-bound args rendered
-  with the **result renderer** (`<pre class="json">` — same as an outcome, no
-  "prefilled/remaining" labels; the JSON-vs-fields-vs-JSON visual contrast is the
-  only signposting), the **editable fields** (schema − locked, with the quiet
-  `edit as JSON` toggle), **one money button** (`verb (N)`, §5.1) with an
-  `hx-indicator` `.progress` and `hx-disabled-elt`, and the **result target
-  below** the form (`.outcome`, never nested inside the form). The step variant is
-  **one-shot** (`data-oneshot` — JS hides the form once its result swaps in a
-  success, since a spent step moves to History on reload); the action variant
-  repeats.
+  (action run **and** step completion): optional **locked block** (pre-bound args
+  via the result renderer, no labels), the **editable input**, **one money button**
+  (`verb (N)`, §5.1) with `.progress` + `hx-disabled-elt`, then the **result below**
+  (`.outcome`, never nested). Steps are **one-shot** (`data-oneshot`); actions repeat.
+- Editable input is schema-driven, one of three: **structured** (typed fields +
+  the field-switch), **approval** (nothing left to fill → just the button), or a
+  lone **raw JSON** editor (free-form schema). Same component throughout.
+- **Field-switch** (`.field-switch`, `fields | JSON`) is the bare tab-group switch
+  (§5.2) — the one way to edit a structured form as raw JSON. No "edit as JSON" button.
 
 ### 5.5 Cards, grids, tables
 

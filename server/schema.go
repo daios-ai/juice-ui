@@ -259,7 +259,11 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 		UseRawFallback: full.UseRawFallback,
 		Example:        full.Example,
 	}
-	// Approval: structured schema and all fields are locked.
-	isApproval := !full.UseRawFallback && len(editFields) == 0
+	// Approval: nothing meaningful is left for the completer to fill. This covers
+	// a structured schema with every field locked AND a free-form schema whose
+	// pre-bound args already carry the payload (e.g. @sys/sink with `message`
+	// locked) — in both cases we show just the acknowledge button, not a dead raw
+	// box. We are inside the len(bound) > 0 branch, so args are already pre-bound.
+	isApproval := len(editFields) == 0
 	return StepFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
 }

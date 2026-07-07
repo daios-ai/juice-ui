@@ -196,6 +196,36 @@ func TestBuildStepFormInvalidPartial(t *testing.T) {
 	}
 }
 
+// A free-form schema (no named fields, e.g. @sys/sink) whose payload is already
+// pre-bound leaves nothing for the completer to fill → approval, no raw box.
+func TestBuildStepFormFreeFormLockedIsApproval(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`) // free-form → UseRawFallback
+	partial := json.RawMessage(`{"message":"hi there"}`)
+	sfm := BuildStepForm(schema, partial)
+	if !sfm.IsApproval {
+		t.Error("free-form step with pre-bound payload → IsApproval should be true (just acknowledge, no raw box)")
+	}
+	if len(sfm.Editable.Fields) != 0 {
+		t.Errorf("free-form approval has no editable fields, got %d", len(sfm.Editable.Fields))
+	}
+	if len(sfm.Locked) != 1 {
+		t.Errorf("the pre-bound key is locked, expected 1, got %d", len(sfm.Locked))
+	}
+}
+
+// A free-form schema with NO pre-bound args still needs input from the completer,
+// so it is not an approval — it shows the raw editor.
+func TestBuildStepFormFreeFormNoLock(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	sfm := BuildStepForm(schema, nil)
+	if sfm.IsApproval {
+		t.Error("free-form step with no pre-bound args must not be an approval")
+	}
+	if !sfm.Editable.UseRawFallback {
+		t.Error("free-form step with no lock shows the raw editor")
+	}
+}
+
 func TestBuildStepFormExtraKeysInPartial(t *testing.T) {
 	// partial_args may contain keys not in the schema (forward-compat).
 	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"}}}`)

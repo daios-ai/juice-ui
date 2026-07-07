@@ -137,6 +137,19 @@ func TestNoCurrencyGlyph(t *testing.T) {
 	}
 }
 
+// TestNoRetiredRawToggle ensures the old "edit as JSON" text-button toggle and its
+// .raw-switch wrapper are gone — the input-mode toggle is the .field-switch bare
+// tab-group switch (fields | JSON), identical on action-run and step-complete forms.
+func TestNoRetiredRawToggle(t *testing.T) {
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		src := string(mustRead(t, f))
+		if strings.Contains(src, "edit as JSON") || strings.Contains(src, "raw-switch") || strings.Contains(src, "data-raw-toggle") {
+			t.Errorf("%s: retired raw toggle — use the .field-switch (fields | JSON) switch", f)
+		}
+	}
+}
+
 func mustRead(t *testing.T, f string) []byte {
 	t.Helper()
 	b, err := tmplFS.ReadFile(f)

@@ -398,10 +398,18 @@ button { font-family: inherit; cursor: pointer; }
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: .25rem; }
 .field { margin-bottom: 1rem; }
-/* Quiet "edit as JSON" mode toggle — sits above the fields, right-aligned, and
-   reads as a control, not another input. */
-.raw-switch { display: flex; justify-content: flex-end; margin-bottom: .1rem; }
-.raw-switch .btn-quiet { font-size: .8rem; }
+/* Input-mode switch (fields | JSON) — the same bare tab-group switch idiom as the
+   yours|everyone scope switch, sized down and right-aligned above the fields. It
+   is the one way to flip a structured form to raw JSON, identical on action-run
+   and step-complete forms. */
+.field-switch { display: flex; justify-content: flex-end; gap: .25rem; margin-bottom: .35rem; }
+.field-switch .seg {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: .15rem .4rem; margin-bottom: -1px; cursor: pointer;
+  font-family: inherit; font-size: .8rem; font-weight: 600; color: var(--text-muted);
+}
+.field-switch .seg:hover { color: var(--text); }
+.field-switch .seg[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--accent); }
 /* Inbox grouped by the creating action (§ steps). */
 .inbox-group { color: var(--text-muted); margin: 1.4rem 0 .5rem; }
 .step-item + .step-item { margin-top: 1rem; }

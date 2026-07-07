@@ -18,7 +18,6 @@
   <div class="stack step-item">
     <div class="row">
       <span class="mono">{{template "_ref" $step.Ref}}</span>
-      <span class="price" title="Parked price">◷ {{money $step.Price}} parked</span>
       {{if $step.WaitingOnPeer}}<span class="sig-escrow" title="Required caller is a peer">peer</span>{{end}}
     </div>
     {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval $step.PartialArgs nil)}}

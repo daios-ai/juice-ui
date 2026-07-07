@@ -861,12 +861,13 @@ func TestInboxPageRendersSteps(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/steps")
 
 	// Step S1 (status=waiting, required_caller=@alice=current user) appears as a
-	// completable card showing its parked price.
-	if !strings.Contains(body, "parked") {
-		t.Error("inbox must attribute the parked price on the waiting step card")
+	// completable card. The price rides on the Complete button — the redundant
+	// "◷ N parked" chip is gone (the button already names the amount).
+	if strings.Contains(body, "parked") {
+		t.Error("inbox card must not repeat the parked price — the Complete (N) button carries it")
 	}
-	if !strings.Contains(body, "Complete") {
-		t.Error("inbox page must show the Complete button for own waiting steps")
+	if !strings.Contains(body, "Complete (5)") {
+		t.Error("inbox page must show the money Complete (N) button for own waiting steps")
 	}
 	// Old inline step-create endpoint must be absent (creation is a modal to POST /steps).
 	if strings.Contains(body, "/steps/create") {
