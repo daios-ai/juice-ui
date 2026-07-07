@@ -29,7 +29,7 @@
 <h2>Open processes</h2>
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th>Available</th><th>Locked</th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Available</th><th class="money">Locked</th></tr></thead>
   <tbody>{{range $d.OpenProcesses}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
 </div>
@@ -39,7 +39,7 @@
 {{if $d.Transactions}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Action</th><th>Amount</th><th>Status</th><th>When</th></tr></thead>
+  <thead><tr><th>ID</th><th>Action</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
   <tbody>{{range $d.Transactions}}{{template "_tx_row" (txrow . $d.MyHandle $d.Actions)}}{{end}}</tbody>
 </table>
 </div>

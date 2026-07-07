@@ -72,6 +72,7 @@ func NewRenderer() (*Renderer, error) {
 		"shortTime":   shortTime,
 		"txAmount":    txAmount,
 		"txrow":       txRowOf,
+		"kindBadge":   kindBadge,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -259,6 +260,37 @@ func refName(ref string) string {
 		return ref[i+1:]
 	}
 	return ""
+}
+
+// KindBadge is the single-letter attribute chip for an action's execution kind.
+// R (remote) is the notable one and stands out by weight (a filled chip), not
+// color — every theme hue is reserved for a money/trust signal.
+type KindBadge struct {
+	Letter string
+	Title  string
+	Filled bool
+}
+
+// kindBadge maps an action kind to its chip. Unknown kinds fall back to the
+// uppercased first rune with the raw kind as the tooltip, so nothing leaks the
+// internal token as visible text.
+func kindBadge(kind string) KindBadge {
+	switch kind {
+	case "wasm":
+		return KindBadge{"W", "WebAssembly action", false}
+	case "native":
+		return KindBadge{"N", "Native action", false}
+	case "http":
+		return KindBadge{"H", "HTTP action", false}
+	case "remote_proxy":
+		return KindBadge{"R", "Remote — runs on another kernel", true}
+	default:
+		letter := "?"
+		if kind != "" {
+			letter = strings.ToUpper(kind[:1])
+		}
+		return KindBadge{letter, kind, false}
+	}
 }
 
 // shortTime trims an RFC3339 timestamp to "YYYY-MM-DD HH:MM" for compact display.

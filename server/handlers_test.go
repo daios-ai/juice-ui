@@ -392,6 +392,10 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, `class="owner">@alice`) {
 		t.Error("action ref must render via _ref with owner emphasized")
 	}
+	// The Amount column is right-aligned, so its header is too (class="money").
+	if !strings.Contains(body, `<th class="money">Amount</th>`) {
+		t.Error("the Amount header must be right-aligned (class=\"money\") over its values")
+	}
 }
 
 // The user ledger and the tx index share _tx_row, so the ledger now carries the
@@ -486,9 +490,46 @@ func TestStudioPageTwoZones(t *testing.T) {
 	if !strings.Contains(body, "draft") {
 		t.Error("studio must list inactive/private own actions (R10.3 resolved)")
 	}
-	// Inactive status visible for the draft action (shown in card meta line).
+	// Inactive status visible for the draft action (the inactive chip).
 	if !strings.Contains(body, "inactive") {
 		t.Error("studio must show the inactive status for an inactive action")
+	}
+}
+
+func TestActionCardChips(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	body := getBody(t, cl, srv.URL+"/actions")
+
+	// Ref is the card title/link, rendered via _ref (owner emphasized).
+	if !strings.Contains(body, `class="action-card-ref mono" href="/actions/A1"`) {
+		t.Error("action card must use the ref as the title link")
+	}
+	if !strings.Contains(body, `class="owner">@alice`) {
+		t.Error("card ref must render via _ref with owner emphasized")
+	}
+	// Kind chip: both fixtures are wasm → a W chip.
+	if !strings.Contains(body, `class="chip" title="WebAssembly action">W`) {
+		t.Error("action card must show the kind chip (W for wasm)")
+	}
+	// A3 (@alice/draft) is private + inactive: lock chip, dimmed card, inactive chip.
+	if !strings.Contains(body, `/static/icons.svg#lock`) {
+		t.Error("a private action must show the lock chip")
+	}
+	if !strings.Contains(body, `class="card action-card inactive"`) {
+		t.Error("an inactive action's card must be dimmed (inactive class)")
+	}
+	if !strings.Contains(body, `class="chip tag" title="Inactive — not callable">inactive`) {
+		t.Error("an inactive action must show the inactive chip")
+	}
+	// The old cluttered markup is gone.
+	for _, gone := range []string{"action-card-name", "action-card-meta", "remote_proxy"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("action card must not contain legacy %q", gone)
+		}
 	}
 }
 

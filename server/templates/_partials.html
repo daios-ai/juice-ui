@@ -1,8 +1,13 @@
 {{define "_action_card"}}
-<article class="card action-card">
-  <p class="action-card-name"><a href="/actions/{{.Action.ID}}" title="{{.Action.Name}}">{{.Action.Name}}</a></p>
-  <p class="action-card-ref mono" title="{{.Action.Ref}}">{{.Action.Ref}}</p>
-  <p class="action-card-meta muted">{{.Action.Kind}}{{if not .Action.Public}} · private{{end}}{{if not .Action.Active}} · inactive{{end}}</p>
+<article class="card action-card{{if not .Action.Active}} inactive{{end}}">
+  <div class="action-card-head">
+    <a class="action-card-ref mono" href="/actions/{{.Action.ID}}" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</a>
+    <span class="chips">
+      {{if not .Action.Public}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{end}}
+      {{with kindBadge .Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
+      {{if not .Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
+    </span>
+  </div>
   <div class="action-card-body">
     {{if .Action.Description}}<p class="action-card-desc" title="{{.Action.Description}}">{{.Action.Description}}</p>{{end}}
   </div>
@@ -10,13 +15,13 @@
   <p class="stat-strip">
     <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Action.Price}}</span>
     {{if .Stats}}
-    · <span title="Success rate (total runs)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}% ({{.Stats.Uses}})</span>
-    · {{if gt .Stats.RatingCount 0}}<span title="Rating (rater count)"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}% ({{.Stats.RatingCount}})</span>{{else}}<span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
+    · <span title="Success rate — {{.Stats.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}%</span>
+    · {{if gt .Stats.RatingCount 0}}<span title="Rating — {{.Stats.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}%</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
     · <span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .Stats.LatencyEstimate}}s</span>
     {{else}}
-    · <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
-    · <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
-    · <span class="muted"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
+    · <span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
+    · <span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
+    · <span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
     {{end}}
   </p>
 </article>
@@ -105,7 +110,7 @@
 {{define "_action_stats"}}
 <div class="table-scroll">
 <table class="stats-table">
-  <thead><tr><th>action</th><th>price</th><th>uses</th><th>rating</th></tr></thead>
+  <thead><tr><th>action</th><th class="money">price</th><th class="money">uses</th><th class="money">rating</th></tr></thead>
   <tbody>
   {{range .}}
   <tr>

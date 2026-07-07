@@ -221,8 +221,21 @@ none float, none are colored.
 
 - `.card` (surface, border, radius, pad); `.action-card` for catalog items;
   `.grid` for card collections; `.card-list` for stacked cards.
+- **Action card:** the **ref is the title** (`_ref`, owner emphasized) and the
+  link to the action — never the bare name or the raw kind string. **Attribute
+  chips** (`.chip`) sit at the head, right-aligned, marking the *exception*:
+  - **Kind** (always, one chip): `W` wasm · `N` native · `H` http · `R` remote
+    (`kind == "remote_proxy"`, via the `kindBadge` helper). **`R` stands out by
+    weight** (`.chip.filled`), never by hue.
+  - **Private** → a lock chip (`#lock`); public shows nothing.
+  - **Inactive** → the card is dimmed (`.action-card.inactive`) plus a muted
+    `inactive` chip (`.chip.tag`).
+  - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
+    is spent on them (every hue is a reserved money/trust signal).
 - **Tables:** full width, hairline row borders, muted `th`. A clickable row is
   `.rowable` + `tabindex="-1"` + `data-href`; navigable with `j`/`k`/`Enter`.
+- **Money columns are right-aligned, header included** — a money `<th>` carries
+  `class="money"` so the title sits over its right-aligned values.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
 - **Record rows** (the same record type wherever it appears) render through **one

@@ -8,7 +8,7 @@
 {{if .Data.Transactions}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Action</th><th>Amount</th><th>Status</th><th>When</th></tr></thead>
+  <thead><tr><th>ID</th><th>Action</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
   <tbody>
   {{range .Data.Transactions}}{{template "_tx_row" (txrow . $.Data.MyHandle $.Data.Actions)}}{{end}}
   </tbody>

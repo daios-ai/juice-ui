@@ -155,6 +155,32 @@ func TestTxAmount(t *testing.T) {
 	}
 }
 
+func TestKindBadge(t *testing.T) {
+	cases := []struct {
+		kind, letter string
+		filled       bool
+	}{
+		{"wasm", "W", false},
+		{"native", "N", false},
+		{"http", "H", false},
+		{"remote_proxy", "R", true},
+		{"weird", "W", false}, // unknown → uppercased first rune, not filled
+	}
+	for _, c := range cases {
+		b := kindBadge(c.kind)
+		if b.Letter != c.letter || b.Filled != c.filled {
+			t.Errorf("kindBadge(%q) = %+v, want letter %q filled %v", c.kind, b, c.letter, c.filled)
+		}
+		if b.Title == "" {
+			t.Errorf("kindBadge(%q) has empty tooltip", c.kind)
+		}
+	}
+	// Only remote is filled (colorless emphasis for the notable kind).
+	if kindBadge("wasm").Filled {
+		t.Error("only remote_proxy should be a filled chip")
+	}
+}
+
 func TestRenderFragment(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {

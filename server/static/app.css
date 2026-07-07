@@ -114,7 +114,9 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .stat-strip svg { pointer-events: none; }
 .stat-strip.left { justify-content: flex-start; }
 
-td.money { text-align: right; }
+/* Money columns are right-aligned — header included, so the title sits over its
+   values. Any money <th> carries class="money". */
+td.money, th.money { text-align: right; }
 
 /* Generic floating menu panel — pair with <details><summary> or [data-menu] button */
 .menu {
@@ -297,11 +299,25 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 }
 .card-sep { border: none; border-top: 1px solid var(--border); margin: .7rem -1rem; }
 .action-card { display: flex; flex-direction: column; }
-.action-card-name { margin: 0 0 .1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.action-card-name a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.action-card-ref { margin: 0 0 .2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; color: var(--text-muted); }
-.action-card-meta { margin: 0 0 .5rem; font-size: .75rem; }
-.action-card .stat-strip { font-size: .75rem; gap: .6rem; margin: 0; }
+.action-card.inactive { opacity: .6; }
+/* Card head: the ref is the title/link (truncates); attribute chips sit right
+   and never get pushed out. */
+.action-card-head { display: flex; align-items: center; gap: .4rem; margin: 0 0 .2rem; }
+.action-card-ref { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+.chips { flex: 0 0 auto; display: flex; align-items: center; gap: .25rem; }
+/* Attribute chips — single letter (or lock/word), colorless. R stands out by
+   weight (.filled), never by hue: every theme color is a money/trust signal. */
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.15rem; height: 1.15rem; padding: 0 .25rem;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: .7rem; font-weight: 600;
+  line-height: 1; color: var(--text-muted);
+}
+.chip.filled { background: var(--surface-2); color: var(--text); }
+.chip.tag { min-width: 0; padding: 0 .35rem; text-transform: lowercase; }
+.chip .ico { width: .8rem; height: .8rem; }
+.action-card .stat-strip { font-size: .72rem; gap: .5rem; margin: 0; flex-wrap: nowrap; }
 .action-card-body { flex: 1; }
 .action-card-desc { margin: .35rem 0 0; font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .grid { display: grid; gap: .85rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }

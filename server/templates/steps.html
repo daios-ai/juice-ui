@@ -53,7 +53,7 @@
 {{if $d.History}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Action</th><th>Status</th><th>Price</th><th>Caller</th></tr></thead>
+  <thead><tr><th>ID</th><th>Action</th><th>Status</th><th class="money">Price</th><th>Caller</th></tr></thead>
   <tbody>
   {{range $d.History}}
   <tr class="rowable" tabindex="-1" data-href="/steps/{{.ID}}">
