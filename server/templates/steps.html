@@ -11,7 +11,7 @@
 {{if $d.InboxGroups}}
 {{$multi := gt (len $d.InboxGroups) 1}}
 {{range $d.InboxGroups}}
-{{if $multi}}<h3 class="inbox-group">{{if .CreatedBy}}Requested by {{template "_ref" .CreatedBy}}{{else}}Directly created{{end}}</h3>{{end}}
+{{if or .CreatedBy $multi}}<h3 class="inbox-group">{{if .CreatedBy}}Requested by {{template "_ref" .CreatedBy}}{{else}}Directly created{{end}}</h3>{{end}}
 <div class="stack">
   {{range .Steps}}
   {{$step := .Step}}

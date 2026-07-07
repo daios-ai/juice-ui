@@ -97,9 +97,11 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"@alice/x","owner_handle":"@alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
+		// Two waiting steps spawned by the same creating action (@sys/make) — the
+		// common case: one process fans out several steps sharing one created_by.
 		w.Write([]byte(`[
-			{"id":"S1","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"status":"waiting","created_by":"@alice/dispatch","created_at":"2026-01-01T00:00:00Z"},
-			{"id":"S2","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":3,"status":"waiting","created_by":"@bob/relay","created_at":"2026-01-02T00:00:00Z"}
+			{"id":"S1","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":5,"status":"waiting","created_by":"@sys/make","created_at":"2026-01-01T00:00:00Z"},
+			{"id":"S2","required_caller_handle":"@alice","action":"@alice/hello","action_id":"A1","price":3,"status":"waiting","created_by":"@sys/make","created_at":"2026-01-02T00:00:00Z"}
 		]`))
 	})
 	mux.HandleFunc("GET /v1/steps/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -796,19 +798,21 @@ func TestInboxGroupsByCreatingAction(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/steps")
 
-	// Two waiting steps requested by two different creating actions → the inbox
-	// groups them under a heading naming each creating action (not the human caller).
-	if strings.Count(body, `class="inbox-group"`) != 2 {
-		t.Error("inbox must group waiting steps by creating action when there is more than one")
+	// Both waiting steps share one creating action (@sys/make) → a single group,
+	// but the inbox must STILL name the creating action (not just the target), even
+	// when there is only one group. Regression guard: the heading was previously
+	// suppressed for a lone group, leaving only the completion target visible.
+	if strings.Count(body, `class="inbox-group"`) != 1 {
+		t.Errorf("a single creating action must render exactly one group heading: %s", body)
 	}
-	// _ref splits owner/name with markup, so assert the distinguishing name fragments.
-	if !strings.Contains(body, "/dispatch") || !strings.Contains(body, "/relay") {
-		t.Errorf("each group heading must name its creating action: %s", body)
+	if strings.Count(body, "Requested by") != 1 {
+		t.Errorf("inbox must name the creating action even for a lone group: %s", body)
 	}
-	if strings.Count(body, "Requested by") != 2 {
-		t.Errorf("each group renders a 'Requested by <action>' heading: %s", body)
+	// _ref splits owner/name with markup, so assert the distinguishing name fragment.
+	if !strings.Contains(body, "/make") {
+		t.Errorf("group heading must name the creating action @sys/make: %s", body)
 	}
-	// Both completion forms are still present, one per step.
+	// Both completion forms are present under the group, one per step.
 	if !strings.Contains(body, `action="/steps/S1/complete"`) || !strings.Contains(body, `action="/steps/S2/complete"`) {
 		t.Error("every waiting step keeps its own completion form")
 	}
