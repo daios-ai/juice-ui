@@ -267,6 +267,11 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .auth-brand { display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1.3rem; letter-spacing: .04em; }
 .auth-brand .brand-logo { height: 2rem; }
 .auth-subtitle { margin: .4rem 0 1.1rem; font-size: .85rem; }
+/* Kernel identity on the login card: which kernel you're joining, plus a short
+   key fingerprint to verify the instance before signing in. */
+.auth-kernel { margin: .5rem 0 .15rem; font-size: .95rem; color: var(--text); }
+.kernel-fp { display: inline-flex; align-items: center; gap: .3rem; margin: 0 0 1.1rem; font-size: .75rem; color: var(--text-muted); }
+.kernel-fp .ico { width: .8rem; height: .8rem; }
 .auth-card .tabs .tab { flex: 1; text-align: center; } /* entry tabs fill the card width */
 .auth-panel[hidden] { display: none; }
 .auth-panel .btn { width: 100%; }

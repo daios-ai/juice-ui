@@ -31,20 +31,22 @@ func StaticFS() fs.FS {
 
 // Page is the data passed to the layout for a full-page render.
 type Page struct {
-	Title       string
-	Theme       string        // theme slug, or "" to defer to prefers-color-scheme
-	Sidebar     string        // "collapsed" | "" (expanded); stamped to avoid flash
-	Active      string        // active nav group ("run"|"action"|…) for aria-current
-	Handle      string        // signed-in handle for the nav, or "" when anonymous
-	IsSuperuser bool          // handle == "@sys": show the admin group and admin scope
-	Available   int64         // signed-in user's available balance; 0 when unknown
-	Themes      []ANSIPalette // selectable terminal themes for the picker
-	CSRFField   template.HTML // hidden CSRF input for no-JS forms
-	CSRFToken   string        // raw token for the <meta> tag htmx reads
-	Commands    template.JS   // JSON command registry for the keyboard palette (inert data)
-	Flash       string        // transient user message
-	FlashKind   string        // "success" | "error" | "info" | ""
-	Data        any           // page-specific view model
+	Title        string
+	Theme        string        // theme slug, or "" to defer to prefers-color-scheme
+	Sidebar      string        // "collapsed" | "" (expanded); stamped to avoid flash
+	Active       string        // active nav group ("run"|"action"|…) for aria-current
+	Handle       string        // signed-in handle for the nav, or "" when anonymous
+	KernelHandle string        // this kernel's own handle (from /health), or "" if unknown
+	KernelFP     string        // short key fingerprint for pre-auth verification (login only)
+	IsSuperuser  bool          // handle == "@sys": show the admin group and admin scope
+	Available    int64         // signed-in user's available balance; 0 when unknown
+	Themes       []ANSIPalette // selectable terminal themes for the picker
+	CSRFField    template.HTML // hidden CSRF input for no-JS forms
+	CSRFToken    string        // raw token for the <meta> tag htmx reads
+	Commands     template.JS   // JSON command registry for the keyboard palette (inert data)
+	Flash        string        // transient user message
+	FlashKind    string        // "success" | "error" | "info" | ""
+	Data         any           // page-specific view model
 }
 
 // Renderer holds parsed templates. Each page is parsed together with the layout

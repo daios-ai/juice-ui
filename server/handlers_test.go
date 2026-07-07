@@ -25,6 +25,10 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		// Open endpoint; also carries the kernel's own federation identity.
+		w.Write([]byte(`{"status":"ok","handle":"@testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
+	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0}`))
 	})
@@ -493,6 +497,27 @@ func TestStudioPageTwoZones(t *testing.T) {
 	// Inactive status visible for the draft action (the inactive chip).
 	if !strings.Contains(body, "inactive") {
 		t.Error("studio must show the inactive status for an inactive action")
+	}
+}
+
+func TestKernelIdentityShown(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+
+	// Login page (unauthenticated) names the kernel and shows the key fingerprint.
+	login := getBody(t, &http.Client{}, srv.URL+"/login")
+	if !strings.Contains(login, "Sign in to") || !strings.Contains(login, "@testnet") {
+		t.Error("login page must name the kernel it's joining (@testnet)")
+	}
+	if !strings.Contains(login, "ABCDEFGHIJ…abcd") {
+		t.Error("login page must show the kernel key fingerprint for verification")
+	}
+	// The sidebar brand shows the kernel handle once signed in.
+	cl := loginClient(t, srv.URL)
+	if !strings.Contains(getBody(t, cl, srv.URL+"/run"), `class="lbl">@testnet`) {
+		t.Error("sidebar brand must show the kernel handle")
 	}
 }
 

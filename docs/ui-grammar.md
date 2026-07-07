@@ -68,10 +68,14 @@ The frame every page renders into. Defined in `layout.html`.
 | **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · tx · user`); top hamburger → **drawer** (theme, Account, Sign out, and **Admin when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin MUST remain reachable in the drawer for `@sys`. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
-card (`◆ juice`) whose **Sign in / Create account** toggle is the `.tabs`
-component (§5.2, its one retained use), one action per tab. Tabs are real
-`/login?tab=` links (server renders the active tab with JS off); app.js swaps
-panels client-side.
+card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
+`@handle`") with a short **key fingerprint** for pre-auth verification, then the
+**Sign in / Create account** toggle (the `.tabs` component, §5.2, its one
+retained use), one action per tab. The kernel handle + key come from the open
+`GET /health`; the sidebar brand shows the same handle once signed in (kernel at
+the top, your own `@handle` at the profile foot). Tabs are real `/login?tab=`
+links (server renders the active tab with JS off); app.js swaps panels
+client-side.
 
 **Layer order** (all native `<dialog>` except the menu/flash; `Esc` closes the
 topmost): content < flash < menu/popover < modal form & confirm modal < command

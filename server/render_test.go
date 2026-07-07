@@ -181,6 +181,17 @@ func TestKindBadge(t *testing.T) {
 	}
 }
 
+func TestKeyFingerprint(t *testing.T) {
+	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
+	if got, want := keyFingerprint(long), "ABCDEFGHIJ…abcd"; got != want {
+		t.Errorf("keyFingerprint(long) = %q want %q", got, want)
+	}
+	// Short keys are returned as-is (nothing to shorten).
+	if got := keyFingerprint("short"); got != "short" {
+		t.Errorf("keyFingerprint(short) = %q want %q", got, "short")
+	}
+}
+
 func TestRenderFragment(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {

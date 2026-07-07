@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -35,6 +37,46 @@ type Server struct {
 	render   *Renderer
 	log      *slog.Logger
 	secure   bool
+
+	// Cached kernel identity (handle + key fingerprint) from the open /health,
+	// so the login page and sidebar can name/verify the kernel. Fetched once on
+	// the first successful render; retried until then.
+	idMu         sync.Mutex
+	kernelHandle string
+	kernelFP     string
+	idFetched    bool
+}
+
+// kernelIdentity returns the kernel's handle and a short key fingerprint from
+// the open /health endpoint, cached after the first success (identity is
+// stable). Empty strings when the kernel hasn't answered yet — templates then
+// fall back to the plain brand.
+func (s *Server) kernelIdentity(ctx context.Context) (handle, fp string) {
+	s.idMu.Lock()
+	fetched, h, f := s.idFetched, s.kernelHandle, s.kernelFP
+	s.idMu.Unlock()
+	if fetched {
+		return h, f
+	}
+	hc, err := s.client.Health(ctx)
+	if err != nil || hc.Handle == "" {
+		return "", "" // retry on a later render
+	}
+	handle, fp = hc.Handle, keyFingerprint(hc.PublicKey)
+	s.idMu.Lock()
+	s.kernelHandle, s.kernelFP, s.idFetched = handle, fp, true
+	s.idMu.Unlock()
+	return handle, fp
+}
+
+// keyFingerprint shortens a base64url public key to a head…tail form for
+// eyeball verification. The key itself is the canonical global name, so a
+// truncation of it is the value to compare against (no hashing).
+func keyFingerprint(key string) string {
+	if len(key) <= 14 {
+		return key
+	}
+	return key[:10] + "…" + key[len(key)-4:]
 }
 
 // New builds the BFF HTTP handler: routes plus the middleware chain
@@ -313,20 +355,23 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		}
 	}
 	super := s.isSuperuser(r)
+	kernelHandle, kernelFP := s.kernelIdentity(r.Context())
 	return Page{
-		Title:       title,
-		Theme:       themeFromRequest(r),
-		Sidebar:     sidebarFromRequest(r),
-		Active:      activeGroup(r.URL.Path),
-		Handle:      s.sessions.Handle(r.Context()),
-		IsSuperuser: super,
-		Themes:      ThemeList(),
-		CSRFField:   csrf.TemplateField(r),
-		CSRFToken:   csrf.Token(r),
-		Commands:    template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
-		Flash:       flash,
-		FlashKind:   flashKind,
-		Data:        data,
+		Title:        title,
+		Theme:        themeFromRequest(r),
+		Sidebar:      sidebarFromRequest(r),
+		Active:       activeGroup(r.URL.Path),
+		Handle:       s.sessions.Handle(r.Context()),
+		KernelHandle: kernelHandle,
+		KernelFP:     kernelFP,
+		IsSuperuser:  super,
+		Themes:       ThemeList(),
+		CSRFField:    csrf.TemplateField(r),
+		CSRFToken:    csrf.Token(r),
+		Commands:     template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
+		Flash:        flash,
+		FlashKind:    flashKind,
+		Data:         data,
 	}
 }
 

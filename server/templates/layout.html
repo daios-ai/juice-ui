@@ -22,7 +22,7 @@
     {{if .Handle}}
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/run"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">juice</span></a>
+        <a class="brand" href="/run"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">

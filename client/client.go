@@ -266,9 +266,12 @@ type WellKnown struct {
 	PublicKey string `json:"public_key"`
 }
 
-// Health is GET /health.
+// Health is GET /health (open) — it also carries the kernel's own federation
+// identity, so the UI can name/verify the kernel before authenticating.
 type Health struct {
-	Status string `json:"status"`
+	Status    string `json:"status"`
+	Handle    string `json:"handle"`
+	PublicKey string `json:"public_key"`
 }
 
 // ---- core request helper ----
