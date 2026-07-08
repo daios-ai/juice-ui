@@ -6,9 +6,9 @@
 
 <div class="card">
   <div class="balances">
-    <div class="balance"><div class="amount money">{{money $d.Process.Available}}</div><div class="label">Available</div></div>
-    <div class="balance"><div class="amount money">{{money $d.Process.Locked}}</div><div class="label">Parked (steps)</div></div>
-    <div class="balance"><div class="amount"><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></div><div class="label">Status</div></div>
+    <div class="balance"><div class="amount money sig-credited">{{money $d.Process.Available}}</div><div class="label">available</div></div>
+    <div class="balance"><div class="amount money sig-escrow">{{money $d.Process.Locked}}</div><div class="label">parked</div></div>
+    <div class="balance"><div class="amount"><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></div><div class="label">status</div></div>
   </div>
   {{if $d.Process.AwaitingReceipt}}
   <p class="banner banner-info">Remote receipt pending — funds parked on a possibly-offline peer{{if $d.Process.AwaitingReceiptSince}} since {{shortTime $d.Process.AwaitingReceiptSince}}{{end}}.</p>

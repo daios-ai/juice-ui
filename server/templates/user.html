@@ -19,8 +19,7 @@
 <div class="card">
   <div class="balances">
     <div class="balance"><div class="amount money sig-credited">{{money $d.User.Available}}</div><div class="label">available</div></div>
-    <div class="balance"><div class="amount money sig-escrow">{{money $d.Parked}}</div><div class="label">parked (open processes)</div></div>
-    <div class="balance"><div class="amount money">{{money $d.User.Locked}}</div><div class="label">locked (total)</div></div>
+    <div class="balance"><div class="amount money sig-escrow">{{money $d.User.Locked}}</div><div class="label">parked</div></div>
   </div>
   <p class="card-note muted">Top-ups are out-of-band — an operator deposits credits.</p>
 </div>
@@ -54,7 +53,7 @@
 <h2>Open processes</h2>
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th class="money">Available</th><th class="money">Locked</th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Available</th><th class="money">Parked</th></tr></thead>
   <tbody>{{range $d.OpenProcesses}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
 </div>

@@ -54,17 +54,17 @@ type userView struct {
 	Actions       map[string]client.Action // action_id → Action for ledger refs
 	MyHandle      string
 	OpenProcesses []client.Process
-	Parked        int64 // locked funds across open processes
 	OpenForm      string
 	Error         string
 	Notice        string
 }
 
+// studioEarnings is money that came to the user, folded from their transactions:
+// their net as a seller, plus the platform fee on every settled call when they are
+// the superuser (@sys's tax). Mirrors the ledger's per-viewer amounts (txAmount).
 type studioEarnings struct {
-	Gross int64
-	Fee   int64
-	Net   int64
-	Count int
+	Earned int64
+	Count  int
 }
 
 type actionCardView struct {
@@ -505,9 +505,6 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 		view.Actions = s.actionsByID(ctx, tok, view.Transactions)
 		procs, _ := s.client.ListProcesses(ctx, tok)
 		view.OpenProcesses = filterStatus(procs, "open", true)
-		for _, p := range view.OpenProcesses {
-			view.Parked += p.Locked
-		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -868,10 +865,18 @@ func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, tx := range txs {
-		if tx.TargetHandle == view.User.Handle && tx.Status == "success" {
-			view.Earnings.Gross += tx.Gross
-			view.Earnings.Fee += tx.Fee
-			view.Earnings.Net += tx.Net
+		if tx.Status != "success" {
+			continue
+		}
+		var inflow int64
+		if tx.TargetHandle == view.User.Handle {
+			inflow += tx.Net // net as the seller
+		}
+		if super {
+			inflow += tx.Fee // @sys earns the platform fee on every settled call
+		}
+		if inflow > 0 {
+			view.Earnings.Earned += inflow
 			view.Earnings.Count++
 		}
 	}

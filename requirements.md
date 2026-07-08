@@ -370,11 +370,11 @@ open (parked steps), the result MUST say so and link to the Wallet.
 
 ### 6.5 user & tx — money, ledger, and receipts
 
-* The Wallet MUST show three balances using the credited / refunded /
-  escrow-pending signals: **Available**; **Parked** (locked: open processes and
-  waiting steps, expandable to the owning items, with a force-end control that
-  names its consequence — cancels waiting steps, refunds parked prices — via
-  `POST /v1/processes/{id}/end`); **In flight** (open calls awaiting settlement).
+* The Wallet MUST show two balances (credited / escrow-pending signals):
+  **available** and **parked** (all locked funds; the open-processes list itemizes
+  them, each with a force-end control naming its consequence — cancels waiting
+  steps, refunds parked prices — via `POST /v1/processes/{id}/end`). "locked" is not
+  a user-facing label.
 * The ledger MUST list every credit and debit, newest first, each row linking to
   its receipt. Closed processes (including `run`-created ephemerals) MUST appear
   here.

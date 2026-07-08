@@ -914,8 +914,9 @@ func TestStudioShowsEarnings(t *testing.T) {
 	if !strings.Contains(body, "Earnings") {
 		t.Error("studio must show Earnings section when seller transactions exist")
 	}
-	if !strings.Contains(strings.ToLower(body), "net received") {
-		t.Error("studio Earnings card must show Net received label")
+	lower := strings.ToLower(body)
+	if !strings.Contains(lower, ">earnings<") || !strings.Contains(lower, ">calls<") {
+		t.Error("studio Earnings card must show the earnings + calls figures")
 	}
 }
 

@@ -12,10 +12,8 @@
 <div class="card">
   <h2>Earnings</h2>
   <div class="balances">
-    <div class="balance"><div class="amount money sig-credited">{{money $d.Earnings.Net}}</div><div class="label">net received</div></div>
-    <div class="balance"><div class="amount money">{{money $d.Earnings.Gross}}</div><div class="label">gross</div></div>
-    <div class="balance"><div class="amount money">{{money $d.Earnings.Fee}}</div><div class="label">platform fee</div></div>
-    <div class="balance"><div class="amount">{{$d.Earnings.Count}}</div><div class="label">paid calls</div></div>
+    <div class="balance"><div class="amount money sig-credited">{{money $d.Earnings.Earned}}</div><div class="label">earnings</div></div>
+    <div class="balance"><div class="amount">{{$d.Earnings.Count}}</div><div class="label">calls</div></div>
   </div>
   <p class="card-note"><a href="/transactions">See the underlying transactions →</a></p>
 </div>
