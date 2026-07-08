@@ -52,10 +52,7 @@ server-side.
 
 **Navigation model.** The UI's navigation MUST mirror the juice CLI command
 hierarchy. The primary groups are `run`, `action`, `process`, `tx`, `step`, and
-`user`, plus an `admin` group shown **only to the `@sys` superuser**. The `tx`
-group is **labeled `transactions`** in the sidebar, tab bar, and page titles
-(spelled out for legibility — the sole departure from verbatim CLI-mirroring; its
-route stays `/transactions` and its internal active key stays `tx`). Each group
+`user`, plus an `admin` group shown **only to the `@sys` superuser**. Each group
 presents its concept, not a raw command dump: `run` is discovery + execution,
 `action` is the catalog and provider workspace, `process` and `tx` are evidence
 (computation lifetimes and the immutable ledger), `step` is work addressed to the

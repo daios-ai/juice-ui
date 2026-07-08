@@ -1,8 +1,8 @@
 {{define "content"}}
 {{$d := .Data}}
 {{$me := $d.Me.Handle}}
-<p><a href="/transactions">← transactions</a></p>
-<h1>transactions</h1>
+<p><a href="/transactions">← tx</a></p>
+<h1>tx</h1>
 <p class="subtitle id mono">{{$d.Tx.ID}}</p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
