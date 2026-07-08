@@ -272,6 +272,35 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 	}
 }
 
+// TestCallOutcomeFailedStatesRefundOnce guards the de-duplicated failure panel: the
+// refund is disclosed once in the headline, the message carries only the kernel's
+// reason (no repeated refund, no contradictory "not charged"), and the kernel's
+// detail is shown inert below it.
+func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	out := Outcome{Class: Failed, Message: "The action timed out.", Detail: "remote receipt pending"}
+	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Failed — fully refunded.") {
+		t.Errorf("failure headline must state the refund once: %s", body)
+	}
+	if n := strings.Count(body, "refunded"); n != 1 {
+		t.Errorf("refund must be stated exactly once, got %d: %s", n, body)
+	}
+	if strings.Contains(body, "not charged") {
+		t.Errorf("a refunded failure must not also claim 'not charged': %s", body)
+	}
+	if !strings.Contains(body, "remote receipt pending") {
+		t.Errorf("kernel detail must render below the reason: %s", body)
+	}
+}
+
 func TestKeyFingerprint(t *testing.T) {
 	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
 	if got, want := keyFingerprint(long), "ABCDEFGHIJ…abcd"; got != want {

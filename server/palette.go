@@ -35,7 +35,7 @@ func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 		{Name: "action import", Hint: "Import an OpenAPI spec", Kind: "form", Href: "/actions?form=action-import"},
 		{Name: "action unimport", Hint: "Unimport an OpenAPI spec", Kind: "form", Href: "/actions?form=action-unimport"},
 		{Name: "process list", Hint: "View computation processes", Kind: "nav", Href: "/processes"},
-		{Name: "tx list", Hint: "View the transaction ledger", Kind: "nav", Href: "/transactions"},
+		{Name: "transactions list", Hint: "View the transaction ledger", Kind: "nav", Href: "/transactions"},
 		{Name: "step list", Hint: "View steps addressed to you", Kind: "nav", Href: "/steps"},
 		{Name: "step create", Hint: "Create a step (developer affordance)", Kind: "form", Href: "/steps?form=step-create"},
 		{Name: "user me", Hint: "Your account and balances", Kind: "nav", Href: "/user"},

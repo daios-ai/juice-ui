@@ -182,9 +182,9 @@ func (e *KernelError) UserMessage() string {
 	case KindInsufficientFunds:
 		return "This session doesn't have enough credits. Credits are added out of band by an operator — contact them to top up your account."
 	case KindExecutionFailed:
-		return "The action failed to run. You were not charged — your funds were fully refunded."
+		return "The action failed to run."
 	case KindTimeout:
-		return "The action timed out. You were not charged — your funds were fully refunded."
+		return "The action timed out."
 	case KindRateLimited:
 		return "Too many attempts. Please wait a moment and try again."
 	case KindGrantRequired:

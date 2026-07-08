@@ -47,7 +47,7 @@ The frame every page renders into. Defined in `layout.html`.
 │ ▸ run  │  └────────────────────────────────────┘  │
 │ ▸ action  │  content (container, max 1000px)      │
 │ ▸ process │                                        │
-│ ▸ tx   │                                           │
+│ ▸ transactions │                                           │
 │ ▸ step•│  (• = badge)                              │
 │ ▸ user │                                           │
 │ ▸ admin│  (admin: @sys only)                       │
@@ -59,12 +59,12 @@ The frame every page renders into. Defined in `layout.html`.
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand → `/run`; collapse toggle; nav groups; profile popover at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `run · action · process · tx · step · user` + `admin · peers` (only `@sys`) | Mirrors the CLI command groups — with **`peers` elevated to its own slot** (a deliberate exception: federation is distinct enough to warrant it). Active group carries `aria-current="page"`. `step` carries the badge. Icon + lowercase label; label hidden when collapsed. |
+| **Nav** | `run · action · process · transactions · step · user` + `admin · peers` (only `@sys`) | Mirrors the CLI command groups — with **`peers` elevated to its own slot** (a deliberate exception: federation is distinct enough to warrant it). Active group carries `aria-current="page"`. `step` carries the badge. Icon + lowercase label; label hidden when collapsed. |
 | **Profile popover** | handle, balance, theme picker, Sign out — **no navigation** | Opens from the sidebar foot (`[data-menu]`). Nav destinations live in the sidebar, not here (the mobile drawer, which replaces the sidebar, keeps them). Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width 1000px`, centered, padding `1.25rem 1.5rem 4rem`. |
 | **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · tx · user`); top hamburger → **drawer** (Account, theme, Sign out, and **Admin + Peers when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin/Peers MUST remain reachable in the drawer for `@sys` (no sidebar there). |
+| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · transactions · user`); top hamburger → **drawer** (Account, theme, Sign out, and **Admin + Peers when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin/Peers MUST remain reachable in the drawer for `@sys` (no sidebar there). |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -115,8 +115,12 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 - **Scale:** `h1 1.4rem` · `h2 1.1rem` · `h3 1rem` · body `.9rem/14px` ·
   `.small .85rem` · `.tiny .8rem`. Headings carry slight `letter-spacing`.
 - **Titles are lowercase CLI nouns** on **both** index and detail pages:
-  `run · action · process · tx · step · user · admin · peers`. A **detail** page
-  adds a `← group` back-link above the title and shows the resource id/name.
+  `run · action · process · transactions · step · user · admin · peers`. A **detail**
+  page adds a `← group` back-link above the title and shows the resource id/name.
+  (The one exception to verbatim CLI-mirroring: the CLI's `tx` group is titled
+  **`transactions`** in full — spelled out for legibility. Its route stays
+  `/transactions`, its internal nav/active key stays `tx`, and the palette command
+  is `transactions list`.)
 - **Money, IDs, hashes, `@owner/name`:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**

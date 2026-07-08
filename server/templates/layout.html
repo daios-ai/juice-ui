@@ -34,7 +34,7 @@
         <a href="/run" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span class="lbl">run</span></a>
         <a href="/actions" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span class="lbl">action</span></a>
         <a href="/processes" title="Processes"{{if eq .Active "process"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layout-dashboard"/></svg><span class="lbl">process</span></a>
-        <a href="/transactions" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl">tx</span></a>
+        <a href="/transactions" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl">transactions</span></a>
         <a href="/steps" title="Steps" class="nav-inbox"{{if eq .Active "step"}} aria-current="page"{{end}}>
           <span class="ico-badge-wrap">
             <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
@@ -92,7 +92,7 @@
     <a href="/run" class="tab" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span>run</span></a>
     <a href="/actions" class="tab" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span>action</span></a>
     <a href="/steps" class="tab" title="Steps"{{if eq .Active "step"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg><span>step</span></a>
-    <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>tx</span></a>
+    <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>transactions</span></a>
     <a href="/user" class="tab" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span>user</span></a>
   </nav>
   {{end}}
@@ -103,7 +103,7 @@
   <!-- Keyboard command palette (Ctrl/Cmd+K). Registry is inert JSON data (CSP-safe). -->
   <script type="application/json" id="command-registry">{{.Commands}}</script>
   <dialog id="palette" class="palette" aria-label="Command palette">
-    <input type="text" class="palette-input" id="palette-input" placeholder="Type a command…  (e.g. action create, tx list, theme nord)" aria-label="Command" autocomplete="off">
+    <input type="text" class="palette-input" id="palette-input" placeholder="Type a command…  (e.g. action create, transactions list, theme nord)" aria-label="Command" autocomplete="off">
     <ul class="palette-list" id="palette-list" role="listbox"></ul>
   </dialog>
   <dialog id="help" class="palette" aria-label="Keyboard shortcuts">
@@ -111,7 +111,7 @@
     <div class="modal-body">
       <dl class="help-grid">
         <dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette</dd>
-        <dt><kbd>g</kbd> then <kbd>r a p t s u</kbd></dt><dd>Go to run · action · process · tx · step · user</dd>
+        <dt><kbd>g</kbd> then <kbd>r a p t s u</kbd></dt><dd>Go to run · action · process · transactions · step · user</dd>
         <dt><kbd>/</kbd></dt><dd>Focus search</dd>
         <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>

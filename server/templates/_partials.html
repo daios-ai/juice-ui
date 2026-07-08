@@ -45,10 +45,10 @@
 </div>
 {{else if .IsFailed}}
 <div class="outcome failed" role="status">
-  <strong>The action failed — your funds were fully refunded.</strong>
+  <strong>Failed — fully refunded.</strong>
   <p>{{.Message}}</p>
   {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
-  <p><a href="/user">Check your account ledger for the refund →</a></p>
+  <p><a href="/user">View your ledger →</a></p>
 </div>
 {{else if .IsGrantRequired}}
 <div class="outcome rejected" role="status">
@@ -128,7 +128,7 @@
   <div class="row">
     <button class="{{if gt .Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if gt .Price 0}} ({{money .Price}}){{end}}</button>
     <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
-      <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
+      <span class="bar" aria-hidden="true"></span><span>Running…</span>
     </div>
   </div>
   {{if and (gt .Price 0) (not .OneShot)}}<p class="help muted flush">Maximum, all-in. Refunded in full if it fails.</p>{{end}}
