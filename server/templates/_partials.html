@@ -131,6 +131,7 @@
       <span class="bar" aria-hidden="true"></span><span>Running… this can take a few seconds.</span>
     </div>
   </div>
+  {{if and (gt .Price 0) (not .OneShot)}}<p class="help muted flush">Maximum, all-in. Refunded in full if it fails.</p>{{end}}
 </form>
 <div id="{{.ResultID}}">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
 {{end}}

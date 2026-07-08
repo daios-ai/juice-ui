@@ -101,7 +101,7 @@
         <button class="btn" type="submit">Create action</button>
         <a class="btn" href="/actions" data-modal-close>Cancel</a>
       </div>
-      <p class="help muted flush">Created inactive. Enable it when the contract is ready.</p>
+      <p class="help muted flush">Created inactive.</p>
     </form>
   </div>
 </dialog>
@@ -117,7 +117,7 @@
       {{.CSRFField}}
       <div class="field">
         <label for="m-desc">Describe the action</label>
-        <p class="help">@sys/make writes, compiles, and activates a WASM action for you.</p>
+        <p class="help">Writes, compiles, and activates a WASM action.</p>
         <textarea id="m-desc" name="description" placeholder="e.g. Given a list of numbers, return their mean and standard deviation." required rows="1"></textarea>
       </div>
       <div class="row">
@@ -139,7 +139,7 @@
       {{.CSRFField}}
       <div class="field">
         <label for="i-url">Spec URL</label>
-        <p class="help">Representable operations import as inactive http actions. Reimport reconciles by provenance.</p>
+        <p class="help">Representable operations import as inactive http actions.</p>
         <input id="i-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json" required>
       </div>
       <div class="cluster">
@@ -177,7 +177,6 @@
   <div class="modal-body">
     <form class="stack" method="post" action="/steps">
       {{.CSRFField}}
-      <p class="help muted">A developer affordance: a funded continuation addressed to a caller.</p>
       <div class="field"><label for="s-trace">Funding trace ID</label><input id="s-trace" name="trace_id" type="text" required></div>
       <div class="field"><label for="s-action">Next action ID</label><input id="s-action" name="action_id" type="text" required></div>
       <div class="field"><label for="s-caller">Required caller (@handle)</label><input id="s-caller" name="required_caller" type="text" placeholder="@handle" required></div>
@@ -202,7 +201,7 @@
         <input id="u-email" name="email" type="email" value="{{.Data.User.Email}}">
       </div>
       <hr class="card-sep">
-      <p class="help muted flush">To change your password, enter the current one and a new one (twice). Leave blank to keep your current password.</p>
+      <p class="help muted flush">Leave blank to keep your current password.</p>
       <div class="field"><label for="u-cur">Current password</label><input id="u-cur" name="current_password" type="password" autocomplete="current-password"></div>
       <div class="field"><label for="u-new">New password</label><input id="u-new" name="password" type="password" autocomplete="new-password" minlength="8"></div>
       <div class="field"><label for="u-new2">Confirm new password</label><input id="u-new2" name="confirm_password" type="password" autocomplete="new-password" minlength="8"></div>

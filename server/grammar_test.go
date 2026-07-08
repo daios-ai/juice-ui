@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // Drift guard for docs/ui-grammar.md. The templates must use only the button
@@ -146,6 +147,70 @@ func TestNoRetiredRawToggle(t *testing.T) {
 		src := string(mustRead(t, f))
 		if strings.Contains(src, "edit as JSON") || strings.Contains(src, "raw-switch") || strings.Contains(src, "data-raw-toggle") {
 			t.Errorf("%s: retired raw toggle — use the .field-switch (fields | JSON) switch", f)
+		}
+	}
+}
+
+// Copy discipline (grammar §3). Prose is rationed like color: a subtitle orients
+// in one phrase; a prose note discloses one thing; neither narrates how the kernel
+// works. These guards fail the build the moment a string swells back into a
+// paragraph, so the narration cannot silently creep back.
+
+var (
+	scopeNoteRe = regexp.MustCompile(`(?s)<span class="scope-note">.*?</span>`)
+	subtitleRe  = regexp.MustCompile(`(?s)<p class="subtitle[^"]*"[^>]*>(.*?)</p>`)
+	proseNoteRe = regexp.MustCompile(`(?s)<p class="[^"]*\b(?:help|card-note)\b[^"]*"[^>]*>(.*?)</p>`)
+	tagRe       = regexp.MustCompile(`<[^>]*>`)
+	// A sentence-ender followed by more words → a second sentence.
+	secondSentenceRe = regexp.MustCompile(`[.;!?]\s+\S`)
+)
+
+// visibleText strips the scope-note span, template actions, and tags, then collapses
+// whitespace — leaving only the literal words a reader would see at render time.
+func visibleText(html string) string {
+	s := scopeNoteRe.ReplaceAllString(html, "")
+	s = tmplActionRe.ReplaceAllString(s, "")
+	s = tagRe.ReplaceAllString(s, "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// TestSubtitlesAreOrienting enforces §3: a page-head/section subtitle orients in one
+// short phrase and a single sentence — it never narrates kernel or control behavior.
+// Detail-page subtitles carry only an id (template-only), so they strip to empty.
+func TestSubtitlesAreOrienting(t *testing.T) {
+	const maxRunes = 64
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		src := string(mustRead(t, f))
+		for _, m := range subtitleRe.FindAllStringSubmatch(src, -1) {
+			txt := visibleText(m[1])
+			if txt == "" {
+				continue // an id or otherwise template-only subtitle
+			}
+			if n := utf8.RuneCountInString(txt); n > maxRunes {
+				t.Errorf("%s: subtitle runs to %d runes (max %d) — orient in one phrase, don't narrate (grammar §3): %q", f, n, maxRunes, txt)
+			}
+			if secondSentenceRe.MatchString(txt) {
+				t.Errorf("%s: subtitle spans multiple sentences — orient in one phrase, don't narrate (grammar §3): %q", f, txt)
+			}
+		}
+	}
+}
+
+// TestProseNotesAreShort enforces §3: a help/card-note prose note discloses one thing
+// at the point of consequence; it does not swell into a paragraph explaining a
+// feature. Counterparty content (a field .Description, a rating .Note) is template-
+// only and strips to empty, so this lints the chrome, not untrusted payload.
+func TestProseNotesAreShort(t *testing.T) {
+	const maxRunes = 120
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		src := string(mustRead(t, f))
+		for _, m := range proseNoteRe.FindAllStringSubmatch(src, -1) {
+			txt := visibleText(m[1])
+			if n := utf8.RuneCountInString(txt); n > maxRunes {
+				t.Errorf("%s: prose note runs to %d runes (max %d) — cut narration, disclose one thing (grammar §3): %q", f, n, maxRunes, txt)
+			}
 		}
 	}
 }

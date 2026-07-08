@@ -306,6 +306,10 @@ func TestCallFormRun(t *testing.T) {
 	if strings.Contains(body, `data-oneshot="true"`) {
 		t.Error("action run form must repeat, not be one-shot")
 	}
+	// A paid run is a settling payment: the refund disclosure rides with the confirm.
+	if !strings.Contains(body, "Refunded in full if it fails.") {
+		t.Errorf("paid run form must disclose the refund at the confirm: %s", body)
+	}
 	// Result target must sit after the closing </form>, not inside it.
 	form := strings.Index(body, "</form>")
 	target := strings.Index(body, `id="run-result"`)
@@ -343,6 +347,11 @@ func TestCallFormComplete(t *testing.T) {
 	}
 	if !strings.Contains(body, `id="step-result-S1"`) {
 		t.Errorf("completion result target must be step-result-S1: %s", body)
+	}
+	// A step's price is already parked — the refund disclosure is for the run confirm,
+	// not the completion, so it must not appear here.
+	if strings.Contains(body, "Refunded in full") {
+		t.Errorf("step completion must not carry the run's refund disclosure: %s", body)
 	}
 }
 

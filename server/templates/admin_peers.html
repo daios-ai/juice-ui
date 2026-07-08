@@ -2,7 +2,7 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>peers</h1>
-  <p class="subtitle">Federation: discover kernels, inspect them, and trust them. A friend can call your actions only once you deposit credits to their proxy. <span class="scope-note">superuser only</span></p>
+  <p class="subtitle">Federation — discover, inspect, trust kernels. <span class="scope-note">superuser only</span></p>
 </div>
 
 <h2>This kernel</h2>
@@ -48,7 +48,7 @@
 {{else}}<p class="muted">No friends yet. Befriend a kernel by its public key, or from the known network below.</p>{{end}}
 
 <h2>Known network</h2>
-<p class="subtitle">Kernels discovered through gossip — you may not be friends with them yet. Your own earned stats are shown as <span class="mono">you</span>, distinct from what each kernel self-reports and what peers say about it.</p>
+<p class="subtitle">Discovered through gossip — not yet friends.</p>
 {{if $d.Roster}}
 <div class="card-list">
   {{range $d.Roster}}
@@ -84,7 +84,7 @@
   {{end}}
 </div>
 {{else}}
-<p class="muted">No kernels discovered yet. The known network fills in as your friends transact and the discovery loop runs.</p>
+<p class="muted">No kernels discovered yet.</p>
 {{end}}
 
 <dialog id="form-admin-friend" class="modal-form"{{if eq $d.OpenForm "admin-friend"}} open{{end}} aria-label="Friend a kernel">
@@ -94,7 +94,7 @@
       {{.CSRFField}}
       <div class="field">
         <label for="fr-key">Peer public key</label>
-        <p class="help">The peer's base64url Ed25519 key (the global name). Their active public actions import immediately.</p>
+        <p class="help">The peer's base64url Ed25519 key — its global name.</p>
         <input id="fr-key" name="key" type="text" required>
       </div>
       <div class="cluster">

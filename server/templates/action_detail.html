@@ -28,11 +28,10 @@
 
 <h2>Run</h2>
 {{template "_call_form" (runForm $.CSRFField $d.Action.ID $d.Action.Price $d.Form $d.Outcome)}}
-{{if $d.IsPaid}}<p class="help muted">Price is the maximum, all-in — refunded in full if it fails.</p>{{end}}
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>
-<p class="muted small">Ratings from paid calls, newest first.</p>
+<p class="muted small">From paid calls.</p>
 <div class="card-list">
 {{range $d.Ratings}}
 <div class="card">
@@ -63,7 +62,6 @@
     <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
     <form method="post" action="/actions/{{$d.Action.ID}}/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<button class="btn-danger" type="submit">Delete</button></form>
   </div>
-  <p class="help muted flush">Editing source, schema, or price deactivates the action until you re-enable it.</p>
 </div>
 
 <dialog id="form-action-edit" class="modal-form"{{if eq $d.OpenForm "action-edit"}} open{{end}} aria-label="Edit action">
@@ -132,7 +130,6 @@
       <div class="field">
         <label for="edit-price">Price</label>
         <input id="edit-price" name="price" type="number" min="0" value="{{$d.Action.Price}}" class="input-sm">
-        <p class="help">Submitting the price separately: use the price control if you only want to change price.</p>
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Save changes</button>

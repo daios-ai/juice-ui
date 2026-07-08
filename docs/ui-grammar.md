@@ -124,6 +124,25 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
     row (with an optional inline `+ new …` command) → list.
   - *Detail* = back-link → `<h1>` → `.subtitle` (the id) → cards.
 
+**Copy discipline — words are a component.** Prose is rationed like color. Every
+visible string is exactly one register:
+
+- **Orientation** — the page-head / section `.subtitle`: one short phrase, a single
+  sentence, no verb describing what the kernel or a control *does*. "Work addressed
+  to you." — never a description of what *waiting* and *history* mean.
+- **Disclosure** — a consequence you consent to or a constraint on you (the refund
+  rule, out-of-band top-ups, fee "on value added", "saving deactivates the action").
+  Legitimately words — several are required by `requirements.md` — but shown **once,
+  at the point of consequence**, beside the button or field that triggers it; never
+  duplicated, never floating up-page as a standalone note.
+- **Narration** — how the kernel/system works. Belongs **nowhere**: structure,
+  labels, columns, chips, and just-in-time affordances already carry it. Cut it, or
+  turn it into structure.
+
+Empty states name the absence in one phrase ("No connected accounts yet."), never a
+lecture on how the list will fill. Field `help` states what to type or the single
+consequence of that field — it is not where a feature gets explained.
+
 ---
 
 ## 4. Spacing scale
@@ -356,6 +375,9 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   `<table>` sits in a `.table-scroll`.
 - Lowercase CLI titles; `page-head` (title + subtitle only) on index, back-link
   on detail. Commands are quiet and inline — never a floating page-head cluster.
+- **Copy is rationed (§3 Copy discipline):** subtitles orient in one phrase; no
+  sentence narrates kernel/control behavior; disclosures appear once, at the point
+  of consequence. Empty states and `help` name the thing, they don't lecture.
 - One `aria-live` region; the `step` badge is the only async attention signal;
   no notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
@@ -370,5 +392,7 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   `page-head` carries no command cluster (§5.3).
 - **Drift guard:** a test scans templates and fails on any button class outside
   §5.1 (incl. the retired `.btn-primary`), any inline `style=`, any `.toolbar`,
-  any `.linkbar`, the superseded `auth-tab` class, and
-  any `<table>` not wrapped in a `.table-scroll`.
+  any `.linkbar`, the superseded `auth-tab` class,
+  any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
+  phrase or into a second sentence, and any prose note (`.help` / `.card-note`) that
+  swells into a paragraph.

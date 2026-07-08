@@ -22,7 +22,7 @@
     <div class="balance"><div class="amount money sig-escrow">{{money $d.Parked}}</div><div class="label">parked (open processes)</div></div>
     <div class="balance"><div class="amount money">{{money $d.User.Locked}}</div><div class="label">locked (total)</div></div>
   </div>
-  <p class="card-note muted">Top-ups happen out of band — an operator deposits credits after payment. The UI can't add credits.</p>
+  <p class="card-note muted">Top-ups are out-of-band — an operator deposits credits.</p>
 </div>
 
 <h2>Connected accounts</h2>
@@ -47,7 +47,7 @@
     </tbody>
   </table>
   </div>
-  {{else}}<p class="muted flush">No connected accounts. Actions that need an upstream account (e.g. an OAuth API) will prompt you to connect when you run them.</p>{{end}}
+  {{else}}<p class="muted flush">No connected accounts yet.</p>{{end}}
 </div>
 
 {{if $d.OpenProcesses}}
