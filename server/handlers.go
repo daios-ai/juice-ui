@@ -83,8 +83,7 @@ type discoverView struct {
 
 type actionView struct {
 	Action   client.Action
-	HasStats bool
-	Stats    client.Stats
+	Stats    *client.Stats // nil until the action has usage
 	Ratings  []client.Rating
 	Form     FormModel
 	IsOwner  bool
@@ -751,7 +750,7 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			OpenForm: openForm(r, "action-detail"),
 		}
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
-			view.Stats, view.HasStats = st, true
+			view.Stats = &st
 		}
 		if ratings, e := s.client.ActionRatings(ctx, tok, id); e == nil {
 			view.Ratings = ratings

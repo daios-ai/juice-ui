@@ -81,6 +81,7 @@ func NewRenderer() (*Renderer, error) {
 		"actionsHref":  actionsHref,
 		"runForm":      runForm,
 		"completeForm": completeForm,
+		"statStrip":    statStrip,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -276,6 +277,24 @@ func refName(ref string) string {
 type Tab struct {
 	Label, Href, Data string
 	Active            bool
+}
+
+// StatStrip feeds the _stat_strip partial. Counts toggles the (N) run/rater
+// counts — shown on the action detail page, omitted on the list cards.
+type StatStrip struct {
+	Price  int64
+	S      client.Stats
+	Counts bool
+}
+
+// statStrip builds a StatStrip. It is nil-safe (a card's *client.Stats is nil
+// until the action has usage), so an unused action renders honest empty states.
+func statStrip(price int64, s *client.Stats, counts bool) StatStrip {
+	var v client.Stats
+	if s != nil {
+		v = *s
+	}
+	return StatStrip{Price: price, S: v, Counts: counts}
 }
 
 // tab builds a plain navigation tab (list filters, scope switch).

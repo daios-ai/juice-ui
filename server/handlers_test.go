@@ -890,14 +890,14 @@ func TestWalletShowsLedger(t *testing.T) {
 	if !strings.Contains(body, "T2") && !strings.Contains(body, "/transactions/T2") {
 		t.Error("wallet ledger must link to transaction T2")
 	}
-	// Roles are shown on the dedicated transactions ledger (the account page keeps
-	// a compact ledger without per-row roles).
+	// Each row encodes the viewer's role by the signed amount: as seller (T2, payee)
+	// @alice sees a credited +net; as buyer (T1, payer) she sees a −gross debit.
 	txBody := getBody(t, cl, srv.URL+"/transactions")
-	if !strings.Contains(txBody, "buyer") {
-		t.Error("transactions ledger must show 'buyer' role for T1")
+	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+45") {
+		t.Error("transactions ledger must show @alice's seller credit (+net) on T2")
 	}
-	if !strings.Contains(txBody, "seller") {
-		t.Error("transactions ledger must show 'seller' role for T2")
+	if !strings.Contains(txBody, ">-100<") {
+		t.Error("transactions ledger must show @alice's buyer debit (−gross) on T1")
 	}
 }
 
@@ -978,6 +978,15 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/actions/A1")
+
+	// The header titles on @owner/name (the ref), not the bare name, and drops the
+	// spelled-out "active · public" meta line (state shows via chips, like the cards).
+	if !strings.Contains(page, `class="action-head"`) || !strings.Contains(page, "weather") {
+		t.Errorf("action header must title on the @owner/name ref: %s", page)
+	}
+	if strings.Contains(page, "action-detail-meta") {
+		t.Error("action header must not carry the spelled-out kind·active·public meta line")
+	}
 
 	// Decomposed http object is rendered inertly.
 	for _, want := range []string{"GET", "https://api.x/{city}", "city:path", "units:query"} {

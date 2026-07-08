@@ -12,19 +12,21 @@
     {{if .Action.Description}}<p class="action-card-desc" title="{{.Action.Description}}">{{.Action.Description}}</p>{{end}}
   </div>
   <hr class="card-sep">
-  <p class="stat-strip">
-    <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Action.Price}}</span>
-    {{if .Stats}}
-    · <span title="Success rate — {{.Stats.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Stats.Successes .Stats.Uses}}%</span>
-    · {{if gt .Stats.RatingCount 0}}<span title="Rating — {{.Stats.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}%</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
-    · <span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .Stats.LatencyEstimate}}s</span>
-    {{else}}
-    · <span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>
-    · <span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>
-    · <span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>
-    {{end}}
-  </p>
+  {{template "_stat_strip" (statStrip .Action.Price .Stats false)}}
 </article>
+{{end}}
+
+{{/* _stat_strip — THE action stats line (price · success · rating · latency),
+     shared by the list cards and the action detail page so they never drift.
+     Keyed per field, so an unused action reads honest empty states, not fake
+     "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). */}}
+{{define "_stat_strip"}}
+<p class="stat-strip">
+  <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Price}}</span>
+  · {{if gt .S.Uses 0}}<span title="Success rate — {{.S.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
+  · {{if gt .S.RatingCount 0}}<span title="Rating — {{.S.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
+  · {{if gt .S.Uses 0}}<span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
+</p>
 {{end}}
 
 {{define "_cost_breakdown"}}
@@ -122,11 +124,7 @@
       hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
   {{if .Locked}}<pre class="json">{{json .Locked}}</pre>{{end}}
-  {{if .IsApproval}}
-  <p class="muted small">No further input needed — just acknowledge.</p>
-  {{else}}
-  {{template "_form_fields" .Editable}}
-  {{end}}
+  {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="row">
     <button class="{{if gt .Price 0}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if gt .Price 0}} ({{money .Price}}){{end}}</button>
     <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">

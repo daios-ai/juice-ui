@@ -372,7 +372,8 @@ func TestFormFieldsStructuredSwitch(t *testing.T) {
 }
 
 // TestCallFormApproval renders an approval _call_form (a step with nothing left to
-// fill): the acknowledge line, the Complete button, and NO raw-JSON input.
+// fill): just the locked block + the Complete button, no raw-JSON input and no
+// wordy "acknowledge" line — the locked JSON + button carry it visually.
 func TestCallFormApproval(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
@@ -388,8 +389,66 @@ func TestCallFormApproval(t *testing.T) {
 	if strings.Contains(body, `name="raw_args"`) {
 		t.Errorf("an approval form must not render a raw-args box: %s", body)
 	}
-	if !strings.Contains(body, "acknowledge") || !strings.Contains(body, "Complete (1)") {
-		t.Errorf("approval form must show the acknowledge line and Complete button: %s", body)
+	if strings.Contains(strings.ToLower(body), "acknowledge") || strings.Contains(body, "No further input") {
+		t.Errorf("approval form must not carry a wordy acknowledge line: %s", body)
+	}
+	if !strings.Contains(body, "Complete (1)") {
+		t.Errorf("approval form must show the Complete button: %s", body)
+	}
+}
+
+// TestStatStripHonestEmpty renders the shared stat strip for an unused action: it
+// must read honest empty states (none, with a (0) count when Counts) — never fake
+// "—%" or "0.0s" data.
+func TestStatStripHonestEmpty(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(12, nil, true)); err != nil {
+		t.Fatalf("Fragment: %v", err)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "—%") || strings.Contains(body, "0.0s") {
+		t.Errorf("unused action must not render fake stat data: %s", body)
+	}
+	if !strings.Contains(body, "none (0)") {
+		t.Errorf("unused action (with counts) must read honest 'none (0)': %s", body)
+	}
+	if !strings.Contains(body, "12") {
+		t.Errorf("stat strip must show the price: %s", body)
+	}
+}
+
+// TestStatStripCounts contrasts the detail (with counts) and card (no counts)
+// renderings of the same stats — the only difference is the (N) run/rater counts.
+func TestStatStripCounts(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := client.Stats{Uses: 10, Successes: 9, RatingCount: 4, RatingEstimate: 0.75, LatencyEstimate: 0.4}
+
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, true)); err != nil {
+		t.Fatal(err)
+	}
+	detail := rec.Body.String()
+	if !strings.Contains(detail, "90%") || !strings.Contains(detail, "(10)") || !strings.Contains(detail, "(4)") {
+		t.Errorf("detail strip must show success%% with run/rater counts: %s", detail)
+	}
+
+	rec = httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, false)); err != nil {
+		t.Fatal(err)
+	}
+	card := rec.Body.String()
+	if !strings.Contains(card, "90%") {
+		t.Errorf("card strip must still show success%%: %s", card)
+	}
+	if strings.Contains(card, "(10)") || strings.Contains(card, "(4)") {
+		t.Errorf("card strip must NOT show counts: %s", card)
 	}
 }
 
