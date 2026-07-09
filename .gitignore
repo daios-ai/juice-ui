@@ -18,3 +18,6 @@ coverage.*
 /juice
 juice.db
 juice.json
+
+# Per-app config (holds provisioned service-account secrets)
+juice-ui.json

@@ -48,6 +48,9 @@
           <span class="lbl">step</span>
         </a>
         <a href="/user" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl">user</span></a>
+        {{range .AppNav}}
+        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Icon}}<span class="lbl">{{.Label}}</span></a>
+        {{end}}
         {{if .IsSuperuser}}
         <a href="/admin" title="Admin"{{if eq .Active "admin"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg><span class="lbl">admin</span></a>
         <a href="/admin/peers" title="Peers"{{if eq .Active "peers"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#share-2"/></svg><span class="lbl">peers</span></a>
@@ -94,6 +97,9 @@
     <a href="/steps" class="tab" title="Steps"{{if eq .Active "step"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg><span>step</span></a>
     <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>tx</span></a>
     <a href="/user" class="tab" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span>user</span></a>
+    {{range .AppNav}}
+    <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Icon}}<span>{{.Label}}</span></a>
+    {{end}}
   </nav>
   {{end}}
 

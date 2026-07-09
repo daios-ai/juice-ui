@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/gorilla/csrf"
@@ -24,10 +27,12 @@ type Options struct {
 	Sessions       *session.Manager
 	Renderer       *Renderer
 	Logger         *slog.Logger
-	CSRFKey        []byte   // 32 bytes
-	Secure         bool     // set Secure flag on CSRF/session cookies (false for local http)
-	TrustedOrigins []string // extra hosts accepted as the request Origin (proxied hostnames)
-	PublicURL      string   // absolute base URL of this BFF, for OAuth redirect_uri; "" derives from the request
+	CSRFKey        []byte     // 32 bytes
+	Secure         bool       // set Secure flag on CSRF/session cookies (false for local http)
+	TrustedOrigins []string   // extra hosts accepted as the request Origin (proxied hostnames)
+	PublicURL      string     // absolute base URL of this BFF, for OAuth redirect_uri; "" derives from the request
+	Apps           []apps.App // app modules to mount (their templates must already be in Renderer)
+	ConfigPath     string     // path to juice-ui.json for per-app persisted config; "" = in-memory
 }
 
 // Server holds dependencies and serves the BFF.
@@ -39,6 +44,8 @@ type Server struct {
 	log       *slog.Logger
 	secure    bool
 	publicURL string // configured absolute base URL; "" → derive from the request
+	apps      []apps.App
+	appStore  *appStore // per-app persisted config (juice-ui.json)
 
 	// Cached kernel identity (handle + key fingerprint) from the open /health,
 	// so the login page and sidebar can name/verify the kernel. Fetched once on
@@ -110,7 +117,13 @@ func New(o Options) (http.Handler, error) {
 		log:       o.Logger,
 		secure:    o.Secure,
 		publicURL: strings.TrimRight(o.PublicURL, "/"),
+		apps:      o.Apps,
 	}
+	as, err := newAppStore(o.ConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("load app config %q: %w", o.ConfigPath, err)
+	}
+	s.appStore = as
 
 	mux := http.NewServeMux()
 	// Static assets (open).
@@ -206,6 +219,18 @@ func New(o Options) (http.Handler, error) {
 	// Session-scoped preferences.
 	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getStepsBadge)) // legacy poll URL
 
+	// App modules (chat, and future special apps): each registers its own
+	// routes and opens any module-owned store. The core stays agnostic — it only
+	// knows the apps.App seam, never a concrete module. App routes are
+	// gated behind requireAuth here so a module handler always has a session.
+	deps := s.appDeps()
+	for _, f := range s.apps {
+		f.Mount(mux, deps) // Mount first: a module stashes Deps here, then uses it in Start.
+		if err := f.Start(context.Background()); err != nil {
+			return nil, err
+		}
+	}
+
 	// Middleware chain (outer to inner): request-id -> logging -> session -> CSRF -> CSP.
 	csrfMW := csrf.Protect(o.CSRFKey,
 		csrf.Secure(o.Secure),
@@ -219,13 +244,24 @@ func New(o Options) (http.Handler, error) {
 		// and log the rejected origin so the operator knows what to trust.
 		csrf.ErrorHandler(http.HandlerFunc(s.csrfFailed)),
 	)
-	var h http.Handler = csrfMW(mux)
+	protected := csrfMW(mux)
 	if !o.Secure {
 		// Over plaintext HTTP (local dev), tell gorilla/csrf to skip the
 		// HTTPS-only strict Referer rule; the CSRF token and Origin checks still
 		// apply. Behind TLS (Secure=true) the strict check is retained.
-		h = plaintextMiddleware(h)
+		protected = plaintextMiddleware(protected)
 	}
+	// An app's kernel-facing endpoints live under /_kernel/ and are called
+	// server-to-server by the kernel (no browser, no CSRF token), so they bypass
+	// CSRF; every browser route stays CSRF-protected. Both paths still pass through
+	// session/security/logging below.
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/_kernel/") {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	})
 	h = o.Sessions.SCS().LoadAndSave(h)
 	h = securityHeaders(h) // CSP + hardening on every response, including errors
 	h = s.logging(h)
@@ -362,6 +398,52 @@ func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// appDeps builds the capability surface handed to every app at
+// Mount time: the kernel client and session manager, plus rendering and flow
+// helpers as closures over this server, so a module renders in the shared shell
+// without importing package server.
+func (s *Server) appDeps() apps.Deps {
+	return apps.Deps{
+		Client:   s.client,
+		Sessions: s.sessions,
+		RenderPage: func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
+			s.renderPage(w, r, status, page, title, data)
+		},
+		RenderFragment: func(w http.ResponseWriter, status int, name string, data any) error {
+			return s.render.Fragment(w, status, name, data)
+		},
+		HandleErr:         s.handleErr,
+		HandleErrFragment: s.handleErrFragment,
+		FlashRedirect:     s.flashRedirect,
+		CSRFField:         func(r *http.Request) template.HTML { return csrf.TemplateField(r) },
+		IsHTMX:            isHTMX,
+		Handle:            func(r *http.Request) string { return s.sessions.Handle(r.Context()) },
+		RequireAuth:       s.requireAuth,
+		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
+		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
+		PublicURL:         s.publicURL,
+	}
+}
+
+// appNav collects the sidebar entries contributed by apps for the
+// signed-in user, marking the entry whose Match prefixes the request path as the
+// current page.
+func (s *Server) appNav(r *http.Request) []apps.NavEntry {
+	if len(s.apps) == 0 {
+		return nil
+	}
+	handle := s.sessions.Handle(r.Context())
+	super := s.isSuperuser(r)
+	var out []apps.NavEntry
+	for _, f := range s.apps {
+		for _, e := range f.Nav(handle, super) {
+			e.Active = e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match)
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // page builds the common page envelope (theme, handle, CSRF, flash) for a
 // request.
 func (s *Server) page(r *http.Request, title string, data any) Page {
@@ -394,6 +476,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Commands:     template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
 		Flash:        flash,
 		FlashKind:    flashKind,
+		AppNav:       s.appNav(r),
 		Data:         data,
 	}
 }

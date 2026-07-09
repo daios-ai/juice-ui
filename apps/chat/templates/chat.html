@@ -1,0 +1,43 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1>chat</h1>
+  <p class="subtitle">Your rooms.</p>
+</div>
+
+<p><a class="btn-quiet" href="/chat?form=room-create" data-modal="form-room-create">+ new room</a></p>
+
+<div class="table-scroll">
+<table>
+  <tbody>
+  {{range $d.Rooms}}
+  <tr class="rowable" tabindex="-1" data-href="/chat/room/{{.ID}}">
+    <td><a href="/chat/room/{{.ID}}">{{.Name}}</a></td>
+    <td class="muted small">{{len .Members}} members</td>
+  </tr>
+  {{else}}
+  <tr><td class="muted">No rooms yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+<dialog id="form-room-create" class="modal-form"{{if $d.OpenForm}} open{{end}} aria-label="New room">
+  <div class="modal-head"><h2>New room</h2><a class="modal-close" href="/chat" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/chat/rooms">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="room-name">Name</label>
+        <input id="room-name" type="text" name="name" placeholder="general" required>
+      </div>
+      <div class="field">
+        <label for="room-members">Members</label>
+        <p class="help">Handles separated by spaces, e.g. @bob @carol.</p>
+        <textarea id="room-members" name="members" rows="1" placeholder="@bob @carol"></textarea>
+      </div>
+      <button class="btn" type="submit">Create</button>
+    </form>
+  </div>
+</dialog>
+{{end}}

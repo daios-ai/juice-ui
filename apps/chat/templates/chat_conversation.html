@@ -1,0 +1,78 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$me := $d.Me}}
+{{$rid := $d.Room.ID}}
+<p><a href="/chat">← chat</a></p>
+<h1>{{$d.Room.Name}}</h1>
+
+<div class="cluster">
+  {{if $d.IsOwner}}
+  <a class="btn" href="/chat/room/{{$rid}}?form=rename" data-modal="form-rename">Rename</a>
+  <form method="post" action="/chat/room/{{$rid}}/delete" data-confirm="Delete this room for everyone?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete</button></form>
+  {{else}}
+  <form method="post" action="/chat/room/{{$rid}}/leave" data-confirm="Leave this room?">{{.CSRFField}}<button class="btn" type="submit">Leave</button></form>
+  {{end}}
+</div>
+
+<h2>Members</h2>
+{{if $d.IsOwner}}
+<div class="row control-row">
+  <a class="btn-quiet" href="/chat/room/{{$rid}}?form=add-member" data-modal="form-add-member">+ add member</a>
+</div>
+{{end}}
+<div class="table-scroll">
+<table>
+  <tbody>
+  {{range $d.Room.Members}}
+  <tr>
+    <td><span class="ref mono"><span class="owner">{{.}}</span></span>{{if eq . $d.Room.Creator}} <span class="muted small">creator</span>{{end}}</td>
+    <td>{{if and $d.IsOwner (ne . $me)}}<form method="post" action="/chat/room/{{$rid}}/remove-member">{{$.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger small" type="submit">Remove</button></form>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+<h2>Messages</h2>
+<div class="stack">
+  <div id="chat-messages" hx-get="/chat/room/{{$rid}}/messages" hx-trigger="load, every 4s" hx-swap="innerHTML">
+    {{template "_chat_messages" $d.Msgs}}
+  </div>
+  <div class="card">
+    <form class="row" method="post" action="/chat/room/{{$rid}}/message">
+      {{.CSRFField}}
+      <textarea name="text" class="stretch" rows="1" placeholder="Message…" aria-label="Message"></textarea>
+      <button class="btn" type="submit">Send</button>
+    </form>
+  </div>
+</div>
+
+{{if $d.IsOwner}}
+<dialog id="form-rename" class="modal-form"{{if eq $d.OpenForm "rename"}} open{{end}} aria-label="Rename room">
+  <div class="modal-head"><h2>Rename room</h2><a class="modal-close" href="/chat/room/{{$rid}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/chat/room/{{$rid}}/rename">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="rename-name">Name</label>
+        <input id="rename-name" type="text" name="name" value="{{$d.Room.Name}}" required>
+      </div>
+      <button class="btn" type="submit">Rename</button>
+    </form>
+  </div>
+</dialog>
+<dialog id="form-add-member" class="modal-form"{{if eq $d.OpenForm "add-member"}} open{{end}} aria-label="Add member">
+  <div class="modal-head"><h2>Add member</h2><a class="modal-close" href="/chat/room/{{$rid}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/chat/room/{{$rid}}/add-member">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="add-member-handle">Handle</label>
+        <input id="add-member-handle" type="text" name="member" placeholder="@handle" required>
+      </div>
+      <button class="btn" type="submit">Add member</button>
+    </form>
+  </div>
+</dialog>
+{{end}}
+{{end}}

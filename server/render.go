@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 )
 
@@ -33,21 +34,22 @@ func StaticFS() fs.FS {
 // Page is the data passed to the layout for a full-page render.
 type Page struct {
 	Title        string
-	Theme        string        // theme slug, or "" to defer to prefers-color-scheme
-	Sidebar      string        // "collapsed" | "" (expanded); stamped to avoid flash
-	Active       string        // active nav group ("run"|"action"|…) for aria-current
-	Handle       string        // signed-in handle for the nav, or "" when anonymous
-	KernelHandle string        // this kernel's own handle (from /health), or "" if unknown
-	KernelFP     string        // short key fingerprint for pre-auth verification (login only)
-	IsSuperuser  bool          // handle == "@sys": show the admin group and admin scope
-	Available    int64         // signed-in user's available balance; 0 when unknown
-	Themes       []ANSIPalette // selectable terminal themes for the picker
-	CSRFField    template.HTML // hidden CSRF input for no-JS forms
-	CSRFToken    string        // raw token for the <meta> tag htmx reads
-	Commands     template.JS   // JSON command registry for the keyboard palette (inert data)
-	Flash        string        // transient user message
-	FlashKind    string        // "success" | "error" | "info" | ""
-	Data         any           // page-specific view model
+	Theme        string          // theme slug, or "" to defer to prefers-color-scheme
+	Sidebar      string          // "collapsed" | "" (expanded); stamped to avoid flash
+	Active       string          // active nav group ("run"|"action"|…) for aria-current
+	Handle       string          // signed-in handle for the nav, or "" when anonymous
+	KernelHandle string          // this kernel's own handle (from /health), or "" if unknown
+	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
+	IsSuperuser  bool            // handle == "@sys": show the admin group and admin scope
+	Available    int64           // signed-in user's available balance; 0 when unknown
+	Themes       []ANSIPalette   // selectable terminal themes for the picker
+	CSRFField    template.HTML   // hidden CSRF input for no-JS forms
+	CSRFToken    string          // raw token for the <meta> tag htmx reads
+	Commands     template.JS     // JSON command registry for the keyboard palette (inert data)
+	Flash        string          // transient user message
+	FlashKind    string          // "success" | "error" | "info" | ""
+	AppNav       []apps.NavEntry // sidebar entries contributed by apps
+	Data         any             // page-specific view model
 }
 
 // Renderer holds parsed templates. Each page is parsed together with the layout
@@ -57,8 +59,12 @@ type Renderer struct {
 	partials *template.Template
 }
 
-// NewRenderer parses all embedded templates.
-func NewRenderer() (*Renderer, error) {
+// NewRenderer parses all embedded templates, plus any app-module template
+// filesystems. A app's partials (files under templates/ whose name starts
+// with "_") are merged into the shared base set; its pages are cloned from that
+// base, so a app page renders through the same layout, partials, and helpers
+// as a core page.
+func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":        money,
 		"json":         prettyJSON,
@@ -87,24 +93,44 @@ func NewRenderer() (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse base templates: %w", err)
 	}
-	pageFiles, err := fs.Glob(tmplFS, "templates/*.html")
-	if err != nil {
-		return nil, err
+	// Merge each app's partials into the base set first, so a app page
+	// (cloned below) can reference both core and app partials.
+	for _, ffs := range appTemplates {
+		if parts, _ := fs.Glob(ffs, "templates/_*.html"); len(parts) > 0 {
+			if _, err := base.ParseFS(ffs, "templates/_*.html"); err != nil {
+				return nil, fmt.Errorf("parse app partials: %w", err)
+			}
+		}
 	}
 	pages := map[string]*template.Template{}
-	for _, pf := range pageFiles {
-		name := strings.TrimSuffix(strings.TrimPrefix(pf, "templates/"), ".html")
-		if name == "layout" || strings.HasPrefix(name, "_") {
-			continue
-		}
-		clone, err := base.Clone()
+	addPages := func(fsys fs.FS) error {
+		files, err := fs.Glob(fsys, "templates/*.html")
 		if err != nil {
+			return err
+		}
+		for _, pf := range files {
+			name := strings.TrimSuffix(strings.TrimPrefix(pf, "templates/"), ".html")
+			if name == "layout" || strings.HasPrefix(name, "_") {
+				continue
+			}
+			clone, err := base.Clone()
+			if err != nil {
+				return err
+			}
+			if _, err := clone.ParseFS(fsys, pf); err != nil {
+				return fmt.Errorf("parse page %s: %w", pf, err)
+			}
+			pages[name] = clone
+		}
+		return nil
+	}
+	if err := addPages(tmplFS); err != nil {
+		return nil, err
+	}
+	for _, ffs := range appTemplates {
+		if err := addPages(ffs); err != nil {
 			return nil, err
 		}
-		if _, err := clone.ParseFS(tmplFS, pf); err != nil {
-			return nil, fmt.Errorf("parse page %s: %w", pf, err)
-		}
-		pages[name] = clone
 	}
 	return &Renderer{pages: pages, partials: base}, nil
 }

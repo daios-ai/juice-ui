@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2"
+	"github.com/daios-ai/juice-ui/apps"
+	"github.com/daios-ai/juice-ui/apps/chat"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
@@ -36,6 +39,7 @@ type Config struct {
 	Secure         bool     // Secure flag on cookies; enable behind HTTPS.
 	TrustedOrigins []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
 	PublicURL      string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
+	ConfigPath     string   // path to juice-ui.json (per-app persisted config; apps self-provision into it)
 }
 
 // LoadConfig reads configuration via getenv (injected for testability) and
@@ -47,6 +51,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		SessionSecret: strings.TrimSpace(getenv("JUICE_UI_SESSION_SECRET")),
 		Secure:        strings.EqualFold(strings.TrimSpace(getenv("JUICE_UI_SECURE")), "true"),
 		PublicURL:     strings.TrimSpace(getenv("JUICE_UI_PUBLIC_URL")),
+		ConfigPath:    orDefault(getenv("JUICE_UI_CONFIG"), "juice-ui.json"),
 	}
 	u, err := url.Parse(cfg.KernelBaseURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -131,7 +136,19 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 
 	sessions := session.NewManager(sm, kernel)
 
-	renderer, err := server.NewRenderer()
+	// App modules. Each is self-contained; the core only knows the apps.App
+	// seam. Chat runs the in-process @chat application, which provisions its own
+	// service account on first run and persists it in juice-ui.json — no chat
+	// configuration required.
+	var appList []apps.App
+	var appTemplates []fs.FS
+	ch := chat.New()
+	appList = append(appList, ch)
+	appTemplates = append(appTemplates, ch.Templates())
+
+	// The renderer must include each enabled app's templates so its pages
+	// render in the shared layout.
+	renderer, err := server.NewRenderer(appTemplates...)
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
 	}
@@ -142,6 +159,13 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	if ephemeral {
 		log.Warn("JUICE_UI_SESSION_SECRET not set; using an ephemeral key — sessions reset on restart and this is unsafe for production")
 	}
+	// Resolve a concrete base URL so in-process apps can register kind=http
+	// action sources the kernel calls back (defaults to the listen address for
+	// local use; operators behind a proxy set JUICE_UI_PUBLIC_URL).
+	publicURL := cfg.PublicURL
+	if publicURL == "" {
+		publicURL = "http://" + cfg.ListenAddr
+	}
 	return server.New(server.Options{
 		Client:         kernel,
 		Sessions:       sessions,
@@ -150,7 +174,9 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		CSRFKey:        key,
 		Secure:         cfg.Secure,
 		TrustedOrigins: cfg.TrustedOrigins,
-		PublicURL:      cfg.PublicURL,
+		PublicURL:      publicURL,
+		Apps:           appList,
+		ConfigPath:     cfg.ConfigPath,
 	})
 }
 

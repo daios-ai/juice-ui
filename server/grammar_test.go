@@ -2,6 +2,8 @@ package server
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -199,7 +201,7 @@ func TestSubtitlesAreOrienting(t *testing.T) {
 
 // TestProseNotesAreShort enforces §3: a help/card-note prose note discloses one thing
 // at the point of consequence; it does not swell into a paragraph explaining a
-// feature. Counterparty content (a field .Description, a rating .Note) is template-
+// app. Counterparty content (a field .Description, a rating .Note) is template-
 // only and strips to empty, so this lints the chrome, not untrusted payload.
 func TestProseNotesAreShort(t *testing.T) {
 	const maxRunes = 120
@@ -210,6 +212,48 @@ func TestProseNotesAreShort(t *testing.T) {
 			txt := visibleText(m[1])
 			if n := utf8.RuneCountInString(txt); n > maxRunes {
 				t.Errorf("%s: prose note runs to %d runes (max %d) — cut narration, disclose one thing (grammar §3): %q", f, n, maxRunes, txt)
+			}
+		}
+	}
+}
+
+// TestAppTemplatesFollowGrammar extends the drift guard to app-module
+// templates (apps/*/templates/*.html): the visual grammar is central, so a
+// module's templates obey the same button, inline-style, table, and
+// retired-component rules as the core, wherever the file lives.
+func TestAppTemplatesFollowGrammar(t *testing.T) {
+	files, err := filepath.Glob("../apps/*/templates/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Skip("no app templates")
+	}
+	tableRe := regexp.MustCompile(`<table`)
+	wrapRe := regexp.MustCompile(`(?s)<div class="table-scroll">\s*<table`)
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		if loc := inlineStyleRe.FindStringIndex(src); loc != nil {
+			t.Errorf("%s: inline style is forbidden (grammar §6): …%s…", f, snippet(src, loc[0]))
+		}
+		for _, m := range classAttrRe.FindAllStringSubmatch(src, -1) {
+			cleaned := tmplActionRe.ReplaceAllString(m[1], " ")
+			for _, tok := range strings.Fields(cleaned) {
+				if strings.HasPrefix(tok, "btn") && !allowedButtonClasses[tok] {
+					t.Errorf("%s: off-grammar button class %q (allowed: btn, btn-money, btn-danger, btn-icon, btn-quiet)", f, tok)
+				}
+			}
+		}
+		if tables, wrapped := len(tableRe.FindAllString(src, -1)), len(wrapRe.FindAllString(src, -1)); tables != wrapped {
+			t.Errorf("%s: %d <table> but %d wrapped in .table-scroll", f, tables, wrapped)
+		}
+		for _, bad := range []string{`class="toolbar"`, "btn-primary", "linkbar", "auth-tab"} {
+			if strings.Contains(src, bad) {
+				t.Errorf("%s: retired component %q must not reappear", f, bad)
 			}
 		}
 	}

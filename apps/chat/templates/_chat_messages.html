@@ -1,0 +1,18 @@
+{{define "_chat_messages"}}
+<div class="stack">
+  {{range .Messages}}
+  <div class="card stack">
+    <div class="row compact flush">
+      <span class="ref mono"><span class="owner">{{.From}}</span></span>
+      <span class="muted small stretch">{{shortTime .At}}</span>
+      {{if eq .From $.Me}}
+      <form method="post" action="/chat/room/{{$.RoomID}}/message/{{.ID}}/delete">{{$.CSRF}}<button class="btn-icon" type="submit" aria-label="Delete message"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></form>
+      {{end}}
+    </div>
+    <p class="flush">{{.Text}}</p>
+  </div>
+  {{else}}
+  <p class="muted">No messages yet.</p>
+  {{end}}
+</div>
+{{end}}
