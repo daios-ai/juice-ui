@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -326,6 +327,28 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/user", "success", "Connected "+action+".")
 }
 
+// postGrantConnect attaches a static per-caller token to a delegated_bearer action
+// (the non-OAuth grant path). The token is write-only: it is read from a masked
+// field and never re-displayed. On success the user returns to where they were (the
+// action page) so they can retry the run.
+func (s *Server) postGrantConnect(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	action := strings.TrimSpace(r.FormValue("action"))
+	token := strings.TrimSpace(r.FormValue("token"))
+	back := backTo(r)
+	if action == "" || token == "" {
+		s.flashRedirect(w, r, back, "error", "Paste an access token to connect.")
+		return
+	}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		return s.client.ConnectGrant(ctx, tok, action, token)
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.flashRedirect(w, r, back, "success", "Account connected. You can run it now.")
+}
+
 // postGrantDisconnect revokes the caller's grant for an action.
 func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -337,6 +360,16 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.flashRedirect(w, r, "/user", "success", "Disconnected "+action+".")
+}
+
+// backTo returns a same-origin path from the request's Referer to return to (so a
+// connect made from an action page lands back there), or /user as a fallback. Only
+// a same-host path is honored, never an absolute/off-site URL.
+func backTo(r *http.Request) string {
+	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Path != "" && (ref.Host == "" || ref.Host == r.Host) {
+		return ref.Path
+	}
+	return "/user"
 }
 
 func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {

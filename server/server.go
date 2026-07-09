@@ -199,9 +199,11 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /user", s.requireAuth(s.getUser))
 	mux.HandleFunc("POST /user", s.requireAuth(s.postUser))
 
-	// Delegated OAuth grants (connect an upstream account to an action).
+	// Grants (connect an upstream account to an action): the oauth_delegated
+	// browser flow (start/callback) and the delegated_bearer static-token path.
 	mux.HandleFunc("POST /grants/start", s.requireAuth(s.postGrantStart))
 	mux.HandleFunc("GET /grants/callback", s.requireAuth(s.getGrantCallback))
+	mux.HandleFunc("POST /grants/connect", s.requireAuth(s.postGrantConnect))
 	mux.HandleFunc("POST /grants/disconnect", s.requireAuth(s.postGrantDisconnect))
 
 	// Admin — superuser-only supervision (money, access, federation trust).
@@ -422,6 +424,8 @@ func (s *Server) appDeps() apps.Deps {
 		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
 		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
 		PublicURL:         s.publicURL,
+		ConfigPath:        s.appStore.path,
+		Logger:            s.log,
 	}
 }
 

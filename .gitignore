@@ -21,3 +21,8 @@ juice.json
 
 # Per-app config (holds provisioned service-account secrets)
 juice-ui.json
+
+# Chat app durable store (created beside juice-ui.json at runtime)
+chat.db
+chat.db-shm
+chat.db-wal

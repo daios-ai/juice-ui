@@ -96,8 +96,14 @@ type Action struct {
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	Source       json.RawMessage `json:"source,omitempty"`
 	HTTP         *HTTPSpec       `json:"http,omitempty"`
-	CreatedAt    string          `json:"created_at"`
-	UpdatedAt    string          `json:"updated_at"`
+	// AuthScheme is the upstream auth scheme (e.g. "delegated_bearer"), and
+	// RequiresGrant reports whether a per-caller grant is needed to run the action.
+	// The kernel exposes these even though the auth config/secrets stay write-only
+	// (R9), so a client can tell an action needs a grant, and of which kind.
+	AuthScheme    string `json:"auth_scheme,omitempty"`
+	RequiresGrant bool   `json:"requires_grant,omitempty"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 // Ref returns "@owner/name" for this action. The kernel now populates the
@@ -135,6 +141,7 @@ type UpdateActionInput struct {
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	Public       *bool           `json:"public,omitempty"`
+	Auth         json.RawMessage `json:"auth,omitempty"`
 }
 
 // Process is a funded computation lifetime. Processes are auto-created by run.
@@ -434,6 +441,14 @@ func (c *Client) StartGrant(ctx context.Context, token, action, redirectURI stri
 // the value from StartGrant.
 func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) error {
 	return c.do(ctx, http.MethodPost, "/v1/grants/complete", token, map[string]string{"state": state, "code": code}, nil)
+}
+
+// ConnectGrant attaches a static per-caller token to a delegated_bearer action
+// (POST /v1/grants) — the non-OAuth grant path. Authenticated as the grantor; the
+// kernel injects the token into the action's configured header on the grantor's
+// calls. Idempotent per (grantor, action): a re-connect overwrites in place.
+func (c *Client) ConnectGrant(ctx context.Context, token, action, staticToken string) error {
+	return c.do(ctx, http.MethodPost, "/v1/grants", token, map[string]string{"action": action, "token": staticToken}, nil)
 }
 
 // DeleteGrant revokes the caller's grant for an action.

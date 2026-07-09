@@ -1,354 +1,308 @@
-// Package daemon is the @chat application: a self-contained Juice user that
-// registers its own free (price-0) actions and projects its own transaction
-// ledger into rooms and messages. It attributes every event by the unforgeable
-// caller_handle (no OAuth, no per-user consent) because it *is* a Juice member.
+// Package daemon is the @chat chat server: a self-contained, Juice-agnostic REST
+// service over a durable store (rooms, membership, an append-only message log,
+// per-user read watermarks). It knows nothing of the kernel, tokens, or grants —
+// caller authentication is *injected* (an auth hook handed to New), so the same
+// service runs standalone behind any auth layer.
 //
-// It runs in-process inside juice-ui (started by the chat plugin's Start), but
-// depends only on the kernel client — it knows nothing about juice-ui or the app
-// seam, so it is independently testable against a live or fake kernel.
+// Two route classes, two audiences:
+//
+//   - Kernel-facing writes (KernelHandler): fixed URLs, args in the JSON body; the
+//     caller is whatever the injected auth hook returns for the request. These are
+//     the @chat/* action sources. They enforce authorization (creator-only admin
+//     ops, member-only posting) and return a real success or failure, synchronously.
+//   - Admin (reached only through the in-process Client): the read/provision
+//     surface — list rooms + unread, read a room, page history, mark read — gated by
+//     the admin secret.
 package daemon
 
 import (
-	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"sort"
-	"sync"
-	"time"
-
-	"github.com/daios-ai/juice-ui/client"
-	"github.com/daios-ai/juice-ui/session"
+	"net/http"
+	"strconv"
 )
 
-// pollInterval is how often the projection folds in new ledger events.
-const pollInterval = 2 * time.Second
+// adminHeader carries the admin secret on the provisioning/read routes.
+const adminHeader = "X-Chat-Admin"
 
-// ---- kernel surface ----
-
-// actionSpec is one @chat action to register: its name and input schema. Every
-// @chat action is a free (price-0) kind=http event emitter pointing at the app's
-// ack endpoint; the real logic is the ledger projection.
-type actionSpec struct {
-	name        string
-	inputSchema string
+// Op is one chat operation exposed as a kernel-facing write route at "/<Name>"
+// and, correspondingly, registered by the plugin as the Juice action
+// "@chat/<Name>". It is the action's full public contract: a natural-language
+// Description plus JSON-Schema args and success response — written to be sufficient
+// for @sys/lookup and LLM function calling (kernel requirements §3).
+type Op struct {
+	Name         string
+	Description  string
+	InputSchema  json.RawMessage
+	OutputSchema json.RawMessage
 }
 
-const outputSchema = `{"type":"object","properties":{"ok":{"type":"boolean","description":"acknowledgement"}}}`
+// Success-response schemas. Business rejections are returned as non-2xx (a run
+// failure, not output-validated), so the schemas describe only the 2xx body.
+const (
+	outOK   = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the operation was applied."}}}`
+	outRoom = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the room was created."},"room_id":{"type":"string","description":"Id of the newly created room; use it to address the room in later calls."}}}`
+	outMsg  = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the message was posted."},"message_id":{"type":"string","description":"Id of the newly posted message; use it to delete the message later."}}}`
+)
 
-// actionSpecs is the chat application's kernel surface.
-var actionSpecs = []actionSpec{
-	{"create-room", `{"type":"object","properties":{"name":{"type":"string","description":"room name"},"members":{"type":"array","items":{"type":"string"},"description":"member handles"}}}`},
-	{"rename-room", `{"type":"object","properties":{"room":{"type":"string","description":"room id"},"name":{"type":"string","description":"new name"}}}`},
-	{"delete-room", `{"type":"object","properties":{"room":{"type":"string","description":"room id"}}}`},
-	{"add-member", `{"type":"object","properties":{"room":{"type":"string","description":"room id"},"member":{"type":"string","description":"handle to add"}}}`},
-	{"remove-member", `{"type":"object","properties":{"room":{"type":"string","description":"room id"},"member":{"type":"string","description":"handle to remove"}}}`},
-	{"leave-room", `{"type":"object","properties":{"room":{"type":"string","description":"room id"}}}`},
-	{"message", `{"type":"object","properties":{"room":{"type":"string","description":"room id"},"text":{"type":"string","description":"message body"}}}`},
-	{"delete-message", `{"type":"object","properties":{"room":{"type":"string","description":"room id"},"message":{"type":"string","description":"message id"}}}`},
+// Ops is the chat server's kernel-facing write surface — the single source of
+// truth for the daemon's routes, the plugin's action registration, and the
+// public action contract.
+var Ops = []Op{
+	{
+		Name:         "create-room",
+		Description:  "Create a chat room — a named conversation the caller owns — and add the given members alongside the caller. Returns the new room's id.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Handles of users to add as members besides the caller, for example @bob and @carol. May be empty."}}}`),
+		OutputSchema: json.RawMessage(outRoom),
+	},
+	{
+		Name:         "rename-room",
+		Description:  "Rename a chat room. Only the room's owner may rename it.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to rename."},"name":{"type":"string","description":"New display name for the room."}}}`),
+		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "delete-room",
+		Description:  "Delete a chat room for everyone. Only the room's owner may delete it.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to delete."}}}`),
+		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "add-member",
+		Description:  "Add a user to a chat room. Only the room's owner may add members.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Handle of the user to add, for example @bob."}}}`),
+		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "remove-member",
+		Description:  "Remove a member from a chat room. Only the room's owner may remove members, and the owner cannot remove themselves.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Handle of the member to remove."}}}`),
+		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "leave-room",
+		Description:  "Leave a chat room you are a member of. The owner cannot leave; they delete the room instead.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to leave."}}}`),
+		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "message",
+		Description:  "Post a message to a chat room. Only a member of the room may post. Returns the new message's id.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to post to."},"text":{"type":"string","description":"The message text to post."}}}`),
+		OutputSchema: json.RawMessage(outMsg),
+	},
+	{
+		Name:         "delete-message",
+		Description:  "Delete a message you sent. Only the message's original sender may delete it.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the message is in."},"message":{"type":"string","description":"Id of the message to delete (as returned by the message action)."}}}`),
+		OutputSchema: json.RawMessage(outOK),
+	},
 }
 
-// actionNameSet is the set of @chat action names, used by the projection to
-// filter the ledger.
-func actionNameSet() map[string]bool {
-	m := make(map[string]bool, len(actionSpecs))
-	for _, s := range actionSpecs {
-		m[s.name] = true
-	}
-	return m
-}
+// Auth identifies the caller of a kernel-facing request (returning ok=false when
+// it can't). It is injected so the daemon stays agnostic about *how* callers are
+// authenticated (juice-ui hands it a stateless-token verifier; a standalone
+// deployment supplies its own).
+type Auth func(r *http.Request) (handle string, ok bool)
 
-// ---- @chat kernel identity ----
-
-// service is the @chat kernel identity: it authenticates as @chat, ensures the
-// chat actions exist, and reads the @chat ledger for the projection. It manages
-// @chat's own token (login + refresh) independent of any user session.
-type service struct {
-	client   *client.Client
-	handle   string // "@chat"
-	password string
-	ackURL   string // absolute URL of the kernel-facing ack endpoint
-
-	mu   sync.Mutex
-	toks client.Tokens
-}
-
-func newService(c *client.Client, handle, password, ackURL string) *service {
-	return &service{client: c, handle: handle, password: password, ackURL: ackURL}
-}
-
-// login authenticates as @chat (creating the account first if absent) and stores
-// the token pair. Uses the same authorization-code+PKCE flow as a browser login.
-func (s *service) login(ctx context.Context) error {
-	// Best-effort create; ignore "already exists". A pre-existing @chat with a
-	// different password will fail the Authorize below (a clear misconfiguration).
-	_, _ = s.client.CreateUser(ctx, s.handle, "chat@juice-ui.local", s.password)
-	verifier, err := session.NewVerifier()
-	if err != nil {
-		return err
-	}
-	code, err := s.client.Authorize(ctx, s.handle, s.password, session.Challenge(verifier))
-	if err != nil {
-		return fmt.Errorf("chat: authorize %s: %w", s.handle, err)
-	}
-	toks, err := s.client.ExchangeCode(ctx, code, verifier)
-	if err != nil {
-		return fmt.Errorf("chat: token exchange: %w", err)
-	}
-	s.mu.Lock()
-	s.toks = toks
-	s.mu.Unlock()
-	return nil
-}
-
-// do runs fn with @chat's access token, refreshing (or re-logging-in) once on an
-// authentication error and retrying.
-func (s *service) do(ctx context.Context, fn func(token string) error) error {
-	s.mu.Lock()
-	tok := s.toks.AccessToken
-	s.mu.Unlock()
-	if tok == "" {
-		if err := s.login(ctx); err != nil {
-			return err
-		}
-		s.mu.Lock()
-		tok = s.toks.AccessToken
-		s.mu.Unlock()
-	}
-	err := fn(tok)
-	if !errors.Is(err, client.ErrUnauthenticated) {
-		return err
-	}
-	if rerr := s.refresh(ctx); rerr != nil {
-		return rerr
-	}
-	s.mu.Lock()
-	tok = s.toks.AccessToken
-	s.mu.Unlock()
-	return fn(tok)
-}
-
-// refresh rotates @chat's token pair, falling back to a full re-login if the
-// refresh token is no longer valid.
-func (s *service) refresh(ctx context.Context) error {
-	s.mu.Lock()
-	rt := s.toks.RefreshToken
-	s.mu.Unlock()
-	nt, err := s.client.Refresh(ctx, rt)
-	if err != nil {
-		return s.login(ctx)
-	}
-	s.mu.Lock()
-	s.toks = nt
-	s.mu.Unlock()
-	return nil
-}
-
-// ensureActions registers, enables, and publishes each chat action that does not
-// already exist under @chat. Idempotent — safe to run on every startup.
-func (s *service) ensureActions(ctx context.Context) error {
-	return s.do(ctx, func(tok string) error {
-		existing, err := s.client.ListActions(ctx, tok, s.handle, "", true)
-		if err != nil {
-			return err
-		}
-		have := map[string]bool{}
-		for _, a := range existing {
-			have[a.Name] = true
-		}
-		for _, spec := range actionSpecs {
-			if have[spec.name] {
-				continue
-			}
-			a, err := s.client.CreateAction(ctx, tok, client.CreateActionInput{
-				Name:         spec.name,
-				Kind:         "http",
-				Source:       s.ackURL,
-				Method:       "POST",
-				Description:  "chat " + spec.name + " event",
-				Price:        0,
-				InputSchema:  json.RawMessage(spec.inputSchema),
-				OutputSchema: json.RawMessage(outputSchema),
-			})
-			if err != nil {
-				return fmt.Errorf("chat: create @chat/%s: %w", spec.name, err)
-			}
-			if err := s.client.EnableAction(ctx, tok, a.ID); err != nil {
-				return fmt.Errorf("chat: enable @chat/%s: %w", spec.name, err)
-			}
-			pub := true
-			if _, err := s.client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &pub}); err != nil {
-				return fmt.Errorf("chat: publish @chat/%s: %w", spec.name, err)
-			}
-		}
-		return nil
-	})
-}
-
-// ---- ledger projection ----
-
-// projector maintains the store as a projection of the @chat transaction ledger.
-// It replays the ledger on the first poll and applies new events on each
-// subsequent poll; Store.Applied makes replays idempotent.
-type projector struct {
-	svc   *service
-	store *Store
-	names map[string]bool
-}
-
-func newProjector(svc *service, store *Store) *projector {
-	return &projector{svc: svc, store: store, names: actionNameSet()}
-}
-
-// poll reads @chat's ledger and applies any chat events not yet projected, in
-// ledger (chronological) order.
-func (p *projector) poll(ctx context.Context) error {
-	var txs []client.Transaction
-	if err := p.svc.do(ctx, func(tok string) error {
-		var e error
-		txs, e = p.svc.client.ListTransactions(ctx, tok, "")
-		return e
-	}); err != nil {
-		return err
-	}
-	var pending []client.Transaction
-	for _, t := range txs {
-		if p.names[t.ActionName] && !p.store.Applied(t.ID) {
-			pending = append(pending, t)
-		}
-	}
-	sort.Slice(pending, func(i, j int) bool {
-		if pending[i].StartedAt != pending[j].StartedAt {
-			return pending[i].StartedAt < pending[j].StartedAt
-		}
-		return pending[i].ID < pending[j].ID
-	})
-	for _, t := range pending {
-		if ev, ok := p.resolve(ctx, t); ok {
-			p.store.Apply(ev)
-		}
-	}
-	return nil
-}
-
-// resolve builds an event from a ledger transaction. The tx list omits the
-// caller, so the unforgeable caller_handle is fetched with tx show (once per
-// event); args come from the list.
-func (p *projector) resolve(ctx context.Context, t client.Transaction) (event, bool) {
-	caller, args := t.CallerHandle, t.Args
-	if caller == "" {
-		var full client.Transaction
-		if err := p.svc.do(ctx, func(tok string) error {
-			var e error
-			full, e = p.svc.client.GetTransaction(ctx, tok, t.ID)
-			return e
-		}); err != nil {
-			return event{}, false
-		}
-		caller = full.CallerHandle
-		if len(args) == 0 {
-			args = full.Args
-		}
-	}
-	if caller == "" {
-		return event{}, false
-	}
-	var a eventArgs
-	_ = json.Unmarshal(args, &a)
-	return event{TxID: t.ID, Action: t.ActionName, Caller: caller, At: t.StartedAt, Args: a}, true
-}
-
-// run polls on an interval until ctx is cancelled (an immediate first poll seeds
-// the store from the ledger).
-func (p *projector) run(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		_ = p.poll(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-// ---- in-process facade ----
-
-// Daemon is the running @chat application: its kernel identity, the projected
-// store, and the projection loop. The chat plugin holds one and reads/writes it
-// via direct Go calls (no HTTP between them).
+// Daemon is the running chat server: the store, an injected caller authenticator,
+// and its two route sets.
 type Daemon struct {
-	svc    *service
-	store  *Store
-	proj   *projector
-	cancel context.CancelFunc
-
-	mu    sync.Mutex
-	ready bool
+	store       *Store
+	adminSecret string
+	auth        Auth
+	kernelMux   *http.ServeMux
+	adminMux    *http.ServeMux
 }
 
-// New builds the @chat application. actionSource is the absolute URL the kernel
-// calls back for each @chat action (juice-ui's /_kernel/chat/ack).
-func New(c *client.Client, handle, password, actionSource string) *Daemon {
-	store := NewStore()
-	svc := newService(c, handle, password, actionSource)
-	return &Daemon{svc: svc, store: store, proj: newProjector(svc, store)}
+// New wraps an open store into a chat server. auth authenticates callers on the
+// kernel-facing write routes; adminSecret gates the admin read routes.
+func New(store *Store, adminSecret string, auth Auth) *Daemon {
+	d := &Daemon{store: store, adminSecret: adminSecret, auth: auth}
+	d.routes()
+	return d
 }
 
-// Start brings the app up in the background: authenticate as @chat (retrying
-// until the kernel is reachable), ensure the actions exist, then run the ledger
-// projection until Stop. Backgrounded so juice-ui starts even when the kernel is
-// briefly unavailable.
-func (d *Daemon) Start(ctx context.Context) {
-	bg, cancel := context.WithCancel(context.Background())
-	d.cancel = cancel
-	go func() {
-		for {
-			if err := d.svc.login(bg); err == nil {
-				break
-			}
-			select {
-			case <-bg.Done():
-				return
-			case <-time.After(3 * time.Second):
-			}
-		}
-		if err := d.svc.ensureActions(bg); err != nil {
+// Close releases the store.
+func (d *Daemon) Close() error { return d.store.Close() }
+
+// KernelHandler is the kernel-facing write surface, mounted by the plugin under
+// the CSRF-exempt /_kernel/chat/ prefix so the kernel can call it server-to-server.
+func (d *Daemon) KernelHandler() http.Handler { return d.kernelMux }
+
+// kargs holds the decoded fields across all write actions (only the relevant
+// ones are set per action).
+type kargs struct {
+	Name    string   `json:"name"`
+	Members []string `json:"members"`
+	Room    string   `json:"room"`
+	Text    string   `json:"text"`
+	Member  string   `json:"member"`
+	Message string   `json:"message"`
+}
+
+func (d *Daemon) routes() {
+	d.kernelMux = http.NewServeMux()
+	d.kernelMux.HandleFunc("POST /create-room", d.write(func(caller string, a kargs) (map[string]any, error) {
+		r, err := d.store.CreateRoom(caller, a.Name, a.Members)
+		return map[string]any{"ok": true, "room_id": r.ID}, err
+	}))
+	d.kernelMux.HandleFunc("POST /rename-room", d.write(func(caller string, a kargs) (map[string]any, error) {
+		return okBody(), d.store.RenameRoom(caller, a.Room, a.Name)
+	}))
+	d.kernelMux.HandleFunc("POST /delete-room", d.write(func(caller string, a kargs) (map[string]any, error) {
+		return okBody(), d.store.DeleteRoom(caller, a.Room)
+	}))
+	d.kernelMux.HandleFunc("POST /add-member", d.write(func(caller string, a kargs) (map[string]any, error) {
+		return okBody(), d.store.AddMember(caller, a.Room, a.Member)
+	}))
+	d.kernelMux.HandleFunc("POST /remove-member", d.write(func(caller string, a kargs) (map[string]any, error) {
+		return okBody(), d.store.RemoveMember(caller, a.Room, a.Member)
+	}))
+	d.kernelMux.HandleFunc("POST /leave-room", d.write(func(caller string, a kargs) (map[string]any, error) {
+		return okBody(), d.store.LeaveRoom(caller, a.Room)
+	}))
+	d.kernelMux.HandleFunc("POST /message", d.write(func(caller string, a kargs) (map[string]any, error) {
+		m, err := d.store.PostMessage(caller, a.Room, a.Text)
+		return map[string]any{"ok": true, "message_id": m.ID}, err
+	}))
+	d.kernelMux.HandleFunc("POST /delete-message", d.write(func(caller string, a kargs) (map[string]any, error) {
+		return okBody(), d.store.DeleteMessage(caller, a.Room, a.Message)
+	}))
+
+	d.adminMux = http.NewServeMux()
+	d.adminMux.HandleFunc("GET /admin/rooms", d.admin(d.listRooms))
+	d.adminMux.HandleFunc("GET /admin/rooms/{id}", d.admin(d.getRoom))
+	d.adminMux.HandleFunc("GET /admin/rooms/{id}/history", d.admin(d.getHistory))
+	d.adminMux.HandleFunc("POST /admin/rooms/{id}/read", d.admin(d.markRead))
+	d.adminMux.HandleFunc("GET /admin/unread", d.admin(d.getUnread))
+}
+
+// ---- kernel-facing writes ----
+
+// write adapts a store operation into an authenticated handler: identify the
+// caller via the injected auth hook, decode args, apply, and render a real success
+// or typed failure.
+func (d *Daemon) write(op func(caller string, a kargs) (map[string]any, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		caller, ok := d.auth(r)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthenticated caller"})
 			return
 		}
-		d.setReady(true)
-		d.proj.run(bg, pollInterval)
-	}()
-}
-
-// Stop halts the projection and background work.
-func (d *Daemon) Stop() {
-	if d.cancel != nil {
-		d.cancel()
+		var a kargs
+		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad request body"})
+			return
+		}
+		body, err := op(caller, a)
+		if err != nil {
+			writeJSON(w, statusFor(err), map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
 	}
 }
 
-// Poll folds the latest ledger events into the store now, so a write is visible
-// on the read that follows it.
-func (d *Daemon) Poll(ctx context.Context) error { return d.proj.poll(ctx) }
+// ---- admin (provisioning + reads) ----
 
-// Ready reports whether the app has authenticated and registered its actions.
-func (d *Daemon) Ready() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.ready
+// admin gates a handler on the admin secret (constant-time compare).
+func (d *Daemon) admin(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get(adminHeader)
+		if subtle.ConstantTimeCompare([]byte(got), []byte(d.adminSecret)) != 1 {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		h(w, r)
+	}
 }
 
-func (d *Daemon) setReady(v bool) {
-	d.mu.Lock()
-	d.ready = v
-	d.mu.Unlock()
+func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
+	rooms, err := d.store.RoomsFor(r.URL.Query().Get("handle"))
+	if err != nil {
+		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		return
+	}
+	if rooms == nil {
+		rooms = []Room{}
+	}
+	writeJSON(w, http.StatusOK, rooms)
 }
 
-// Rooms returns the rooms handle is a member of, newest first.
-func (d *Daemon) Rooms(handle string) []Room { return d.store.RoomsFor(handle) }
+func (d *Daemon) getRoom(w http.ResponseWriter, r *http.Request) {
+	room, msgs, err := d.store.Room(r.URL.Query().Get("handle"), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		return
+	}
+	if msgs == nil {
+		msgs = []Message{}
+	}
+	writeJSON(w, http.StatusOK, roomView{Room: room, Messages: msgs})
+}
 
-// Room returns a room and its messages for a member; ok is false if missing,
-// deleted, or handle is not a member.
-func (d *Daemon) Room(id, handle string) (Room, []Message, bool) { return d.store.Room(id, handle) }
+func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	msgs, err := d.store.History(r.URL.Query().Get("handle"), r.PathValue("id"), before, limit)
+	if err != nil {
+		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		return
+	}
+	if msgs == nil {
+		msgs = []Message{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
+func (d *Daemon) markRead(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Seq int64 `json:"seq"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if err := d.store.MarkRead(r.URL.Query().Get("handle"), r.PathValue("id"), in.Seq); err != nil {
+		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, okBody())
+}
+
+func (d *Daemon) getUnread(w http.ResponseWriter, r *http.Request) {
+	n, err := d.store.UnreadTotal(r.URL.Query().Get("handle"))
+	if err != nil {
+		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": n})
+}
+
+// roomView is the admin read shape for a single room.
+type roomView struct {
+	Room     Room      `json:"room"`
+	Messages []Message `json:"messages"`
+}
+
+// ---- helpers ----
+
+func okBody() map[string]any { return map[string]any{"ok": true} }
+
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrForbidden), errors.Is(err, ErrNotMember):
+		return http.StatusForbidden
+	case errors.Is(err, ErrBadInput):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}

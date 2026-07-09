@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -527,6 +528,57 @@ func TestUserShowsGrants(t *testing.T) {
 	}
 	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="@sys/gmail-send"`) {
 		t.Error("/user must offer a disconnect for each grant")
+	}
+}
+
+// TestGrantConnectPostsToken checks the delegated_bearer static-token path: the
+// handler forwards {action, token} to POST /v1/grants and returns the user to the
+// page they connected from (the Referer).
+func TestGrantConnectPostsToken(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	var mu sync.Mutex
+	var gotBody string
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/grants" {
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			gotBody = string(b)
+			mu.Unlock()
+			w.Write([]byte(`{"status":"connected"}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r) // delegate login/dashboard reads to authKernel
+	}))
+	defer wrap.Close()
+
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/user"))
+	form := url.Values{"action": {"@lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", srv.URL+"/actions/abc") // connected from an action page
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/actions/abc" {
+		t.Errorf("redirected to %q, want /actions/abc (back to the originating action)", loc)
+	}
+	mu.Lock()
+	got := gotBody
+	mu.Unlock()
+	if !strings.Contains(got, `"action":"@lena/api"`) || !strings.Contains(got, `"token":"PAT-123"`) {
+		t.Errorf("kernel /v1/grants body = %s", got)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -67,6 +68,7 @@ type NavEntry struct {
 	Icon   template.HTML // inline <svg class="ico">…</svg> markup, app-provided
 	Match  string        // path prefix for the active state, e.g. "/chat"
 	Active bool          // computed by the core against the request path
+	Badge  int           // app-scoped attention count (e.g. unread); rendered only when > 0
 }
 
 // Deps is the core capability surface handed to a app at Mount time. It
@@ -123,4 +125,14 @@ type Deps struct {
 	// actions builds their callback source from it, under the CSRF-exempt
 	// /_kernel/ prefix (e.g. PublicURL + "/_kernel/<slug>/ack").
 	PublicURL string
+
+	// ConfigPath is the path to juice-ui.json (the persisted app-config file), or
+	// "" when app config is in-memory (tests). An app that keeps a durable
+	// side-file (e.g. a database) places it beside this path, and should fall back
+	// to an ephemeral/in-memory store when it is empty, so tests write no files.
+	ConfigPath string
+
+	// Logger is the core's structured logger, for an app's background work (e.g.
+	// service-account provisioning). May be nil in tests.
+	Logger *slog.Logger
 }

@@ -57,7 +57,14 @@
   <form method="post" action="/grants/start" class="row compact">
     {{.CSRFField}}
     <input type="hidden" name="action" value="{{.ActionRef}}">
-    <button class="btn" type="submit">Connect {{template "_ref" .ActionRef}}</button>
+    <button class="btn" type="submit">Connect with your browser</button>
+  </form>
+  <p class="muted small">…or, if the action uses a personal access token / API key:</p>
+  <form method="post" action="/grants/connect" class="row compact">
+    {{.CSRFField}}
+    <input type="hidden" name="action" value="{{.ActionRef}}">
+    <input type="password" name="token" class="stretch" placeholder="Paste an access token" autocomplete="off" aria-label="Access token">
+    <button class="btn" type="submit">Connect token</button>
   </form>
 </div>
 {{else}}

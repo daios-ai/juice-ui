@@ -12,7 +12,7 @@
   <tbody>
   {{range $d.Rooms}}
   <tr class="rowable" tabindex="-1" data-href="/chat/room/{{.ID}}">
-    <td><a href="/chat/room/{{.ID}}">{{.Name}}</a></td>
+    <td><a href="/chat/room/{{.ID}}">{{.Name}}</a>{{if .Unread}} <span class="badge">{{.Unread}}</span>{{end}}</td>
     <td class="muted small">{{len .Members}} members</td>
   </tr>
   {{else}}

@@ -333,7 +333,7 @@ split on the first `/`.
 | `.banner` (`-info`/`-error`) | inline notice |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
-| `.badge` | round, accent, **only** on the `step` nav — the sole async attention signal |
+| `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `step` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact |
 
 ### 5.11 Federation (peers)
 
@@ -378,7 +378,8 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
 - **Copy is rationed (§3 Copy discipline):** subtitles orient in one phrase; no
   sentence narrates kernel/control behavior; disclosures appear once, at the point
   of consequence. Empty states and `help` name the thing, they don't lecture.
-- One `aria-live` region; the `step` badge is the only async attention signal;
+- One `aria-live` region; the `step` badge is the only async attention signal in
+  the core surface (an app MAY add its own app-scoped nav badge, e.g. chat unread);
   no notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
   WCAG AA (theme test).

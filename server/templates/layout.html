@@ -49,7 +49,7 @@
         </a>
         <a href="/user" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl">user</span></a>
         {{range .AppNav}}
-        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Icon}}<span class="lbl">{{.Label}}</span></a>
+        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
         {{end}}
         {{if .IsSuperuser}}
         <a href="/admin" title="Admin"{{if eq .Active "admin"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg><span class="lbl">admin</span></a>
@@ -98,7 +98,7 @@
     <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>tx</span></a>
     <a href="/user" class="tab" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span>user</span></a>
     {{range .AppNav}}
-    <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{.Icon}}<span>{{.Label}}</span></a>
+    <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span>{{.Label}}</span></a>
     {{end}}
   </nav>
   {{end}}

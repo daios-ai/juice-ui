@@ -270,6 +270,11 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 	if !strings.Contains(body, "Connect") || strings.Contains(body, "failed") {
 		t.Error("grant_required must read as a Connect affordance, not a failure")
 	}
+	// Both schemes are offered (the UI can't know which the action uses): the OAuth
+	// browser flow AND a masked delegated_bearer token form.
+	if !strings.Contains(body, `action="/grants/connect"`) || !strings.Contains(body, `type="password"`) {
+		t.Errorf("grant_required must also offer a masked token connect form: %s", body)
+	}
 }
 
 // TestCallOutcomeFailedStatesRefundOnce guards the de-duplicated failure panel: the

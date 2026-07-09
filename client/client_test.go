@@ -163,6 +163,21 @@ func TestGrantMethods(t *testing.T) {
 	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "action=%40sys%2Fgmail-send") {
 		t.Errorf("delete = %s %s", f.lastMethod, f.lastPath)
 	}
+
+	// ConnectGrant posts a static per-caller token to /v1/grants as the grantor.
+	f.reply = `{"status":"connected"}`
+	if err := f.client().ConnectGrant(context.Background(), "tok", "@chat/message", "KEY123"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "POST" || f.lastPath != "/v1/grants" {
+		t.Errorf("connect = %s %s", f.lastMethod, f.lastPath)
+	}
+	if !strings.Contains(string(f.lastBody), `"action":"@chat/message"`) || !strings.Contains(string(f.lastBody), `"token":"KEY123"`) {
+		t.Errorf("connect body = %s", f.lastBody)
+	}
+	if f.lastAuth != "Bearer tok" {
+		t.Errorf("ConnectGrant must send the access token, got %q", f.lastAuth)
+	}
 }
 
 func TestStepDecodesCreatedBy(t *testing.T) {
@@ -333,13 +348,18 @@ func TestActionHTTPUnmarshal(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	// kind=http single read carries the decomposed http object (verified live).
-	f.reply = `{"id":"a1","name":"weather","kind":"http","http":{"method":"GET","url":"https://api.x/{city}","params":[{"name":"city","in":"path"},{"name":"units","in":"query"}]}}`
+	f.reply = `{"id":"a1","name":"weather","kind":"http","auth_scheme":"delegated_bearer","requires_grant":true,"http":{"method":"GET","url":"https://api.x/{city}","params":[{"name":"city","in":"path"},{"name":"units","in":"query"}]}}`
 	a, err := f.client().GetAction(context.Background(), "tok", "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a.HTTP == nil {
 		t.Fatal("HTTP must be populated for kind=http")
+	}
+	// The kernel reports the auth scheme + grant requirement (auth config stays
+	// write-only).
+	if a.AuthScheme != "delegated_bearer" || !a.RequiresGrant {
+		t.Errorf("auth fields = %q %v, want delegated_bearer true", a.AuthScheme, a.RequiresGrant)
 	}
 	if a.HTTP.Method != "GET" || a.HTTP.URL != "https://api.x/{city}" {
 		t.Errorf("http = %+v", a.HTTP)
@@ -398,5 +418,33 @@ func TestCreateActionMarshalsMethodParams(t *testing.T) {
 	}
 	if strings.Contains(string(f.lastBody), `"method"`) || strings.Contains(string(f.lastBody), `"params"`) {
 		t.Errorf("empty method/params must be omitted: %s", f.lastBody)
+	}
+}
+
+func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"id":"a1","name":"x","kind":"http"}`
+	src := "https://ui/_kernel/chat/message"
+	pub := true
+	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{
+		Source: &src, Method: "POST", Auth: json.RawMessage(`{"scheme":"delegated_bearer"}`), Public: &pub,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := string(f.lastBody)
+	if f.lastMethod != "PUT" || !strings.Contains(body, `"source":"https://ui/_kernel/chat/message"`) {
+		t.Errorf("update body = %s (%s)", body, f.lastMethod)
+	}
+	if !strings.Contains(body, `"auth":{"scheme":"delegated_bearer"}`) {
+		t.Errorf("auth not sent in update: %s", body)
+	}
+	// omitempty: an update with no auth omits the field.
+	f.reply = `{"id":"a1","name":"x","kind":"http"}`
+	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{Public: &pub}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(f.lastBody), `"auth"`) {
+		t.Errorf("empty auth must be omitted: %s", f.lastBody)
 	}
 }
