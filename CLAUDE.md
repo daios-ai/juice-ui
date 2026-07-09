@@ -27,3 +27,16 @@
 - Follow the visual UI grammar. Never implement inline styling,
   always focus on reusable components.
   
+
+Answering questions
+===================
+
+In all your answers:
+
+- use academic prose and tone
+- be concise and direct
+- never beat around the bush, never use theatricals
+- do not introduce vague nomenclature, stick to what's being used
+  or to what's standard in the literature
+- always provide logical or mathematical justification.
+

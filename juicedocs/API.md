@@ -112,9 +112,10 @@ Federation has no HTTP surface: peer identity, gossip, manifests, the friend han
 |-----------|------|-----|
 | Start consent | `POST /v1/grants/start` `{action, [redirect_uri], [flow]}` → `{state, authorize_url}` (code) or `{state, verification_uri, user_code, interval, expires_in}` (device) | `juice user connect <action> [--device]` |
 | Complete consent | `POST /v1/grants/complete` `{state, [code]}` → `{status, action, created_at}` or `{status: "pending"}` | (driven by `user connect`) |
+| Attach token | `POST /v1/grants` `{action, token}` → `{status, action, created_at}` | `juice user connect <action> --token <pat>` |
 | Disconnect | `DELETE /v1/grants?action=@owner/name` → `{revoked, action}` | `juice user disconnect <action>` |
 
-A `Grant` delegates the caller's upstream OAuth identity to one `oauth_delegated` action (§8). The client hosts the redirect target — a loopback listener for local clients (CLI/desktop), a registered callback for hosted ones — and the server holds only in-memory PKCE/device state and performs the token exchange, so the refresh token never transits the client. Running an action that lacks a grant returns `grant_required` (403) with the action in `meta`, so a client can offer consent inline; the CLI (`juice run`) does exactly that on an interactive terminal and otherwise prints a `juice user connect` hint. Grants are listed token-free under `grants` in `GET /v1/me` and are never otherwise readable.
+A `Grant` delegates the caller's upstream identity to one delegated action (§8). For an `oauth_delegated` action the client hosts the redirect target — a loopback listener for local clients (CLI/desktop), a registered callback for hosted ones — and the server holds only in-memory PKCE/device state and performs the token exchange, so the refresh token never transits the client. For a `delegated_bearer` action there is no browser roundtrip: the caller supplies a static token (a personal access token / per-user API key) once via `POST /v1/grants`, and the CLI's `--token` reads it without echo when the flag value is empty (keeping it out of shell history). Running an action that lacks a grant returns `grant_required` (403) with the action in `meta`, so a client can offer consent inline; the CLI (`juice run`) does exactly that on an interactive terminal and otherwise prints a `juice user connect` hint. Grants are listed token-free under `grants` in `GET /v1/me` and are never otherwise readable.
 
 ### Actions
 
@@ -133,6 +134,21 @@ A `Grant` delegates the caller's upstream OAuth identity to one `oauth_delegated
 | List ratings | `GET /v1/actions/{id}/ratings` → rating[] | — |
 
 `<action>` is `@owner/name` (a raw id is also accepted). Action responses (show and list) include a computed `action` field (`@owner/name`) alongside `id`, plus the full `input_schema` and `output_schema` — the CLI text view shows the same fields the JSON returns. `price` is the subtree bound: the maximum total cost of the action and everything it calls. `auth` is the upstream credential config `{scheme, config, secrets}` (R9: write-only, never returned).
+
+The `auth` object is `{scheme, config, secrets}`; valid schemes and their keys (semantics in requirements.md §8):
+
+| `scheme` | `config` | `secrets` | per-caller credential |
+|----------|----------|-----------|-----------------------|
+| `header` | `name` | `value` | — |
+| `query` | `name` | `value` | — |
+| `bearer` | — | `token` | — |
+| `basic` | — | `username`, `password` | — |
+| `oauth_client_credentials` | `token_url`, `client_id` | `client_secret` | — |
+| `oauth_jwt_bearer` | `token_url`, `client_id` | `private_key` | — |
+| `oauth_delegated` | `auth_url`, `token_url`, `client_id`, opt. `device_auth_url`, `scopes`, `client_secret` | — | `user connect` |
+| `delegated_bearer` | opt. `header`, `template` (default `Authorization` / `Bearer {token}`) | — | `user connect --token` |
+
+The per-caller schemes hold no secret in `auth`; each caller supplies their credential through the Grants surface above, and a call with no grant returns `grant_required` (403). Actions imported from OpenAPI carry no `auth`: set it via `PUT /v1/actions/{id}` before activating.
 
 ### Run
 
@@ -174,7 +190,7 @@ Remote-proxy transactions include `remote_receipt_hash` and `remote_receipt_json
 | Show step | `GET /v1/steps/{id}` → step (incl. `created_by`) | `juice step show <id>` |
 | Complete step | `POST /v1/steps/{id}/complete` `{args}` → `{result, tx_id, trace_id, step_id}` | `juice step complete <id> [json]` |
 
-A step is a funded continuation: creation snapshots the action's price as `step.price` and parks it from `trace_id`; the process is derived from `Trace(trace_id).process_id`. Completion spends the parked price — no funds check occurs, and the completion's allocation and transaction `gross` are `step.price`. `required_caller` is a `@handle`; the server resolves it to `required_caller_user_id`. Step listing returns the caller's own steps (as process owner or required caller), or all of them for a superuser. `status` filter accepts `waiting`, `running`, `done`, or `cancelled`. The `args` field in the complete request is merged with the step's `partial_args` (completion `args` overwrites on key collision); the allowed completion input is derived as `action.input_schema \ keys(partial_args)` — a violation rejects the completion and leaves the step `waiting`, never recorded as an action failure. Step read and list responses include `price`, `action_id`, a computed `action` field (`@owner/name`), `required_caller_handle` (the required caller as a `@handle`, not the raw `required_caller_user_id`), and `waiting_on_peer` on a waiting step whose required caller is a peer. An outstanding step keeps its process open.
+A step is a funded continuation: creation snapshots the action's price as `step.price` and parks it from `trace_id`; the process is derived from `Trace(trace_id).process_id`. Completion spends the parked price — no funds check occurs, and the completion's allocation and transaction `gross` are `step.price`. `required_caller` is a `@handle`; the server resolves it to `required_caller_user_id`. Step listing returns the caller's own steps (as process owner or required caller), or all of them for a superuser. `status` filter accepts `waiting`, `running`, `done`, or `cancelled`. The `args` field in the complete request is merged with the step's `partial_args` (completion `args` overwrites on key collision); the allowed completion input is derived as `action.input_schema \ keys(partial_args)` — a violation rejects the completion and leaves the step `waiting`, never recorded as an action failure. Step read and list responses include `price`, `action_id`, a computed `action` field (`@owner/name`), `owner_handle` (the process owner / payer as a `@handle`, mirroring a transaction's `owner_handle` — the step settles into that owner's transaction), `required_caller_handle` (the required caller as a `@handle`, not the raw `required_caller_user_id`), `waiting_on_peer` on a waiting step whose required caller is a peer, and `allowed_input` on a waiting step — the derived completion schema (`action.input_schema \ keys(partial_args)`) so the required caller can complete it without separately reading the target action (which, when private, they may not be able to read). An outstanding step keeps its process open.
 
 ### System Actions
 
