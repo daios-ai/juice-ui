@@ -1,9 +1,9 @@
 # Juice Web UI Requirements
 
-Version: 0.5
+Version: 0.2.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.5.** The interface is reorganised so its navigation
+> **What changed in 0.2.0.** The interface is reorganised so its navigation
 > **mirrors the juice CLI command hierarchy** (`run`, `action`, `process`, `tx`,
 > `step`, `user`, and a superuser-only `admin`) instead of four fixed rooms. The
 > visual language becomes a **crisp terminal**: a monospace UI face and multiple
@@ -13,7 +13,7 @@ Status: design draft — endpoint surface gated against the running kernel
 > modal forms** with a no-JS `?form=` fallback, and the whole surface is
 > **keyboard-navigable** (a Ctrl/Cmd+K command palette plus vim-style shortcuts).
 > Admin/supervision is now **in scope**, gated to the `@sys` superuser, because
-> the kernel exposes it over HTTP (`/control/*`). Invariants that predate 0.5 —
+> the kernel exposes it over HTTP (`/control/*`). Invariants that predate 0.2.0 —
 > the BFF architecture, session/token rules, spend-button discipline, inert
 > counterparty rendering, the single aria-live region, monospace tabular money,
 > the CSP, and the test discipline — are unchanged.
