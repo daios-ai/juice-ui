@@ -85,16 +85,17 @@ detectable.
   client/         typed kernel HTTP API client and error mapping
   session/        server-side sessions, token lifecycle, PKCE state, CSRF
   server/         router, middleware, request handlers, rendering
+  apps/           self-contained app modules behind one seam (e.g. apps/chat)
   templates/      HTML templates (not Go; no test file required)
   static/         CSS and client scripts (not Go; no test file required)
   ```
 
 * Always test a new or updated feature against a live kernel (start a throwaway
   one if needed; clean up after).
-* Configuration loads from environment variables with safe local defaults. At
-  minimum: kernel API base URL (default `http://127.0.0.1:4040`), the UI listen
-  address, and a session secret. Commit no secrets. Reject invalid startup
-  configuration clearly.
+* Configuration loads from an optional JSON config file overlaid by environment
+  variables (env wins), over safe local defaults. At minimum: kernel API base URL
+  (default `http://127.0.0.1:4040`), the UI listen address, and a session secret.
+  Commit no secrets. Reject invalid startup configuration clearly.
 * Technology stack (standard-library-first; dependencies only where hand-rolling
   would be a correctness or security risk):
   * **Routing:** stdlib `net/http` ServeMux (Go 1.22+ method/pattern routing,
@@ -103,8 +104,8 @@ detectable.
     htmx swap fragments.
   * **Interactivity:** **htmx** plus small vanilla ES modules — no build step, no
     Node, no SPA framework. Handlers return HTML fragments; htmx performs swaps
-    and the inbox-badge polling. Vanilla JS is limited to the schema→form
-    renderer and the theme toggle.
+    and the nav-badge polling (on a configurable interval). Vanilla JS is limited
+    to the schema→form renderer, the theme toggle, and a tab-visibility signal.
   * **Styling:** hand-written CSS driven by the design tokens. No CSS framework,
     no build pipeline.
   * **Sessions:** `alexedwards/scs` for server-side token storage.
@@ -213,10 +214,12 @@ detectable.
 * Mobile MUST reflow the same layout: the sidebar becomes a fixed bottom tab bar
   (the primary groups, step badge intact), with secondary items (theme, account,
   logout) in a drawer.
-* The step badge MUST be the only attention-demanding affordance in the UI. It
-  MUST reflect waiting steps for the signed-in user, sourced from a single
-  server-side poll of `GET /v1/steps?status=waiting` per session (a per-session
-  cache), fanned out to open tabs — not one polling loop per tab.
+* The step badge MUST be the only attention-demanding affordance in the **core**
+  UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
+  its nav entry. It MUST reflect waiting steps for the signed-in user, sourced from
+  a single server-side poll of `GET /v1/steps?status=waiting` per session (a
+  per-session cache whose TTL matches the configured badge poll interval), fanned
+  out to open tabs — not one polling loop per tab.
 * All create and edit operations MUST open **floating modal forms** — native
   `<dialog>` elements opened client-side with `showModal()`. Each modal trigger
   MUST also be a real link (`?form=NAME`); without JavaScript the server renders
@@ -444,8 +447,9 @@ open (parked steps), the result MUST say so and link to the Wallet.
   outcomes render in place. The UI MUST provide exactly one polite `aria-live`
   region for ephemeral acknowledgement of the user's own just-completed action
   (e.g. "Action disabled," "Copied," the 429 "slow down"): no history, no
-  stacking, no counterparty text, auto-dismissing. The Inbox badge is the sole
-  async attention signal.
+  stacking, no counterparty text, auto-dismissing. The step badge is the sole
+  async attention signal in the core surface; an app MAY add its own app-scoped
+  nav badge.
 * **CSS grammar.** All visual decisions MUST live in named CSS classes in
   `app.css`; inline `style="..."` attributes are forbidden in templates. Utilities
   (`.small`, `.tiny`, `.flush`, `.stretch`, `.input-sm`, `.row.compact`, etc.)
