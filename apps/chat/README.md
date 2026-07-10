@@ -56,25 +56,28 @@ injected auth hook (`CallerIdentity.Authenticate`) recovers the caller's handle.
 
 ## The daemon's two REST surfaces
 
-- **Kernel-facing writes** (`KernelHandler`, mounted by the plugin under the
+- **Kernel-facing actions** (`KernelHandler`, mounted by the plugin under the
   CSRF-exempt `/_kernel/chat/` prefix). Fixed URLs, args in the JSON body,
   per-caller auth injected by the kernel. These are the `Ops`:
 
-  `create-room · rename-room · delete-room · add-member · remove-member ·
-  leave-room · message · delete-message`
+  `create-room · delete-room · add-member · remove-member · leave-room ·
+  message · delete-message · inbox`
 
-  `Ops` is the single source of truth: the daemon's routes, the plugin's Juice
-  action registration (`@chat/<name>`), and each action's public contract
-  (description + JSON-Schema args and success response, written to satisfy
-  `@sys/lookup` and LLM function calling).
+  Seven are writes; **`inbox`** is the read half of the channel — it returns the
+  caller's rooms (with unread counts) and their unseen messages, marking them seen
+  (consume-on-read), so a headless Juice client can *receive*, not only send. `Ops`
+  is the single source of truth: the daemon's routes, the plugin's Juice action
+  registration (`@chat/<name>`), and each action's public contract (description +
+  JSON-Schema args and result, written to satisfy `@sys/lookup` and LLM function
+  calling).
 
 - **Admin reads** (`admin/*`, authenticated by a shared secret): `rooms`,
-  `rooms/{id}`, `rooms/{id}/history`, `rooms/{id}/read`, `unread`. The plugin uses
-  these to render the UI; they are never exposed to the browser directly.
-
-Reads go through the plugin, not the kernel — "lightweight but solid": no
-full-ledger scans, incremental message reads, and a per-user read watermark that
-drives unread counts.
+  `rooms/{id}`, `rooms/{id}/history`, `rooms/{id}/read`, `unread`. These are the
+  plugin's in-process transport for rendering the web UI (room list, scrollback,
+  the unread badge) — plumbing, not a capability. The rule the boundary enforces: a
+  *capability* (send, receive) must be a Juice action; an endpoint that only renders
+  already-delivered content (e.g. `history` scrollback) may stay admin-only. So the
+  comms loop is fully action-reachable, and the UI's reads ride a private surface.
 
 ## Browser routes (mounted by the plugin)
 

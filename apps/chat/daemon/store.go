@@ -55,6 +55,9 @@ type Message struct {
 	From string `json:"from"` // @handle of the sender (unforgeable — the kernel-injected key)
 	Text string `json:"text"`
 	At   string `json:"at"`
+	// RoomID is set only by Inbox (which spans rooms), so a caller can address a
+	// reply; omitted by the per-room reads where the room is already known.
+	RoomID string `json:"room_id,omitempty"`
 }
 
 const schema = `
@@ -169,18 +172,6 @@ func (s *Store) requireCreator(actor, roomID string) (Room, error) {
 		return Room{}, ErrForbidden
 	}
 	return r, nil
-}
-
-// RenameRoom renames a room; creator only.
-func (s *Store) RenameRoom(actor, roomID, name string) error {
-	if name == "" {
-		return ErrBadInput
-	}
-	if _, err := s.requireCreator(actor, roomID); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`UPDATE rooms SET name = ? WHERE id = ?`, name, roomID)
-	return err
 }
 
 // DeleteRoom soft-deletes a room; creator only.
@@ -442,11 +433,86 @@ func (s *Store) MarkRead(viewer, roomID string, seq int64) error {
 	if !s.isMember(roomID, viewer) {
 		return ErrNotMember
 	}
+	return s.bumpRead(viewer, roomID, seq)
+}
+
+// bumpRead advances the watermark without the member/live checks (callers that
+// already established membership, e.g. Inbox). A watermark never moves backwards.
+func (s *Store) bumpRead(viewer, roomID string, seq int64) error {
 	_, err := s.db.Exec(`
 		INSERT INTO reads(handle, room_id, watermark) VALUES(?,?,?)
 		ON CONFLICT(handle, room_id) DO UPDATE SET watermark = MAX(watermark, excluded.watermark)`,
 		viewer, roomID, seq)
 	return err
+}
+
+// Inbox is the receive half of the chat channel for a non-UI Juice caller: it
+// returns viewer's rooms (with their unread counts) and every message across those
+// rooms that viewer has not yet seen — from others, above the per-room read
+// watermark — then advances the watermark past what it returns. Consume-on-read: a
+// later call yields only newly-arrived messages. Each room's batch is bounded to
+// recentWindow, so a flood pages across calls (the watermark advances only over
+// what was returned); messages remain in history regardless.
+func (s *Store) Inbox(viewer string) ([]Room, []Message, error) {
+	rooms, err := s.RoomsFor(viewer)
+	if err != nil {
+		return nil, nil, err
+	}
+	var msgs []Message
+	for i := range rooms {
+		if rooms[i].Unread == 0 {
+			continue // nothing unseen from others here
+		}
+		batch, err := s.unseen(viewer, rooms[i].ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		for j := range batch {
+			batch[j].RoomID = rooms[i].ID
+		}
+		msgs = append(msgs, batch...)
+		if err := s.bumpRead(viewer, rooms[i].ID, batch[len(batch)-1].Seq); err != nil {
+			return nil, nil, err
+		}
+	}
+	return rooms, msgs, nil
+}
+
+// unseen returns up to recentWindow non-deleted messages in roomID from senders
+// other than viewer, above viewer's watermark, oldest-first.
+func (s *Store) unseen(viewer, roomID string) ([]Message, error) {
+	rows, err := s.db.Query(`SELECT id, seq, sender, text, at FROM messages
+		WHERE room_id = ? AND deleted = 0 AND sender <> ?
+		  AND seq > COALESCE((SELECT watermark FROM reads WHERE handle = ? AND room_id = ?), 0)
+		ORDER BY seq LIMIT ?`, roomID, viewer, viewer, roomID, recentWindow)
+	if err != nil {
+		return nil, err
+	}
+	return scanMessages(rows) // already oldest-first (ORDER BY seq ASC)
+}
+
+// MemberHandles returns the distinct handles that are members of any live room —
+// the set of users the plugin must hold kernel grants for (so a headless member can
+// call the actions without a UI visit).
+func (s *Store) MemberHandles() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT mem.handle FROM members mem
+		JOIN rooms r ON r.id = mem.room_id AND r.deleted = 0 ORDER BY mem.handle`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 // ---- helpers ----

@@ -334,6 +334,29 @@ func TestEnsureActionsReconcilesStaleSchema(t *testing.T) {
 	}
 }
 
+// TestEnsureActionsRetiresOrphans checks that an active @chat action no longer in
+// Ops (e.g. the removed rename-room) is disabled — so the catalog never advertises
+// an action whose daemon route is gone.
+func TestEnsureActionsRetiresOrphans(t *testing.T) {
+	f := newFakeKernel(fakeAction{ID: "orphan", Name: "rename-room", Active: true, Public: true,
+		URL: "http://localhost:8080/_kernel/chat/rename-room"})
+	defer f.close()
+	c := New()
+	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.st.AuthRev = authRev()
+	if err := c.ensureActions(context.Background()); err != nil {
+		t.Fatalf("ensureActions: %v", err)
+	}
+	if !f.disabled("orphan") {
+		t.Error("orphaned rename-room action not disabled")
+	}
+	// The current ops were all missing, so each was created (none disabled).
+	if got := f.createdCount(); got != len(daemon.Ops) {
+		t.Errorf("created %d, want %d (all current ops)", got, len(daemon.Ops))
+	}
+}
+
 // ---- fake kernel for action reconciliation ----
 
 type fakeAction struct {
@@ -361,18 +384,19 @@ func (a *fakeAction) wire() string {
 }
 
 type fakeKernel struct {
-	srv     *httptest.Server
-	url     string
-	mu      sync.Mutex
-	acts    map[string]*fakeAction
-	creates []string
-	updates map[string]string // id -> last PUT body
-	enables map[string]bool
-	seq     int
+	srv      *httptest.Server
+	url      string
+	mu       sync.Mutex
+	acts     map[string]*fakeAction
+	creates  []string
+	updates  map[string]string // id -> last PUT body
+	enables  map[string]bool
+	disables map[string]bool
+	seq      int
 }
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
-	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string]string{}, enables: map[string]bool{}}
+	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string]string{}, enables: map[string]bool{}, disables: map[string]bool{}}
 	for i := range seed {
 		a := seed[i]
 		f.acts[a.ID] = &a
@@ -446,6 +470,16 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		w.Write([]byte(`{"active":true}`))
 	})
+	mux.HandleFunc("POST /v1/actions/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.disables[id] = true
+		if a := f.acts[id]; a != nil {
+			a.Active = false
+		}
+		w.Write([]byte(`{"active":false}`))
+	})
 	f.srv = httptest.NewServer(mux)
 	f.url = f.srv.URL
 	return f
@@ -468,9 +502,14 @@ func (f *fakeKernel) updateBody(id string) string {
 	return f.updates[id]
 }
 func (f *fakeKernel) enabled(id string) bool { f.mu.Lock(); defer f.mu.Unlock(); return f.enables[id] }
-func (f *fakeKernel) createdCount() int      { f.mu.Lock(); defer f.mu.Unlock(); return len(f.creates) }
-func (f *fakeKernel) updateCount() int       { f.mu.Lock(); defer f.mu.Unlock(); return len(f.updates) }
-func (f *fakeKernel) enableCount() int       { f.mu.Lock(); defer f.mu.Unlock(); return len(f.enables) }
+func (f *fakeKernel) disabled(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.disables[id]
+}
+func (f *fakeKernel) createdCount() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.creates) }
+func (f *fakeKernel) updateCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return len(f.updates) }
+func (f *fakeKernel) enableCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return len(f.enables) }
 
 // TestGetBadge checks the nav badge fragment: bare count for a user with unread,
 // empty body when zero (the core steps-badge contract).

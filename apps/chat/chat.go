@@ -112,7 +112,6 @@ func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("GET /chat/room/{id}/messages", d.RequireAuth(c.getMessages))
 	mux.HandleFunc("POST /chat/rooms", d.RequireAuth(c.postCreateRoom))
 	mux.HandleFunc("POST /chat/room/{id}/message", d.RequireAuth(c.postMessage))
-	mux.HandleFunc("POST /chat/room/{id}/rename", d.RequireAuth(c.postRename))
 	mux.HandleFunc("POST /chat/room/{id}/delete", d.RequireAuth(c.postDeleteRoom))
 	mux.HandleFunc("POST /chat/room/{id}/leave", d.RequireAuth(c.postLeave))
 	mux.HandleFunc("POST /chat/room/{id}/add-member", d.RequireAuth(c.postAddMember))
@@ -253,6 +252,10 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 		for _, a := range existing {
 			have[a.Name] = a
 		}
+		wanted := map[string]bool{}
+		for _, op := range daemon.Ops {
+			wanted[op.Name] = true
+		}
 		base := strings.TrimRight(c.deps.PublicURL, "/") + "/_kernel/chat/"
 		auth := authConfig()
 		pubTrue := true
@@ -310,6 +313,17 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 				if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &pubTrue}); err != nil {
 					return fmt.Errorf("chat: publish %s/%s: %w", chatHandle, op.Name, err)
 				}
+			}
+		}
+		// Retire orphans: an active @chat action no longer in Ops (e.g. a removed op
+		// like rename-room) is disabled — reversible, preserves history — so the
+		// catalog never advertises an action whose daemon route is gone.
+		for name, a := range have {
+			if wanted[name] || !a.Active {
+				continue
+			}
+			if err := c.deps.Client.DisableAction(ctx, tok, a.ID); err != nil {
+				return fmt.Errorf("chat: retire %s/%s: %w", chatHandle, name, err)
 			}
 		}
 		return nil
@@ -544,10 +558,6 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Redirect(w, r, "/chat/room/"+url.PathEscape(id), http.StatusSeeOther)
-}
-
-func (c *Chat) postRename(w http.ResponseWriter, r *http.Request) {
-	c.opRedirect(w, r, "rename-room", map[string]any{"room": r.PathValue("id"), "name": roomName(r.FormValue("name"))})
 }
 
 func (c *Chat) postDeleteRoom(w http.ResponseWriter, r *http.Request) {

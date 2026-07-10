@@ -48,7 +48,6 @@ func TestAdminOpsAreCreatorOnly(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"rename", func() error { return s.RenameRoom("@bob", r.ID, "x") }},
 		{"delete", func() error { return s.DeleteRoom("@bob", r.ID) }},
 		{"add", func() error { return s.AddMember("@bob", r.ID, "@dave") }},
 		{"remove", func() error { return s.RemoveMember("@bob", r.ID, "@alice") }},
@@ -58,9 +57,6 @@ func TestAdminOpsAreCreatorOnly(t *testing.T) {
 		}
 	}
 	// creator succeeds
-	if err := s.RenameRoom("@alice", r.ID, "renamed"); err != nil {
-		t.Fatalf("creator rename: %v", err)
-	}
 	if err := s.AddMember("@alice", r.ID, "@dave"); err != nil {
 		t.Fatalf("creator add: %v", err)
 	}
@@ -71,7 +67,7 @@ func TestAdminOpsAreCreatorOnly(t *testing.T) {
 		t.Errorf("removing creator err = %v, want ErrBadInput", err)
 	}
 	got, _, _ := s.Room("@alice", r.ID)
-	if got.Name != "renamed" || len(got.Members) != 2 {
+	if got.Name != "n" || len(got.Members) != 2 {
 		t.Fatalf("after ops room = %+v", got)
 	}
 }
@@ -144,7 +140,7 @@ func TestDeleteRoomHidesAndGates(t *testing.T) {
 	if _, _, err := s.Room("@alice", r.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted room read err = %v, want ErrNotFound", err)
 	}
-	if err := s.RenameRoom("@alice", r.ID, "x"); !errors.Is(err, ErrNotFound) {
+	if err := s.AddMember("@alice", r.ID, "@dave"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("op on deleted room err = %v, want ErrNotFound", err)
 	}
 }
@@ -189,6 +185,124 @@ func TestUnreadAndWatermark(t *testing.T) {
 	}
 	if err := s.MarkRead("@carol", r.ID, 1); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member MarkRead err = %v, want ErrNotMember", err)
+	}
+}
+
+// TestInboxConsumeAcrossRooms checks the receive contract: unseen messages from
+// others across all the caller's rooms, each tagged with its room, marked seen on
+// return, with empty-room memberships still listed.
+func TestInboxConsumeAcrossRooms(t *testing.T) {
+	s := newStore(t)
+	a, _ := s.CreateRoom("@alice", "A", []string{"@bob"})
+	b, _ := s.CreateRoom("@alice", "B", []string{"@bob"})
+	empty, _ := s.CreateRoom("@alice", "C", []string{"@bob"}) // no messages
+	s.PostMessage("@alice", a.ID, "a1")
+	s.PostMessage("@bob", a.ID, "bob-own") // bob's own → not unseen for bob
+	s.PostMessage("@alice", b.ID, "b1")
+	s.PostMessage("@alice", b.ID, "b2")
+
+	rooms, msgs, err := s.Inbox("@bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rooms) != 3 {
+		t.Fatalf("rooms = %d, want 3 (incl. empty)", len(rooms))
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("msgs = %d, want 3 (a1,b1,b2; own excluded): %+v", len(msgs), msgs)
+	}
+	for _, m := range msgs {
+		if m.RoomID == "" {
+			t.Errorf("inbox message missing room_id: %+v", m)
+		}
+	}
+	sawEmpty := false
+	for _, r := range rooms {
+		if r.ID == empty.ID {
+			sawEmpty = true
+			if r.Unread != 0 {
+				t.Errorf("empty room unread = %d, want 0", r.Unread)
+			}
+		}
+	}
+	if !sawEmpty {
+		t.Error("empty-room membership not listed")
+	}
+
+	// Consume-on-read: a second call returns nothing new.
+	if _, m2, _ := s.Inbox("@bob"); len(m2) != 0 {
+		t.Errorf("second inbox = %d, want 0 (consumed)", len(m2))
+	}
+	// A new message re-raises it.
+	s.PostMessage("@alice", a.ID, "a2")
+	_, m3, _ := s.Inbox("@bob")
+	if len(m3) != 1 || m3[0].Text != "a2" {
+		t.Fatalf("after new post inbox = %+v", m3)
+	}
+}
+
+// TestInboxPagesLargeBacklog checks the per-room cap: a flood pages across calls,
+// the watermark advances only over what was returned, and unread reports the true
+// backlog (which exceeds a capped page).
+func TestInboxPagesLargeBacklog(t *testing.T) {
+	s := newStore(t)
+	r, _ := s.CreateRoom("@alice", "big", []string{"@bob"})
+	total := recentWindow + 5
+	for i := 0; i < total; i++ {
+		s.PostMessage("@alice", r.ID, "m")
+	}
+	rooms, msgs, _ := s.Inbox("@bob")
+	if len(msgs) != recentWindow {
+		t.Fatalf("first page = %d, want %d (capped)", len(msgs), recentWindow)
+	}
+	if rooms[0].Unread != total {
+		t.Errorf("unread = %d, want %d (full backlog, not the page)", rooms[0].Unread, total)
+	}
+	if _, m2, _ := s.Inbox("@bob"); len(m2) != 5 {
+		t.Fatalf("second page = %d, want 5 (resume)", len(m2))
+	}
+	if _, m3, _ := s.Inbox("@bob"); len(m3) != 0 {
+		t.Errorf("third page = %d, want 0", len(m3))
+	}
+}
+
+func TestInboxNonMemberEmpty(t *testing.T) {
+	s := newStore(t)
+	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
+	s.PostMessage("@alice", r.ID, "hi")
+	rooms, msgs, err := s.Inbox("@carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rooms) != 0 || len(msgs) != 0 {
+		t.Fatalf("non-member inbox rooms=%d msgs=%d, want 0/0", len(rooms), len(msgs))
+	}
+}
+
+// TestMemberHandles checks the grant-sweep source: distinct members of live rooms
+// only (a member of a deleted room is excluded).
+func TestMemberHandles(t *testing.T) {
+	s := newStore(t)
+	s.CreateRoom("@alice", "A", []string{"@bob", "@carol"})
+	s.CreateRoom("@bob", "B", []string{"@alice"})
+	del, _ := s.CreateRoom("@alice", "D", []string{"@dave"})
+	s.DeleteRoom("@alice", del.ID)
+
+	hs, err := s.MemberHandles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, h := range hs {
+		got[h] = true
+	}
+	for _, w := range []string{"@alice", "@bob", "@carol"} {
+		if !got[w] {
+			t.Errorf("missing member %q in %v", w, hs)
+		}
+	}
+	if got["@dave"] {
+		t.Errorf("@dave (deleted-room-only) must be excluded: %v", hs)
 	}
 }
 

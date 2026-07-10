@@ -44,6 +44,21 @@ const (
 	outOK   = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the operation was applied."}}}`
 	outRoom = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the room was created."},"room_id":{"type":"string","description":"Id of the newly created room; use it to address the room in later calls."}}}`
 	outMsg  = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the message was posted."},"message_id":{"type":"string","description":"Id of the newly posted message; use it to delete the message later."}}}`
+	// outInbox documents the receive shape: your rooms (with unread counts) and the
+	// unseen messages returning this call consumes.
+	outInbox = `{"type":"object","properties":{` +
+		`"ok":{"type":"boolean","description":"True on success."},` +
+		`"rooms":{"type":"array","description":"Your room memberships, each with your unseen-message count.","items":{"type":"object","properties":{` +
+		`"room_id":{"type":"string","description":"Id of the room; use it to post a reply."},` +
+		`"name":{"type":"string","description":"Display name of the room."},` +
+		`"unread":{"type":"integer","description":"Messages from others you have not seen; may exceed the messages returned this call when a large backlog is paged across calls."}}}},` +
+		`"messages":{"type":"array","description":"The messages you had not yet seen, oldest first. Returning them marks them seen.","items":{"type":"object","properties":{` +
+		`"room_id":{"type":"string","description":"Id of the room the message is in."},` +
+		`"id":{"type":"string","description":"Id of the message."},` +
+		`"seq":{"type":"integer","description":"Per-room sequence number of the message."},` +
+		`"from":{"type":"string","description":"Handle of the sender."},` +
+		`"text":{"type":"string","description":"The message text."},` +
+		`"at":{"type":"string","description":"RFC 3339 timestamp when it was posted."}}}}}}`
 )
 
 // Ops is the chat server's kernel-facing write surface — the single source of
@@ -55,12 +70,6 @@ var Ops = []Op{
 		Description:  "Create a chat room — a named conversation the caller owns — and add the given members alongside the caller. Returns the new room's id.",
 		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Handles of users to add as members besides the caller, for example @bob and @carol. May be empty."}}}`),
 		OutputSchema: json.RawMessage(outRoom),
-	},
-	{
-		Name:         "rename-room",
-		Description:  "Rename a chat room. Only the room's owner may rename it.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to rename."},"name":{"type":"string","description":"New display name for the room."}}}`),
-		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "delete-room",
@@ -97,6 +106,12 @@ var Ops = []Op{
 		Description:  "Delete a message you sent. Only the message's original sender may delete it.",
 		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the message is in."},"message":{"type":"string","description":"Id of the message to delete (as returned by the message action)."}}}`),
 		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "inbox",
+		Description:  "Fetch your unseen chat messages across all rooms, plus your room list. Returning messages marks them seen, so a later call yields only newly-arrived ones — poll this to receive messages. A large backlog is paged across calls.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{}}`),
+		OutputSchema: json.RawMessage(outInbox),
 	},
 }
 
@@ -148,9 +163,6 @@ func (d *Daemon) routes() {
 		r, err := d.store.CreateRoom(caller, a.Name, a.Members)
 		return map[string]any{"ok": true, "room_id": r.ID}, err
 	}))
-	d.kernelMux.HandleFunc("POST /rename-room", d.write(func(caller string, a kargs) (map[string]any, error) {
-		return okBody(), d.store.RenameRoom(caller, a.Room, a.Name)
-	}))
 	d.kernelMux.HandleFunc("POST /delete-room", d.write(func(caller string, a kargs) (map[string]any, error) {
 		return okBody(), d.store.DeleteRoom(caller, a.Room)
 	}))
@@ -169,6 +181,16 @@ func (d *Daemon) routes() {
 	}))
 	d.kernelMux.HandleFunc("POST /delete-message", d.write(func(caller string, a kargs) (map[string]any, error) {
 		return okBody(), d.store.DeleteMessage(caller, a.Room, a.Message)
+	}))
+	d.kernelMux.HandleFunc("POST /inbox", d.write(func(caller string, _ kargs) (map[string]any, error) {
+		rooms, msgs, err := d.store.Inbox(caller)
+		if err != nil {
+			return nil, err
+		}
+		if msgs == nil {
+			msgs = []Message{}
+		}
+		return map[string]any{"ok": true, "rooms": inboxRooms(rooms), "messages": msgs}, nil
 	}))
 
 	d.adminMux = http.NewServeMux()
@@ -287,6 +309,16 @@ type roomView struct {
 // ---- helpers ----
 
 func okBody() map[string]any { return map[string]any{"ok": true} }
+
+// inboxRooms trims store rooms to the inbox action's documented shape
+// (room_id/name/unread), dropping fields the receive contract doesn't promise.
+func inboxRooms(rooms []Room) []map[string]any {
+	out := make([]map[string]any, 0, len(rooms))
+	for _, r := range rooms {
+		out = append(out, map[string]any{"room_id": r.ID, "name": r.Name, "unread": r.Unread})
+	}
+	return out
+}
 
 func statusFor(err error) int {
 	switch {

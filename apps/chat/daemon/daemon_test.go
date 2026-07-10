@@ -78,9 +78,44 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	if code, _ := postKernel(t, d, "/message", alice, `{"room":"ghost","text":"x"}`); code != http.StatusNotFound {
 		t.Fatalf("post to missing room status=%d, want 404", code)
 	}
-	// bob (non-creator) renames → 403.
-	if code, _ := postKernel(t, d, "/rename-room", bob, `{"room":"`+room+`","name":"hacked"}`); code != http.StatusForbidden {
-		t.Fatalf("non-creator rename status=%d, want 403", code)
+	// bob (non-creator) adds a member → 403 (creator-only, enforced on the kernel surface).
+	if code, _ := postKernel(t, d, "/add-member", bob, `{"room":"`+room+`","member":"@dave"}`); code != http.StatusForbidden {
+		t.Fatalf("non-creator add-member status=%d, want 403", code)
+	}
+}
+
+// TestInboxRoute drives the receive action end-to-end through the kernel surface:
+// authenticated, consume-on-read, room-tagged messages.
+func TestInboxRoute(t *testing.T) {
+	d := newDaemon(t)
+	code, body := postKernel(t, d, "/create-room", "@alice", `{"name":"n","members":["@bob"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("create-room status=%d", code)
+	}
+	room, _ := body["room_id"].(string)
+	postKernel(t, d, "/message", "@alice", `{"room":"`+room+`","text":"hello bob"}`)
+
+	// unauthenticated → 401
+	if code, _ := postKernel(t, d, "/inbox", "", `{}`); code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated inbox status=%d, want 401", code)
+	}
+	// bob receives the message, tagged with its room
+	code, in := postKernel(t, d, "/inbox", "@bob", `{}`)
+	if code != http.StatusOK || in["ok"] != true {
+		t.Fatalf("inbox status=%d body=%v", code, in)
+	}
+	msgs, _ := in["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("inbox messages = %d, want 1: %v", len(msgs), in["messages"])
+	}
+	m0, _ := msgs[0].(map[string]any)
+	if m0["from"] != "@alice" || m0["room_id"] != room || m0["text"] != "hello bob" {
+		t.Errorf("inbox message = %v", m0)
+	}
+	// consume-on-read: second call is empty
+	_, in2 := postKernel(t, d, "/inbox", "@bob", `{}`)
+	if msgs2, _ := in2["messages"].([]any); len(msgs2) != 0 {
+		t.Errorf("second inbox messages = %d, want 0 (consumed)", len(msgs2))
 	}
 }
 
@@ -101,7 +136,7 @@ func TestAdminRoutesRequireSecret(t *testing.T) {
 }
 
 func TestOpsAndOutputSchemaAreValid(t *testing.T) {
-	want := []string{"create-room", "rename-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message"}
+	want := []string{"create-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message", "inbox"}
 	if len(Ops) != len(want) {
 		t.Fatalf("Ops has %d, want %d", len(Ops), len(want))
 	}
