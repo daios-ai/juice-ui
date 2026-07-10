@@ -23,6 +23,34 @@ Two properties, on two different axes:
 > app templates too). Code is modular; the grammar is unified. That centralization
 > is what keeps every app visually coherent.
 
+## Design rules & rationale
+
+Five rules govern every app. They are what keep the codebase modular without the
+core rotting into a monolith; read them before touching this seam.
+
+1. **Dependency direction is law.** *daemon* (a self-contained service) ← *plugin*
+   (the App: the only Juice + UI-aware piece) ← *core* (imports only the `apps`
+   seam, never a concrete app). An app imports `client`, `session`, `apps` — never
+   `server`. The arrows never reverse.
+2. **Litmus test: delete the plugin and the daemon still runs.** A daemon (e.g.
+   `apps/chat/daemon`) is a plain REST service that knows nothing about Juice — auth
+   is *injected* into it as a hook, not imported. If a daemon needs the plugin to
+   compile or run, the boundary has leaked.
+3. **Ownership split.** The daemon owns *domain state* (its store, its REST
+   contract, its list ordering). The plugin owns *Juice/UI integration* (kernel
+   actions, grants, identity, templates, the nav badge). Neither reaches across:
+   the plugin never writes the daemon's tables; the daemon never mints a grant.
+4. **Identity is stateless and deterministic.** Caller tokens are *derived*
+   (`CallerIdentity`'s HMAC), never stored, so they survive any store reset and can
+   never desync from a kernel grant. Prefer derivation over persistence for anything
+   that must stay in lock-step with the kernel.
+5. **Self-provisioning; new capabilities go in the seam.** An app provisions its own
+   secrets into app state (no per-app environment variables). A capability more than
+   one app could want — the app-state store, `ServiceAccount`, `CallerIdentity`,
+   badge polling, `UserDataDir` — lands in `apps/apps.go`, never hardwired into one
+   app. The badge poll is the worked example: chat asked for a live nav count, and
+   the answer was a seam field (`NavEntry.BadgeURL`) every future app inherits.
+
 ## The seam (`apps/apps.go`)
 
 ```go
@@ -137,6 +165,20 @@ inline `<svg>` markup, so it needs no edit to the core sprite, `Match` — the p
 prefix that lights it). An app nav entry is a deliberate exception to the
 CLI-mirroring nav, exactly as `peers` is.
 
+**Live nav badge.** `NavEntry.Badge` is the initial count (server-rendered, so a
+no-JS client still sees it). Set `NavEntry.BadgeURL` too — an authenticated `GET`
+fragment endpoint (convention `/<slug>/badge`) — and the core polls it on the one
+configured interval (`badge_interval_seconds`, default 30s), keeping the badge live
+without a page reload. **Endpoint contract:** respond `text/html` whose body is the
+bare count, and an **empty** body when zero (`.badge:empty` hides it). This is the
+same contract the core steps badge uses; it is a seam capability, not a chat
+special-case (rule 5).
+
+`Deps.DataDir` is the per-user durable-data directory (`apps.UserDataDir`: XDG data
+dir on Linux, `~/Library/Application Support` on macOS) — where an app places its
+database, kept out of the *config* dir. It is `""` when app config is in-memory
+(tests); an app then stays in-memory and writes no file.
+
 The seam also reserves a **CSRF-exempt `/_kernel/` path prefix** for an app's
 kernel-facing endpoints — a `kind=http` action `source` the kernel calls
 server-to-server, without a browser CSRF token. Every browser route stays
@@ -193,7 +235,10 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
    **self-provisions** its account on first run and persists the password via
    `SaveAppState`, so there are no per-app env vars. The UI plugin stays thin: it
    reads from the in-process app and issues writes as the signed-in user.
-6. Run `go test ./...` (unit + the grammar drift guard) and **drive the real app
+6. Badge (optional): to show a live attention count on the nav entry, add a `GET
+   /<slug>/badge` route (auth-gated) honouring the endpoint contract above and set
+   `NavEntry.BadgeURL`. Durable data goes under `Deps.DataDir`, not the config dir.
+7. Run `go test ./...` (unit + the grammar drift guard) and **drive the real app
    end-to-end** against a throwaway kernel — a single juice-ui launch, with
    realistic pricing (native actions can cost credits).
 

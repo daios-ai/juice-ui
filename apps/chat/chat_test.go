@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -80,10 +81,14 @@ func TestNavGatedOnAuthAndBadge(t *testing.T) {
 	if n := c.Nav("", false); n != nil {
 		t.Fatalf("anonymous Nav = %v, want nil", n)
 	}
-	// No daemon yet: badge is 0, entry still present.
+	// No daemon yet: badge is 0, entry still present, and it advertises the poll
+	// endpoint the core refreshes on the configured interval.
 	n := c.Nav("@alice", false)
 	if len(n) != 1 || n[0].Href != "/chat" || n[0].Match != "/chat" || n[0].Icon == "" || n[0].Badge != 0 {
 		t.Fatalf("Nav = %+v", n)
+	}
+	if n[0].BadgeURL != "/chat/badge" {
+		t.Errorf("Nav BadgeURL = %q, want /chat/badge", n[0].BadgeURL)
 	}
 	// With a daemon and an unread message, the badge reflects it.
 	st := mustStore(t)
@@ -466,3 +471,103 @@ func (f *fakeKernel) enabled(id string) bool { f.mu.Lock(); defer f.mu.Unlock();
 func (f *fakeKernel) createdCount() int      { f.mu.Lock(); defer f.mu.Unlock(); return len(f.creates) }
 func (f *fakeKernel) updateCount() int       { f.mu.Lock(); defer f.mu.Unlock(); return len(f.updates) }
 func (f *fakeKernel) enableCount() int       { f.mu.Lock(); defer f.mu.Unlock(); return len(f.enables) }
+
+// TestGetBadge checks the nav badge fragment: bare count for a user with unread,
+// empty body when zero (the core steps-badge contract).
+func TestGetBadge(t *testing.T) {
+	st := mustStore(t)
+	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
+	st.PostMessage("@bob", r.ID, "hi")
+	c := New()
+	c.daemon = daemon.New(st, "s", noAuth)
+	c.dc = daemon.NewClient(c.daemon)
+	c.deps = apps.Deps{Handle: func(*http.Request) string { return "@alice" }}
+
+	rec := httptest.NewRecorder()
+	c.getBadge(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
+	if body := strings.TrimSpace(rec.Body.String()); body != "1" {
+		t.Errorf("badge body = %q, want 1", body)
+	}
+	// The sender has no unread → empty body (hidden by .badge:empty).
+	c.deps.Handle = func(*http.Request) string { return "@bob" }
+	rec = httptest.NewRecorder()
+	c.getBadge(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
+	if body := rec.Body.String(); body != "" {
+		t.Errorf("zero badge body = %q, want empty", body)
+	}
+}
+
+// TestGetMessagesMarkReadVisibility proves the poll advances the read watermark
+// only when the tab is visible (X-Visible), so a backgrounded conversation tab does
+// not silently clear unread; an absent header degrades to the old always-mark path.
+func TestGetMessagesMarkReadVisibility(t *testing.T) {
+	st := mustStore(t)
+	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
+	st.PostMessage("@bob", r.ID, "hi")
+	c := New()
+	c.daemon = daemon.New(st, "s", noAuth)
+	c.dc = daemon.NewClient(c.daemon)
+	c.deps = apps.Deps{
+		Handle:         func(*http.Request) string { return "@alice" },
+		CSRFField:      func(*http.Request) template.HTML { return "" },
+		RenderFragment: func(http.ResponseWriter, int, string, any) error { return nil },
+	}
+	poll := func(visible string) {
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
+		req.SetPathValue("id", r.ID)
+		if visible != "" {
+			req.Header.Set("X-Visible", visible)
+		}
+		c.getMessages(httptest.NewRecorder(), req)
+	}
+	poll("0") // hidden tab: must NOT mark read
+	if n, _ := st.UnreadTotal("@alice"); n != 1 {
+		t.Errorf("hidden-tab poll marked read: unread=%d, want 1", n)
+	}
+	poll("1") // visible: marks read
+	if n, _ := st.UnreadTotal("@alice"); n != 0 {
+		t.Errorf("visible poll did not mark read: unread=%d, want 0", n)
+	}
+	st.PostMessage("@bob", r.ID, "hi2")
+	poll("") // absent header (stale asset): degrades to marking read
+	if n, _ := st.UnreadTotal("@alice"); n != 0 {
+		t.Errorf("absent-header poll should mark read: unread=%d, want 0", n)
+	}
+}
+
+// TestDBPathMigration checks the store-path resolution: an existing legacy store
+// under the config dir is kept (never abandoned), else the proper data dir is used;
+// no persistent config ⇒ in-memory.
+func TestDBPathMigration(t *testing.T) {
+	home := t.TempDir()
+	cfgHome := filepath.Join(home, "cfg")
+	t.Setenv("XDG_CONFIG_HOME", cfgHome) // os.UserConfigDir() honours this on Linux
+	dataDir := filepath.Join(home, "data")
+
+	c := New()
+	c.deps = apps.Deps{
+		ConfigPath: filepath.Join(cfgHome, "juice-ui", "juice-ui.json"),
+		DataDir:    dataDir,
+	}
+	// No legacy file → the data dir is used.
+	if got, want := c.dbPathOrDefault(), filepath.Join(dataDir, chatDBName); got != want {
+		t.Errorf("new-install db path = %q, want %q", got, want)
+	}
+	// A pre-existing legacy store under the config dir is preferred (kept in place).
+	legacyDir := filepath.Join(cfgHome, "juice-ui")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(legacyDir, chatDBName)
+	if err := os.WriteFile(legacy, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.dbPathOrDefault(); got != legacy {
+		t.Errorf("legacy store present but path = %q, want %q", got, legacy)
+	}
+	// No persistent app config → in-memory (no file).
+	c2 := New()
+	if got := c2.dbPathOrDefault(); got != "" {
+		t.Errorf("no config path should be in-memory, got %q", got)
+	}
+}

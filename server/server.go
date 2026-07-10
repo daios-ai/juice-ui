@@ -27,12 +27,14 @@ type Options struct {
 	Sessions       *session.Manager
 	Renderer       *Renderer
 	Logger         *slog.Logger
-	CSRFKey        []byte     // 32 bytes
-	Secure         bool       // set Secure flag on CSRF/session cookies (false for local http)
-	TrustedOrigins []string   // extra hosts accepted as the request Origin (proxied hostnames)
-	PublicURL      string     // absolute base URL of this BFF, for OAuth redirect_uri; "" derives from the request
-	Apps           []apps.App // app modules to mount (their templates must already be in Renderer)
-	ConfigPath     string     // path to juice-ui.json for per-app persisted config; "" = in-memory
+	CSRFKey        []byte        // 32 bytes
+	Secure         bool          // set Secure flag on CSRF/session cookies (false for local http)
+	TrustedOrigins []string      // extra hosts accepted as the request Origin (proxied hostnames)
+	PublicURL      string        // absolute base URL of this BFF, for OAuth redirect_uri; "" derives from the request
+	Apps           []apps.App    // app modules to mount (their templates must already be in Renderer)
+	ConfigPath     string        // path to juice-ui.json for per-app persisted config; "" = in-memory
+	DataDir        string        // per-user durable-data dir handed to apps (apps.UserDataDir); "" = none
+	BadgeInterval  time.Duration // nav-badge poll interval + steps-badge cache TTL; 0 → default 30s
 }
 
 // Server holds dependencies and serves the BFF.
@@ -45,7 +47,9 @@ type Server struct {
 	secure    bool
 	publicURL string // configured absolute base URL; "" → derive from the request
 	apps      []apps.App
-	appStore  *appStore // per-app persisted config (juice-ui.json)
+	appStore  *appStore     // per-app persisted config (juice-ui.json)
+	dataDir   string        // per-user durable-data dir handed to apps
+	badgeTTL  time.Duration // nav-badge poll interval + steps-badge cache TTL
 
 	// Cached kernel identity (handle + key fingerprint) from the open /health,
 	// so the login page and sidebar can name/verify the kernel. Fetched once on
@@ -109,6 +113,10 @@ func New(o Options) (http.Handler, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
+	badgeTTL := o.BadgeInterval
+	if badgeTTL <= 0 {
+		badgeTTL = 30 * time.Second
+	}
 	s := &Server{
 		client:    o.Client,
 		sessions:  o.Sessions,
@@ -118,6 +126,8 @@ func New(o Options) (http.Handler, error) {
 		secure:    o.Secure,
 		publicURL: strings.TrimRight(o.PublicURL, "/"),
 		apps:      o.Apps,
+		dataDir:   o.DataDir,
+		badgeTTL:  badgeTTL,
 	}
 	as, err := newAppStore(o.ConfigPath)
 	if err != nil {
@@ -425,6 +435,7 @@ func (s *Server) appDeps() apps.Deps {
 		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
 		PublicURL:         s.publicURL,
 		ConfigPath:        s.appStore.path,
+		DataDir:           s.dataDir,
 		Logger:            s.log,
 	}
 }
@@ -481,6 +492,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Flash:        flash,
 		FlashKind:    flashKind,
 		AppNav:       s.appNav(r),
+		BadgeSecs:    int(s.badgeTTL / time.Second),
 		Data:         data,
 	}
 }

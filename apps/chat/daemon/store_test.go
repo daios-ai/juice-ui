@@ -192,6 +192,45 @@ func TestUnreadAndWatermark(t *testing.T) {
 	}
 }
 
+// TestRoomsForOrdering checks the list contract: unread rooms sort first, then by
+// most-recent activity, with an empty room falling back to its creation time.
+func TestRoomsForOrdering(t *testing.T) {
+	s := newStore(t)
+	// A: unread for bob, but its activity is the OLDEST.
+	a, _ := s.CreateRoom("@alice", "A", []string{"@bob"})
+	s.PostMessage("@alice", a.ID, "hi-a")
+	// B: bob's own message → not unread for bob; activity newer than A.
+	b, _ := s.CreateRoom("@alice", "B", []string{"@bob"})
+	s.PostMessage("@bob", b.ID, "hi-b")
+	// C: empty room, created last → newest last_at (falls back to created_at).
+	c, _ := s.CreateRoom("@alice", "C", []string{"@bob"})
+
+	rooms, err := s.RoomsFor("@bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rooms) != 3 {
+		t.Fatalf("got %d rooms, want 3", len(rooms))
+	}
+	// Unread first (A), despite being the least recent; then the read rooms by
+	// recency: C (created after B's message) before B.
+	if rooms[0].ID != a.ID {
+		t.Errorf("unread room not first: got %q", rooms[0].Name)
+	}
+	if rooms[1].ID != c.ID || rooms[2].ID != b.ID {
+		t.Errorf("read rooms not recency-ordered: got %q, %q want C, B", rooms[1].Name, rooms[2].Name)
+	}
+	for _, rm := range rooms {
+		if rm.LastAt == "" {
+			t.Errorf("room %q has empty LastAt", rm.Name)
+		}
+	}
+	// The empty room's LastAt is its CreatedAt.
+	if rooms[1].LastAt != rooms[1].CreatedAt {
+		t.Errorf("empty room LastAt %q != CreatedAt %q", rooms[1].LastAt, rooms[1].CreatedAt)
+	}
+}
+
 func TestRecentWindowAndHistory(t *testing.T) {
 	s := newStore(t)
 	r, _ := s.CreateRoom("@alice", "n", nil)

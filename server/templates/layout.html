@@ -38,18 +38,13 @@
         <a href="/steps" title="Steps" class="nav-inbox"{{if eq .Active "step"}} aria-current="page"{{end}}>
           <span class="ico-badge-wrap">
             <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
-            <span id="inbox-badge"
-                  hx-get="/steps/badge"
-                  hx-trigger="load, every 30s"
-                  hx-swap="innerHTML"
-                  class="badge"
-                  aria-label="Waiting steps"></span>
+            {{template "_badge_poll" (badge "/steps/badge" "Waiting steps" 0 .BadgeSecs)}}
           </span>
           <span class="lbl">step</span>
         </a>
         <a href="/user" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl">user</span></a>
         {{range .AppNav}}
-        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
+        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
         {{end}}
         {{if .IsSuperuser}}
         <a href="/admin" title="Admin"{{if eq .Active "admin"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg><span class="lbl">admin</span></a>
@@ -94,11 +89,11 @@
   <nav class="tab-bar" aria-label="Primary">
     <a href="/run" class="tab" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span>run</span></a>
     <a href="/actions" class="tab" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span>action</span></a>
-    <a href="/steps" class="tab" title="Steps"{{if eq .Active "step"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg><span>step</span></a>
+    <a href="/steps" class="tab" title="Steps"{{if eq .Active "step"}} aria-current="page"{{end}}><span class="ico-badge-wrap"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>{{template "_badge_poll" (badge "/steps/badge" "Waiting steps" 0 .BadgeSecs)}}</span><span>step</span></a>
     <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>tx</span></a>
     <a href="/user" class="tab" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span>user</span></a>
     {{range .AppNav}}
-    <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span>{{.Label}}</span></a>
+    <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span>{{.Label}}</span></a>
     {{end}}
   </nav>
   {{end}}

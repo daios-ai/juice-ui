@@ -333,7 +333,8 @@ split on the first `/`.
 | `.banner` (`-info`/`-error`) | inline notice |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
-| `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `step` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact |
+| `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `step` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact. **Every** nav badge is the `_badge_poll` partial: htmx re-fetches its endpoint on the **one** configured interval (`badge_interval_seconds`, default 30s), body = bare count, **empty when zero** (`.badge:empty` hides it). Rendered identically in the sidebar and the mobile tab bar |
+| `.unread` | row modifier for a list row with unseen activity (e.g. a chat room): the primary-cell link is weighted (`tr.unread > td:first-child a`) so the row reads as "new", complementing the count badge |
 
 ### 5.11 Federation (peers)
 

@@ -15,14 +15,44 @@ package apps
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 )
+
+// UserDataDir returns the per-user directory for juice-ui's durable data (an app's
+// database, say), following platform convention: on Linux, $XDG_DATA_HOME/juice-ui
+// or ~/.local/share/juice-ui; on macOS/Windows, os.UserConfigDir()/juice-ui, where
+// data and config conventionally coincide. This is deliberately distinct from the
+// config dir (os.UserConfigDir) so a database is never filed under "config". getenv
+// is injected for testing. The directory is not created; callers do that when they
+// write.
+func UserDataDir(getenv func(string) string) (string, error) {
+	if runtime.GOOS == "linux" {
+		if xdg := strings.TrimSpace(getenv("XDG_DATA_HOME")); xdg != "" {
+			return filepath.Join(xdg, "juice-ui"), nil
+		}
+		home := strings.TrimSpace(getenv("HOME"))
+		if home == "" {
+			return "", errors.New("neither XDG_DATA_HOME nor HOME is set")
+		}
+		return filepath.Join(home, ".local", "share", "juice-ui"), nil
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "juice-ui"), nil
+}
 
 // App is one app module. The core calls Templates() and Nav()
 // to fold the module's pages and sidebar entry into the shared shell, Mount() to
@@ -68,7 +98,12 @@ type NavEntry struct {
 	Icon   template.HTML // inline <svg class="ico">…</svg> markup, app-provided
 	Match  string        // path prefix for the active state, e.g. "/chat"
 	Active bool          // computed by the core against the request path
-	Badge  int           // app-scoped attention count (e.g. unread); rendered only when > 0
+	Badge  int           // app-scoped attention count (e.g. unread); the initial server-rendered value
+	// BadgeURL, when set, is an authenticated GET fragment endpoint the core polls
+	// (on the configured interval) to keep the badge live without a page reload.
+	// Contract: return text/html whose body is the bare count, empty when zero.
+	// Convention "/" + Slug + "/badge". Empty ⇒ the badge is static (Badge only).
+	BadgeURL string
 }
 
 // Deps is the core capability surface handed to a app at Mount time. It
@@ -127,10 +162,14 @@ type Deps struct {
 	PublicURL string
 
 	// ConfigPath is the path to juice-ui.json (the persisted app-config file), or
-	// "" when app config is in-memory (tests). An app that keeps a durable
-	// side-file (e.g. a database) places it beside this path, and should fall back
-	// to an ephemeral/in-memory store when it is empty, so tests write no files.
+	// "" when app config is in-memory (tests). An app should fall back to an
+	// ephemeral/in-memory store when it is empty, so tests write no files.
 	ConfigPath string
+
+	// DataDir is the per-user durable-data directory (see UserDataDir): where an
+	// app places its database and other large runtime files, kept out of the config
+	// dir. "" when app config is in-memory (tests) — an app then stays in-memory.
+	DataDir string
 
 	// Logger is the core's structured logger, for an app's background work (e.g.
 	// service-account provisioning). May be nil in tests.

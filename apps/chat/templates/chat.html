@@ -11,12 +11,13 @@
 <table>
   <tbody>
   {{range $d.Rooms}}
-  <tr class="rowable" tabindex="-1" data-href="/chat/room/{{.ID}}">
-    <td><a href="/chat/room/{{.ID}}">{{.Name}}</a>{{if .Unread}} <span class="badge">{{.Unread}}</span>{{end}}</td>
+  <tr class="rowable{{if .Unread}} unread{{end}}" tabindex="-1" data-href="/chat/room/{{.ID}}">
+    <td>{{if .Unread}}<span class="ico-badge-wrap"><a href="/chat/room/{{.ID}}">{{.Name}}</a><span class="badge">{{.Unread}}</span></span>{{else}}<a href="/chat/room/{{.ID}}">{{.Name}}</a>{{end}}</td>
     <td class="muted small">{{len .Members}} members</td>
+    <td class="muted small">{{shortTime .LastAt}}</td>
   </tr>
   {{else}}
-  <tr><td class="muted">No rooms yet.</td></tr>
+  <tr><td class="muted" colspan="3">No rooms yet.</td></tr>
   {{end}}
   </tbody>
 </table>

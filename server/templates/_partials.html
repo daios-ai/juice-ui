@@ -1,3 +1,8 @@
+{{/* _badge_poll — a nav attention badge that htmx re-fetches every .Every seconds
+     from .URL. Body is the initial count (empty when zero; .badge:empty hides it),
+     which the poll then overwrites. Build the model with the `badge` helper. */}}
+{{define "_badge_poll"}}<span class="badge" hx-get="{{.URL}}" hx-trigger="load, every {{.Every}}s" hx-swap="innerHTML" aria-label="{{.Label}}">{{if .Count}}{{.Count}}{{end}}</span>{{end}}
+
 {{define "_action_card"}}
 <article class="card action-card{{if not .Action.Active}} inactive{{end}}">
   <div class="action-card-head">

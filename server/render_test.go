@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 )
 
@@ -508,5 +509,78 @@ func TestRenderFragment(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "Success") || !strings.Contains(body, "/transactions/tx1") {
 		t.Errorf("fragment render missing content: %s", body)
+	}
+}
+
+// TestBadgeHelper checks the interval default (a mis-plumbed 0 must not yield an
+// invalid "every 0s" htmx trigger).
+func TestBadgeHelper(t *testing.T) {
+	if got := badge("/x", "l", 0, 0).Every; got != 30 {
+		t.Errorf("badge interval defaulted to %d, want 30", got)
+	}
+	b := badge("/steps/badge", "Waiting", 4, 15)
+	if b.Every != 15 || b.Count != 4 || b.URL != "/steps/badge" {
+		t.Errorf("badge = %+v", b)
+	}
+}
+
+// TestBadgePollFragment checks the reusable poller partial: htmx attributes + the
+// interval, the count when > 0, and an empty body when 0 (so .badge:empty hides it).
+func TestBadgePollFragment(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_badge_poll", badge("/chat/badge", "chat", 3, 15)); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`hx-get="/chat/badge"`, `every 15s`, `hx-swap="innerHTML"`, `>3<`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("badge fragment missing %q: %s", want, body)
+		}
+	}
+	rec = httptest.NewRecorder()
+	_ = r.Fragment(rec, 200, "_badge_poll", badge("/chat/badge", "chat", 0, 15))
+	if strings.Contains(rec.Body.String(), ">0<") {
+		t.Errorf("zero badge should render empty, got %q", rec.Body.String())
+	}
+}
+
+// TestLayoutRendersBadgePollers proves the layout polls every badge — the core
+// steps badge and each app badge — on the configured interval, in both the sidebar
+// and the mobile tab bar.
+func TestLayoutRendersBadgePollers(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{
+		Handle:    "@me",
+		BadgeSecs: 15,
+		AppNav: []apps.NavEntry{{
+			Slug: "chat", Label: "chat", Href: "/chat", Match: "/chat",
+			Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, BadgeURL: "/chat/badge",
+		}},
+		Data: struct{ Message string }{"x"},
+	}
+	if err := r.Render(rec, 200, "error", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if strings.Count(body, `hx-get="/steps/badge"`) < 2 {
+		t.Errorf("steps badge poller must appear in sidebar AND tab bar: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/chat/badge"`) {
+		t.Errorf("app badge poller missing: %s", body)
+	}
+	// steps(sidebar+tab) + chat(sidebar+tab) = 4 pollers, all on the configured 15s.
+	if n := strings.Count(body, `every 15s`); n < 4 {
+		t.Errorf("configured interval applied to %d pollers, want >= 4: %s", n, body)
+	}
+	if strings.Contains(body, `id="inbox-badge"`) {
+		t.Error("legacy inbox-badge id should be gone")
 	}
 }

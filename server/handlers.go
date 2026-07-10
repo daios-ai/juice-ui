@@ -717,7 +717,6 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 const (
 	sessionKeyBadgeCount = "steps.badge.count"
 	sessionKeyBadgeAt    = "steps.badge.at"
-	badgeCacheTTL        = 30 * time.Second
 )
 
 func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
@@ -728,7 +727,7 @@ func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
 	// without registration; time.Time stored as interface{} would need gob.Register.
 	cachedAtNano := sm.GetInt64(ctx, sessionKeyBadgeAt)
 	count := sm.GetInt(ctx, sessionKeyBadgeCount)
-	if time.Since(time.Unix(0, cachedAtNano)) > badgeCacheTTL {
+	if time.Since(time.Unix(0, cachedAtNano)) > s.badgeTTL {
 		_ = s.sessions.Do(ctx, func(tok string) error {
 			me, e := s.client.Me(ctx, tok)
 			if e != nil {

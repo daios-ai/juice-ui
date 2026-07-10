@@ -41,6 +41,10 @@ type Room struct {
 	Members   []string `json:"members"`
 	CreatedAt string   `json:"created_at"`
 	Unread    int      `json:"unread"`
+	// LastAt is the timestamp of the room's most recent live message (falling back
+	// to CreatedAt for an empty room). Filled only in list views (RoomsFor), where
+	// it drives recency ordering; empty elsewhere.
+	LastAt string `json:"last_at,omitempty"`
 }
 
 // Message is one posted message. Seq is the monotonic per-room position used for
@@ -372,22 +376,29 @@ func (s *Store) History(viewer, roomID string, beforeSeq int64, limit int) ([]Me
 // RoomsFor returns the live rooms viewer is a member of, most-recently-created
 // first, each with the viewer's unread count.
 func (s *Store) RoomsFor(viewer string) ([]Room, error) {
+	// Order unread rooms first, then by most-recent activity — the conventional
+	// messaging-list grammar. last_at is the newest live message's timestamp (a
+	// one-row seek on the (room_id, seq) primary key), falling back to created_at
+	// for an empty room; both are RFC3339 text, so lexical DESC is chronological.
 	rows, err := s.db.Query(`
 		SELECT r.id, r.name, r.creator, r.created_at,
 		  (SELECT COUNT(*) FROM messages m
 		     WHERE m.room_id = r.id AND m.deleted = 0 AND m.sender <> ?
-		       AND m.seq > COALESCE((SELECT watermark FROM reads WHERE handle = ? AND room_id = r.id), 0)) AS unread
+		       AND m.seq > COALESCE((SELECT watermark FROM reads WHERE handle = ? AND room_id = r.id), 0)) AS unread,
+		  COALESCE((SELECT m2.at FROM messages m2
+		     WHERE m2.room_id = r.id AND m2.deleted = 0
+		     ORDER BY m2.seq DESC LIMIT 1), r.created_at) AS last_at
 		FROM rooms r
 		JOIN members mem ON mem.room_id = r.id AND mem.handle = ?
 		WHERE r.deleted = 0
-		ORDER BY r.created_at DESC`, viewer, viewer, viewer)
+		ORDER BY (unread > 0) DESC, last_at DESC, r.created_at DESC`, viewer, viewer, viewer)
 	if err != nil {
 		return nil, err
 	}
 	var out []Room
 	for rows.Next() {
 		var r Room
-		if err := rows.Scan(&r.ID, &r.Name, &r.Creator, &r.CreatedAt, &r.Unread); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Creator, &r.CreatedAt, &r.Unread, &r.LastAt); err != nil {
 			rows.Close()
 			return nil, err
 		}

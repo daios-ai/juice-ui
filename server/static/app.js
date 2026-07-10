@@ -8,6 +8,11 @@ document.addEventListener("htmx:configRequest", (e) => {
   if (meta && meta.content) {
     e.detail.headers["X-CSRF-Token"] = meta.content;
   }
+  // Tell the server whether this tab is in the foreground. A backgrounded tab
+  // keeps polling (fresh content/badges) but the chat message poll must not mark
+  // rooms read while unattended. CSP forbids htmx's eval-based hx-trigger filters,
+  // so we signal via a header every request already carries. (CSP-safe.)
+  e.detail.headers["X-Visible"] = document.visibilityState === "visible" ? "1" : "0";
 });
 
 // A one-shot call form (a step completion) is spent once it succeeds: when its

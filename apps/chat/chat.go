@@ -96,7 +96,7 @@ func (c *Chat) Nav(handle string, superuser bool) []apps.NavEntry {
 			badge = n
 		}
 	}
-	return []apps.NavEntry{{Slug: "chat", Label: "chat", Href: "/chat", Icon: chatIcon, Match: "/chat", Badge: badge}}
+	return []apps.NavEntry{{Slug: "chat", Label: "chat", Href: "/chat", Icon: chatIcon, Match: "/chat", Badge: badge, BadgeURL: "/chat/badge"}}
 }
 
 func (c *Chat) Templates() fs.FS { return tmplFS }
@@ -107,6 +107,7 @@ func (c *Chat) Templates() fs.FS { return tmplFS }
 func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	c.deps = d
 	mux.HandleFunc("GET /chat", d.RequireAuth(c.getIndex))
+	mux.HandleFunc("GET /chat/badge", d.RequireAuth(c.getBadge))
 	mux.HandleFunc("GET /chat/room/{id}", d.RequireAuth(c.getRoom))
 	mux.HandleFunc("GET /chat/room/{id}/messages", d.RequireAuth(c.getMessages))
 	mux.HandleFunc("POST /chat/rooms", d.RequireAuth(c.postCreateRoom))
@@ -201,10 +202,13 @@ func (c *Chat) Stop(ctx context.Context) error {
 	return nil
 }
 
-// dbPathOrDefault resolves the durable store path: an explicit test override; else,
-// when there is persistent app config, the user's app data dir
-// (os.UserConfigDir()/juice-ui) so the store is never mistaken for build output;
-// else "" (in-memory — so tests with no persistent config write no file).
+// dbPathOrDefault resolves the durable store path. Order: an explicit test
+// override; then "" (in-memory) when there is no persistent app config, so tests
+// write no file; then — for the migration — the legacy location under the *config*
+// dir if a store already exists there, kept in place because it is live user data
+// and the WAL sidecars make an automatic move unsafe (operators migrate explicitly,
+// see docs/config.md); else the proper data dir (apps.UserDataDir via Deps.DataDir),
+// falling back beside the app-state file if none was provided.
 func (c *Chat) dbPathOrDefault() string {
 	if c.dbPath != "" {
 		return c.dbPath
@@ -212,11 +216,15 @@ func (c *Chat) dbPathOrDefault() string {
 	if c.deps.ConfigPath == "" {
 		return ""
 	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		dir = filepath.Dir(c.deps.ConfigPath) // fallback: beside the config file
-	} else {
-		dir = filepath.Join(dir, "juice-ui")
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		legacy := filepath.Join(cfgDir, "juice-ui", chatDBName)
+		if _, err := os.Stat(legacy); err == nil {
+			return legacy
+		}
+	}
+	dir := c.deps.DataDir
+	if dir == "" {
+		dir = filepath.Dir(c.deps.ConfigPath) // fallback: beside the app-state file
 	}
 	_ = os.MkdirAll(dir, 0o700)
 	return filepath.Join(dir, chatDBName)
@@ -451,6 +459,18 @@ func (c *Chat) getIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getBadge serves the nav unread badge fragment the core polls: bare count as
+// text/html, empty body when zero (matching the core steps-badge contract).
+func (c *Chat) getBadge(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if c.dc == nil {
+		return
+	}
+	if n, err := c.dc.UnreadTotal(r.Context(), c.deps.Handle(r)); err == nil && n > 0 {
+		fmt.Fprintf(w, "%d", n)
+	}
+}
+
 func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Handle(r)
 	c.ensureProvisioned(r)
@@ -468,14 +488,20 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getMessages renders just the message list for the conversation page's htmx poll,
-// marking the room read up to the latest message shown. A non-member gets an empty
-// list (no leak).
+// getMessages renders just the message list for the conversation page's htmx poll.
+// It marks the room read up to the latest message shown ONLY when the tab is
+// visible: the poll keeps running in a backgrounded tab (so content and badges stay
+// fresh), but must not silently clear unread while the user isn't looking. app.js
+// sends X-Visible from document.visibilityState; an absent header (stale asset,
+// other client) is treated as visible, degrading to the prior always-mark behaviour
+// rather than to "unread stuck forever". A non-member gets an empty list (no leak).
 func (c *Chat) getMessages(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Handle(r)
 	id := r.PathValue("id")
 	_, msgs, _ := c.dc.Room(r.Context(), me, id)
-	c.markRead(r, me, id, msgs)
+	if r.Header.Get("X-Visible") != "0" {
+		c.markRead(r, me, id, msgs)
+	}
 	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_messages", msgsView{
 		RoomID: id, Me: me, Messages: msgs, CSRF: c.deps.CSRFField(r),
 	})

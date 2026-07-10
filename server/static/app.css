@@ -156,6 +156,11 @@ details.mobile-menu > summary::-webkit-details-marker { display: none; }
 }
 .badge:empty { display: none; }
 
+/* .unread — a table row (e.g. a chat room) with unseen activity: the primary
+   cell's link is weighted so the row reads as "new" at a glance, complementing
+   the count badge. */
+tr.unread > td:first-child a { font-weight: 700; }
+
 /* .tabs — THE view-switch component: the entry screen's sign in / create
    account toggle and in-content list filters (all/active/inactive, …). The
    mobile bottom bar is a separate component (.tab-bar). */

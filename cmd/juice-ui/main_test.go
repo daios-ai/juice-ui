@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -12,8 +13,13 @@ func env(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
 
+// noFiles is a readFile stub for LoadConfig tests that exercise env/defaults only:
+// every path is reported absent, so no operator config file is loaded and the
+// app-state path resolves to the config-dir default.
+func noFiles(string) ([]byte, error) { return nil, os.ErrNotExist }
+
 func TestLoadConfigDefaults(t *testing.T) {
-	cfg, err := LoadConfig(env(nil))
+	cfg, err := LoadConfig(env(nil), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +40,7 @@ func TestLoadConfigOverrides(t *testing.T) {
 		"JUICE_UI_ADDR":           ":9000",
 		"JUICE_UI_SESSION_SECRET": "topsecret",
 		"JUICE_UI_SECURE":         "true",
-	}))
+	}), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +54,7 @@ func TestLoadConfigOverrides(t *testing.T) {
 
 func TestTrustedOriginsDefaultsAndConfig(t *testing.T) {
 	// Defaults trust localhost/127.0.0.1 on the bound port.
-	cfg, err := LoadConfig(env(map[string]string{"JUICE_UI_ADDR": "127.0.0.1:8080"}))
+	cfg, err := LoadConfig(env(map[string]string{"JUICE_UI_ADDR": "127.0.0.1:8080"}), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +65,7 @@ func TestTrustedOriginsDefaultsAndConfig(t *testing.T) {
 	cfg2, err := LoadConfig(env(map[string]string{
 		"JUICE_UI_ADDR":            "127.0.0.1:8080",
 		"JUICE_UI_TRUSTED_ORIGINS": "https://ui.example.com, 192.168.1.9:8080 ,",
-	}))
+	}), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +88,7 @@ func hasHost(ss []string, want string) bool {
 
 func TestLoadConfigRejectsBadURL(t *testing.T) {
 	for _, bad := range []string{"not-a-url", "ftp://x", "://nohost", "/relative"} {
-		if _, err := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": bad})); err == nil {
+		if _, err := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": bad}), noFiles); err == nil {
 			t.Errorf("expected error for kernel url %q", bad)
 		}
 	}
@@ -109,7 +115,7 @@ func TestCSRFKey(t *testing.T) {
 }
 
 func TestBuildServesLogin(t *testing.T) {
-	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "secret-for-test"}))
+	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "secret-for-test"}), noFiles)
 	cfg.ConfigPath = "" // in-memory app config; tests write no file
 	h, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -137,7 +143,7 @@ func TestBuildServesLogin(t *testing.T) {
 }
 
 func TestBuildRequiresAuthRedirect(t *testing.T) {
-	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "s"}))
+	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "s"}), noFiles)
 	cfg.ConfigPath = "" // in-memory app config; tests write no file
 	h, _ := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(h)

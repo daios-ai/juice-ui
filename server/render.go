@@ -49,6 +49,7 @@ type Page struct {
 	Flash        string          // transient user message
 	FlashKind    string          // "success" | "error" | "info" | ""
 	AppNav       []apps.NavEntry // sidebar entries contributed by apps
+	BadgeSecs    int             // nav-badge poll interval in seconds (steps + apps)
 	Data         any             // page-specific view model
 }
 
@@ -88,6 +89,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"runForm":      runForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
+		"badge":        badge,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -347,6 +349,25 @@ func actionsHref(scope, filter string) string {
 		return "/actions"
 	}
 	return "/actions?" + q.Encode()
+}
+
+// badgeView is the model for the _badge_poll partial: a nav attention badge that
+// htmx re-fetches on a fixed interval. Count is the initial server-rendered value
+// (so a no-JS client still sees it); the poll then overwrites it.
+type badgeView struct {
+	URL   string
+	Label string
+	Count int
+	Every int // poll interval, seconds
+}
+
+// badge builds a badgeView for the template, defaulting the interval defensively
+// so a mis-plumbed 0 never yields an invalid "every 0s" trigger.
+func badge(url, label string, count, secs int) badgeView {
+	if secs < 1 {
+		secs = 30
+	}
+	return badgeView{URL: url, Label: label, Count: count, Every: secs}
 }
 
 // KindBadge is the single-letter attribute chip for an action's execution kind.
