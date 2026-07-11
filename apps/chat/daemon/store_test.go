@@ -279,33 +279,6 @@ func TestInboxNonMemberEmpty(t *testing.T) {
 	}
 }
 
-// TestMemberHandles checks the grant-sweep source: distinct members of live rooms
-// only (a member of a deleted room is excluded).
-func TestMemberHandles(t *testing.T) {
-	s := newStore(t)
-	s.CreateRoom("@alice", "A", []string{"@bob", "@carol"})
-	s.CreateRoom("@bob", "B", []string{"@alice"})
-	del, _ := s.CreateRoom("@alice", "D", []string{"@dave"})
-	s.DeleteRoom("@alice", del.ID)
-
-	hs, err := s.MemberHandles()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]bool{}
-	for _, h := range hs {
-		got[h] = true
-	}
-	for _, w := range []string{"@alice", "@bob", "@carol"} {
-		if !got[w] {
-			t.Errorf("missing member %q in %v", w, hs)
-		}
-	}
-	if got["@dave"] {
-		t.Errorf("@dave (deleted-room-only) must be excluded: %v", hs)
-	}
-}
-
 // TestRoomsForOrdering checks the list contract: unread rooms sort first, then by
 // most-recent activity, with an empty room falling back to its creation time.
 func TestRoomsForOrdering(t *testing.T) {

@@ -174,6 +174,18 @@ func (s *Store) requireCreator(actor, roomID string) (Room, error) {
 	return r, nil
 }
 
+// requireMember loads a live room and checks actor is a member of it.
+func (s *Store) requireMember(actor, roomID string) (Room, error) {
+	r, err := s.liveRoom(s.db, roomID)
+	if err != nil {
+		return Room{}, err
+	}
+	if !s.isMember(roomID, actor) {
+		return Room{}, ErrNotMember
+	}
+	return r, nil
+}
+
 // DeleteRoom soft-deletes a room; creator only.
 func (s *Store) DeleteRoom(actor, roomID string) error {
 	if _, err := s.requireCreator(actor, roomID); err != nil {
@@ -259,11 +271,8 @@ func (s *Store) PostMessage(actor, roomID, text string) (Message, error) {
 	if text == "" {
 		return Message{}, ErrBadInput
 	}
-	if _, err := s.liveRoom(s.db, roomID); err != nil {
+	if _, err := s.requireMember(actor, roomID); err != nil {
 		return Message{}, err
-	}
-	if !s.isMember(roomID, actor) {
-		return Message{}, ErrNotMember
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -310,12 +319,9 @@ func (s *Store) DeleteMessage(actor, roomID, msgID string) error {
 // Room returns a room (with members) and its most recent messages oldest-first,
 // bounded to the recent window; member only.
 func (s *Store) Room(viewer, roomID string) (Room, []Message, error) {
-	r, err := s.liveRoom(s.db, roomID)
+	r, err := s.requireMember(viewer, roomID)
 	if err != nil {
 		return Room{}, nil, err
-	}
-	if !s.isMember(roomID, viewer) {
-		return Room{}, nil, ErrNotMember
 	}
 	if r.Members, err = s.members(s.db, roomID); err != nil {
 		return Room{}, nil, err
@@ -342,11 +348,8 @@ func (s *Store) recent(roomID string) ([]Message, error) {
 // History returns up to limit non-deleted messages before beforeSeq, oldest-first,
 // for scrollback; member only.
 func (s *Store) History(viewer, roomID string, beforeSeq int64, limit int) ([]Message, error) {
-	if _, err := s.liveRoom(s.db, roomID); err != nil {
+	if _, err := s.requireMember(viewer, roomID); err != nil {
 		return nil, err
-	}
-	if !s.isMember(roomID, viewer) {
-		return nil, ErrNotMember
 	}
 	if limit <= 0 || limit > recentWindow {
 		limit = recentWindow
@@ -427,11 +430,8 @@ func (s *Store) UnreadTotal(viewer string) (int, error) {
 // MarkRead advances viewer's read watermark for a room to at least seq; member
 // only. A watermark never moves backwards.
 func (s *Store) MarkRead(viewer, roomID string, seq int64) error {
-	if _, err := s.liveRoom(s.db, roomID); err != nil {
+	if _, err := s.requireMember(viewer, roomID); err != nil {
 		return err
-	}
-	if !s.isMember(roomID, viewer) {
-		return ErrNotMember
 	}
 	return s.bumpRead(viewer, roomID, seq)
 }
@@ -492,27 +492,6 @@ func (s *Store) unseen(viewer, roomID string) ([]Message, error) {
 		return nil, err
 	}
 	return scanMessages(rows) // already oldest-first (ORDER BY seq ASC)
-}
-
-// MemberHandles returns the distinct handles that are members of any live room —
-// the set of users the plugin must hold kernel grants for (so a headless member can
-// call the actions without a UI visit).
-func (s *Store) MemberHandles() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT mem.handle FROM members mem
-		JOIN rooms r ON r.id = mem.room_id AND r.deleted = 0 ORDER BY mem.handle`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err != nil {
-			return nil, err
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
 }
 
 // ---- helpers ----

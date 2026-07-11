@@ -696,22 +696,11 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.PartialArgs = partial
-	var created client.Step
 	oErr := s.sessions.Do(ctx, func(tok string) error {
-		st, e := s.client.CreateStep(ctx, tok, in)
-		created = st
+		_, e := s.client.CreateStep(ctx, tok, in)
 		return e
 	})
-	if isAuthErr(oErr) {
-		s.handleErr(w, r, oErr)
-		return
-	}
-	if oErr != nil {
-		s.flashRedirect(w, r, "/steps", "error", userMessage(oErr))
-		return
-	}
-	_ = created
-	s.flashRedirect(w, r, "/steps", "success", "Step created.")
+	s.flashResult(w, r, oErr, "/steps", "Step created.")
 }
 
 const (
@@ -949,16 +938,8 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		in.Method = strings.TrimSpace(r.FormValue("method"))
 		in.Params = parseHTTPParams(r)
 	}
-	for _, f := range []struct {
-		key string
-		dst *json.RawMessage
-	}{{"input_schema", &in.InputSchema}, {"output_schema", &in.OutputSchema}} {
-		raw, err := schemaFromForm(r, f.key)
-		if err != nil {
-			s.flashRedirect(w, r, "/actions", "error", err.Error())
-			return
-		}
-		*f.dst = raw
+	if !s.applySchemas(w, r, "/actions", &in.InputSchema, &in.OutputSchema) {
+		return
 	}
 
 	if scheme := r.FormValue("auth_scheme"); scheme != "" {
@@ -999,15 +980,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		created = a
 		return e
 	})
-	if isAuthErr(err) {
-		s.handleErr(w, r, err)
-		return
-	}
-	if err != nil {
-		s.flashRedirect(w, r, "/actions", "error", userMessage(err))
-		return
-	}
-	s.flashRedirect(w, r, "/actions", "success", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
+	s.flashResult(w, r, err, "/actions", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
@@ -1177,6 +1150,24 @@ func schemaFromForm(r *http.Request, key string) (json.RawMessage, error) {
 	return json.RawMessage(raw), nil
 }
 
+// applySchemas reads the input_schema and output_schema form fields into the given
+// destinations (shared by action create and update). On invalid JSON it flashes a
+// form error to dest and returns false, so the caller returns.
+func (s *Server) applySchemas(w http.ResponseWriter, r *http.Request, dest string, input, output *json.RawMessage) bool {
+	for _, f := range []struct {
+		key string
+		dst *json.RawMessage
+	}{{"input_schema", input}, {"output_schema", output}} {
+		raw, err := schemaFromForm(r, f.key)
+		if err != nil {
+			s.flashRedirect(w, r, dest, "error", err.Error())
+			return false
+		}
+		*f.dst = raw
+	}
+	return true
+}
+
 // parseHTTPParams reads the repeated param_name/param_in form rows into ordered
 // {name, in} bindings. Rows are paired by index (the http-only section enables
 // its inputs as a unit, so the two slices stay aligned); blank-name rows are
@@ -1214,16 +1205,8 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 			in.Price = &p
 		}
 	}
-	for _, f := range []struct {
-		key string
-		dst *json.RawMessage
-	}{{"input_schema", &in.InputSchema}, {"output_schema", &in.OutputSchema}} {
-		raw, err := schemaFromForm(r, f.key)
-		if err != nil {
-			s.flashRedirect(w, r, "/actions/"+id, "error", err.Error())
-			return
-		}
-		*f.dst = raw
+	if !s.applySchemas(w, r, "/actions/"+id, &in.InputSchema, &in.OutputSchema) {
+		return
 	}
 	// Source/method/params come only from the http subsection, which renders the
 	// method select. Absent it (e.g. a wasm action), leave the request untouched.
@@ -1237,15 +1220,7 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 		_, e := s.client.UpdateAction(ctx, tok, id, in)
 		return e
 	})
-	if err != nil {
-		if isAuthErr(err) {
-			s.handleErr(w, r, err)
-			return
-		}
-		s.flashRedirect(w, r, "/actions/"+id, "error", userMessage(err))
-		return
-	}
-	s.flashRedirect(w, r, "/actions/"+id, "success", "Action updated. It is now inactive.")
+	s.flashResult(w, r, err, "/actions/"+id, "Action updated. It is now inactive.")
 }
 
 func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
@@ -1340,27 +1315,34 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// loadTxView fetches a transaction, the viewer, and (best-effort) the action into
+// a txView — the shared basis of the transaction page and its verify fragment. The
+// action is nil on 404 (a soft-deleted action). CanRate: the buyer may rate a
+// successful, unrated transaction (R6.6.4).
+func (s *Server) loadTxView(ctx context.Context, tok, id string) (txView, error) {
+	tx, e := s.client.GetTransaction(ctx, tok, id)
+	if e != nil {
+		return txView{}, e
+	}
+	me, e := s.client.Me(ctx, tok)
+	if e != nil {
+		return txView{}, e
+	}
+	v := txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerHandle == me.Handle && tx.Rating == nil}
+	if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
+		v.Action = &a
+	}
+	return v, nil
+}
+
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 	var view txView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		tx, e := s.client.GetTransaction(ctx, tok, id)
-		if e != nil {
-			return e
-		}
-		me, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
-		// The buyer (process owner) may rate a successful, unrated transaction (R6.6.4).
-		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerHandle == me.Handle && tx.Rating == nil}
-		// Fetch the action; nil on 404 (soft-deleted action). Receipt verification
-		// is on demand (the Verify control → getTxVerify), not fetched eagerly.
-		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
-			view.Action = &a
-		}
-		return nil
+		v, e := s.loadTxView(ctx, tok, id)
+		view = v
+		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
@@ -1375,25 +1357,18 @@ func (s *Server) getTxVerify(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var view txView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		tx, e := s.client.GetTransaction(ctx, tok, id)
+		v, e := s.loadTxView(ctx, tok, id)
 		if e != nil {
 			return e
-		}
-		me, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
-		view = txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerHandle == me.Handle && tx.Rating == nil}
-		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
-			view.Action = &a
 		}
 		if receipt, re := s.client.ReceiptVerification(ctx, tok, id); re == nil {
-			view.Receipt = &receipt
+			v.Receipt = &receipt
 		} else if kerr, ok := re.(*client.KernelError); ok && kerr.Kind == client.KindInvalidState {
-			view.ReceiptMsg = "Receipt verification is not available for this local transaction."
+			v.ReceiptMsg = "Receipt verification is not available for this local transaction."
 		} else {
-			view.ReceiptMsg = userMessage(re)
+			v.ReceiptMsg = userMessage(re)
 		}
+		view = v
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {

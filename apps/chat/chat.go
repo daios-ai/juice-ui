@@ -579,29 +579,23 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Chat) postDeleteRoom(w http.ResponseWriter, r *http.Request) {
-	if _, err := c.run(r, "delete-room", map[string]any{"room": r.PathValue("id")}); c.deps.HandleErr(w, r, err) {
-		return
-	}
-	http.Redirect(w, r, "/chat", http.StatusSeeOther)
+	c.opRedirect(w, r, "delete-room", map[string]any{"room": r.PathValue("id")}, "/chat")
 }
 
 func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) {
-	if _, err := c.run(r, "leave-room", map[string]any{"room": r.PathValue("id")}); c.deps.HandleErr(w, r, err) {
-		return
-	}
-	http.Redirect(w, r, "/chat", http.StatusSeeOther)
+	c.opRedirect(w, r, "leave-room", map[string]any{"room": r.PathValue("id")}, "/chat")
 }
 
 func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
-	c.opRedirect(w, r, "add-member", map[string]any{"room": r.PathValue("id"), "member": strings.TrimSpace(r.FormValue("member"))})
+	c.opRedirect(w, r, "add-member", map[string]any{"room": r.PathValue("id"), "member": strings.TrimSpace(r.FormValue("member"))}, roomURL(r))
 }
 
 func (c *Chat) postRemoveMember(w http.ResponseWriter, r *http.Request) {
-	c.opRedirect(w, r, "remove-member", map[string]any{"room": r.PathValue("id"), "member": strings.TrimSpace(r.FormValue("member"))})
+	c.opRedirect(w, r, "remove-member", map[string]any{"room": r.PathValue("id"), "member": strings.TrimSpace(r.FormValue("member"))}, roomURL(r))
 }
 
 func (c *Chat) postDeleteMessage(w http.ResponseWriter, r *http.Request) {
-	c.opRedirect(w, r, "delete-message", map[string]any{"room": r.PathValue("id"), "message": r.PathValue("mid")})
+	c.opRedirect(w, r, "delete-message", map[string]any{"room": r.PathValue("id"), "message": r.PathValue("mid")}, roomURL(r))
 }
 
 // ---- helpers ----
@@ -619,13 +613,17 @@ func (c *Chat) run(r *http.Request, action string, args map[string]any) (client.
 	return reply, err
 }
 
-// opRedirect runs an action against the current room and redirects back to it.
-func (c *Chat) opRedirect(w http.ResponseWriter, r *http.Request, action string, args map[string]any) {
+// opRedirect runs an action as the signed-in user and, on success, redirects to
+// `to` (the room URL for in-room ops, "/chat" for room removal/leaving).
+func (c *Chat) opRedirect(w http.ResponseWriter, r *http.Request, action string, args map[string]any, to string) {
 	if _, err := c.run(r, action, args); c.deps.HandleErr(w, r, err) {
 		return
 	}
-	http.Redirect(w, r, "/chat/room/"+url.PathEscape(r.PathValue("id")), http.StatusSeeOther)
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }
+
+// roomURL is the browser path for the current room.
+func roomURL(r *http.Request) string { return "/chat/room/" + url.PathEscape(r.PathValue("id")) }
 
 // roomName sanitizes a display room name (trimmed; empty rejected).
 func roomName(s string) string { return strings.TrimSpace(s) }

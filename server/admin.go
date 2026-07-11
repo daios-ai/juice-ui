@@ -82,19 +82,11 @@ func (s *Server) postAdminUserOp(w http.ResponseWriter, r *http.Request) {
 		}
 		return s.client.AdminSuspendUser(ctx, tok, handle)
 	})
-	if isAuthErr(err) {
-		s.handleErr(w, r, err)
-		return
-	}
-	if err != nil {
-		s.flashRedirect(w, r, "/admin", "error", userMessage(err))
-		return
-	}
 	verb := "suspended"
 	if op == "unsuspend" {
 		verb = "unsuspended"
 	}
-	s.flashRedirect(w, r, "/admin", "success", "User "+handle+" "+verb+".")
+	s.flashResult(w, r, err, "/admin", "User "+handle+" "+verb+".")
 }
 
 // postAdminAdjust handles deposit/withdraw, dispatched on the path's last segment.
@@ -117,19 +109,11 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 		_, e := s.client.AdminDeposit(ctx, tok, handle, amount, reason, extKey)
 		return e
 	})
-	if isAuthErr(err) {
-		s.handleErr(w, r, err)
-		return
-	}
-	if err != nil {
-		s.flashRedirect(w, r, "/admin", "error", userMessage(err))
-		return
-	}
 	verb := "Deposited"
 	if op == "withdraw" {
 		verb = "Withdrew"
 	}
-	s.flashRedirect(w, r, "/admin", "success", verb+" "+money(amount)+" credits · "+handle+".")
+	s.flashResult(w, r, err, "/admin", verb+" "+money(amount)+" credits · "+handle+".")
 }
 
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
@@ -193,15 +177,7 @@ func (s *Server) postAdminFriend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminFriend(ctx, tok, key) })
-	if isAuthErr(err) {
-		s.handleErr(w, r, err)
-		return
-	}
-	if err != nil {
-		s.flashRedirect(w, r, "/admin/peers", "error", userMessage(err))
-		return
-	}
-	s.flashRedirect(w, r, "/admin/peers", "success", "Friend request sent; actions imported.")
+	s.flashResult(w, r, err, "/admin/peers", "Friend request sent; actions imported.")
 }
 
 func (s *Server) postAdminUnfriend(w http.ResponseWriter, r *http.Request) {
@@ -212,13 +188,5 @@ func (s *Server) postAdminUnfriend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnfriend(ctx, tok, peer) })
-	if isAuthErr(err) {
-		s.handleErr(w, r, err)
-		return
-	}
-	if err != nil {
-		s.flashRedirect(w, r, "/admin/peers", "error", userMessage(err))
-		return
-	}
-	s.flashRedirect(w, r, "/admin/peers", "success", "Unfriended "+peer+". Proxies deactivated; history preserved.")
+	s.flashResult(w, r, err, "/admin/peers", "Unfriended "+peer+". Proxies deactivated; history preserved.")
 }

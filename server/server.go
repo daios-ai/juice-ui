@@ -631,6 +631,21 @@ func (s *Server) flashRedirect(w http.ResponseWriter, r *http.Request, to, kind,
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
+// flashResult renders the standard outcome of a write action: an auth error is a
+// clean logout, any other error flashes its user message, and success flashes the
+// given message — all redirecting to dest. It is the shared tail of the POST
+// handlers (admin ops, action/step create-update).
+func (s *Server) flashResult(w http.ResponseWriter, r *http.Request, err error, dest, success string) {
+	switch {
+	case isAuthErr(err):
+		s.handleErr(w, r, err)
+	case err != nil:
+		s.flashRedirect(w, r, dest, "error", userMessage(err))
+	default:
+		s.flashRedirect(w, r, dest, "success", success)
+	}
+}
+
 // themeFromRequest returns the explicit theme slug from the cookie, or "" to
 // defer to prefers-color-scheme. Legacy "light"/"dark" cookies map to the default
 // light/dark themes so existing sessions keep working after the theme change.

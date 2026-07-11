@@ -244,7 +244,7 @@ func (d *Daemon) admin(h http.HandlerFunc) http.HandlerFunc {
 func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
 	rooms, err := d.store.RoomsFor(r.URL.Query().Get("handle"))
 	if err != nil {
-		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		writeErr(w, err)
 		return
 	}
 	if rooms == nil {
@@ -256,7 +256,7 @@ func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) getRoom(w http.ResponseWriter, r *http.Request) {
 	room, msgs, err := d.store.Room(r.URL.Query().Get("handle"), r.PathValue("id"))
 	if err != nil {
-		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		writeErr(w, err)
 		return
 	}
 	if msgs == nil {
@@ -270,7 +270,7 @@ func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	msgs, err := d.store.History(r.URL.Query().Get("handle"), r.PathValue("id"), before, limit)
 	if err != nil {
-		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		writeErr(w, err)
 		return
 	}
 	if msgs == nil {
@@ -285,7 +285,7 @@ func (d *Daemon) markRead(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	if err := d.store.MarkRead(r.URL.Query().Get("handle"), r.PathValue("id"), in.Seq); err != nil {
-		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, okBody())
@@ -294,7 +294,7 @@ func (d *Daemon) markRead(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) getUnread(w http.ResponseWriter, r *http.Request) {
 	n, err := d.store.UnreadTotal(r.URL.Query().Get("handle"))
 	if err != nil {
-		writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"count": n})
@@ -337,4 +337,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeErr renders a store error at its mapped status — the shared tail of the
+// admin read handlers.
+func writeErr(w http.ResponseWriter, err error) {
+	writeJSON(w, statusFor(err), map[string]any{"error": err.Error()})
 }

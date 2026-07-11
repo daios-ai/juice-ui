@@ -69,7 +69,6 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":        money,
 		"json":         prettyJSON,
-		"jsonCompact":  jsonCompact,
 		"jsonEdit":     jsonEdit,
 		"statusClass":  statusClass,
 		"truncate":     truncate,
@@ -195,22 +194,12 @@ func money(n int64) string {
 	return out
 }
 
-// prettyJSON renders inline JSON (args/result) as indented text (R4.2). It never
-// double-encodes: structured fields arrive as raw JSON and are pretty-printed.
-func jsonCompact(raw json.RawMessage) string {
+// indentJSON pretty-prints inline JSON (args/result) as indented text (R4.2),
+// never double-encoding (structured fields arrive as raw JSON). Empty input yields
+// the given placeholder.
+func indentJSON(raw json.RawMessage, empty string) string {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return ""
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
-		return string(raw)
-	}
-	return buf.String()
-}
-
-func prettyJSON(raw json.RawMessage) string {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return "—"
+		return empty
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, raw, "", "  "); err != nil {
@@ -219,19 +208,10 @@ func prettyJSON(raw json.RawMessage) string {
 	return buf.String()
 }
 
-// jsonEdit renders a raw JSON value for prefilling an editable <textarea>:
-// indented when present, empty string when absent (so the field stays blank
-// rather than showing prettyJSON's "—" placeholder).
-func jsonEdit(raw json.RawMessage) string {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return ""
-	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, raw, "", "  "); err != nil {
-		return string(raw)
-	}
-	return buf.String()
-}
+// prettyJSON shows a value read-only ("—" when absent); jsonEdit prefills an
+// editable <textarea> (blank when absent, not the "—" placeholder).
+func prettyJSON(raw json.RawMessage) string { return indentJSON(raw, "—") }
+func jsonEdit(raw json.RawMessage) string   { return indentJSON(raw, "") }
 
 // statusClass maps a transaction/credit status to a CSS class. The three
 // financial states use mutually distinct, trust-signal colors (R8.7).
