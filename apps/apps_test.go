@@ -4,8 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"testing/fstest"
 )
@@ -68,33 +66,5 @@ func TestNavEntryCarriesBadgeURL(t *testing.T) {
 	e := NavEntry{Slug: "chat", BadgeURL: "/chat/badge", Badge: 3}
 	if e.BadgeURL != "/chat/badge" || e.Badge != 3 {
 		t.Fatalf("NavEntry badge fields = %+v", e)
-	}
-}
-
-func TestUserDataDir(t *testing.T) {
-	getenv := func(m map[string]string) func(string) string {
-		return func(k string) string { return m[k] }
-	}
-	if runtime.GOOS == "linux" {
-		// XDG_DATA_HOME wins when set.
-		got, err := UserDataDir(getenv(map[string]string{"XDG_DATA_HOME": "/xdg"}))
-		if err != nil || got != filepath.Join("/xdg", "juice-ui") {
-			t.Errorf("XDG_DATA_HOME: got %q err %v", got, err)
-		}
-		// Else ~/.local/share.
-		got, err = UserDataDir(getenv(map[string]string{"HOME": "/home/x"}))
-		if err != nil || got != filepath.Join("/home/x", ".local", "share", "juice-ui") {
-			t.Errorf("HOME fallback: got %q err %v", got, err)
-		}
-		// Neither set → error, not a bogus relative path.
-		if _, err := UserDataDir(getenv(nil)); err == nil {
-			t.Error("expected error when neither XDG_DATA_HOME nor HOME is set")
-		}
-		return
-	}
-	// Non-Linux: coincides with the config dir; just require a non-empty, absolute path.
-	got, err := UserDataDir(getenv(nil))
-	if err != nil || !filepath.IsAbs(got) {
-		t.Errorf("UserDataDir = %q err %v, want an absolute path", got, err)
 	}
 }

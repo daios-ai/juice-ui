@@ -3,24 +3,23 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
 
-// oneFile returns a readFile stub that serves body for exactly `path` and reports
-// every other path absent — so tests can inject a config file without disk.
-func oneFile(path, body string) func(string) ([]byte, error) {
+// files returns a readFile stub serving the given path→body map; every other path
+// is reported absent, so tests stay hermetic.
+func files(m map[string]string) func(string) ([]byte, error) {
 	return func(p string) ([]byte, error) {
-		if p == path {
-			return []byte(body), nil
+		if b, ok := m[p]; ok {
+			return []byte(b), nil
 		}
 		return nil, os.ErrNotExist
 	}
 }
 
-func TestConfigDefaultsWhenNoFile(t *testing.T) {
-	cfg, err := LoadConfig(env(nil), noFiles)
+func TestConfigDefaultsAndHome(t *testing.T) {
+	cfg, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j"}), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,85 +29,73 @@ func TestConfigDefaultsWhenNoFile(t *testing.T) {
 	if cfg.BadgeInterval != 30*time.Second {
 		t.Errorf("default badge interval = %v want 30s", cfg.BadgeInterval)
 	}
+	if cfg.Home != filepath.Join("/j", "ui") {
+		t.Errorf("Home = %q, want /j/ui", cfg.Home)
+	}
+	if cfg.StatePath != filepath.Join("/j", "ui", "state.json") {
+		t.Errorf("StatePath = %q, want /j/ui/state.json", cfg.StatePath)
+	}
+	if len(cfg.Notices) != 0 {
+		t.Errorf("unexpected notices on a clean install: %v", cfg.Notices)
+	}
 }
 
 func TestConfigFileValuesApplied(t *testing.T) {
-	const path = "/etc/juice-ui/config.json"
-	body := `{
-	  "kernel_url": "https://k.example.com",
-	  "addr": ":9100",
-	  "secure": true,
-	  "public_url": "https://ui.example.com",
-	  "trusted_origins": ["https://ui.example.com", "lan:8080"],
-	  "badge_interval_seconds": 12,
-	  "app_state_path": "/var/lib/juice-ui/state.json"
-	}`
-	getenv := env(map[string]string{"JUICE_UI_CONFIG_FILE": path})
-	cfg, err := LoadConfig(getenv, oneFile(path, body))
+	cfgPath := filepath.Join("/j", "ui", "config.json")
+	body := `{"kernel_url":"https://k","addr":":9100","secure":true,"public_url":"https://ui","trusted_origins":["https://ui","lan:8080"],"badge_interval_seconds":12}`
+	cfg, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j"}), files(map[string]string{cfgPath: body}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.KernelBaseURL != "https://k.example.com" || cfg.ListenAddr != ":9100" {
-		t.Errorf("file kernel/addr not applied: %+v", cfg)
-	}
-	if !cfg.Secure {
-		t.Error("file secure=true not applied")
-	}
-	if cfg.PublicURL != "https://ui.example.com" {
-		t.Errorf("file public_url not applied: %q", cfg.PublicURL)
+	if cfg.KernelBaseURL != "https://k" || cfg.ListenAddr != ":9100" || !cfg.Secure || cfg.PublicURL != "https://ui" {
+		t.Errorf("file values not applied: %+v", cfg)
 	}
 	if cfg.BadgeInterval != 12*time.Second {
 		t.Errorf("file badge interval = %v want 12s", cfg.BadgeInterval)
 	}
-	if cfg.ConfigPath != "/var/lib/juice-ui/state.json" {
-		t.Errorf("file app_state_path not applied: %q", cfg.ConfigPath)
-	}
-	if !hasHost(cfg.TrustedOrigins, "ui.example.com") || !hasHost(cfg.TrustedOrigins, "lan:8080") {
+	if !hasHost(cfg.TrustedOrigins, "ui") || !hasHost(cfg.TrustedOrigins, "lan:8080") {
 		t.Errorf("file trusted_origins not merged/normalised: %v", cfg.TrustedOrigins)
 	}
 }
 
 func TestEnvOverridesFile(t *testing.T) {
-	const path = "/cfg.json"
-	body := `{"kernel_url": "https://from-file", "addr": ":1", "secure": true}`
+	cfgPath := filepath.Join("/j", "ui", "config.json")
 	getenv := env(map[string]string{
-		"JUICE_UI_CONFIG_FILE": path,
-		"JUICE_KERNEL_URL":     "https://from-env",
-		"JUICE_UI_ADDR":        ":2",
-		"JUICE_UI_SECURE":      "false",
+		"JUICE_HOME":       "/j",
+		"JUICE_KERNEL_URL": "https://from-env",
+		"JUICE_UI_ADDR":    ":2",
+		"JUICE_UI_SECURE":  "false",
 	})
-	cfg, err := LoadConfig(getenv, oneFile(path, body))
+	body := `{"kernel_url":"https://from-file","addr":":1","secure":true}`
+	cfg, err := LoadConfig(getenv, files(map[string]string{cfgPath: body}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.KernelBaseURL != "https://from-env" || cfg.ListenAddr != ":2" {
+	if cfg.KernelBaseURL != "https://from-env" || cfg.ListenAddr != ":2" || cfg.Secure {
 		t.Errorf("env did not win over file: %+v", cfg)
-	}
-	if cfg.Secure {
-		t.Error("env JUICE_UI_SECURE=false should override file secure=true")
 	}
 }
 
 func TestConfigMalformedIsError(t *testing.T) {
-	const path = "/cfg.json"
-	getenv := env(map[string]string{"JUICE_UI_CONFIG_FILE": path})
-	if _, err := LoadConfig(getenv, oneFile(path, `{not json`)); err == nil {
+	cfgPath := filepath.Join("/j", "ui", "config.json")
+	getenv := env(map[string]string{"JUICE_HOME": "/j"})
+	if _, err := LoadConfig(getenv, files(map[string]string{cfgPath: `{not json`})); err == nil {
 		t.Error("malformed config file should be a hard error")
 	}
 }
 
 func TestConfigUnknownKeyIsError(t *testing.T) {
-	const path = "/cfg.json"
-	getenv := env(map[string]string{"JUICE_UI_CONFIG_FILE": path})
-	if _, err := LoadConfig(getenv, oneFile(path, `{"kernal_url": "typo"}`)); err == nil {
+	cfgPath := filepath.Join("/j", "ui", "config.json")
+	getenv := env(map[string]string{"JUICE_HOME": "/j"})
+	if _, err := LoadConfig(getenv, files(map[string]string{cfgPath: `{"kernal_url":"typo"}`})); err == nil {
 		t.Error("unknown config key should be a hard error (DisallowUnknownFields)")
 	}
 }
 
 func TestBadgeIntervalClamped(t *testing.T) {
-	const path = "/cfg.json"
-	getenv := env(map[string]string{"JUICE_UI_CONFIG_FILE": path})
-	cfg, err := LoadConfig(getenv, oneFile(path, `{"badge_interval_seconds": 2}`))
+	cfgPath := filepath.Join("/j", "ui", "config.json")
+	getenv := env(map[string]string{"JUICE_HOME": "/j"})
+	cfg, err := LoadConfig(getenv, files(map[string]string{cfgPath: `{"badge_interval_seconds":2}`}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,57 +104,53 @@ func TestBadgeIntervalClamped(t *testing.T) {
 	}
 }
 
-// TestAppStatePathPrefersCwdFile verifies the migration-safe resolution: with no
-// JUICE_UI_CONFIG and no app_state_path in the file, an existing ./juice-ui.json is
-// preferred (protecting a deployment that relies on the historical cwd default).
-func TestAppStatePathPrefersCwdFile(t *testing.T) {
-	// readFile reports only "juice-ui.json" as present (the cwd app-state file);
-	// the config file itself is absent.
-	readFile := func(p string) ([]byte, error) {
-		if p == "juice-ui.json" {
-			return []byte(`{"apps":{}}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
-	cfg, err := LoadConfig(env(nil), readFile)
+// TestStatePathLegacyCwd verifies the migration bridge: an existing cwd
+// ./juice-ui.json (the historical deployment) is honoured, with a notice, when the
+// home state.json is absent.
+func TestStatePathLegacyCwd(t *testing.T) {
+	getenv := env(map[string]string{"JUICE_HOME": "/j"})
+	cfg, err := LoadConfig(getenv, files(map[string]string{"juice-ui.json": `{"apps":{}}`}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ConfigPath != "juice-ui.json" {
-		t.Errorf("cwd juice-ui.json not preferred: %q", cfg.ConfigPath)
+	if cfg.StatePath != "juice-ui.json" {
+		t.Errorf("StatePath = %q, want the cwd legacy juice-ui.json", cfg.StatePath)
+	}
+	if len(cfg.Notices) == 0 {
+		t.Error("expected a migration notice for the legacy state file")
 	}
 }
 
-func TestAppStatePathEnvWins(t *testing.T) {
-	getenv := env(map[string]string{"JUICE_UI_CONFIG": "/explicit/state.json"})
-	// Even if a cwd app-state file exists, the explicit env var wins. (The operator
-	// config file itself is absent — only app-state paths report present.)
-	readFile := func(p string) ([]byte, error) {
-		if strings.HasSuffix(p, "config.json") {
-			return nil, os.ErrNotExist
-		}
-		return []byte(`{"apps":{}}`), nil
-	}
-	cfg, err := LoadConfig(getenv, readFile)
+// TestStatePathLegacyConfigDir verifies the other legacy state location
+// (os.UserConfigDir()/juice-ui/juice-ui.json).
+func TestStatePathLegacyConfigDir(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome) // os.UserConfigDir() honours this on Linux
+	legacy := filepath.Join(cfgHome, "juice-ui", "juice-ui.json")
+	getenv := env(map[string]string{"JUICE_HOME": "/j"})
+	cfg, err := LoadConfig(getenv, files(map[string]string{legacy: `{"apps":{}}`}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ConfigPath != "/explicit/state.json" {
-		t.Errorf("JUICE_UI_CONFIG did not win: %q", cfg.ConfigPath)
+	if cfg.StatePath != legacy {
+		t.Errorf("StatePath = %q, want config-dir legacy %q", cfg.StatePath, legacy)
 	}
 }
 
-// TestAppStatePathDefaultsToConfigDir checks the clean-install fallback: no env, no
-// file value, no cwd file → the config dir default under juice-ui/.
-func TestAppStatePathDefaultsToConfigDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", home) // os.UserConfigDir uses this on Linux
-	cfg, err := LoadConfig(env(nil), noFiles)
+// TestConfigJSONLegacyConfigDir verifies a legacy config.json is still read.
+func TestConfigJSONLegacyConfigDir(t *testing.T) {
+	cfgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	legacy := filepath.Join(cfgHome, "juice-ui", "config.json")
+	getenv := env(map[string]string{"JUICE_HOME": "/j"})
+	cfg, err := LoadConfig(getenv, files(map[string]string{legacy: `{"addr":":7777"}`}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(home, "juice-ui", "juice-ui.json")
-	if cfg.ConfigPath != want && !strings.HasSuffix(cfg.ConfigPath, filepath.Join("juice-ui", "juice-ui.json")) {
-		t.Errorf("app-state default = %q, want under a juice-ui config dir (%q)", cfg.ConfigPath, want)
+	if cfg.ListenAddr != ":7777" {
+		t.Errorf("legacy config.json not read: addr = %q", cfg.ListenAddr)
+	}
+	if len(cfg.Notices) == 0 {
+		t.Error("expected a migration notice for the legacy config file")
 	}
 }

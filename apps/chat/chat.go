@@ -21,7 +21,7 @@
 // daemon's REST Client, and writes by running @chat/* as the signed-in user.
 //
 // The @chat password, daemon admin secret, and caller-token signing key are
-// provisioned on first run and persisted in juice-ui.json via the app config store
+// provisioned on first run and persisted in state.json via the app-state store
 // — no chat environment variables.
 package chat
 
@@ -54,7 +54,7 @@ var tmplFS embed.FS
 // chatHandle is the application's service-account handle.
 const chatHandle = "@chat"
 
-// chatDBName is the daemon store filename, kept under the user's app data dir.
+// chatDBName is the daemon store filename, kept in the component home ($JUICE_HOME/ui).
 const chatDBName = "chat.db"
 
 // chatIcon is the plugin's own nav icon (a speech bubble), inline so no core
@@ -202,31 +202,49 @@ func (c *Chat) Stop(ctx context.Context) error {
 }
 
 // dbPathOrDefault resolves the durable store path. Order: an explicit test
-// override; then "" (in-memory) when there is no persistent app config, so tests
-// write no file; then — for the migration — the legacy location under the *config*
-// dir if a store already exists there, kept in place because it is live user data
-// and the WAL sidecars make an automatic move unsafe (operators migrate explicitly,
-// see docs/config.md); else the proper data dir (apps.UserDataDir via Deps.DataDir),
-// falling back beside the app-state file if none was provided.
+// override; then "" (in-memory) when there is no persistent app state, so tests
+// write no file; then the component home ($JUICE_HOME/ui/chat.db). For the
+// migration, if the home store does not yet exist but a legacy one does (an earlier
+// XDG-data or config-dir location), that legacy store is kept in place — it is live
+// user data and the WAL sidecars make an automatic move unsafe (operators migrate
+// explicitly; see docs/installation.md).
 func (c *Chat) dbPathOrDefault() string {
 	if c.dbPath != "" {
 		return c.dbPath
 	}
-	if c.deps.ConfigPath == "" {
+	if c.deps.StatePath == "" {
 		return ""
 	}
-	if cfgDir, err := os.UserConfigDir(); err == nil {
-		legacy := filepath.Join(cfgDir, "juice-ui", chatDBName)
-		if _, err := os.Stat(legacy); err == nil {
-			return legacy
+	home := c.deps.Home
+	if home == "" {
+		home = filepath.Dir(c.deps.StatePath) // fallback: beside state.json
+	}
+	primary := filepath.Join(home, chatDBName)
+	if _, err := os.Stat(primary); os.IsNotExist(err) {
+		for _, legacy := range legacyChatDBs() {
+			if _, err := os.Stat(legacy); err == nil {
+				return legacy
+			}
 		}
 	}
-	dir := c.deps.DataDir
-	if dir == "" {
-		dir = filepath.Dir(c.deps.ConfigPath) // fallback: beside the app-state file
+	_ = os.MkdirAll(home, 0o700)
+	return primary
+}
+
+// legacyChatDBs lists the pre-JUICE_HOME locations chat.db may still occupy, in
+// preference order: the XDG data dir, then the original config dir (where the live
+// store sits). Used only to keep an existing store in place during migration.
+func legacyChatDBs() []string {
+	var out []string
+	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
+		out = append(out, filepath.Join(xdg, "juice-ui", chatDBName))
+	} else if home, err := os.UserHomeDir(); err == nil {
+		out = append(out, filepath.Join(home, ".local", "share", "juice-ui", chatDBName))
 	}
-	_ = os.MkdirAll(dir, 0o700)
-	return filepath.Join(dir, chatDBName)
+	if cfg, err := os.UserConfigDir(); err == nil {
+		out = append(out, filepath.Join(cfg, "juice-ui", chatDBName))
+	}
+	return out
 }
 
 // ensureActions makes each @chat action exist, active, public, and pointed at the

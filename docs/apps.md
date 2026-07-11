@@ -71,7 +71,7 @@ type App interface {
 shared shell and htmx fragments without importing `server`. It also carries:
 
 - **`LoadAppState(slug)` / `SaveAppState(slug, v)`** — a namespaced config store
-  over `juice-ui.json`. An app provisions and remembers its own state (e.g. a
+  over `state.json`. An app provisions and remembers its own state (e.g. a
   service-account password) here, so onboarding needs **no per-app environment
   variables** — a new app adds a JSON key, never a new env var.
 - **`PublicURL`** — the BFF's absolute base URL. An app that registers `kind=http`
@@ -141,7 +141,7 @@ into the *old* header — the service reads nothing and returns 401.
 The fix is to **version the auth config locally** and force a re-push on change:
 
 - Persist a short revision of the pushed auth config in app state (chat stores
-  `AuthRev`, a hash of the auth JSON, in `juice-ui.json` via `SaveAppState`).
+  `AuthRev`, a hash of the auth JSON, in `state.json` via `SaveAppState`).
 - On reconcile, compute `force := storedRev != currentRev`. When `force`, `Update`
   every action with the **full** contract *including `auth`* (not only the readable
   fields), then persist the new revision. Steady-state restarts (matching revision)
@@ -276,7 +276,7 @@ side's internals.
 
 - **Self-provisions.** On `Start` it loads (or generates + persists) the `@chat`
   account password *and* the daemon admin secret via `LoadAppState`/`SaveAppState`,
-  and opens the store beside `juice-ui.json` (in-memory when there is no persistent
+  and opens the store beside `state.json` (in-memory when there is no persistent
   config). No chat environment variables — one launch and chat works.
 - **Owns the `@chat` account via `apps.ServiceAccount`.** It hands the seam the
   handle, the persisted password, and its action-registration as the `setup`

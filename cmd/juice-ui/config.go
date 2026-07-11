@@ -24,7 +24,9 @@ type Config struct {
 	Secure         bool     // Secure flag on cookies; enable behind HTTPS.
 	TrustedOrigins []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
 	PublicURL      string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
-	ConfigPath     string   // resolved path to juice-ui.json (machine-written per-app state; NOT the operator config)
+	Home           string   // the component home, $JUICE_HOME/ui (docs/installation.md)
+	StatePath      string   // resolved path to state.json (machine-written app state)
+	Notices        []string // one-line startup notices (e.g. a legacy path in use, to migrate)
 
 	// BadgeInterval is how often every nav badge (steps + each app) is polled, and
 	// also the steps-badge cache TTL. File-only knob (badge_interval_seconds),
@@ -34,8 +36,7 @@ type Config struct {
 
 // fileConfig is the on-disk shape of the operator config file (config.json). Every
 // key is optional; a pointer or zero value means "not set, keep the lower layer".
-// It is distinct from juice-ui.json, which is machine-written app state — see
-// docs/config.md for the naming asymmetry.
+// It is distinct from state.json, which is machine-written app state.
 type fileConfig struct {
 	KernelURL            string   `json:"kernel_url"`
 	Addr                 string   `json:"addr"`
@@ -44,7 +45,6 @@ type fileConfig struct {
 	PublicURL            string   `json:"public_url"`
 	TrustedOrigins       []string `json:"trusted_origins"`
 	BadgeIntervalSeconds int      `json:"badge_interval_seconds"`
-	AppStatePath         string   `json:"app_state_path"`
 }
 
 // LoadConfig assembles the configuration. getenv and readFile are injected for
@@ -59,8 +59,11 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 		BadgeInterval: 30 * time.Second,
 	}
 
+	home := uiHome(getenv)
+	cfg.Home = home
+
 	// 2. config file
-	fc, _, err := loadConfigFile(getenv, readFile)
+	fc, cfgLegacy, err := loadConfigFile(home, readFile)
 	if err != nil {
 		return Config{}, err
 	}
@@ -125,60 +128,97 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	origins = append(origins, parseOrigins(getenv("JUICE_UI_TRUSTED_ORIGINS"))...)
 	cfg.TrustedOrigins = origins
 
-	cfg.ConfigPath = resolveAppStatePath(getenv, readFile, fc)
+	statePath, stateLegacy := resolveStatePath(home, readFile)
+	cfg.StatePath = statePath
+	if cfgLegacy != "" {
+		cfg.Notices = append(cfg.Notices, fmt.Sprintf("config.json: reading legacy %s — move it to %s", cfgLegacy, filepath.Join(home, "config.json")))
+	}
+	if stateLegacy != "" {
+		cfg.Notices = append(cfg.Notices, fmt.Sprintf("app state: reading legacy %s — move it to %s", stateLegacy, filepath.Join(home, "state.json")))
+	}
 	return cfg, nil
 }
 
-// loadConfigFile reads and parses the operator config file. It returns (nil, path,
-// nil) when the file is absent. The path is JUICE_UI_CONFIG_FILE, or
-// os.UserConfigDir()/juice-ui/config.json by default.
-func loadConfigFile(getenv func(string) string, readFile func(string) ([]byte, error)) (*fileConfig, string, error) {
-	path := strings.TrimSpace(getenv("JUICE_UI_CONFIG_FILE"))
-	if path == "" {
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			return nil, "", nil // can't locate a config dir; defaults + env still apply
+// uiHome is juice-ui's component home: $JUICE_HOME/ui, else ~/.juice/ui (fixed,
+// never cwd-relative — docs/installation.md — except a last-resort cwd fallback when
+// the home directory cannot be determined at all, keeping the binary usable in
+// minimal environments). JUICE_HOME is the only path knob.
+func uiHome(getenv func(string) string) string {
+	root := strings.TrimSpace(getenv("JUICE_HOME"))
+	if root == "" {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			root = filepath.Join(home, ".juice")
+		} else {
+			root = ".juice"
 		}
-		path = filepath.Join(dir, "juice-ui", "config.json")
 	}
+	return filepath.Join(root, "ui")
+}
+
+// legacyConfigDir is the pre-JUICE_HOME juice-ui config directory
+// (os.UserConfigDir()/juice-ui), consulted only to keep an existing file in place
+// during migration. Empty when the config dir can't be located.
+func legacyConfigDir() string {
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "juice-ui")
+	}
+	return ""
+}
+
+// resolveWithLegacy returns primary, unless it is absent and a legacy path exists —
+// then the first existing legacy, and that path as migratedFrom (for a one-time
+// operator notice). Existence is probed via readFile so tests stay hermetic.
+func resolveWithLegacy(primary string, legacies []string, readFile func(string) ([]byte, error)) (path, migratedFrom string) {
+	if _, err := readFile(primary); err == nil {
+		return primary, ""
+	}
+	for _, l := range legacies {
+		if l == "" {
+			continue
+		}
+		if _, err := readFile(l); err == nil {
+			return l, l
+		}
+	}
+	return primary, ""
+}
+
+// loadConfigFile reads and parses the operator config file — $JUICE_HOME/ui/
+// config.json, else an existing legacy config-dir copy. It returns (nil, "", nil)
+// when absent (defaults + env still apply). migratedFrom names a legacy file in use.
+func loadConfigFile(uiHome string, readFile func(string) ([]byte, error)) (fc *fileConfig, migratedFrom string, err error) {
+	primary := filepath.Join(uiHome, "config.json")
+	var legacies []string
+	if d := legacyConfigDir(); d != "" {
+		legacies = append(legacies, filepath.Join(d, "config.json"))
+	}
+	path, migratedFrom := resolveWithLegacy(primary, legacies, readFile)
 	b, err := readFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, path, nil
+			return nil, "", nil
 		}
-		return nil, path, fmt.Errorf("read config file %q: %w", path, err)
+		return nil, "", fmt.Errorf("read config file %q: %w", path, err)
 	}
-	var fc fileConfig
+	var out fileConfig
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&fc); err != nil {
-		return nil, path, fmt.Errorf("parse config file %q: %w", path, err)
+	if err := dec.Decode(&out); err != nil {
+		return nil, "", fmt.Errorf("parse config file %q: %w", path, err)
 	}
-	return &fc, path, nil
+	return &out, migratedFrom, nil
 }
 
-// resolveAppStatePath decides where juice-ui.json (machine-written app state)
-// lives, in precedence order: the JUICE_UI_CONFIG env var (kept for the live
-// deployment, which depends on it), the file's app_state_path, an existing
-// ./juice-ui.json in the working directory (protects a deployment that relies on
-// the historical cwd default), else os.UserConfigDir()/juice-ui/juice-ui.json for
-// a clean new install.
-func resolveAppStatePath(getenv func(string) string, readFile func(string) ([]byte, error), fc *fileConfig) string {
-	if v := strings.TrimSpace(getenv("JUICE_UI_CONFIG")); v != "" {
-		return v
+// resolveStatePath decides where state.json (machine-written app state) lives:
+// $JUICE_HOME/ui/state.json, else an existing legacy file — the cwd ./juice-ui.json
+// (the historical deployment default) or the config-dir juice-ui.json.
+func resolveStatePath(uiHome string, readFile func(string) ([]byte, error)) (path, migratedFrom string) {
+	primary := filepath.Join(uiHome, "state.json")
+	legacies := []string{"juice-ui.json"} // cwd — the live deployment's location
+	if d := legacyConfigDir(); d != "" {
+		legacies = append(legacies, filepath.Join(d, "juice-ui.json"))
 	}
-	if fc != nil {
-		if v := strings.TrimSpace(fc.AppStatePath); v != "" {
-			return v
-		}
-	}
-	if _, err := readFile("juice-ui.json"); err == nil {
-		return "juice-ui.json"
-	}
-	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "juice-ui", "juice-ui.json")
-	}
-	return "juice-ui.json"
+	return resolveWithLegacy(primary, legacies, readFile)
 }
 
 // defaultTrustedOrigins trusts localhost and 127.0.0.1 on the listen port, so the

@@ -62,7 +62,7 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 
 	// App modules. Each is self-contained; the core only knows the apps.App
 	// seam. Chat runs the in-process @chat application, which provisions its own
-	// service account on first run and persists it in juice-ui.json — no chat
+	// service account on first run and persists it in state.json — no chat
 	// configuration required.
 	var appList []apps.App
 	var appTemplates []fs.FS
@@ -90,13 +90,6 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	if publicURL == "" {
 		publicURL = "http://" + cfg.ListenAddr
 	}
-	// Durable-data directory for apps (e.g. the chat store). Best-effort: if it
-	// can't be resolved, apps fall back to placing data beside the app-state file.
-	dataDir, err := apps.UserDataDir(os.Getenv)
-	if err != nil {
-		log.Warn("could not resolve a data directory; apps will fall back beside the config file", "err", err)
-		dataDir = ""
-	}
 	return server.New(server.Options{
 		Client:         kernel,
 		Sessions:       sessions,
@@ -107,8 +100,8 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		TrustedOrigins: cfg.TrustedOrigins,
 		PublicURL:      publicURL,
 		Apps:           appList,
-		ConfigPath:     cfg.ConfigPath,
-		DataDir:        dataDir,
+		StatePath:      cfg.StatePath,
+		Home:           cfg.Home,
 		BadgeInterval:  cfg.BadgeInterval,
 	})
 }
@@ -124,7 +117,10 @@ func main() {
 		log.Error("invalid configuration", "err", err)
 		os.Exit(1)
 	}
-	log.Info("config resolved", "app_state", cfg.ConfigPath, "badge_interval", cfg.BadgeInterval)
+	log.Info("config resolved", "home", cfg.Home, "state", cfg.StatePath, "badge_interval", cfg.BadgeInterval)
+	for _, n := range cfg.Notices {
+		log.Warn("migration: " + n)
+	}
 	handler, err := build(cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)

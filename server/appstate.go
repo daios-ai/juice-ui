@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// appStore persists per-app configuration in a single JSON file (juice-ui.json),
+// appStore persists per-app configuration in a single JSON file (state.json),
 // namespaced by app slug: {"apps":{"<slug>":<blob>}}. It is the generic mechanism
 // apps use to provision and remember their own state (e.g. a service-account
 // password) across restarts — a new app adds a key, never a new env var. Safe for
@@ -18,7 +18,7 @@ type appStore struct {
 	data map[string]json.RawMessage
 }
 
-// appConfigFile is the on-disk shape of juice-ui.json.
+// appConfigFile is the on-disk shape of state.json.
 type appConfigFile struct {
 	Apps map[string]json.RawMessage `json:"apps"`
 }
@@ -65,6 +65,11 @@ func (a *appStore) save(slug string, v json.RawMessage) error {
 	}
 	b, err := json.MarshalIndent(appConfigFile{Apps: a.data}, "", "  ")
 	if err != nil {
+		return err
+	}
+	// Create the component home before the first write — the binary owns its own
+	// directory (docs/installation.md), no reliance on the installer or an sibling.
+	if err := os.MkdirAll(filepath.Dir(a.path), 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(a.path), ".juice-ui-*.tmp")

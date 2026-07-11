@@ -10,7 +10,7 @@ KERNEL  ?= http://127.0.0.1:4040
 ADDR    ?= 127.0.0.1:8080
 SECRET  ?= dev-secret
 
-.PHONY: build test clean install run e2e fmt vet check
+.PHONY: build test clean install uninstall run e2e fmt vet check
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
@@ -22,7 +22,13 @@ clean:
 	rm -f $(BINARY) coverage.out
 
 install: build
+	mkdir -p $(PREFIX)/bin
 	install -m 755 $(BINARY) $(PREFIX)/bin/$(BINARY)
+
+# Removes the installed binary only; $JUICE_HOME state (keys, config, stores) is
+# left intact.
+uninstall:
+	rm -f $(PREFIX)/bin/$(BINARY)
 
 # --- juice-ui extras (offline test above is the regression gate) ---
 

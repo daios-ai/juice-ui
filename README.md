@@ -71,16 +71,17 @@ Configuration is layered **defaults < `config.json` < environment variables**
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `JUICE_HOME` | root for all state (`$JUICE_HOME/ui/`) | `~/.juice` |
 | `JUICE_KERNEL_URL` | kernel API base URL | `http://127.0.0.1:4040` |
 | `JUICE_UI_ADDR` | listen address | `127.0.0.1:8080` |
 | `JUICE_UI_SESSION_SECRET` | derives the CSRF key; **set it in production** | — (ephemeral key if unset — sessions reset on restart) |
 | `JUICE_UI_SECURE` | `true` sets Secure cookies (behind HTTPS) | `false` |
 | `JUICE_UI_PUBLIC_URL` | absolute base URL for OAuth redirects (behind a proxy) | derived from the request |
 
-The optional `config.json` (under the user config dir, or `JUICE_UI_CONFIG_FILE`)
-holds the same settings plus `badge_interval_seconds` (how often nav badges poll,
-default 30). See **[docs/config.md](docs/config.md)** for the full schema, file
-locations, and the app-state file.
+The optional `config.json` (in `$JUICE_HOME/ui/`) holds the same settings plus
+`badge_interval_seconds` (how often nav badges poll, default 30). See
+**[docs/config.md](docs/config.md)** for the schema and
+**[docs/installation.md](docs/installation.md)** for file locations.
 
 ## Architecture
 
@@ -148,7 +149,8 @@ back end.
 - [`requirements.md`](requirements.md) — UI requirements and scope.
 - [`docs/apps.md`](docs/apps.md) — the apps seam and design rules.
 - [`docs/ui-grammar.md`](docs/ui-grammar.md) — the visual grammar.
-- [`docs/config.md`](docs/config.md) — configuration and file locations.
+- [`docs/config.md`](docs/config.md) — configuration settings.
+- [`docs/installation.md`](docs/installation.md) — the filesystem convention & install layout.
 - [`apps/chat/README.md`](apps/chat/README.md) — the built-in chat app.
 - [`juicedocs/`](juicedocs/) — vendored kernel API and requirements.
 

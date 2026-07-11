@@ -116,7 +116,7 @@ func TestCSRFKey(t *testing.T) {
 
 func TestBuildServesLogin(t *testing.T) {
 	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "secret-for-test"}), noFiles)
-	cfg.ConfigPath = "" // in-memory app config; tests write no file
+	cfg.StatePath = "" // in-memory app state; tests write no file
 	h, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -144,7 +144,7 @@ func TestBuildServesLogin(t *testing.T) {
 
 func TestBuildRequiresAuthRedirect(t *testing.T) {
 	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "s"}), noFiles)
-	cfg.ConfigPath = "" // in-memory app config; tests write no file
+	cfg.StatePath = "" // in-memory app state; tests write no file
 	h, _ := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(h)
 	defer srv.Close()

@@ -574,39 +574,49 @@ func TestGetMessagesMarkReadVisibility(t *testing.T) {
 	}
 }
 
-// TestDBPathMigration checks the store-path resolution: an existing legacy store
-// under the config dir is kept (never abandoned), else the proper data dir is used;
-// no persistent config ⇒ in-memory.
+// TestDBPathMigration checks store-path resolution: the component home
+// ($JUICE_HOME/ui) by default; an existing legacy store (config-dir or XDG-data)
+// kept in place, XDG-data preferred; no persistent state ⇒ in-memory.
 func TestDBPathMigration(t *testing.T) {
-	home := t.TempDir()
-	cfgHome := filepath.Join(home, "cfg")
-	t.Setenv("XDG_CONFIG_HOME", cfgHome) // os.UserConfigDir() honours this on Linux
-	dataDir := filepath.Join(home, "data")
+	tmp := t.TempDir()
+	cfgHome := filepath.Join(tmp, "cfg")   // → os.UserConfigDir()
+	dataHome := filepath.Join(tmp, "data") // → XDG_DATA_HOME
+	t.Setenv("XDG_CONFIG_HOME", cfgHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	t.Setenv("HOME", tmp)
 
+	home := filepath.Join(tmp, "juice", "ui") // the component home
 	c := New()
-	c.deps = apps.Deps{
-		ConfigPath: filepath.Join(cfgHome, "juice-ui", "juice-ui.json"),
-		DataDir:    dataDir,
-	}
-	// No legacy file → the data dir is used.
-	if got, want := c.dbPathOrDefault(), filepath.Join(dataDir, chatDBName); got != want {
+	c.deps = apps.Deps{StatePath: filepath.Join(home, "state.json"), Home: home}
+
+	// No legacy store anywhere → the component home is used.
+	if got, want := c.dbPathOrDefault(), filepath.Join(home, chatDBName); got != want {
 		t.Errorf("new-install db path = %q, want %q", got, want)
 	}
-	// A pre-existing legacy store under the config dir is preferred (kept in place).
-	legacyDir := filepath.Join(cfgHome, "juice-ui")
-	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+	// A legacy store under the config dir is kept in place.
+	cfgLegacy := filepath.Join(cfgHome, "juice-ui", chatDBName)
+	seedFile(t, cfgLegacy)
+	if got := c.dbPathOrDefault(); got != cfgLegacy {
+		t.Errorf("config-dir legacy present but path = %q, want %q", got, cfgLegacy)
+	}
+	// The XDG data-dir legacy is preferred over the config-dir one.
+	dataLegacy := filepath.Join(dataHome, "juice-ui", chatDBName)
+	seedFile(t, dataLegacy)
+	if got := c.dbPathOrDefault(); got != dataLegacy {
+		t.Errorf("db path = %q, want XDG-data legacy %q (preferred)", got, dataLegacy)
+	}
+	// No persistent app state → in-memory.
+	if got := New().dbPathOrDefault(); got != "" {
+		t.Errorf("no state path should be in-memory, got %q", got)
+	}
+}
+
+func seedFile(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacy := filepath.Join(legacyDir, chatDBName)
-	if err := os.WriteFile(legacy, []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	if got := c.dbPathOrDefault(); got != legacy {
-		t.Errorf("legacy store present but path = %q, want %q", got, legacy)
-	}
-	// No persistent app config → in-memory (no file).
-	c2 := New()
-	if got := c2.dbPathOrDefault(); got != "" {
-		t.Errorf("no config path should be in-memory, got %q", got)
 	}
 }

@@ -32,8 +32,8 @@ type Options struct {
 	TrustedOrigins []string      // extra hosts accepted as the request Origin (proxied hostnames)
 	PublicURL      string        // absolute base URL of this BFF, for OAuth redirect_uri; "" derives from the request
 	Apps           []apps.App    // app modules to mount (their templates must already be in Renderer)
-	ConfigPath     string        // path to juice-ui.json for per-app persisted config; "" = in-memory
-	DataDir        string        // per-user durable-data dir handed to apps (apps.UserDataDir); "" = none
+	StatePath      string        // path to state.json for per-app persisted state; "" = in-memory
+	Home           string        // component home dir ($JUICE_HOME/ui) handed to apps; "" = none
 	BadgeInterval  time.Duration // nav-badge poll interval + steps-badge cache TTL; 0 → default 30s
 }
 
@@ -47,8 +47,8 @@ type Server struct {
 	secure    bool
 	publicURL string // configured absolute base URL; "" → derive from the request
 	apps      []apps.App
-	appStore  *appStore     // per-app persisted config (juice-ui.json)
-	dataDir   string        // per-user durable-data dir handed to apps
+	appStore  *appStore     // per-app persisted state (state.json)
+	home      string        // component home dir handed to apps
 	badgeTTL  time.Duration // nav-badge poll interval + steps-badge cache TTL
 
 	// Cached kernel identity (handle + key fingerprint) from the open /health,
@@ -126,12 +126,12 @@ func New(o Options) (http.Handler, error) {
 		secure:    o.Secure,
 		publicURL: strings.TrimRight(o.PublicURL, "/"),
 		apps:      o.Apps,
-		dataDir:   o.DataDir,
+		home:      o.Home,
 		badgeTTL:  badgeTTL,
 	}
-	as, err := newAppStore(o.ConfigPath)
+	as, err := newAppStore(o.StatePath)
 	if err != nil {
-		return nil, fmt.Errorf("load app config %q: %w", o.ConfigPath, err)
+		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
 	}
 	s.appStore = as
 
@@ -434,8 +434,8 @@ func (s *Server) appDeps() apps.Deps {
 		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
 		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
 		PublicURL:         s.publicURL,
-		ConfigPath:        s.appStore.path,
-		DataDir:           s.dataDir,
+		StatePath:         s.appStore.path,
+		Home:              s.home,
 		Logger:            s.log,
 	}
 }

@@ -45,6 +45,23 @@ func TestAppStorePersistAndReload(t *testing.T) {
 	}
 }
 
+// TestAppStoreCreatesParentDir checks the fresh-install fix: save creates its
+// component home before writing, rather than failing when the directory is absent.
+func TestAppStoreCreatesParentDir(t *testing.T) {
+	// A path whose parent (…/juice/ui) does not exist yet.
+	path := filepath.Join(t.TempDir(), "juice", "ui", "state.json")
+	a, err := newAppStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.save("chat", json.RawMessage(`{"ok":true}`)); err != nil {
+		t.Fatalf("save into a missing dir should create it: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("state file not written: %v", err)
+	}
+}
+
 func TestAppStoreMissingFileAndInMemory(t *testing.T) {
 	// Missing file is not an error.
 	if _, err := newAppStore(filepath.Join(t.TempDir(), "absent.json")); err != nil {

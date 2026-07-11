@@ -15,44 +15,14 @@ package apps
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 )
-
-// UserDataDir returns the per-user directory for juice-ui's durable data (an app's
-// database, say), following platform convention: on Linux, $XDG_DATA_HOME/juice-ui
-// or ~/.local/share/juice-ui; on macOS/Windows, os.UserConfigDir()/juice-ui, where
-// data and config conventionally coincide. This is deliberately distinct from the
-// config dir (os.UserConfigDir) so a database is never filed under "config". getenv
-// is injected for testing. The directory is not created; callers do that when they
-// write.
-func UserDataDir(getenv func(string) string) (string, error) {
-	if runtime.GOOS == "linux" {
-		if xdg := strings.TrimSpace(getenv("XDG_DATA_HOME")); xdg != "" {
-			return filepath.Join(xdg, "juice-ui"), nil
-		}
-		home := strings.TrimSpace(getenv("HOME"))
-		if home == "" {
-			return "", errors.New("neither XDG_DATA_HOME nor HOME is set")
-		}
-		return filepath.Join(home, ".local", "share", "juice-ui"), nil
-	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "juice-ui"), nil
-}
 
 // App is one app module. The core calls Templates() and Nav()
 // to fold the module's pages and sidebar entry into the shared shell, Mount() to
@@ -148,11 +118,11 @@ type Deps struct {
 	// with a session.
 	RequireAuth func(http.HandlerFunc) http.HandlerFunc
 
-	// LoadAppState returns this app's persisted config blob (nil if none), and
-	// SaveAppState persists it — both namespaced by the app's Slug() in
-	// juice-ui.json. Apps use these to provision and remember their own state
-	// (e.g. a service-account password) across restarts, so onboarding needs no
-	// per-app environment variables.
+	// LoadAppState returns this app's persisted state blob (nil if none), and
+	// SaveAppState persists it — both namespaced by the app's Slug() in the
+	// component's state.json. Apps use these to provision and remember their own
+	// state (e.g. a service-account password) across restarts, so onboarding needs
+	// no per-app environment variables.
 	LoadAppState func(slug string) (json.RawMessage, error)
 	SaveAppState func(slug string, v json.RawMessage) error
 
@@ -161,15 +131,15 @@ type Deps struct {
 	// /_kernel/ prefix (e.g. PublicURL + "/_kernel/<slug>/ack").
 	PublicURL string
 
-	// ConfigPath is the path to juice-ui.json (the persisted app-config file), or
-	// "" when app config is in-memory (tests). An app should fall back to an
+	// StatePath is the path to the machine-written app state file (state.json), or
+	// "" when app state is in-memory (tests). An app should fall back to an
 	// ephemeral/in-memory store when it is empty, so tests write no files.
-	ConfigPath string
+	StatePath string
 
-	// DataDir is the per-user durable-data directory (see UserDataDir): where an
-	// app places its database and other large runtime files, kept out of the config
-	// dir. "" when app config is in-memory (tests) — an app then stays in-memory.
-	DataDir string
+	// Home is the component's home directory ($JUICE_HOME/ui — see
+	// docs/installation.md), where an app places its database and other durable
+	// files. "" when app state is in-memory (tests) — an app then stays in-memory.
+	Home string
 
 	// Logger is the core's structured logger, for an app's background work (e.g.
 	// service-account provisioning). May be nil in tests.

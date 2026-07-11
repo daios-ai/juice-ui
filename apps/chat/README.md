@@ -39,7 +39,7 @@ bool)` the plugin supplies, not something the daemon imports.
 ## How identity flows
 
 Chat is itself a **Juice user** (`@chat`). It self-provisions on first run and
-persists its credentials via the seam's app-state store (`juice-ui.json`) — no
+persists its credentials via the seam's app-state store (`state.json`) — no
 per-app environment variables.
 
 - **Outbound** (chat acting as a Juice user): `apps.ServiceAccount` — provision
@@ -111,12 +111,12 @@ revokes existing grants. See `docs/apps.md` → "Reconciling write-only auth con
 
 ## Storage
 
-- **Domain data:** `chat.db` (SQLite, WAL) under the per-user data dir
-  (`apps.UserDataDir` → `~/.local/share/juice-ui` on Linux). An existing legacy
-  store under the config dir is kept in place; migration is manual and documented
-  in `docs/config.md`. It is **live user state — never delete it.**
+- **Domain data:** `chat.db` (SQLite, WAL) in the component home (`$JUICE_HOME/ui/`,
+  default `~/.juice/ui/`; see `docs/installation.md`). An existing legacy store (a
+  config-dir or XDG-data location) is kept in place and migrated manually. It is
+  **live user state — never delete it.**
 - **Credentials:** the `@chat` password, the daemon admin secret, the
-  `CallerIdentity` signing key, and `AuthRev` live in `juice-ui.json` (app state).
+  `CallerIdentity` signing key, and `AuthRev` live in `state.json` (app state).
 
 ## Tests
 
