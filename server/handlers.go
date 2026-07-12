@@ -282,22 +282,27 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
 // getGrantCallback. (Mirrors doLogin's two-step split across requests.)
 func (s *Server) postGrantStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	action := strings.TrimSpace(r.FormValue("action"))
-	if action == "" {
-		s.flashRedirect(w, r, "/user", "error", "No action to connect.")
+	selector, provider := grantTarget(r)
+	if selector == "" {
+		s.flashRedirect(w, r, "/user", "error", "No account to connect.")
 		return
 	}
 	redirectURI := s.publicBaseURL(r) + "/grants/callback"
 	var authorizeURL, state string
+	var granted bool
 	err := s.sessions.Do(ctx, func(tok string) error {
-		u, st, e := s.client.StartGrant(ctx, tok, action, redirectURI)
-		authorizeURL, state = u, st
+		u, st, g, e := s.client.StartGrant(ctx, tok, selector, provider, redirectURI)
+		authorizeURL, state, granted = u, st, g
 		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.sessions.PutGrantState(ctx, state, action)
+	if granted { // account already covers the group — no browser round-trip needed
+		s.flashRedirect(w, r, backTo(r), "success", "Account already connected. You can run it now.")
+		return
+	}
+	s.sessions.PutGrantState(ctx, state, selector)
 	http.Redirect(w, r, authorizeURL, http.StatusSeeOther)
 }
 
@@ -319,7 +324,8 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		return s.client.CompleteGrant(ctx, tok, state, code)
+		_, e := s.client.CompleteGrant(ctx, tok, state, code)
+		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
@@ -333,15 +339,16 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 // action page) so they can retry the run.
 func (s *Server) postGrantConnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	action := strings.TrimSpace(r.FormValue("action"))
+	selector, provider := grantTarget(r)
 	token := strings.TrimSpace(r.FormValue("token"))
 	back := backTo(r)
-	if action == "" || token == "" {
+	if selector == "" || token == "" {
 		s.flashRedirect(w, r, back, "error", "Paste an access token to connect.")
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		return s.client.ConnectGrant(ctx, tok, action, token)
+		_, e := s.client.ConnectGrant(ctx, tok, selector, provider, token)
+		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
@@ -349,17 +356,70 @@ func (s *Server) postGrantConnect(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, back, "success", "Account connected. You can run it now.")
 }
 
-// postGrantDisconnect revokes the caller's grant for an action.
+// postGrantDisconnect revokes the caller's grants for a selector, or — when an
+// `account` provider_key is posted instead — deletes that upstream account and
+// cascades every grant pointing at it.
 func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	action := strings.TrimSpace(r.FormValue("action"))
+	if account := strings.TrimSpace(r.FormValue("account")); account != "" {
+		err := s.sessions.Do(ctx, func(tok string) error {
+			return s.client.DeleteConnection(ctx, tok, account)
+		})
+		if s.handleErr(w, r, err) {
+			return
+		}
+		s.flashRedirect(w, r, "/user", "success", "Account disconnected.")
+		return
+	}
+	selector, _ := grantTarget(r)
 	err := s.sessions.Do(ctx, func(tok string) error {
-		return s.client.DeleteGrant(ctx, tok, action)
+		return s.client.DeleteGrant(ctx, tok, selector)
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/user", "success", "Disconnected "+action+".")
+	s.flashRedirect(w, r, "/user", "success", "Disconnected "+selector+".")
+}
+
+// grantConnectView drives the consent-delta page: the plan for a selector, shown as
+// the upstream-account groups and the actions each will connect, so the user
+// reviews the delta before consenting (kernel §14).
+type grantConnectView struct {
+	Selector string
+	Plan     client.GrantPlan
+}
+
+// getGrantConnect renders the consent plan for a selector — the callable delegated
+// actions grouped by upstream account — so the user reviews what will be connected,
+// then covers each group with one gesture (a token paste or a browser consent).
+func (s *Server) getGrantConnect(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	selector := strings.TrimSpace(r.URL.Query().Get("selector"))
+	if selector == "" {
+		s.flashRedirect(w, r, "/user", "error", "No account to connect.")
+		return
+	}
+	var plan client.GrantPlan
+	err := s.sessions.Do(ctx, func(tok string) error {
+		p, e := s.client.PlanGrants(ctx, tok, selector)
+		plan = p
+		return e
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "grant_connect", "Connect an account", grantConnectView{Selector: selector, Plan: plan})
+}
+
+// grantTarget reads the selector (and optional provider) a grant form posts. It
+// accepts the modern `selector`+`provider` fields and falls back to the legacy
+// `action` field — a full @owner/name is the degenerate single-action selector.
+func grantTarget(r *http.Request) (selector, provider string) {
+	selector = strings.TrimSpace(r.FormValue("selector"))
+	if selector == "" {
+		selector = strings.TrimSpace(r.FormValue("action"))
+	}
+	return selector, strings.TrimSpace(r.FormValue("provider"))
 }
 
 // backTo returns a same-origin path from the request's Referer to return to (so a

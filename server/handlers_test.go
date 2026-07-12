@@ -577,7 +577,8 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	mu.Lock()
 	got := gotBody
 	mu.Unlock()
-	if !strings.Contains(got, `"action":"@lena/api"`) || !strings.Contains(got, `"token":"PAT-123"`) {
+	// The legacy `action` form field is mapped to the v0.7 `selector`.
+	if !strings.Contains(got, `"selector":"@lena/api"`) || !strings.Contains(got, `"token":"PAT-123"`) {
 		t.Errorf("kernel /v1/grants body = %s", got)
 	}
 }

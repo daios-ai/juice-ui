@@ -32,6 +32,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -277,61 +278,71 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 		base := strings.TrimRight(c.deps.PublicURL, "/") + "/_kernel/chat/"
 		auth := authConfig()
 		pubTrue := true
+		// Reconcile every op independently and accumulate failures rather than
+		// aborting on the first: a transient failure on one action must not starve
+		// the rest (a fail-fast loop once left delete-message private and inbox
+		// uncreated, cascading into missing grants). AuthRev is recorded only when
+		// the whole pass is clean (below), so a partial pass retries next time.
+		var errs []error
 		for _, op := range daemon.Ops {
-			want := base + op.Name
-			a, ok := have[op.Name]
-			if !ok {
-				na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
-					Name:         op.Name,
-					Kind:         "http",
-					Source:       want,
-					Method:       "POST",
-					Description:  op.Description,
-					Price:        0,
-					InputSchema:  op.InputSchema,
-					OutputSchema: op.OutputSchema,
-					Auth:         auth,
-				})
-				if err != nil {
-					return fmt.Errorf("chat: create %s/%s: %w", chatHandle, op.Name, err)
+			op := op
+			errs = append(errs, func() error {
+				want := base + op.Name
+				a, ok := have[op.Name]
+				if !ok {
+					na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
+						Name:         op.Name,
+						Kind:         "http",
+						Source:       want,
+						Method:       "POST",
+						Description:  op.Description,
+						Price:        0,
+						InputSchema:  op.InputSchema,
+						OutputSchema: op.OutputSchema,
+						Auth:         auth,
+					})
+					if err != nil {
+						return fmt.Errorf("chat: create %s/%s: %w", chatHandle, op.Name, err)
+					}
+					if err := c.enablePublic(ctx, tok, na.ID); err != nil {
+						return err
+					}
+					return nil
 				}
-				if err := c.enablePublic(ctx, tok, na.ID); err != nil {
-					return err
+				if force || contractDrifted(a, want, op) {
+					// Bring the WHOLE contract into line (source, schemas, description,
+					// AND auth), then re-enable — the update deactivates the action and
+					// revokes its grants; per-user provisioning re-heals them.
+					desc := op.Description
+					if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
+						Source:       &want,
+						Method:       "POST",
+						Auth:         auth,
+						InputSchema:  op.InputSchema,
+						OutputSchema: op.OutputSchema,
+						Description:  &desc,
+						Public:       &pubTrue,
+					}); err != nil {
+						return fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, op.Name, err)
+					}
+					if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
+						return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
+					}
+					return nil
 				}
-				continue
-			}
-			if force || contractDrifted(a, want, op) {
-				// Bring the WHOLE contract into line (source, schemas, description,
-				// AND auth), then re-enable — the update deactivates the action and
-				// revokes its grants; per-user provisioning re-heals them.
-				desc := op.Description
-				if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
-					Source:       &want,
-					Method:       "POST",
-					Auth:         auth,
-					InputSchema:  op.InputSchema,
-					OutputSchema: op.OutputSchema,
-					Description:  &desc,
-					Public:       &pubTrue,
-				}); err != nil {
-					return fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, op.Name, err)
+				// Contract already correct — only nudge active/public state if needed.
+				if !a.Active {
+					if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
+						return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
+					}
 				}
-				if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
-					return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
+				if !a.Public {
+					if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &pubTrue}); err != nil {
+						return fmt.Errorf("chat: publish %s/%s: %w", chatHandle, op.Name, err)
+					}
 				}
-				continue
-			}
-			// Contract already correct — only nudge active/public state if needed.
-			if !a.Active {
-				if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
-					return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
-				}
-			}
-			if !a.Public {
-				if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &pubTrue}); err != nil {
-					return fmt.Errorf("chat: publish %s/%s: %w", chatHandle, op.Name, err)
-				}
-			}
+				return nil
+			}())
 		}
 		// Retire orphans: an active @chat action no longer in Ops (e.g. a removed op
 		// like rename-room) is disabled — reversible, preserves history — so the
@@ -341,10 +352,10 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 				continue
 			}
 			if err := c.deps.Client.DisableAction(ctx, tok, a.ID); err != nil {
-				return fmt.Errorf("chat: retire %s/%s: %w", chatHandle, name, err)
+				errs = append(errs, fmt.Errorf("chat: retire %s/%s: %w", chatHandle, name, err))
 			}
 		}
-		return nil
+		return errors.Join(errs...)
 	})
 	if err != nil {
 		return err
@@ -423,12 +434,15 @@ func authConfig() json.RawMessage {
 
 // ---- per-user provisioning ----
 
-// ensureProvisioned connects the signed-in user's deterministic caller token as a
-// grant on every @chat action — once per handle per juice-ui run (an in-memory
-// guard). Because the token is a stateless function of (signing key, handle), this
-// re-points any stale or revoked grant at the current token and can never desync;
-// it also migrates grants left carrying an older random key. It runs on the chat
-// entry pages, before any write is possible.
+// ensureProvisioned connects the signed-in user's deterministic caller token to
+// the @chat actions — once per handle per juice-ui run (an in-memory guard). A
+// single selector connect (@chat) mints one grant per callable @chat action against
+// one Connection (v0.7 §8); the @chat actions share one source host, so they form a
+// single bearer group and provider is left empty. Because the token is a stateless
+// function of (signing key, handle), this re-points any stale or revoked grant at
+// the current token and can never desync. It runs on the chat entry pages, before
+// any write is possible. The selector expands only to actions the user may call, so
+// an op still being (re)published is simply picked up on a later run.
 func (c *Chat) ensureProvisioned(r *http.Request) {
 	handle := c.deps.Handle(r)
 	if handle == "" || c.id == nil {
@@ -439,12 +453,8 @@ func (c *Chat) ensureProvisioned(r *http.Request) {
 	}
 	token := c.id.Token(handle)
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
-		for _, op := range daemon.Ops {
-			if err := c.deps.Client.ConnectGrant(r.Context(), tok, chatHandle+"/"+op.Name, token); err != nil {
-				return err
-			}
-		}
-		return nil
+		_, e := c.deps.Client.ConnectGrant(r.Context(), tok, chatHandle, "", token)
+		return e
 	})
 	if err != nil {
 		c.provisioned.Delete(handle) // let a later visit retry

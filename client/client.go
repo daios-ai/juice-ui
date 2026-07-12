@@ -41,20 +41,33 @@ type Tokens struct {
 // User is the self profile (GET /v1/me) and the create-user response. Money is
 // integer credits. Verified live: id, handle, email, available, locked.
 type User struct {
-	ID        string  `json:"id"`
-	Handle    string  `json:"handle"`
-	Email     string  `json:"email"`
-	Available int64   `json:"available"`
-	Locked    int64   `json:"locked"`
-	Grants    []Grant `json:"grants"` // delegated upstream OAuth consents (no token material)
+	ID          string       `json:"id"`
+	Handle      string       `json:"handle"`
+	Email       string       `json:"email"`
+	Available   int64        `json:"available"`
+	Locked      int64        `json:"locked"`
+	Grants      []Grant      `json:"grants"`      // per-action delegated consents (no token material)
+	Connections []Connection `json:"connections"` // upstream accounts, one per (user, provider)
 }
 
-// Grant is a delegated upstream OAuth consent for one action, as listed by
-// GET /v1/me. It is a consent record only — never any token material.
+// Grant is a per-action delegated consent, as listed by GET /v1/me. It is a
+// consent record only (a pointer to a Connection) — never any token material.
 type Grant struct {
 	Action    string   `json:"action"` // @owner/name of the granted action
 	Scopes    []string `json:"scopes"`
 	CreatedAt string   `json:"created_at"`
+}
+
+// Connection is a user's upstream account credential as summarised by GET /v1/me
+// (§8): one per (user, provider), shared by every Grant that points at it. The
+// token itself is never returned. Provider is the display host/label; the kernel
+// does not expose the underlying provider_key on this read path. Unused is true
+// when no Grant currently points at it (the credential is kept for re-consent).
+type Connection struct {
+	Provider  string `json:"provider"`
+	Actions   int    `json:"actions"` // number of grants pointing at this connection
+	Unused    bool   `json:"unused"`
+	CreatedAt string `json:"created_at"`
 }
 
 // HTTPParam binds an action input field to a location in the upstream HTTP
@@ -424,41 +437,110 @@ func (c *Client) Logout(ctx context.Context, refreshToken string) error {
 	return c.do(ctx, http.MethodPost, "/v1/auth/logout", "", map[string]string{"refresh_token": refreshToken}, nil)
 }
 
-// ---- grants (delegated OAuth consent) ----
+// ---- grants and connections (delegated consent, §8) ----
 
-// StartGrant begins the delegated-OAuth consent for one action. redirectURI is
-// the client's own callback URL the provider will send the code back to. Returns
-// the provider authorize URL to send the browser to, plus the opaque state to
-// hold and match on the callback. Authenticated as the grantor.
-func (c *Client) StartGrant(ctx context.Context, token, action, redirectURI string) (authorizeURL, state string, err error) {
-	body := map[string]string{"action": action, "redirect_uri": redirectURI}
+// GrantPlan is the consent plan for a selector (GET /v1/grants/plan): the caller's
+// callable delegated actions grouped by upstream account, plus counts of actions
+// skipped because the caller is loginless or may not call them. A client shows the
+// plan as the consent act — the actions to be connected (kernel requirement §14).
+type GrantPlan struct {
+	Groups            []GrantGroup `json:"groups"`
+	SkippedLoginless  int          `json:"skipped_loginless"`
+	SkippedUncallable int          `json:"skipped_uncallable"`
+}
+
+// GrantGroup is one upstream-account group within a plan. ProviderKey is the
+// stable key (bearer:<host> | oauth:<token_url>|<client_id>) used to address the
+// account; Provider is its display host/label. Covered is true when an existing
+// Connection already grants the whole group with no further consent.
+type GrantGroup struct {
+	ProviderKey string            `json:"provider_key"`
+	Provider    string            `json:"provider"`
+	Scheme      string            `json:"scheme"`
+	Scopes      []string          `json:"scopes"`
+	Connected   bool              `json:"connected"`
+	Covered     bool              `json:"covered"`
+	Actions     []GrantPlanAction `json:"actions"`
+}
+
+// GrantPlanAction is one action in a group, with whether it is already granted.
+type GrantPlanAction struct {
+	ActionID string `json:"action_id"`
+	Action   string `json:"action"`
+	Granted  bool   `json:"granted"`
+}
+
+// PlanGrants returns the consent plan for a selector (@owner, @owner/path, or a
+// full @owner/name). Authenticated as the caller whose coverage is planned.
+func (c *Client) PlanGrants(ctx context.Context, token, selector string) (GrantPlan, error) {
+	q := url.Values{"selector": {selector}}
+	var p GrantPlan
+	err := c.do(ctx, http.MethodGet, "/v1/grants/plan?"+q.Encode(), token, nil, &p)
+	return p, err
+}
+
+// StartGrant begins delegated-OAuth consent for a selector's provider group.
+// provider disambiguates when the selector spans groups (may be empty for a
+// single group). It returns granted=true (with an empty authorizeURL) when the
+// caller's Connection already covers the group so no browser round-trip is needed;
+// otherwise it returns the provider authorize URL and the opaque state to match on
+// the callback. Authenticated as the grantor.
+func (c *Client) StartGrant(ctx context.Context, token, selector, provider, redirectURI string) (authorizeURL, state string, granted bool, err error) {
+	body := map[string]string{"selector": selector, "redirect_uri": redirectURI}
+	if provider != "" {
+		body["provider"] = provider
+	}
 	var resp struct {
+		Status       string `json:"status"`
 		State        string `json:"state"`
 		AuthorizeURL string `json:"authorize_url"`
 	}
 	if err = c.do(ctx, http.MethodPost, "/v1/grants/start", token, body, &resp); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return resp.AuthorizeURL, resp.State, nil
+	return resp.AuthorizeURL, resp.State, resp.Status == "granted", nil
 }
 
-// CompleteGrant exchanges the provider code for the stored grant. state must be
-// the value from StartGrant.
-func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) error {
-	return c.do(ctx, http.MethodPost, "/v1/grants/complete", token, map[string]string{"state": state, "code": code}, nil)
+// CompleteGrant exchanges the provider code for the group's grants. state must be
+// the value from StartGrant. Returns the actions that were granted.
+func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) ([]string, error) {
+	var resp struct {
+		Actions []string `json:"actions"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/grants/complete", token, map[string]string{"state": state, "code": code}, &resp)
+	return resp.Actions, err
 }
 
-// ConnectGrant attaches a static per-caller token to a delegated_bearer action
-// (POST /v1/grants) — the non-OAuth grant path. Authenticated as the grantor; the
-// kernel injects the token into the action's configured header on the grantor's
-// calls. Idempotent per (grantor, action): a re-connect overwrites in place.
-func (c *Client) ConnectGrant(ctx context.Context, token, action, staticToken string) error {
-	return c.do(ctx, http.MethodPost, "/v1/grants", token, map[string]string{"action": action, "token": staticToken}, nil)
+// ConnectGrant attaches a static per-caller token to a delegated_bearer selector's
+// group (POST /v1/grants) — the non-OAuth twin of start/complete. One call mints a
+// grant per action in the group against one Connection; provider disambiguates
+// when the selector spans groups (may be empty for a single group). Authenticated
+// as the grantor. Idempotent: a re-connect overwrites in place. Returns the actions
+// that were granted.
+func (c *Client) ConnectGrant(ctx context.Context, token, selector, provider, staticToken string) ([]string, error) {
+	body := map[string]string{"selector": selector, "token": staticToken}
+	if provider != "" {
+		body["provider"] = provider
+	}
+	var resp struct {
+		Actions []string `json:"actions"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/grants", token, body, &resp)
+	return resp.Actions, err
 }
 
-// DeleteGrant revokes the caller's grant for an action.
-func (c *Client) DeleteGrant(ctx context.Context, token, action string) error {
-	q := url.Values{"action": {action}}
+// DeleteGrant revokes the caller's grants matching a selector (the grants only;
+// the Connection is kept for re-consent).
+func (c *Client) DeleteGrant(ctx context.Context, token, selector string) error {
+	q := url.Values{"selector": {selector}}
+	return c.do(ctx, http.MethodDelete, "/v1/grants?"+q.Encode(), token, nil, nil)
+}
+
+// DeleteConnection deletes the caller's upstream account by provider_key and
+// cascades every grant that pointed at it. account is the stable provider_key
+// (bearer:<host> | oauth:<token_url>|<client_id>).
+func (c *Client) DeleteConnection(ctx context.Context, token, account string) error {
+	q := url.Values{"account": {account}}
 	return c.do(ctx, http.MethodDelete, "/v1/grants?"+q.Encode(), token, nil, nil)
 }
 

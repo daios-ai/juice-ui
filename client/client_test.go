@@ -126,7 +126,7 @@ func TestListActionsEncodesFilters(t *testing.T) {
 func TestMeDecodesGrants(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"handle":"@alice","grants":[{"action":"@sys/gmail-send","scopes":["send"],"created_at":"2026-07-07T00:00:00Z"}]}`
+	f.reply = `{"handle":"@alice","grants":[{"action":"@sys/gmail-send","scopes":["send"],"created_at":"2026-07-07T00:00:00Z"}],"connections":[{"provider":"127.0.0.1:8080","actions":2,"unused":false,"created_at":"2026-07-07T00:00:00Z"}]}`
 	u, err := f.client().Me(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
@@ -134,15 +134,21 @@ func TestMeDecodesGrants(t *testing.T) {
 	if len(u.Grants) != 1 || u.Grants[0].Action != "@sys/gmail-send" || len(u.Grants[0].Scopes) != 1 {
 		t.Fatalf("grants = %+v", u.Grants)
 	}
+	if len(u.Connections) != 1 || u.Connections[0].Provider != "127.0.0.1:8080" || u.Connections[0].Actions != 2 {
+		t.Fatalf("connections = %+v", u.Connections)
+	}
 }
 
 func TestGrantMethods(t *testing.T) {
 	f := newFake()
 	defer f.close()
+
+	// StartGrant posts a selector (+provider) and returns the authorize URL when a
+	// browser round-trip is needed (status != granted).
 	f.reply = `{"state":"S1","authorize_url":"https://prov/auth?x=1"}`
-	url, state, err := f.client().StartGrant(context.Background(), "tok", "@sys/gmail-send", "http://ui/grants/callback")
-	if err != nil || url != "https://prov/auth?x=1" || state != "S1" {
-		t.Fatalf("start = %q %q %v", url, state, err)
+	url, state, granted, err := f.client().StartGrant(context.Background(), "tok", "@sys/gmail", "oauth:x", "http://ui/grants/callback")
+	if err != nil || url != "https://prov/auth?x=1" || state != "S1" || granted {
+		t.Fatalf("start = %q %q granted=%v %v", url, state, granted, err)
 	}
 	if f.lastAuth != "Bearer tok" {
 		t.Errorf("StartGrant must send the access token, got %q", f.lastAuth)
@@ -150,33 +156,64 @@ func TestGrantMethods(t *testing.T) {
 	if f.lastPath != "/v1/grants/start" {
 		t.Errorf("start path = %q", f.lastPath)
 	}
-	f.reply = `{}`
-	if err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE"); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(string(f.lastBody), `"selector":"@sys/gmail"`) || !strings.Contains(string(f.lastBody), `"provider":"oauth:x"`) {
+		t.Errorf("start body = %s", f.lastBody)
+	}
+	// An already-covered account grants instantly with no authorize URL.
+	f.reply = `{"status":"granted","actions":["@sys/gmail"]}`
+	_, _, granted, err = f.client().StartGrant(context.Background(), "tok", "@sys/gmail", "", "http://ui/grants/callback")
+	if err != nil || !granted {
+		t.Fatalf("instant-granted start: granted=%v err=%v", granted, err)
+	}
+
+	f.reply = `{"actions":["@sys/gmail"]}`
+	acts, err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE")
+	if err != nil || len(acts) != 1 || acts[0] != "@sys/gmail" {
+		t.Fatalf("complete = %v %v", acts, err)
 	}
 	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) {
 		t.Errorf("complete body = %s", f.lastBody)
 	}
+
+	// DeleteGrant revokes by selector; DeleteConnection deletes by provider_key.
 	if err := f.client().DeleteGrant(context.Background(), "tok", "@sys/gmail-send"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "action=%40sys%2Fgmail-send") {
+	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "selector=%40sys%2Fgmail-send") {
 		t.Errorf("delete = %s %s", f.lastMethod, f.lastPath)
 	}
-
-	// ConnectGrant posts a static per-caller token to /v1/grants as the grantor.
-	f.reply = `{"status":"connected"}`
-	if err := f.client().ConnectGrant(context.Background(), "tok", "@chat/message", "KEY123"); err != nil {
+	if err := f.client().DeleteConnection(context.Background(), "tok", "bearer:127.0.0.1:8080"); err != nil {
 		t.Fatal(err)
+	}
+	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "account=bearer%3A127.0.0.1%3A8080") {
+		t.Errorf("delete connection = %s %s", f.lastMethod, f.lastPath)
+	}
+
+	// ConnectGrant posts a static token for a selector's group and returns the
+	// actions granted.
+	f.reply = `{"status":"connected","actions":["@chat/message","@chat/inbox"]}`
+	acts, err = f.client().ConnectGrant(context.Background(), "tok", "@chat", "", "KEY123")
+	if err != nil || len(acts) != 2 {
+		t.Fatalf("connect = %v %v", acts, err)
 	}
 	if f.lastMethod != "POST" || f.lastPath != "/v1/grants" {
 		t.Errorf("connect = %s %s", f.lastMethod, f.lastPath)
 	}
-	if !strings.Contains(string(f.lastBody), `"action":"@chat/message"`) || !strings.Contains(string(f.lastBody), `"token":"KEY123"`) {
+	if !strings.Contains(string(f.lastBody), `"selector":"@chat"`) || !strings.Contains(string(f.lastBody), `"token":"KEY123"`) {
 		t.Errorf("connect body = %s", f.lastBody)
 	}
-	if f.lastAuth != "Bearer tok" {
-		t.Errorf("ConnectGrant must send the access token, got %q", f.lastAuth)
+	if strings.Contains(string(f.lastBody), `"provider"`) {
+		t.Errorf("empty provider must be omitted, got %s", f.lastBody)
+	}
+
+	// PlanGrants fetches the consent plan for a selector.
+	f.reply = `{"groups":[{"provider_key":"bearer:h","provider":"h","scheme":"delegated_bearer","actions":[{"action":"@chat/message","granted":false}]}],"skipped_uncallable":1}`
+	plan, err := f.client().PlanGrants(context.Background(), "tok", "@chat")
+	if err != nil || len(plan.Groups) != 1 || plan.Groups[0].ProviderKey != "bearer:h" || plan.SkippedUncallable != 1 {
+		t.Fatalf("plan = %+v %v", plan, err)
+	}
+	if f.lastMethod != "GET" || !strings.Contains(f.lastPath, "/v1/grants/plan?selector=%40chat") {
+		t.Errorf("plan path = %s %s", f.lastMethod, f.lastPath)
 	}
 }
 

@@ -357,6 +357,44 @@ func TestEnsureActionsRetiresOrphans(t *testing.T) {
 	}
 }
 
+// TestEnsureActionsIsResilient checks that one action's failure no longer starves
+// the rest — the fail-fast bug that once left delete-message private and inbox
+// uncreated, cascading into missing grants. Under a force re-push, enabling
+// `message` fails; every OTHER op must still be reconciled and enabled, the failure
+// must be reported, and AuthRev must NOT be recorded so the pass retries next time.
+func TestEnsureActionsIsResilient(t *testing.T) {
+	base := "http://localhost:8080/_kernel/chat/"
+	var seed []fakeAction
+	for i, op := range daemon.Ops {
+		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Active: true, Public: true,
+			URL: base + op.Name, Description: op.Description, InSchema: string(op.InputSchema), OutSchema: string(op.OutputSchema)})
+	}
+	f := newFakeKernel(seed...)
+	f.failName = "message"
+	defer f.close()
+	var saved []byte
+	c := New()
+	c.deps = apps.Deps{
+		Client: client.New(f.url, nil), PublicURL: "http://localhost:8080",
+		SaveAppState: func(_ string, b json.RawMessage) error { saved = b; return nil },
+	}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.st.AuthRev = "stale" // force a full re-push (update+enable every op)
+
+	if err := c.ensureActions(context.Background()); err == nil {
+		t.Fatal("expected an aggregate error from the failing op")
+	}
+	if f.updateCount() != len(daemon.Ops) {
+		t.Errorf("updates=%d, want %d (all ops reconciled despite one failure)", f.updateCount(), len(daemon.Ops))
+	}
+	if got, want := f.enableCount(), len(daemon.Ops)-1; got != want {
+		t.Errorf("enables=%d, want %d (all but the failing op)", got, want)
+	}
+	if saved != nil {
+		t.Error("AuthRev must not be recorded when the pass had a failure (so it retries)")
+	}
+}
+
 // ---- fake kernel for action reconciliation ----
 
 type fakeAction struct {
@@ -393,6 +431,7 @@ type fakeKernel struct {
 	enables  map[string]bool
 	disables map[string]bool
 	seq      int
+	failName string // if set, enabling the action of this name returns 500
 }
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
@@ -464,6 +503,11 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		id := r.PathValue("id")
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if a := f.acts[id]; a != nil && a.Name == f.failName {
+			w.WriteHeader(500)
+			w.Write([]byte(`{"error":"boom"}`))
+			return
+		}
 		f.enables[id] = true
 		if a := f.acts[id]; a != nil {
 			a.Active = true

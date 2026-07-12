@@ -1,0 +1,46 @@
+{{define "content"}}
+{{$d := .Data}}
+<p><a href="/user">← account</a></p>
+<div class="page-head">
+  <h1>Connect an account</h1>
+  <p class="subtitle">Review what each account connects, then authorize it.</p>
+</div>
+
+{{range $d.Plan.Groups}}
+<div class="card stack">
+  <div class="row compact">
+    <h2 class="flush mono">{{.Provider}}</h2>
+    {{if .Covered}}<span class="pill status-credited">connected</span>{{end}}
+  </div>
+  {{if .Scopes}}<p class="muted small">Scopes: {{range .Scopes}}<span class="chip tag">{{.}}</span> {{end}}</p>{{end}}
+  <p class="help flush">Connects {{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}:</p>
+  <ul class="tiny">
+    {{range .Actions}}<li>{{template "_ref" .Action}}{{if .Granted}} <span class="muted small">— already connected</span>{{end}}</li>{{end}}
+  </ul>
+  {{if .Covered}}
+  <p class="muted small flush">This account already covers every action above.</p>
+  {{else if eq .Scheme "oauth_delegated"}}
+  <form method="post" action="/grants/start" class="row compact">
+    {{$.CSRFField}}
+    <input type="hidden" name="selector" value="{{$d.Selector}}">
+    <input type="hidden" name="provider" value="{{.ProviderKey}}">
+    <button class="btn" type="submit">Connect with your browser</button>
+  </form>
+  {{else}}
+  <form method="post" action="/grants/connect" class="row compact">
+    {{$.CSRFField}}
+    <input type="hidden" name="selector" value="{{$d.Selector}}">
+    <input type="hidden" name="provider" value="{{.ProviderKey}}">
+    <input type="password" name="token" class="stretch" placeholder="Paste a personal access token / API key" autocomplete="off" aria-label="Access token">
+    <button class="btn" type="submit">Connect token</button>
+  </form>
+  {{end}}
+</div>
+{{else}}
+<div class="card"><p class="muted flush">Nothing to connect for this selector.</p></div>
+{{end}}
+
+{{if or $d.Plan.SkippedUncallable $d.Plan.SkippedLoginless}}
+<p class="muted small">{{$d.Plan.SkippedUncallable}} action(s) you can't call{{if $d.Plan.SkippedLoginless}} and {{$d.Plan.SkippedLoginless}} that need no login{{end}} were skipped.</p>
+{{end}}
+{{end}}

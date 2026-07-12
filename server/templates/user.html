@@ -26,6 +26,22 @@
 
 <h2>Connected accounts</h2>
 <div class="card">
+  {{if $d.User.Connections}}
+  <ul class="stack flush">
+    {{range $d.User.Connections}}
+    <li class="row compact">
+      <span class="mono">{{.Provider}}</span>
+      <span class="muted small">— {{.Actions}} action{{if ne .Actions 1}}s{{end}}</span>
+      {{if .Unused}}<span class="chip tag">unused</span>{{end}}
+      <span class="muted small">since {{shortTime .CreatedAt}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="muted flush">No connected accounts yet.</p>{{end}}
+</div>
+
+<h2>Connected actions</h2>
+<div class="card">
   {{if $d.User.Grants}}
   <div class="table-scroll">
   <table>
@@ -46,7 +62,7 @@
     </tbody>
   </table>
   </div>
-  {{else}}<p class="muted flush">No connected accounts yet.</p>{{end}}
+  {{else}}<p class="muted flush">No connected actions yet.</p>{{end}}
 </div>
 
 {{if $d.OpenProcesses}}

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
@@ -265,16 +266,79 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `action="/grants/start"`) || !strings.Contains(body, `value="@sys/gmail-send"`) {
-		t.Errorf("grant_required outcome must render a Connect form for the action: %s", body)
+	// The affordance links to the consent-plan page for the action's selector; the
+	// per-scheme consent forms live on that page (v0.7 §14 delta display).
+	if !strings.Contains(body, `href="/grants/connect?selector=`) || !strings.Contains(body, `%40sys%2fgmail-send`) {
+		t.Errorf("grant_required outcome must link to the connect plan for the action: %s", body)
 	}
 	if !strings.Contains(body, "Connect") || strings.Contains(body, "failed") {
 		t.Error("grant_required must read as a Connect affordance, not a failure")
 	}
-	// Both schemes are offered (the UI can't know which the action uses): the OAuth
-	// browser flow AND a masked delegated_bearer token form.
-	if !strings.Contains(body, `action="/grants/connect"`) || !strings.Contains(body, `type="password"`) {
-		t.Errorf("grant_required must also offer a masked token connect form: %s", body)
+}
+
+func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	plan := client.GrantPlan{
+		Groups: []client.GrantGroup{
+			{ProviderKey: "bearer:api.acme.com", Provider: "api.acme.com", Scheme: "delegated_bearer",
+				Actions: []client.GrantPlanAction{{Action: "@acme/send"}, {Action: "@acme/read"}}},
+			{ProviderKey: "oauth:https://g/token|cid", Provider: "google", Scheme: "oauth_delegated", Scopes: []string{"mail.send"},
+				Actions: []client.GrantPlanAction{{Action: "@g/mail"}}},
+		},
+		SkippedUncallable: 2,
+	}
+	p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "@acme", Plan: plan}}
+	if err := r.Render(rec, 200, "grant_connect", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	// The delta: every action to be connected is listed (names, per _ref rendering).
+	for _, name := range []string{"send", "read", "mail"} {
+		if !strings.Contains(body, name) {
+			t.Errorf("plan must list action %q: %s", name, body)
+		}
+	}
+	// The bearer group offers a masked token form carrying selector + provider_key.
+	if !strings.Contains(body, `type="password"`) || !strings.Contains(body, `action="/grants/connect"`) {
+		t.Errorf("bearer group must offer a masked token form: %s", body)
+	}
+	if !strings.Contains(body, `value="bearer:api.acme.com"`) || !strings.Contains(body, `value="@acme"`) {
+		t.Errorf("token form must carry provider_key + selector: %s", body)
+	}
+	// The oauth group offers the browser consent instead.
+	if !strings.Contains(body, `action="/grants/start"`) {
+		t.Errorf("oauth group must offer the browser consent: %s", body)
+	}
+	if !strings.Contains(body, "2 action") {
+		t.Errorf("skipped-uncallable count not surfaced: %s", body)
+	}
+}
+
+func TestUserPageShowsConnections(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: userView{
+		User: client.User{Handle: "@me", Connections: []client.Connection{
+			{Provider: "127.0.0.1:8080", Actions: 8, Unused: false, CreatedAt: "2026-07-12T00:00:00Z"},
+			{Provider: "api.acme.com", Actions: 0, Unused: true, CreatedAt: "2026-07-11T00:00:00Z"},
+		}},
+	}}
+	if err := r.Render(rec, 200, "user", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "127.0.0.1:8080") || !strings.Contains(body, "8 actions") {
+		t.Errorf("account with grants not shown: %s", body)
+	}
+	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "unused") {
+		t.Errorf("unused account not flagged: %s", body)
 	}
 }
 
@@ -657,5 +721,28 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 	}
 	if !strings.Contains(body, ">250<") {
 		t.Errorf("our credit value not rendered: %s", body)
+	}
+}
+
+// TestRelTime checks the coarse "time ago" freshness rendering used for a peer's
+// last-seen (empty stays empty; unparseable falls back to raw).
+func TestRelTime(t *testing.T) {
+	now := time.Now()
+	ago := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"not-a-time", "not-a-time"},
+		{ago(10 * time.Second), "just now"},
+		{ago(90 * time.Second), "1 min ago"},
+		{ago(3 * time.Minute), "3 mins ago"},
+		{ago(1 * time.Hour), "1 hour ago"},
+		{ago(2 * time.Hour), "2 hours ago"},
+		{ago(24 * time.Hour), "1 day ago"},
+		{ago(3 * 24 * time.Hour), "3 days ago"},
+	}
+	for _, c := range cases {
+		if got := relTime(c.in); got != c.want {
+			t.Errorf("relTime(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
