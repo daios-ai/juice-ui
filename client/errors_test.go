@@ -52,6 +52,29 @@ func TestClassifyGrantRequired(t *testing.T) {
 	}
 }
 
+// TestClassifyPeerErrors checks the remote-proxy run failures get their own kinds
+// (so 402 peer_unfunded doesn't read as the caller's "insufficient funds").
+func TestClassifyPeerErrors(t *testing.T) {
+	unf, _ := AsKernelError(classify(402, []byte(`{"error":"peer unfunded","code":"peer_unfunded","meta":{"peer":"@kernelb"}}`)))
+	if unf.Kind != KindPeerUnfunded {
+		t.Errorf("kind = %v, want KindPeerUnfunded (not InsufficientFunds)", unf.Kind)
+	}
+	if msg := unf.UserMessage(); !strings.Contains(msg, "operator") {
+		t.Errorf("unfunded message should point at the operator top-up: %q", msg)
+	}
+	unr, _ := AsKernelError(classify(502, []byte(`{"error":"peer unreachable","code":"peer_unreachable"}`)))
+	if unr.Kind != KindPeerUnreachable {
+		t.Errorf("kind = %v, want KindPeerUnreachable", unr.Kind)
+	}
+	if msg := unr.UserMessage(); !strings.Contains(msg, "not spent") {
+		t.Errorf("unreachable message should reassure funds not spent: %q", msg)
+	}
+	// A plain 402 (the caller's own funds) stays InsufficientFunds.
+	if plain, _ := AsKernelError(classify(402, []byte(`{"error":"broke"}`))); plain.Kind != KindInsufficientFunds {
+		t.Errorf("plain 402 kind = %v, want KindInsufficientFunds", plain.Kind)
+	}
+}
+
 func TestClassify2xxIsNil(t *testing.T) {
 	for _, s := range []int{200, 201, 204} {
 		if err := classify(s, nil); err != nil {

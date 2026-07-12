@@ -42,12 +42,16 @@ type Adjustment struct {
 	TargetHandle   string `json:"target_handle"`
 }
 
-// Peer is a friend (proxy user) row from the control surface.
+// Peer is a friend (proxy user) row from the control surface. Available/Locked are
+// the peer's own wallet here; PeerCredit and LastSeen are the §13 friend-sync cache
+// — our prepaid credit held on the peer, and when we last heard from it.
 type Peer struct {
-	Handle    string `json:"handle"`
-	PublicKey string `json:"public_key"`
-	Available int64  `json:"available"`
-	Locked    int64  `json:"locked"`
+	Handle     string `json:"handle"`
+	PublicKey  string `json:"public_key"`
+	Available  int64  `json:"available"`
+	Locked     int64  `json:"locked"`
+	PeerCredit int64  `json:"peer_credit"` // our spendable credit on the peer
+	LastSeen   string `json:"last_seen"`   // RFC3339; "" / null when never seen
 }
 
 // Peers is the /control/peers response: friends plus (with gossip) the

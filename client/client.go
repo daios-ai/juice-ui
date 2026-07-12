@@ -102,8 +102,13 @@ type Action struct {
 	// (R9), so a client can tell an action needs a grant, and of which kind.
 	AuthScheme    string `json:"auth_scheme,omitempty"`
 	RequiresGrant bool   `json:"requires_grant,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	// PeerState is a display-only health hint on a kind=remote_proxy action: "offline"
+	// (the owner peer's friend-sync is stale) or "unfunded" (our prepaid credit on the
+	// peer is below the price). Empty when healthy or not remote. The kernel never
+	// gates a call on it; the UI does (a doomed remote call is not offered).
+	PeerState string `json:"peer_state,omitempty"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // Ref returns "@owner/name" for this action. The kernel now populates the

@@ -27,6 +27,8 @@ const (
 	KindRateLimited            // 429 (per-IP auth/user-create limiting, R5.6)
 	KindInternal               // 500 (kernel bug / unrecoverable)
 	KindGrantRequired          // 403 code="grant_required": needs a delegated OAuth grant
+	KindPeerUnreachable        // 502 code="peer_unreachable": remote peer offline; call refunded
+	KindPeerUnfunded           // 402 code="peer_unfunded": our prepaid credit on the peer exhausted
 )
 
 // KernelError is the typed error returned by every client call on a non-2xx
@@ -68,6 +70,8 @@ var (
 	ErrRateLimited       = &KernelError{Kind: KindRateLimited}
 	ErrInternal          = &KernelError{Kind: KindInternal}
 	ErrGrantRequired     = &KernelError{Kind: KindGrantRequired}
+	ErrPeerUnreachable   = &KernelError{Kind: KindPeerUnreachable}
+	ErrPeerUnfunded      = &KernelError{Kind: KindPeerUnfunded}
 )
 
 func (k Kind) String() string {
@@ -94,6 +98,10 @@ func (k Kind) String() string {
 		return "internal"
 	case KindGrantRequired:
 		return "grant_required"
+	case KindPeerUnreachable:
+		return "peer_unreachable"
+	case KindPeerUnfunded:
+		return "peer_unfunded"
 	default:
 		return "unknown"
 	}
@@ -153,6 +161,15 @@ func classify(status int, body []byte) error {
 	default:
 		e.Kind = KindInternal
 	}
+	// A remote-proxy call carries a machine code that overrides the status-derived
+	// kind, so the outcome names the real cause (an unreachable peer, or this
+	// kernel's exhausted prepaid credit — not the caller's own balance).
+	switch wire.Code {
+	case "peer_unreachable":
+		e.Kind = KindPeerUnreachable
+	case "peer_unfunded":
+		e.Kind = KindPeerUnfunded
+	}
 	return e
 }
 
@@ -189,6 +206,10 @@ func (e *KernelError) UserMessage() string {
 		return "Too many attempts. Please wait a moment and try again."
 	case KindGrantRequired:
 		return "This action needs a connected account. Connect it and try again."
+	case KindPeerUnreachable:
+		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
+	case KindPeerUnfunded:
+		return "This kernel's prepaid credit on the peer is exhausted — not your balance. An operator needs to top it up before this action can run."
 	default:
 		return "Something went wrong. Please try again."
 	}

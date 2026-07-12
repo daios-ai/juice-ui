@@ -26,7 +26,7 @@
 {{if $d.Peers}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>Handle</th><th>Public key</th><th class="money">Available</th><th class="money">Parked</th><th></th></tr></thead>
+  <thead><tr><th>Handle</th><th>Public key</th><th class="money">Available</th><th class="money">Parked</th><th class="money">Our credit</th><th>Last seen</th><th></th></tr></thead>
   <tbody>
   {{range $d.Peers}}
   <tr>
@@ -34,6 +34,8 @@
     <td class="mono hash">{{truncate 16 .PublicKey}}…</td>
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
+    <td class="money" title="Our prepaid credit on this peer — what we can spend calling it">{{money .PeerCredit}}</td>
+    <td class="muted small">{{if .LastSeen}}{{shortTime .LastSeen}}{{else}}never{{end}}</td>
     <td class="cluster">
       <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
       <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{.Handle}}? Their proxies deactivate; balance and history are preserved.">

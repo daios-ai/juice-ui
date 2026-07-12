@@ -7,6 +7,7 @@
     {{if not $d.Action.Public}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{end}}
     {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
     {{if not $d.Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
+    {{if $d.Action.PeerState}}<span class="chip tag" title="Peer {{$d.Action.PeerState}} — not callable right now">peer {{$d.Action.PeerState}}</span>{{end}}
   </span>
 </div>
 
@@ -27,7 +28,11 @@
 </div>
 
 <h2>Run</h2>
+{{if $d.Action.PeerState}}
+<div class="banner banner-info">{{if eq $d.Action.PeerState "unfunded"}}This kernel's prepaid credit on the peer is exhausted — an operator top-up is needed before this action can run.{{else}}This action runs on a peer that's currently unreachable. Try again when it's back.{{end}}</div>
+{{else}}
 {{template "_call_form" (runForm $.CSRFField $d.Action.ID $d.Action.Price $d.Form $d.Outcome)}}
+{{end}}
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>

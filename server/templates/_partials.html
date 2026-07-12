@@ -11,6 +11,7 @@
       {{if not .Action.Public}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{end}}
       {{with kindBadge .Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
       {{if not .Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
+      {{if .Action.PeerState}}<span class="chip tag" title="Peer {{.Action.PeerState}} — not callable right now">peer {{.Action.PeerState}}</span>{{end}}
     </span>
   </div>
   <div class="action-card-body">

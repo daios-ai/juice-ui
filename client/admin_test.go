@@ -100,7 +100,7 @@ func TestAdminDepositWithdraw(t *testing.T) {
 func TestAdminPeersAndIdentity(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"peers":[{"handle":"@peerb","public_key":"KEY","available":10,"locked":0}]}`
+	f.reply = `{"peers":[{"handle":"@peerb","public_key":"KEY","available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"}]}`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", true)
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +110,10 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	}
 	if len(p.Peers) != 1 || p.Peers[0].Handle != "@peerb" {
 		t.Errorf("peers decode wrong: %+v", p)
+	}
+	// The §13 friend-sync cache — our credit on the peer and when last seen.
+	if p.Peers[0].PeerCredit != 250 || p.Peers[0].LastSeen != "2026-07-12T00:00:00Z" {
+		t.Errorf("peer sync-cache decode wrong: credit=%d last_seen=%q", p.Peers[0].PeerCredit, p.Peers[0].LastSeen)
 	}
 	f.reply = `{"handle":"@k","public_key":"PK","addrs":["/ip4/127.0.0.1/tcp/1"]}`
 	id, err := f.client().AdminIdentity(context.Background(), "tok")

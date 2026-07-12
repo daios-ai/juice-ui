@@ -584,3 +584,78 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 		t.Error("legacy inbox-badge id should be gone")
 	}
 }
+
+// TestActionDetailGatesRunOnPeerState is the load-bearing federation test: a remote
+// action whose peer is offline/unfunded shows a status notice INSTEAD of the run
+// form (no doomed spend), while a healthy remote action still shows the form.
+func TestActionDetailGatesRunOnPeerState(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := func(ps string) actionView {
+		return actionView{
+			Action: client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Public: true, Price: 10, PeerState: ps},
+			Form:   BuildForm(nil),
+		}
+	}
+	render := func(ps string) string {
+		rec := httptest.NewRecorder()
+		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: view(ps)}
+		if err := r.Render(rec, 200, "action_detail", p); err != nil {
+			t.Fatalf("render %q: %v", ps, err)
+		}
+		return rec.Body.String()
+	}
+
+	off := render("offline")
+	if !strings.Contains(off, "currently unreachable") {
+		t.Errorf("offline notice missing: %s", off)
+	}
+	if strings.Contains(off, "data-run-panel") {
+		t.Error("offline peer must NOT render the run form")
+	}
+	if !strings.Contains(off, "peer offline") {
+		t.Error("offline head chip missing")
+	}
+
+	unf := render("unfunded")
+	if !strings.Contains(unf, "prepaid credit on the peer is exhausted") {
+		t.Errorf("unfunded notice missing: %s", unf)
+	}
+	if strings.Contains(unf, "data-run-panel") {
+		t.Error("unfunded peer must NOT render the run form")
+	}
+
+	ok := render("")
+	if !strings.Contains(ok, "data-run-panel") {
+		t.Error("healthy remote action must render the run form")
+	}
+	if strings.Contains(ok, "currently unreachable") {
+		t.Error("no peer notice when healthy")
+	}
+}
+
+// TestPeersPageShowsCreditAndLastSeen checks gap (a): the Friends table surfaces our
+// prepaid credit on the peer and when it was last seen.
+func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		Identity: client.Identity{Handle: "@me", PublicKey: "PK"},
+		Peers:    []client.Peer{{Handle: "@peerb", PublicKey: "KEY", Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+	}}
+	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Our credit") {
+		t.Error("peers table missing the Our-credit column header")
+	}
+	if !strings.Contains(body, ">250<") {
+		t.Errorf("our credit value not rendered: %s", body)
+	}
+}
