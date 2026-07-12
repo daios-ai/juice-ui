@@ -28,10 +28,10 @@ No envelope objects. `GET /v1/steps` returns `[…]` directly. Metadata such as 
 The handler rejects invalid inputs before calling the kernel. `rating` must be 0 or 1; returns `ErrInvalidInput` when violated.
 
 **R8 — Action responses include both `id` and `action`.**  
-Every read or list response for an action resource includes both `id` (UUID, for management operations) and a computed `action` field containing `@owner/name` (for running). Clients can copy the `action` value directly into run requests without a separate lookup. For `kind=http` actions, responses also include a decomposed `http` object `{method, url, params}` — identical in shape for manually-created and OpenAPI-imported actions — that round-trips with the `source`/`method`/`param` create and update inputs.
+Every read or list response for an action resource includes both `id` (UUID, for management operations) and a computed `action` field containing `@owner/name` (for running). Clients can copy the `action` value directly into run requests without a separate lookup. For `kind=http` actions, responses also include a decomposed `http` object `{method, url, params}` — identical in shape for manually-created and OpenAPI-imported actions — that round-trips with the `source`/`method`/`param` create and update inputs. Responses also carry the action's non-secret auth summary: `requires_grant` (always present — `true` iff a caller must connect a per-caller credential before calling, i.e. a delegated scheme) and, when the action has upstream auth, `auth_scheme` (the scheme name, e.g. `delegated_bearer`). These are the scheme and flag only, never config or secrets (R9). A `kind=remote_proxy` action additionally carries `peer_state` — `offline` (the owner peer's friend-sync is missing or stale) or `unfunded` (this kernel's cached credit on the peer is below the action's price), omitted when healthy — a display-only hint from the §13 peer-sync cache that never gates a call.
 
 **R9 — Secrets never serialize.**  
-Auth configs (`Action.source` upstream credentials) are write-only: accepted on create and update, never present in any read, list, log, receipt, hash, or manifest response. There is no read path for a stored secret.
+Auth configs (`Action.source` upstream credentials) are write-only: accepted on create and update, never present in any read, list, log, receipt, hash, or manifest response. There is no read path for a stored secret. The non-secret `auth_scheme` name and `requires_grant` flag (R8) are not secrets and are exposed; the `config` and `secrets` of an auth are never returned.
 
 ### CLI
 
@@ -133,7 +133,7 @@ A `Grant` delegates the caller's upstream identity to one delegated action (§8)
 | Get stats | `GET /v1/stats/{action_id}` → stats | `juice action stats <action>` |
 | List ratings | `GET /v1/actions/{id}/ratings` → rating[] | — |
 
-`<action>` is `@owner/name` (a raw id is also accepted). Action responses (show and list) include a computed `action` field (`@owner/name`) alongside `id`, plus the full `input_schema` and `output_schema` — the CLI text view shows the same fields the JSON returns. `price` is the subtree bound: the maximum total cost of the action and everything it calls. `auth` is the upstream credential config `{scheme, config, secrets}` (R9: write-only, never returned).
+`<action>` is `@owner/name` (a raw id is also accepted). Action responses (show and list) include a computed `action` field (`@owner/name`) alongside `id`, plus the full `input_schema` and `output_schema` — the CLI text view shows the same fields the JSON returns. `price` is the subtree bound: the maximum total cost of the action and everything it calls. `auth` is the upstream credential config `{scheme, config, secrets}` (R9: write-only, never returned); reads instead expose only its non-secret summary — `auth_scheme` (scheme name, when present) and `requires_grant` (R8).
 
 The `auth` object is `{scheme, config, secrets}`; valid schemes and their keys (semantics in requirements.md §8):
 
@@ -156,7 +156,7 @@ The per-caller schemes hold no secret in `auth`; each caller supplies their cred
 |-----------|------|-----|
 | Run action | `POST /v1/run` `{action, args}` → `{result, tx_id, trace_id, process_id}` | `juice run <action> [json]` |
 
-`run` is the single execution entry point: it atomically creates a process funded with exactly the action's price (parked from the caller's available balance), issues the root call, and the process closes itself when the root call has returned and no steps remain outstanding. There is no process handle to manage and no funding amount to choose. `args` defaults to `{}` when omitted. Zero-price actions (e.g. `@sys/lookup`) run with zero funding — no special handling.
+`run` is the single execution entry point: it atomically creates a process funded with exactly the action's price (parked from the caller's available balance), issues the root call, and the process closes itself when the root call has returned and no steps remain outstanding. A remote-proxy `run` may fail with a federation-relationship error distinct from the caller's own funds: `peer_unreachable` (502) — the peer was offline and the request provably never left this kernel, so the call was refunded rather than parked (retry when it is back); or `peer_unfunded` (402, `meta.peer` names the peer) — this kernel's prepaid credit on the peer is exhausted, an operator top-up condition, never the caller's balance (§13). There is no process handle to manage and no funding amount to choose. `args` defaults to `{}` when omitted. Zero-price actions (e.g. `@sys/lookup`) run with zero funding — no special handling.
 
 ### Processes
 
@@ -194,7 +194,7 @@ A step is a funded continuation: creation snapshots the action's price as `step.
 
 ### System Actions
 
-Native actions registered at bootstrap, owned by `@sys`, public, runnable like any other action — `juice run @sys/lookup '{"query":"…"}'`. `@sys/lookup` results carry `action_id`, `action` (`@owner/name`), `description`, `score`, `input_schema`, and `output_schema`:
+Native actions registered at bootstrap, owned by `@sys`, public, runnable like any other action — `juice run @sys/lookup '{"query":"…"}'`. `@sys/lookup` results carry `action_id`, `action` (`@owner/name`), `description`, `score`, `input_schema`, and `output_schema`. `score` is a dimensionless relevance-times-quality rank score (lexical and semantic legs fused by reciprocal-rank fusion, weighted by stats); it is comparable only for ordering within one response, not across queries or as a probability:
 
 | Action | Price | Purpose |
 |--------|-------|---------|
@@ -229,7 +229,7 @@ The operator verbs no ordinary user performs — money, access, federation trust
 | Withdraw credits | `juice admin withdraw <user\|key> <amount> [--reason --external-key]` |
 | Friend a kernel | `juice admin friend <key>` |
 | Unfriend a kernel | `juice admin unfriend <user\|key>` |
-| List peers | `juice admin peers [--gossip] [--all]` — friended peers by default (`handle`, `public_key`, `available`, `locked`; no internal id); `--all` (`?all=1`) also lists denied/unfriended peers; `--gossip` adds the known-network directory roster |
+| List peers | `juice admin peers [--gossip] [--all]` — friended peers by default (`handle`, `public_key`, `available`, `locked`, plus the §13 sync cache `peer_credit` (our credit on the peer) and `last_seen`; no internal id); `--all` (`?all=1`) also lists denied/unfriended peers; `--gossip` adds the known-network directory roster |
 | Inspect a kernel | `juice admin inspect <key\|user>` — identity, public actions, transacted friends, reachability. `source` is `live`/`local`/`none`: an offline but friended peer degrades to last-known local data (`online:false`) |
 | Show own identity | `juice admin identity` — this kernel's public key, handle, listen addresses |
 
