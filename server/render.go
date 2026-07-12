@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
@@ -79,6 +80,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"refOwner":     refOwner,
 		"refName":      refName,
 		"shortTime":    shortTime,
+		"relTime":      relTime,
 		"txAmount":     txAmount,
 		"txrow":        txRowOf,
 		"kindBadge":    kindBadge,
@@ -387,6 +389,37 @@ func shortTime(ts string) string {
 		return ts
 	}
 	return ts[:10] + " " + ts[11:16]
+}
+
+// relTime renders an RFC3339 timestamp as a coarse "time ago" for freshness signals
+// (a peer's last-seen): "just now", "3 mins ago", "2 hours ago", "5 days ago".
+// Empty stays empty; an unparseable value falls back to its raw text.
+func relTime(ts string) string {
+	if ts == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return agoUnit(int(d.Minutes()), "min")
+	case d < 24*time.Hour:
+		return agoUnit(int(d.Hours()), "hour")
+	default:
+		return agoUnit(int(d.Hours()/24), "day")
+	}
+}
+
+func agoUnit(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit + " ago"
+	}
+	return fmt.Sprintf("%d %ss ago", n, unit)
 }
 
 // txRow bundles a transaction with the viewer's handle and the resolved action

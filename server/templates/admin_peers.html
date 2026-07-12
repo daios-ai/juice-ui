@@ -35,7 +35,7 @@
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
     <td class="money" title="Our prepaid credit on this peer — what we can spend calling it">{{money .PeerCredit}}</td>
-    <td class="muted small">{{if .LastSeen}}{{shortTime .LastSeen}}{{else}}never{{end}}</td>
+    <td class="muted small" title="{{.LastSeen}}">{{if .LastSeen}}{{relTime .LastSeen}}{{else}}never{{end}}</td>
     <td class="cluster">
       <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
       <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{.Handle}}? Their proxies deactivate; balance and history are preserved.">
