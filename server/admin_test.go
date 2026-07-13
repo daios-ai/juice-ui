@@ -157,6 +157,86 @@ func TestAdminPeersRendersGossipRoster(t *testing.T) {
 	}
 }
 
+// htmxGet issues a GET carrying the htmx request header, without following any
+// redirect, so a test can inspect an HX-Redirect header or a bare fragment body.
+func htmxGet(t *testing.T, cl *http.Client, url string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("HX-Request", "true")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// TestAdminPeersHTMXReturnsFragment checks item 1: an htmx poll of /admin/peers
+// gets just the Friends-table fragment, not the whole page (no identity card, no
+// layout chrome) — so the swap replaces only the polled region.
+func TestAdminPeersHTMXReturnsFragment(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "@sys")
+
+	resp := htmxGet(t, cl, srv.URL+"/admin/peers")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	s := string(body)
+	if !strings.Contains(s, "@peerb") {
+		t.Errorf("htmx peers fragment must carry the friends table: %s", s)
+	}
+	if strings.Contains(s, "This kernel") || strings.Contains(s, `hx-get="/steps/badge"`) {
+		t.Errorf("htmx peers fragment must be bare (no identity card, no layout chrome): %s", s)
+	}
+}
+
+// TestAdminInspectHTMXReturnsStatusFragment checks item 2: an htmx poll of an
+// inspect page gets just the reachability status card.
+func TestAdminInspectHTMXReturnsStatusFragment(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "@sys")
+
+	resp := htmxGet(t, cl, srv.URL+"/admin/peers/KEYC")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	s := string(body)
+	if !strings.Contains(s, "direct") {
+		t.Errorf("htmx inspect fragment must carry reachability: %s", s)
+	}
+	if strings.Contains(s, "Transacted friends") || strings.Contains(s, `hx-get="/steps/badge"`) {
+		t.Errorf("htmx inspect fragment must be bare (status card only): %s", s)
+	}
+}
+
+// TestAdminPollHTMXNonSuperuserRedirects checks the cross-cutting guard: a demoted
+// session polling an admin fragment gets an HX-Redirect (real navigation), never a
+// full 404 page swapped into the polled element.
+func TestAdminPollHTMXNonSuperuserRedirects(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "@alice")
+
+	resp := htmxGet(t, cl, srv.URL+"/admin/peers")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("htmx non-superuser status = %d want 200 (HX-Redirect, not a page)", resp.StatusCode)
+	}
+	if got := resp.Header.Get("HX-Redirect"); got != "/" {
+		t.Errorf("htmx non-superuser must get HX-Redirect / got %q", got)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "Page not found") {
+		t.Error("htmx non-superuser must not swap the 404 page body into the fragment")
+	}
+}
+
 func TestAdminInspectRenders(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()

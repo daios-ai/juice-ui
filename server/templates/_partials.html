@@ -62,6 +62,16 @@
   <p>{{.Message}} You weren't charged.</p>
   <p><a class="btn" href="/grants/connect?selector={{.ActionRef}}">Connect account</a></p>
 </div>
+{{else if .IsPeerUnreachable}}
+<div class="outcome failed" role="status">
+  <strong>Peer unreachable — fully refunded.</strong>
+  <p>{{.Message}}</p>
+</div>
+{{else if .IsPeerUnfunded}}
+<div class="outcome rejected" role="status">
+  <strong>Peer credit exhausted — you were not charged.</strong>
+  <p>{{.Message}}</p>
+</div>
 {{else}}
 <div class="outcome success" role="status">
   <strong>Success.</strong>
@@ -286,6 +296,96 @@
 </div>
 {{else if .ReceiptMsg}}
 <div class="banner banner-info" role="status">{{.ReceiptMsg}}</div>
+{{end}}
+{{end}}
+
+{{/* _peers_friends — the friended-peers table, extracted so an htmx poll on the
+     peers page can refresh last_seen/peer_credit without a reload. Root is the
+     adminPeersView (so $.CSRFField resolves whether embedded or served standalone
+     via render.Fragment). The Known-network roster is deliberately NOT polled —
+     swapping it would reset its <details> state. */}}
+{{define "_peers_friends"}}
+{{if .Peers}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Handle</th><th>Public key</th><th class="money">Credits</th><th class="money">Our credit</th><th>Last seen</th><th></th></tr></thead>
+  <tbody>
+  {{range .Peers}}
+  <tr{{if .Denied}} class="muted"{{end}}>
+    <td class="mono">{{.Handle}}{{if .Denied}} <span class="chip tag" title="Unfriended — deny-listed since {{.DeniedAt}}">denied</span>{{end}}</td>
+    <td class="mono hash">{{truncate 16 .PublicKey}}…</td>
+    <td class="money">{{money (sum .Available .Locked)}}</td>
+    <td class="money" title="Our prepaid credit on this peer — what we can spend calling it">{{money .PeerCredit}}</td>
+    <td class="muted small" title="{{.LastSeen}}">{{if .LastSeen}}{{relTime .LastSeen}}{{else}}never{{end}}</td>
+    <td class="cluster">
+      <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
+      {{if .Denied}}
+      <form method="post" action="/admin/peers/friend" data-confirm="Re-friend {{.Handle}}? This clears the denial and restarts the handshake; their actions import again.">
+        {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn small" type="submit">Re-friend</button>
+      </form>
+      {{else}}
+      <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{.Handle}}? Their proxies deactivate; balance and history are preserved.">
+        {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-danger small" type="submit">Unfriend</button>
+      </form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="muted">No friends yet. Befriend a kernel by its public key, or from the known network below.</p>{{end}}
+{{end}}
+
+{{/* _inspect_status — a peer's live reachability card, extracted so the inspect
+     page can poll it. Root is the adminInspectView. Because inspect persists the
+     peer-sync cache, each poll also freshens this peer's peer_state kernel-wide. */}}
+{{define "_inspect_status"}}
+{{$i := .Inspection}}
+<dl class="locked-args">
+  <dt>Handle</dt><dd class="mono">{{$i.Handle}}</dd>
+  <dt>Status</dt><dd>
+    {{if $i.Reachability.Online}}<span class="pill status-credited">online</span>{{else}}<span class="pill status-escrow">offline</span>{{end}}
+    {{if $i.Reachability.Source}}<span class="muted small">{{if eq $i.Reachability.Source "local"}}last-known (offline){{else}}{{$i.Reachability.Source}}{{end}}</span>{{end}}
+  </dd>
+  <dt>Reachability</dt><dd>
+    <span class="pill {{if eq $i.Reachability.Path "direct"}}status-credited{{else}}status-escrow{{end}}">{{if $i.Reachability.Path}}{{$i.Reachability.Path}}{{else}}unknown{{end}}</span>
+    {{if $i.Reachability.RTTMillis}}<span class="muted small">{{$i.Reachability.RTTMillis}} ms</span>{{end}}
+  </dd>
+  {{if $i.Reachability.Protocols}}<dt>Protocols</dt><dd class="mono tiny">{{range $i.Reachability.Protocols}}{{.}} {{end}}</dd>{{end}}
+</dl>
+{{end}}
+
+{{/* _action_run — the Run region of the action page: a peer-blocked banner or the
+     call form. Self-terminating poll: when PeerState is set the wrapper polls
+     GET /actions/{id} (which returns this same partial); the moment the peer
+     recovers the fragment is the form branch, which carries NO poller, so
+     swapping it (outerHTML) stops the polling and re-enables the form. Root is
+     the actionView (so .CSRFField/.BadgeSecs resolve when served standalone). */}}
+{{define "_action_run"}}
+{{if .Action.PeerState}}
+<div id="action-run" hx-get="/actions/{{.Action.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
+  <div class="banner banner-info">{{if eq .Action.PeerState "unfunded"}}This kernel's prepaid credit on the peer is exhausted — an operator top-up is needed before this action can run.{{else}}This action runs on a peer that's currently unreachable. Try again when it's back.{{end}}</div>
+</div>
+{{else}}
+<div id="action-run">
+{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome)}}
+</div>
+{{end}}
+{{end}}
+
+{{/* _process_await — the awaiting-receipt banner of the process page. Same
+     self-terminating idiom: polls GET /processes/{id} while parked on a remote
+     receipt; when the peer returns and the receipt settles the fragment is an
+     empty div with no poller, so the banner clears and polling stops. Root is
+     the processView. */}}
+{{define "_process_await"}}
+{{if .Process.AwaitingReceipt}}
+<div id="process-await" hx-get="/processes/{{.Process.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
+  <p class="banner banner-info">Remote receipt pending — funds parked on a possibly-offline peer{{if .Process.AwaitingReceiptSince}} since {{shortTime .Process.AwaitingReceiptSince}}{{end}}.</p>
+</div>
+{{else}}
+<div id="process-await"></div>
 {{end}}
 {{end}}
 

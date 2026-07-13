@@ -1,10 +1,12 @@
 package server
 
 import (
+	"html/template"
 	"net/http"
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/gorilla/csrf"
 )
 
 // Admin (superuser) handlers. Every route reaches here only through
@@ -27,6 +29,8 @@ type adminPeersView struct {
 	Peers      []client.Peer
 	Roster     []client.DiscoveredKernel
 	FriendKeys map[string]bool // public keys we already friend (hide Befriend for these)
+	ShowDenied bool            // ?all=1 — friends list includes denied/unfriended peers
+	CSRFField  template.HTML   // carried on the view so the polled fragment's forms keep their token
 	OpenForm   string
 }
 
@@ -118,12 +122,14 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	view := adminPeersView{OpenForm: openForm(r, "admin")}
+	showDenied := r.URL.Query().Get("all") == "1"
+	view := adminPeersView{OpenForm: openForm(r, "admin"), ShowDenied: showDenied, CSRFField: csrf.TemplateField(r)}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
 			view.Identity = id
 		}
-		p, e := s.client.AdminListPeers(ctx, tok, true) // gossip roster included
+		// gossip roster included; all=showDenied also lists denied/unfriended peers.
+		p, e := s.client.AdminListPeers(ctx, tok, true, showDenied)
 		if e != nil {
 			return e
 		}
@@ -135,7 +141,13 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	// An htmx poll refreshes just the Friends table (last_seen/peer_credit move);
+	// the roster is left static so its <details> state survives.
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_peers_friends", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "admin_peers", "Peers", view)
@@ -154,7 +166,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Inspection = insp
 		// A peer we already friend shows differently (no Befriend prompt).
-		if peers, e := s.client.AdminListPeers(ctx, tok, false); e == nil {
+		if peers, e := s.client.AdminListPeers(ctx, tok, false, false); e == nil {
 			for _, p := range peers.Peers {
 				if p.PublicKey == key {
 					view.IsFriend = true
@@ -163,7 +175,14 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	// An htmx poll refreshes just the reachability/status card. Because inspect
+	// persists the peer-sync cache, each refresh also freshens this peer's
+	// peer_state kernel-wide (feeds the action/process polls).
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_inspect_status", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "admin_inspect", "Inspect", view)

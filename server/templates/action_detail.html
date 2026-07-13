@@ -28,11 +28,7 @@
 </div>
 
 <h2>Run</h2>
-{{if $d.Action.PeerState}}
-<div class="banner banner-info">{{if eq $d.Action.PeerState "unfunded"}}This kernel's prepaid credit on the peer is exhausted — an operator top-up is needed before this action can run.{{else}}This action runs on a peer that's currently unreachable. Try again when it's back.{{end}}</div>
-{{else}}
-{{template "_call_form" (runForm $.CSRFField $d.Action.ID $d.Action.Price $d.Form $d.Outcome)}}
-{{end}}
+{{template "_action_run" $d}}
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>

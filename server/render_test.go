@@ -781,6 +781,179 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 	}
 }
 
+// TestActionRunPollsWhilePeerBlocked checks item 3: a peer-blocked run region polls
+// GET /actions/{id} so it re-enables on its own, and the healthy region carries NO
+// poller (self-terminating — the poll stops once the form is back).
+func TestActionRunPollsWhilePeerBlocked(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(ps string) string {
+		rec := httptest.NewRecorder()
+		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: actionView{
+			Action:    client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Public: true, Price: 10, PeerState: ps},
+			Form:      BuildForm(nil),
+			BadgeSecs: 15,
+		}}
+		if err := r.Render(rec, 200, "action_detail", p); err != nil {
+			t.Fatalf("render %q: %v", ps, err)
+		}
+		return rec.Body.String()
+	}
+	off := render("offline")
+	if !strings.Contains(off, `hx-get="/actions/a1"`) || !strings.Contains(off, "every 15s") {
+		t.Errorf("peer-blocked run region must poll /actions/a1 every 15s: %s", off)
+	}
+	ok := render("")
+	if strings.Contains(ok, `hx-get="/actions/a1"`) {
+		t.Error("healthy run region must NOT carry a poller (self-terminating)")
+	}
+}
+
+// TestProcessAwaitingReceiptPolls checks item 4: a process parked on a remote
+// receipt polls GET /processes/{id}; once settled the region carries no poller.
+func TestProcessAwaitingReceiptPolls(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(awaiting bool) string {
+		rec := httptest.NewRecorder()
+		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: processView{
+			Process:   client.Process{ID: "p1", Status: "open", AwaitingReceipt: awaiting, AwaitingReceiptSince: "2026-07-12T00:00:00Z"},
+			BadgeSecs: 15,
+		}}
+		if err := r.Render(rec, 200, "process", p); err != nil {
+			t.Fatalf("render awaiting=%v: %v", awaiting, err)
+		}
+		return rec.Body.String()
+	}
+	parked := render(true)
+	if !strings.Contains(parked, `hx-get="/processes/p1"`) || !strings.Contains(parked, "every 15s") {
+		t.Errorf("awaiting-receipt banner must poll /processes/p1 every 15s: %s", parked)
+	}
+	if !strings.Contains(parked, "Remote receipt pending") {
+		t.Errorf("awaiting-receipt banner text missing: %s", parked)
+	}
+	settled := render(false)
+	if strings.Contains(settled, `hx-get="/processes/p1"`) {
+		t.Error("settled process must NOT carry the awaiting-receipt poller")
+	}
+}
+
+// TestCallOutcomePeerBranches checks item 5: peer-unreachable/unfunded render as
+// first-class outcomes in the shared _call_outcome panel, not generic errors.
+func TestCallOutcomePeerBranches(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		class OutcomeClass
+		want  string
+	}{
+		{PeerUnreachable, "Peer unreachable"},
+		{PeerUnfunded, "Peer credit exhausted"},
+	} {
+		rec := httptest.NewRecorder()
+		out := Outcome{Class: tc.class, Message: "explanatory copy"}
+		if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
+			t.Fatalf("fragment %v: %v", tc.class, err)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, tc.want) || !strings.Contains(body, "explanatory copy") {
+			t.Errorf("outcome %v must render %q with its message: %s", tc.class, tc.want, body)
+		}
+	}
+}
+
+// TestPeersFriendsPollerAndDeniedToggle checks items 1 & 6: the Friends table is an
+// htmx-polled fragment, and a Show/Hide-denied toggle drives the ?all=1 view.
+func TestPeersFriendsPollerAndDeniedToggle(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderPeers := func(showDenied bool) string {
+		rec := httptest.NewRecorder()
+		p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+			Identity:   client.Identity{Handle: "@me", PublicKey: "PK"},
+			Peers:      []client.Peer{{Handle: "@peerb", PublicKey: "KEY", PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+			ShowDenied: showDenied,
+		}}
+		if err := r.Render(rec, 200, "admin_peers", p); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return rec.Body.String()
+	}
+	body := renderPeers(false)
+	if !strings.Contains(body, `id="peers-friends"`) || !strings.Contains(body, `hx-get="/admin/peers"`) || !strings.Contains(body, "every 15s") {
+		t.Errorf("Friends table must be an htmx-polled fragment: %s", body)
+	}
+	if !strings.Contains(body, `href="/admin/peers?all=1"`) || !strings.Contains(body, "Show denied") {
+		t.Errorf("peers page must offer a Show-denied toggle: %s", body)
+	}
+	denied := renderPeers(true)
+	if !strings.Contains(denied, "Hide denied") || !strings.Contains(denied, `hx-get="/admin/peers?all=1"`) {
+		t.Errorf("denied view must show a Hide toggle and poll ?all=1: %s", denied)
+	}
+}
+
+// TestPeersDeniedRowOffersRefriend checks item 6: a denied peer (denied_at set) is
+// marked and offers Re-friend (which clears the denial), while a live friend offers
+// Unfriend.
+func TestPeersDeniedRowOffersRefriend(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		Identity:   client.Identity{Handle: "@me", PublicKey: "PK"},
+		ShowDenied: true,
+		Peers: []client.Peer{
+			{Handle: "@friend", PublicKey: "KF"},
+			{Handle: "@gone", PublicKey: "KG", DeniedAt: "2026-07-13T17:50:24Z"},
+		},
+	}}
+	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, ">denied<") {
+		t.Errorf("denied peer must be marked: %s", body)
+	}
+	// The denied row re-friends by key; the live friend row unfriends by handle.
+	if !strings.Contains(body, `action="/admin/peers/friend"`) || !strings.Contains(body, `value="KG"`) {
+		t.Errorf("denied row must offer Re-friend prefilled with its key: %s", body)
+	}
+	if !strings.Contains(body, `value="@friend"`) {
+		t.Errorf("live friend row must still offer Unfriend: %s", body)
+	}
+}
+
+// TestInspectStatusPolls checks item 2: the inspect status card is an htmx-polled
+// fragment so an open inspect view is a live monitor.
+func TestInspectStatusPolls(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+		Key:        "KEYC",
+		Inspection: client.Inspection{Handle: "@kernelc", Reachability: client.Reachability{Online: true, Path: "direct"}},
+	}}
+	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="inspect-status"`) || !strings.Contains(body, `hx-get="/admin/peers/KEYC"`) || !strings.Contains(body, "every 15s") {
+		t.Errorf("inspect status card must be an htmx-polled fragment: %s", body)
+	}
+}
+
 // TestPeersPageShowsCreditAndLastSeen checks gap (a): the Friends table surfaces our
 // prepaid credit on the peer and when it was last seen.
 func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {

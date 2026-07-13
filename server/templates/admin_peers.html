@@ -22,31 +22,11 @@
 <h2>Friends</h2>
 <div class="row control-row">
   <a class="btn-quiet" href="/admin/peers?form=admin-friend" data-modal="form-admin-friend">+ friend a kernel</a>
+  {{if $d.ShowDenied}}<a class="btn-quiet" href="/admin/peers">Hide denied</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show denied</a>{{end}}
 </div>
-{{if $d.Peers}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>Handle</th><th>Public key</th><th class="money">Credits</th><th class="money">Our credit</th><th>Last seen</th><th></th></tr></thead>
-  <tbody>
-  {{range $d.Peers}}
-  <tr>
-    <td class="mono">{{.Handle}}</td>
-    <td class="mono hash">{{truncate 16 .PublicKey}}…</td>
-    <td class="money">{{money (sum .Available .Locked)}}</td>
-    <td class="money" title="Our prepaid credit on this peer — what we can spend calling it">{{money .PeerCredit}}</td>
-    <td class="muted small" title="{{.LastSeen}}">{{if .LastSeen}}{{relTime .LastSeen}}{{else}}never{{end}}</td>
-    <td class="cluster">
-      <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-      <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{.Handle}}? Their proxies deactivate; balance and history are preserved.">
-        {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-danger small" type="submit">Unfriend</button>
-      </form>
-    </td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
+<div id="peers-friends" hx-get="/admin/peers{{if $d.ShowDenied}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
+{{template "_peers_friends" $d}}
 </div>
-{{else}}<p class="muted">No friends yet. Befriend a kernel by its public key, or from the known network below.</p>{{end}}
 
 <h2>Known network</h2>
 <p class="subtitle">Discovered through gossip — not yet friends.</p>

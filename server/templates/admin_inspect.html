@@ -6,18 +6,9 @@
 <p class="subtitle mono hash">{{$d.Key}}</p>
 
 <div class="card">
-  <dl class="locked-args">
-    <dt>Handle</dt><dd class="mono">{{$i.Handle}}</dd>
-    <dt>Status</dt><dd>
-      {{if $i.Reachability.Online}}<span class="pill status-credited">online</span>{{else}}<span class="pill status-escrow">offline</span>{{end}}
-      {{if $i.Reachability.Source}}<span class="muted small">{{if eq $i.Reachability.Source "local"}}last-known (offline){{else}}{{$i.Reachability.Source}}{{end}}</span>{{end}}
-    </dd>
-    <dt>Reachability</dt><dd>
-      <span class="pill {{if eq $i.Reachability.Path "direct"}}status-credited{{else}}status-escrow{{end}}">{{if $i.Reachability.Path}}{{$i.Reachability.Path}}{{else}}unknown{{end}}</span>
-      {{if $i.Reachability.RTTMillis}}<span class="muted small">{{$i.Reachability.RTTMillis}} ms</span>{{end}}
-    </dd>
-    {{if $i.Reachability.Protocols}}<dt>Protocols</dt><dd class="mono tiny">{{range $i.Reachability.Protocols}}{{.}} {{end}}</dd>{{end}}
-  </dl>
+  <div id="inspect-status" hx-get="/admin/peers/{{$d.Key}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
+    {{template "_inspect_status" $d}}
+  </div>
   <div class="cluster">
     {{if $d.IsFriend}}
     <span class="pill status-credited">friend</span>

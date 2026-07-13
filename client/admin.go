@@ -55,9 +55,16 @@ type Peer struct {
 	PublicKey  string `json:"public_key"`
 	Available  int64  `json:"available"`
 	Locked     int64  `json:"locked"`
-	PeerCredit int64  `json:"peer_credit"` // our spendable credit on the peer
-	LastSeen   string `json:"last_seen"`   // RFC3339; "" / null when never seen
+	PeerCredit int64  `json:"peer_credit"`         // our spendable credit on the peer
+	LastSeen   string `json:"last_seen"`           // RFC3339; "" / null when never seen
+	DeniedAt   string `json:"denied_at,omitempty"` // set only on a denied (unfriended) row under ?all=1
 }
+
+// Denied reports whether this peer is deny-listed (unfriended). Detection is by
+// presence: the kernel returns denied_at only on a denied row (verified live
+// 2026-07-13 via a two-kernel friend→unfriend), so a non-empty string means
+// denied — matching AdminUser's presence semantics.
+func (p Peer) Denied() bool { return p.DeniedAt != "" }
 
 // Peers is the /control/peers response: friends plus (with gossip) the
 // known-network roster.
@@ -169,13 +176,21 @@ func (c *Client) adjust(ctx context.Context, token, path, handle string, amount 
 	return a, err
 }
 
-// AdminListPeers returns friends, optionally with the gossip roster
-// (GET /control/peers[?gossip=1]). The kernel requires the value "1" — "true"
-// is read as false and returns no roster (verified live).
-func (c *Client) AdminListPeers(ctx context.Context, token string, gossip bool) (Peers, error) {
-	path := "/control/peers"
+// AdminListPeers returns friends, optionally with the gossip roster (gossip) and
+// optionally including denied/unfriended peers (all) — GET
+// /control/peers[?gossip=1][&all=1]. The kernel requires the literal value "1"
+// ("true" is read as false), so each flag is emitted as "1" or omitted.
+func (c *Client) AdminListPeers(ctx context.Context, token string, gossip, all bool) (Peers, error) {
+	q := url.Values{}
 	if gossip {
-		path += "?gossip=1"
+		q.Set("gossip", "1")
+	}
+	if all {
+		q.Set("all", "1")
+	}
+	path := "/control/peers"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	var p Peers
 	err := c.do(ctx, http.MethodGet, path, token, nil, &p)

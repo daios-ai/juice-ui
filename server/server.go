@@ -410,10 +410,19 @@ func (s *Server) isSuperuser(r *http.Request) bool {
 func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.sessions.IsAuthenticated(r.Context()) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			// hxRedirect, not a bare 303: an admin view that polls a fragment must
+			// navigate on a lost session, never swap the login page into the div.
+			hxRedirect(w, r, "/login")
 			return
 		}
 		if !s.isSuperuser(r) {
+			// Same reasoning for a demoted session: send htmx to the home page
+			// rather than swap a full 404 into a polled fragment.
+			if isHTMX(r) {
+				w.Header().Set("HX-Redirect", "/")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			s.renderPage(w, r, http.StatusNotFound, "error", "Not found", errorView{Message: "Page not found."})
 			return
 		}
@@ -507,6 +516,11 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Data:         data,
 	}
 }
+
+// badgeSecs is the poll interval in whole seconds — the same value the nav badges
+// use — for the federation and call-gate live pollers that carry it in view data
+// (a standalone fragment has no Page envelope to read .BadgeSecs from).
+func (s *Server) badgeSecs() int { return int(s.badgeTTL / time.Second) }
 
 // activeGroup maps a request path to the nav group it belongs to, for
 // aria-current highlighting.

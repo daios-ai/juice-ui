@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -83,15 +84,17 @@ type discoverView struct {
 }
 
 type actionView struct {
-	Action   client.Action
-	Stats    *client.Stats // nil until the action has usage
-	Ratings  []client.Rating
-	Form     FormModel
-	IsOwner  bool
-	IsPaid   bool
-	Outcome  *Outcome
-	OpenForm string
-	Error    string
+	Action    client.Action
+	Stats     *client.Stats // nil until the action has usage
+	Ratings   []client.Rating
+	Form      FormModel
+	IsOwner   bool
+	IsPaid    bool
+	Outcome   *Outcome
+	OpenForm  string
+	Error     string
+	CSRFField template.HTML // carried so the polled _action_run fragment's form keeps its token
+	BadgeSecs int           // poll interval for the self-terminating peer-state poll
 }
 
 // actionsView is the action room: browse everyone's catalog and manage your own,
@@ -127,6 +130,7 @@ type processView struct {
 	Transactions []client.Transaction
 	Actions      map[string]client.Action // action_id → Action; missing if deleted
 	MyHandle     string
+	BadgeSecs    int // poll interval for the self-terminating awaiting-receipt poll
 }
 
 type transactionsView struct {
@@ -849,11 +853,13 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view = actionView{
-			Action:   a,
-			Form:     BuildForm(a.InputSchema),
-			IsOwner:  a.OwnerHandle == me.Handle,
-			IsPaid:   a.Price > 0,
-			OpenForm: openForm(r, "action-detail"),
+			Action:    a,
+			Form:      BuildForm(a.InputSchema),
+			IsOwner:   a.OwnerHandle == me.Handle,
+			IsPaid:    a.Price > 0,
+			OpenForm:  openForm(r, "action-detail"),
+			CSRFField: csrf.TemplateField(r),
+			BadgeSecs: s.badgeSecs(),
 		}
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats = &st
@@ -863,7 +869,13 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	// A peer-blocked run form polls this handler; return just the run region so it
+	// self-terminates (re-enables the form) once the peer recovers.
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_action_run", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
@@ -1352,13 +1364,20 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Process = p
 		view.MyHandle = s.sessions.Handle(ctx)
+		view.BadgeSecs = s.badgeSecs()
 		if txs, e := s.client.ListTransactions(ctx, tok, id); e == nil {
 			view.Transactions = txs
 			view.Actions = s.actionsByID(ctx, tok, txs)
 		}
 		return nil
 	})
-	if s.handleErr(w, r, err) {
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	// A process parked on a remote receipt polls this handler; return just the
+	// awaiting-receipt region so it self-terminates when the receipt settles.
+	if isHTMX(r) {
+		_ = s.render.Fragment(w, http.StatusOK, "_process_await", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "process", "Session", view)

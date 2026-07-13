@@ -8,7 +8,7 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 )
 
-// OutcomeClass is one of the three call result classes.
+// OutcomeClass is one of the call result classes.
 type OutcomeClass int
 
 const (
@@ -22,6 +22,12 @@ const (
 	// GrantRequired: the action needs a delegated OAuth grant — rejected before
 	// any charge; the UI offers inline consent.
 	GrantRequired
+	// PeerUnreachable: a remote-proxy call whose first dispatch provably never
+	// reached the peer — settled locally as a full refund (retry when it is back).
+	PeerUnreachable
+	// PeerUnfunded: this kernel's prepaid credit on the peer is exhausted — an
+	// operator top-up condition, never the caller's own balance; not charged.
+	PeerUnfunded
 )
 
 // Cost is the gross/fee/net breakdown of a successful call.
@@ -56,6 +62,15 @@ func (o Outcome) IsRejected() bool { return o.Class == Rejected }
 // IsGrantRequired reports an outcome needing a delegated OAuth grant before the
 // action can run (template helper).
 func (o Outcome) IsGrantRequired() bool { return o.Class == GrantRequired }
+
+// IsPeerUnreachable reports a remote-proxy call the peer never received —
+// fully refunded, retry when the peer is back (template helper).
+func (o Outcome) IsPeerUnreachable() bool { return o.Class == PeerUnreachable }
+
+// IsPeerUnfunded reports a remote-proxy call blocked because this kernel's
+// prepaid credit on the peer is exhausted — not the caller's balance, not
+// charged (template helper).
+func (o Outcome) IsPeerUnfunded() bool { return o.Class == PeerUnfunded }
 
 // CallForm drives the shared _call_form partial for both running an action and
 // completing a step — conceptually the same act (execute an action). Locked
@@ -173,6 +188,18 @@ func classifyErr(err error) (Outcome, error) {
 			Class:     GrantRequired,
 			ActionRef: ke.GrantAction,
 			Message:   "This action needs a connected account before it can run.",
+		}, nil
+	case client.KindPeerUnreachable:
+		return Outcome{
+			Class:   PeerUnreachable,
+			Message: ke.UserMessage(),
+			Detail:  ke.KernelMessage,
+		}, nil
+	case client.KindPeerUnfunded:
+		return Outcome{
+			Class:   PeerUnfunded,
+			Message: ke.UserMessage(),
+			Detail:  ke.KernelMessage,
 		}, nil
 	default:
 		return Outcome{}, err

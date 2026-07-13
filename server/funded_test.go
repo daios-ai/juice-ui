@@ -121,6 +121,48 @@ func TestRunGrantRequiredFallsBackToRunRef(t *testing.T) {
 	}
 }
 
+func TestRunPeerUnreachable(t *testing.T) {
+	// A remote-proxy call the peer never received: a first-class refunded outcome,
+	// not a raw error dumped through the generic path.
+	f := &fakeKernel{
+		runStatus: 502,
+		runBody:   `{"error":"peer offline","code":"peer_unreachable","meta":{"peer":"@peerb"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "@peerb/greet", nil)
+	if err != nil {
+		t.Fatalf("peer_unreachable must be an outcome, not an error: %v", err)
+	}
+	if out.Class != PeerUnreachable || !out.IsPeerUnreachable() {
+		t.Fatalf("class = %v want PeerUnreachable", out.Class)
+	}
+	if out.Message == "" {
+		t.Error("peer-unreachable outcome should carry a message")
+	}
+}
+
+func TestRunPeerUnfunded(t *testing.T) {
+	// Our prepaid credit on the peer is exhausted (an operator condition): a
+	// first-class not-charged outcome, distinct from the caller's own funds.
+	f := &fakeKernel{
+		runStatus: 402,
+		runBody:   `{"error":"peer credit exhausted","code":"peer_unfunded","meta":{"peer":"@peerb"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "@peerb/greet", nil)
+	if err != nil {
+		t.Fatalf("peer_unfunded must be an outcome, not an error: %v", err)
+	}
+	if out.Class != PeerUnfunded || !out.IsPeerUnfunded() {
+		t.Fatalf("class = %v want PeerUnfunded", out.Class)
+	}
+	if out.Message == "" {
+		t.Error("peer-unfunded outcome should carry a message")
+	}
+}
+
 func TestRunInsufficientFundsIsError(t *testing.T) {
 	f := &fakeKernel{
 		runStatus: 402,

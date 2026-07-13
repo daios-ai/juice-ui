@@ -102,7 +102,7 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"peers":[{"handle":"@peerb","public_key":"KEY","available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"}]}`
-	p, err := f.client().AdminListPeers(context.Background(), "tok", true)
+	p, err := f.client().AdminListPeers(context.Background(), "tok", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +115,33 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	// The §13 friend-sync cache — our credit on the peer and when last seen.
 	if p.Peers[0].PeerCredit != 250 || p.Peers[0].LastSeen != "2026-07-12T00:00:00Z" {
 		t.Errorf("peer sync-cache decode wrong: credit=%d last_seen=%q", p.Peers[0].PeerCredit, p.Peers[0].LastSeen)
+	}
+	// gossip+all → both flags emitted as literal "1" (kernel reads "true" as false).
+	if _, err := f.client().AdminListPeers(context.Background(), "tok", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/control/peers?all=1&gossip=1" {
+		t.Errorf("peers all path = %q", f.lastPath)
+	}
+	// Neither flag → bare path, no query.
+	if _, err := f.client().AdminListPeers(context.Background(), "tok", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/control/peers" {
+		t.Errorf("peers bare path = %q", f.lastPath)
+	}
+	// ?all=1 surfaces denied peers, marked by presence of denied_at (verified live).
+	f.reply = `{"peers":[{"handle":"@peerb","public_key":"KEY","available":0,"locked":0,"denied_at":"2026-07-13T17:50:24Z"}]}`
+	dp, err := f.client().AdminListPeers(context.Background(), "tok", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dp.Peers) != 1 || !dp.Peers[0].Denied() {
+		t.Errorf("denied peer must decode denied_at and report Denied(): %+v", dp.Peers)
+	}
+	// A friend row (no denied_at) is not denied.
+	if (Peer{Handle: "@x"}).Denied() {
+		t.Error("a peer without denied_at must not be Denied()")
 	}
 	f.reply = `{"handle":"@k","public_key":"PK","addrs":["/ip4/127.0.0.1/tcp/1"]}`
 	id, err := f.client().AdminIdentity(context.Background(), "tok")
