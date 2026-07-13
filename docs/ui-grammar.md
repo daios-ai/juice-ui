@@ -27,7 +27,7 @@ Three laws underpin everything:
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
 | Card / grid / table | `.card` · `.grid` · `.card-list` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | Field | `.field` + inputs/select/textarea | forms |
-| Dialog | `dialog.modal-form` · `#modal-backdrop` confirm · `dialog.palette` | overlays |
+| Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays |
 | Status | `.pill` (+state) · `.sig-*` money signals | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
 | Ref | `_ref` partial | `@owner/name` |
@@ -313,7 +313,9 @@ split on the first `/`.
   an in-flow card. `?form` values are whitelisted server-side.
 - Structure: `.modal-head` (title + `.modal-close`) → `.modal-body` (the form).
 - **Destructive confirm:** `form[data-confirm="…"]` routes through the shared
-  confirm modal (`#modal-backdrop`), whose message names the consequence.
+  confirm modal — a native `dialog.modal-confirm` (`#modal-backdrop`) shown with
+  `showModal()`, so it stacks in the top layer above an open `modal-form`; its
+  message names the consequence.
 
 ### 5.9 Command palette & keyboard
 

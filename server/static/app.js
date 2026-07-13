@@ -105,14 +105,11 @@ document.addEventListener('click', (e) => {
 
   function openModal(text) {
     msg.textContent = text;
-    backdrop.hidden = false;
-    backdrop.removeAttribute('aria-hidden');
+    backdrop.showModal(); // native <dialog>: top layer, above any modal-form
     btnConfirm.focus();
   }
   function closeModal() {
-    backdrop.hidden = true;
-    backdrop.setAttribute('aria-hidden', 'true');
-    pending = null;
+    if (backdrop.open) backdrop.close();
   }
 
   document.addEventListener('submit', (e) => {
@@ -135,13 +132,12 @@ document.addEventListener('click', (e) => {
 
   btnCancel.addEventListener('click', closeModal);
 
+  // Light-dismiss: a click on the dialog's ::backdrop lands on the dialog element
+  // itself (outside .modal-box). Native Esc fires 'close'; clear the pending form there.
   backdrop.addEventListener('click', (e) => {
     if (!e.target.closest('.modal-box')) closeModal();
   });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !backdrop.hidden) closeModal();
-  });
+  backdrop.addEventListener('close', () => { pending = null; });
 })();
 
 // Optimistic sidebar collapse/expand.

@@ -123,14 +123,14 @@
   </dialog>
   {{end}}
 
-  <div id="modal-backdrop" class="modal-backdrop" hidden aria-hidden="true">
-    <div class="modal-box" role="alertdialog" aria-modal="true" aria-labelledby="modal-msg">
+  <dialog id="modal-backdrop" class="modal-confirm" aria-labelledby="modal-msg">
+    <div class="modal-box">
       <p id="modal-msg" class="modal-msg"></p>
       <div class="modal-actions">
         <button id="modal-cancel" class="btn">Cancel</button>
         <button id="modal-confirm" class="btn-danger">Confirm</button>
       </div>
     </div>
-  </div>
+  </dialog>
 </body>
 </html>{{end}}

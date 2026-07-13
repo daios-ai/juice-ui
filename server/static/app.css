@@ -207,17 +207,17 @@ tr.unread > td:first-child a { font-weight: 700; }
   border-radius: var(--radius); padding: .5rem .8rem; text-align: center; font-size: .9rem;
 }
 
-/* Confirmation modal (destructive actions) */
-.modal-backdrop {
-  position: fixed; inset: 0; z-index: 400;
-  background: rgba(0,0,0,.5);
-  display: flex; align-items: center; justify-content: center;
+/* Confirmation modal (destructive actions) — a native <dialog> like modal-form,
+   so it shares the top layer and stacks above an open modal-form dialog. */
+dialog.modal-confirm {
+  border: none; background: transparent; padding: 0;
+  max-width: 400px; width: 90%;
 }
-.modal-backdrop[hidden] { display: none; }
+dialog.modal-confirm::backdrop { background: rgba(0,0,0,.5); }
 .modal-box {
   background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: var(--radius); box-shadow: none;
-  padding: 1.25rem; max-width: 400px; width: 90%; display: flex;
+  padding: 1.25rem; width: 100%; display: flex;
   flex-direction: column; gap: 1.1rem;
   animation: modal-in .12s ease;
 }

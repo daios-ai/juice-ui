@@ -673,6 +673,27 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 	}
 }
 
+// TestConfirmModalIsNativeDialog guards snag #1: the shared confirm must be a
+// native <dialog> (top layer) so it stacks above an open modal-form dialog —
+// not a z-indexed div that a dialog would paint over.
+func TestConfirmModalIsNativeDialog(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := r.Render(rec, 200, "error", Page{Handle: "@me", Data: struct{ Message string }{"x"}}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<dialog id="modal-backdrop" class="modal-confirm"`) {
+		t.Errorf("confirm modal must be a native <dialog class=modal-confirm>: %s", body)
+	}
+	if strings.Contains(body, `class="modal-backdrop"`) {
+		t.Error("legacy z-indexed .modal-backdrop div must be gone (a dialog would stack over it)")
+	}
+}
+
 // TestActionDetailGatesRunOnPeerState is the load-bearing federation test: a remote
 // action whose peer is offline/unfunded shows a status notice INSTEAD of the run
 // form (no doomed spend), while a healthy remote action still shows the form.
