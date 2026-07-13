@@ -215,7 +215,8 @@ dialog.modal-confirm {
 }
 dialog.modal-confirm::backdrop { background: rgba(0,0,0,.5); }
 .modal-box {
-  background: var(--surface); border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius); box-shadow: none;
   padding: 1.25rem; width: 100%; display: flex;
   flex-direction: column; gap: 1.1rem;
@@ -483,11 +484,12 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .5rem .5rem; border-bottom: 1px solid var(--border); font-size: .9rem; }
 th { color: var(--text-muted); font-weight: 600; }
 .schema-table td { vertical-align: top; }
-/* Known-network roster: each kernel is a collapsible row — name only by default,
-   stats on expand. Inspect/Befriend live in the summary, pushed right. */
-.roster-kernel > summary { display: flex; align-items: center; gap: .5rem; cursor: pointer; list-style-position: inside; }
-.roster-kernel > summary::-webkit-details-marker { color: var(--text-muted); }
-.roster-kernel .roster-actions { margin-left: auto; }
+/* Collapsible card (details.card): the summary is a flex row — the label sits by
+   the disclosure marker on the left, its action .cluster is pushed to the far right
+   (clear of the marker). Shared by the peers roster and the user's connectors. */
+details.card > summary { display: flex; align-items: center; gap: .5rem; cursor: pointer; list-style-position: inside; }
+details.card > summary::-webkit-details-marker { color: var(--text-muted); }
+details.card > summary .cluster { margin-left: auto; }
 .roster-stats { margin-top: .75rem; }
 
 /* Compact stats table for federation roster/inspect (name/price/uses/rating) */

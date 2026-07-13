@@ -97,12 +97,12 @@ type actionView struct {
 	BadgeSecs int           // poll interval for the self-terminating peer-state poll
 }
 
-// actionsView is the action room: browse everyone's catalog and manage your own,
-// with earnings folded in. Scope="all" for a superuser shows the whole catalog.
+// actionsView is the action room: manage your own actions, with earnings folded
+// in. Discovery/browse lives in /run; Scope="all" for a superuser widens Mine to
+// every owner's actions.
 type actionsView struct {
 	User      client.User
 	Mine      []actionCardView // the signed-in user's own actions (management)
-	Catalog   []actionCardView // public catalog (browse)
 	Earnings  studioEarnings
 	Filter    string // "active" | "inactive" | "" (all) — applies to Mine
 	Scope     string // "" (own+public) | "all" (superuser sees every action)
@@ -604,7 +604,9 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 		}
 		view.User = u
 		view.MyHandle = u.Handle
-		view.Transactions, _ = s.client.ListTransactions(ctx, tok, "")
+		// A preview only — the most recent 10; "Full transaction ledger →" links
+		// to the rest. Capped kernel-side via ?limit rather than fetching all.
+		view.Transactions, _ = s.client.ListTransactions(ctx, tok, "", 10)
 		view.Actions = s.actionsByID(ctx, tok, view.Transactions)
 		procs, _ := s.client.ListProcesses(ctx, tok)
 		view.OpenProcesses = filterStatus(procs, "open", true)
@@ -952,7 +954,7 @@ func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 		scope = ""
 	}
 	view := actionsView{Filter: filter, Scope: scope, Superuser: super, OpenForm: openForm(r, "action")}
-	var mine, catalog []client.Action
+	var mine []client.Action
 	var txs []client.Transaction
 	actionStats := map[string]client.Stats{}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -970,11 +972,7 @@ func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		mine = a
-		if scope != "all" {
-			// Browse: the public catalog (everyone's active/public actions).
-			catalog, _ = s.client.ListActions(ctx, tok, "", "", false)
-		}
-		txs, _ = s.client.ListTransactions(ctx, tok, "")
+		txs, _ = s.client.ListTransactions(ctx, tok, "", 0)
 		for _, action := range mine {
 			if st, e := s.client.ActionStats(ctx, tok, action.ID); e == nil {
 				actionStats[action.ID] = st
@@ -1014,13 +1012,6 @@ func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 			st = &cp
 		}
 		view.Mine = append(view.Mine, actionCardView{Action: a, Stats: st})
-	}
-	// Catalog excludes the user's own actions (already in Mine) for a cleaner browse.
-	for _, a := range catalog {
-		if a.OwnerHandle == view.User.Handle {
-			continue
-		}
-		view.Catalog = append(view.Catalog, actionCardView{Action: a})
 	}
 	s.renderPage(w, r, http.StatusOK, "actions", "Actions", view, view.User.Available)
 }
@@ -1365,7 +1356,7 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		view.Process = p
 		view.MyHandle = s.sessions.Handle(ctx)
 		view.BadgeSecs = s.badgeSecs()
-		if txs, e := s.client.ListTransactions(ctx, tok, id); e == nil {
+		if txs, e := s.client.ListTransactions(ctx, tok, id, 0); e == nil {
 			view.Transactions = txs
 			view.Actions = s.actionsByID(ctx, tok, txs)
 		}
@@ -1406,7 +1397,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		myHandle = me.Handle
-		t, e := s.client.ListTransactions(ctx, tok, "")
+		t, e := s.client.ListTransactions(ctx, tok, "", 0)
 		if e != nil {
 			return e
 		}

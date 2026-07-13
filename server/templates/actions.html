@@ -2,7 +2,7 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>action</h1>
-  <p class="subtitle">Browse the catalog and manage your own actions.{{if $d.Superuser}} <span class="scope-note">superuser scope available</span>{{end}}</p>
+  <p class="subtitle">Manage your own actions.{{if $d.Superuser}} <span class="scope-note">superuser scope available</span>{{end}}</p>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
@@ -47,13 +47,6 @@
 </div>
 {{else}}
 <p class="muted">No actions yet. Create one, synthesize one, or import an OpenAPI spec.</p>
-{{end}}
-
-{{if $d.Catalog}}
-<h2>Catalog</h2>
-<div class="grid">
-  {{range $d.Catalog}}{{template "_action_card" .}}{{end}}
-</div>
 {{end}}
 
 {{template "_form_action_create" .}}

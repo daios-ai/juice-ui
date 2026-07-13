@@ -245,11 +245,54 @@ func TestAdminInspectRenders(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "@sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
-	// action ref renders through _ref (owner segment in its own span)
-	for _, want := range []string{"@kernelc", "direct", `class="owner">@sys`, "Reachability"} {
+	// action ref renders through _ref (owner segment in its own span); the transport
+	// path (direct) is folded into the single online status line.
+	for _, want := range []string{"@kernelc", "direct", `class="owner">@sys`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inspect page missing %q", want)
 		}
+	}
+	// online/source are top-level in the response; a reachable peer must show the
+	// "online" pill (regression guard for the always-offline decode bug).
+	if !strings.Contains(body, `class="pill status-credited">online`) {
+		t.Errorf("reachable peer must render the online pill: %s", body)
+	}
+	if strings.Contains(body, `status-escrow">offline`) {
+		t.Error("reachable peer must not render the offline pill")
+	}
+	// The redundant standalone "live" source and separate Reachability row are gone.
+	if strings.Contains(body, "Reachability</dt>") {
+		t.Error("the separate Reachability row should be folded into Status")
+	}
+	// A stranger (KEYC is not a friend) offers Befriend and carries no friend badge.
+	if !strings.Contains(body, `action="/admin/peers/friend"`) || !strings.Contains(body, ">Befriend<") {
+		t.Error("a non-friend inspect must offer Befriend")
+	}
+	if strings.Contains(body, ">friend</span>") {
+		t.Error("a non-friend must not show the friend badge")
+	}
+}
+
+// TestAdminInspectFriendShowsBadgeAndUnfriend checks the relationship UI: an
+// already-friended kernel shows the friend badge in the header and offers the
+// symmetric Unfriend action (not Befriend).
+func TestAdminInspectFriendShowsBadgeAndUnfriend(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "@sys")
+
+	// KEYB is a friend in the fake /control/peers, so IsFriend is true.
+	body := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
+	if !strings.Contains(body, ">friend</span>") {
+		t.Error("a friended kernel must show the friend badge (in the header)")
+	}
+	if !strings.Contains(body, `action="/admin/peers/unfriend"`) || !strings.Contains(body, ">Unfriend<") {
+		t.Error("a friended kernel must offer the symmetric Unfriend action")
+	}
+	if strings.Contains(body, ">Befriend<") {
+		t.Error("a friend must not offer Befriend")
 	}
 }
 

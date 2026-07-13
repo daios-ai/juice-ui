@@ -2,7 +2,7 @@
 {{$d := .Data}}
 {{$i := $d.Inspection}}
 <p><a href="/admin/peers">← peers</a></p>
-<h1>{{if $i.Handle}}{{$i.Handle}}{{else}}kernel{{end}}</h1>
+<h1>{{if $i.Handle}}{{$i.Handle}}{{else}}kernel{{end}}{{if $d.IsFriend}} <span class="pill status-credited">friend</span>{{end}}</h1>
 <p class="subtitle mono hash">{{$d.Key}}</p>
 
 <div class="card">
@@ -11,8 +11,13 @@
   </div>
   <div class="cluster">
     {{if $d.IsFriend}}
-    <span class="pill status-credited">friend</span>
-    {{else}}
+    {{/* Unfriend is local — it works even when the peer is offline. */}}
+    <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{$i.Handle}}? Their proxies deactivate; balance and history are preserved.">
+      {{.CSRFField}}<input type="hidden" name="peer" value="{{if $i.Handle}}{{$i.Handle}}{{else}}{{$d.Key}}{{end}}"><button class="btn-danger" type="submit">Unfriend</button>
+    </form>
+    {{else if $i.Online}}
+    {{/* Befriending needs to reach the peer, so only offer it when reachable;
+         when it's offline we simply show nothing. */}}
     <form method="post" action="/admin/peers/friend" data-confirm="Befriend {{$i.Handle}}? Their active public actions import immediately.">
       {{.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Befriend</button>
     </form>

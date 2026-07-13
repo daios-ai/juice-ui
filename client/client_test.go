@@ -103,6 +103,31 @@ func TestBearerAndRequestID(t *testing.T) {
 	}
 }
 
+func TestListTransactionsPagination(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	// The kernel ignores ?limit (returns all), so the client enforces the cap:
+	// three rows returned, limit 2 → two rows. ?limit=2 is still sent (forward-compat).
+	f.reply = `[{"id":"A"},{"id":"B"},{"id":"C"}]`
+	got, err := f.client().ListTransactions(context.Background(), "tok", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.lastPath, "limit=2") {
+		t.Errorf("limit not sent: %s", f.lastPath)
+	}
+	if len(got) != 2 || got[0].ID != "A" || got[1].ID != "B" {
+		t.Errorf("client-side cap wrong: %+v", got)
+	}
+	// limit 0 means "all" — no limit param; a process scope is still encoded.
+	if _, err := f.client().ListTransactions(context.Background(), "tok", "P1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.lastPath, "limit") || !strings.Contains(f.lastPath, "process_id=P1") {
+		t.Errorf("unlimited process query wrong: %s", f.lastPath)
+	}
+}
+
 func TestListActionsEncodesFilters(t *testing.T) {
 	f := newFake()
 	defer f.close()
@@ -123,19 +148,37 @@ func TestListActionsEncodesFilters(t *testing.T) {
 	}
 }
 
-func TestMeDecodesGrants(t *testing.T) {
+func TestMeDecodesConnectors(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"handle":"@alice","grants":[{"action":"@sys/gmail-send","scopes":["send"],"created_at":"2026-07-07T00:00:00Z"}],"connections":[{"provider":"127.0.0.1:8080","actions":2,"unused":false,"created_at":"2026-07-07T00:00:00Z"}]}`
+	// New /v1/me: a directory-grouped `connectors` tree (each node carries backing
+	// connections + per-action grants with provider_key) plus a `connections`
+	// inventory that carries provider_key and surfaces unused accounts.
+	f.reply = `{"handle":"@alice",
+	 "connectors":[{"directory":"@chat","connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}],
+	   "actions":[{"action":"@chat/pay","scopes":["pay.write"],"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}]}],
+	 "connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"},
+	   {"provider":"mail.host","actions":0,"unused":true,"provider_key":"bearer:mail.host","created_at":"2026-07-07T00:00:00Z"}]}`
 	u, err := f.client().Me(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(u.Grants) != 1 || u.Grants[0].Action != "@sys/gmail-send" || len(u.Grants[0].Scopes) != 1 {
-		t.Fatalf("grants = %+v", u.Grants)
+	if len(u.Connectors) != 1 || u.Connectors[0].Directory != "@chat" {
+		t.Fatalf("connectors = %+v", u.Connectors)
 	}
-	if len(u.Connections) != 1 || u.Connections[0].Provider != "127.0.0.1:8080" || u.Connections[0].Actions != 2 {
+	c := u.Connectors[0]
+	if len(c.Actions) != 1 || c.Actions[0].Action != "@chat/pay" || c.Actions[0].ProviderKey != "oauth:PK" {
+		t.Fatalf("connector actions = %+v", c.Actions)
+	}
+	if len(c.Connections) != 1 || c.Connections[0].Provider != "api.stripe.com" {
+		t.Fatalf("connector connections = %+v", c.Connections)
+	}
+	// The inventory carries provider_key (for account disconnect) and the unused account.
+	if len(u.Connections) != 2 || u.Connections[0].ProviderKey != "oauth:PK" {
 		t.Fatalf("connections = %+v", u.Connections)
+	}
+	if !u.Connections[1].Unused || u.Connections[1].ProviderKey != "bearer:mail.host" {
+		t.Fatalf("unused account not surfaced: %+v", u.Connections[1])
 	}
 }
 

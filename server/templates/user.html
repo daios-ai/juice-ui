@@ -24,46 +24,62 @@
   <p class="card-note muted">Top-ups are out-of-band.</p>
 </div>
 
-<h2>Connected accounts</h2>
-<div class="card">
-  {{if $d.User.Connections}}
-  <ul class="stack flush">
-    {{range $d.User.Connections}}
-    <li class="row compact">
-      <span class="mono">{{.Provider}}</span>
-      <span class="muted small">— {{.Actions}} action{{if ne .Actions 1}}s{{end}}</span>
-      {{if .Unused}}<span class="chip tag">unused</span>{{end}}
-      <span class="muted small">since {{shortTime .CreatedAt}}</span>
-    </li>
-    {{end}}
-  </ul>
-  {{else}}<p class="muted flush">No connected accounts yet.</p>{{end}}
-</div>
-
-<h2>Connected actions</h2>
-<div class="card">
-  {{if $d.User.Grants}}
-  <div class="table-scroll">
-  <table>
-    <thead><tr><th>Action</th><th>Scopes</th><th>Connected</th><th></th></tr></thead>
-    <tbody>
-    {{range $d.User.Grants}}
-    <tr>
-      <td>{{template "_ref" .Action}}</td>
-      <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
-      <td class="muted">{{shortTime .CreatedAt}}</td>
-      <td>
-        <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}? Running it will ask you to connect again.">
-          {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger small" type="submit">Disconnect</button>
+<h2>Connected</h2>
+{{if or $d.User.Connectors $d.User.Connections}}
+<div class="card-list">
+  {{range $d.User.Connectors}}
+  <details class="card">
+    <summary>
+      <span class="mono"><b>{{.Directory}}</b></span>
+      {{range .Connections}}<span class="muted small">{{.Provider}}</span>{{end}}
+      <span class="muted small">{{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}</span>
+      <span class="cluster">
+        {{range .Connections}}{{if .ProviderKey}}
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}? Every action it backs is disconnected.">
+          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect account</button>
         </form>
-      </td>
-    </tr>
-    {{end}}
-    </tbody>
-  </table>
-  </div>
-  {{else}}<p class="muted flush">No connected actions yet.</p>{{end}}
+        {{end}}{{end}}
+      </span>
+    </summary>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Action</th><th>Scopes</th><th>Connected</th><th></th></tr></thead>
+      <tbody>
+      {{range .Actions}}
+      <tr>
+        <td>{{template "_ref" .Action}}</td>
+        <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
+        <td class="muted">{{shortTime .CreatedAt}}</td>
+        <td>
+          <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}? Running it will ask you to connect again.">
+            {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger small" type="submit">Disconnect</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {{end}}
+  {{range $d.User.Connections}}{{if .Unused}}
+  <details class="card">
+    <summary>
+      <span class="mono"><b>{{.Provider}}</b></span>
+      <span class="chip tag">unused</span>
+      <span class="cluster">
+        {{if .ProviderKey}}
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}?">
+          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect account</button>
+        </form>
+        {{end}}
+      </span>
+    </summary>
+    <p class="muted flush">No actions use this account.</p>
+  </details>
+  {{end}}{{end}}
 </div>
+{{else}}<p class="muted">Nothing connected yet.</p>{{end}}
 
 {{if $d.OpenProcesses}}
 <h2>Open processes</h2>

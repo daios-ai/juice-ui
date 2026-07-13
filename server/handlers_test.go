@@ -31,7 +31,10 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"status":"ok","handle":"@testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0,"grants":[{"action":"@sys/gmail-send","scopes":["send"],"created_at":"2024-01-01T00:00:00Z"}]}`))
+		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0,
+		 "connectors":[{"directory":"@sys","connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}],
+		   "actions":[{"action":"@sys/gmail-send","scopes":["send"],"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}],
+		 "connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}`))
 	})
 	mux.HandleFunc("PUT /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		var inp struct {
@@ -151,9 +154,12 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"peers":[{"handle":"@peerb","public_key":"KEYB","available":50,"locked":0}]}`))
 	})
 	mux.HandleFunc("GET /control/peers/inspect", func(w http.ResponseWriter, r *http.Request) {
+		// online/source are TOP-LEVEL in the real response; reachability holds only
+		// the transport diagnostics (path/rtt/protocols/error). Verified live.
 		w.Write([]byte(`{"handle":"@kernelc","public_key":"` + r.URL.Query().Get("key") + `",
 		 "actions":[{"action_id":"a2","name":"@sys/make","description":"synth","price":20,"uses":0,"rating":0}],
 		 "friends":[{"handle":"@peerb","public_key":"KEYB"}],
+		 "online":true,"source":"live",
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
 	mux.HandleFunc("POST /control/peers/friend", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -511,7 +517,7 @@ func TestStudioPageTwoZones(t *testing.T) {
 	}
 }
 
-func TestUserShowsGrants(t *testing.T) {
+func TestUserShowsConnectors(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -519,15 +525,21 @@ func TestUserShowsGrants(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	body := getBody(t, cl, srv.URL+"/user")
 
-	if !strings.Contains(body, "Connected accounts") {
-		t.Error("/user must show the connected accounts section")
+	// The single directory-grouped connectors tree: the @sys folder node.
+	if !strings.Contains(body, ">Connected</h2>") || !strings.Contains(body, "<details") {
+		t.Error("/user must render the directory-grouped connectors tree")
 	}
-	// The grant from /v1/me renders via _ref with a disconnect form.
+	// The grant under the connector renders via _ref with a per-action disconnect.
 	if !strings.Contains(body, `class="owner">@sys`) {
-		t.Error("/user must list the grant's action ref")
+		t.Error("/user must list the granted action ref")
 	}
 	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="@sys/gmail-send"`) {
-		t.Error("/user must offer a disconnect for each grant")
+		t.Error("/user must offer a per-action disconnect")
+	}
+	// Account-level disconnect (provider_key) lives inline in the folder, not a
+	// separate section.
+	if !strings.Contains(body, `value="oauth:G"`) {
+		t.Error("/user must offer account-level disconnect (account=provider_key)")
 	}
 }
 

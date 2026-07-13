@@ -103,22 +103,28 @@ type DiscoveredKernel struct {
 	Sources   []RosterSource `json:"sources"`
 }
 
-// Reachability describes how a remote kernel is currently reached.
+// Reachability holds the transport diagnostics only. Online/Source are NOT here —
+// the kernel returns them at the top level of the inspection (see Inspection).
 type Reachability struct {
-	Path      string   `json:"path"` // "direct" | "relayed" | …
+	Path      string   `json:"path"` // "direct" | "relayed" | "unreachable" | …
 	RTTMillis int64    `json:"rtt_millis"`
 	Protocols []string `json:"protocols"`
-	Online    bool     `json:"online"` // false when a friended peer is currently unreachable
-	Source    string   `json:"source"` // "live" | "local" (last-known) | "none"
+	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }
 
 // Inspection is GET /control/peers/inspect?key= — a remote kernel's identity,
-// public actions, transacted friends, and reachability.
+// public actions, transacted friends, and reachability. Online and Source are
+// top-level fields of the response (verified live 2026-07-13): Online is true only
+// when the live probe reached the peer; Source is "live" | "local" (last-known,
+// online=false) | "none". An earlier version decoded these from inside
+// Reachability, where they never appear — so inspect always showed "offline".
 type Inspection struct {
 	Handle       string       `json:"handle"`
 	PublicKey    string       `json:"public_key"`
 	Actions      []ActionStat `json:"actions"`
 	Friends      []Peer       `json:"friends"`
+	Online       bool         `json:"online"`
+	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
 	Reachability Reachability `json:"reachability"`
 }
 

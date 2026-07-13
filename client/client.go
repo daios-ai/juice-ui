@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -46,28 +47,42 @@ type User struct {
 	Email       string       `json:"email"`
 	Available   int64        `json:"available"`
 	Locked      int64        `json:"locked"`
-	Grants      []Grant      `json:"grants"`      // per-action delegated consents (no token material)
-	Connections []Connection `json:"connections"` // upstream accounts, one per (user, provider)
+	Connectors  []Connector  `json:"connectors"`  // directory-grouped consent tree (§8)
+	Connections []Connection `json:"connections"` // full upstream-account inventory
 }
 
-// Grant is a per-action delegated consent, as listed by GET /v1/me. It is a
-// consent record only (a pointer to a Connection) — never any token material.
+// Connector is one node of the directory-grouped consent tree in GET /v1/me: a
+// folder (the granted actions' shared ref prefix, e.g. @chat or @chat/inbox), the
+// upstream account(s) that back it (usually one), and the per-action grants under
+// it. The directory is a display grouping only — it never gates a credential.
+type Connector struct {
+	Directory   string       `json:"directory"`
+	Connections []Connection `json:"connections"`
+	Actions     []Grant      `json:"actions"`
+}
+
+// Grant is a per-action delegated consent (a node under a Connector in GET /v1/me):
+// a consent record only — never any token material. ProviderKey is the opaque key
+// of the backing Connection (omitted on an unbackfilled legacy grant).
 type Grant struct {
-	Action    string   `json:"action"` // @owner/name of the granted action
-	Scopes    []string `json:"scopes"`
-	CreatedAt string   `json:"created_at"`
+	Action      string   `json:"action"` // @owner/name of the granted action
+	Scopes      []string `json:"scopes"`
+	ProviderKey string   `json:"provider_key,omitempty"`
+	CreatedAt   string   `json:"created_at"`
 }
 
 // Connection is a user's upstream account credential as summarised by GET /v1/me
 // (§8): one per (user, provider), shared by every Grant that points at it. The
-// token itself is never returned. Provider is the display host/label; the kernel
-// does not expose the underlying provider_key on this read path. Unused is true
-// when no Grant currently points at it (the credential is kept for re-consent).
+// token itself is never returned. Provider is the display host/label. ProviderKey
+// is the opaque account key — it also addresses DELETE /v1/grants?account=; treat
+// it as opaque, never parse it. Unused is true when no Grant currently points at
+// it (the credential is kept for re-consent).
 type Connection struct {
-	Provider  string `json:"provider"`
-	Actions   int    `json:"actions"` // number of grants pointing at this connection
-	Unused    bool   `json:"unused"`
-	CreatedAt string `json:"created_at"`
+	Provider    string `json:"provider"`
+	Actions     int    `json:"actions"` // number of grants pointing at this connection
+	Unused      bool   `json:"unused"`
+	ProviderKey string `json:"provider_key,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // HTTPParam binds an action input field to a location in the upstream HTTP
@@ -691,13 +706,28 @@ func (c *Client) Run(ctx context.Context, token, action string, args json.RawMes
 
 // ---- transactions ----
 
-func (c *Client) ListTransactions(ctx context.Context, token, processID string) ([]Transaction, error) {
-	path := "/v1/transactions"
+// ListTransactions lists the caller's transactions (GET /v1/transactions),
+// optionally scoped to a process and capped to the most recent `limit` (0 = all).
+func (c *Client) ListTransactions(ctx context.Context, token, processID string, limit int) ([]Transaction, error) {
+	q := url.Values{}
 	if processID != "" {
-		path += "?" + url.Values{"process_id": {processID}}.Encode()
+		q.Set("process_id", processID)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/transactions"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	var t []Transaction
 	err := c.do(ctx, http.MethodGet, path, token, nil, &t)
+	// The kernel does NOT paginate this endpoint over HTTP — ?limit is ignored
+	// (verified live: it returns the full list). Send it for forward-compat, but
+	// enforce the cap here, exactly as the CLI's --limit does client-side.
+	if err == nil && limit > 0 && len(t) > limit {
+		t = t[:limit]
+	}
 	return t, err
 }
 

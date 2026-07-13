@@ -325,20 +325,43 @@ func TestUserPageShowsConnections(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: userView{
-		User: client.User{Handle: "@me", Connections: []client.Connection{
-			{Provider: "127.0.0.1:8080", Actions: 8, Unused: false, CreatedAt: "2026-07-12T00:00:00Z"},
-			{Provider: "api.acme.com", Actions: 0, Unused: true, CreatedAt: "2026-07-11T00:00:00Z"},
-		}},
+		User: client.User{Handle: "@me",
+			Connectors: []client.Connector{{
+				Directory:   "@chat",
+				Connections: []client.Connection{{Provider: "127.0.0.1:8080", ProviderKey: "bearer:h"}},
+				Actions:     []client.Grant{{Action: "@chat/pay", Scopes: []string{"pay.write"}, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"}},
+			}},
+			Connections: []client.Connection{
+				{Provider: "127.0.0.1:8080", Actions: 8, Unused: false, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"},
+				{Provider: "api.acme.com", Actions: 0, Unused: true, ProviderKey: "oauth:a", CreatedAt: "2026-07-11T00:00:00Z"},
+			}},
 	}}
 	if err := r.Render(rec, 200, "user", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "127.0.0.1:8080") || !strings.Contains(body, "8 actions") {
-		t.Errorf("account with grants not shown: %s", body)
+	// One combined tree: the @chat folder node (with its backing account) and its
+	// action ref, in a collapsible card (roster grammar).
+	if !strings.Contains(body, "<details") || !strings.Contains(body, ">@chat<") || !strings.Contains(body, `class="owner">@chat`) {
+		t.Errorf("connectors tree (folder + action) not shown: %s", body)
 	}
+	if !strings.Contains(body, "127.0.0.1:8080") {
+		t.Errorf("backing account not shown on the folder: %s", body)
+	}
+	// Account disconnect lives inline in the folder summary (not a separate section).
+	if !strings.Contains(body, `name="account" value="bearer:h"`) {
+		t.Errorf("account-level disconnect (provider_key) missing: %s", body)
+	}
+	// The unused account is folded into the same list as its own node.
 	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "unused") {
-		t.Errorf("unused account not flagged: %s", body)
+		t.Errorf("unused account not surfaced: %s", body)
+	}
+	if !strings.Contains(body, `name="account" value="oauth:a"`) {
+		t.Errorf("unused account disconnect missing: %s", body)
+	}
+	// The redundant separate "Accounts" section is gone.
+	if strings.Contains(body, ">Accounts</h2>") {
+		t.Error("the separate Accounts section should be merged into the tree")
 	}
 }
 
@@ -943,7 +966,7 @@ func TestInspectStatusPolls(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key:        "KEYC",
-		Inspection: client.Inspection{Handle: "@kernelc", Reachability: client.Reachability{Online: true, Path: "direct"}},
+		Inspection: client.Inspection{Handle: "@kernelc", Online: true, Source: "live", Reachability: client.Reachability{Path: "direct"}},
 	}}
 	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -951,6 +974,39 @@ func TestInspectStatusPolls(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `id="inspect-status"`) || !strings.Contains(body, `hx-get="/admin/peers/KEYC"`) || !strings.Contains(body, "every 15s") {
 		t.Errorf("inspect status card must be an htmx-polled fragment: %s", body)
+	}
+}
+
+// TestInspectOfflineStranger checks two UX fixes: an unreachable non-friend must NOT
+// offer Befriend (the handshake needs to reach the peer), and the offline reason is a
+// short standardized phrase with the raw fed error tucked into a title tooltip.
+func TestInspectOfflineStranger(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+		Key: "KDOWN", IsFriend: false,
+		Inspection: client.Inspection{Handle: "", Online: false, Source: "none",
+			Reachability: client.Reachability{Path: "unreachable", Error: "fed: cannot resolve peer 12D3KooW…: routing: not found"}},
+	}}
+	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, ">Befriend<") {
+		t.Error("an unreachable kernel must not offer Befriend")
+	}
+	// Standardized short reason; the raw fed error is only in a title tooltip.
+	if !strings.Contains(body, ">unreachable</span>") {
+		t.Errorf("offline reason must be the short 'unreachable': %s", body)
+	}
+	if strings.Contains(body, ">fed: cannot") {
+		t.Error("the raw libp2p error must not be shown as inline text (title only)")
+	}
+	if !strings.Contains(body, `title="fed: cannot resolve peer`) {
+		t.Error("the raw error should be available on hover (title)")
 	}
 }
 

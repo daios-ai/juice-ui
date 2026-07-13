@@ -168,11 +168,29 @@ func TestAdminFriendUnfriendInspect(t *testing.T) {
 	if f.lastPath != "/control/peers/unfriend" || !strings.Contains(string(f.lastBody), `"handle":"@peerb"`) {
 		t.Errorf("unfriend request = %s body=%s", f.lastPath, f.lastBody)
 	}
-	f.reply = `{"ok":true}`
-	if _, err := f.client().AdminInspect(context.Background(), "tok", "PKEY"); err != nil {
+	// online/source are TOP-LEVEL fields of the inspection; reachability holds the
+	// transport diagnostics (path/rtt/protocols/error). Decoding online from inside
+	// reachability is the always-offline bug this guards against.
+	f.reply = `{"handle":"@k","public_key":"PKEY","online":true,"source":"live",
+	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"error":""}}`
+	insp, err := f.client().AdminInspect(context.Background(), "tok", "PKEY")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if f.lastMethod != "GET" || f.lastPath != "/control/peers/inspect?key=PKEY" {
 		t.Errorf("inspect request = %s %s", f.lastMethod, f.lastPath)
+	}
+	if !insp.Online || insp.Source != "live" {
+		t.Errorf("top-level online/source not decoded: online=%v source=%q", insp.Online, insp.Source)
+	}
+	if insp.Reachability.Path != "direct" || insp.Reachability.RTTMillis != 7 {
+		t.Errorf("reachability diagnostics not decoded: %+v", insp.Reachability)
+	}
+	// An unreachable peer carries a reason in reachability.error.
+	f.reply = `{"handle":"@k","public_key":"PKEY","online":false,"source":"none",
+	 "reachability":{"path":"unreachable","error":"routing: not found"}}`
+	insp2, _ := f.client().AdminInspect(context.Background(), "tok", "PKEY")
+	if insp2.Online || insp2.Reachability.Error == "" {
+		t.Errorf("unreachable inspection must decode online=false + error: %+v", insp2)
 	}
 }
