@@ -111,7 +111,7 @@ func main() {
 		fmt.Printf("juice-ui %s (%s)\n", version, commit)
 		return
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := slog.New(newLogHandler(os.Stderr))
 	cfg, err := LoadConfig(os.Getenv, os.ReadFile)
 	if err != nil {
 		log.Error("invalid configuration", "err", err)

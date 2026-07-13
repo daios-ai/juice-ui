@@ -362,13 +362,22 @@ func (s *Server) logging(next http.Handler) http.Handler {
 		sr := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sr, r)
 		s.log.Info("request",
-			"request_id", client.RequestIDFromContext(r.Context()),
+			"request_id", shortID(client.RequestIDFromContext(r.Context())),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sr.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+// shortID trims an opaque id (e.g. a request id) to its first 8 chars for compact
+// logs; short or empty ids pass through unchanged.
+func shortID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // requireAuth wraps a handler so unauthenticated requests are redirected to the
