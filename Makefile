@@ -10,7 +10,7 @@ KERNEL  ?= http://127.0.0.1:4040
 ADDR    ?= 127.0.0.1:8080
 SECRET  ?= dev-secret
 
-.PHONY: build test clean install uninstall run e2e fmt vet check
+.PHONY: build test clean install uninstall run fmt vet check
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
@@ -34,11 +34,6 @@ uninstall:
 
 run: build
 	JUICE_KERNEL_URL=$(KERNEL) JUICE_UI_ADDR=$(ADDR) JUICE_UI_SESSION_SECRET=$(SECRET) ./$(BINARY)
-
-# Live end-to-end flow harness: drives the BFF over HTTP against a throwaway
-# kernel. Needs the `juice` binary and free ports :4790/:4791/:8790.
-e2e:
-	./e2e/flows.sh
 
 fmt:
 	gofmt -w .

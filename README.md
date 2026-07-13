@@ -125,7 +125,6 @@ never a concrete app). The litmus test: delete the plugin and the daemon still r
 | `make test` | `go test ./...` |
 | `make check` | the CI gate: `gofmt` check + `go vet` + `go test` |
 | `make fmt` / `make vet` | format / vet |
-| `make e2e` | run `e2e/flows.sh` — a flow harness that drives a throwaway kernel |
 | `make clean` | remove build artifacts |
 
 Testing discipline: **every production `.go` file has a `_test.go`**, and

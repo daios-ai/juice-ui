@@ -327,7 +327,7 @@ func TestStepRef(t *testing.T) {
 func TestImportResultCaseInsensitive(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	// Kernel emits capitalized keys (per flows.sh); Go decode is case-insensitive.
+	// Kernel emits capitalized keys (verified live); Go decode is case-insensitive.
 	f.reply = `{"Created":[{"id":"a1","name":"x"}],"Updated":[]}`
 	res, err := f.client().ImportOpenAPI(context.Background(), "tok", "http://spec")
 	if err != nil {
