@@ -145,6 +145,7 @@ func New(o Options) (http.Handler, error) {
 	})
 
 	// Public auth routes.
+	mux.HandleFunc("GET /health", s.getHealth) // open liveness probe + browser heartbeat
 	mux.HandleFunc("GET /login", s.getLogin)
 	mux.HandleFunc("POST /login", s.postLogin)
 	mux.HandleFunc("POST /signup", s.postSignup)
@@ -385,7 +386,7 @@ func shortID(s string) string {
 func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.sessions.IsAuthenticated(r.Context()) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			hxRedirect(w, r, "/login")
 			return
 		}
 		h(w, r)
@@ -638,6 +639,19 @@ func (s *Server) flashRedirect(w http.ResponseWriter, r *http.Request, to, kind,
 		Name: "flash", Value: url.QueryEscape(kind + "|" + msg), Path: "/", MaxAge: 30,
 		HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode,
 	})
+	hxRedirect(w, r, to)
+}
+
+// hxRedirect navigates to `to`. For an htmx request it sets the HX-Redirect header
+// (htmx performs a real full-page navigation) instead of a 303 whose body htmx would
+// swap into the triggering element — which is how a lost session used to swap the
+// whole login page into a badge <span>. Normal requests get the usual 303.
+func hxRedirect(w http.ResponseWriter, r *http.Request, to string) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", to)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 

@@ -29,6 +29,7 @@ const (
 	KindGrantRequired          // 403 code="grant_required": needs a delegated OAuth grant
 	KindPeerUnreachable        // 502 code="peer_unreachable": remote peer offline; call refunded
 	KindPeerUnfunded           // 402 code="peer_unfunded": our prepaid credit on the peer exhausted
+	KindUnavailable            // transport failure: the kernel gave no HTTP response (down/restarting)
 )
 
 // KernelError is the typed error returned by every client call on a non-2xx
@@ -72,6 +73,7 @@ var (
 	ErrGrantRequired     = &KernelError{Kind: KindGrantRequired}
 	ErrPeerUnreachable   = &KernelError{Kind: KindPeerUnreachable}
 	ErrPeerUnfunded      = &KernelError{Kind: KindPeerUnfunded}
+	ErrUnavailable       = &KernelError{Kind: KindUnavailable}
 )
 
 func (k Kind) String() string {
@@ -102,6 +104,8 @@ func (k Kind) String() string {
 		return "peer_unreachable"
 	case KindPeerUnfunded:
 		return "peer_unfunded"
+	case KindUnavailable:
+		return "unavailable"
 	default:
 		return "unknown"
 	}
@@ -210,6 +214,8 @@ func (e *KernelError) UserMessage() string {
 		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
 	case KindPeerUnfunded:
 		return "This kernel's prepaid credit on the peer is exhausted — not your balance. An operator needs to top it up before this action can run."
+	case KindUnavailable:
+		return "The Juice kernel is unreachable — it may be down or restarting. Please try again shortly."
 	default:
 		return "Something went wrong. Please try again."
 	}

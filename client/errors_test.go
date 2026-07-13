@@ -1,10 +1,30 @@
 package client
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+// TestUnreachableKernelIsUnavailable checks a transport failure (no HTTP response)
+// is typed KindUnavailable, so callers can say "kernel unreachable" instead of a
+// generic or credential error.
+func TestUnreachableKernelIsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // the port is now closed → connection refused
+	_, err := New(url, nil).Health(context.Background())
+	ke, ok := AsKernelError(err)
+	if !ok || ke.Kind != KindUnavailable {
+		t.Fatalf("unreachable kernel: got %v, want KindUnavailable", err)
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Error("errors.Is(err, ErrUnavailable) must hold")
+	}
+}
 
 func TestClassifyByStatus(t *testing.T) {
 	cases := []struct {

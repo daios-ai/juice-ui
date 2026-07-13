@@ -123,6 +123,7 @@
   </dialog>
   {{end}}
 
+  {{if .Handle}}<div hidden aria-hidden="true" hx-get="/health" hx-trigger="every {{.BadgeSecs}}s" hx-swap="none"></div>{{end}}
   <dialog id="modal-backdrop" class="modal-confirm" aria-labelledby="modal-msg">
     <div class="modal-box">
       <p id="modal-msg" class="modal-msg"></p>

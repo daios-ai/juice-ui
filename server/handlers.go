@@ -203,7 +203,13 @@ func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/run", http.StatusSeeOther)
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: loginTab(r)})
+	view := loginView{Tab: loginTab(r)}
+	// /health is open (no token), so we can tell the user the kernel is down before
+	// they even try — instead of a misleading "invalid handle or password".
+	if _, err := s.client.Health(r.Context()); err != nil {
+		view.Notice = "The kernel is unreachable — you can't sign in until it's back."
+	}
+	s.renderPage(w, r, http.StatusOK, "login", "Sign in", view)
 }
 
 func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
@@ -767,6 +773,28 @@ const (
 	sessionKeyBadgeCount = "steps.badge.count"
 	sessionKeyBadgeAt    = "steps.badge.at"
 )
+
+// getHealth is juice-ui's own liveness probe and the browser heartbeat target: it
+// asks the kernel's open /health (no token). A plain probe gets 200 / 503; a
+// heartbeat (htmx) from an authenticated session whose kernel has gone away is
+// logged out with a clean full-page redirect to /login, which then reports the
+// kernel is down. This is the general kernel-down handling — the badge pollers no
+// longer carry it.
+func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.client.Health(r.Context()); err == nil {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" && s.sessions.IsAuthenticated(r.Context()) {
+		_ = s.sessions.Logout(r.Context())
+		w.Header().Set("HX-Redirect", "/login")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = w.Write([]byte("kernel unreachable"))
+}
 
 func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -1677,6 +1705,8 @@ func loginErrorMessage(err error) string {
 			return ke.UserMessage()
 		case client.KindUnauthenticated, client.KindNotFound, client.KindInvalidInput:
 			return "Invalid handle or password."
+		case client.KindUnavailable:
+			return ke.UserMessage() // "the kernel is unreachable…" — not a credential error
 		}
 	}
 	return "Could not sign in. Please try again."

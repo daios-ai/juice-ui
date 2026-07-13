@@ -583,6 +583,79 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	}
 }
 
+// --- kernel-down handling (snag #2) ---
+
+func TestHealthDownReturns503(t *testing.T) {
+	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1")) // dead kernel
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("plain /health with kernel down = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestLoginShowsKernelUnreachable(t *testing.T) {
+	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
+	defer srv.Close()
+	if body := getBody(t, &http.Client{}, srv.URL+"/login"); !strings.Contains(body, "unreachable") {
+		t.Errorf("login page must warn the kernel is unreachable: %s", body)
+	}
+}
+
+// TestHtmxAuthLossRedirectsViaHeader guards the weird-badge fix: an htmx request that
+// loses auth must full-page redirect via the HX-Redirect header, never a 303 whose
+// body htmx would swap into the triggering element (the badge span).
+func TestHtmxAuthLossRedirectsViaHeader(t *testing.T) {
+	k := authKernel()
+	defer k.Close()
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/steps/badge", nil) // requireAuth-gated
+	req.Header.Set("HX-Request", "true")
+	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("HX-Redirect"); got != "/login" {
+		t.Errorf("htmx auth-loss: HX-Redirect=%q status=%d, want /login (no page swap)", got, resp.StatusCode)
+	}
+}
+
+// TestHealthHeartbeatLogsOutWhenKernelDown: an authenticated heartbeat whose kernel
+// has gone away is logged out cleanly (HX-Redirect to /login).
+func TestHealthHeartbeatLogsOutWhenKernelDown(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" { // kernel is up for login, but /health now fails
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer wrap.Close()
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/health", nil)
+	req.Header.Set("HX-Request", "true")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("HX-Redirect"); got != "/login" {
+		t.Errorf("authed heartbeat + kernel down: HX-Redirect=%q status=%d, want /login", got, resp.StatusCode)
+	}
+}
+
 func TestKernelIdentityShown(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()

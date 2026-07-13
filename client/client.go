@@ -338,7 +338,10 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("kernel request: %w", err)
+		// No HTTP response at all — the kernel is unreachable (down, restarting, or a
+		// timeout). Type it so callers can surface "kernel unreachable" instead of a
+		// generic failure or a misleading "invalid credentials".
+		return &KernelError{Kind: KindUnavailable, KernelMessage: "kernel request: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
