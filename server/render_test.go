@@ -342,6 +342,30 @@ func TestUserPageShowsConnections(t *testing.T) {
 	}
 }
 
+// TestAdminPageOffersUnsuspend guards the suspended-state detection: a present
+// suspended_at (here the RFC3339 zero value an older kernel emitted) must render the
+// user as suspended AND offer the Unsuspend action.
+func TestAdminPageOffersUnsuspend(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
+		Users: []client.AdminUser{{Handle: "@victim", SuspendedAt: "0001-01-01T00:00:00Z"}},
+	}}
+	if err := r.Render(rec, 200, "admin", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "suspended") {
+		t.Errorf("zero-value suspended_at must render the suspended pill: %s", body)
+	}
+	if !strings.Contains(body, "/admin/users/@victim/unsuspend") {
+		t.Errorf("suspended user must offer the Unsuspend action: %s", body)
+	}
+}
+
 // TestCallOutcomeFailedStatesRefundOnce guards the de-duplicated failure panel: the
 // refund is disclosed once in the headline, the message carries only the kernel's
 // reason (no repeated refund, no contradictory "not charged"), and the kernel's

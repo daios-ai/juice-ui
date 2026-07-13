@@ -37,14 +37,15 @@ func TestAdminGetUserAndSuspended(t *testing.T) {
 		t.Errorf("path = %q", f.lastPath)
 	}
 	if !u.Suspended() {
-		t.Error("non-zero suspended_at must report Suspended()")
+		t.Error("a real suspended_at must report Suspended()")
 	}
-	// A zero timestamp is not suspended.
-	if (AdminUser{SuspendedAt: "0001-01-01T00:00:00Z"}).Suspended() {
-		t.Error("zero suspended_at must not report suspended")
+	// Presence, not value: an older kernel sent the RFC3339 zero value for a
+	// suspended user, so that regression case must still report suspended.
+	if !(AdminUser{SuspendedAt: "0001-01-01T00:00:00Z"}).Suspended() {
+		t.Error("a present suspended_at (even the zero value) must report suspended")
 	}
 	if (AdminUser{}).Suspended() {
-		t.Error("empty suspended_at must not report suspended")
+		t.Error("omitted suspended_at must not report suspended")
 	}
 }
 

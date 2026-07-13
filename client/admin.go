@@ -13,9 +13,11 @@ import (
 // (2026-07-06). These never touch the kernel DB directly; the BFF is an ordinary
 // HTTP client of the control surface.
 
-// AdminUser is a user row from the control surface. suspended_at/denied_at are
-// present on single reads; a non-zero timestamp (not the RFC3339 zero value)
-// means the state is set.
+// AdminUser is a user row from the control surface. The kernel signals the
+// suspended (and denied) state by the PRESENCE of suspended_at/denied_at: it omits
+// the field when the state is unset and includes the timestamp when set. (An older
+// kernel sent the RFC3339 zero value instead of a real time; the presence check
+// below handles both.)
 type AdminUser struct {
 	ID          string `json:"id"`
 	Handle      string `json:"handle"`
@@ -23,13 +25,16 @@ type AdminUser struct {
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
 	SuspendedAt string `json:"suspended_at,omitempty"`
-	DeniedAt    string `json:"denied_at,omitempty"`
+	DeniedAt    string `json:"denied_at,omitempty"` // same presence semantics; add Denied() if ever surfaced
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
 
-// Suspended reports whether the user is currently suspended.
-func (u AdminUser) Suspended() bool { return isSetTime(u.SuspendedAt) }
+// Suspended reports whether the user is currently suspended. Detection is by
+// presence: the kernel omits suspended_at when active and sends the suspension
+// timestamp when suspended, so a non-empty string means suspended — robust also to
+// an older kernel that sent the RFC3339 zero value.
+func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 
 // Adjustment is the audit record returned by deposit/withdraw.
 type Adjustment struct {
@@ -199,10 +204,4 @@ func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspectio
 	var out Inspection
 	err := c.do(ctx, http.MethodGet, "/control/peers/inspect?key="+url.QueryEscape(key), token, nil, &out)
 	return out, err
-}
-
-// isSetTime reports whether an RFC3339 timestamp string represents a set value
-// (not empty and not the Go zero time the kernel emits for "unset").
-func isSetTime(s string) bool {
-	return s != "" && s != "0001-01-01T00:00:00Z"
 }
