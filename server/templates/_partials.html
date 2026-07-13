@@ -90,8 +90,7 @@
 <tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
   <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a></td>
   <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">◷ awaiting</span>{{end}}</td>
-  <td class="money">{{money .Available}}</td>
-  <td class="money">{{money .Locked}}</td>
+  <td class="money">{{money (sum .Available .Locked)}}</td>
 </tr>
 {{end}}
 

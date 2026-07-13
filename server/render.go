@@ -69,6 +69,7 @@ type Renderer struct {
 func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":        money,
+		"sum":          func(a, b int64) int64 { return a + b },
 		"json":         prettyJSON,
 		"jsonEdit":     jsonEdit,
 		"statusClass":  statusClass,

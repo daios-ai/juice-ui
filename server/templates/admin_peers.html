@@ -26,14 +26,13 @@
 {{if $d.Peers}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>Handle</th><th>Public key</th><th class="money">Available</th><th class="money">Parked</th><th class="money">Our credit</th><th>Last seen</th><th></th></tr></thead>
+  <thead><tr><th>Handle</th><th>Public key</th><th class="money">Credits</th><th class="money">Our credit</th><th>Last seen</th><th></th></tr></thead>
   <tbody>
   {{range $d.Peers}}
   <tr>
     <td class="mono">{{.Handle}}</td>
     <td class="mono hash">{{truncate 16 .PublicKey}}…</td>
-    <td class="money">{{money .Available}}</td>
-    <td class="money">{{money .Locked}}</td>
+    <td class="money">{{money (sum .Available .Locked)}}</td>
     <td class="money" title="Our prepaid credit on this peer — what we can spend calling it">{{money .PeerCredit}}</td>
     <td class="muted small" title="{{.LastSeen}}">{{if .LastSeen}}{{relTime .LastSeen}}{{else}}never{{end}}</td>
     <td class="cluster">

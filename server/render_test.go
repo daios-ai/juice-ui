@@ -694,6 +694,42 @@ func TestConfirmModalIsNativeDialog(t *testing.T) {
 	}
 }
 
+// TestCreditsColumnIsSingleTotal guards snag #3: lists show one "Credits" column =
+// available + parked (total); the split stays only on prominent wallet/detail views.
+func TestCreditsColumnIsSingleTotal(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// List → a single Credits column showing the total.
+	rec := httptest.NewRecorder()
+	list := Page{Handle: "@me", Data: processesView{Open: []client.Process{{ID: "p1", Status: "open", Available: 30, Locked: 70}}}}
+	if err := r.Render(rec, 200, "processes", list); err != nil {
+		t.Fatalf("render processes: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<th class="money">Credits</th>`) {
+		t.Errorf("list must have a single Credits column: %s", body)
+	}
+	if strings.Contains(body, ">Parked<") || strings.Contains(body, ">Available<") {
+		t.Errorf("list must drop the standing Available/Parked columns: %s", body)
+	}
+	if !strings.Contains(body, ">100<") {
+		t.Errorf("Credits cell must show the total 30+70=100: %s", body)
+	}
+
+	// Detail → the available + parked split is kept.
+	rec = httptest.NewRecorder()
+	detail := Page{Handle: "@me", CSRFField: template.HTML("<input>"),
+		Data: processView{Process: client.Process{ID: "p1", Status: "open", Available: 30, Locked: 70}}}
+	if err := r.Render(rec, 200, "process", detail); err != nil {
+		t.Fatalf("render process: %v", err)
+	}
+	if d := rec.Body.String(); !strings.Contains(d, "available") || !strings.Contains(d, "parked") {
+		t.Errorf("process detail must keep the available+parked split: %s", d)
+	}
+}
+
 // TestActionDetailGatesRunOnPeerState is the load-bearing federation test: a remote
 // action whose peer is offline/unfunded shows a status notice INSTEAD of the run
 // form (no doomed spend), while a healthy remote action still shows the form.
