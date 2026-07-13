@@ -169,7 +169,7 @@
     <td>{{template "_ref" .Name}}</td>
     <td class="money">{{money .Price}}</td>
     <td class="money">{{.Uses}}</td>
-    <td class="money">{{if gt .Uses 0}}{{.Rating}}{{else}}—{{end}}</td>
+    <td class="money">{{if gt .Uses 0}}{{ratingPct .Rating .Uses}}%{{else}}—{{end}}</td>
   </tr>
   {{end}}
   </tbody>

@@ -145,7 +145,7 @@ func authKernel() *httptest.Server {
 		if r.URL.Query().Get("gossip") == "1" {
 			// Roster carries @kernelc (not a friend) and @peerb (already a friend).
 			w.Write([]byte(`{"peers":[{"handle":"@peerb","public_key":"KEYB","available":50,"locked":0}],
-			 "roster":[{"public_key":"KEYC","handle":"@kernelc","own":[{"action_id":"a1","name":"@sys/time","description":"","price":0,"uses":3,"rating":1}],
+			 "roster":[{"public_key":"KEYC","handle":"@kernelc","own":[{"action_id":"a1","name":"@sys/time","description":"","price":0,"uses":3,"rating":0.8333333333333334}],
 			  "sources":[{"introduced_by":"KEYC","self_reported":true,"actions":[{"action_id":"a2","name":"@sys/make","description":"synth","price":20,"uses":0,"rating":0}]},
 			             {"introduced_by":"KEYB","self_reported":false,"actions":[{"action_id":"a1","name":"@sys/time","description":"","price":0,"uses":1,"rating":0}]}]},
 			           {"public_key":"KEYB","handle":"@peerb","sources":[{"introduced_by":"KEYB","self_reported":true,"actions":[]}]}]}`))

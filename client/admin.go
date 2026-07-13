@@ -76,12 +76,12 @@ type Peers struct {
 // ActionStat is one action's advertised/earned figures inside a roster or
 // inspection (verified live: action_id/name/description/price/uses/rating).
 type ActionStat struct {
-	ActionID    string `json:"action_id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Price       int64  `json:"price"`
-	Uses        int64  `json:"uses"`
-	Rating      int64  `json:"rating"`
+	ActionID    string  `json:"action_id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Price       int64   `json:"price"`
+	Uses        int64   `json:"uses"`
+	Rating      float64 `json:"rating"` // 0–1 mean rating estimate (rendered as a percentage)
 }
 
 // RosterSource is one attribution for a discovered kernel: the introducer's key,

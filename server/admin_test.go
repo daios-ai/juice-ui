@@ -155,6 +155,11 @@ func TestAdminPeersRendersGossipRoster(t *testing.T) {
 	if !strings.Contains(body, `class="card roster-kernel"`) || !strings.Contains(body, "<summary>") {
 		t.Error("roster kernels must be collapsible <details> rows")
 	}
+	// The kernel sends `rating` as a 0–1 float; it must decode and render as a
+	// rounded percentage (regression: it was int64 and 400'd the whole page).
+	if !strings.Contains(body, "83%") {
+		t.Errorf("fractional roster rating must render as a percentage: %s", body)
+	}
 }
 
 // htmxGet issues a GET carrying the htmx request header, without following any
