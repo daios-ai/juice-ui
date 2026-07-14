@@ -41,6 +41,6 @@
 {{end}}
 
 {{if or $d.Plan.SkippedUncallable $d.Plan.SkippedLoginless}}
-<p class="muted small">{{$d.Plan.SkippedUncallable}} action(s) you can't call{{if $d.Plan.SkippedLoginless}} and {{$d.Plan.SkippedLoginless}} that need no login{{end}} were skipped.</p>
+<p class="muted small">{{$d.Plan.SkippedUncallable}} uncallable{{if $d.Plan.SkippedLoginless}}, {{$d.Plan.SkippedLoginless}} loginless{{end}} skipped.</p>
 {{end}}
 {{end}}

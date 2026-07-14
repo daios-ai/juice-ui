@@ -211,7 +211,7 @@ func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	// /health is open (no token), so we can tell the user the kernel is down before
 	// they even try — instead of a misleading "invalid handle or password".
 	if _, err := s.client.Health(r.Context()); err != nil {
-		view.Notice = "The kernel is unreachable — you can't sign in until it's back."
+		view.Notice = "Kernel unreachable."
 	}
 	s.renderPage(w, r, http.StatusOK, "login", "Sign in", view)
 }

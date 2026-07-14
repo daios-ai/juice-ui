@@ -777,7 +777,8 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 	}
 
 	off := render("offline")
-	if !strings.Contains(off, "currently unreachable") {
+	// The banner names the state in one phrase (reusing the chip's label), no prose.
+	if !strings.Contains(off, "Peer offline.") {
 		t.Errorf("offline notice missing: %s", off)
 	}
 	if strings.Contains(off, "data-run-panel") {
@@ -788,7 +789,7 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 	}
 
 	unf := render("unfunded")
-	if !strings.Contains(unf, "prepaid credit on the peer is exhausted") {
+	if !strings.Contains(unf, "Peer unfunded.") {
 		t.Errorf("unfunded notice missing: %s", unf)
 	}
 	if strings.Contains(unf, "data-run-panel") {
@@ -799,7 +800,7 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 	if !strings.Contains(ok, "data-run-panel") {
 		t.Error("healthy remote action must render the run form")
 	}
-	if strings.Contains(ok, "currently unreachable") {
+	if strings.Contains(ok, "Peer offline.") {
 		t.Error("no peer notice when healthy")
 	}
 }
@@ -856,7 +857,7 @@ func TestProcessAwaitingReceiptPolls(t *testing.T) {
 	if !strings.Contains(parked, `hx-get="/processes/p1"`) || !strings.Contains(parked, "every 15s") {
 		t.Errorf("awaiting-receipt banner must poll /processes/p1 every 15s: %s", parked)
 	}
-	if !strings.Contains(parked, "Remote receipt pending") {
+	if !strings.Contains(parked, "Awaiting remote receipt") {
 		t.Errorf("awaiting-receipt banner text missing: %s", parked)
 	}
 	settled := render(false)

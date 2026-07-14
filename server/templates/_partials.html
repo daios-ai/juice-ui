@@ -232,7 +232,7 @@
     {{range .Diagnostics}}<li>{{.}}</li>{{end}}
   </ul>
   {{else}}
-  <p>No diagnostic detail was returned. Try refining your description.</p>
+  <p>No diagnostic detail returned.</p>
   {{end}}
 </div>
 {{end}}
@@ -366,7 +366,7 @@
 {{define "_action_run"}}
 {{if .Action.PeerState}}
 <div id="action-run" hx-get="/actions/{{.Action.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
-  <div class="banner banner-info">{{if eq .Action.PeerState "unfunded"}}This kernel's prepaid credit on the peer is exhausted — an operator top-up is needed before this action can run.{{else}}This action runs on a peer that's currently unreachable. Try again when it's back.{{end}}</div>
+  <div class="banner banner-info">Peer {{.Action.PeerState}}.</div>
 </div>
 {{else}}
 <div id="action-run">
@@ -383,7 +383,7 @@
 {{define "_process_await"}}
 {{if .Process.AwaitingReceipt}}
 <div id="process-await" hx-get="/processes/{{.Process.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
-  <p class="banner banner-info">Remote receipt pending — funds parked on a possibly-offline peer{{if .Process.AwaitingReceiptSince}} since {{shortTime .Process.AwaitingReceiptSince}}{{end}}.</p>
+  <p class="banner banner-info">Awaiting remote receipt{{if .Process.AwaitingReceiptSince}} since {{shortTime .Process.AwaitingReceiptSince}}{{end}}.</p>
 </div>
 {{else}}
 <div id="process-await"></div>
