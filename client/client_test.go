@@ -106,9 +106,9 @@ func TestBearerAndRequestID(t *testing.T) {
 func TestListTransactionsPagination(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	// The kernel ignores ?limit (returns all), so the client enforces the cap:
-	// three rows returned, limit 2 → two rows. ?limit=2 is still sent (forward-compat).
-	f.reply = `[{"id":"A"},{"id":"B"},{"id":"C"}]`
+	// limit>0 → a single server page: the kernel caps, the client sends ?limit and
+	// returns the page as-is (no client-side slice).
+	f.reply = `[{"id":"A"},{"id":"B"}]`
 	got, err := f.client().ListTransactions(context.Background(), "tok", "", 2)
 	if err != nil {
 		t.Fatal(err)
@@ -116,15 +116,21 @@ func TestListTransactionsPagination(t *testing.T) {
 	if !strings.Contains(f.lastPath, "limit=2") {
 		t.Errorf("limit not sent: %s", f.lastPath)
 	}
-	if len(got) != 2 || got[0].ID != "A" || got[1].ID != "B" {
-		t.Errorf("client-side cap wrong: %+v", got)
+	if len(got) != 2 {
+		t.Errorf("single page = %+v", got)
 	}
-	// limit 0 means "all" — no limit param; a process scope is still encoded.
-	if _, err := f.client().ListTransactions(context.Background(), "tok", "P1", 0); err != nil {
+	// limit==0 → fetch ALL by paging with the ceiling; a short first page (2 < 200)
+	// ends the loop in one request, and the process scope is carried on every page.
+	f.reply = `[{"id":"X"},{"id":"Y"}]`
+	all, err := f.client().ListTransactions(context.Background(), "tok", "P1", 0)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(f.lastPath, "limit") || !strings.Contains(f.lastPath, "process_id=P1") {
-		t.Errorf("unlimited process query wrong: %s", f.lastPath)
+	if !strings.Contains(f.lastPath, "limit=200") || !strings.Contains(f.lastPath, "process_id=P1") {
+		t.Errorf("get-all must page with the ceiling limit + process scope: %s", f.lastPath)
+	}
+	if len(all) != 2 {
+		t.Errorf("get-all one page = %+v", all)
 	}
 }
 

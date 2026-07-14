@@ -22,7 +22,7 @@ Sub-resource removal uses path parameters. Request bodies on DELETE are rejected
 Any operation that changes resource state returns the new state as the response body. `POST /v1/actions/{id}/enable` returns the updated action. Purely destructive operations (`DELETE`, `POST .../end`) return 204.
 
 **R6 — List responses are plain arrays.**  
-No envelope objects. `GET /v1/steps` returns `[…]` directly. Metadata such as pagination belongs in response headers, not the body.
+No envelope objects. `GET /v1/steps` returns `[…]` directly. Metadata such as pagination belongs in response headers, not the body. Every list endpoint pages by `limit`/`offset` query params — default `limit` 50, ceiling 200, `offset` floored at 0 — so no single response is unbounded.
 
 **R7 — Input validated at the HTTP boundary.**  
 The handler rejects invalid inputs before calling the kernel. `rating` must be 0 or 1; returns `ErrInvalidInput` when violated.
@@ -39,7 +39,7 @@ Auth configs (`Action.source` upstream credentials) are write-only: accepted on 
 The thing a command acts on is positional, not a flag. A second mandatory value (amount, rating) is the second positional. Only optional inputs use `--flag` style.
 
 **C2 — Positional identifiers are natural keys.**  
-A user is `@handle` (never a UUID — handles are unique). An action is `@owner/name` (a raw id is also accepted). Processes, steps, and transactions, which have no human-readable name, are ids. The CLI never asks the user to type a user UUID.
+A user is `@handle`, a public key, or a raw id — the shapes are disjoint, so one resolver disambiguates. An action is `@owner/name` (a raw id is also accepted). Processes, steps, and transactions, which have no human-readable name, are ids. Outputs still render users as `@handle`, never a raw id.
 
 **C3 — `--source` is reserved for URLs and file paths.**  
 `--source` is used for action source URLs and script paths (`action create --source`). For `kind=http`, `--method` sets the verb (default `POST`; GET/POST/PUT/PATCH/DELETE) and the repeatable `--param name:in` (`in` = `path`/`query`/`body`) binds input fields; omitting `--param` uses implicit routing (`{name}` placeholders in the URL become path params, remaining args go to the query for GET/DELETE or the JSON body otherwise). User-handle inputs use descriptively named flags: `--required-caller @handle` in `step create`.
@@ -51,7 +51,7 @@ All resource-creation commands use `create`: `user create`, `action create`, `st
 Deletion commands use `delete`. Side effects of deletion are documented in the command description.
 
 **C6 — A command group's `list` subcommand lists that group's primary noun.**  
-`juice step list` lists steps. Optional filters (`--process`, `--status`) narrow the result without changing the command group.
+`juice step list` lists steps. Optional filters (`--process`, `--status`) narrow the result, and `--limit`/`--offset` page it, without changing the command group.
 
 **C7 — `stats` lives under `action`.**  
 `juice action stats <action>`. Stats are a property of an action; the command belongs in the `action` group.
@@ -123,17 +123,17 @@ A `Grant` is per-action consent (§8): a pointer binding one action to a `Connec
 
 | Operation | HTTP | CLI |
 |-----------|------|-----|
-| Create action | `POST /v1/actions` `{name, kind, [source, method, params, description, price, input_schema, output_schema, auth]}` → 201 action | `juice action create <name> --kind [--source --method --param --description --price --input-schema --output-schema --auth]` |
-| List actions | `GET /v1/actions[?owner=&name=&all=]` → action[]; active-only by default (unauthenticated → active public; authenticated → + own active; superuser → all owners' active); `?all=1` includes inactive/private in scope; `?owner=`/`?name=` filter | `juice action list [--all --limit --offset]` |
+| Create action | `POST /v1/actions` `{name, kind, [source, wasm_artifact, method, params, description, price, input_schema, output_schema, auth]}` → 201 action | `juice action create <name> --kind [--source --artifact --method --param --description --price --input-schema --output-schema --auth]` |
+| List actions | `GET /v1/actions[?owner=&name=&all=&limit=&offset=]` → action[]; active-only by default (unauthenticated → active public; authenticated → + own active; superuser → all owners' active); `?all=1` includes inactive/private in scope; `?owner=`/`?name=` filter | `juice action list [--all --limit --offset]` |
 | Show action | `GET /v1/actions/{id}` → action | `juice action show <action>` |
-| Update action | `PUT /v1/actions/{id}` `{[price, description, source, method, params, input_schema, output_schema, public, auth]}` → action | `juice action update <action> [--price --description --source --method --param --input-schema --output-schema --public --auth]` |
+| Update action | `PUT /v1/actions/{id}` `{[price, description, source, wasm_artifact, method, params, input_schema, output_schema, public, auth]}` → action | `juice action update <action> [--price --description --source --artifact --method --param --input-schema --output-schema --public --auth]` |
 | Enable action | `POST /v1/actions/{id}/enable` → `{active:true}` | `juice action enable <action>` |
 | Disable action | `POST /v1/actions/{id}/disable` → `{active:false}` | `juice action disable <action>` |
 | Delete action | `DELETE /v1/actions/{id}` → 204 | `juice action delete <action>` |
 | Import OpenAPI | `POST /v1/actions/import` `{spec_url}` → import result | `juice action import <spec-url>` |
 | Unimport OpenAPI | `POST /v1/actions/unimport` `{spec_url[, name]}` → action[] | `juice action unimport <spec-url> [--name]` |
 | Get stats | `GET /v1/stats/{action_id}` → stats | `juice action stats <action>` |
-| List ratings | `GET /v1/actions/{id}/ratings` → rating[] | — |
+| List ratings | `GET /v1/actions/{id}/ratings[?limit=&offset=]` → rating[] | — |
 
 `<action>` is `@owner/name` (a raw id is also accepted). Action responses (show and list) include a computed `action` field (`@owner/name`) alongside `id`, plus the full `input_schema` and `output_schema` — the CLI text view shows the same fields the JSON returns. `price` is the subtree bound: the maximum total cost of the action and everything it calls. `auth` is the upstream credential config `{scheme, config, secrets}` (R9: write-only, never returned); reads instead expose only its non-secret summary — `auth_scheme` (scheme name, when present) and `requires_grant` (R8).
 
@@ -164,7 +164,7 @@ The per-caller schemes hold no secret in `auth`; each caller supplies their cred
 
 | Operation | HTTP | CLI |
 |-----------|------|-----|
-| List processes | `GET /v1/processes` → process[]; own processes, or **all for a superuser** | `juice process list` |
+| List processes | `GET /v1/processes[?limit=&offset=]` → process[]; own processes, or **all for a superuser** | `juice process list [--limit --offset]` |
 | Show process | `GET /v1/processes/{id}` → process (`owner_handle`, `available`, `locked`, `status`, `awaiting_receipt`, `awaiting_receipt_since?`) | `juice process show <id>` |
 | End process | `POST /v1/processes/{id}/end` → 204 | `juice process end <id>` |
 
@@ -174,7 +174,7 @@ Processes are created only by `run` and close automatically. `end` is the forced
 
 | Operation | HTTP | CLI |
 |-----------|------|-----|
-| List transactions | `GET /v1/transactions[?process_id=]` → transaction[] | `juice tx list [--process --limit --offset]` |
+| List transactions | `GET /v1/transactions[?process_id=&limit=&offset=]` → transaction[] | `juice tx list [--process --limit --offset]` |
 | Show transaction | `GET /v1/transactions/{id}` → transaction | `juice tx show <id>` |
 | Rate transaction | `POST /v1/transactions/{id}/rate` `{rating, note?}` → rating | `juice tx rate <id> <0\|1> [--note]` |
 | Verify remote receipt | `GET /v1/transactions/{id}/receipt-verification` → verification | `juice tx verify <id>` |
@@ -188,7 +188,7 @@ Remote-proxy transactions include `remote_receipt_hash` and `remote_receipt_json
 | Operation | HTTP | CLI |
 |-----------|------|-----|
 | Create step | `POST /v1/steps` `{trace_id, action_id, partial_args, required_caller}` → 201 step | `juice step create <action> --trace --required-caller <user> [--partial-args]` |
-| List steps | `GET /v1/steps[?process_id=&status=]` → step[]; each carries `created_by` (the creating action `@owner/name`, from the parent trace) alongside `action` (the completion target) | `juice step list [--process --status]` |
+| List steps | `GET /v1/steps[?process_id=&status=&limit=&offset=]` → step[]; each carries `created_by` (the creating action `@owner/name`, from the parent trace) alongside `action` (the completion target) | `juice step list [--process --status --limit --offset]` |
 | Show step | `GET /v1/steps/{id}` → step (incl. `created_by`) | `juice step show <id>` |
 | Complete step | `POST /v1/steps/{id}/complete` `{args}` → `{result, tx_id, trace_id, step_id}` | `juice step complete <id> [json]` |
 
@@ -205,7 +205,6 @@ Native actions registered at bootstrap, owned by `@sys`, public, runnable like a
 | `@sys/llm/embed` | 0 | Text embedding vector |
 | `@sys/llm/json`  | 0 | Structured JSON output from LLM, locally validated |
 | `@sys/llm/decide` | 0 | LLM-driven action selection; returns chosen action and args without executing |
-| `@sys/make` | 20 (configurable, `native.make`) | Synthesize a WASM action from a description |
 | `@sys/time` | 0 | Current time |
 | `@sys/sink` | 0 | Universal no-op step target |
 | `@sys/message` | 0 | Message a user by creating a step they acknowledge |

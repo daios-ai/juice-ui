@@ -707,8 +707,31 @@ func (c *Client) Run(ctx context.Context, token, action string, args json.RawMes
 // ---- transactions ----
 
 // ListTransactions lists the caller's transactions (GET /v1/transactions),
-// optionally scoped to a process and capped to the most recent `limit` (0 = all).
+// optionally scoped to a process. limit>0 returns a single server page of that
+// size (newest first). limit==0 returns the FULL set: the kernel pages every list
+// endpoint with a default of 50 (ceiling 200, §R6), so an unpaged call would
+// silently truncate — earnings, the full ledger, and process views need all rows,
+// so we page through with offset.
 func (c *Client) ListTransactions(ctx context.Context, token, processID string, limit int) ([]Transaction, error) {
+	if limit > 0 {
+		return c.txPage(ctx, token, processID, limit, 0)
+	}
+	const page = 200 // server ceiling
+	var all []Transaction
+	for offset := 0; ; offset += page {
+		batch, err := c.txPage(ctx, token, processID, page, offset)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, batch...)
+		if len(batch) < page {
+			return all, nil
+		}
+	}
+}
+
+// txPage fetches one page of transactions (GET /v1/transactions?limit=&offset=).
+func (c *Client) txPage(ctx context.Context, token, processID string, limit, offset int) ([]Transaction, error) {
 	q := url.Values{}
 	if processID != "" {
 		q.Set("process_id", processID)
@@ -716,18 +739,15 @@ func (c *Client) ListTransactions(ctx context.Context, token, processID string, 
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(limit))
 	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
 	path := "/v1/transactions"
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
 	var t []Transaction
 	err := c.do(ctx, http.MethodGet, path, token, nil, &t)
-	// The kernel does NOT paginate this endpoint over HTTP — ?limit is ignored
-	// (verified live: it returns the full list). Send it for forward-compat, but
-	// enforce the cap here, exactly as the CLI's --limit does client-side.
-	if err == nil && limit > 0 && len(t) > limit {
-		t = t[:limit]
-	}
 	return t, err
 }
 
