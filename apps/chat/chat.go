@@ -36,11 +36,13 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 
@@ -54,6 +56,13 @@ var tmplFS embed.FS
 
 // chatHandle is the application's service-account handle.
 const chatHandle = "@chat"
+
+// outboxName is @chat's private, price-0, owner-only action that opens the outbox
+// seed. @chat runs it (paying itself 0), and its dispatch handler creates the
+// sentinel step via the trace capability — no @sys/message toll, so @chat needs no
+// credits on any kernel. Its handler is the plugin (not a daemon Op) because the
+// capability callback is a Juice call; the daemon stays Juice-agnostic.
+const outboxName = "outbox"
 
 // chatDBName is the daemon store filename, kept in the component home ($JUICE_HOME/ui).
 const chatDBName = "chat.db"
@@ -75,6 +84,9 @@ type Chat struct {
 	dbPath string               // overridable in tests; "" -> in-memory store
 	st     chatState            // persisted config; written by ensureActions (the SA setup goroutine)
 
+	seedTrace string // @chat's open outbox trace, minted doorbells hang off it (from st.SeedTrace)
+	sinkID    string // @sys/sink action id, the doorbell steps' onward (resolved at seed setup)
+
 	provisioned sync.Map // handle -> struct{}: grants synced this run
 }
 
@@ -85,19 +97,16 @@ func New() *Chat { return &Chat{} }
 
 func (c *Chat) Slug() string { return "chat" }
 
-// Nav contributes the "chat" sidebar entry, carrying the signed-in user's unread
-// count as an app-scoped badge (distinct from the core's sole step badge).
+// Nav contributes the "chat" sidebar entry. Its badge is the count of the user's
+// outstanding chat doorbell steps — the core step badge (all steps) filtered to
+// @chat, one source of truth. The count is filled by the /chat/badge poll (Nav has
+// no session token to read the kernel steps at render time), so the initial value
+// is 0 and the poll corrects it within the badge interval.
 func (c *Chat) Nav(handle string, superuser bool) []apps.NavEntry {
 	if handle == "" {
 		return nil
 	}
-	badge := 0
-	if c.dc != nil {
-		if n, err := c.dc.UnreadTotal(context.Background(), handle); err == nil {
-			badge = n
-		}
-	}
-	return []apps.NavEntry{{Slug: "chat", Label: "chat", Href: "/chat", Icon: chatIcon, Match: "/chat", Badge: badge, BadgeURL: "/chat/badge"}}
+	return []apps.NavEntry{{Slug: "chat", Label: "chat", Href: "/chat", Icon: chatIcon, Match: "/chat", BadgeURL: "/chat/badge"}}
 }
 
 func (c *Chat) Templates() fs.FS { return tmplFS }
@@ -122,13 +131,46 @@ func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.Handle("/_kernel/chat/", http.StripPrefix("/_kernel/chat", http.HandlerFunc(c.kernelDispatch)))
 }
 
-// kernelDispatch forwards a kernel callback to the daemon once it is up.
+// kernelDispatch routes a kernel callback under /_kernel/chat/ (path already stripped
+// of that prefix). The private @chat/outbox action is handled by the plugin (it makes
+// a Juice capability callback); everything else is a daemon write route. Keeping
+// /outbox under this same prefix inherits its CSRF exemption.
 func (c *Chat) kernelDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/"+outboxName {
+		c.serveOutbox(w, r)
+		return
+	}
 	if c.daemon == nil {
 		http.Error(w, "chat starting", http.StatusServiceUnavailable)
 		return
 	}
 	c.daemon.KernelHandler().ServeHTTP(w, r)
+}
+
+// serveOutbox handles the kernel's dispatch of @chat/outbox: it reads the injected
+// trace-capability headers and calls back to create the never-completed sentinel step
+// that holds the outbox seed process open (the mint-able trace notify() hangs
+// doorbells off). @chat pays itself 0 (the action is price 0). Returns the sentinel
+// id as {step_id} so ensureSeed can persist it. A leaf response (no capability) is a
+// harmless no-op.
+func (c *Chat) serveOutbox(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	cap, cb := r.Header.Get(client.CapabilityHeader), r.Header.Get(client.CallbackHeader)
+	stepID := ""
+	if cap != "" && cb != "" && c.sinkID != "" {
+		st, err := c.deps.Client.CallbackCreateStep(r.Context(), cb, cap, client.CreateStepInput{
+			ActionID:       c.sinkID,
+			RequiredCaller: chatHandle,
+		})
+		if err != nil {
+			slog.Warn("chat outbox: capability callback failed", "callback", cb, "sink", c.sinkID, "err", err.Error())
+		} else {
+			stepID = st.ID
+		}
+	} else {
+		slog.Warn("chat outbox: dispatch missing inputs", "cap_present", cap != "", "callback", cb, "sink_present", c.sinkID != "")
+	}
+	_, _ = fmt.Fprintf(w, `{"step_id":%q}`, stepID)
 }
 
 // chatState is the plugin's persisted config: the @chat account password, the
@@ -143,6 +185,12 @@ type chatState struct {
 	AdminSecret string `json:"admin_secret"`
 	SigningKey  string `json:"signing_key"`
 	AuthRev     string `json:"auth_rev"`
+	// SeedTrace / SeedStep identify @chat's open "outbox" process — opened by running
+	// the private @chat/outbox action, whose never-completed sentinel step (SeedStep)
+	// holds the process open and the trace (SeedTrace) mint-able. Doorbell steps are
+	// minted off it. Both survive kernel restarts; re-established only when gone.
+	SeedTrace string `json:"seed_trace"`
+	SeedStep  string `json:"seed_step"`
 }
 
 // Start provisions credentials (once), opens the durable store, brings up the
@@ -180,7 +228,7 @@ func (c *Chat) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("chat: open store: %w", err)
 	}
-	c.daemon = daemon.New(store, st.AdminSecret, c.id.Authenticate)
+	c.daemon = daemon.New(store, st.AdminSecret, c.id.Authenticate, c.notify)
 	c.dc = daemon.NewClient(c.daemon)
 
 	// The @chat kernel account. The seam ServiceAccount owns its whole lifecycle
@@ -204,11 +252,9 @@ func (c *Chat) Stop(ctx context.Context) error {
 
 // dbPathOrDefault resolves the durable store path. Order: an explicit test
 // override; then "" (in-memory) when there is no persistent app state, so tests
-// write no file; then the component home ($JUICE_HOME/ui/chat.db). For the
-// migration, if the home store does not yet exist but a legacy one does (an earlier
-// XDG-data or config-dir location), that legacy store is kept in place — it is live
-// user data and the WAL sidecars make an automatic move unsafe (operators migrate
-// explicitly; see docs/installation.md).
+// write no file; then the component home only ($JUICE_HOME/ui/chat.db). No
+// legacy-path fallback — see the note in cmd/juice-ui config.go: silent legacy
+// resolution is what let @chat credentials drift.
 func (c *Chat) dbPathOrDefault() string {
 	if c.dbPath != "" {
 		return c.dbPath
@@ -220,32 +266,8 @@ func (c *Chat) dbPathOrDefault() string {
 	if home == "" {
 		home = filepath.Dir(c.deps.StatePath) // fallback: beside state.json
 	}
-	primary := filepath.Join(home, chatDBName)
-	if _, err := os.Stat(primary); os.IsNotExist(err) {
-		for _, legacy := range legacyChatDBs() {
-			if _, err := os.Stat(legacy); err == nil {
-				return legacy
-			}
-		}
-	}
 	_ = os.MkdirAll(home, 0o700)
-	return primary
-}
-
-// legacyChatDBs lists the pre-JUICE_HOME locations chat.db may still occupy, in
-// preference order: the XDG data dir, then the original config dir (where the live
-// store sits). Used only to keep an existing store in place during migration.
-func legacyChatDBs() []string {
-	var out []string
-	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
-		out = append(out, filepath.Join(xdg, "juice-ui", chatDBName))
-	} else if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, filepath.Join(home, ".local", "share", "juice-ui", chatDBName))
-	}
-	if cfg, err := os.UserConfigDir(); err == nil {
-		out = append(out, filepath.Join(cfg, "juice-ui", chatDBName))
-	}
-	return out
+	return filepath.Join(home, chatDBName)
 }
 
 // ensureActions makes each @chat action exist, active, public, and pointed at the
@@ -275,6 +297,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 		for _, op := range daemon.Ops {
 			wanted[op.Name] = true
 		}
+		wanted[outboxName] = true // private seed action (reconciled separately, not a daemon Op) — keep it off the orphan-retirement list
 		base := strings.TrimRight(c.deps.PublicURL, "/") + "/_kernel/chat/"
 		auth := authConfig()
 		pubTrue := true
@@ -368,6 +391,136 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 			_ = c.deps.SaveAppState(c.Slug(), b)
 		}
 		c.provisioned.Range(func(k, _ any) bool { c.provisioned.Delete(k); return true })
+	}
+	// Ensure @chat holds an open outbox trace to mint doorbell steps off. Done after
+	// action reconciliation and within the same backoff-retried setup, so a briefly
+	// unreachable kernel just retries.
+	return c.sa.Do(ctx, func(tok string) error { return c.ensureSeed(ctx, tok) })
+}
+
+// outbox action schemas — activation requires described properties; it takes none.
+var (
+	outboxInSchema  = json.RawMessage(`{"type":"object","properties":{}}`)
+	outboxOutSchema = json.RawMessage(`{"type":"object","properties":{"step_id":{"type":"string","description":"Id of the sentinel step that holds the outbox process open."}}}`)
+)
+
+const outboxDesc = "Opens the chat outbox seed by creating a sentinel step via the trace capability; called only by @chat."
+
+// ensureSeed makes sure @chat holds an open "outbox" trace to mint doorbell steps off
+// (see chatState.SeedTrace). It resolves @sys/sink's id (the sentinel's and every
+// doorbell's onward), makes the private @chat/outbox action exist, then reuses a
+// persisted seed whose sentinel is still waiting — or opens a fresh one by running
+// @chat/outbox (price 0, owner-called, so @chat pays itself 0). The outbox handler
+// (serveOutbox) creates the never-completed sentinel via the trace capability, holding
+// the process open and the trace mint-able. No @sys/message toll ⇒ @chat needs no
+// credits on any kernel. Idempotent and restart-safe (the seed survives kernel restarts).
+func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
+	if c.sinkID == "" {
+		id, err := c.resolveSink(ctx, tok)
+		if err != nil {
+			return fmt.Errorf("chat: resolve @sys/sink: %w", err)
+		}
+		c.sinkID = id
+	}
+	if err := c.ensureOutboxAction(ctx, tok); err != nil {
+		return err
+	}
+	// Reuse a live seed: the sentinel step must still be waiting.
+	if c.st.SeedTrace != "" && c.st.SeedStep != "" {
+		steps, err := c.deps.Client.ListSteps(ctx, tok, "", "waiting")
+		if err != nil {
+			return err
+		}
+		for _, s := range steps {
+			if s.ID == c.st.SeedStep {
+				c.seedTrace = c.st.SeedTrace // sentinel alive — reuse
+				return nil
+			}
+		}
+	}
+	reply, err := c.deps.Client.Run(ctx, tok, chatHandle+"/"+outboxName, mustJSON(map[string]any{}))
+	if err != nil {
+		return fmt.Errorf("chat: open outbox seed: %w", err)
+	}
+	var res struct {
+		StepID string `json:"step_id"`
+	}
+	_ = json.Unmarshal(reply.Result, &res)
+	if res.StepID == "" {
+		return fmt.Errorf("chat: outbox produced no sentinel step (capability callback failed?)")
+	}
+	c.seedTrace = reply.TraceID
+	c.st.SeedTrace = reply.TraceID
+	c.st.SeedStep = res.StepID
+	if b, e := json.Marshal(c.st); e == nil && c.deps.SaveAppState != nil {
+		_ = c.deps.SaveAppState(c.Slug(), b)
+	}
+	return nil
+}
+
+// resolveSink returns @sys/sink's action id. GET /v1/actions/{ref} does not resolve an
+// @owner/name ref (404 — see kernel-contract-deviations), so it is found by name in
+// @sys's public catalog.
+func (c *Chat) resolveSink(ctx context.Context, tok string) (string, error) {
+	acts, err := c.deps.Client.ListActions(ctx, tok, "@sys", "", false)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range acts {
+		if a.Action == "@sys/sink" || a.Name == "sink" {
+			return a.ID, nil
+		}
+	}
+	return "", fmt.Errorf("@sys/sink not in catalog")
+}
+
+// ensureOutboxAction makes @chat's private, price-0, no-auth outbox action exist,
+// active, and pointed at the plugin's /_kernel/chat/outbox handler. It is reconciled
+// here — not through the public-op loop or contractDrifted (which assume public
+// delegated_bearer) — because it must stay PRIVATE (only @chat calls it) with NO auth
+// (owner calls own action, so no grant). It is never published.
+func (c *Chat) ensureOutboxAction(ctx context.Context, tok string) error {
+	want := strings.TrimRight(c.deps.PublicURL, "/") + "/_kernel/chat/" + outboxName
+	existing, err := c.deps.Client.ListActions(ctx, tok, chatHandle, "", true)
+	if err != nil {
+		return err
+	}
+	var a *client.Action
+	for i := range existing {
+		if existing[i].Name == outboxName {
+			a = &existing[i]
+			break
+		}
+	}
+	if a == nil {
+		na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
+			Name: outboxName, Kind: "http", Source: want, Method: "POST",
+			Description: outboxDesc, Price: 0,
+			InputSchema: outboxInSchema, OutputSchema: outboxOutSchema, // no Auth: owner-called
+		})
+		if err != nil {
+			return fmt.Errorf("chat: create %s/%s: %w", chatHandle, outboxName, err)
+		}
+		return c.deps.Client.EnableAction(ctx, tok, na.ID) // enable, never publish → stays private
+	}
+	priv := false
+	if a.HTTP == nil || a.HTTP.URL != want {
+		desc := outboxDesc
+		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
+			Source: &want, Method: "POST", InputSchema: outboxInSchema, OutputSchema: outboxOutSchema,
+			Description: &desc, Public: &priv,
+		}); err != nil {
+			return fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, outboxName, err)
+		}
+		return c.deps.Client.EnableAction(ctx, tok, a.ID)
+	}
+	if !a.Active {
+		return c.deps.Client.EnableAction(ctx, tok, a.ID)
+	}
+	if a.Public {
+		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &priv}); err != nil {
+			return fmt.Errorf("chat: unpublish %s/%s: %w", chatHandle, outboxName, err)
+		}
 	}
 	return nil
 }
@@ -495,22 +648,66 @@ func (c *Chat) getIndex(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
+	// Unread is the doorbell steps, not a watermark: bold the rooms the user has an
+	// outstanding @chat doorbell for, and float them to the top (RoomsFor is
+	// recency-ordered; a stable sort keeps that within each group).
+	unread, _ := c.chatUnread(r)
+	for i := range rooms {
+		if unread[rooms[i].ID] {
+			rooms[i].Unread = 1
+		}
+	}
+	sort.SliceStable(rooms, func(i, j int) bool { return rooms[i].Unread > rooms[j].Unread })
 	c.deps.RenderPage(w, r, http.StatusOK, "chat", "chat", indexView{
 		Rooms:    rooms,
 		OpenForm: r.URL.Query().Get("form") == "room-create",
 	})
 }
 
-// getBadge serves the nav unread badge fragment the core polls: bare count as
-// text/html, empty body when zero (matching the core steps-badge contract).
+// getBadge serves the chat nav-badge fragment the core polls: the count of the
+// user's outstanding chat doorbells (bare number, empty when zero — the core
+// steps-badge contract). It is the core step badge filtered to @chat — one source
+// of truth (the doorbell steps), never a separate watermark.
 func (c *Chat) getBadge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if c.dc == nil {
-		return
-	}
-	if n, err := c.dc.UnreadTotal(r.Context(), c.deps.Handle(r)); err == nil && n > 0 {
+	if _, n := c.chatUnread(r); n > 0 {
 		fmt.Fprintf(w, "%d", n)
 	}
+}
+
+// chatUnread reads the signed-in user's outstanding chat doorbells straight from
+// the kernel steps — the single source of truth for chat unread. A doorbell is a
+// waiting step owned by @chat addressed to the user; its partial_args names the
+// room. Returns the set of unread rooms and the count. Both the app-badge and the
+// room-list unread are just this: the bell (all waiting steps) filtered to @chat.
+func (c *Chat) chatUnread(r *http.Request) (map[string]bool, int) {
+	rooms := map[string]bool{}
+	if c.deps.Sessions == nil {
+		return rooms, 0
+	}
+	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
+		steps, e := c.deps.Client.ListSteps(r.Context(), tok, "", "waiting")
+		if e != nil {
+			return e
+		}
+		for _, s := range steps {
+			if s.OwnerHandle != chatHandle {
+				continue // not a chat doorbell
+			}
+			var pa struct {
+				Room string `json:"room"`
+			}
+			_ = json.Unmarshal(s.PartialArgs, &pa)
+			if pa.Room != "" {
+				rooms[pa.Room] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return map[string]bool{}, 0
+	}
+	return rooms, len(rooms)
 }
 
 func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
@@ -522,7 +719,7 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 		c.deps.HandleErr(w, r, &client.KernelError{Kind: client.KindNotFound})
 		return
 	}
-	c.markRead(r, me, id, msgs)
+	c.dismiss(r, me, id)
 	c.deps.RenderPage(w, r, http.StatusOK, "chat_conversation", "chat", roomView{
 		Room: room, Me: me, IsOwner: room.Creator == me,
 		OpenForm: r.URL.Query().Get("form"),
@@ -531,29 +728,103 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 // getMessages renders just the message list for the conversation page's htmx poll.
-// It marks the room read up to the latest message shown ONLY when the tab is
-// visible: the poll keeps running in a backgrounded tab (so content and badges stay
-// fresh), but must not silently clear unread while the user isn't looking. app.js
-// sends X-Visible from document.visibilityState; an absent header (stale asset,
-// other client) is treated as visible, degrading to the prior always-mark behaviour
-// rather than to "unread stuck forever". A non-member gets an empty list (no leak).
+// It completes the room's doorbell (clearing chat unread) ONLY when the tab is
+// visible: the poll keeps running in a backgrounded tab (so content stays fresh),
+// but must not silently clear unread while the user isn't looking. app.js sends
+// X-Visible from document.visibilityState; an absent header (stale asset, other
+// client) is treated as visible, degrading to the prior always-mark behaviour rather
+// than to "unread stuck forever". A non-member gets an empty list (no leak).
 func (c *Chat) getMessages(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Handle(r)
 	id := r.PathValue("id")
 	_, msgs, _ := c.dc.Room(r.Context(), me, id)
 	if r.Header.Get("X-Visible") != "0" {
-		c.markRead(r, me, id, msgs)
+		c.dismiss(r, me, id)
 	}
 	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_messages", msgsView{
 		RoomID: id, Me: me, Messages: msgs, CSRF: c.deps.CSRFField(r),
 	})
 }
 
-// markRead advances the viewer's watermark to the latest message shown.
-func (c *Chat) markRead(r *http.Request, me, roomID string, msgs []daemon.Message) {
-	if n := len(msgs); n > 0 {
-		_ = c.dc.MarkRead(r.Context(), me, roomID, msgs[n-1].Seq)
+// notify delivers a doorbell — a Juice step addressed to each other member — after
+// a message is posted. The doorbell is THE unread signal (single source of truth):
+// a member's chat unread is exactly their outstanding @chat doorbells, surfaced on
+// the core step badge/inbox and, filtered, on the chat app-badge; an agent bridge is
+// notified by the same step. Coalesced: at most one waiting doorbell per
+// (member, room); a message arriving while one is outstanding mints nothing. Owned
+// and funded by @chat off its outbox seed trace, so posters' wallets stay clean.
+// Asynchronous (the post has already committed); a mint failure clears the slot so
+// the next message retries.
+func (c *Chat) notify(ev daemon.NotifyEvent) {
+	if c.seedTrace == "" || c.sinkID == "" {
+		return // seed not established yet; the next post retries
 	}
+	go func() {
+		ctx := context.Background()
+		partial := mustJSON(map[string]any{"room": ev.RoomID, "room_name": ev.RoomName})
+		for _, member := range ev.Members {
+			if member == ev.Sender {
+				continue
+			}
+			reserved, err := c.dc.ReserveNotification(ctx, member, ev.RoomID)
+			if err != nil || !reserved {
+				continue // already ringing, or reserve failed
+			}
+			var stepID string
+			err = c.sa.Do(ctx, func(tok string) error {
+				st, e := c.deps.Client.CreateStep(ctx, tok, client.CreateStepInput{
+					TraceID:        c.seedTrace,
+					ActionID:       c.sinkID,
+					RequiredCaller: member,
+					PartialArgs:    partial,
+				})
+				if e == nil {
+					stepID = st.ID
+				}
+				return e
+			})
+			if err != nil || stepID == "" {
+				_ = c.dc.ClearNotification(ctx, member, ev.RoomID) // let the next message retry
+				continue
+			}
+			_ = c.dc.SetNotificationRef(ctx, member, ev.RoomID, stepID)
+		}
+	}()
+}
+
+// dismiss completes the outstanding doorbell step for (me, room), if any, when the
+// member visits the room — clearing chat unread everywhere (it IS the unread state:
+// the core step badge/inbox and the chat app-badge both read these steps).
+// Completion runs under the member's OWN session token (only the required_caller may
+// complete a step). The local ref is cleared unless completion failed only
+// transiently, so the next unread re-rings.
+func (c *Chat) dismiss(r *http.Request, me, roomID string) {
+	ref, err := c.dc.GetNotification(r.Context(), me, roomID)
+	if err != nil || ref == "" {
+		return
+	}
+	cerr := c.deps.Sessions.Do(r.Context(), func(tok string) error {
+		_, e := c.deps.Client.CompleteStep(r.Context(), tok, ref, nil)
+		return e
+	})
+	if completionSettled(cerr) {
+		_ = c.dc.ClearNotification(r.Context(), me, roomID)
+	}
+}
+
+// completionSettled reports whether a doorbell completion left the step resolved —
+// success, or any non-transient kernel error (already done, gone, closed) that a
+// retry would not fix. Only a transport-transient failure (kernel down/timeout)
+// keeps the local ref so a later visit retries.
+func completionSettled(err error) bool {
+	if err == nil {
+		return true
+	}
+	ke, ok := client.AsKernelError(err)
+	if !ok {
+		return false
+	}
+	return ke.Kind != client.KindUnavailable && ke.Kind != client.KindTimeout
 }
 
 func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {

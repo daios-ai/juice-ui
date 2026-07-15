@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -277,6 +278,7 @@ type Step struct {
 	ID                   string          `json:"id"`
 	ParentTraceID        string          `json:"parent_trace_id"`
 	RequiredCallerHandle string          `json:"required_caller_handle"`
+	OwnerHandle          string          `json:"owner_handle"` // process owner/payer; chat doorbells carry @chat
 	ActionID             string          `json:"action_id"`
 	Action               string          `json:"action"`
 	Price                int64           `json:"price"`
@@ -814,6 +816,60 @@ func (c *Client) CreateStep(ctx context.Context, token string, in CreateStepInpu
 	var s Step
 	err := c.do(ctx, http.MethodPost, "/v1/steps", token, in, &s)
 	return s, err
+}
+
+// Capability-callback headers the kernel injects into every kind=http dispatch
+// (juicedocs §9 out-of-kernel composition): the executing action composes by calling
+// back with the capability.
+const (
+	CapabilityHeader = "X-Juice-Capability" // <trace_id>.<sig> — the trace to compose on
+	CallbackHeader   = "X-Juice-Callback"   // base URL to call the composition API back on
+)
+
+// CallbackCreateStep creates a step via the trace-capability the kernel injected into
+// a kind=http dispatch, rather than via a session token. It POSTs to
+// {callbackBase}/v1/steps carrying `capability` in the X-Juice-Capability header (NOT a
+// bearer) with NO trace_id — the capability IS the trace. Used by the @chat/outbox
+// handler to create the sentinel step that holds the outbox seed open. Valid only while
+// the dispatch's trace is unsettled (call it during the dispatch, before returning).
+func (c *Client) CallbackCreateStep(ctx context.Context, callbackBase, capability string, in CreateStepInput) (Step, error) {
+	if len(in.PartialArgs) == 0 {
+		in.PartialArgs = json.RawMessage(`{}`)
+	}
+	body, err := json.Marshal(map[string]any{
+		"action_id":       in.ActionID,
+		"required_caller": in.RequiredCaller,
+		"partial_args":    in.PartialArgs,
+	})
+	if err != nil {
+		return Step{}, fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(callbackBase, "/")+"/v1/steps", bytes.NewReader(body))
+	if err != nil {
+		return Step{}, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(CapabilityHeader, capability)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Step{}, &KernelError{Kind: KindUnavailable, KernelMessage: "callback: " + err.Error()}
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Step{}, fmt.Errorf("read response: %w", err)
+	}
+	if cerr := classify(resp.StatusCode, raw); cerr != nil {
+		return Step{}, cerr
+	}
+	var s Step
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return Step{}, fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return s, nil
 }
 
 // CompleteStep completes a waiting step. args is always sent in the body (the

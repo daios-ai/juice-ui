@@ -23,7 +23,7 @@ func newDaemon(t *testing.T) *Daemon {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	d := New(s, "s3cret", testAuth)
+	d := New(s, "s3cret", testAuth, nil)
 	t.Cleanup(func() { _ = d.Close() })
 	return d
 }
@@ -84,44 +84,9 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	}
 }
 
-// TestInboxRoute drives the receive action end-to-end through the kernel surface:
-// authenticated, consume-on-read, room-tagged messages.
-func TestInboxRoute(t *testing.T) {
-	d := newDaemon(t)
-	code, body := postKernel(t, d, "/create-room", "@alice", `{"name":"n","members":["@bob"]}`)
-	if code != http.StatusOK {
-		t.Fatalf("create-room status=%d", code)
-	}
-	room, _ := body["room_id"].(string)
-	postKernel(t, d, "/message", "@alice", `{"room":"`+room+`","text":"hello bob"}`)
-
-	// unauthenticated → 401
-	if code, _ := postKernel(t, d, "/inbox", "", `{}`); code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated inbox status=%d, want 401", code)
-	}
-	// bob receives the message, tagged with its room
-	code, in := postKernel(t, d, "/inbox", "@bob", `{}`)
-	if code != http.StatusOK || in["ok"] != true {
-		t.Fatalf("inbox status=%d body=%v", code, in)
-	}
-	msgs, _ := in["messages"].([]any)
-	if len(msgs) != 1 {
-		t.Fatalf("inbox messages = %d, want 1: %v", len(msgs), in["messages"])
-	}
-	m0, _ := msgs[0].(map[string]any)
-	if m0["from"] != "@alice" || m0["room_id"] != room || m0["text"] != "hello bob" {
-		t.Errorf("inbox message = %v", m0)
-	}
-	// consume-on-read: second call is empty
-	_, in2 := postKernel(t, d, "/inbox", "@bob", `{}`)
-	if msgs2, _ := in2["messages"].([]any); len(msgs2) != 0 {
-		t.Errorf("second inbox messages = %d, want 0 (consumed)", len(msgs2))
-	}
-}
-
 func TestAdminRoutesRequireSecret(t *testing.T) {
 	d := newDaemon(t)
-	req := httptest.NewRequest(http.MethodGet, "/admin/unread?handle=@alice", nil) // no secret
+	req := httptest.NewRequest(http.MethodGet, "/admin/rooms?handle=@alice", nil) // no secret
 	rec := httptest.NewRecorder()
 	d.adminMux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -136,7 +101,7 @@ func TestAdminRoutesRequireSecret(t *testing.T) {
 }
 
 func TestOpsAndOutputSchemaAreValid(t *testing.T) {
-	want := []string{"create-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message", "inbox"}
+	want := []string{"create-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message"}
 	if len(Ops) != len(want) {
 		t.Fatalf("Ops has %d, want %d", len(Ops), len(want))
 	}
@@ -170,5 +135,81 @@ func TestOpsAndOutputSchemaAreValid(t *testing.T) {
 		if !seen[n] {
 			t.Errorf("missing op %q", n)
 		}
+	}
+}
+
+// adminReq drives an admin route with the shared secret.
+func adminReq(t *testing.T, d *Daemon, method, path, body string) (int, map[string]any) {
+	t.Helper()
+	var rdr *strings.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	var req *http.Request
+	if rdr != nil {
+		req = httptest.NewRequest(method, path, rdr)
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req.Header.Set(adminHeader, "s3cret")
+	rec := httptest.NewRecorder()
+	d.adminMux.ServeHTTP(rec, req)
+	var m map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &m)
+	return rec.Code, m
+}
+
+func TestNotifierFiresOnPostOnly(t *testing.T) {
+	s, err := Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	var got []NotifyEvent
+	d := New(s, "s3cret", testAuth, func(ev NotifyEvent) { got = append(got, ev) })
+	t.Cleanup(func() { _ = d.Close() })
+
+	_, body := postKernel(t, d, "/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
+	room := body["room_id"].(string)
+
+	// A successful post fires exactly one event with the room, sender, and members
+	// (sender included — the plugin excludes it).
+	postKernel(t, d, "/message", "@alice", `{"room":"`+room+`","text":"hi"}`)
+	if len(got) != 1 {
+		t.Fatalf("events after post = %d, want 1", len(got))
+	}
+	ev := got[0]
+	if ev.RoomID != room || ev.Sender != "@alice" || ev.RoomName != "general" {
+		t.Errorf("event = %+v", ev)
+	}
+	if len(ev.Members) != 2 {
+		t.Errorf("members = %v, want alice+bob", ev.Members)
+	}
+
+	// A rejected post (non-member) fires no event.
+	postKernel(t, d, "/message", "@carol", `{"room":"`+room+`","text":"nope"}`)
+	if len(got) != 1 {
+		t.Errorf("events after rejected post = %d, want still 1", len(got))
+	}
+}
+
+func TestNotifyAdminRoutesRoundTrip(t *testing.T) {
+	d := newDaemon(t)
+	p := "/admin/rooms/r1/notify"
+	// reserve: first true, second (coalesced) false.
+	if _, m := adminReq(t, d, http.MethodPost, p+"/reserve?handle=@bob", ""); m["reserved"] != true {
+		t.Fatalf("first reserve = %v, want true", m["reserved"])
+	}
+	if _, m := adminReq(t, d, http.MethodPost, p+"/reserve?handle=@bob", ""); m["reserved"] != false {
+		t.Errorf("second reserve = %v, want false", m["reserved"])
+	}
+	// set + get the ref.
+	adminReq(t, d, http.MethodPut, p+"?handle=@bob", `{"ref":"step-7"}`)
+	if _, m := adminReq(t, d, http.MethodGet, p+"?handle=@bob", ""); m["ref"] != "step-7" {
+		t.Errorf("ref = %v, want step-7", m["ref"])
+	}
+	// clear frees the slot.
+	adminReq(t, d, http.MethodDelete, p+"?handle=@bob", "")
+	if _, m := adminReq(t, d, http.MethodGet, p+"?handle=@bob", ""); m["ref"] != "" {
+		t.Errorf("ref after clear = %v, want empty", m["ref"])
 	}
 }

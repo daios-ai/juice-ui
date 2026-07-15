@@ -105,52 +105,31 @@ func TestBadgeIntervalClamped(t *testing.T) {
 }
 
 // TestStatePathLegacyCwd verifies the migration bridge: an existing cwd
-// ./juice-ui.json (the historical deployment) is honoured, with a notice, when the
-// home state.json is absent.
-func TestStatePathLegacyCwd(t *testing.T) {
-	getenv := env(map[string]string{"JUICE_HOME": "/j"})
-	cfg, err := LoadConfig(getenv, files(map[string]string{"juice-ui.json": `{"apps":{}}`}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.StatePath != "juice-ui.json" {
-		t.Errorf("StatePath = %q, want the cwd legacy juice-ui.json", cfg.StatePath)
-	}
-	if len(cfg.Notices) == 0 {
-		t.Error("expected a migration notice for the legacy state file")
-	}
-}
-
-// TestStatePathLegacyConfigDir verifies the other legacy state location
-// (os.UserConfigDir()/juice-ui/juice-ui.json).
-func TestStatePathLegacyConfigDir(t *testing.T) {
-	cfgHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfgHome) // os.UserConfigDir() honours this on Linux
-	legacy := filepath.Join(cfgHome, "juice-ui", "juice-ui.json")
-	getenv := env(map[string]string{"JUICE_HOME": "/j"})
-	cfg, err := LoadConfig(getenv, files(map[string]string{legacy: `{"apps":{}}`}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.StatePath != legacy {
-		t.Errorf("StatePath = %q, want config-dir legacy %q", cfg.StatePath, legacy)
-	}
-}
-
-// TestConfigJSONLegacyConfigDir verifies a legacy config.json is still read.
-func TestConfigJSONLegacyConfigDir(t *testing.T) {
+// TestNoLegacyPaths asserts app-state and config are read ONLY from $JUICE_HOME/ui —
+// no cwd/config-dir legacy fallback. Silent legacy resolution is what drifted @chat's
+// stored credentials (it minted a fresh state.json when the prior file wasn't at the
+// expected path), so legacy files must be ignored entirely.
+func TestNoLegacyPaths(t *testing.T) {
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
-	legacy := filepath.Join(cfgHome, "juice-ui", "config.json")
+	// Both a legacy state file (cwd juice-ui.json) and a legacy config.json exist…
+	legacyCfg := filepath.Join(cfgHome, "juice-ui", "config.json")
 	getenv := env(map[string]string{"JUICE_HOME": "/j"})
-	cfg, err := LoadConfig(getenv, files(map[string]string{legacy: `{"addr":":7777"}`}))
+	cfg, err := LoadConfig(getenv, files(map[string]string{
+		"juice-ui.json": `{"apps":{}}`,
+		legacyCfg:       `{"addr":":7777"}`,
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ListenAddr != ":7777" {
-		t.Errorf("legacy config.json not read: addr = %q", cfg.ListenAddr)
+	// …and both are ignored: state is canonical, config falls back to the default addr.
+	if want := filepath.Join("/j", "ui", "state.json"); cfg.StatePath != want {
+		t.Errorf("StatePath = %q, want canonical %q (no legacy)", cfg.StatePath, want)
 	}
-	if len(cfg.Notices) == 0 {
-		t.Error("expected a migration notice for the legacy config file")
+	if cfg.ListenAddr == ":7777" {
+		t.Error("legacy config.json was read; want ignored")
+	}
+	if len(cfg.Notices) != 0 {
+		t.Errorf("unexpected migration notices: %v", cfg.Notices)
 	}
 }

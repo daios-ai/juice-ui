@@ -555,3 +555,43 @@ func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 		t.Errorf("empty auth must be omitted: %s", f.lastBody)
 	}
 }
+
+func TestCallbackCreateStep(t *testing.T) {
+	var gotCap, gotAuth, gotBody, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCap = r.Header.Get("X-Juice-Capability")
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"sentinel-1","status":"waiting"}`))
+	}))
+	defer srv.Close()
+
+	// baseURL is deliberately bogus — the callback must target the passed URL, not baseURL.
+	c := New("http://127.0.0.1:1", nil)
+	st, err := c.CallbackCreateStep(context.Background(), srv.URL, "trace-1.sig",
+		CreateStepInput{ActionID: "sink", RequiredCaller: "@chat"})
+	if err != nil {
+		t.Fatalf("CallbackCreateStep: %v", err)
+	}
+	if st.ID != "sentinel-1" {
+		t.Errorf("step id = %q, want sentinel-1", st.ID)
+	}
+	if gotPath != "/v1/steps" {
+		t.Errorf("path = %q, want /v1/steps", gotPath)
+	}
+	if gotCap != "trace-1.sig" {
+		t.Errorf("X-Juice-Capability = %q, want trace-1.sig", gotCap)
+	}
+	if gotAuth != "" {
+		t.Errorf("must NOT send a bearer; Authorization = %q", gotAuth)
+	}
+	if strings.Contains(gotBody, "trace_id") {
+		t.Errorf("body must NOT carry trace_id (capability IS the trace): %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"action_id":"sink"`) || !strings.Contains(gotBody, `"required_caller":"@chat"`) {
+		t.Errorf("body = %s", gotBody)
+	}
+}

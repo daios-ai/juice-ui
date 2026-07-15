@@ -32,8 +32,9 @@ var (
 	ErrBadInput  = errors.New("bad input")    // 400
 )
 
-// Room is a chat room (a DM is a two-member room). Unread is filled only in list
-// views (RoomsFor); it is 0 elsewhere.
+// Room is a chat room (a DM is a two-member room). Unread is a display flag (0/1)
+// the plugin sets from the viewer's outstanding doorbell steps; the store never
+// computes it (unread is a Juice-steps concern, not a store concern).
 type Room struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
@@ -84,10 +85,10 @@ CREATE TABLE IF NOT EXISTS messages (
   PRIMARY KEY (room_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(room_id, id);
-CREATE TABLE IF NOT EXISTS reads (
-  handle    TEXT NOT NULL,
-  room_id   TEXT NOT NULL,
-  watermark INTEGER NOT NULL DEFAULT 0,
+CREATE TABLE IF NOT EXISTS notifications (
+  handle  TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  ref     TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (handle, room_id)
 );`
 
@@ -367,32 +368,30 @@ func (s *Store) History(viewer, roomID string, beforeSeq int64, limit int) ([]Me
 	return msgs, nil
 }
 
-// RoomsFor returns the live rooms viewer is a member of, most-recently-created
-// first, each with the viewer's unread count.
+// RoomsFor returns the live rooms viewer is a member of, most-recent-activity
+// first. Unread is NOT computed here: unread is a Juice-steps concern (the plugin
+// fills Room.Unread from the viewer's outstanding doorbell steps), so the store
+// stays a pure message log + membership.
 func (s *Store) RoomsFor(viewer string) ([]Room, error) {
-	// Order unread rooms first, then by most-recent activity — the conventional
-	// messaging-list grammar. last_at is the newest live message's timestamp (a
-	// one-row seek on the (room_id, seq) primary key), falling back to created_at
-	// for an empty room; both are RFC3339 text, so lexical DESC is chronological.
+	// last_at is the newest live message's timestamp (a one-row seek on the
+	// (room_id, seq) primary key), falling back to created_at for an empty room;
+	// both are RFC3339 text, so lexical DESC is chronological.
 	rows, err := s.db.Query(`
 		SELECT r.id, r.name, r.creator, r.created_at,
-		  (SELECT COUNT(*) FROM messages m
-		     WHERE m.room_id = r.id AND m.deleted = 0 AND m.sender <> ?
-		       AND m.seq > COALESCE((SELECT watermark FROM reads WHERE handle = ? AND room_id = r.id), 0)) AS unread,
 		  COALESCE((SELECT m2.at FROM messages m2
 		     WHERE m2.room_id = r.id AND m2.deleted = 0
 		     ORDER BY m2.seq DESC LIMIT 1), r.created_at) AS last_at
 		FROM rooms r
 		JOIN members mem ON mem.room_id = r.id AND mem.handle = ?
 		WHERE r.deleted = 0
-		ORDER BY (unread > 0) DESC, last_at DESC, r.created_at DESC`, viewer, viewer, viewer)
+		ORDER BY last_at DESC, r.created_at DESC`, viewer)
 	if err != nil {
 		return nil, err
 	}
 	var out []Room
 	for rows.Next() {
 		var r Room
-		if err := rows.Scan(&r.ID, &r.Name, &r.Creator, &r.CreatedAt, &r.Unread, &r.LastAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Creator, &r.CreatedAt, &r.LastAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -414,84 +413,69 @@ func (s *Store) RoomsFor(viewer string) ([]Room, error) {
 	return out, nil
 }
 
-// UnreadTotal is the viewer's unread count across all their rooms (the nav badge).
-func (s *Store) UnreadTotal(viewer string) (int, error) {
-	var n int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM messages m
-		JOIN members mem ON mem.room_id = m.room_id AND mem.handle = ?
-		JOIN rooms r ON r.id = m.room_id AND r.deleted = 0
-		WHERE m.deleted = 0 AND m.sender <> ?
-		  AND m.seq > COALESCE((SELECT watermark FROM reads WHERE handle = ? AND room_id = m.room_id), 0)`,
-		viewer, viewer, viewer).Scan(&n)
-	return n, err
-}
+// ---- notification doorbells ----
+//
+// The notifications table records, per (handle, room), the opaque id of an
+// outstanding "doorbell" — a Juice step the plugin minted to tell that member a
+// room has unread messages. The store never interprets the ref and issues no
+// kernel call over it. It backs only the doorbell *lifecycle* (coalescing +
+// completion lookup); the unread DISPLAY derives from the real kernel steps. A
+// standalone (plugin-less) deployment simply never populates it.
 
-// MarkRead advances viewer's read watermark for a room to at least seq; member
-// only. A watermark never moves backwards.
-func (s *Store) MarkRead(viewer, roomID string, seq int64) error {
-	if _, err := s.requireMember(viewer, roomID); err != nil {
-		return err
+// ReserveNotification atomically claims the doorbell slot for (handle, room): it
+// returns true iff no row yet exists, so exactly one concurrent poster mints the
+// step. A subsequent message while a doorbell is outstanding reserves nothing
+// (coalescing). The winner records the step id via SetNotificationRef, or clears
+// the slot on a mint failure so the next message retries.
+func (s *Store) ReserveNotification(handle, roomID string) (bool, error) {
+	res, err := s.db.Exec(`INSERT INTO notifications(handle, room_id, ref) VALUES(?,?,'')
+		ON CONFLICT(handle, room_id) DO NOTHING`, handle, roomID)
+	if err != nil {
+		return false, err
 	}
-	return s.bumpRead(viewer, roomID, seq)
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
-// bumpRead advances the watermark without the member/live checks (callers that
-// already established membership, e.g. Inbox). A watermark never moves backwards.
-func (s *Store) bumpRead(viewer, roomID string, seq int64) error {
-	_, err := s.db.Exec(`
-		INSERT INTO reads(handle, room_id, watermark) VALUES(?,?,?)
-		ON CONFLICT(handle, room_id) DO UPDATE SET watermark = MAX(watermark, excluded.watermark)`,
-		viewer, roomID, seq)
+// SetNotificationRef records the minted step id for a reserved slot.
+func (s *Store) SetNotificationRef(handle, roomID, ref string) error {
+	_, err := s.db.Exec(`UPDATE notifications SET ref = ? WHERE handle = ? AND room_id = ?`,
+		ref, handle, roomID)
 	return err
 }
 
-// Inbox is the receive half of the chat channel for a non-UI Juice caller: it
-// returns viewer's rooms (with their unread counts) and every message across those
-// rooms that viewer has not yet seen — from others, above the per-room read
-// watermark — then advances the watermark past what it returns. Consume-on-read: a
-// later call yields only newly-arrived messages. Each room's batch is bounded to
-// recentWindow, so a flood pages across calls (the watermark advances only over
-// what was returned); messages remain in history regardless.
-func (s *Store) Inbox(viewer string) ([]Room, []Message, error) {
-	rooms, err := s.RoomsFor(viewer)
-	if err != nil {
-		return nil, nil, err
+// GetNotification returns the outstanding doorbell step id for (handle, room), or
+// "" when none is set (no row, or a reserved-but-not-yet-minted slot).
+func (s *Store) GetNotification(handle, roomID string) (string, error) {
+	var ref string
+	err := s.db.QueryRow(`SELECT ref FROM notifications WHERE handle = ? AND room_id = ?`,
+		handle, roomID).Scan(&ref)
+	if err == sql.ErrNoRows {
+		return "", nil
 	}
-	var msgs []Message
-	for i := range rooms {
-		if rooms[i].Unread == 0 {
-			continue // nothing unseen from others here
-		}
-		batch, err := s.unseen(viewer, rooms[i].ID)
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(batch) == 0 {
-			continue
-		}
-		for j := range batch {
-			batch[j].RoomID = rooms[i].ID
-		}
-		msgs = append(msgs, batch...)
-		if err := s.bumpRead(viewer, rooms[i].ID, batch[len(batch)-1].Seq); err != nil {
-			return nil, nil, err
-		}
-	}
-	return rooms, msgs, nil
+	return ref, err
 }
 
-// unseen returns up to recentWindow non-deleted messages in roomID from senders
-// other than viewer, above viewer's watermark, oldest-first.
-func (s *Store) unseen(viewer, roomID string) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT id, seq, sender, text, at FROM messages
-		WHERE room_id = ? AND deleted = 0 AND sender <> ?
-		  AND seq > COALESCE((SELECT watermark FROM reads WHERE handle = ? AND room_id = ?), 0)
-		ORDER BY seq LIMIT ?`, roomID, viewer, viewer, roomID, recentWindow)
-	if err != nil {
-		return nil, err
+// ClearNotification removes the doorbell slot for (handle, room), so the next
+// message re-rings. Called on room visit (after completing the step) and on a mint
+// failure.
+func (s *Store) ClearNotification(handle, roomID string) error {
+	_, err := s.db.Exec(`DELETE FROM notifications WHERE handle = ? AND room_id = ?`, handle, roomID)
+	return err
+}
+
+// Recipients returns a live room's display name and its member handles — the
+// daemon builds a post-message NotifyEvent from it. ErrNotFound if the room is
+// gone.
+func (s *Store) Recipients(roomID string) (name string, members []string, err error) {
+	if err = s.db.QueryRow(`SELECT name FROM rooms WHERE id = ? AND deleted = 0`, roomID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil, ErrNotFound
+		}
+		return "", nil, err
 	}
-	return scanMessages(rows) // already oldest-first (ORDER BY seq ASC)
+	members, err = s.members(s.db, roomID)
+	return name, members, err
 }
 
 // ---- helpers ----

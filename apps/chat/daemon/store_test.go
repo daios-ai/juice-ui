@@ -145,150 +145,18 @@ func TestDeleteRoomHidesAndGates(t *testing.T) {
 	}
 }
 
-func TestUnreadAndWatermark(t *testing.T) {
-	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	s.PostMessage("@alice", r.ID, "a1")
-	s.PostMessage("@alice", r.ID, "a2")
-	m3, _ := s.PostMessage("@alice", r.ID, "a3")
-	// bob's own messages never count as unread for him.
-	s.PostMessage("@bob", r.ID, "b1")
-
-	rooms, _ := s.RoomsFor("@bob")
-	if len(rooms) != 1 || rooms[0].Unread != 3 {
-		t.Fatalf("bob unread = %d, want 3 (excludes own): %+v", rooms[0].Unread, rooms)
-	}
-	if n, _ := s.UnreadTotal("@bob"); n != 3 {
-		t.Errorf("UnreadTotal(bob) = %d, want 3", n)
-	}
-	if n, _ := s.UnreadTotal("@alice"); n != 1 {
-		t.Errorf("UnreadTotal(alice) = %d, want 1 (bob's message)", n)
-	}
-	// bob reads up to m3.
-	if err := s.MarkRead("@bob", r.ID, m3.Seq); err != nil {
-		t.Fatalf("MarkRead: %v", err)
-	}
-	if n, _ := s.UnreadTotal("@bob"); n != 0 {
-		t.Errorf("after read UnreadTotal(bob) = %d, want 0", n)
-	}
-	// a new message re-raises unread.
-	s.PostMessage("@alice", r.ID, "a4")
-	if n, _ := s.UnreadTotal("@bob"); n != 1 {
-		t.Errorf("after new message unread = %d, want 1", n)
-	}
-	// watermark never regresses.
-	if err := s.MarkRead("@bob", r.ID, 1); err != nil {
-		t.Fatalf("MarkRead lower: %v", err)
-	}
-	if n, _ := s.UnreadTotal("@bob"); n != 1 {
-		t.Errorf("watermark regressed: unread = %d, want 1", n)
-	}
-	if err := s.MarkRead("@carol", r.ID, 1); !errors.Is(err, ErrNotMember) {
-		t.Errorf("non-member MarkRead err = %v, want ErrNotMember", err)
-	}
-}
-
-// TestInboxConsumeAcrossRooms checks the receive contract: unseen messages from
-// others across all the caller's rooms, each tagged with its room, marked seen on
-// return, with empty-room memberships still listed.
-func TestInboxConsumeAcrossRooms(t *testing.T) {
-	s := newStore(t)
-	a, _ := s.CreateRoom("@alice", "A", []string{"@bob"})
-	b, _ := s.CreateRoom("@alice", "B", []string{"@bob"})
-	empty, _ := s.CreateRoom("@alice", "C", []string{"@bob"}) // no messages
-	s.PostMessage("@alice", a.ID, "a1")
-	s.PostMessage("@bob", a.ID, "bob-own") // bob's own → not unseen for bob
-	s.PostMessage("@alice", b.ID, "b1")
-	s.PostMessage("@alice", b.ID, "b2")
-
-	rooms, msgs, err := s.Inbox("@bob")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rooms) != 3 {
-		t.Fatalf("rooms = %d, want 3 (incl. empty)", len(rooms))
-	}
-	if len(msgs) != 3 {
-		t.Fatalf("msgs = %d, want 3 (a1,b1,b2; own excluded): %+v", len(msgs), msgs)
-	}
-	for _, m := range msgs {
-		if m.RoomID == "" {
-			t.Errorf("inbox message missing room_id: %+v", m)
-		}
-	}
-	sawEmpty := false
-	for _, r := range rooms {
-		if r.ID == empty.ID {
-			sawEmpty = true
-			if r.Unread != 0 {
-				t.Errorf("empty room unread = %d, want 0", r.Unread)
-			}
-		}
-	}
-	if !sawEmpty {
-		t.Error("empty-room membership not listed")
-	}
-
-	// Consume-on-read: a second call returns nothing new.
-	if _, m2, _ := s.Inbox("@bob"); len(m2) != 0 {
-		t.Errorf("second inbox = %d, want 0 (consumed)", len(m2))
-	}
-	// A new message re-raises it.
-	s.PostMessage("@alice", a.ID, "a2")
-	_, m3, _ := s.Inbox("@bob")
-	if len(m3) != 1 || m3[0].Text != "a2" {
-		t.Fatalf("after new post inbox = %+v", m3)
-	}
-}
-
-// TestInboxPagesLargeBacklog checks the per-room cap: a flood pages across calls,
-// the watermark advances only over what was returned, and unread reports the true
-// backlog (which exceeds a capped page).
-func TestInboxPagesLargeBacklog(t *testing.T) {
-	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "big", []string{"@bob"})
-	total := recentWindow + 5
-	for i := 0; i < total; i++ {
-		s.PostMessage("@alice", r.ID, "m")
-	}
-	rooms, msgs, _ := s.Inbox("@bob")
-	if len(msgs) != recentWindow {
-		t.Fatalf("first page = %d, want %d (capped)", len(msgs), recentWindow)
-	}
-	if rooms[0].Unread != total {
-		t.Errorf("unread = %d, want %d (full backlog, not the page)", rooms[0].Unread, total)
-	}
-	if _, m2, _ := s.Inbox("@bob"); len(m2) != 5 {
-		t.Fatalf("second page = %d, want 5 (resume)", len(m2))
-	}
-	if _, m3, _ := s.Inbox("@bob"); len(m3) != 0 {
-		t.Errorf("third page = %d, want 0", len(m3))
-	}
-}
-
-func TestInboxNonMemberEmpty(t *testing.T) {
-	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	s.PostMessage("@alice", r.ID, "hi")
-	rooms, msgs, err := s.Inbox("@carol")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rooms) != 0 || len(msgs) != 0 {
-		t.Fatalf("non-member inbox rooms=%d msgs=%d, want 0/0", len(rooms), len(msgs))
-	}
-}
-
-// TestRoomsForOrdering checks the list contract: unread rooms sort first, then by
-// most-recent activity, with an empty room falling back to its creation time.
+// TestRoomsForOrdering checks the list contract: rooms sort by most-recent
+// activity, an empty room falling back to its creation time. The store no longer
+// computes unread (that is a Juice-steps concern the plugin fills), so Room.Unread
+// is always 0 here.
 func TestRoomsForOrdering(t *testing.T) {
 	s := newStore(t)
-	// A: unread for bob, but its activity is the OLDEST.
+	// A: oldest activity.
 	a, _ := s.CreateRoom("@alice", "A", []string{"@bob"})
 	s.PostMessage("@alice", a.ID, "hi-a")
-	// B: bob's own message → not unread for bob; activity newer than A.
+	// B: newer activity than A.
 	b, _ := s.CreateRoom("@alice", "B", []string{"@bob"})
-	s.PostMessage("@bob", b.ID, "hi-b")
+	s.PostMessage("@alice", b.ID, "hi-b")
 	// C: empty room, created last → newest last_at (falls back to created_at).
 	c, _ := s.CreateRoom("@alice", "C", []string{"@bob"})
 
@@ -299,22 +167,21 @@ func TestRoomsForOrdering(t *testing.T) {
 	if len(rooms) != 3 {
 		t.Fatalf("got %d rooms, want 3", len(rooms))
 	}
-	// Unread first (A), despite being the least recent; then the read rooms by
-	// recency: C (created after B's message) before B.
-	if rooms[0].ID != a.ID {
-		t.Errorf("unread room not first: got %q", rooms[0].Name)
-	}
-	if rooms[1].ID != c.ID || rooms[2].ID != b.ID {
-		t.Errorf("read rooms not recency-ordered: got %q, %q want C, B", rooms[1].Name, rooms[2].Name)
+	// Most-recent first: C (created after B's message) > B > A.
+	if rooms[0].ID != c.ID || rooms[1].ID != b.ID || rooms[2].ID != a.ID {
+		t.Errorf("not recency-ordered: got %q, %q, %q; want C, B, A", rooms[0].Name, rooms[1].Name, rooms[2].Name)
 	}
 	for _, rm := range rooms {
 		if rm.LastAt == "" {
 			t.Errorf("room %q has empty LastAt", rm.Name)
 		}
+		if rm.Unread != 0 {
+			t.Errorf("room %q Unread = %d, want 0 (store no longer computes unread)", rm.Name, rm.Unread)
+		}
 	}
 	// The empty room's LastAt is its CreatedAt.
-	if rooms[1].LastAt != rooms[1].CreatedAt {
-		t.Errorf("empty room LastAt %q != CreatedAt %q", rooms[1].LastAt, rooms[1].CreatedAt)
+	if rooms[0].LastAt != rooms[0].CreatedAt {
+		t.Errorf("empty room LastAt %q != CreatedAt %q", rooms[0].LastAt, rooms[0].CreatedAt)
 	}
 }
 
@@ -350,5 +217,66 @@ func TestRecentWindowAndHistory(t *testing.T) {
 	}
 	if _, err := s.History("@carol", r.ID, midSeq, 5); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member history err = %v, want ErrNotMember", err)
+	}
+}
+
+func TestNotificationReserveCoalesceAndClear(t *testing.T) {
+	s := newStore(t)
+	// First reserve for (handle, room) wins; a second (a coalesced re-post) loses.
+	ok, err := s.ReserveNotification("@bob", "r1")
+	if err != nil || !ok {
+		t.Fatalf("first reserve = %v, %v; want true", ok, err)
+	}
+	if ok, _ := s.ReserveNotification("@bob", "r1"); ok {
+		t.Errorf("second reserve granted; want coalesced (false)")
+	}
+	// A different room, and a different member, are independent slots.
+	if ok, _ := s.ReserveNotification("@bob", "r2"); !ok {
+		t.Errorf("reserve for other room denied")
+	}
+	if ok, _ := s.ReserveNotification("@carol", "r1"); !ok {
+		t.Errorf("reserve for other member denied")
+	}
+	// Ref round-trips; empty until set.
+	if ref, _ := s.GetNotification("@bob", "r1"); ref != "" {
+		t.Errorf("ref before set = %q, want empty", ref)
+	}
+	if err := s.SetNotificationRef("@bob", "r1", "step-9"); err != nil {
+		t.Fatalf("SetNotificationRef: %v", err)
+	}
+	if ref, _ := s.GetNotification("@bob", "r1"); ref != "step-9" {
+		t.Errorf("ref = %q, want step-9", ref)
+	}
+	// Clearing frees the slot so the next message re-rings.
+	if err := s.ClearNotification("@bob", "r1"); err != nil {
+		t.Fatalf("ClearNotification: %v", err)
+	}
+	if ref, _ := s.GetNotification("@bob", "r1"); ref != "" {
+		t.Errorf("ref after clear = %q, want empty", ref)
+	}
+	if ok, _ := s.ReserveNotification("@bob", "r1"); !ok {
+		t.Errorf("reserve after clear denied; want re-ring")
+	}
+	// No row for an unknown pair reads as empty, not an error.
+	if ref, err := s.GetNotification("@nobody", "rx"); err != nil || ref != "" {
+		t.Errorf("GetNotification(unknown) = %q, %v; want \"\", nil", ref, err)
+	}
+}
+
+func TestRecipientsListsLiveMembers(t *testing.T) {
+	s := newStore(t)
+	r, err := s.CreateRoom("@alice", "general", []string{"@bob"})
+	if err != nil {
+		t.Fatalf("CreateRoom: %v", err)
+	}
+	name, members, err := s.Recipients(r.ID)
+	if err != nil || name != "general" {
+		t.Fatalf("Recipients name = %q, err %v", name, err)
+	}
+	if len(members) != 2 {
+		t.Errorf("members = %v, want alice+bob", members)
+	}
+	if _, _, err := s.Recipients("nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Recipients(unknown) err = %v, want ErrNotFound", err)
 	}
 }

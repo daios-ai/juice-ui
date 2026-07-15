@@ -55,19 +55,35 @@ func (c *Client) History(ctx context.Context, handle, roomID string, beforeSeq i
 	return out.Messages, err
 }
 
-// MarkRead advances handle's read watermark for a room to seq.
-func (c *Client) MarkRead(ctx context.Context, handle, roomID string, seq int64) error {
-	return c.do(ctx, http.MethodPost, "/admin/rooms/"+url.PathEscape(roomID)+"/read?"+q("handle", handle),
-		map[string]int64{"seq": seq}, nil)
+// ReserveNotification atomically claims the doorbell slot for (handle, room),
+// returning true iff this caller should mint the step (no doorbell outstanding).
+func (c *Client) ReserveNotification(ctx context.Context, handle, roomID string) (bool, error) {
+	var out struct {
+		Reserved bool `json:"reserved"`
+	}
+	err := c.do(ctx, http.MethodPost, "/admin/rooms/"+url.PathEscape(roomID)+"/notify/reserve?"+q("handle", handle), nil, &out)
+	return out.Reserved, err
 }
 
-// UnreadTotal is handle's unread count across all rooms (the nav badge).
-func (c *Client) UnreadTotal(ctx context.Context, handle string) (int, error) {
+// SetNotificationRef records the minted doorbell step id for (handle, room).
+func (c *Client) SetNotificationRef(ctx context.Context, handle, roomID, ref string) error {
+	return c.do(ctx, http.MethodPut, "/admin/rooms/"+url.PathEscape(roomID)+"/notify?"+q("handle", handle),
+		map[string]string{"ref": ref}, nil)
+}
+
+// GetNotification returns the outstanding doorbell step id for (handle, room), or
+// "" when none.
+func (c *Client) GetNotification(ctx context.Context, handle, roomID string) (string, error) {
 	var out struct {
-		Count int `json:"count"`
+		Ref string `json:"ref"`
 	}
-	err := c.do(ctx, http.MethodGet, "/admin/unread?"+q("handle", handle), nil, &out)
-	return out.Count, err
+	err := c.do(ctx, http.MethodGet, "/admin/rooms/"+url.PathEscape(roomID)+"/notify?"+q("handle", handle), nil, &out)
+	return out.Ref, err
+}
+
+// ClearNotification removes the doorbell slot for (handle, room).
+func (c *Client) ClearNotification(ctx context.Context, handle, roomID string) error {
+	return c.do(ctx, http.MethodDelete, "/admin/rooms/"+url.PathEscape(roomID)+"/notify?"+q("handle", handle), nil, nil)
 }
 
 // do performs one admin request, mapping non-2xx responses to typed errors.

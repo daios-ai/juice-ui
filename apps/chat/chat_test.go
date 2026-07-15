@@ -14,10 +14,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/apps/chat/daemon"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/session"
 )
 
 func TestParseHandles(t *testing.T) {
@@ -81,23 +84,15 @@ func TestNavGatedOnAuthAndBadge(t *testing.T) {
 	if n := c.Nav("", false); n != nil {
 		t.Fatalf("anonymous Nav = %v, want nil", n)
 	}
-	// No daemon yet: badge is 0, entry still present, and it advertises the poll
-	// endpoint the core refreshes on the configured interval.
+	// The entry advertises the poll endpoint; the badge itself is filled by the
+	// /chat/badge poll (which counts the user's @chat doorbell steps), not computed
+	// at render time — so the initial Badge is 0 regardless of unread.
 	n := c.Nav("@alice", false)
 	if len(n) != 1 || n[0].Href != "/chat" || n[0].Match != "/chat" || n[0].Icon == "" || n[0].Badge != 0 {
 		t.Fatalf("Nav = %+v", n)
 	}
 	if n[0].BadgeURL != "/chat/badge" {
 		t.Errorf("Nav BadgeURL = %q, want /chat/badge", n[0].BadgeURL)
-	}
-	// With a daemon and an unread message, the badge reflects it.
-	st := mustStore(t)
-	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
-	st.PostMessage("@bob", r.ID, "hi alice")
-	c.daemon = daemon.New(st, "s", noAuth)
-	c.dc = daemon.NewClient(c.daemon)
-	if got := c.Nav("@alice", false)[0].Badge; got != 1 {
-		t.Errorf("badge = %d, want 1", got)
 	}
 }
 
@@ -159,7 +154,7 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 	var gotName string
 	var gotData any
 	c := New()
-	c.daemon = daemon.New(mustStore(t), "s", noAuth)
+	c.daemon = daemon.New(mustStore(t), "s", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
 	c.deps = apps.Deps{
 		Handle:    func(r *http.Request) string { return "@alice" },
@@ -430,8 +425,12 @@ type fakeKernel struct {
 	updates  map[string]string // id -> last PUT body
 	enables  map[string]bool
 	disables map[string]bool
-	seq      int
-	failName string // if set, enabling the action of this name returns 500
+	seq       int
+	failName  string   // if set, enabling the action of this name returns 500
+	runs      int      // count of POST /v1/run (seed opens via @sys/message)
+	mints     []string // POST /v1/steps bodies (doorbell mints)
+	completes []string // POST /v1/steps/{id}/complete step ids (doorbell dismissals)
+	stepsJSON string   // body returned by GET /v1/steps (default: the outbox sentinel)
 }
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
@@ -447,6 +446,11 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.Write([]byte(`{"access_token":"t","refresh_token":"r"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		// @sys's catalog carries @sys/sink (resolveSink finds the doorbell/sentinel onward).
+		if r.URL.Query().Get("owner") == "@sys" {
+			w.Write([]byte(`[{"id":"sink","action":"@sys/sink","name":"sink","active":true,"public":true}]`))
+			return
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		var parts []string
@@ -465,7 +469,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		a := &fakeAction{ID: id, Name: in.Name, URL: in.Source, Description: in.Description,
 			InSchema: string(in.InputSchema), OutSchema: string(in.OutputSchema)}
 		f.acts[id] = a
-		f.creates = append(f.creates, in.Name)
+		if in.Name != "outbox" { // the private seed action is not an op — keep it out of op-churn counts
+			f.creates = append(f.creates, in.Name)
+		}
 		w.WriteHeader(201)
 		w.Write([]byte(a.wire()))
 	})
@@ -474,13 +480,15 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		b, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.updates[id] = string(b)
 		var in client.UpdateActionInput
 		_ = json.Unmarshal(b, &in)
 		a := f.acts[id]
 		if a == nil {
 			w.Write([]byte(`{}`))
 			return
+		}
+		if a.Name != "outbox" { // exclude the private seed action from op-churn counts
+			f.updates[id] = string(b)
 		}
 		if in.Source != nil {
 			a.URL = *in.Source
@@ -508,9 +516,11 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			w.Write([]byte(`{"error":"boom"}`))
 			return
 		}
-		f.enables[id] = true
 		if a := f.acts[id]; a != nil {
 			a.Active = true
+			if a.Name != "outbox" { // exclude the private seed action from op-churn counts
+				f.enables[id] = true
+			}
 		}
 		w.Write([]byte(`{"active":true}`))
 	})
@@ -524,10 +534,49 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		w.Write([]byte(`{"active":false}`))
 	})
+	// Seed/outbox stubs: ensureSeed resolves @sys/sink and opens an outbox trace via
+	// a self @sys/message; some tests may re-check the sentinel via ListSteps.
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"sink","action":"@sys/sink","active":true}`))
+	})
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.runs++
+		f.mu.Unlock()
+		w.Write([]byte(`{"trace_id":"seed-trace-1","result":{"step_id":"sentinel-1"}}`))
+	})
+	// Default: the seed's sentinel step (action_id @sys/sink, which ensureSeed reads
+	// as the doorbells' onward id). Tests that exercise the doorbell badge/room-list
+	// override f.stepsJSON with @chat-owned doorbell steps.
+	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"sink","action":"@sys/sink"}]`
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		body := f.stepsJSON
+		f.mu.Unlock()
+		w.Write([]byte(body))
+	})
+	mux.HandleFunc("POST /v1/steps", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.seq++
+		id := "step" + strconv.Itoa(f.seq)
+		f.mints = append(f.mints, string(mustRead(r)))
+		f.mu.Unlock()
+		w.WriteHeader(201)
+		w.Write([]byte(`{"id":"` + id + `","status":"waiting"}`))
+	})
+	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.completes = append(f.completes, r.PathValue("id"))
+		f.mu.Unlock()
+		w.Write([]byte(`{"result":{},"tx_id":"tx1"}`))
+	})
 	f.srv = httptest.NewServer(mux)
 	f.url = f.srv.URL
 	return f
 }
+
+// mustRead drains a request body for test assertions.
+func mustRead(r *http.Request) []byte { b, _ := io.ReadAll(r.Body); return b }
 
 func (f *fakeKernel) close() { f.srv.Close() }
 
@@ -555,73 +604,95 @@ func (f *fakeKernel) createdCount() int { f.mu.Lock(); defer f.mu.Unlock(); retu
 func (f *fakeKernel) updateCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return len(f.updates) }
 func (f *fakeKernel) enableCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return len(f.enables) }
 
-// TestGetBadge checks the nav badge fragment: bare count for a user with unread,
-// empty body when zero (the core steps-badge contract).
+// TestGetBadge checks the nav badge fragment: the count of the user's outstanding
+// @chat doorbell steps (bare number; empty when zero). It reads the kernel steps —
+// the single source of truth — filtered to @chat, ignoring other steps.
 func TestGetBadge(t *testing.T) {
-	st := mustStore(t)
-	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
-	st.PostMessage("@bob", r.ID, "hi")
+	f := newFakeKernel()
+	defer f.close()
+	f.stepsJSON = `[
+	  {"id":"d1","status":"waiting","owner_handle":"@chat","partial_args":{"room":"r1"}},
+	  {"id":"d2","status":"waiting","owner_handle":"@chat","partial_args":{"room":"r2"}},
+	  {"id":"x","status":"waiting","owner_handle":"@someone","partial_args":{}}]`
 	c := New()
-	c.daemon = daemon.New(st, "s", noAuth)
-	c.dc = daemon.NewClient(c.daemon)
-	c.deps = apps.Deps{Handle: func(*http.Request) string { return "@alice" }}
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	c.deps = apps.Deps{Client: cl, Sessions: session.NewManager(sm, cl)}
 
-	rec := httptest.NewRecorder()
-	c.getBadge(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
-	if body := strings.TrimSpace(rec.Body.String()); body != "1" {
-		t.Errorf("badge body = %q, want 1", body)
+	body := func() string {
+		rec := httptest.NewRecorder()
+		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			c.getBadge(w, r)
+		}))
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
+		return strings.TrimSpace(rec.Body.String())
 	}
-	// The sender has no unread → empty body (hidden by .badge:empty).
-	c.deps.Handle = func(*http.Request) string { return "@bob" }
-	rec = httptest.NewRecorder()
-	c.getBadge(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
-	if body := rec.Body.String(); body != "" {
-		t.Errorf("zero badge body = %q, want empty", body)
+	if got := body(); got != "2" {
+		t.Errorf("badge = %q, want 2 (two @chat doorbell rooms; the @someone step ignored)", got)
+	}
+	f.stepsJSON = `[]` // no doorbells → empty body (hidden by .badge:empty)
+	if got := body(); got != "" {
+		t.Errorf("zero badge = %q, want empty", got)
 	}
 }
 
-// TestGetMessagesMarkReadVisibility proves the poll advances the read watermark
-// only when the tab is visible (X-Visible), so a backgrounded conversation tab does
-// not silently clear unread; an absent header degrades to the old always-mark path.
-func TestGetMessagesMarkReadVisibility(t *testing.T) {
+// TestGetMessagesDismissVisibility proves the poll completes the room's doorbell
+// (clearing chat unread) only when the tab is visible (X-Visible), so a backgrounded
+// conversation tab does not silently clear unread; an absent header degrades to the
+// always-dismiss path.
+func TestGetMessagesDismissVisibility(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
 	st := mustStore(t)
 	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
 	st.PostMessage("@bob", r.ID, "hi")
+	st.ReserveNotification("@alice", r.ID)
+	st.SetNotificationRef("@alice", r.ID, "doorbell-1")
 	c := New()
-	c.daemon = daemon.New(st, "s", noAuth)
+	c.daemon = daemon.New(st, "s", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
+	cl := client.New(f.url, nil)
+	sm := scs.New()
 	c.deps = apps.Deps{
 		Handle:         func(*http.Request) string { return "@alice" },
 		CSRFField:      func(*http.Request) template.HTML { return "" },
 		RenderFragment: func(http.ResponseWriter, int, string, any) error { return nil },
+		Client:         cl,
+		Sessions:       session.NewManager(sm, cl),
 	}
 	poll := func(visible string) {
-		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
-		req.SetPathValue("id", r.ID)
+		outer := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
+		outer.SetPathValue("id", r.ID)
 		if visible != "" {
-			req.Header.Set("X-Visible", visible)
+			outer.Header.Set("X-Visible", visible)
 		}
-		c.getMessages(httptest.NewRecorder(), req)
+		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			c.getMessages(w, req)
+		}))
+		h.ServeHTTP(httptest.NewRecorder(), outer)
 	}
-	poll("0") // hidden tab: must NOT mark read
-	if n, _ := st.UnreadTotal("@alice"); n != 1 {
-		t.Errorf("hidden-tab poll marked read: unread=%d, want 1", n)
+	poll("0") // hidden tab: must NOT dismiss
+	if len(f.completes) != 0 {
+		t.Errorf("hidden-tab poll dismissed the doorbell: completes=%v", f.completes)
 	}
-	poll("1") // visible: marks read
-	if n, _ := st.UnreadTotal("@alice"); n != 0 {
-		t.Errorf("visible poll did not mark read: unread=%d, want 0", n)
+	if ref, _ := st.GetNotification("@alice", r.ID); ref == "" {
+		t.Errorf("doorbell cleared while hidden")
 	}
-	st.PostMessage("@bob", r.ID, "hi2")
-	poll("") // absent header (stale asset): degrades to marking read
-	if n, _ := st.UnreadTotal("@alice"); n != 0 {
-		t.Errorf("absent-header poll should mark read: unread=%d, want 0", n)
+	poll("1") // visible: completes the doorbell
+	if len(f.completes) != 1 || f.completes[0] != "doorbell-1" {
+		t.Errorf("visible poll didn't complete the doorbell: %v", f.completes)
+	}
+	if ref, _ := st.GetNotification("@alice", r.ID); ref != "" {
+		t.Errorf("doorbell not cleared after visible poll: %q", ref)
 	}
 }
 
-// TestDBPathMigration checks store-path resolution: the component home
-// ($JUICE_HOME/ui) by default; an existing legacy store (config-dir or XDG-data)
-// kept in place, XDG-data preferred; no persistent state ⇒ in-memory.
-func TestDBPathMigration(t *testing.T) {
+// TestDBPathCanonicalOnly checks store-path resolution: always the component home
+// ($JUICE_HOME/ui/chat.db); legacy stores (config-dir or XDG-data) are IGNORED — the
+// legacy fallback is what let @chat credentials drift; no persistent state ⇒ in-memory.
+func TestDBPathCanonicalOnly(t *testing.T) {
 	tmp := t.TempDir()
 	cfgHome := filepath.Join(tmp, "cfg")   // → os.UserConfigDir()
 	dataHome := filepath.Join(tmp, "data") // → XDG_DATA_HOME
@@ -632,22 +703,14 @@ func TestDBPathMigration(t *testing.T) {
 	home := filepath.Join(tmp, "juice", "ui") // the component home
 	c := New()
 	c.deps = apps.Deps{StatePath: filepath.Join(home, "state.json"), Home: home}
+	want := filepath.Join(home, chatDBName)
 
-	// No legacy store anywhere → the component home is used.
-	if got, want := c.dbPathOrDefault(), filepath.Join(home, chatDBName); got != want {
-		t.Errorf("new-install db path = %q, want %q", got, want)
-	}
-	// A legacy store under the config dir is kept in place.
-	cfgLegacy := filepath.Join(cfgHome, "juice-ui", chatDBName)
-	seedFile(t, cfgLegacy)
-	if got := c.dbPathOrDefault(); got != cfgLegacy {
-		t.Errorf("config-dir legacy present but path = %q, want %q", got, cfgLegacy)
-	}
-	// The XDG data-dir legacy is preferred over the config-dir one.
-	dataLegacy := filepath.Join(dataHome, "juice-ui", chatDBName)
-	seedFile(t, dataLegacy)
-	if got := c.dbPathOrDefault(); got != dataLegacy {
-		t.Errorf("db path = %q, want XDG-data legacy %q (preferred)", got, dataLegacy)
+	// Even with legacy stores present under BOTH the config dir and the XDG data dir,
+	// the canonical component-home path is used — no legacy fallback.
+	seedFile(t, filepath.Join(cfgHome, "juice-ui", chatDBName))
+	seedFile(t, filepath.Join(dataHome, "juice-ui", chatDBName))
+	if got := c.dbPathOrDefault(); got != want {
+		t.Errorf("db path = %q, want canonical %q (legacy must be ignored)", got, want)
 	}
 	// No persistent app state → in-memory.
 	if got := New().dbPathOrDefault(); got != "" {
@@ -662,5 +725,199 @@ func seedFile(t *testing.T, p string) {
 	}
 	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// waitFor polls cond until true or the deadline, for the async notify goroutine.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met before timeout")
+}
+
+func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.daemon = daemon.New(mustStore(t), "s", noAuth, nil)
+	c.dc = daemon.NewClient(c.daemon)
+	c.seedTrace, c.sinkID = "seed-1", "sink" // seed already established
+
+	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "@alice",
+		Members: []string{"@alice", "@bob", "@carol"}}
+	c.notify(ev)
+	// One doorbell per member EXCEPT the sender.
+	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 2 })
+	f.mu.Lock()
+	bodies := strings.Join(f.mints, "|")
+	f.mu.Unlock()
+	if strings.Contains(bodies, `"required_caller":"@alice"`) {
+		t.Error("minted a doorbell for the sender")
+	}
+	if !strings.Contains(bodies, `"required_caller":"@bob"`) || !strings.Contains(bodies, `"required_caller":"@carol"`) {
+		t.Errorf("missing per-member doorbells: %s", bodies)
+	}
+	if !strings.Contains(bodies, `"room":"r1"`) {
+		t.Errorf("doorbell partial_args missing room: %s", bodies)
+	}
+	// The step ids are recorded so a room visit can complete them.
+	if ref, _ := c.dc.GetNotification(context.Background(), "@bob", "r1"); ref == "" {
+		t.Error("doorbell ref not recorded for @bob")
+	}
+
+	// Coalescing: a second message while the doorbells are outstanding mints nothing.
+	c.notify(ev)
+	time.Sleep(30 * time.Millisecond)
+	f.mu.Lock()
+	n := len(f.mints)
+	f.mu.Unlock()
+	if n != 2 {
+		t.Errorf("second post minted more doorbells: total=%d, want 2 (coalesced)", n)
+	}
+}
+
+func TestDismissCompletesDoorbellAsUserAndClears(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	st := mustStore(t)
+	// A doorbell is outstanding for (@bob, r1).
+	st.ReserveNotification("@bob", "r1")
+	st.SetNotificationRef("@bob", "r1", "doorbell-1")
+	c := New()
+	c.daemon = daemon.New(st, "s", noAuth, nil)
+	c.dc = daemon.NewClient(c.daemon)
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	c.deps = apps.Deps{Client: cl, Sessions: session.NewManager(sm, cl)}
+
+	// Drive dismiss inside a loaded, logged-in (@bob) session, so completion runs
+	// under @bob's own token (only the required_caller may complete).
+	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@bob"); err != nil {
+			t.Fatal(err)
+		}
+		c.dismiss(r, "@bob", "r1")
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if len(f.completes) != 1 || f.completes[0] != "doorbell-1" {
+		t.Errorf("completes = %v, want [doorbell-1]", f.completes)
+	}
+	if ref, _ := st.GetNotification("@bob", "r1"); ref != "" {
+		t.Errorf("doorbell ref not cleared after dismiss: %q", ref)
+	}
+}
+
+func TestCompletionSettled(t *testing.T) {
+	// nil and non-transient kernel errors leave the doorbell resolved → clear.
+	for _, err := range []error{nil, client.ErrInvalidState, client.ErrNotFound, client.ErrUnauthorized} {
+		if !completionSettled(err) {
+			t.Errorf("completionSettled(%v) = false, want true (clear)", err)
+		}
+	}
+	// Only transport-transient failures keep the ref for a retry.
+	for _, err := range []error{client.ErrUnavailable, client.ErrTimeout} {
+		if completionSettled(err) {
+			t.Errorf("completionSettled(%v) = true, want false (keep for retry)", err)
+		}
+	}
+}
+
+func TestEnsureActionsEstablishesSeed(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.st.AuthRev = authRev()
+	if err := c.ensureActions(context.Background()); err != nil {
+		t.Fatalf("ensureActions: %v", err)
+	}
+	if c.seedTrace == "" || c.sinkID != "sink" {
+		t.Errorf("seed not established: trace=%q sink=%q (want sink)", c.seedTrace, c.sinkID)
+	}
+	if f.runs != 1 {
+		t.Errorf("outbox seed opened %d times, want 1", f.runs)
+	}
+	// The seed is opened by running @chat's OWN private outbox action (price 0, no @sys
+	// toll) — it must exist, be active, and NOT be public.
+	var ob *fakeAction
+	f.mu.Lock()
+	for _, a := range f.acts {
+		if a.Name == "outbox" {
+			ob = a
+		}
+	}
+	f.mu.Unlock()
+	if ob == nil {
+		t.Fatal("@chat/outbox action not created")
+	}
+	if !ob.Active || ob.Public {
+		t.Errorf("outbox active=%v public=%v, want active + private", ob.Active, ob.Public)
+	}
+}
+
+func TestServeOutboxCreatesSentinelViaCapability(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	c.deps = apps.Deps{Client: client.New(f.url, nil)}
+	c.sinkID = "sink"
+
+	call := func(withCap bool) (string, int) {
+		req := httptest.NewRequest(http.MethodPost, "/_kernel/chat/outbox", strings.NewReader("{}"))
+		if withCap {
+			req.Header.Set("X-Juice-Capability", "trace-9.sig")
+			req.Header.Set("X-Juice-Callback", f.url)
+		}
+		rec := httptest.NewRecorder()
+		c.serveOutbox(rec, req)
+		var out struct {
+			StepID string `json:"step_id"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		f.mu.Lock()
+		n := len(f.mints)
+		f.mu.Unlock()
+		return out.StepID, n
+	}
+	// With the capability the handler calls back and creates a sentinel step.
+	id, mints := call(true)
+	if id == "" {
+		t.Error("no sentinel step_id returned")
+	}
+	if mints != 1 {
+		t.Errorf("capability callback minted %d steps, want 1", mints)
+	}
+	// A leaf dispatch (no capability headers) is a harmless no-op.
+	id2, mints2 := call(false)
+	if id2 != "" {
+		t.Errorf("no-cap dispatch returned step_id %q, want empty", id2)
+	}
+	if mints2 != 1 {
+		t.Errorf("no-cap dispatch minted a step (total %d), want still 1", mints2)
+	}
+}
+
+func TestKernelDispatchRoutesOutboxToPlugin(t *testing.T) {
+	c := New()
+	c.deps = apps.Deps{Client: client.New("http://127.0.0.1:1", nil)}
+	c.sinkID = "sink"
+	// c.daemon is nil: if /outbox weren't intercepted, kernelDispatch would 503.
+	req := httptest.NewRequest(http.MethodPost, "/outbox", strings.NewReader("{}")) // path as seen post-StripPrefix
+	rec := httptest.NewRecorder()
+	c.kernelDispatch(rec, req)
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatal("/outbox not intercepted — fell through to the (nil) daemon")
+	}
+	if !strings.Contains(rec.Body.String(), "step_id") {
+		t.Errorf("outbox not handled by plugin: %s", rec.Body.String())
 	}
 }

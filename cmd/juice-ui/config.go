@@ -63,7 +63,7 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	cfg.Home = home
 
 	// 2. config file
-	fc, cfgLegacy, err := loadConfigFile(home, readFile)
+	fc, err := loadConfigFile(home, readFile)
 	if err != nil {
 		return Config{}, err
 	}
@@ -128,14 +128,10 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	origins = append(origins, parseOrigins(getenv("JUICE_UI_TRUSTED_ORIGINS"))...)
 	cfg.TrustedOrigins = origins
 
-	statePath, stateLegacy := resolveStatePath(home, readFile)
-	cfg.StatePath = statePath
-	if cfgLegacy != "" {
-		cfg.Notices = append(cfg.Notices, fmt.Sprintf("config.json: reading legacy %s — move it to %s", cfgLegacy, filepath.Join(home, "config.json")))
-	}
-	if stateLegacy != "" {
-		cfg.Notices = append(cfg.Notices, fmt.Sprintf("app state: reading legacy %s — move it to %s", stateLegacy, filepath.Join(home, "state.json")))
-	}
+	// App state and config live only in the component home ($JUICE_HOME/ui). No
+	// legacy-path fallback: a fallback silently minted fresh @chat credentials when
+	// the prior file wasn't found at the expected place, orphaning the kernel's @chat.
+	cfg.StatePath = filepath.Join(home, "state.json")
 	return cfg, nil
 }
 
@@ -155,70 +151,24 @@ func uiHome(getenv func(string) string) string {
 	return filepath.Join(root, "ui")
 }
 
-// legacyConfigDir is the pre-JUICE_HOME juice-ui config directory
-// (os.UserConfigDir()/juice-ui), consulted only to keep an existing file in place
-// during migration. Empty when the config dir can't be located.
-func legacyConfigDir() string {
-	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "juice-ui")
-	}
-	return ""
-}
-
-// resolveWithLegacy returns primary, unless it is absent and a legacy path exists —
-// then the first existing legacy, and that path as migratedFrom (for a one-time
-// operator notice). Existence is probed via readFile so tests stay hermetic.
-func resolveWithLegacy(primary string, legacies []string, readFile func(string) ([]byte, error)) (path, migratedFrom string) {
-	if _, err := readFile(primary); err == nil {
-		return primary, ""
-	}
-	for _, l := range legacies {
-		if l == "" {
-			continue
-		}
-		if _, err := readFile(l); err == nil {
-			return l, l
-		}
-	}
-	return primary, ""
-}
-
 // loadConfigFile reads and parses the operator config file — $JUICE_HOME/ui/
-// config.json, else an existing legacy config-dir copy. It returns (nil, "", nil)
-// when absent (defaults + env still apply). migratedFrom names a legacy file in use.
-func loadConfigFile(uiHome string, readFile func(string) ([]byte, error)) (fc *fileConfig, migratedFrom string, err error) {
-	primary := filepath.Join(uiHome, "config.json")
-	var legacies []string
-	if d := legacyConfigDir(); d != "" {
-		legacies = append(legacies, filepath.Join(d, "config.json"))
-	}
-	path, migratedFrom := resolveWithLegacy(primary, legacies, readFile)
+// config.json only. It returns (nil, nil) when absent (defaults + env still apply).
+func loadConfigFile(uiHome string, readFile func(string) ([]byte, error)) (*fileConfig, error) {
+	path := filepath.Join(uiHome, "config.json")
 	b, err := readFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, "", nil
+			return nil, nil
 		}
-		return nil, "", fmt.Errorf("read config file %q: %w", path, err)
+		return nil, fmt.Errorf("read config file %q: %w", path, err)
 	}
 	var out fileConfig
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
-		return nil, "", fmt.Errorf("parse config file %q: %w", path, err)
+		return nil, fmt.Errorf("parse config file %q: %w", path, err)
 	}
-	return &out, migratedFrom, nil
-}
-
-// resolveStatePath decides where state.json (machine-written app state) lives:
-// $JUICE_HOME/ui/state.json, else an existing legacy file — the cwd ./juice-ui.json
-// (the historical deployment default) or the config-dir juice-ui.json.
-func resolveStatePath(uiHome string, readFile func(string) ([]byte, error)) (path, migratedFrom string) {
-	primary := filepath.Join(uiHome, "state.json")
-	legacies := []string{"juice-ui.json"} // cwd — the live deployment's location
-	if d := legacyConfigDir(); d != "" {
-		legacies = append(legacies, filepath.Join(d, "juice-ui.json"))
-	}
-	return resolveWithLegacy(primary, legacies, readFile)
+	return &out, nil
 }
 
 // defaultTrustedOrigins trusts localhost and 127.0.0.1 on the listen port, so the

@@ -44,21 +44,6 @@ const (
 	outOK   = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the operation was applied."}}}`
 	outRoom = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the room was created."},"room_id":{"type":"string","description":"Id of the newly created room; use it to address the room in later calls."}}}`
 	outMsg  = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the message was posted."},"message_id":{"type":"string","description":"Id of the newly posted message; use it to delete the message later."}}}`
-	// outInbox documents the receive shape: your rooms (with unread counts) and the
-	// unseen messages returning this call consumes.
-	outInbox = `{"type":"object","properties":{` +
-		`"ok":{"type":"boolean","description":"True on success."},` +
-		`"rooms":{"type":"array","description":"Your room memberships, each with your unseen-message count.","items":{"type":"object","properties":{` +
-		`"room_id":{"type":"string","description":"Id of the room; use it to post a reply."},` +
-		`"name":{"type":"string","description":"Display name of the room."},` +
-		`"unread":{"type":"integer","description":"Messages from others you have not seen; may exceed the messages returned this call when a large backlog is paged across calls."}}}},` +
-		`"messages":{"type":"array","description":"The messages you had not yet seen, oldest first. Returning them marks them seen.","items":{"type":"object","properties":{` +
-		`"room_id":{"type":"string","description":"Id of the room the message is in."},` +
-		`"id":{"type":"string","description":"Id of the message."},` +
-		`"seq":{"type":"integer","description":"Per-room sequence number of the message."},` +
-		`"from":{"type":"string","description":"Handle of the sender."},` +
-		`"text":{"type":"string","description":"The message text."},` +
-		`"at":{"type":"string","description":"RFC 3339 timestamp when it was posted."}}}}}}`
 )
 
 // Ops is the chat server's kernel-facing write surface — the single source of
@@ -107,12 +92,6 @@ var Ops = []Op{
 		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the message is in."},"message":{"type":"string","description":"Id of the message to delete (as returned by the message action)."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
-	{
-		Name:         "inbox",
-		Description:  "Fetch your unseen chat messages across all rooms, plus your room list. Returning messages marks them seen, so a later call yields only newly-arrived ones — poll this to receive messages. A large backlog is paged across calls.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{}}`),
-		OutputSchema: json.RawMessage(outInbox),
-	},
 }
 
 // Auth identifies the caller of a kernel-facing request (returning ok=false when
@@ -121,20 +100,38 @@ var Ops = []Op{
 // deployment supplies its own).
 type Auth func(r *http.Request) (handle string, ok bool)
 
+// NotifyEvent describes a just-committed message so an injected Notifier can
+// deliver a doorbell to each recipient. Members includes the sender; the plugin
+// excludes it.
+type NotifyEvent struct {
+	RoomID   string
+	RoomName string
+	Sender   string
+	Members  []string
+}
+
+// Notifier is called after a message commits so the plugin can ring each member
+// (in juice-ui, by minting a Juice step). It is injected — like Auth — so the
+// daemon stays Juice-agnostic: it invokes the hook and makes no kernel call
+// itself. A standalone deployment passes nil.
+type Notifier func(ev NotifyEvent)
+
 // Daemon is the running chat server: the store, an injected caller authenticator,
 // and its two route sets.
 type Daemon struct {
 	store       *Store
 	adminSecret string
 	auth        Auth
+	notify      Notifier
 	kernelMux   *http.ServeMux
 	adminMux    *http.ServeMux
 }
 
 // New wraps an open store into a chat server. auth authenticates callers on the
-// kernel-facing write routes; adminSecret gates the admin read routes.
-func New(store *Store, adminSecret string, auth Auth) *Daemon {
-	d := &Daemon{store: store, adminSecret: adminSecret, auth: auth}
+// kernel-facing write routes; adminSecret gates the admin read routes; notify (may
+// be nil) is invoked after each successful post to deliver doorbells.
+func New(store *Store, adminSecret string, auth Auth, notify Notifier) *Daemon {
+	d := &Daemon{store: store, adminSecret: adminSecret, auth: auth, notify: notify}
 	d.routes()
 	return d
 }
@@ -177,28 +174,38 @@ func (d *Daemon) routes() {
 	}))
 	d.kernelMux.HandleFunc("POST /message", d.write(func(caller string, a kargs) (map[string]any, error) {
 		m, err := d.store.PostMessage(caller, a.Room, a.Text)
+		if err == nil {
+			d.fireNotify(caller, a.Room)
+		}
 		return map[string]any{"ok": true, "message_id": m.ID}, err
 	}))
 	d.kernelMux.HandleFunc("POST /delete-message", d.write(func(caller string, a kargs) (map[string]any, error) {
 		return okBody(), d.store.DeleteMessage(caller, a.Room, a.Message)
-	}))
-	d.kernelMux.HandleFunc("POST /inbox", d.write(func(caller string, _ kargs) (map[string]any, error) {
-		rooms, msgs, err := d.store.Inbox(caller)
-		if err != nil {
-			return nil, err
-		}
-		if msgs == nil {
-			msgs = []Message{}
-		}
-		return map[string]any{"ok": true, "rooms": inboxRooms(rooms), "messages": msgs}, nil
 	}))
 
 	d.adminMux = http.NewServeMux()
 	d.adminMux.HandleFunc("GET /admin/rooms", d.admin(d.listRooms))
 	d.adminMux.HandleFunc("GET /admin/rooms/{id}", d.admin(d.getRoom))
 	d.adminMux.HandleFunc("GET /admin/rooms/{id}/history", d.admin(d.getHistory))
-	d.adminMux.HandleFunc("POST /admin/rooms/{id}/read", d.admin(d.markRead))
-	d.adminMux.HandleFunc("GET /admin/unread", d.admin(d.getUnread))
+	d.adminMux.HandleFunc("POST /admin/rooms/{id}/notify/reserve", d.admin(d.reserveNotification))
+	d.adminMux.HandleFunc("GET /admin/rooms/{id}/notify", d.admin(d.getNotification))
+	d.adminMux.HandleFunc("PUT /admin/rooms/{id}/notify", d.admin(d.setNotification))
+	d.adminMux.HandleFunc("DELETE /admin/rooms/{id}/notify", d.admin(d.clearNotification))
+}
+
+// fireNotify builds a NotifyEvent from the room's live membership and hands it to
+// the injected Notifier (if any). Best-effort: a lookup failure or nil hook simply
+// delivers no doorbell — the message is already committed and the watermark-based
+// unread count is unaffected.
+func (d *Daemon) fireNotify(sender, roomID string) {
+	if d.notify == nil {
+		return
+	}
+	name, members, err := d.store.Recipients(roomID)
+	if err != nil {
+		return
+	}
+	d.notify(NotifyEvent{RoomID: roomID, RoomName: name, Sender: sender, Members: members})
 }
 
 // ---- kernel-facing writes ----
@@ -279,25 +286,42 @@ func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }
 
-func (d *Daemon) markRead(w http.ResponseWriter, r *http.Request) {
+func (d *Daemon) reserveNotification(w http.ResponseWriter, r *http.Request) {
+	ok, err := d.store.ReserveNotification(r.URL.Query().Get("handle"), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reserved": ok})
+}
+
+func (d *Daemon) getNotification(w http.ResponseWriter, r *http.Request) {
+	ref, err := d.store.GetNotification(r.URL.Query().Get("handle"), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ref": ref})
+}
+
+func (d *Daemon) setNotification(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Seq int64 `json:"seq"`
+		Ref string `json:"ref"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	if err := d.store.MarkRead(r.URL.Query().Get("handle"), r.PathValue("id"), in.Seq); err != nil {
+	if err := d.store.SetNotificationRef(r.URL.Query().Get("handle"), r.PathValue("id"), in.Ref); err != nil {
 		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, okBody())
 }
 
-func (d *Daemon) getUnread(w http.ResponseWriter, r *http.Request) {
-	n, err := d.store.UnreadTotal(r.URL.Query().Get("handle"))
-	if err != nil {
+func (d *Daemon) clearNotification(w http.ResponseWriter, r *http.Request) {
+	if err := d.store.ClearNotification(r.URL.Query().Get("handle"), r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"count": n})
+	writeJSON(w, http.StatusOK, okBody())
 }
 
 // roomView is the admin read shape for a single room.
@@ -309,16 +333,6 @@ type roomView struct {
 // ---- helpers ----
 
 func okBody() map[string]any { return map[string]any{"ok": true} }
-
-// inboxRooms trims store rooms to the inbox action's documented shape
-// (room_id/name/unread), dropping fields the receive contract doesn't promise.
-func inboxRooms(rooms []Room) []map[string]any {
-	out := make([]map[string]any, 0, len(rooms))
-	for _, r := range rooms {
-		out = append(out, map[string]any{"room_id": r.ID, "name": r.Name, "unread": r.Unread})
-	}
-	return out
-}
 
 func statusFor(err error) int {
 	switch {
