@@ -44,6 +44,15 @@ const (
 	outOK   = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the operation was applied."}}}`
 	outRoom = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the room was created."},"room_id":{"type":"string","description":"Id of the newly created room; use it to address the room in later calls."}}}`
 	outMsg  = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the message was posted."},"message_id":{"type":"string","description":"Id of the newly posted message; use it to delete the message later."}}}`
+	// outRead is the read action's response: the room's recent messages, oldest first.
+	outRead = `{"type":"object","properties":{` +
+		`"ok":{"type":"boolean","description":"True on success."},` +
+		`"messages":{"type":"array","description":"The room's recent messages, oldest first.","items":{"type":"object","properties":{` +
+		`"id":{"type":"string","description":"Id of the message."},` +
+		`"seq":{"type":"integer","description":"Per-room sequence number; pass the largest one back as `+"`after`"+` to fetch only newer messages next time."},` +
+		`"from":{"type":"string","description":"Handle of the sender."},` +
+		`"text":{"type":"string","description":"The message text."},` +
+		`"at":{"type":"string","description":"RFC 3339 timestamp when it was posted."}}}}}}`
 )
 
 // Ops is the chat server's kernel-facing write surface — the single source of
@@ -91,6 +100,12 @@ var Ops = []Op{
 		Description:  "Delete a message you sent. Only the message's original sender may delete it.",
 		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the message is in."},"message":{"type":"string","description":"Id of the message to delete (as returned by the message action)."}}}`),
 		OutputSchema: json.RawMessage(outOK),
+	},
+	{
+		Name:         "read",
+		Description:  "Read recent messages in a chat room you are a member of, oldest first. Poll this after a chat notification to see what was said. Pass `after` (a message seq) to fetch only messages newer than it; omit it for the recent window.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to read."},"after":{"type":"integer","description":"Return only messages with a seq greater than this (from a prior read); omit or 0 for the recent window."}}}`),
+		OutputSchema: json.RawMessage(outRead),
 	},
 }
 
@@ -152,6 +167,7 @@ type kargs struct {
 	Text    string   `json:"text"`
 	Member  string   `json:"member"`
 	Message string   `json:"message"`
+	After   int64    `json:"after"`
 }
 
 func (d *Daemon) routes() {
@@ -181,6 +197,16 @@ func (d *Daemon) routes() {
 	}))
 	d.kernelMux.HandleFunc("POST /delete-message", d.write(func(caller string, a kargs) (map[string]any, error) {
 		return okBody(), d.store.DeleteMessage(caller, a.Room, a.Message)
+	}))
+	d.kernelMux.HandleFunc("POST /read", d.write(func(caller string, a kargs) (map[string]any, error) {
+		msgs, err := d.store.Messages(caller, a.Room, a.After)
+		if err != nil {
+			return nil, err
+		}
+		if msgs == nil {
+			msgs = []Message{}
+		}
+		return map[string]any{"ok": true, "messages": msgs}, nil
 	}))
 
 	d.adminMux = http.NewServeMux()

@@ -280,3 +280,34 @@ func TestRecipientsListsLiveMembers(t *testing.T) {
 		t.Errorf("Recipients(unknown) err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestMessagesReadPath(t *testing.T) {
+	s := newStore(t)
+	r, _ := s.CreateRoom("@alice", "general", []string{"@bob"})
+	s.PostMessage("@alice", r.ID, "one")
+	s.PostMessage("@bob", r.ID, "two")
+	m3, _ := s.PostMessage("@alice", r.ID, "three")
+
+	// after=0 → the recent window, oldest-first, all senders (not consume-on-read).
+	msgs, err := s.Messages("@bob", r.ID, 0)
+	if err != nil {
+		t.Fatalf("Messages: %v", err)
+	}
+	if len(msgs) != 3 || msgs[0].Text != "one" || msgs[2].Text != "three" {
+		t.Fatalf("recent read = %+v", msgs)
+	}
+	// A second read returns the same (stateless — reading marks nothing).
+	if again, _ := s.Messages("@bob", r.ID, 0); len(again) != 3 {
+		t.Errorf("read is not stateless: got %d, want 3", len(again))
+	}
+	// after=<2nd seq> → only newer, oldest-first.
+	after := msgs[1].Seq
+	newer, _ := s.Messages("@bob", r.ID, after)
+	if len(newer) != 1 || newer[0].ID != m3.ID {
+		t.Errorf("after-filter = %+v, want just the third message", newer)
+	}
+	// Non-members cannot read.
+	if _, err := s.Messages("@carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
+		t.Errorf("non-member read err = %v, want ErrNotMember", err)
+	}
+}

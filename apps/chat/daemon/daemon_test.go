@@ -101,7 +101,7 @@ func TestAdminRoutesRequireSecret(t *testing.T) {
 }
 
 func TestOpsAndOutputSchemaAreValid(t *testing.T) {
-	want := []string{"create-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message"}
+	want := []string{"create-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message", "read"}
 	if len(Ops) != len(want) {
 		t.Fatalf("Ops has %d, want %d", len(Ops), len(want))
 	}
@@ -211,5 +211,33 @@ func TestNotifyAdminRoutesRoundTrip(t *testing.T) {
 	adminReq(t, d, http.MethodDelete, p+"?handle=@bob", "")
 	if _, m := adminReq(t, d, http.MethodGet, p+"?handle=@bob", ""); m["ref"] != "" {
 		t.Errorf("ref after clear = %v, want empty", m["ref"])
+	}
+}
+
+func TestReadRoute(t *testing.T) {
+	d := newDaemon(t)
+	_, body := postKernel(t, d, "/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
+	room := body["room_id"].(string)
+	postKernel(t, d, "/message", "@alice", `{"room":"`+room+`","text":"hi bob"}`)
+
+	// unauthenticated → 401
+	if code, _ := postKernel(t, d, "/read", "", `{"room":"`+room+`"}`); code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated read status=%d, want 401", code)
+	}
+	// member reads the message
+	code, in := postKernel(t, d, "/read", "@bob", `{"room":"`+room+`"}`)
+	if code != http.StatusOK || in["ok"] != true {
+		t.Fatalf("read status=%d body=%v", code, in)
+	}
+	msgs, _ := in["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("read messages = %d, want 1: %v", len(msgs), in["messages"])
+	}
+	if m0, _ := msgs[0].(map[string]any); m0["from"] != "@alice" || m0["text"] != "hi bob" {
+		t.Errorf("read message = %v", msgs[0])
+	}
+	// non-member → 403
+	if code, _ := postKernel(t, d, "/read", "@carol", `{"room":"`+room+`"}`); code != http.StatusForbidden {
+		t.Errorf("non-member read status=%d, want 403", code)
 	}
 }

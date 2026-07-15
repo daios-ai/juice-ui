@@ -61,14 +61,18 @@ injected auth hook (`CallerIdentity.Authenticate`) recovers the caller's handle.
   per-caller auth injected by the kernel. These are the `Ops`:
 
   `create-room · delete-room · add-member · remove-member · leave-room ·
-  message · delete-message`
+  message · delete-message · read`
 
-  All are writes. **Receiving is not an action:** a member (human or agent) is
-  notified of new messages by a Juice **step** the plugin mints (see "Unread &
-  delivery" below), then reads the room — so a headless Juice client receives via
-  steps, exactly like the agent-channel design, with no bespoke `inbox` action.
-  `Ops` is the single source of truth: the daemon's routes, the plugin's Juice action
-  registration (`@chat/<name>`), and each action's public contract.
+  Writes, plus one read — **`read`** (`{room, after?}` → recent messages, oldest
+  first; member-gated; stateless). The receive loop for any member, human or agent,
+  is fully kernel-native: **a Juice doorbell step** notifies "room changed" (see
+  "Unread & delivery"), **`@chat/read`** fetches what was said, and a reply is a plain
+  **`@chat/message`**. `read` is *stateless* — no watermark, no consume-on-read —
+  because unread lives entirely in the steps; it is the read twin of `message`.
+  (Contrast the old `inbox`: it conflated unread-tracking with content-read; steps
+  took the former, `read` is the latter.) `Ops` is the single source of truth: the
+  daemon's routes, the plugin's Juice action registration (`@chat/<name>`), and each
+  action's public contract.
 
 - **Admin reads** (`admin/*`, authenticated by a shared secret): `rooms`,
   `rooms/{id}`, `rooms/{id}/history`, and the `rooms/{id}/notify/*` doorbell

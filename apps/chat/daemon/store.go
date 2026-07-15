@@ -368,6 +368,29 @@ func (s *Store) History(viewer, roomID string, beforeSeq int64, limit int) ([]Me
 	return msgs, nil
 }
 
+// Messages is the member-facing READ path (the twin of PostMessage): up to
+// recentWindow of the room's most recent live messages with seq > after
+// (after=0 → the recent window), oldest-first; member only. It is stateless — no
+// watermark, no marking-seen — because unread is tracked as Juice steps, so reading
+// is a pure query. A non-UI member (e.g. an agent) fetches room content this way.
+func (s *Store) Messages(viewer, roomID string, after int64) ([]Message, error) {
+	if _, err := s.requireMember(viewer, roomID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT id, seq, sender, text, at FROM messages
+		WHERE room_id = ? AND deleted = 0 AND seq > ? ORDER BY seq DESC LIMIT ?`,
+		roomID, after, recentWindow)
+	if err != nil {
+		return nil, err
+	}
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return nil, err
+	}
+	reverse(msgs)
+	return msgs, nil
+}
+
 // RoomsFor returns the live rooms viewer is a member of, most-recent-activity
 // first. Unread is NOT computed here: unread is a Juice-steps concern (the plugin
 // fills Room.Unread from the viewer's outstanding doorbell steps), so the store
