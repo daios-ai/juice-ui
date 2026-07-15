@@ -6,6 +6,10 @@ in that surface — the first is **chat** (`apps/chat`). An app is a self-contai
 unit that plugs into the core through one seam, so the core never grows an app's
 weight and an app never reaches into the core.
 
+> This document is the **seam mechanics**. For the *mental model and the sharp edges*
+> — how to think about an app as a Juice user so it composes with the rest of the
+> ecosystem — read `docs/building-juice-apps.md` first.
+
 Two properties, on two different axes:
 
 - **Independent in code.** An app is its own package with its own templates,
