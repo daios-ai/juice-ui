@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -85,11 +86,12 @@ CREATE TABLE IF NOT EXISTS messages (
   PRIMARY KEY (room_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(room_id, id);
-CREATE TABLE IF NOT EXISTS notifications (
-  handle  TEXT NOT NULL,
-  room_id TEXT NOT NULL,
-  ref     TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (handle, room_id)
+CREATE TABLE IF NOT EXISTS tokens (
+  hash       TEXT PRIMARY KEY,
+  username   TEXT NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 0,
+  reg_id     TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
 );`
 
 // recentWindow bounds how many of a room's latest messages a plain read returns;
@@ -436,57 +438,6 @@ func (s *Store) RoomsFor(viewer string) ([]Room, error) {
 	return out, nil
 }
 
-// ---- notification doorbells ----
-//
-// The notifications table records, per (handle, room), the opaque id of an
-// outstanding "doorbell" — a Juice step the plugin minted to tell that member a
-// room has unread messages. The store never interprets the ref and issues no
-// kernel call over it. It backs only the doorbell *lifecycle* (coalescing +
-// completion lookup); the unread DISPLAY derives from the real kernel steps. A
-// standalone (plugin-less) deployment simply never populates it.
-
-// ReserveNotification atomically claims the doorbell slot for (handle, room): it
-// returns true iff no row yet exists, so exactly one concurrent poster mints the
-// step. A subsequent message while a doorbell is outstanding reserves nothing
-// (coalescing). The winner records the step id via SetNotificationRef, or clears
-// the slot on a mint failure so the next message retries.
-func (s *Store) ReserveNotification(handle, roomID string) (bool, error) {
-	res, err := s.db.Exec(`INSERT INTO notifications(handle, room_id, ref) VALUES(?,?,'')
-		ON CONFLICT(handle, room_id) DO NOTHING`, handle, roomID)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
-}
-
-// SetNotificationRef records the minted step id for a reserved slot.
-func (s *Store) SetNotificationRef(handle, roomID, ref string) error {
-	_, err := s.db.Exec(`UPDATE notifications SET ref = ? WHERE handle = ? AND room_id = ?`,
-		ref, handle, roomID)
-	return err
-}
-
-// GetNotification returns the outstanding doorbell step id for (handle, room), or
-// "" when none is set (no row, or a reserved-but-not-yet-minted slot).
-func (s *Store) GetNotification(handle, roomID string) (string, error) {
-	var ref string
-	err := s.db.QueryRow(`SELECT ref FROM notifications WHERE handle = ? AND room_id = ?`,
-		handle, roomID).Scan(&ref)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return ref, err
-}
-
-// ClearNotification removes the doorbell slot for (handle, room), so the next
-// message re-rings. Called on room visit (after completing the step) and on a mint
-// failure.
-func (s *Store) ClearNotification(handle, roomID string) error {
-	_, err := s.db.Exec(`DELETE FROM notifications WHERE handle = ? AND room_id = ?`, handle, roomID)
-	return err
-}
-
 // Recipients returns a live room's display name and its member handles — the
 // daemon builds a post-message NotifyEvent from it. ErrNotFound if the room is
 // gone.
@@ -499,6 +450,71 @@ func (s *Store) Recipients(roomID string) (name string, members []string, err er
 	}
 	members, err = s.members(s.db, roomID)
 	return name, members, err
+}
+
+// ---- api tokens (register / verify) ----
+//
+// A token is @chat's own per-caller credential: the caller registers a @handle,
+// receives an opaque API key (stored here only as its hash), and — once the handle
+// owner accepts the verification step — the key is activated. The kernel injects the
+// key on every @chat/msg/* call; the daemon's auth hook recovers the caller by hashing
+// it and looking up the (active) row. Registration and verification are the plugin's
+// job (they need Juice); the store only mints, activates, and resolves.
+
+// RegisterToken mints a pending (inactive) API key for username, storing only its
+// hash. It returns the raw key (shown to the caller once) and the reg_id used to
+// activate it. A standalone daemon can register directly; the plugin drives it from
+// the open @chat/register action.
+func (s *Store) RegisterToken(username string) (rawKey, regID string, err error) {
+	if username == "" {
+		return "", "", ErrBadInput
+	}
+	rawKey, regID = newToken(), newToken()
+	if _, err = s.db.Exec(`INSERT INTO tokens(hash, username, active, reg_id, created_at)
+		VALUES(?,?,0,?,?)`, hashToken(rawKey), username, regID, now()); err != nil {
+		return "", "", err
+	}
+	return rawKey, regID, nil
+}
+
+// ActivateToken flips the pending key identified by regID to active. ErrNotFound if
+// no such registration exists. Called when the verification step is completed.
+func (s *Store) ActivateToken(regID string) error {
+	if regID == "" {
+		return ErrBadInput
+	}
+	res, err := s.db.Exec(`UPDATE tokens SET active = 1 WHERE reg_id = ?`, regID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ResolveToken maps a RAW API key (as the kernel injects it) to its username and
+// active flag, hashing it first — the daemon's auth hook calls this. An empty or
+// unknown key resolves to ("", false, nil), an unauthenticated caller.
+func (s *Store) ResolveToken(raw string) (username string, active bool, err error) {
+	if raw == "" {
+		return "", false, nil
+	}
+	return s.LookupToken(hashToken(raw))
+}
+
+// LookupToken resolves a token hash to its username and active flag. A miss returns
+// ("", false, nil) — an unknown key is an unauthenticated caller, not an error.
+func (s *Store) LookupToken(hash string) (username string, active bool, err error) {
+	var act int
+	err = s.db.QueryRow(`SELECT username, active FROM tokens WHERE hash = ?`, hash).Scan(&username, &act)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return username, act == 1, nil
 }
 
 // ---- helpers ----
@@ -546,10 +562,17 @@ func dedupeMembers(creator string, members []string) []string {
 // now is the current UTC time as an RFC 3339 string.
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-// newToken returns a 24-byte cryptographically-random hex string, used for user
-// keys and room/message ids.
+// newToken returns a 24-byte cryptographically-random hex string, used for API
+// keys, registration ids, and room/message ids.
 func newToken() string {
 	var b [24]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// hashToken returns the hex SHA-256 of a raw API key. Only the hash is persisted, so
+// a store leak never exposes usable keys.
+func hashToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }

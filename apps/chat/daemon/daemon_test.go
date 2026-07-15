@@ -23,7 +23,7 @@ func newDaemon(t *testing.T) *Daemon {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	d := New(s, "s3cret", testAuth, nil)
+	d := New(s, "s3cret", "vs3cret", testAuth, nil)
 	t.Cleanup(func() { _ = d.Close() })
 	return d
 }
@@ -48,12 +48,12 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	alice, bob, carol := "@alice", "@bob", "@carol"
 
 	// unauthenticated caller → 401, no state change.
-	if code, _ := postKernel(t, d, "/create-room", "", `{"name":"x"}`); code != http.StatusUnauthorized {
+	if code, _ := postKernel(t, d, "/msg/create-room", "", `{"name":"x"}`); code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status = %d, want 401", code)
 	}
 
 	// alice creates a room with bob → 200 + room_id.
-	code, body := postKernel(t, d, "/create-room", alice, `{"name":"general","members":["@bob"]}`)
+	code, body := postKernel(t, d, "/msg/create-room", alice, `{"name":"general","members":["@bob"]}`)
 	if code != http.StatusOK || body["ok"] != true {
 		t.Fatalf("create-room status=%d body=%v", code, body)
 	}
@@ -63,7 +63,7 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	}
 
 	// bob (member) posts → 200; caller attributed from the key.
-	if code, body := postKernel(t, d, "/message", bob, `{"room":"`+room+`","text":"hi"}`); code != http.StatusOK || body["message_id"] == "" {
+	if code, body := postKernel(t, d, "/msg/message", bob, `{"room":"`+room+`","text":"hi"}`); code != http.StatusOK || body["message_id"] == "" {
 		t.Fatalf("member post status=%d body=%v", code, body)
 	}
 	if _, msgs, _ := d.store.Room("@bob", room); len(msgs) != 1 || msgs[0].From != "@bob" {
@@ -71,15 +71,15 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	}
 
 	// carol (not a member) posts → 403.
-	if code, body := postKernel(t, d, "/message", carol, `{"room":"`+room+`","text":"nope"}`); code != http.StatusForbidden || body["ok"] != false {
+	if code, body := postKernel(t, d, "/msg/message", carol, `{"room":"`+room+`","text":"nope"}`); code != http.StatusForbidden || body["ok"] != false {
 		t.Fatalf("non-member post status=%d body=%v, want 403 ok=false", code, body)
 	}
 	// post to a nonexistent room → 404.
-	if code, _ := postKernel(t, d, "/message", alice, `{"room":"ghost","text":"x"}`); code != http.StatusNotFound {
+	if code, _ := postKernel(t, d, "/msg/message", alice, `{"room":"ghost","text":"x"}`); code != http.StatusNotFound {
 		t.Fatalf("post to missing room status=%d, want 404", code)
 	}
 	// bob (non-creator) adds a member → 403 (creator-only, enforced on the kernel surface).
-	if code, _ := postKernel(t, d, "/add-member", bob, `{"room":"`+room+`","member":"@dave"}`); code != http.StatusForbidden {
+	if code, _ := postKernel(t, d, "/msg/add-member", bob, `{"room":"`+room+`","member":"@dave"}`); code != http.StatusForbidden {
 		t.Fatalf("non-creator add-member status=%d, want 403", code)
 	}
 }
@@ -101,7 +101,7 @@ func TestAdminRoutesRequireSecret(t *testing.T) {
 }
 
 func TestOpsAndOutputSchemaAreValid(t *testing.T) {
-	want := []string{"create-room", "delete-room", "add-member", "remove-member", "leave-room", "message", "delete-message", "read"}
+	want := []string{"msg/create-room", "msg/delete-room", "msg/add-member", "msg/remove-member", "msg/leave-room", "msg/message", "msg/delete-message", "msg/read"}
 	if len(Ops) != len(want) {
 		t.Fatalf("Ops has %d, want %d", len(Ops), len(want))
 	}
@@ -138,42 +138,21 @@ func TestOpsAndOutputSchemaAreValid(t *testing.T) {
 	}
 }
 
-// adminReq drives an admin route with the shared secret.
-func adminReq(t *testing.T, d *Daemon, method, path, body string) (int, map[string]any) {
-	t.Helper()
-	var rdr *strings.Reader
-	if body != "" {
-		rdr = strings.NewReader(body)
-	}
-	var req *http.Request
-	if rdr != nil {
-		req = httptest.NewRequest(method, path, rdr)
-	} else {
-		req = httptest.NewRequest(method, path, nil)
-	}
-	req.Header.Set(adminHeader, "s3cret")
-	rec := httptest.NewRecorder()
-	d.adminMux.ServeHTTP(rec, req)
-	var m map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &m)
-	return rec.Code, m
-}
-
 func TestNotifierFiresOnPostOnly(t *testing.T) {
 	s, err := Open("")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	var got []NotifyEvent
-	d := New(s, "s3cret", testAuth, func(ev NotifyEvent) { got = append(got, ev) })
+	d := New(s, "s3cret", "vs3cret", testAuth, func(ev NotifyEvent) { got = append(got, ev) })
 	t.Cleanup(func() { _ = d.Close() })
 
-	_, body := postKernel(t, d, "/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
+	_, body := postKernel(t, d, "/msg/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
 	room := body["room_id"].(string)
 
 	// A successful post fires exactly one event with the room, sender, and members
 	// (sender included — the plugin excludes it).
-	postKernel(t, d, "/message", "@alice", `{"room":"`+room+`","text":"hi"}`)
+	postKernel(t, d, "/msg/message", "@alice", `{"room":"`+room+`","text":"hi"}`)
 	if len(got) != 1 {
 		t.Fatalf("events after post = %d, want 1", len(got))
 	}
@@ -186,46 +165,24 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 	}
 
 	// A rejected post (non-member) fires no event.
-	postKernel(t, d, "/message", "@carol", `{"room":"`+room+`","text":"nope"}`)
+	postKernel(t, d, "/msg/message", "@carol", `{"room":"`+room+`","text":"nope"}`)
 	if len(got) != 1 {
 		t.Errorf("events after rejected post = %d, want still 1", len(got))
 	}
 }
 
-func TestNotifyAdminRoutesRoundTrip(t *testing.T) {
-	d := newDaemon(t)
-	p := "/admin/rooms/r1/notify"
-	// reserve: first true, second (coalesced) false.
-	if _, m := adminReq(t, d, http.MethodPost, p+"/reserve?handle=@bob", ""); m["reserved"] != true {
-		t.Fatalf("first reserve = %v, want true", m["reserved"])
-	}
-	if _, m := adminReq(t, d, http.MethodPost, p+"/reserve?handle=@bob", ""); m["reserved"] != false {
-		t.Errorf("second reserve = %v, want false", m["reserved"])
-	}
-	// set + get the ref.
-	adminReq(t, d, http.MethodPut, p+"?handle=@bob", `{"ref":"step-7"}`)
-	if _, m := adminReq(t, d, http.MethodGet, p+"?handle=@bob", ""); m["ref"] != "step-7" {
-		t.Errorf("ref = %v, want step-7", m["ref"])
-	}
-	// clear frees the slot.
-	adminReq(t, d, http.MethodDelete, p+"?handle=@bob", "")
-	if _, m := adminReq(t, d, http.MethodGet, p+"?handle=@bob", ""); m["ref"] != "" {
-		t.Errorf("ref after clear = %v, want empty", m["ref"])
-	}
-}
-
 func TestReadRoute(t *testing.T) {
 	d := newDaemon(t)
-	_, body := postKernel(t, d, "/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
+	_, body := postKernel(t, d, "/msg/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
 	room := body["room_id"].(string)
-	postKernel(t, d, "/message", "@alice", `{"room":"`+room+`","text":"hi bob"}`)
+	postKernel(t, d, "/msg/message", "@alice", `{"room":"`+room+`","text":"hi bob"}`)
 
 	// unauthenticated → 401
-	if code, _ := postKernel(t, d, "/read", "", `{"room":"`+room+`"}`); code != http.StatusUnauthorized {
+	if code, _ := postKernel(t, d, "/msg/read", "", `{"room":"`+room+`"}`); code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated read status=%d, want 401", code)
 	}
 	// member reads the message
-	code, in := postKernel(t, d, "/read", "@bob", `{"room":"`+room+`"}`)
+	code, in := postKernel(t, d, "/msg/read", "@bob", `{"room":"`+room+`"}`)
 	if code != http.StatusOK || in["ok"] != true {
 		t.Fatalf("read status=%d body=%v", code, in)
 	}
@@ -237,7 +194,49 @@ func TestReadRoute(t *testing.T) {
 		t.Errorf("read message = %v", msgs[0])
 	}
 	// non-member → 403
-	if code, _ := postKernel(t, d, "/read", "@carol", `{"room":"`+room+`"}`); code != http.StatusForbidden {
+	if code, _ := postKernel(t, d, "/msg/read", "@carol", `{"room":"`+room+`"}`); code != http.StatusForbidden {
 		t.Errorf("non-member read status=%d, want 403", code)
+	}
+}
+
+func TestValidateUserActivatesToken(t *testing.T) {
+	d := newDaemon(t) // validateSecret = "vs3cret"
+	rawKey, regID, err := d.store.RegisterToken("@agent")
+	if err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
+
+	post := func(auth, body string) int {
+		req := httptest.NewRequest(http.MethodPost, "/validate-user", strings.NewReader(body))
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		d.KernelHandler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// wrong / absent secret → 401, key stays inactive.
+	if code := post("Bearer wrong", `{"reg_id":"`+regID+`"}`); code != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret validate status=%d, want 401", code)
+	}
+	if code := post("", `{"reg_id":"`+regID+`"}`); code != http.StatusUnauthorized {
+		t.Fatalf("no-secret validate status=%d, want 401", code)
+	}
+	if _, active, _ := d.store.LookupToken(hashToken(rawKey)); active {
+		t.Fatal("key activated despite rejected validate calls")
+	}
+
+	// correct secret → 200, key active.
+	if code := post("Bearer vs3cret", `{"reg_id":"`+regID+`"}`); code != http.StatusOK {
+		t.Fatalf("valid validate status=%d, want 200", code)
+	}
+	if _, active, _ := d.store.LookupToken(hashToken(rawKey)); !active {
+		t.Error("key not activated after valid validate call")
+	}
+
+	// unknown reg_id (correct secret) → 404.
+	if code := post("Bearer vs3cret", `{"reg_id":"nope"}`); code != http.StatusNotFound {
+		t.Errorf("unknown reg_id validate status=%d, want 404", code)
 	}
 }

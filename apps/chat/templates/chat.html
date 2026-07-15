@@ -5,6 +5,7 @@
   <p class="subtitle">Your rooms.</p>
 </div>
 
+{{if $d.Connected}}
 <p><a class="btn-quiet" href="/chat?form=room-create" data-modal="form-room-create">+ new room</a></p>
 
 <div class="table-scroll">
@@ -41,4 +42,13 @@
     </form>
   </div>
 </dialog>
+{{else}}
+<div class="banner banner-info" role="status">
+  <p>Connect your account to start using chat.</p>
+  <form method="post" action="/chat/connect">
+    {{.CSRFField}}
+    <button class="btn" type="submit">Connect to chat</button>
+  </form>
+</div>
+{{end}}
 {{end}}

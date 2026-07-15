@@ -154,7 +154,7 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 	var gotName string
 	var gotData any
 	c := New()
-	c.daemon = daemon.New(mustStore(t), "s", noAuth, nil)
+	c.daemon = daemon.New(mustStore(t), "s", "vs", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
 	c.deps = apps.Deps{
 		Handle:    func(r *http.Request) string { return "@alice" },
@@ -195,7 +195,7 @@ func mustStore(t *testing.T) *daemon.Store {
 // the new route with delegated_bearer auth and re-enabled — reproducing the fix
 // for the stale-source "action returned status 404" bug.
 func TestEnsureActionsCreatesAndMigrates(t *testing.T) {
-	f := newFakeKernel(fakeAction{ID: "old1", Name: "create-room", Active: true, Public: true,
+	f := newFakeKernel(fakeAction{ID: "old1", Name: "msg/create-room", Active: true, Public: true,
 		URL: "http://localhost:8080/_kernel/chat/ack"}) // stale source from the old version
 	defer f.close()
 	c := New()
@@ -206,7 +206,7 @@ func TestEnsureActionsCreatesAndMigrates(t *testing.T) {
 		t.Fatalf("ensureActions: %v", err)
 	}
 	upd := f.updateBody("old1")
-	if !strings.Contains(upd, "/_kernel/chat/create-room") || !strings.Contains(upd, "delegated_bearer") {
+	if !strings.Contains(upd, "/_kernel/chat/msg/create-room") || !strings.Contains(upd, "delegated_bearer") {
 		t.Errorf("stale create-room not repointed/rebound: %q", upd)
 	}
 	if !f.enabled("old1") {
@@ -264,7 +264,6 @@ func TestEnsureActionsForcesOnAuthRevChange(t *testing.T) {
 	}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
 	c.st.AuthRev = "stale-header-rev" // pushed by an earlier build under the old header
-	c.provisioned.Store("@alice", true)
 
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
@@ -282,9 +281,6 @@ func TestEnsureActionsForcesOnAuthRevChange(t *testing.T) {
 	}
 	if !strings.Contains(string(saved), authRev()) {
 		t.Errorf("new AuthRev not persisted: %s", saved)
-	}
-	if _, ok := c.provisioned.Load("@alice"); ok {
-		t.Error("provisioned guard not cleared after auth re-push (grants would not re-sync)")
 	}
 
 	// Second run with the now-current AuthRev: steady state, zero churn.
@@ -305,12 +301,12 @@ func TestEnsureActionsReconcilesStaleSchema(t *testing.T) {
 	base := "http://localhost:8080/_kernel/chat/"
 	var cr daemon.Op
 	for _, op := range daemon.Ops {
-		if op.Name == "create-room" {
+		if op.Name == "msg/create-room" {
 			cr = op
 		}
 	}
-	stale := fakeAction{ID: "cr", Name: "create-room", Active: true, Public: true,
-		URL: base + "create-room", Description: cr.Description, InSchema: string(cr.InputSchema),
+	stale := fakeAction{ID: "cr", Name: "msg/create-room", Active: true, Public: true,
+		URL: base + "msg/create-room", Description: cr.Description, InSchema: string(cr.InputSchema),
 		OutSchema: `{"type":"object","properties":{"ok":{"type":"boolean","description":"acknowledgement"}}}`}
 	f := newFakeKernel(stale)
 	defer f.close()
@@ -365,7 +361,7 @@ func TestEnsureActionsIsResilient(t *testing.T) {
 			URL: base + op.Name, Description: op.Description, InSchema: string(op.InputSchema), OutSchema: string(op.OutputSchema)})
 	}
 	f := newFakeKernel(seed...)
-	f.failName = "message"
+	f.failName = "msg/message"
 	defer f.close()
 	var saved []byte
 	c := New()
@@ -417,24 +413,28 @@ func (a *fakeAction) wire() string {
 }
 
 type fakeKernel struct {
-	srv      *httptest.Server
-	url      string
-	mu       sync.Mutex
-	acts     map[string]*fakeAction
-	creates  []string
-	updates  map[string]string // id -> last PUT body
-	enables  map[string]bool
-	disables map[string]bool
+	srv       *httptest.Server
+	url       string
+	mu        sync.Mutex
+	acts      map[string]*fakeAction
+	creates   []string
+	updates   map[string]string // id -> last PUT body
+	enables   map[string]bool
+	disables  map[string]bool
 	seq       int
-	failName  string   // if set, enabling the action of this name returns 500
-	runs      int      // count of POST /v1/run (seed opens via @sys/message)
-	mints     []string // POST /v1/steps bodies (doorbell mints)
-	completes []string // POST /v1/steps/{id}/complete step ids (doorbell dismissals)
-	stepsJSON string   // body returned by GET /v1/steps (default: the outbox sentinel)
+	failName  string           // if set, enabling the action of this name returns 500
+	runs      int              // count of POST /v1/run (seed opens via @sys/message)
+	mints     []string         // POST /v1/steps bodies (doorbell + verification mints)
+	completes []string         // POST /v1/steps/{id}/complete step ids (doorbell dismissals)
+	grants    []string         // POST /v1/grants selectors (connect)
+	doorbells []map[string]any // minted steps, surfaced by GET /v1/steps (coalescing reads them)
+	done      map[string]bool  // completed step ids (dropped from the waiting listing)
+	stepsJSON string           // extra steps GET /v1/steps returns (default: the outbox sentinel)
+	meJSON    string           // body returned by GET /v1/me (default: no @chat/msg connector)
 }
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
-	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string]string{}, enables: map[string]bool{}, disables: map[string]bool{}}
+	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string]string{}, enables: map[string]bool{}, disables: map[string]bool{}, done: map[string]bool{}}
 	for i := range seed {
 		a := seed[i]
 		f.acts[a.ID] = &a
@@ -469,7 +469,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		a := &fakeAction{ID: id, Name: in.Name, URL: in.Source, Description: in.Description,
 			InSchema: string(in.InputSchema), OutSchema: string(in.OutputSchema)}
 		f.acts[id] = a
-		if in.Name != "outbox" { // the private seed action is not an op — keep it out of op-churn counts
+		if !isSpecialName(in.Name) { // register/validate/outbox are not Ops — keep them out of op-churn counts
 			f.creates = append(f.creates, in.Name)
 		}
 		w.WriteHeader(201)
@@ -487,7 +487,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			w.Write([]byte(`{}`))
 			return
 		}
-		if a.Name != "outbox" { // exclude the private seed action from op-churn counts
+		if !isSpecialName(a.Name) { // exclude the non-Op special actions from op-churn counts
 			f.updates[id] = string(b)
 		}
 		if in.Source != nil {
@@ -518,7 +518,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		if a := f.acts[id]; a != nil {
 			a.Active = true
-			if a.Name != "outbox" { // exclude the private seed action from op-churn counts
+			if !isSpecialName(a.Name) { // exclude the non-Op special actions from op-churn counts
 				f.enables[id] = true
 			}
 		}
@@ -540,26 +540,78 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.Write([]byte(`{"id":"sink","action":"@sys/sink","active":true}`))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		body := string(mustRead(r))
 		f.mu.Lock()
 		f.runs++
 		f.mu.Unlock()
+		// @chat/register returns a pending key + verification step; the seed run (the
+		// private @chat/outbox) returns the sentinel step id.
+		if strings.Contains(body, chatHandle+"/"+registerName) {
+			w.Write([]byte(`{"trace_id":"t","result":{"ok":true,"api_key":"KEY-abc","step_id":"vstep-1"}}`))
+			return
+		}
 		w.Write([]byte(`{"trace_id":"seed-trace-1","result":{"step_id":"sentinel-1"}}`))
+	})
+	// /v1/me for the connector gate; /v1/grants for connect.
+	f.meJSON = `{"handle":"@alice","connectors":[]}`
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		body := f.meJSON
+		f.mu.Unlock()
+		w.Write([]byte(body))
+	})
+	mux.HandleFunc("POST /v1/grants", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Selector string `json:"selector"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		f.mu.Lock()
+		f.grants = append(f.grants, in.Selector)
+		f.mu.Unlock()
+		w.Write([]byte(`{"actions":["@chat/msg/message"],"status":"connected"}`))
 	})
 	// Default: the seed's sentinel step (action_id @sys/sink, which ensureSeed reads
 	// as the doorbells' onward id). Tests that exercise the doorbell badge/room-list
 	// override f.stepsJSON with @chat-owned doorbell steps.
-	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"sink","action":"@sys/sink"}]`
+	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"ack","action":"@chat/ack"}]`
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		body := f.stepsJSON
+		var out []map[string]any
+		_ = json.Unmarshal([]byte(f.stepsJSON), &out)
+		if out == nil {
+			out = []map[string]any{}
+		}
+		for _, d := range f.doorbells {
+			if !f.done[d["id"].(string)] {
+				out = append(out, d)
+			}
+		}
 		f.mu.Unlock()
-		w.Write([]byte(body))
+		b, _ := json.Marshal(out)
+		w.Write(b)
 	})
 	mux.HandleFunc("POST /v1/steps", func(w http.ResponseWriter, r *http.Request) {
+		raw := mustRead(r)
+		var in struct {
+			RequiredCaller string          `json:"required_caller"`
+			PartialArgs    json.RawMessage `json:"partial_args"`
+		}
+		_ = json.Unmarshal(raw, &in)
+		var pa struct {
+			Room string `json:"room"`
+		}
+		_ = json.Unmarshal(in.PartialArgs, &pa)
 		f.mu.Lock()
 		f.seq++
 		id := "step" + strconv.Itoa(f.seq)
-		f.mints = append(f.mints, string(mustRead(r)))
+		f.mints = append(f.mints, string(raw))
+		// Surface the minted step as an @chat-owned waiting doorbell so ListSteps-based
+		// coalescing/dismiss see it (mirrors the real kernel).
+		f.doorbells = append(f.doorbells, map[string]any{
+			"id": id, "status": "waiting", "owner_handle": "@chat",
+			"required_caller_handle": in.RequiredCaller,
+			"partial_args":           map[string]any{"room": pa.Room},
+		})
 		f.mu.Unlock()
 		w.WriteHeader(201)
 		w.Write([]byte(`{"id":"` + id + `","status":"waiting"}`))
@@ -567,12 +619,20 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.completes = append(f.completes, r.PathValue("id"))
+		f.done[r.PathValue("id")] = true
 		f.mu.Unlock()
 		w.Write([]byte(`{"result":{},"tx_id":"tx1"}`))
 	})
 	f.srv = httptest.NewServer(mux)
 	f.url = f.srv.URL
 	return f
+}
+
+// isSpecialName reports whether an action is one of the three reconciled outside the
+// public msg/ Op loop (not a daemon.Op), so the fake kernel keeps them out of the
+// op-churn counts the reconciliation tests assert on.
+func isSpecialName(name string) bool {
+	return name == ackName || name == outboxName || name == registerName || name == validateName
 }
 
 // mustRead drains a request body for test assertions.
@@ -647,10 +707,8 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 	st := mustStore(t)
 	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
 	st.PostMessage("@bob", r.ID, "hi")
-	st.ReserveNotification("@alice", r.ID)
-	st.SetNotificationRef("@alice", r.ID, "doorbell-1")
 	c := New()
-	c.daemon = daemon.New(st, "s", noAuth, nil)
+	c.daemon = daemon.New(st, "s", "vs", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
 	cl := client.New(f.url, nil)
 	sm := scs.New()
@@ -661,6 +719,10 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 		Client:         cl,
 		Sessions:       session.NewManager(sm, cl),
 	}
+	// @alice holds an outstanding @chat doorbell for the room (a waiting kernel step).
+	f.mu.Lock()
+	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"@chat","required_caller_handle":"@alice","partial_args":{"room":"` + r.ID + `"}}]`
+	f.mu.Unlock()
 	poll := func(visible string) {
 		outer := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
 		outer.SetPathValue("id", r.ID)
@@ -673,19 +735,13 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), outer)
 	}
-	poll("0") // hidden tab: must NOT dismiss
+	poll("0") // hidden tab: must NOT complete the doorbell
 	if len(f.completes) != 0 {
 		t.Errorf("hidden-tab poll dismissed the doorbell: completes=%v", f.completes)
 	}
-	if ref, _ := st.GetNotification("@alice", r.ID); ref == "" {
-		t.Errorf("doorbell cleared while hidden")
-	}
-	poll("1") // visible: completes the doorbell
+	poll("1") // visible: completes the doorbell step
 	if len(f.completes) != 1 || f.completes[0] != "doorbell-1" {
 		t.Errorf("visible poll didn't complete the doorbell: %v", f.completes)
-	}
-	if ref, _ := st.GetNotification("@alice", r.ID); ref != "" {
-		t.Errorf("doorbell not cleared after visible poll: %q", ref)
 	}
 }
 
@@ -746,9 +802,7 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 	c := New()
 	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
-	c.daemon = daemon.New(mustStore(t), "s", noAuth, nil)
-	c.dc = daemon.NewClient(c.daemon)
-	c.seedTrace, c.sinkID = "seed-1", "sink" // seed already established
+	c.seedTrace, c.ackID = "seed-1", "ack" // seed already established; onward = @chat/ack
 
 	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "@alice",
 		Members: []string{"@alice", "@bob", "@carol"}}
@@ -767,12 +821,13 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 	if !strings.Contains(bodies, `"room":"r1"`) {
 		t.Errorf("doorbell partial_args missing room: %s", bodies)
 	}
-	// The step ids are recorded so a room visit can complete them.
-	if ref, _ := c.dc.GetNotification(context.Background(), "@bob", "r1"); ref == "" {
-		t.Error("doorbell ref not recorded for @bob")
+	// The onward is @chat's own price-0 ack, never @sys/sink (which @chat can't price).
+	if !strings.Contains(bodies, `"action_id":"ack"`) {
+		t.Errorf("doorbell onward is not @chat/ack: %s", bodies)
 	}
 
-	// Coalescing: a second message while the doorbells are outstanding mints nothing.
+	// Coalescing off the steps: a second message, while those doorbells are still
+	// waiting (the fake surfaces them via ListSteps), mints nothing.
 	c.notify(ev)
 	time.Sleep(30 * time.Millisecond)
 	f.mu.Lock()
@@ -783,16 +838,38 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 	}
 }
 
-func TestDismissCompletesDoorbellAsUserAndClears(t *testing.T) {
+// TestNotifyReRingsAfterCompletion proves the deadlock fix: once a member completes
+// their doorbell (it drops out of `waiting`), the next message re-rings — for a
+// headless member with no room-visit, purely because coalescing reads the steps.
+func TestNotifyReRingsAfterCompletion(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
-	st := mustStore(t)
-	// A doorbell is outstanding for (@bob, r1).
-	st.ReserveNotification("@bob", "r1")
-	st.SetNotificationRef("@bob", "r1", "doorbell-1")
 	c := New()
-	c.daemon = daemon.New(st, "s", noAuth, nil)
-	c.dc = daemon.NewClient(c.daemon)
+	c.deps = apps.Deps{Client: client.New(f.url, nil)}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.seedTrace, c.ackID = "seed-1", "ack"
+
+	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "@alice", Members: []string{"@alice", "@bob"}}
+	c.notify(ev)
+	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 1 })
+
+	// @bob completes the doorbell over the kernel (no dismiss/browser path).
+	f.mu.Lock()
+	id := f.doorbells[0]["id"].(string)
+	f.mu.Unlock()
+	c.deps.Client.CompleteStep(context.Background(), "t", id, nil)
+
+	// The next message re-rings: @bob no longer holds a waiting @chat doorbell for r1.
+	c.notify(ev)
+	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 2 })
+}
+
+func TestDismissCompletesDoorbellFromSteps(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	// A doorbell is outstanding for (@bob, r1): a waiting @chat step @bob must complete.
+	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"@chat","required_caller_handle":"@bob","partial_args":{"room":"r1"}}]`
+	c := New()
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{Client: cl, Sessions: session.NewManager(sm, cl)}
@@ -810,24 +887,6 @@ func TestDismissCompletesDoorbellAsUserAndClears(t *testing.T) {
 	if len(f.completes) != 1 || f.completes[0] != "doorbell-1" {
 		t.Errorf("completes = %v, want [doorbell-1]", f.completes)
 	}
-	if ref, _ := st.GetNotification("@bob", "r1"); ref != "" {
-		t.Errorf("doorbell ref not cleared after dismiss: %q", ref)
-	}
-}
-
-func TestCompletionSettled(t *testing.T) {
-	// nil and non-transient kernel errors leave the doorbell resolved → clear.
-	for _, err := range []error{nil, client.ErrInvalidState, client.ErrNotFound, client.ErrUnauthorized} {
-		if !completionSettled(err) {
-			t.Errorf("completionSettled(%v) = false, want true (clear)", err)
-		}
-	}
-	// Only transport-transient failures keep the ref for a retry.
-	for _, err := range []error{client.ErrUnavailable, client.ErrTimeout} {
-		if completionSettled(err) {
-			t.Errorf("completionSettled(%v) = true, want false (keep for retry)", err)
-		}
-	}
 }
 
 func TestEnsureActionsEstablishesSeed(t *testing.T) {
@@ -840,11 +899,27 @@ func TestEnsureActionsEstablishesSeed(t *testing.T) {
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
 	}
-	if c.seedTrace == "" || c.sinkID != "sink" {
-		t.Errorf("seed not established: trace=%q sink=%q (want sink)", c.seedTrace, c.sinkID)
+	if c.seedTrace == "" || c.ackID == "" {
+		t.Errorf("seed not established: trace=%q ack=%q (want both set)", c.seedTrace, c.ackID)
 	}
 	if f.runs != 1 {
 		t.Errorf("outbox seed opened %d times, want 1", f.runs)
+	}
+	// The doorbell/sentinel onward is @chat's OWN price-0 ack (not @sys/sink) — it must
+	// exist, be active, and NOT be public.
+	var ack *fakeAction
+	f.mu.Lock()
+	for _, a := range f.acts {
+		if a.Name == ackName {
+			ack = a
+		}
+	}
+	f.mu.Unlock()
+	if ack == nil {
+		t.Fatal("@chat/ack action not created")
+	}
+	if !ack.Active || ack.Public {
+		t.Errorf("ack active=%v public=%v, want active + private", ack.Active, ack.Public)
 	}
 	// The seed is opened by running @chat's OWN private outbox action (price 0, no @sys
 	// toll) — it must exist, be active, and NOT be public.
@@ -869,7 +944,7 @@ func TestServeOutboxCreatesSentinelViaCapability(t *testing.T) {
 	defer f.close()
 	c := New()
 	c.deps = apps.Deps{Client: client.New(f.url, nil)}
-	c.sinkID = "sink"
+	c.ackID = "ack"
 
 	call := func(withCap bool) (string, int) {
 		req := httptest.NewRequest(http.MethodPost, "/_kernel/chat/outbox", strings.NewReader("{}"))
@@ -906,10 +981,140 @@ func TestServeOutboxCreatesSentinelViaCapability(t *testing.T) {
 	}
 }
 
+// TestServeRegisterMintsPendingKeyAndVerificationStep covers the open @chat/register
+// handler (reached via kernelDispatch): the register secret gates it; on success it
+// mints a PENDING key and a verification step (onward validate-user, addressed to the
+// requested handle, carrying reg_id), minted off the seed so @chat owns it.
+func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	c.store = mustStore(t)
+	c.deps = apps.Deps{Client: client.New(f.url, nil)}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.seedTrace, c.validateID = "seed-1", "validate-act-id"
+	c.st.RegisterSecret = "regsec"
+
+	call := func(auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/"+registerName, strings.NewReader(`{"username":"@agent"}`))
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		c.kernelDispatch(rec, req) // routes /register to serveRegister (daemon is nil)
+		return rec
+	}
+	if rec := call("Bearer nope"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad-secret register status=%d, want 401", rec.Code)
+	}
+	rec := call("Bearer regsec")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		APIKey string `json:"api_key"`
+		StepID string `json:"step_id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if res.APIKey == "" || res.StepID == "" {
+		t.Fatalf("register result = %s", rec.Body.String())
+	}
+	// The key resolves to the handle but is inactive until the step is completed.
+	if u, active, _ := c.store.ResolveToken(res.APIKey); u != "@agent" || active {
+		t.Errorf("token = (%q,%v), want (@agent,false)", u, active)
+	}
+	// Exactly one verification step, to @agent, onward validate-user, carrying reg_id.
+	if len(f.mints) != 1 {
+		t.Fatalf("mints = %d, want 1 verification step", len(f.mints))
+	}
+	body := f.mints[0]
+	if !strings.Contains(body, `"required_caller":"@agent"`) ||
+		!strings.Contains(body, `"action_id":"validate-act-id"`) ||
+		!strings.Contains(body, "reg_id") {
+		t.Errorf("verification step = %s", body)
+	}
+}
+
+// TestConnectRouteRegistersCompletesConnects covers the browser Connect button: as the
+// signed-in user it runs @chat/register, completes the returned verification step, and
+// connects the key to @chat/msg — the identical path a headless agent uses.
+func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	c.deps = apps.Deps{
+		Client:   cl,
+		Sessions: session.NewManager(sm, cl),
+		Handle:   func(*http.Request) string { return "@alice" },
+		FlashRedirect: func(w http.ResponseWriter, r *http.Request, to, kind, msg string) {
+			http.Redirect(w, r, to, http.StatusSeeOther)
+		},
+	}
+	rec := httptest.NewRecorder()
+	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+		c.postConnect(w, r)
+	}))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/chat/connect", nil))
+
+	if len(f.completes) != 1 || f.completes[0] != "vstep-1" {
+		t.Errorf("verification step not completed: completes=%v", f.completes)
+	}
+	if len(f.grants) != 1 || f.grants[0] != msgSelector {
+		t.Errorf("connect selector = %v, want [%s]", f.grants, msgSelector)
+	}
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("connect redirect = %d, want 303", rec.Code)
+	}
+}
+
+// TestIndexGateOnConnector proves the rooms page is gated on the @chat/msg connector:
+// absent → the Connect gate (Connected=false); present → the rooms view.
+func TestIndexGateOnConnector(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	c.daemon = daemon.New(mustStore(t), "s", "vs", noAuth, nil)
+	c.dc = daemon.NewClient(c.daemon)
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	var got indexView
+	c.deps = apps.Deps{
+		Client:    cl,
+		Sessions:  session.NewManager(sm, cl),
+		Handle:    func(*http.Request) string { return "@alice" },
+		CSRFField: func(*http.Request) template.HTML { return "" },
+		HandleErr: func(http.ResponseWriter, *http.Request, error) bool { return false },
+		RenderPage: func(_ http.ResponseWriter, _ *http.Request, _ int, _, _ string, data any) {
+			got, _ = data.(indexView)
+		},
+	}
+	render := func() indexView {
+		got = indexView{}
+		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			c.getIndex(w, r)
+		}))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/chat", nil))
+		return got
+	}
+	if v := render(); v.Connected {
+		t.Error("no @chat/msg connector, but Connected=true (gate not shown)")
+	}
+	f.mu.Lock()
+	f.meJSON = `{"handle":"@alice","connectors":[{"directory":"@chat/msg","connections":[],"actions":[{"action":"@chat/msg/message"}]}]}`
+	f.mu.Unlock()
+	if v := render(); !v.Connected {
+		t.Error("@chat/msg connector present, but Connected=false (rooms not shown)")
+	}
+}
+
 func TestKernelDispatchRoutesOutboxToPlugin(t *testing.T) {
 	c := New()
 	c.deps = apps.Deps{Client: client.New("http://127.0.0.1:1", nil)}
-	c.sinkID = "sink"
+	c.ackID = "ack"
 	// c.daemon is nil: if /outbox weren't intercepted, kernelDispatch would 503.
 	req := httptest.NewRequest(http.MethodPost, "/outbox", strings.NewReader("{}")) // path as seen post-StripPrefix
 	rec := httptest.NewRecorder()

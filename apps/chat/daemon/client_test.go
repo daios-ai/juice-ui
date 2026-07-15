@@ -49,33 +49,3 @@ func TestClientRejectsWrongSecret(t *testing.T) {
 		t.Fatal("expected error with wrong admin secret")
 	}
 }
-
-func TestClientNotifications(t *testing.T) {
-	d := newDaemon(t)
-	c := NewClient(d)
-	ctx := context.Background()
-
-	// Reserve coalesces, ref round-trips, clear frees the slot — all over the
-	// in-process REST client the plugin uses.
-	if ok, err := c.ReserveNotification(ctx, "@bob", "r1"); err != nil || !ok {
-		t.Fatalf("first reserve = %v, %v; want true", ok, err)
-	}
-	if ok, _ := c.ReserveNotification(ctx, "@bob", "r1"); ok {
-		t.Errorf("second reserve granted; want false (coalesced)")
-	}
-	if err := c.SetNotificationRef(ctx, "@bob", "r1", "step-9"); err != nil {
-		t.Fatalf("SetNotificationRef: %v", err)
-	}
-	if ref, _ := c.GetNotification(ctx, "@bob", "r1"); ref != "step-9" {
-		t.Errorf("GetNotification = %q, want step-9", ref)
-	}
-	if err := c.ClearNotification(ctx, "@bob", "r1"); err != nil {
-		t.Fatalf("ClearNotification: %v", err)
-	}
-	if ref, _ := c.GetNotification(ctx, "@bob", "r1"); ref != "" {
-		t.Errorf("ref after clear = %q, want empty", ref)
-	}
-	if ok, _ := c.ReserveNotification(ctx, "@bob", "r1"); !ok {
-		t.Errorf("reserve after clear denied; want re-ring")
-	}
-}

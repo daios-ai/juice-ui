@@ -220,49 +220,6 @@ func TestRecentWindowAndHistory(t *testing.T) {
 	}
 }
 
-func TestNotificationReserveCoalesceAndClear(t *testing.T) {
-	s := newStore(t)
-	// First reserve for (handle, room) wins; a second (a coalesced re-post) loses.
-	ok, err := s.ReserveNotification("@bob", "r1")
-	if err != nil || !ok {
-		t.Fatalf("first reserve = %v, %v; want true", ok, err)
-	}
-	if ok, _ := s.ReserveNotification("@bob", "r1"); ok {
-		t.Errorf("second reserve granted; want coalesced (false)")
-	}
-	// A different room, and a different member, are independent slots.
-	if ok, _ := s.ReserveNotification("@bob", "r2"); !ok {
-		t.Errorf("reserve for other room denied")
-	}
-	if ok, _ := s.ReserveNotification("@carol", "r1"); !ok {
-		t.Errorf("reserve for other member denied")
-	}
-	// Ref round-trips; empty until set.
-	if ref, _ := s.GetNotification("@bob", "r1"); ref != "" {
-		t.Errorf("ref before set = %q, want empty", ref)
-	}
-	if err := s.SetNotificationRef("@bob", "r1", "step-9"); err != nil {
-		t.Fatalf("SetNotificationRef: %v", err)
-	}
-	if ref, _ := s.GetNotification("@bob", "r1"); ref != "step-9" {
-		t.Errorf("ref = %q, want step-9", ref)
-	}
-	// Clearing frees the slot so the next message re-rings.
-	if err := s.ClearNotification("@bob", "r1"); err != nil {
-		t.Fatalf("ClearNotification: %v", err)
-	}
-	if ref, _ := s.GetNotification("@bob", "r1"); ref != "" {
-		t.Errorf("ref after clear = %q, want empty", ref)
-	}
-	if ok, _ := s.ReserveNotification("@bob", "r1"); !ok {
-		t.Errorf("reserve after clear denied; want re-ring")
-	}
-	// No row for an unknown pair reads as empty, not an error.
-	if ref, err := s.GetNotification("@nobody", "rx"); err != nil || ref != "" {
-		t.Errorf("GetNotification(unknown) = %q, %v; want \"\", nil", ref, err)
-	}
-}
-
 func TestRecipientsListsLiveMembers(t *testing.T) {
 	s := newStore(t)
 	r, err := s.CreateRoom("@alice", "general", []string{"@bob"})
@@ -309,5 +266,48 @@ func TestMessagesReadPath(t *testing.T) {
 	// Non-members cannot read.
 	if _, err := s.Messages("@carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member read err = %v, want ErrNotMember", err)
+	}
+}
+
+func TestTokenRegisterActivateLookup(t *testing.T) {
+	s := newStore(t)
+
+	rawKey, regID, err := s.RegisterToken("@agent")
+	if err != nil {
+		t.Fatalf("RegisterToken: %v", err)
+	}
+	if rawKey == "" || regID == "" || rawKey == regID {
+		t.Fatalf("register returned rawKey=%q regID=%q", rawKey, regID)
+	}
+
+	// A freshly registered key resolves to its handle but is NOT yet active.
+	u, active, err := s.LookupToken(hashToken(rawKey))
+	if err != nil || u != "@agent" || active {
+		t.Fatalf("pending lookup = (%q, %v, %v), want (@agent, false, nil)", u, active, err)
+	}
+
+	// Activation flips it live.
+	if err := s.ActivateToken(regID); err != nil {
+		t.Fatalf("ActivateToken: %v", err)
+	}
+	if u, active, _ := s.LookupToken(hashToken(rawKey)); u != "@agent" || !active {
+		t.Errorf("active lookup = (%q, %v), want (@agent, true)", u, active)
+	}
+
+	// An unknown key is an unauthenticated caller, not an error.
+	if u, active, err := s.LookupToken(hashToken("nope")); err != nil || u != "" || active {
+		t.Errorf("unknown lookup = (%q, %v, %v), want ('', false, nil)", u, active, err)
+	}
+	// Activating an unknown registration is ErrNotFound.
+	if err := s.ActivateToken("no-such-reg"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("activate unknown reg = %v, want ErrNotFound", err)
+	}
+	// The raw key must never be recoverable from the store: only its hash is stored.
+	var got string
+	if err := s.db.QueryRow(`SELECT hash FROM tokens WHERE reg_id = ?`, regID).Scan(&got); err != nil {
+		t.Fatalf("read hash: %v", err)
+	}
+	if got == rawKey {
+		t.Error("raw key stored verbatim; want only its hash")
 	}
 }
