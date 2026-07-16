@@ -273,9 +273,28 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 /* Narrow screens: hide sidebar, show bottom tab bar */
 @media (max-width: 720px) {
   .sidebar { display: none; }
-  .mobile-menu { display: block; padding: .5rem; }
+  /* The four-tab bottom bar (browse · inbox · chat · you) is the mobile nav;
+     secondary destinations live in the `you` hub, so no hamburger drawer. */
+  .mobile-menu { display: none; }
   .tab-bar { display: flex; }
   .container { padding-bottom: 5.5rem; padding-left: 1rem; padding-right: 1rem; }
+
+  /* Dialogs become bottom sheets: full-width, anchored to the bottom edge, the
+     confirm in the thumb zone. The <dialog>/?form= machinery is unchanged. */
+  dialog.modal-form, dialog.modal-confirm, dialog.palette {
+    max-width: 100%; width: 100%; margin: auto 0 0; border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: none;
+  }
+  dialog.palette { margin: 0 0 auto; border-radius: 0 0 var(--radius) var(--radius); }
+  .modal-body { max-height: 76vh; }
+  /* Stacked, full-width actions (confirm on top of the thumb, cancel above it). */
+  .modal-actions, .modal-form .cluster:last-child {
+    flex-direction: column-reverse; align-items: stretch;
+  }
+  .modal-actions .btn, .modal-actions .btn-danger, .modal-actions .btn-money,
+  .modal-form .cluster:last-child .btn, .modal-form .cluster:last-child .btn-money {
+    width: 100%;
+  }
 }
 
 /* Entry screen (unauthenticated): one centered, branded auth card with a
