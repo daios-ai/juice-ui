@@ -32,8 +32,7 @@
 <h2>Theme</h2>
 <form class="row compact" method="post" action="/theme" data-theme-form>
   {{.CSRFField}}
-  <label for="theme-sel" class="sr-only">Theme</label>
-  <select id="theme-sel" name="theme" data-theme-select>
+  <select name="theme" data-theme-select aria-label="Theme">
     <option value="">System default</option>
     {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
   </select>
@@ -41,59 +40,23 @@
 </form>
 
 <h2>Connected accounts</h2>
-{{if or $d.User.Connectors $d.User.Connections}}
+{{/* One row per upstream account (the inventory), by provider — not the raw
+     per-folder tree, which fragments a single account across many grants. */}}
+{{if $d.User.Connections}}
 <div class="card-list">
-  {{range $d.User.Connectors}}
-  <details class="card">
-    <summary>
-      <span class="mono"><b>{{.Directory}}</b></span>
-      {{range .Connections}}<span class="muted small">{{.Provider}}</span>{{end}}
-      <span class="muted small">{{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}</span>
-      <span class="cluster">
-        {{range .Connections}}{{if .ProviderKey}}
-        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}? Every action it backs is disconnected.">
-          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect account</button>
-        </form>
-        {{end}}{{end}}
-      </span>
-    </summary>
-    <div class="table-scroll">
-    <table>
-      <thead><tr><th>Action</th><th>Scopes</th><th>Connected</th><th></th></tr></thead>
-      <tbody>
-      {{range .Actions}}
-      <tr>
-        <td>{{template "_ref" .Action}}</td>
-        <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
-        <td class="muted">{{shortTime .CreatedAt}}</td>
-        <td>
-          <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}? Running it will ask you to connect again.">
-            {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger small" type="submit">Disconnect</button>
-          </form>
-        </td>
-      </tr>
-      {{end}}
-      </tbody>
-    </table>
+  {{range $d.User.Connections}}
+  <div class="card row">
+    <div class="stretch">
+      <b>{{.Provider}}</b>
+      <div class="small muted">{{if .Unused}}no actions use this account{{else}}{{.Actions}} action{{if ne .Actions 1}}s{{end}} connected{{end}}</div>
     </div>
-  </details>
+    {{if .ProviderKey}}
+    <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Provider}}? Every action it backs will ask you to connect again.">
+      {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect</button>
+    </form>
+    {{end}}
+  </div>
   {{end}}
-  {{range $d.User.Connections}}{{if .Unused}}
-  <details class="card">
-    <summary>
-      <span class="mono"><b>{{.Provider}}</b></span>
-      <span class="chip tag">unused</span>
-      <span class="cluster">
-        {{if .ProviderKey}}
-        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}?">
-          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect account</button>
-        </form>
-        {{end}}
-      </span>
-    </summary>
-    <p class="muted flush">No actions use this account.</p>
-  </details>
-  {{end}}{{end}}
 </div>
 {{else}}<p class="muted">No connected accounts yet.</p>{{end}}
 

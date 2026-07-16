@@ -525,21 +525,15 @@ func TestUserShowsConnectors(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	body := getBody(t, cl, srv.URL+"/you")
 
-	// The single directory-grouped connectors tree: the @sys folder node.
-	if !strings.Contains(body, ">Connected accounts</h2>") || !strings.Contains(body, "<details") {
-		t.Error("/user must render the directory-grouped connectors tree")
+	// Connected accounts renders the account inventory (one row per upstream
+	// account, by provider) — not the raw per-folder tree, which fragments one
+	// account across many grants.
+	if !strings.Contains(body, ">Connected accounts</h2>") || !strings.Contains(body, "gmail.com") {
+		t.Error("/you must list connected accounts by provider")
 	}
-	// The grant under the connector renders via _ref with a per-action disconnect.
-	if !strings.Contains(body, `class="owner">@sys`) {
-		t.Error("/user must list the granted action ref")
-	}
-	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="@sys/gmail-send"`) {
-		t.Error("/user must offer a per-action disconnect")
-	}
-	// Account-level disconnect (provider_key) lives inline in the folder, not a
-	// separate section.
-	if !strings.Contains(body, `value="oauth:G"`) {
-		t.Error("/user must offer account-level disconnect (account=provider_key)")
+	// Account-level disconnect keys on the provider_key (account=), one per account.
+	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="oauth:G"`) {
+		t.Error("/you must offer an account-level disconnect (account=provider_key)")
 	}
 }
 

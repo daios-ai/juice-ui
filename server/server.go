@@ -464,16 +464,32 @@ func spriteIcon(id string) template.HTML {
 	return template.HTML(`<svg class="ico" aria-hidden="true"><use href="/static/icons.svg#` + id + `"/></svg>`)
 }
 
+// The marketplace nav icons, inline (stroked outline, currentColor) so they match
+// the approved mockup exactly without a sprite edit. Each is a 24×24 outline.
+func navIcon(paths string) template.HTML {
+	return template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">` + paths + `</svg>`)
+}
+
+var (
+	iconBrowse   = navIcon(`<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>`)                                   // compass
+	iconInbox    = navIcon(`<path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5a3 3 0 0 0 6 0h5"/>`) // tray
+	iconWorkshop = navIcon(`<path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/>`)
+	iconWallet   = navIcon(`<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>`)
+	iconYou      = navIcon(`<circle cx="12" cy="8" r="3.4"/><path d="M5 20c1.5-4 4-5.5 7-5.5s5.5 1.5 7 5.5"/>`)
+	iconNetwork  = navIcon(`<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3.5 9h17M3.5 15h17"/>`)
+	iconAdmin    = navIcon(`<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>`)
+)
+
 // buildNav assembles the single nav model: the marketplace groups, then app
 // entries, then the superuser-only network/admin. Tab=true marks the four mobile
 // bottom-bar entries (browse · inbox · chat · you). active is the current group.
 func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	nav := []NavItem{
-		{Slug: "browse", Label: "browse", Href: "/browse", Icon: spriteIcon("layers"), Tab: true},
-		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: spriteIcon("bell"), BadgeURL: "/inbox/badge", Tab: true},
-		{Slug: "workshop", Label: "workshop", Href: "/workshop", Icon: spriteIcon("pencil")},
-		{Slug: "wallet", Label: "wallet", Href: "/wallet", Icon: spriteIcon("wallet")},
-		{Slug: "you", Label: "you", Href: "/you", Icon: spriteIcon("user"), Tab: true},
+		{Slug: "browse", Label: "browse", Href: "/browse", Icon: iconBrowse, Tab: true},
+		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge", Tab: true},
+		{Slug: "workshop", Label: "workshop", Href: "/workshop", Icon: iconWorkshop},
+		{Slug: "wallet", Label: "wallet", Href: "/wallet", Icon: iconWallet},
+		{Slug: "you", Label: "you", Href: "/you", Icon: iconYou, Tab: true},
 	}
 	// App entries (chat, agents) fold in after the core groups; chat also joins
 	// the mobile tab bar.
@@ -495,8 +511,8 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	}
 	if super {
 		nav = append(nav,
-			NavItem{Slug: "network", Label: "network", Href: "/admin/peers", Icon: spriteIcon("share-2")},
-			NavItem{Slug: "admin", Label: "admin", Href: "/admin", Icon: spriteIcon("settings")},
+			NavItem{Slug: "network", Label: "network", Href: "/admin/peers", Icon: iconNetwork},
+			NavItem{Slug: "admin", Label: "admin", Href: "/admin", Icon: iconAdmin},
 		)
 	}
 	for i := range nav {

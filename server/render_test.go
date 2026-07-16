@@ -339,28 +339,20 @@ func TestUserPageShowsConnections(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	// One combined tree: the @chat folder node (with its backing account) and its
-	// action ref, in a collapsible card (roster grammar).
-	if !strings.Contains(body, "<details") || !strings.Contains(body, ">@chat<") || !strings.Contains(body, `class="owner">@chat`) {
-		t.Errorf("connectors tree (folder + action) not shown: %s", body)
-	}
+	// The account inventory: one row per upstream account, by provider (the raw
+	// per-folder tree fragments a single account across many grants).
 	if !strings.Contains(body, "127.0.0.1:8080") {
-		t.Errorf("backing account not shown on the folder: %s", body)
+		t.Errorf("connected account (by provider) not shown: %s", body)
 	}
-	// Account disconnect lives inline in the folder summary (not a separate section).
 	if !strings.Contains(body, `name="account" value="bearer:h"`) {
 		t.Errorf("account-level disconnect (provider_key) missing: %s", body)
 	}
-	// The unused account is folded into the same list as its own node.
-	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "unused") {
+	// The unused account is surfaced as its own row.
+	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "no actions use this account") {
 		t.Errorf("unused account not surfaced: %s", body)
 	}
 	if !strings.Contains(body, `name="account" value="oauth:a"`) {
 		t.Errorf("unused account disconnect missing: %s", body)
-	}
-	// The redundant separate "Accounts" section is gone.
-	if strings.Contains(body, ">Accounts</h2>") {
-		t.Error("the separate Accounts section should be merged into the tree")
 	}
 }
 
