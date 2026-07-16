@@ -9,13 +9,12 @@
 
 {{/* Earnings — folded from your transactions (BFF, not kernel settlement). */}}
 {{if gt $d.Earnings.Count 0}}
-<div class="card">
-  <h2>Earnings</h2>
-  <div class="balances">
-    <div class="balance"><div class="amount money sig-credited">{{money $d.Earnings.Earned}}</div><div class="label">earnings</div></div>
-    <div class="balance"><div class="amount">{{$d.Earnings.Count}}</div><div class="label">calls</div></div>
+<div class="stat-row">
+  <div class="stat">
+    <div class="label">earnings</div>
+    <div class="value sig-credited">{{money $d.Earnings.Earned}} ¤</div>
+    <a href="/transactions">{{$d.Earnings.Count}} call{{if ne $d.Earnings.Count 1}}s{{end}} →</a>
   </div>
-  <p class="card-note"><a href="/transactions">See the underlying transactions →</a></p>
 </div>
 {{end}}
 
@@ -34,11 +33,11 @@
   {{template "_tab" (tab "inactive" (actionsHref $d.Scope "inactive") (eq $d.Filter "inactive"))}}
   <button class="btn-quiet tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
   <div class="menu" id="menu-new-action" role="menu" hidden>
-    <a class="menu-item" role="menuitem" href="/actions?form=action-create" data-modal="form-action-create">Create manually</a>
-    <a class="menu-item" role="menuitem" href="/actions?form=action-make" data-modal="form-action-make">Synthesize (20)</a>
-    <a class="menu-item" role="menuitem" href="/actions?form=action-import" data-modal="form-action-import">Import from OpenAPI</a>
+    <a class="menu-item" role="menuitem" href="/workshop?form=action-create" data-modal="form-action-create">Create manually</a>
+    <a class="menu-item" role="menuitem" href="/workshop?form=action-make" data-modal="form-action-make">Synthesize (20)</a>
+    <a class="menu-item" role="menuitem" href="/workshop?form=action-import" data-modal="form-action-import">Import from OpenAPI</a>
     <div class="menu-divider"></div>
-    <a class="menu-item" role="menuitem" href="/actions?form=action-unimport" data-modal="form-action-unimport">Unimport a spec…</a>
+    <a class="menu-item" role="menuitem" href="/workshop?form=action-unimport" data-modal="form-action-unimport">Unimport a spec…</a>
   </div>
 </nav>
 {{if $d.Mine}}

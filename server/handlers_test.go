@@ -428,7 +428,7 @@ func TestUserLedgerUsesUnifiedRow(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/you")
+	body := getBody(t, cl, srv.URL+"/wallet")
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("user ledger must link the action ref (was missing before)")
 	}
@@ -465,7 +465,7 @@ func TestWalletShowsBalancesAndDepositNote(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/you")
+	body := getBody(t, cl, srv.URL+"/wallet")
 	if !strings.Contains(body, "500") {
 		t.Error("wallet should show available balance")
 	}
@@ -526,7 +526,7 @@ func TestUserShowsConnectors(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/you")
 
 	// The single directory-grouped connectors tree: the @sys folder node.
-	if !strings.Contains(body, ">Connected</h2>") || !strings.Contains(body, "<details") {
+	if !strings.Contains(body, ">Connected accounts</h2>") || !strings.Contains(body, "<details") {
 		t.Error("/user must render the directory-grouped connectors tree")
 	}
 	// The grant under the connector renders via _ref with a per-action disconnect.
@@ -1020,7 +1020,7 @@ func TestWalletShowsLedger(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/you")
+	body := getBody(t, cl, srv.URL+"/wallet")
 	// Ledger must show both transactions from authKernel.
 	if !strings.Contains(body, "T1") && !strings.Contains(body, "/transactions/T1") {
 		t.Error("wallet ledger must link to transaction T1")
@@ -1049,11 +1049,11 @@ func TestStudioShowsEarnings(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/workshop")
 	// T2 in authKernel is a seller transaction for U1 (target_user_id=U1, status=success).
 	// Earnings card must appear.
-	if !strings.Contains(body, "Earnings") {
+	if !strings.Contains(strings.ToLower(body), ">earnings<") {
 		t.Error("studio must show Earnings section when seller transactions exist")
 	}
 	lower := strings.ToLower(body)
-	if !strings.Contains(lower, ">earnings<") || !strings.Contains(lower, ">calls<") {
+	if !strings.Contains(lower, ">earnings<") || !strings.Contains(lower, "call") {
 		t.Error("studio Earnings card must show the earnings + calls figures")
 	}
 }

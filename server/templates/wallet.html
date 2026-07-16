@@ -18,11 +18,20 @@
 
 <h2>Open sessions</h2>
 {{if .Data.Open}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th></tr></thead>
-  <tbody>{{range .Data.Open}}{{template "_process_row" .}}{{end}}</tbody>
-</table>
+<div class="card-list">
+  {{range .Data.Open}}
+  <div class="card row">
+    <div class="stretch">
+      <a class="mono" href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a>
+      <div class="small muted">
+        <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} ¤ parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
+      </div>
+    </div>
+    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} credits are refunded to you.">
+      {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
+    </form>
+  </div>
+  {{end}}
 </div>
 {{else}}<p class="muted">No open sessions.</p>{{end}}
 

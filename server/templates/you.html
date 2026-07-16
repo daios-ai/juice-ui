@@ -2,29 +2,45 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>you</h1>
-  <p class="subtitle">Your identity and wallet.</p>
+  <p class="subtitle">Your account and preferences.</p>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
-<div class="card">
-  <dl class="locked-args">
-    <dt>Handle</dt><dd class="mono">{{$d.User.Handle}}</dd>
-    <dt>Email</dt><dd class="mono">{{$d.User.Email}}</dd>
-  </dl>
-  <p class="card-note"><a href="/you?form=user-update" data-modal="form-user-update">Update account →</a></p>
-</div>
-
-<h2>Wallet</h2>
-<div class="card">
-  <div class="balances">
-    <div class="balance"><div class="amount money sig-credited">{{money $d.User.Available}}</div><div class="label">available</div></div>
-    <div class="balance"><div class="amount money sig-escrow">{{money $d.User.Locked}}</div><div class="label">parked</div></div>
+<div class="row" role="group" aria-label="Identity">
+  <div class="stretch">
+    <div class="mono"><b>{{$d.User.Handle}}</b></div>
+    <div class="muted small mono">{{$d.User.Email}}</div>
   </div>
-  <p class="card-note muted">Top-ups are out-of-band.</p>
+  <div class="balance">
+    <div class="amount money">{{money $d.User.Available}} ¤</div>
+    <div class="label">available{{if gt $d.User.Locked 0}} · <span class="sig-escrow mono">{{money $d.User.Locked}} ¤ ◷</span> parked{{end}}</div>
+  </div>
 </div>
 
-<h2>Connected</h2>
+<div class="you-list">
+  <a class="you-row" href="/wallet">wallet<span class="detail">{{money $d.User.Available}} ¤</span></a>
+  <a class="you-row" href="/workshop">workshop<span class="detail">your actions &amp; earnings</span></a>
+  {{range .Nav}}{{if eq .Slug "agents"}}<a class="you-row" href="{{.Href}}">agents</a>{{end}}{{end}}
+  {{if .IsSuperuser}}
+  <a class="you-row" href="/admin/peers">network<span class="detail">@sys</span></a>
+  <a class="you-row" href="/admin">admin<span class="detail">@sys</span></a>
+  {{end}}
+  <a class="you-row" href="/you?form=user-update" data-modal="form-user-update">account<span class="detail">email · password</span></a>
+</div>
+
+<h2>Theme</h2>
+<form class="row compact" method="post" action="/theme" data-theme-form>
+  {{.CSRFField}}
+  <label for="theme-sel" class="sr-only">Theme</label>
+  <select id="theme-sel" name="theme" data-theme-select>
+    <option value="">System default</option>
+    {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+  <noscript><button class="btn" type="submit">Apply</button></noscript>
+</form>
+
+<h2>Connected accounts</h2>
 {{if or $d.User.Connectors $d.User.Connections}}
 <div class="card-list">
   {{range $d.User.Connectors}}
@@ -79,28 +95,11 @@
   </details>
   {{end}}{{end}}
 </div>
-{{else}}<p class="muted">Nothing connected yet.</p>{{end}}
+{{else}}<p class="muted">No connected accounts yet.</p>{{end}}
 
-{{if $d.OpenProcesses}}
-<h2>Open processes</h2>
-<div class="table-scroll">
-<table>
-  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th></tr></thead>
-  <tbody>{{range $d.OpenProcesses}}{{template "_process_row" .}}{{end}}</tbody>
-</table>
+<div class="control-row">
+  <form method="post" action="/logout">{{.CSRFField}}<button class="btn" type="submit">Sign out</button></form>
 </div>
-{{end}}
-
-<h2>Ledger</h2>
-{{if $d.Transactions}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>ID</th><th>Action</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
-  <tbody>{{range $d.Transactions}}{{template "_tx_row" (txrow . $d.MyHandle $d.Actions)}}{{end}}</tbody>
-</table>
-</div>
-<p class="card-note"><a href="/transactions">Full transaction ledger →</a></p>
-{{else}}<p class="muted">No transactions yet.</p>{{end}}
 
 {{template "_form_user_update" .}}
 {{end}}
