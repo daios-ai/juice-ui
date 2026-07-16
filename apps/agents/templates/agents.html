@@ -1,0 +1,43 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1>agents</h1>
+  <p class="subtitle">juice-agents on this host.</p>
+</div>
+
+<p><a class="btn-quiet" href="/agents?form=agent-create" data-modal="form-agent-create">+ new agent</a></p>
+
+<div class="table-scroll">
+<table>
+  <tbody>
+  {{range $d.Agents}}
+  <tr class="rowable" tabindex="-1" data-href="/agents/{{.Handle}}">
+    <td><a href="/agents/{{.Handle}}"><span class="ref mono"><span class="owner">@{{.Handle}}</span></span></a></td>
+    <td><div class="row compact" id="agent-status-{{.Handle}}"
+            hx-get="/agents/{{.Handle}}/status" hx-trigger="every 3s"
+            hx-target="#agent-status-{{.Handle}}" hx-swap="innerHTML">{{template "_agent_status" .}}</div></td>
+  </tr>
+  {{else}}
+  <tr><td class="muted" colspan="2">No agents yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+{{range $d.Starts}}{{template "_agent_start" .}}{{end}}
+
+<dialog id="form-agent-create" class="modal-form"{{if $d.OpenForm}} open{{end}} aria-label="New agent">
+  <div class="modal-head"><h2>New agent</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/agents">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="agent-handle">Handle</label>
+        <p class="help">Lowercase, digits, - or _.</p>
+        <input id="agent-handle" type="text" name="handle" placeholder="research" required>
+      </div>
+      <button class="btn" type="submit">Create</button>
+    </form>
+  </div>
+</dialog>
+{{end}}

@@ -280,6 +280,9 @@ export function openDialog(dlg) {
   if (!dlg || dlg.open) return;
   if (typeof dlg.showModal === 'function') dlg.showModal();
   else dlg.setAttribute('open', '');
+  // A textarea measured while its dialog was display:none had scrollHeight 0 and
+  // was pinned to one line; now that the dialog is visible, size it to its content.
+  for (const ta of dlg.querySelectorAll('textarea')) resizeTA(ta);
 }
 document.addEventListener('click', (e) => {
   const trigger = e.target.closest('[data-modal]');

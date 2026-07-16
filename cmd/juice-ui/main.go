@@ -15,6 +15,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/apps"
+	"github.com/daios-ai/juice-ui/apps/agents"
 	"github.com/daios-ai/juice-ui/apps/chat"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/server"
@@ -69,6 +70,11 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	ch := chat.New()
 	appList = append(appList, ch)
 	appTemplates = append(appTemplates, ch.Templates())
+	// The agents app manages sibling juice-agents (files under $JUICE_HOME/agent
+	// and their serve processes). It owns no kernel account and no persisted state.
+	ag := agents.New()
+	appList = append(appList, ag)
+	appTemplates = append(appTemplates, ag.Templates())
 
 	// The renderer must include each enabled app's templates so its pages
 	// render in the shared layout.

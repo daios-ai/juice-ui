@@ -256,6 +256,31 @@ func TestAppTemplatesFollowGrammar(t *testing.T) {
 				t.Errorf("%s: retired component %q must not reappear", f, bad)
 			}
 		}
+		// Copy discipline (§3) applies wherever a template lives: an app's subtitle
+		// orients in one phrase and its help note discloses one thing — neither
+		// narrates how the kernel/daemon works. Same guards as the core (§3 tests).
+		for _, m := range subtitleRe.FindAllStringSubmatch(src, -1) {
+			txt := visibleText(m[1])
+			if txt == "" {
+				continue
+			}
+			if n := utf8.RuneCountInString(txt); n > 64 {
+				t.Errorf("%s: subtitle runs to %d runes (max 64) — orient in one phrase, don't narrate (grammar §3): %q", f, n, txt)
+			}
+			if secondSentenceRe.MatchString(txt) {
+				t.Errorf("%s: subtitle spans multiple sentences — orient in one phrase, don't narrate (grammar §3): %q", f, txt)
+			}
+		}
+		// Prose notes cap on length only (like the core §3 test): a legitimate
+		// disclosure may be two short sentences ("Costs 20 credits. Refunded if it
+		// fails."), so sentence count is not the axis — narration is cut by review
+		// and the written guide, length stops a paragraph.
+		for _, m := range proseNoteRe.FindAllStringSubmatch(src, -1) {
+			txt := visibleText(m[1])
+			if n := utf8.RuneCountInString(txt); n > 120 {
+				t.Errorf("%s: prose note runs to %d runes (max 120) — cut narration, disclose one thing (grammar §3): %q", f, n, txt)
+			}
+		}
 	}
 }
 

@@ -143,6 +143,17 @@ Empty states name the absence in one phrase ("No connected accounts yet."), neve
 lecture on how the list will fill. Field `help` states what to type or the single
 consequence of that field — it is not where a feature gets explained.
 
+**No reassurance, no mechanism.** The label already says what a field is; do not
+re-describe it, and never explain how the system handles the value. A password
+field is `label: Kernel password` and nothing else — **banned** is a caption like
+"The agent's own kernel-account password. It is piped to the daemon and never stored
+— re-enter it after a restart." (restates the label, then narrates internals). A
+read-only region needs no "Learned by the agent. Read-only." — the absence of an edit
+control *is* the statement. This holds identically in **app** templates
+(`apps/*/templates/`); the drift guard (§6) lints them the same as the core, and the
+disclosure/narration line is enforced by review because it is a matter of register,
+not length.
+
 ---
 
 ## 4. Spacing scale
@@ -380,7 +391,9 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   on detail. Commands are quiet and inline — never a floating page-head cluster.
 - **Copy is rationed (§3 Copy discipline):** subtitles orient in one phrase; no
   sentence narrates kernel/control behavior; disclosures appear once, at the point
-  of consequence. Empty states and `help` name the thing, they don't lecture.
+  of consequence. Empty states and `help` name the thing, they don't lecture. A
+  field caption never restates its label or explains a mechanism. The drift guard
+  lints **app** templates (`apps/*/templates/`) for this, identically to the core.
 - One `aria-live` region; the `step` badge is the only async attention signal in
   the core surface (an app MAY add its own app-scoped nav badge, e.g. chat unread);
   no notification feed/toast stack.
