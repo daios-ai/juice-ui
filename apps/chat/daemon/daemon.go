@@ -225,6 +225,7 @@ func (d *Daemon) routes() {
 	d.adminMux.HandleFunc("GET /admin/rooms", d.admin(d.listRooms))
 	d.adminMux.HandleFunc("GET /admin/rooms/{id}", d.admin(d.getRoom))
 	d.adminMux.HandleFunc("GET /admin/rooms/{id}/history", d.admin(d.getHistory))
+	d.adminMux.HandleFunc("GET /admin/rooms/{id}/poll", d.admin(d.pollRoom))
 }
 
 // fireNotify builds a NotifyEvent from the room's live membership and hands it to
@@ -341,6 +342,24 @@ func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 		msgs = []Message{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
+// pollRoom is the conversation view's incremental read: messages to append and ids
+// to remove (see Store.Poll).
+func (d *Daemon) pollRoom(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	added, deleted, err := d.store.Poll(r.URL.Query().Get("handle"), r.PathValue("id"), after)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if added == nil {
+		added = []Message{}
+	}
+	if deleted == nil {
+		deleted = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"added": added, "deleted": deleted})
 }
 
 // roomView is the admin read shape for a single room.

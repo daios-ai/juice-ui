@@ -26,6 +26,30 @@ func TestClientReads(t *testing.T) {
 	}
 }
 
+func TestClientPoll(t *testing.T) {
+	d := newDaemon(t)
+	c := NewClient(d)
+	ctx := context.Background()
+
+	r, _ := d.store.CreateRoom("@alice", "general", []string{"@bob"})
+	d.store.PostMessage("@alice", r.ID, "one")          // seq 1
+	m2, _ := d.store.PostMessage("@alice", r.ID, "two") // seq 2
+
+	// Incremental append: only messages after the watermark come back.
+	added, deleted, err := c.Poll(ctx, "@bob", r.ID, 1)
+	if err != nil || len(added) != 1 || added[0].Text != "two" || len(deleted) != 0 {
+		t.Fatalf("Poll added=%+v deleted=%v err=%v", added, deleted, err)
+	}
+	// A delete surfaces as a removal id through the client.
+	if err := d.store.DeleteMessage("@alice", r.ID, m2.ID); err != nil {
+		t.Fatal(err)
+	}
+	added, deleted, err = c.Poll(ctx, "@bob", r.ID, 2)
+	if err != nil || len(added) != 0 || len(deleted) != 1 || deleted[0] != m2.ID {
+		t.Fatalf("Poll after delete added=%+v deleted=%v err=%v", added, deleted, err)
+	}
+}
+
 func TestClientMapsErrors(t *testing.T) {
 	d := newDaemon(t)
 	c := NewClient(d)

@@ -112,6 +112,49 @@ func TestPostMessageMemberGatedAndAttributed(t *testing.T) {
 	}
 }
 
+func TestPollAppendsNewAndPropagatesDeletes(t *testing.T) {
+	s := newStore(t)
+	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
+	s.PostMessage("@alice", r.ID, "one")            // seq 1
+	m2, _ := s.PostMessage("@alice", r.ID, "two")   // seq 2
+	m3, _ := s.PostMessage("@alice", r.ID, "three") // seq 3
+
+	// A viewer holding through seq 1 gets only the newer two, oldest-first; nothing
+	// is deleted yet.
+	added, deleted, err := s.Poll("@bob", r.ID, 1)
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(added) != 2 || added[0].ID != m2.ID || added[1].ID != m3.ID {
+		t.Fatalf("added = %+v, want [seq2, seq3]", added)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("deleted = %v, want none", deleted)
+	}
+
+	// Sender deletes an already-shown message (seq 2). A caught-up viewer (after=3)
+	// gets no appends but still learns of the deletion, so an append-only view
+	// removes it.
+	if err := s.DeleteMessage("@alice", r.ID, m2.ID); err != nil {
+		t.Fatalf("DeleteMessage: %v", err)
+	}
+	added, deleted, err = s.Poll("@bob", r.ID, 3)
+	if err != nil {
+		t.Fatalf("Poll after delete: %v", err)
+	}
+	if len(added) != 0 {
+		t.Fatalf("added after delete = %+v, want none", added)
+	}
+	if len(deleted) != 1 || deleted[0] != m2.ID {
+		t.Fatalf("deleted = %v, want [%s]", deleted, m2.ID)
+	}
+
+	// Non-members are refused, like every other read.
+	if _, _, err := s.Poll("@carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
+		t.Errorf("non-member Poll err = %v, want ErrNotMember", err)
+	}
+}
+
 func TestDeleteMessageIsSenderOnly(t *testing.T) {
 	s := newStore(t)
 	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})

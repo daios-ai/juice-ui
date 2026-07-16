@@ -393,6 +393,44 @@ func (s *Store) Messages(viewer, roomID string, after int64) ([]Message, error) 
 	return msgs, nil
 }
 
+// Poll is the incremental live read the conversation view uses instead of
+// re-rendering the window each tick: `added` is live messages with seq > after (to
+// append, oldest-first); `deleted` is the ids of recently soft-deleted messages (a
+// delete flips a flag on an existing row, so an append-only read would otherwise
+// miss it) — bounded to the recent window, since older ones scroll out of view.
+// Member only; stateless. An OOB-remove of an absent id is a client no-op, so the
+// scan need not be exact.
+func (s *Store) Poll(viewer, roomID string, after int64) (added []Message, deleted []string, err error) {
+	if _, err = s.requireMember(viewer, roomID); err != nil {
+		return nil, nil, err
+	}
+	rows, err := s.db.Query(`SELECT id, seq, sender, text, at FROM messages
+		WHERE room_id = ? AND deleted = 0 AND seq > ? ORDER BY seq DESC LIMIT ?`,
+		roomID, after, recentWindow)
+	if err != nil {
+		return nil, nil, err
+	}
+	if added, err = scanMessages(rows); err != nil {
+		return nil, nil, err
+	}
+	reverse(added)
+	drows, err := s.db.Query(`SELECT id FROM messages
+		WHERE room_id = ? AND deleted = 1 AND seq > ? ORDER BY seq DESC LIMIT ?`,
+		roomID, after-recentWindow, recentWindow)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer drows.Close()
+	for drows.Next() {
+		var id string
+		if err = drows.Scan(&id); err != nil {
+			return nil, nil, err
+		}
+		deleted = append(deleted, id)
+	}
+	return added, deleted, drows.Err()
+}
+
 // RoomsFor returns the live rooms viewer is a member of, most-recent-activity
 // first. Unread is NOT computed here: unread is a Juice-steps concern (the plugin
 // fills Room.Unread from the viewer's outstanding doorbell steps), so the store

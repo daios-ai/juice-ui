@@ -34,11 +34,19 @@
 
 <h2>Messages</h2>
 <div class="stack">
-  <div id="chat-messages" hx-get="/chat/room/{{$rid}}/messages" hx-trigger="load, every 4s" hx-swap="innerHTML">
-    {{template "_chat_messages" $d.Msgs}}
+  <div id="chat-messages" class="stack" data-autoscroll
+       hx-get="/chat/room/{{$rid}}/messages"
+       hx-include="#chat-after"
+       hx-trigger="every 4s"
+       hx-target="#chat-messages"
+       hx-swap="beforeend">
+    {{range $d.Msgs.Cards}}{{template "_chat_message" .}}{{else}}<p class="muted" id="chat-empty">No messages yet.</p>{{end}}
   </div>
+  <input type="hidden" id="chat-after" name="after" value="{{$d.Msgs.After}}">
   <div class="card">
-    <form class="row" method="post" action="/chat/room/{{$rid}}/message">
+    <form class="row" method="post" action="/chat/room/{{$rid}}/message"
+          hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"
+          hx-target="#chat-messages" hx-swap="beforeend" data-reset-on-success>
       {{.CSRFField}}
       <textarea name="text" class="stretch" rows="1" placeholder="Message…" aria-label="Message"></textarea>
       <button class="btn" type="submit">Send</button>

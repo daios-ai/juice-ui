@@ -25,6 +25,32 @@ document.body.addEventListener("htmx:afterSwap", (e) => {
   }
 });
 
+// A [data-reset-on-success] form clears after a successful htmx submit (a compose
+// box empties without a reload). Generic — any append form opts in.
+document.body.addEventListener("htmx:afterRequest", (e) => {
+  const form = e.detail?.elt;
+  if (e.detail?.successful && form?.matches?.("[data-reset-on-success]")) {
+    form.reset();
+    for (const ta of form.querySelectorAll("textarea")) resizeTA(ta);
+  }
+});
+
+// A [data-autoscroll] log that grows via htmx swaps keeps its newest entry in view,
+// but only when the viewer was already at the bottom (never yanks a history reader).
+let stickBottom = false;
+function atBottom(box) {
+  const last = box.lastElementChild;
+  return !last || last.getBoundingClientRect().bottom <= window.innerHeight + 120;
+}
+document.body.addEventListener("htmx:beforeSwap", (e) => {
+  const box = e.target?.closest?.("[data-autoscroll]");
+  stickBottom = box ? atBottom(box) : false;
+});
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  const box = e.target?.closest?.("[data-autoscroll]");
+  if (box && stickBottom) box.lastElementChild?.scrollIntoView({ block: "end" });
+});
+
 // Theme picker: apply the chosen terminal theme instantly, then persist it via
 // the real form POST (which also works with JS off). An empty value clears the
 // data-theme attribute so the OS preference takes over.

@@ -1,18 +1,21 @@
-{{define "_chat_messages"}}
-<div class="stack">
-  {{range .Messages}}
-  <div class="card stack">
-    <div class="row compact flush">
-      <span class="ref mono"><span class="owner">{{.From}}</span></span>
-      <span class="muted small stretch">{{shortTime .At}}</span>
-      {{if eq .From $.Me}}
-      <form method="post" action="/chat/room/{{$.RoomID}}/message/{{.ID}}/delete">{{$.CSRF}}<button class="btn-icon" type="submit" aria-label="Delete message"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></form>
-      {{end}}
-    </div>
-    <p class="flush">{{.Text}}</p>
+{{define "_chat_message"}}
+<div class="card stack" id="msg-{{.Msg.ID}}">
+  <div class="row compact flush">
+    <span class="ref mono"><span class="owner">{{.Msg.From}}</span></span>
+    <span class="muted small stretch">{{shortTime .Msg.At}}</span>
+    {{if eq .Msg.From .Me}}
+    <form method="post" action="/chat/room/{{.RoomID}}/message/{{.Msg.ID}}/delete" hx-post="/chat/room/{{.RoomID}}/message/{{.Msg.ID}}/delete" hx-target="#msg-{{.Msg.ID}}" hx-swap="delete">{{.CSRF}}<button class="btn-icon" type="submit" aria-label="Delete message"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></form>
+    {{end}}
   </div>
-  {{else}}
-  <p class="muted">No messages yet.</p>
-  {{end}}
+  <p class="flush">{{.Msg.Text}}</p>
 </div>
+{{end}}
+
+{{/* Poll fragment: new cards append (beforeend); the OOB elements advance the
+   watermark, drop the empty placeholder, and remove deleted cards. */}}
+{{define "_chat_poll"}}
+{{range .Cards}}{{template "_chat_message" .}}{{end}}
+<input type="hidden" id="chat-after" name="after" value="{{.After}}" hx-swap-oob="true">
+{{if .HadAdded}}<div id="chat-empty" hx-swap-oob="delete"></div>{{end}}
+{{range .Deleted}}<div id="msg-{{.}}" hx-swap-oob="delete"></div>{{end}}
 {{end}}

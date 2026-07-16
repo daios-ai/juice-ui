@@ -45,6 +45,18 @@ func (c *Client) Room(ctx context.Context, handle, roomID string) (Room, []Messa
 	return out.Room, out.Messages, err
 }
 
+// Poll returns messages newer than after (to append) and ids of recently-deleted
+// messages (to remove), for handle's live conversation view.
+func (c *Client) Poll(ctx context.Context, handle, roomID string, after int64) ([]Message, []string, error) {
+	v := url.Values{"handle": {handle}, "after": {strconv.FormatInt(after, 10)}}
+	var out struct {
+		Added   []Message `json:"added"`
+		Deleted []string  `json:"deleted"`
+	}
+	err := c.do(ctx, http.MethodGet, "/admin/rooms/"+url.PathEscape(roomID)+"/poll?"+v.Encode(), nil, &out)
+	return out.Added, out.Deleted, err
+}
+
 // History returns older messages before beforeSeq for scrollback.
 func (c *Client) History(ctx context.Context, handle, roomID string, beforeSeq int64, limit int) ([]Message, error) {
 	v := url.Values{"handle": {handle}, "before": {strconv.FormatInt(beforeSeq, 10)}, "limit": {strconv.Itoa(limit)}}

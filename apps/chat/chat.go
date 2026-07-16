@@ -47,6 +47,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/daios-ai/juice-ui/apps"
@@ -827,14 +828,43 @@ type roomView struct {
 	Msgs     msgsView
 }
 
-// msgsView is the data for the _chat_messages partial, shared by the full page and
-// the live-update fragment. CSRF is carried here because a fragment has no Page
-// envelope.
+// msgCard is one message plus the chrome its card template needs; each card carries
+// a stable DOM id (msg-<id>) so the poll can append/remove without touching others.
+type msgCard struct {
+	Msg    daemon.Message
+	Me     string
+	RoomID string
+	CSRF   template.HTML
+}
+
+func makeCards(msgs []daemon.Message, me, roomID string, csrf template.HTML) []msgCard {
+	cards := make([]msgCard, len(msgs))
+	for i, m := range msgs {
+		cards[i] = msgCard{Msg: m, Me: me, RoomID: roomID, CSRF: csrf}
+	}
+	return cards
+}
+
+// maxSeq is the newest seq in an oldest-first window (0 if empty) — the poll's
+// after watermark.
+func maxSeq(msgs []daemon.Message) int64 {
+	if len(msgs) == 0 {
+		return 0
+	}
+	return msgs[len(msgs)-1].Seq
+}
+
+// msgsView backs both the initial conversation render and the poll fragment. Cards
+// is the whole window initially, only the new ones on a poll; After is the watermark;
+// Deleted/HadAdded are poll-only (ids to OOB-remove, drop-placeholder flag).
 type msgsView struct {
 	RoomID   string
 	Me       string
-	Messages []daemon.Message
 	CSRF     template.HTML
+	Cards    []msgCard
+	After    int64
+	HadAdded bool
+	Deleted  []string
 }
 
 // ---- browser handlers ----
@@ -928,31 +958,48 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.dismiss(r, me, id)
+	csrf := c.deps.CSRFField(r)
 	c.deps.RenderPage(w, r, http.StatusOK, "chat_conversation", "chat", roomView{
 		Room: room, Me: me, IsOwner: room.Creator == me,
 		OpenForm: r.URL.Query().Get("form"),
-		Msgs:     msgsView{RoomID: room.ID, Me: me, Messages: msgs, CSRF: c.deps.CSRFField(r)},
+		Msgs: msgsView{RoomID: room.ID, Me: me, CSRF: csrf,
+			Cards: makeCards(msgs, me, room.ID, csrf), After: maxSeq(msgs)},
 	})
 }
 
-// getMessages renders just the message list for the conversation page's htmx poll.
-// It completes the room's doorbell (clearing chat unread) ONLY when the tab is
-// visible: the poll keeps running in a backgrounded tab (so content stays fresh),
-// but must not silently clear unread while the user isn't looking. app.js sends
-// X-Visible from document.visibilityState; an absent header (stale asset, other
-// client) is treated as visible, degrading to the prior always-mark behaviour rather
-// than to "unread stuck forever". A non-member gets an empty list (no leak).
+// getMessages is the conversation's poll: an incremental read (writePoll) plus the
+// visible-tab doorbell dismiss. X-Visible (from app.js) keeps a backgrounded tab
+// from silently clearing unread; an absent header counts as visible.
 func (c *Chat) getMessages(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Handle(r)
 	id := r.PathValue("id")
-	_, msgs, _ := c.dc.Room(r.Context(), me, id)
 	if r.Header.Get("X-Visible") != "0" {
 		c.dismiss(r, me, id)
 	}
-	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_messages", msgsView{
-		RoomID: id, Me: me, Messages: msgs, CSRF: c.deps.CSRFField(r),
+	c.writePoll(w, r, me, id)
+}
+
+// writePoll renders the _chat_poll fragment: messages newer than the client's `after`
+// watermark (appended, so no existing node is re-rendered — the scroll-anchor fix)
+// plus OOB removals for recently-deleted ones. Shared by the poll and the compose
+// submit; `after` arrives via FormValue (GET query or POST body).
+func (c *Chat) writePoll(w http.ResponseWriter, r *http.Request, me, id string) {
+	after, _ := strconv.ParseInt(r.FormValue("after"), 10, 64)
+	added, deleted, _ := c.dc.Poll(r.Context(), me, id, after)
+	for _, m := range added {
+		if m.Seq > after {
+			after = m.Seq
+		}
+	}
+	csrf := c.deps.CSRFField(r)
+	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_poll", msgsView{
+		RoomID: id, Me: me, CSRF: csrf,
+		Cards: makeCards(added, me, id, csrf), After: after,
+		HadAdded: len(added) > 0, Deleted: deleted,
 	})
 }
+
+func htmxReq(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
 
 // notify delivers a doorbell — a Juice step addressed to each other member — after a
 // message is posted. The doorbell is THE unread signal and the ONLY state: a member's
@@ -1074,11 +1121,17 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	me := c.deps.Handle(r)
 	text := strings.TrimSpace(r.FormValue("text"))
 	if text != "" {
 		if _, err := c.run(r, "message", map[string]any{"room": id, "text": text}); c.deps.HandleErr(w, r, err) {
 			return
 		}
+	}
+	// htmx: append in place (no reload → no jump). No-JS: reload the room.
+	if htmxReq(r) {
+		c.writePoll(w, r, me, id)
+		return
 	}
 	http.Redirect(w, r, "/chat/room/"+url.PathEscape(id), http.StatusSeeOther)
 }
@@ -1100,7 +1153,16 @@ func (c *Chat) postRemoveMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Chat) postDeleteMessage(w http.ResponseWriter, r *http.Request) {
-	c.opRedirect(w, r, "delete-message", map[string]any{"room": r.PathValue("id"), "message": r.PathValue("mid")}, roomURL(r))
+	id, mid := r.PathValue("id"), r.PathValue("mid")
+	if _, err := c.run(r, "delete-message", map[string]any{"room": id, "message": mid}); c.deps.HandleErr(w, r, err) {
+		return
+	}
+	// htmx: a 200 lets the card's hx-swap="delete" remove it in place. No-JS: reload.
+	if htmxReq(r) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, roomURL(r), http.StatusSeeOther)
 }
 
 // ---- helpers ----

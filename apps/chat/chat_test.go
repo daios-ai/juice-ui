@@ -168,12 +168,96 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 	req.SetPathValue("id", "r1")
 	c.getMessages(httptest.NewRecorder(), req)
 
-	if gotName != "_chat_messages" {
-		t.Fatalf("fragment name = %q, want _chat_messages", gotName)
+	if gotName != "_chat_poll" {
+		t.Fatalf("fragment name = %q, want _chat_poll", gotName)
 	}
 	mv, ok := gotData.(msgsView)
 	if !ok || mv.RoomID != "r1" || mv.Me != "@alice" {
 		t.Fatalf("fragment data = %+v (ok=%v)", gotData, ok)
+	}
+}
+
+// TestPostMessageHTMXAppendsInsteadOfRedirect proves the compose submit swaps the
+// _chat_poll fragment in place for htmx (so the page never reloads to the top),
+// while the no-JS path keeps its full-page redirect fallback.
+func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	st := mustStore(t)
+	r, _ := st.CreateRoom("@alice", "n", []string{"@bob"})
+	c := New()
+	c.daemon = daemon.New(st, "s", "vs", noAuth, nil)
+	c.dc = daemon.NewClient(c.daemon)
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	var fragment string
+	c.deps = apps.Deps{
+		Handle:         func(*http.Request) string { return "@alice" },
+		CSRFField:      func(*http.Request) template.HTML { return "" },
+		RenderFragment: func(_ http.ResponseWriter, _ int, name string, _ any) error { fragment = name; return nil },
+		HandleErr:      func(http.ResponseWriter, *http.Request, error) bool { return false },
+		Client:         cl,
+		Sessions:       session.NewManager(sm, cl),
+	}
+	post := func(htmx bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+r.ID+"/message", strings.NewReader("text=hi&after=0"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("id", r.ID)
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		rec := httptest.NewRecorder()
+		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			c.postMessage(w, req)
+		})).ServeHTTP(rec, req)
+		return rec
+	}
+	fragment = ""
+	if rec := post(true); rec.Code == http.StatusSeeOther {
+		t.Fatalf("htmx submit redirected (%d); it must append in place", rec.Code)
+	}
+	if fragment != "_chat_poll" {
+		t.Fatalf("htmx submit rendered %q, want _chat_poll", fragment)
+	}
+	if rec := post(false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("no-JS submit status %d, want 303 redirect", rec.Code)
+	}
+}
+
+// TestPostDeleteMessageHTMX proves an in-room delete removes the card in place for
+// htmx (a 200 the card's hx-swap="delete" acts on) and redirects for no-JS.
+func TestPostDeleteMessageHTMX(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c := New()
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	c.deps = apps.Deps{
+		Handle:    func(*http.Request) string { return "@alice" },
+		HandleErr: func(http.ResponseWriter, *http.Request, error) bool { return false },
+		Client:    cl,
+		Sessions:  session.NewManager(sm, cl),
+	}
+	del := func(htmx bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/r1/message/m1/delete", nil)
+		req.SetPathValue("id", "r1")
+		req.SetPathValue("mid", "m1")
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		rec := httptest.NewRecorder()
+		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			c.postDeleteMessage(w, req)
+		})).ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := del(true); rec.Code != http.StatusOK {
+		t.Fatalf("htmx delete status %d, want 200 (in-place removal)", rec.Code)
+	}
+	if rec := del(false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("no-JS delete status %d, want 303 redirect", rec.Code)
 	}
 }
 
