@@ -712,7 +712,7 @@ func TestActionCardChips(t *testing.T) {
 	if !strings.Contains(body, `/static/icons.svg#lock`) {
 		t.Error("a private action must show the lock chip")
 	}
-	if !strings.Contains(body, `class="card action-card inactive"`) {
+	if !strings.Contains(body, `class="action-card inactive"`) {
 		t.Error("an inactive action's card must be dimmed (inactive class)")
 	}
 	if !strings.Contains(body, `class="chip tag" title="Inactive — not callable">inactive`) {

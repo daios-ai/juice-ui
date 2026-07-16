@@ -1,31 +1,37 @@
 {{define "content"}}
 {{$d := .Data}}
 <p><a href="/browse">← browse</a></p>
-<div class="action-head">
-  <h1 class="mono">{{template "_ref" $d.Action.Ref}}</h1>
-  <span class="chips">
-    {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span>{{end}}
-    {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
-    {{if not $d.Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
-    {{if $d.Action.PeerState}}<span class="chip tag" title="Peer {{$d.Action.PeerState}} — not callable right now">peer {{$d.Action.PeerState}}</span>{{end}}
-  </span>
+
+<div class="hero">
+  {{template "_media" $d.Action}}
+  <div>
+    <div class="action-head">
+      <h1 class="mono">{{template "_ref" $d.Action.Ref}}</h1>
+      <span class="chips">
+        {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span>{{end}}
+        {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
+        {{if not $d.Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
+        {{if $d.Action.PeerState}}<span class="chip tag" title="Peer {{$d.Action.PeerState}} — not callable right now">peer {{$d.Action.PeerState}}</span>{{end}}
+      </span>
+    </div>
+    {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
+    {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true)}}
+  </div>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
-<div class="card stack action-detail-card">
-  {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-  {{if $d.Action.HTTP}}
-  <dl class="locked-args">
+{{if $d.Action.HTTP}}
+<div class="card action-detail-card">
+  <dl class="locked-args flush">
     <dt>Method</dt><dd class="mono">{{$d.Action.HTTP.Method}}</dd>
     <dt>URL</dt><dd class="mono">{{$d.Action.HTTP.URL}}</dd>
     {{if $d.Action.HTTP.Params}}
     <dt>Params</dt><dd>{{range $d.Action.HTTP.Params}}<span class="mono">{{.Name}}:{{.In}}</span> {{end}}</dd>
     {{end}}
   </dl>
-  {{end}}
-  {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true)}}
 </div>
+{{end}}
 
 <h2>Run</h2>
 {{template "_action_run" $d}}

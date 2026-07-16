@@ -3,8 +3,13 @@
      which the poll then overwrites. Build the model with the `badge` helper. */}}
 {{define "_badge_poll"}}<span class="badge" hx-get="{{.URL}}" hx-trigger="load, every {{.Every}}s" hx-swap="innerHTML" aria-label="{{.Label}}">{{if .Count}}{{.Count}}{{end}}</span>{{end}}
 
+{{/* _media — the 16:9 image slot (§5.13). A kernel image later (ROADMAP);
+     the deterministic cardArt fallback until then. Takes an Action. */}}
+{{define "_media"}}<span class="media">{{cardArt .ID .OwnerHandle .Kind}}</span>{{end}}
+
 {{define "_action_card"}}
-<article class="card action-card{{if not .Action.Active}} inactive{{end}}">
+<article class="action-card{{if not .Action.Active}} inactive{{end}}">
+  <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="action-card-head">
     <a class="action-card-ref mono" href="/actions/{{.Action.ID}}" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</a>
     <span class="chips">
@@ -17,7 +22,6 @@
   <div class="action-card-body">
     {{if .Action.Description}}<p class="action-card-desc" title="{{.Action.Description}}">{{.Action.Description}}</p>{{end}}
   </div>
-  <hr class="card-sep">
   {{template "_stat_strip" (statStrip .Action.Price .Stats false)}}
 </article>
 {{end}}

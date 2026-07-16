@@ -311,12 +311,16 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
   border-radius: var(--radius); padding: .85rem 1rem; box-shadow: none;
 }
 .card-sep { border: none; border-top: 1px solid var(--border); margin: .7rem -1rem; }
-.action-card { display: flex; flex-direction: column; }
-.action-card.inactive { opacity: .6; }
+/* Action card — frameless (YouTube style): media on top, chrome below and
+   outside it (kernel facts never overlap counterparty pixels). */
+.action-card { display: flex; flex-direction: column; gap: .1rem; }
+.action-card.inactive { opacity: .55; }
+.media-link { display: block; }
+.media-link:hover { text-decoration: none; }
 /* Card head: the ref is the title/link (truncates); attribute chips sit right
    and never get pushed out. */
-.action-card-head { display: flex; align-items: center; gap: .4rem; margin: 0 0 .2rem; }
-.action-card-ref { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+.action-card-head { display: flex; align-items: center; gap: .4rem; margin: .5rem 0 .1rem; }
+.action-card-ref { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); font-size: .92rem; }
 .chips { flex: 0 0 auto; display: flex; align-items: center; gap: .25rem; }
 /* Attribute chips — single letter (or lock/word), colorless. R stands out by
    weight (.filled), never by hue: every theme color is a money/trust signal. */
@@ -330,9 +334,9 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .chip.filled { background: var(--surface-2); color: var(--text); }
 .chip.tag { min-width: 0; padding: 0 .35rem; text-transform: lowercase; }
 .chip .ico { width: .8rem; height: .8rem; }
-.action-card .stat-strip { font-size: .72rem; gap: .5rem; margin: 0; flex-wrap: nowrap; }
+.action-card .stat-strip { font-size: .72rem; gap: .5rem; margin: .2rem 0 0; flex-wrap: nowrap; justify-content: flex-start; }
 .action-card-body { flex: 1; }
-.action-card-desc { margin: .35rem 0 0; font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.action-card-desc { margin: .15rem 0 0; font-size: .85rem; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .grid { display: grid; gap: .85rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
@@ -363,8 +367,9 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 /* Action detail header: title on @owner/name + card-consistent chips beside it. */
 .action-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .action-head h1 { margin: 0; }
-/* The detail card's stat strip is a facts line, left-aligned (cards center theirs). */
-.action-detail-card .stat-strip { justify-content: flex-start; }
+/* The detail/hero stat strip is a facts line, left-aligned (cards center theirs). */
+.action-detail-card .stat-strip, .hero .stat-strip { justify-content: flex-start; }
+.hero h1 { font-size: 1.25rem; }
 
 /* @owner/name — owner segment emphasized, confusable-distinct, never accent (R7) */
 .ref .owner { font-weight: 700; color: var(--text); }

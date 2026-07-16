@@ -108,6 +108,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
 		"badge":        badge,
+		"cardArt":      CardArt,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
