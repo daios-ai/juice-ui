@@ -90,8 +90,8 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(body, `href="/admin" title="admin"`) {
 		t.Error("superuser sidebar must have an Admin nav entry")
 	}
-	if !strings.Contains(body, `href="/admin/peers" title="network"`) || !strings.Contains(body, "#share-2") {
-		t.Error("superuser sidebar must have a separate network nav entry (share-2 icon)")
+	if !strings.Contains(body, `href="/admin/peers" title="network"`) {
+		t.Error("superuser sidebar must have a separate network nav entry")
 	}
 	if strings.Contains(body, "linkbar") {
 		t.Error("/admin must not carry the retired users·peers sub-nav")

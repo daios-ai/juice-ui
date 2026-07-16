@@ -9,22 +9,18 @@
 
 <h2>Waiting for you</h2>
 {{if $d.InboxGroups}}
-{{$multi := gt (len $d.InboxGroups) 1}}
+<div class="card-list">
 {{range $d.InboxGroups}}
-{{if or .CreatedBy $multi}}<h3 class="inbox-group">{{if .CreatedBy}}Requested by {{template "_ref" .CreatedBy}}{{else}}Directly created{{end}}</h3>{{end}}
-<div class="stack">
+  {{$req := .CreatedBy}}
   {{range .Steps}}
   {{$step := .Step}}
-  <div class="stack step-item">
-    <div class="row">
-      <span class="mono">{{template "_ref" $step.Ref}}</span>
-      {{if $step.WaitingOnPeer}}<span class="sig-escrow" title="Required caller is a peer">peer</span>{{end}}
-    </div>
+  <div class="step-card">
+    <div class="step-ask">{{if $req}}{{template "_ref" $req}} needs {{end}}{{template "_ref" $step.Ref}}{{if $step.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
     {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval $step.PartialArgs nil)}}
   </div>
   {{end}}
-</div>
 {{end}}
+</div>
 {{else}}
 <p class="muted">Nothing waiting for you.</p>
 {{end}}

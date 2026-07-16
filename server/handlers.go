@@ -70,12 +70,15 @@ type studioEarnings struct {
 }
 
 type actionCardView struct {
-	Action client.Action
-	Stats  *client.Stats
+	Action      client.Action
+	Stats       *client.Stats
+	Earned      int64  // net earned by this action (folded from transactions), workshop table
+	LastFailure string // reason of the latest failed call, a quiet peek
 }
 
 type discoverView struct {
 	Query           string
+	Filter          string // "" (all) | "free" | "paid" | "peers"
 	LookupAvailable bool
 	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []actionCardView
@@ -84,32 +87,35 @@ type discoverView struct {
 }
 
 type actionView struct {
-	Action    client.Action
-	Stats     *client.Stats // nil until the action has usage
-	Ratings   []client.Rating
-	Form      FormModel
-	IsOwner   bool
-	IsPaid    bool
-	Outcome   *Outcome
-	OpenForm  string
-	Error     string
-	CSRFField template.HTML // carried so the polled _action_run fragment's form keeps its token
-	BadgeSecs int           // poll interval for the self-terminating peer-state poll
+	Action     client.Action
+	Stats      *client.Stats // nil until the action has usage
+	Ratings    []client.Rating
+	Form       FormModel
+	IsOwner    bool
+	IsPaid     bool
+	Available  int64 // viewer's available balance, for the payment sheet's before→after
+	FirstPayee bool  // viewer has never paid this action's owner (first-payee hint)
+	Outcome    *Outcome
+	OpenForm   string
+	Error      string
+	CSRFField  template.HTML // carried so the polled _action_run fragment's form keeps its token
+	BadgeSecs  int           // poll interval for the self-terminating peer-state poll
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
 // in. Discovery/browse lives in /run; Scope="all" for a superuser widens Mine to
 // every owner's actions.
 type actionsView struct {
-	User      client.User
-	Mine      []actionCardView // the signed-in user's own actions (management)
-	Earnings  studioEarnings
-	Filter    string // "active" | "inactive" | "" (all) — applies to Mine
-	Scope     string // "" (own+public) | "all" (superuser sees every action)
-	Superuser bool
-	OpenForm  string
-	Error     string
-	Notice    string
+	User        client.User
+	Mine        []actionCardView // the signed-in user's own actions (management)
+	Earnings    studioEarnings
+	MonthEarned int64  // net earned this calendar month (the "this month" tile)
+	Filter      string // "active" | "inactive" | "" (all) — applies to Mine
+	Scope       string // "" (own+public) | "all" (superuser sees every action)
+	Superuser   bool
+	OpenForm    string
+	Error       string
+	Notice      string
 }
 
 type makeResultView struct {
@@ -480,10 +486,35 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 
 // ---- run room (discover / marketplace) ----
 
+// filterCards keeps the cards matching a browse filter ("" all, "free" price 0,
+// "paid" price>0, "peers" remote_proxy) — applied in the BFF over the fetched set.
+func filterCards(cards []actionCardView, filter string) []actionCardView {
+	if filter == "" {
+		return cards
+	}
+	out := cards[:0:0]
+	for _, c := range cards {
+		keep := false
+		switch filter {
+		case "free":
+			keep = c.Action.Price == 0
+		case "paid":
+			keep = c.Action.Price > 0
+		case "peers":
+			keep = c.Action.Kind == "remote_proxy"
+		}
+		if keep {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	view := discoverView{Query: q, LookupAvailable: true, OpenForm: openForm(r, "run")}
+	filter := r.URL.Query().Get("filter")
+	view := discoverView{Query: q, Filter: filter, LookupAvailable: true, OpenForm: openForm(r, "run")}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q == "" {
 			cat, e := s.client.ListActions(ctx, tok, "", "", false)
@@ -550,6 +581,8 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
+	view.Catalog = filterCards(view.Catalog, filter)
+	view.Results = filterCards(view.Results, filter)
 	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
 }
 
@@ -859,6 +892,7 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			Form:      BuildForm(a.InputSchema),
 			IsOwner:   a.OwnerHandle == me.Handle,
 			IsPaid:    a.Price > 0,
+			Available: me.Available,
 			OpenForm:  openForm(r, "action-detail"),
 			CSRFField: csrf.TemplateField(r),
 			BadgeSecs: s.badgeSecs(),
@@ -868,6 +902,19 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if ratings, e := s.client.ActionRatings(ctx, tok, id); e == nil {
 			view.Ratings = ratings
+		}
+		// First-payee hint on the payment sheet (§8.3): show it unless the viewer
+		// has already transacted with this action's owner. Bounded, best-effort.
+		if a.Price > 0 && a.OwnerHandle != me.Handle {
+			view.FirstPayee = true
+			if txs, e := s.client.ListTransactions(ctx, tok, "", 200); e == nil {
+				for _, t := range txs {
+					if t.TargetHandle == a.OwnerHandle {
+						view.FirstPayee = false
+						break
+					}
+				}
+			}
 		}
 		return nil
 	})
@@ -983,13 +1030,25 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
+	// Fold transactions once: aggregate earnings (all-time + this month) and bucket
+	// per-action earned + latest failure for the management table.
+	monthPrefix := time.Now().UTC().Format("2006-01")
+	perActionEarned := map[string]int64{}
+	perActionFailure := map[string]string{} // latest failure reason (txs are newest-first)
 	for _, tx := range txs {
+		if tx.Status == "failure" {
+			if _, seen := perActionFailure[tx.ActionID]; !seen && tx.Reason != "" {
+				perActionFailure[tx.ActionID] = tx.Reason
+			}
+			continue
+		}
 		if tx.Status != "success" {
 			continue
 		}
 		var inflow int64
 		if tx.TargetHandle == view.User.Handle {
 			inflow += tx.Net // net as the seller
+			perActionEarned[tx.ActionID] += tx.Net
 		}
 		if super {
 			inflow += tx.Fee // @sys earns the platform fee on every settled call
@@ -997,6 +1056,9 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 		if inflow > 0 {
 			view.Earnings.Earned += inflow
 			view.Earnings.Count++
+			if strings.HasPrefix(tx.StartedAt, monthPrefix) {
+				view.MonthEarned += inflow
+			}
 		}
 	}
 	for _, a := range mine {
@@ -1011,7 +1073,11 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 			cp := sv
 			st = &cp
 		}
-		view.Mine = append(view.Mine, actionCardView{Action: a, Stats: st})
+		view.Mine = append(view.Mine, actionCardView{
+			Action: a, Stats: st,
+			Earned:      perActionEarned[a.ID],
+			LastFailure: perActionFailure[a.ID],
+		})
 	}
 	s.renderPage(w, r, http.StatusOK, "workshop", "Workshop", view, view.User.Available)
 }
@@ -1617,7 +1683,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 var formWhitelist = map[string]map[string]bool{
 	"run":           {},
 	"action":        {"action-create": true, "action-make": true, "action-import": true, "action-unimport": true},
-	"action-detail": {"action-edit": true},
+	"action-detail": {"action-edit": true, "run": true},
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},
 	"step":          {"step-create": true},

@@ -117,6 +117,12 @@ function openPalette() {
 }
 function closePalette() { palette?.close(); }
 
+// The topbar's ⌘K chip opens the same palette on click (keyboard parity for a
+// pointer user).
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-open-palette]")) { e.preventDefault(); openPalette(); }
+});
+
 if (palette) {
   paletteInput.addEventListener("input", renderList);
   paletteInput.addEventListener("keydown", (e) => {

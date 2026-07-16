@@ -7,7 +7,8 @@
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
-<div class="row" role="group" aria-label="Identity">
+<div class="you-head" role="group" aria-label="Identity">
+  <span class="avatar lg" aria-hidden="true">{{initial $d.User.Handle}}</span>
   <div class="stretch">
     <div class="mono"><b>{{$d.User.Handle}}</b></div>
     <div class="muted small mono">{{$d.User.Email}}</div>
@@ -27,17 +28,20 @@
   <a class="you-row" href="/admin">admin<span class="detail">@sys</span></a>
   {{end}}
   <a class="you-row" href="/you?form=user-update" data-modal="form-user-update">account<span class="detail">email · password</span></a>
+  <div class="you-row"><span>theme</span>
+    <span class="detail">
+      <form method="post" action="/theme" data-theme-form>
+        {{.CSRFField}}
+        <select name="theme" data-theme-select aria-label="Theme">
+          <option value="">System default</option>
+          {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <noscript><button class="btn" type="submit">Apply</button></noscript>
+      </form>
+    </span>
+  </div>
+  <form method="post" action="/logout" class="you-row-form">{{.CSRFField}}<button class="you-row" type="submit">Sign out</button></form>
 </div>
-
-<h2>Theme</h2>
-<form class="row compact" method="post" action="/theme" data-theme-form>
-  {{.CSRFField}}
-  <select name="theme" data-theme-select aria-label="Theme">
-    <option value="">System default</option>
-    {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
-  </select>
-  <noscript><button class="btn" type="submit">Apply</button></noscript>
-</form>
 
 <h2>Connected accounts</h2>
 {{/* One row per upstream account (the inventory), by provider — not the raw
@@ -59,10 +63,6 @@
   {{end}}
 </div>
 {{else}}<p class="muted">No connected accounts yet.</p>{{end}}
-
-<div class="control-row">
-  <form method="post" action="/logout">{{.CSRFField}}<button class="btn" type="submit">Sign out</button></form>
-</div>
 
 {{template "_form_user_update" .}}
 {{end}}

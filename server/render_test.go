@@ -470,8 +470,12 @@ func TestCallFormComplete(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Complete (5)") {
-		t.Errorf("completion form button must read %q: %s", "Complete (5)", body)
+	// Completion is a NEUTRAL button naming no amount (the completer isn't paying).
+	if !strings.Contains(body, `type="submit">Complete</button>`) {
+		t.Errorf("completion button must be a neutral Complete (no amount): %s", body)
+	}
+	if strings.Contains(body, "Complete (5)") || strings.Contains(body, "btn-money") {
+		t.Errorf("completion button must not name an amount or use the money tier: %s", body)
 	}
 	if !strings.Contains(body, `data-oneshot="true"`) {
 		t.Error("step completion form must be one-shot")
@@ -538,8 +542,8 @@ func TestCallFormApproval(t *testing.T) {
 	if strings.Contains(strings.ToLower(body), "acknowledge") || strings.Contains(body, "No further input") {
 		t.Errorf("approval form must not carry a wordy acknowledge line: %s", body)
 	}
-	if !strings.Contains(body, "Complete (1)") {
-		t.Errorf("approval form must show the Complete button: %s", body)
+	if !strings.Contains(body, `type="submit">Complete</button>`) {
+		t.Errorf("approval form must show a neutral Complete button (no amount): %s", body)
 	}
 }
 
@@ -1018,11 +1022,15 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Our credit") {
-		t.Error("peers table missing the Our-credit column header")
+	// Friends now render as kernel cards (with banner art), not a table.
+	if !strings.Contains(body, "our credit there") {
+		t.Error("friend kernel card missing the our-credit figure")
 	}
-	if !strings.Contains(body, ">250<") {
+	if !strings.Contains(body, "250 ¤") {
 		t.Errorf("our credit value not rendered: %s", body)
+	}
+	if !strings.Contains(body, `class="kernel-card`) || !strings.Contains(body, `class="media wide"`) {
+		t.Errorf("friend must render as a kernel card with a banner: %s", body)
 	}
 }
 

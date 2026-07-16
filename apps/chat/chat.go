@@ -548,7 +548,9 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 	// outbox (seed), the open register, and the private validate-user.
 	if c.ackID == "" {
 		id, err := c.ensureSpecialAction(ctx, tok, specialAction{
-			name: ackName, public: false, in: ackInSchema, out: ackOutSchema, desc: ackDesc,
+			// local (not private): a doorbell/message step's required_caller is
+			// another member, who must be able to call this onward (kernel requirement).
+			name: ackName, vis: "local", in: ackInSchema, out: ackOutSchema, desc: ackDesc,
 		})
 		if err != nil {
 			return err
@@ -567,7 +569,9 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		return err
 	}
 	vid, err := c.ensureSpecialAction(ctx, tok, specialAction{
-		name: validateName, public: false, auth: bearerAuth(c.st.ValidateSecret),
+		// local (not private): the verification step's required_caller is the
+		// registrant, who must be able to call this onward (kernel requirement).
+		name: validateName, vis: "local", auth: bearerAuth(c.st.ValidateSecret),
 		in: validateInSchema, out: validateOutSchema, desc: validateDesc,
 	})
 	if err != nil {
@@ -613,11 +617,29 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 // so it needs neither contractDrifted (which assumes public delegated_bearer) nor the
 // AuthRev machinery (its secret never rotates within a state.json).
 type specialAction struct {
-	name    string
+	name string
+	// vis is the action's caller-scope: "" derives from public (public→"public",
+	// else "private"). Set "local" for a step ONWARD whose required_caller is an
+	// ordinary user (e.g. validate-user, ack): the kernel requires the step's
+	// required_caller to be able to call the onward, and a peer never can, so
+	// "local" (any local caller, still bearer-gated) is the minimal scope that lets
+	// the verification/doorbell steps be minted. "private" would 403 the mint.
+	vis     string
 	public  bool
 	auth    json.RawMessage // nil for the no-auth owner-called outbox
 	in, out json.RawMessage
 	desc    string
+}
+
+// visibilityOf resolves a specialAction's target visibility.
+func (sp specialAction) visibilityOf() string {
+	if sp.vis != "" {
+		return sp.vis
+	}
+	if sp.public {
+		return "public"
+	}
+	return "private"
 }
 
 // ensureSpecialAction makes one specialAction exist, active, at its route, with the
@@ -637,10 +659,7 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 			break
 		}
 	}
-	vis := "private"
-	if sp.public {
-		vis = "public"
-	}
+	vis := sp.visibilityOf()
 	if a == nil {
 		na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
 			Name: sp.name, Kind: "http", Source: want, Method: "POST",
@@ -652,9 +671,9 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 		if err := c.deps.Client.EnableAction(ctx, tok, na.ID); err != nil {
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
-		if sp.public {
+		if vis != "private" { // private is the create default; widen when needed
 			if _, err := c.deps.Client.UpdateAction(ctx, tok, na.ID, client.UpdateActionInput{Visibility: &vis}); err != nil {
-				return "", fmt.Errorf("chat: publish %s/%s: %w", chatHandle, sp.name, err)
+				return "", fmt.Errorf("chat: set visibility %s/%s: %w", chatHandle, sp.name, err)
 			}
 		}
 		return na.ID, nil
@@ -677,7 +696,7 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 	}
-	if a.IsPublic() != sp.public {
+	if a.Vis() != vis {
 		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Visibility: &vis}); err != nil {
 			return "", fmt.Errorf("chat: set visibility %s/%s: %w", chatHandle, sp.name, err)
 		}
@@ -785,7 +804,16 @@ func (c *Chat) connected(r *http.Request) bool {
 // connect the key as the @chat/msg grant. The key never reaches the browser. On
 // success the rooms page renders; the kernel connector is now the source of truth.
 func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
+	// Already connected (e.g. a double-submit, or a reconnect where the grant
+	// survived): nothing to do — the kernel connector is the source of truth.
+	if c.connected(r) {
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		return
+	}
 	handle := c.deps.Handle(r)
+	// stage names the step that failed, so a reconnect failure is diagnosable
+	// instead of collapsing into one opaque flash.
+	stage := "register"
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
 		reply, e := c.deps.Client.Run(r.Context(), tok, chatHandle+"/"+registerName,
 			mustJSON(map[string]any{"username": handle}))
@@ -802,14 +830,26 @@ func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
 		if res.APIKey == "" || res.StepID == "" {
 			return fmt.Errorf("chat: register returned no key/step")
 		}
+		stage = "verification"
 		if _, e := c.deps.Client.CompleteStep(r.Context(), tok, res.StepID, nil); e != nil {
 			return e
 		}
+		stage = "attach"
 		_, e = c.deps.Client.ConnectGrant(r.Context(), tok, msgSelector, "", res.APIKey)
 		return e
 	})
 	if err != nil {
-		c.deps.FlashRedirect(w, r, "/chat", "error", "Could not connect to chat. Try again.")
+		// The attach may have partly succeeded; if the grant now exists, treat the
+		// reconnect as done rather than surfacing a spurious error.
+		if c.connected(r) {
+			http.Redirect(w, r, "/chat", http.StatusSeeOther)
+			return
+		}
+		detail := "please try again"
+		if ke, ok := client.AsKernelError(err); ok {
+			detail = ke.UserMessage()
+		}
+		c.deps.FlashRedirect(w, r, "/chat", "error", "Could not connect to chat ("+stage+" failed): "+detail)
 		return
 	}
 	http.Redirect(w, r, "/chat", http.StatusSeeOther)
@@ -825,6 +865,7 @@ type indexView struct {
 
 type roomView struct {
 	Room     daemon.Room
+	Rooms    []daemon.Room // the full rail (two-pane layout); the current room is .Room
 	Me       string
 	IsOwner  bool
 	OpenForm string // which ?form= modal to render open (no-JS path); "" = none
@@ -961,9 +1002,10 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.dismiss(r, me, id)
+	rooms, _ := c.dc.RoomsFor(r.Context(), me) // the rail; best-effort
 	csrf := c.deps.CSRFField(r)
 	c.deps.RenderPage(w, r, http.StatusOK, "chat_conversation", "chat", roomView{
-		Room: room, Me: me, IsOwner: room.Creator == me,
+		Room: room, Rooms: rooms, Me: me, IsOwner: room.Creator == me,
 		OpenForm: r.URL.Query().Get("form"),
 		Msgs: msgsView{RoomID: room.ID, Me: me, CSRF: csrf,
 			Cards: makeCards(msgs, me, room.ID, csrf), After: maxSeq(msgs)},

@@ -495,6 +495,7 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	// the mobile tab bar.
 	handle := s.sessions.Handle(r.Context())
 	super := s.isSuperuser(r)
+	firstApp := true
 	for _, f := range s.apps {
 		for _, e := range f.Nav(handle, super) {
 			nav = append(nav, NavItem{
@@ -506,7 +507,9 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 				BadgeURL: e.BadgeURL,
 				Active:   e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
 				Tab:      e.Slug == "chat",
+				Divider:  firstApp, // separate the apps group from the core groups
 			})
+			firstApp = false
 		}
 	}
 	if super {

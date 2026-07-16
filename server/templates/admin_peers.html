@@ -1,22 +1,23 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <h1>peers</h1>
-  <p class="subtitle">Federation — discover, inspect, trust kernels. <span class="scope-note">superuser only</span></p>
+  <h1>network</h1>
+  <p class="subtitle">Discover, inspect, and trust kernels. <span class="scope-note">superuser only</span></p>
 </div>
 
 <h2>This kernel</h2>
-<div class="card">
-  <dl class="locked-args">
-    <dt>Handle</dt><dd class="mono">{{$d.Identity.Handle}}</dd>
-    <dt>Public key</dt><dd class="mono hash">{{$d.Identity.PublicKey}}</dd>
-  </dl>
-  {{if $d.Identity.Addrs}}
-  <details class="details-panel">
-    <summary>Listen addresses</summary>
-    <ul class="mono tiny">{{range $d.Identity.Addrs}}<li>{{.}}</li>{{end}}</ul>
-  </details>
-  {{end}}
+<div class="kernel-card">
+  <span class="media wide">{{cardArt $d.Identity.PublicKey $d.Identity.Handle "kernel"}}</span>
+  <div class="kernel-body">
+    <div class="mono"><b>{{$d.Identity.Handle}}</b></div>
+    <div class="fingerprint">{{$d.Identity.PublicKey}}</div>
+    {{if $d.Identity.Addrs}}
+    <details class="details-panel">
+      <summary>Listen addresses</summary>
+      <ul class="mono tiny">{{range $d.Identity.Addrs}}<li>{{.}}</li>{{end}}</ul>
+    </details>
+    {{end}}
+  </div>
 </div>
 
 <h2>Friends</h2>
@@ -36,6 +37,7 @@
   {{$isFriend := index $d.FriendKeys .PublicKey}}
   <details class="card roster-kernel">
     <summary>
+      <span class="thumb-s">{{cardArt .PublicKey .Handle "kernel"}}</span>
       <span class="mono"><b>{{.Handle}}</b> <span class="hash muted">{{truncate 16 .PublicKey}}…</span></span>
       {{if $isFriend}}<span class="pill status-credited">friend</span>{{end}}
       <span class="cluster roster-actions">

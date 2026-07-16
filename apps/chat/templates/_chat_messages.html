@@ -1,13 +1,14 @@
 {{define "_chat_message"}}
-<div class="card stack" id="msg-{{.Msg.ID}}">
-  <div class="row compact flush">
-    <span class="ref mono"><span class="owner">{{.Msg.From}}</span></span>
-    <span class="muted small stretch">{{shortTime .Msg.At}}</span>
-    {{if eq .Msg.From .Me}}
-    <form method="post" action="/chat/room/{{.RoomID}}/message/{{.Msg.ID}}/delete" hx-post="/chat/room/{{.RoomID}}/message/{{.Msg.ID}}/delete" hx-target="#msg-{{.Msg.ID}}" hx-swap="delete">{{.CSRF}}<button class="btn-icon" type="submit" aria-label="Delete message"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></form>
-    {{end}}
+<div class="msg" id="msg-{{.Msg.ID}}">
+  <span class="avatar" aria-hidden="true">{{initial .Msg.From}}</span>
+  <div class="msg-body">
+    <div class="msg-who"><span class="h mono">{{.Msg.From}}</span><span class="muted small">{{shortTime .Msg.At}}</span>
+      {{if eq .Msg.From .Me}}
+      <form method="post" action="/chat/room/{{.RoomID}}/message/{{.Msg.ID}}/delete" hx-post="/chat/room/{{.RoomID}}/message/{{.Msg.ID}}/delete" hx-target="#msg-{{.Msg.ID}}" hx-swap="delete">{{.CSRF}}<button class="btn-icon msg-del" type="submit" aria-label="Delete message"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></form>
+      {{end}}
+    </div>
+    <p class="msg-text">{{.Msg.Text}}</p>
   </div>
-  <p class="flush">{{.Msg.Text}}</p>
 </div>
 {{end}}
 

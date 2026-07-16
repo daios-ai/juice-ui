@@ -265,10 +265,15 @@ detectable.
 
 **Discovery.**
 
-* The omnibox MUST be present on every page and MUST issue `@sys/lookup`
-  (required `query`, optional `limit`) via `POST /v1/run`. Results MUST render as
-  ranked cards, each with a **media slot** (§6.2 media) above the ref
-  (owner-emphasized), one-line description, price, and the reputation strip.
+* The omnibox MUST be present on every page — it lives in a **persistent
+  topbar** at the top of the content area (a compact search input reflows onto the
+  browse page itself on mobile, where the topbar is hidden) — and MUST issue
+  `@sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
+  MUST render as ranked cards, each with a **media slot** (§6.2 media), the ref
+  (owner-emphasized) with **price right-aligned** in the title row, a one-line
+  description, and an **icon-less** reputation line (runs · success · latency).
+  The browse page is **headless** (no page-head): a filter tab row
+  (`all · free · paid · from peers`) sits directly above the grid.
 * **Media slot.** Every action card and the action page MUST carry a 16:9 media
   slot. Until the kernel serves images (*Conditional*, §10; tracked in
   `ROADMAP.md`), the slot MUST render a **deterministic generated fallback**
@@ -351,7 +356,17 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * `partial_args` MUST render read-only; only schema fields absent from
   `partial_args` MUST be editable. When none are editable, the card MUST collapse
   to a single confirm.
-* The card MUST display and attribute the parked price before the confirm.
+* The step card MUST stay **calm and free of funds-mechanics narration** — no
+  "parked," no "you pay N but it's reserved," no "the funds don't come from your
+  wallet." The completer is doing requested work, not authorizing a spend from
+  their own wallet (the money was reserved by whoever created the step), so the
+  completion control is a **neutral `Complete`** that names **no** amount — a
+  `verb (N)` money button here actively misleads ("you pay N"). The card names
+  only *who asks* and *what* (the creating action, quietly) and shows the sealed
+  `partial_args` as an inert read-only detail. This reinterprets the older
+  "attribute the parked price"/§8.4 disclosure: for a step the anti-phishing
+  signal that matters is *who requested it* and *what inputs are sealed*, not a
+  funds-movement paragraph.
 * Completion MUST POST to `/v1/steps/{id}/complete` with `args` (default `{}`)
   and MUST render `{result, tx_id, trace_id, step_id}` through the run outcome
   display (§6.2). Completion MUST be offered only to the `required_caller`;

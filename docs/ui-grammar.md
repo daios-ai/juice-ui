@@ -197,7 +197,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, befriend, inspect, navigate, add-row |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`, `Complete (5)`); the accent color conveys it's credits, so **no `¤` glyph** |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no `¤` glyph**. A **step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N" |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, unfriend, force-end |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
@@ -409,9 +409,13 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
 ## 6. Invariants (enforced)
 
 - No inline `style=""`; tokens only; every decision is a named class.
-- **Accent = money movement + focus only.** Money buttons name the amount as
-  `verb (N)` and carry **no `¤`**; money *display* uses `N ¤` in the mono
-  provenance face (§5.6). **Danger beats money.**
+- **Accent = money movement + focus only.** Concretely, the accent appears ONLY
+  on `.btn-money`, the `.badge`, the focus ring, `.req`, and the progress bar —
+  never on links, tab underlines, active nav, or the active mobile tab (those key
+  on text weight + surface). Money buttons name the amount as `verb (N)` and carry
+  **no `¤`**; money *display* uses `N ¤` in the mono provenance face (§5.6).
+  **Danger beats money.** A **step completion is neutral** (`Complete`, no
+  amount, no accent): the completer is not the payer (§5.1).
 - Counterparty content (names, descriptions, args, results, reasons) renders
   **inert**: escaped, no chrome, no accent, JSON in a code block. Trust
   affordances key on kernel-captured fields, never payload shape.

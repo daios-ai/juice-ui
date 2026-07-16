@@ -32,14 +32,18 @@
 
       <nav class="nav" aria-label="Primary">
         {{range .Nav}}
+        {{if .Divider}}<div class="nav-sep" role="presentation"></div>{{end}}
         <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
         {{end}}
       </nav>
 
       <div class="profile-menu">
         <button class="profile-trigger" data-menu="profile-popup" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu" title="Account menu">
-          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
-          <span class="lbl mono">{{.Handle}}</span>
+          <span class="avatar" aria-hidden="true">{{initial .Handle}}</span>
+          <span class="who">
+            <span class="handle mono lbl">{{.Handle}}</span>
+            <span class="bal mono lbl">{{money .Available}} ¤</span>
+          </span>
         </button>
         <div class="menu" id="profile-popup" role="menu" hidden>
           {{template "_menu_account" .}}
@@ -50,14 +54,20 @@
 
     <div class="main-area">
       {{if .Handle}}
-      <details class="mobile-menu">
-        <summary class="btn-icon" aria-label="Account menu" title="Account menu">
-          <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
-        </summary>
-        <div class="menu mobile-drawer" role="menu">
-          {{template "_menu_content" .}}
-        </div>
-      </details>
+      <header class="topbar">
+        <form class="omni" method="get" action="/browse" role="search">
+          <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#search"/></svg>
+          <input type="text" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off">
+          <button type="button" class="kbd" data-open-palette aria-label="Command palette">⌘K</button>
+        </form>
+        <label class="theme-pick" title="Theme">
+          <span class="lbl">theme</span>
+          <select data-theme-select aria-label="Theme">
+            <option value="">System</option>
+            {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
+          </select>
+        </label>
+      </header>
       {{end}}
 
       <div class="content">

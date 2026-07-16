@@ -1,40 +1,29 @@
 {{define "content"}}
-<div class="page-head">
-  <div>
-    <h1>browse</h1>
-    <p class="subtitle">Discover an action and run it.</p>
-  </div>
-</div>
-
+{{$q := .Data.Query}}
 {{if not .Data.LookupAvailable}}
 <div class="banner banner-info" role="status">Semantic search unavailable — showing catalog results.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
 {{end}}
 
-<form class="card row" method="get" action="/browse">
-  <div class="field stretch flush">
-    <label for="q" class="sr-only">Search</label>
-    <input id="q" name="q" type="text" value="{{.Data.Query}}" placeholder="e.g. summarize a document, send a payment">
-  </div>
-  <button class="btn" type="submit">Search</button>
+{{/* Mobile-only search — the topbar omnibox is hidden below 720px. */}}
+<form class="browse-search" method="get" action="/browse" role="search">
+  <label for="q" class="sr-only">Search</label>
+  <input id="q" name="q" type="text" value="{{$q}}" placeholder="what do you need done?">
 </form>
 
-{{if .Data.Query}}
-<h2>Results for "{{.Data.Query}}"</h2>
-{{if .Data.Results}}
+<nav class="tabs control-tabs" aria-label="Filter">
+  {{template "_tab" (tab "all" (browseHref $q "") (eq .Data.Filter ""))}}
+  {{template "_tab" (tab "free" (browseHref $q "free") (eq .Data.Filter "free"))}}
+  {{template "_tab" (tab "paid" (browseHref $q "paid") (eq .Data.Filter "paid"))}}
+  {{template "_tab" (tab "from peers" (browseHref $q "peers") (eq .Data.Filter "peers"))}}
+  {{if $q}}<span class="muted small tabs-action">sorted by relevance</span>{{end}}
+</nav>
+
+{{$cards := .Data.Catalog}}{{if $q}}{{$cards = .Data.Results}}{{end}}
+{{if $cards}}
 <div class="grid">
-  {{range .Data.Results}}{{template "_action_card" .}}{{end}}
+  {{range $cards}}{{template "_action_card" .}}{{end}}
 </div>
 {{else}}
-<p class="muted">No matches.</p>
-{{end}}
-{{else}}
-<h2>Catalog</h2>
-{{if .Data.Catalog}}
-<div class="grid">
-  {{range .Data.Catalog}}{{template "_action_card" .}}{{end}}
-</div>
-{{else}}
-<p class="muted">No public actions yet.</p>
-{{end}}
+<p class="muted">{{if $q}}No matches for "{{$q}}".{{else}}No actions here yet.{{end}}</p>
 {{end}}
 {{end}}

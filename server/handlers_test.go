@@ -397,7 +397,9 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, "+45") || !strings.Contains(body, "sig-credited") {
 		t.Error("seller transaction must show the positive net (+45) as credited")
 	}
-	for _, gone := range []string{"<th>Role</th>", "<th>Fee</th>", "<th>Gross</th>"} {
+	// Gross/fee/full-party breakdown stays on the detail page; the list shows the
+	// signed perspective amount (plus the viewer's role, a lightweight label).
+	for _, gone := range []string{"<th>Fee</th>", "<th>Gross</th>"} {
 		if strings.Contains(body, gone) {
 			t.Errorf("transactions list must not carry the %q column", gone)
 		}
@@ -689,33 +691,39 @@ func TestActionCardChips(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	body := getBody(t, cl, srv.URL+"/workshop")
 
-	// Ref is the card title/link, rendered via _ref (owner emphasized).
-	if !strings.Contains(body, `class="action-card-ref mono" href="/actions/A1"`) {
-		t.Error("action card must use the ref as the title link")
+	// Browse renders active public actions as image cards. The ref is the title
+	// link (via _ref, owner emphasized); the kind chip is exceptional-only.
+	browse := getBody(t, cl, srv.URL+"/browse")
+	if !strings.Contains(browse, `class="card-title ref mono" href="/actions/A1"`) {
+		t.Error("browse card must use the ref as the title link")
 	}
-	if !strings.Contains(body, `class="owner">@alice`) {
+	if !strings.Contains(browse, `class="owner">@alice`) {
 		t.Error("card ref must render via _ref with owner emphasized")
 	}
-	// Kind chip: both fixtures are wasm → a W chip.
-	if !strings.Contains(body, `class="chip" title="WebAssembly action">W`) {
-		t.Error("action card must show the kind chip (W for wasm)")
+	if strings.Contains(browse, `title="WebAssembly action">W`) {
+		t.Error("browse card must NOT show an always-on kind chip (exceptional-only)")
 	}
-	// A3 (@alice/draft) is private + inactive: lock chip, dimmed card, inactive chip.
+	if !strings.Contains(browse, `class="media"`) {
+		t.Error("browse card must carry a media slot")
+	}
+
+	// The workshop management table carries the visibility + state cells: a private
+	// inactive action shows the lock chip, the inactive pill, and a dimmed row.
+	body := getBody(t, cl, srv.URL+"/workshop")
 	if !strings.Contains(body, `/static/icons.svg#lock`) {
-		t.Error("a private action must show the lock chip")
+		t.Error("a private action must show the lock chip in the workshop table")
 	}
-	if !strings.Contains(body, `class="action-card inactive"`) {
-		t.Error("an inactive action's card must be dimmed (inactive class)")
+	if !strings.Contains(body, `class="pill inactive">inactive`) {
+		t.Error("an inactive action must show the inactive pill")
 	}
-	if !strings.Contains(body, `class="chip tag" title="Inactive — not callable">inactive`) {
-		t.Error("an inactive action must show the inactive chip")
+	if !strings.Contains(body, `class="rowable dim"`) {
+		t.Error("an inactive action's row must be dimmed")
 	}
-	// The old cluttered markup is gone.
-	for _, gone := range []string{"action-card-name", "action-card-meta", "remote_proxy"} {
+	// The old cluttered card markup is gone.
+	for _, gone := range []string{"action-card-name", "action-card-meta"} {
 		if strings.Contains(body, gone) {
-			t.Errorf("action card must not contain legacy %q", gone)
+			t.Errorf("must not contain legacy %q", gone)
 		}
 	}
 }
@@ -930,23 +938,23 @@ func TestInboxGroupsByCreatingAction(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/inbox")
 
-	// Both waiting steps share one creating action (@sys/make) → a single group,
-	// but the inbox must STILL name the creating action (not just the target), even
-	// when there is only one group. Regression guard: the heading was previously
-	// suppressed for a lone group, leaving only the completion target visible.
-	if strings.Count(body, `class="inbox-group"`) != 1 {
-		t.Errorf("a single creating action must render exactly one group heading: %s", body)
+	// Each step card names who asked (the creating action, @sys/make) in its ask
+	// line — "@sys/make needs …" — not just the completion target. The old separate
+	// group heading is gone (simplified inbox), but the attribution stays.
+	if !strings.Contains(body, "needs") {
+		t.Errorf("step card must name who asks (an ask line): %s", body)
 	}
-	if strings.Count(body, "Requested by") != 1 {
-		t.Errorf("inbox must name the creating action even for a lone group: %s", body)
-	}
-	// _ref splits owner/name with markup, so assert the distinguishing name fragment.
 	if !strings.Contains(body, "/make") {
-		t.Errorf("group heading must name the creating action @sys/make: %s", body)
+		t.Errorf("step card must name the creating action @sys/make: %s", body)
 	}
-	// Both completion forms are present under the group, one per step.
+	// Both completion forms are present, one per step.
 	if !strings.Contains(body, `action="/inbox/S1/complete"`) || !strings.Contains(body, `action="/inbox/S2/complete"`) {
 		t.Error("every waiting step keeps its own completion form")
+	}
+	// The completion button is neutral (no money button, no amount) — a step
+	// completer is doing work, not paying.
+	if strings.Contains(body, `class="btn-money" type="submit">Complete`) {
+		t.Error("step completion must be a neutral button, not a money button naming an amount")
 	}
 }
 
@@ -994,12 +1002,18 @@ func TestInboxPageRendersSteps(t *testing.T) {
 
 	// Step S1 (status=waiting, required_caller=@alice=current user) appears as a
 	// completable card. The price rides on the Complete button — the redundant
-	// "◷ N parked" chip is gone (the button already names the amount).
-	if strings.Contains(body, "parked") {
-		t.Error("inbox card must not repeat the parked price — the Complete (N) button carries it")
+	// No funds-mechanics prose (parked / your wallet / from their process).
+	for _, banned := range []string{"parked", "your wallet", "their process"} {
+		if strings.Contains(strings.ToLower(body), banned) {
+			t.Errorf("inbox must not narrate funds mechanics (found %q)", banned)
+		}
 	}
-	if !strings.Contains(body, "Complete (5)") {
-		t.Error("inbox page must show the money Complete (N) button for own waiting steps")
+	// Completion is a neutral button (no amount) — the completer isn't paying.
+	if !strings.Contains(body, `type="submit">Complete</button>`) {
+		t.Error("inbox must show a neutral Complete button (no amount)")
+	}
+	if strings.Contains(body, "Complete (5)") {
+		t.Error("inbox Complete button must NOT name an amount (the completer is not the payer)")
 	}
 	// Old inline step-create endpoint must be absent (creation is a modal to POST /steps).
 	if strings.Contains(body, "/steps/create") {
@@ -1041,14 +1055,16 @@ func TestStudioShowsEarnings(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/workshop")
-	// T2 in authKernel is a seller transaction for U1 (target_user_id=U1, status=success).
-	// Earnings card must appear.
-	if !strings.Contains(strings.ToLower(body), ">earnings<") {
-		t.Error("studio must show Earnings section when seller transactions exist")
-	}
+	// T2 in authKernel is a seller transaction for U1 (net 45). The three stat
+	// tiles (this month / parked / all time) must render, all-time showing +45.
 	lower := strings.ToLower(body)
-	if !strings.Contains(lower, ">earnings<") || !strings.Contains(lower, "call") {
-		t.Error("studio Earnings card must show the earnings + calls figures")
+	for _, tile := range []string{"this month", "parked", "all time"} {
+		if !strings.Contains(lower, tile) {
+			t.Errorf("workshop must show the %q earnings tile", tile)
+		}
+	}
+	if !strings.Contains(body, "+45 ¤") {
+		t.Errorf("all-time earnings tile must show the +45 net: %s", body)
 	}
 }
 
@@ -1119,6 +1135,12 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 	}
 	if strings.Contains(page, "action-detail-meta") {
 		t.Error("action header must not carry the spelled-out kind·active·public meta line")
+	}
+
+	// Regression: the run form must POST to /actions/{id}/run — the route rename
+	// once left it pointing at /actions/{id}/browse (a 404).
+	if !strings.Contains(page, `action="/actions/A1/run"`) {
+		t.Errorf("run form must post to /actions/A1/run, not the renamed collateral: %s", page)
 	}
 
 	// Decomposed http object is rendered inertly.

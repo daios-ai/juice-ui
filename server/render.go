@@ -45,6 +45,7 @@ type NavItem struct {
 	Badge    int    // static count (apps); 0 hides
 	BadgeURL string // polled badge endpoint; "" for none
 	Tab      bool   // also appears in the mobile 4-tab bar
+	Divider  bool   // render a separator before this entry (marks the apps group)
 }
 
 // Page is the data passed to the layout for a full-page render.
@@ -86,6 +87,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":        money,
 		"sum":          func(a, b int64) int64 { return a + b },
+		"sub":          func(a, b int64) int64 { return a - b },
 		"json":         prettyJSON,
 		"jsonEdit":     jsonEdit,
 		"statusClass":  statusClass,
@@ -104,11 +106,13 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"tab":          tab,
 		"paneltab":     paneltab,
 		"actionsHref":  actionsHref,
+		"browseHref":   browseHref,
 		"runForm":      runForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
 		"badge":        badge,
 		"cardArt":      CardArt,
+		"initial":      initial,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -332,6 +336,31 @@ func tab(label, href string, active bool) Tab { return Tab{Label: label, Href: h
 // (the panel key) makes _tab emit data-tab + role="tab" for the JS swap.
 func paneltab(label, key string, active bool) Tab {
 	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
+}
+
+// initial returns the first letter of a handle (skipping a leading @), uppercased,
+// for an avatar monogram. "" → "?".
+func initial(handle string) string {
+	for _, r := range strings.TrimPrefix(handle, "@") {
+		return strings.ToUpper(string(r))
+	}
+	return "?"
+}
+
+// browseHref builds the /browse URL for a filter tab, preserving the query so a
+// filter and a search compose.
+func browseHref(query, filter string) string {
+	q := url.Values{}
+	if query != "" {
+		q.Set("q", query)
+	}
+	if filter != "" {
+		q.Set("filter", filter)
+	}
+	if len(q) == 0 {
+		return "/browse"
+	}
+	return "/browse?" + q.Encode()
 }
 
 // actionsHref builds the /workshop URL for a given ownership scope ("" | "all")

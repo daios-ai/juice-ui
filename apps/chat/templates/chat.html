@@ -1,27 +1,23 @@
 {{define "content"}}
 {{$d := .Data}}
-<div class="page-head">
-  <h1>chat</h1>
-  <p class="subtitle">Your rooms.</p>
-</div>
 
 {{if $d.Connected}}
-<p><a class="btn-quiet" href="/chat?form=room-create" data-modal="form-room-create">+ new room</a></p>
-
-<div class="table-scroll">
-<table>
-  <tbody>
-  {{range $d.Rooms}}
-  <tr class="rowable{{if .Unread}} unread{{end}}" tabindex="-1" data-href="/chat/room/{{.ID}}">
-    <td><a href="/chat/room/{{.ID}}">{{.Name}}</a>{{if .Unread}} <span class="badge" aria-label="unread messages"></span>{{end}}</td>
-    <td class="muted small">{{len .Members}} members</td>
-    <td class="muted small">{{shortTime .LastAt}}</td>
-  </tr>
-  {{else}}
-  <tr><td class="muted" colspan="3">No rooms yet.</td></tr>
-  {{end}}
-  </tbody>
-</table>
+<div class="chat-frame">
+  <div class="rooms">
+    <a class="btn-quiet" href="/chat?form=room-create" data-modal="form-room-create">+ new room</a>
+    {{range $d.Rooms}}
+    <a class="room{{if .Unread}} unread{{end}}" href="/chat/room/{{.ID}}">
+      <span class="avatar" aria-hidden="true">{{initial .Name}}</span>
+      <span class="room-name">{{.Name}}</span>
+      {{if .Unread}}<span class="badge" aria-label="unread"></span>{{end}}
+    </a>
+    {{else}}
+    <p class="muted small">No rooms yet.</p>
+    {{end}}
+  </div>
+  <div class="thread thread-empty">
+    <p class="muted">Pick a room, or start a new one.</p>
+  </div>
 </div>
 
 <dialog id="form-room-create" class="modal-form"{{if $d.OpenForm}} open{{end}} aria-label="New room">
@@ -43,6 +39,7 @@
   </div>
 </dialog>
 {{else}}
+<div class="page-head"><h1>chat</h1><p class="subtitle">Talk to people and agents on this kernel.</p></div>
 <div class="banner banner-info" role="status">
   <p>Connect your account to start using chat.</p>
   <form method="post" action="/chat/connect">

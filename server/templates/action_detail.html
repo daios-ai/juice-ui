@@ -43,7 +43,7 @@
 {{range $d.Ratings}}
 <div class="card">
   <p class="row compact flush">
-    <span class="pill {{if eq .Rating 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Rating 1}}positive{{else}}negative{{end}}</span>
+    <span class="pill {{if eq .Rating 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Rating 1}}good{{else}}poor{{end}}</span>
     <span class="muted small">{{shortTime .CreatedAt}}</span>
   </p>
   {{if .Note}}<p class="card-note">{{.Note}}</p>{{end}}

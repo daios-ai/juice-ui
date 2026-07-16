@@ -354,3 +354,43 @@ func TestTokenRegisterActivateLookup(t *testing.T) {
 		t.Error("raw key stored verbatim; want only its hash")
 	}
 }
+
+// TestTokenReconnectRotatesKey: a reconnect (register→activate a second time for
+// the same handle) rotates the key — the new one is active, the old is
+// deactivated, and exactly one active row remains. Guards the orphan-key leak
+// that the kernel-side disconnect could never clean up.
+func TestTokenReconnectRotatesKey(t *testing.T) {
+	s := newStore(t)
+
+	key1, reg1, err := s.RegisterToken("@ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivateToken(reg1); err != nil {
+		t.Fatal(err)
+	}
+	// Reconnect: a fresh registration + activation for the same handle.
+	key2, reg2, err := s.RegisterToken("@ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivateToken(reg2); err != nil {
+		t.Fatal(err)
+	}
+
+	// The new key is live; the old key is no longer active (rotated out).
+	if _, active, _ := s.LookupToken(hashToken(key2)); !active {
+		t.Error("reconnected key must be active")
+	}
+	if _, active, _ := s.LookupToken(hashToken(key1)); active {
+		t.Error("the previous key must be deactivated on reconnect (no orphan)")
+	}
+	// Exactly one active row for the handle.
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tokens WHERE username = ? AND active = 1`, "@ana").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("active key rows for @ana = %d, want exactly 1", n)
+	}
+}

@@ -92,7 +92,7 @@ type CallForm struct {
 // runForm builds a CallForm for running an action (repeatable, no locked args).
 func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome) CallForm {
 	return CallForm{
-		CSRFField: csrf, PostURL: "/actions/" + actionID + "/browse", Verb: "Run",
+		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", Verb: "Run",
 		Price: price, Editable: editable, ResultID: "run-result", Outcome: outcome,
 	}
 }

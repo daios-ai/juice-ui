@@ -515,20 +515,35 @@ func (s *Store) RegisterToken(username string) (rawKey, regID string, err error)
 	return rawKey, regID, nil
 }
 
-// ActivateToken flips the pending key identified by regID to active. ErrNotFound if
-// no such registration exists. Called when the verification step is completed.
+// ActivateToken flips the pending key identified by regID to active AND rotates:
+// it deactivates every other key for the same username, so a reconnect replaces
+// the old key rather than leaving orphan active rows (which accumulated
+// unbounded before — a kernel-side disconnect never told the daemon). ErrNotFound
+// if no such registration exists. Called when the verification step is completed.
 func (s *Store) ActivateToken(regID string) error {
 	if regID == "" {
 		return ErrBadInput
 	}
-	res, err := s.db.Exec(`UPDATE tokens SET active = 1 WHERE reg_id = ?`, regID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE tokens SET active = 1 WHERE reg_id = ?`, regID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	// Rotate: any other row for this username (identified via the just-activated
+	// row's username) is deactivated.
+	if _, err = tx.Exec(`UPDATE tokens SET active = 0
+		WHERE reg_id <> ? AND username = (SELECT username FROM tokens WHERE reg_id = ?)`,
+		regID, regID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ResolveToken maps a RAW API key (as the kernel injects it) to its username and

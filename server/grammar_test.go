@@ -132,16 +132,16 @@ func TestTablesAreScrollable(t *testing.T) {
 var buttonBlockRe = regexp.MustCompile(`(?s)<button\b[^>]*>.*?</button>`)
 
 // TestNoCurrencyGlyphOnButtons enforces §5.1/§5.6: money DISPLAY renders `N ¤` in
-// the mono provenance face, but a spend button reads `verb (N)` — the accent
-// already conveys credits, so no ¤ ever appears inside a <button>. (In prose the
-// unit is spelled "credits".)
+// the mono provenance face, but a SPEND button reads `verb (N)` — the accent
+// already conveys credits, so no ¤ ever appears on a `.btn-money`. (A non-spend
+// element that merely shows a balance, e.g. the account-menu trigger, may.)
 func TestNoCurrencyGlyphOnButtons(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
 		for _, b := range buttonBlockRe.FindAllString(src, -1) {
-			if strings.ContainsRune(b, '¤') {
-				t.Errorf("%s: ¤ inside a <button> — spend buttons read `verb (N)`, the accent conveys credits (grammar §5.1): %s", f, b)
+			if strings.Contains(b, "btn-money") && strings.ContainsRune(b, '¤') {
+				t.Errorf("%s: ¤ on a spend button — money buttons read `verb (N)`, the accent conveys credits (grammar §5.1): %s", f, b)
 			}
 		}
 	}
