@@ -41,6 +41,11 @@ fmt:
 vet:
 	go vet ./...
 
+# Regenerate the committed theme stylesheet from the Ghostty palettes. Guarded
+# by server/themes_test.go (TestThemesCSSInSync), so a forgotten run fails check.
+themes:
+	go run ./cmd/themegen > server/static/themes.css
+
 # CI gate: formatting, vet, and the offline suite must all pass.
 check:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }

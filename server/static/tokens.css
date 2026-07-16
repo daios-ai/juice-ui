@@ -2,23 +2,29 @@
   Structural design tokens — the theme-independent half of the token system.
   Color tokens live in the generated themes.css (one 16-color Ghostty ANSI
   palette per selectable theme, mapped to the same semantic names below).
-  Components reference these custom properties only, never raw values, so a new
-  terminal theme is purely a palette swap.
+  Components reference these custom properties only, never raw values.
 
-  Aesthetic: a crisp terminal. Monospace throughout, tight spacing, near-square
-  corners, no drop shadows — the chrome reads like a well-set TUI, and the
-  counterparty content sits inside it as plain, inert text.
+  Aesthetic (v0.3): a minimal marketplace storefront. The UI face is proportional
+  (--font-ui); monospace (--font-mono) is RESERVED for the provenance set — money,
+  @owner/name, ids, hashes, sealed partial_args — so the typeface marks
+  kernel-vouched facts apart from chrome. Corners are softly rounded. The
+  `terminal` theme overrides --font-ui and the radii back to the old identity
+  (see themes.go / themes.css); components must never assume one or the other.
 */
 
 :root {
-  --radius: 2px;
+  --radius: 12px;    /* card / surface radius */
+  --radius-s: 7px;   /* control radius (buttons, inputs, chips, pills) */
   --shadow: none;
 
-  /* One monospace family for the whole UI (R7 terminal identity). Money, IDs,
-     hashes, and @owner/name inherit it and add tabular figures. */
+  /* The UI face: proportional system sans (the storefront register). */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI",
+    Roboto, Ubuntu, Cantarell, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+
+  /* The provenance face: monospace with tabular figures, for money, IDs,
+     hashes, and @owner/name. */
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
     Menlo, Consolas, "Liberation Mono", monospace;
-  --font-ui: var(--font-mono);
 }
 
 html {

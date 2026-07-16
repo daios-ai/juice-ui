@@ -2,8 +2,9 @@
   UI GRAMMAR — strict rule: no inline style="" in templates.
   Every visual decision is a named class here; components reference design tokens
   (tokens.css + the generated themes.css) only, never raw colors or sizes.
-  Aesthetic: a crisp terminal — monospace throughout, tight spacing, near-square
-  corners, hairline borders, no drop shadows.
+  Aesthetic (v0.3): a minimal marketplace storefront — proportional UI face,
+  monospace RESERVED for provenance (money, refs, ids, hashes), soft corners
+  (--radius card / --radius-s control), hairline borders, no drop shadows.
   Utilities: .small .tiny .flush .stretch .input-sm .muted .mono .row .row.compact
   Icon+badge: wrap icon in .ico-badge-wrap, place .badge inside.
 */
@@ -102,11 +103,15 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 
 .main-area { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .content { flex: 1 1 auto; display: flex; flex-direction: column; }
-.container { width: 100%; max-width: 1000px; margin: 0 auto; padding: 1.25rem 1.5rem 4rem; flex: 1 0 auto; }
+.container { width: 100%; max-width: 1160px; margin: 0 auto; padding: 1.25rem 1.5rem 4rem; flex: 1 0 auto; }
 .ico-inline { width: 1em; height: 1em; vertical-align: -.15em; display: inline-block; }
 
-/* Price uses accent color — same signal as the spend button */
-.price { color: var(--accent); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* Price is money DISPLAY (mono, tabular), not a control — never the accent
+   (accent = money movement only). The unit ¤ is added in the template. */
+.price { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.price-lg { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.7rem; font-weight: 700; }
+.price-lg .cap { display: block; font-family: var(--font-ui); font-size: .72rem; font-weight: 500; color: var(--text-muted); }
+.price .free, .price-lg .free { color: var(--text-muted); font-weight: 500; }
 
 /* Stat strips — icon + number pairs in a horizontal row */
 .stat-strip { display: flex; gap: 1rem; flex-wrap: nowrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: .85rem; }
@@ -318,7 +323,7 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .chip {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 1.15rem; height: 1.15rem; padding: 0 .25rem;
-  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-s);
   font-family: var(--font-mono); font-size: .7rem; font-weight: 600;
   line-height: 1; color: var(--text-muted);
 }
@@ -385,7 +390,7 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 button { font-family: inherit; cursor: pointer; }
 .btn, .btn-money, .btn-danger {
   font-family: inherit; font-size: .9rem; line-height: 1.2;
-  padding: .5rem 1rem; border-radius: var(--radius);
+  padding: .5rem 1rem; border-radius: var(--radius-s);
   border: 1px solid transparent; cursor: pointer; text-decoration: none;
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
 }
@@ -399,7 +404,7 @@ button { font-family: inherit; cursor: pointer; }
 .btn.small, .btn-money.small, .btn-danger.small { padding: .3rem .6rem; font-size: .8rem; }
 .btn-quiet { background: none; border: none; color: var(--text-muted); padding: .25rem .5rem; cursor: pointer; font-family: inherit; font-size: .9rem; }
 .btn-quiet:hover { color: var(--text); text-decoration: underline; }
-.btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: .35rem .5rem; color: var(--text); font-size: 1rem; cursor: pointer; }
+.btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius-s); padding: .35rem .5rem; color: var(--text); font-size: 1rem; cursor: pointer; }
 .btn-icon .ico { width: 1.05rem; height: 1.05rem; }
 
 /* Forms */
@@ -428,7 +433,7 @@ label { display: block; font-weight: 600; margin-bottom: .25rem; }
 input[type=search], textarea, select) {
   width: 100%; padding: .5rem .6rem; font-family: inherit; font-size: .9rem;
   background: var(--bg); color: var(--text);
-  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-s);
 }
 /* Textarea starts at exactly one line and autosizes (resizeTA in app.js grows
    it to content; min-height is the one-line floor so an empty box isn't cramped).
@@ -441,7 +446,7 @@ textarea {
 .error-text { color: var(--danger); font-size: .85rem; margin-top: .25rem; }
 
 /* Status pills (financial trust signal). Square, bordered, text-only fills. */
-.pill { display: inline-block; padding: .05rem .5rem; border-radius: var(--radius); font-size: .8rem; font-weight: 600; border: 1px solid currentColor; }
+.pill { display: inline-block; padding: .05rem .5rem; border-radius: var(--radius-s); font-size: .8rem; font-weight: 600; border: 1px solid currentColor; }
 .status-credited { color: var(--credited); }
 .status-refunded { color: var(--refunded); }
 .status-escrow   { color: var(--escrow); }
@@ -512,6 +517,58 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .muted { color: var(--text-muted); }
 .score { color: var(--text-muted); font-size: .85rem; }
 
+/* ---- v0.3 marketplace components ---- */
+
+/* Media slot (§5.13): a 16:9 image frame on the action card and hero. Holds a
+   kernel image (later) or the deterministic cardArt fallback. Counterparty
+   content — inert, framed, chrome renders outside it. .wide is the 4:1 kernel
+   banner variant on network. */
+.media {
+  aspect-ratio: 16 / 9; border-radius: var(--radius);
+  overflow: hidden; border: 1px solid var(--border);
+  background: var(--surface-2); display: block;
+}
+.media.wide { aspect-ratio: 4 / 1; }
+.media svg, .media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.action-card .media { margin-bottom: .55rem; }
+.action-card:hover .media { border-color: var(--border-strong); }
+/* Action-page hero: media beside the facts. */
+.hero { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; gap: 1.6rem; align-items: start; }
+.thumb-s { width: 3.4rem; aspect-ratio: 16 / 9; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--border); flex: 0 0 auto; }
+.thumb-s svg, .thumb-s img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* Stat tile (§5) — a workshop earnings/metric tile. */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .85rem; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
+.stat .label { color: var(--text-muted); font-size: .82rem; }
+.stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 700; margin: .2rem 0 .1rem; }
+.stat a { font-size: .82rem; color: var(--text-muted); }
+
+/* you-row — a link/setting row on the `you` identity hub. */
+.you-list { display: flex; flex-direction: column; gap: .6rem; max-width: 560px; }
+.you-row {
+  display: flex; align-items: center; gap: .75rem; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .8rem 1rem; font-size: .95rem;
+  color: var(--text); font-family: inherit; cursor: pointer;
+}
+.you-row:hover { border-color: var(--border-strong); text-decoration: none; }
+.you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: .82rem; color: var(--text-muted); }
+
+/* Kernel card — a peer kernel on network (banner via .media.wide). */
+.kernel-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: block; }
+.kernel-card:hover { border-color: var(--border-strong); text-decoration: none; }
+.kernel-card .media { border-radius: 0; border: none; border-bottom: 1px solid var(--border); margin: 0; }
+.kernel-body { padding: .75rem 1rem .85rem; }
+.net-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .action-card .media, .btn, .btn-money, .btn-danger { transition: border-color .14s ease, background .14s ease, transform .14s ease; }
+  .action-card:hover .media { transform: translateY(-2px); }
+}
+@media (max-width: 720px) {
+  .hero { grid-template-columns: 1fr; }
 }
