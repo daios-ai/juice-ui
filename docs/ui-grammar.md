@@ -25,10 +25,14 @@ Three laws underpin everything:
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
 | Tab bar | `.tab-bar` + `.tab` | the fixed mobile bottom nav |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
-| Card / grid / table | `.card` · `.grid` · `.card-list` · `table` (`.rowable`, `.stats-table`) | containers & data |
+| Card / grid / table | `.card` · `.grid` · `.card-list` · `.action-card` · `table` (`.rowable`, `.stats-table`) | containers & data |
+| **Media** | `.media` (16:9 slot) · `_media` partial · `cardArt` fallback | the action image slot (§5.13) |
+| **Stat** | `.stat` (label · value · link) | a workshop earnings/metric tile |
+| **you-row** | `.you-row` | a link/setting row on the `you` hub |
+| **Kernel card** | `.kernel-card` · `.banner` | a peer kernel on `network` |
 | Field | `.field` + inputs/select/textarea | forms |
-| Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays |
-| Status | `.pill` (+state) · `.sig-*` money signals | trust signals |
+| Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
+| Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
 | Ref | `_ref` partial | `@owner/name` |
 
@@ -39,32 +43,33 @@ Three laws underpin everything:
 The frame every page renders into. Defined in `layout.html`.
 
 ```
-┌────────┬─────────────────────────────────────────┐
-│ SIDEBAR│  flash bar (one-shot, when present)       │
-│ brand  ├─────────────────────────────────────────┤
-│ ◆ juice│  ┌── page-head ───────────────────────┐  │
-│        │  │ title + subtitle                   │  │
-│ ▸ run  │  └────────────────────────────────────┘  │
-│ ▸ action  │  content (container, max 1000px)      │
-│ ▸ process │                                        │
-│ ▸ tx   │                                           │
-│ ▸ step•│  (• = badge)                              │
-│ ▸ user │                                           │
-│ ▸ admin│  (admin: @sys only)                       │
-│        │                                           │
-│ ⌂ @you │  ← profile popover                        │
+┌──────────┬───────────────────────────────────────┐
+│ SIDEBAR  │  flash bar (one-shot, when present)     │
+│ brand    ├───────────────────────────────────────┤
+│ juice ◄logo│ ┌── page-head ───────────────────┐   │
+│          │  │ title + subtitle                │   │
+│ ▸ browse │  └─────────────────────────────────┘   │
+│ ▸ inbox• │  content (container, max ~1160px)       │
+│ ▸ workshop│                                        │
+│ ▸ wallet │                                         │
+│ ▸ you    │  (• = badge)                            │
+│ ─ chat•  │  (apps, after a divider)                │
+│ ▸ network│  (network/admin: @sys only)             │
+│ ▸ admin  │                                         │
+│          │                                         │
+│ ⌂ @you   │  ← identity summary → the `you` hub     │
 └────────┴─────────────────────────────────────────┘
 ```
 
 | Region | Contents | Rules |
 |---|---|---|
-| **Sidebar** | brand → `/run`; collapse toggle; nav groups; profile popover at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `run · action · process · tx · step · user` + `admin · peers` (only `@sys`) | Mirrors the CLI command groups — with **`peers` elevated to its own slot** (a deliberate exception: federation is distinct enough to warrant it). Active group carries `aria-current="page"`. `step` carries the badge. Icon + lowercase label; label hidden when collapsed. |
-| **Profile popover** | handle, balance, theme picker, Sign out — **no navigation** | Opens from the sidebar foot (`[data-menu]`). Nav destinations live in the sidebar, not here (the mobile drawer, which replaces the sidebar, keeps them). Theme picker is a `<select>` of the shipped themes + "System default". |
-| **Main area** | flash bar, then the content container | Container: `max-width 1000px`, centered, padding `1.25rem 1.5rem 4rem`. |
+| **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
+| **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `@sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the step badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
+| **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
+| **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. |
 | **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar** (`run · action · step• · tx · user`); top hamburger → **drawer** (Account, theme, Sign out, and **Admin + Peers when `@sys`**) | Same layout reflowed. The badge stays on `step`. Admin/Peers MUST remain reachable in the drawer for `@sys` (no sidebar there). |
+| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar of four** (`browse · inbox• · chat• · you`) | Same layout reflowed. Badges stay on `inbox` and `chat`. The remaining destinations (`wallet`, `workshop`, `network`, `admin`) and preferences live inside the `you` hub — no hamburger drawer. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -96,7 +101,8 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 | `--credited` / `--refunded` / `--escrow` | money signals: in `+` / returned `↩` / parked `◷` |
 | `--danger` / `--danger-contrast` | critical color, readable text on a filled danger button |
 | `--sel-bg` / `--sel-fg` | text selection |
-| `--radius` (`2px`) / `--shadow` (`none`) / `--font-mono` (= `--font-ui`) | structural (theme-independent, `tokens.css`) |
+| `--radius` (card) / `--radius-s` (control) / `--shadow` (`none`) | structural (in `tokens.css`; a theme MAY override `--radius`/`--radius-s`, e.g. `terminal` → `0`) |
+| `--font-ui` (proportional) / `--font-mono` (provenance) | type faces (`tokens.css`; a theme MAY override `--font-ui`, e.g. `terminal` → `var(--font-mono)`) |
 
 - **Theme selection:** defaults from `prefers-color-scheme` (a default light and
   dark theme); an explicit choice is the `theme` cookie (slug) stamped on
@@ -111,11 +117,16 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 
 ## 3. Typography & page structure
 
-- **Face:** the system monospace stack, everywhere (terminal identity).
+- **Face:** the **proportional system sans stack** (`--font-ui`) for chrome and
+  prose — the storefront register. **Monospace (`--font-mono`) is reserved** for
+  the *provenance* set: money, IDs, hashes, `@owner/name`, and sealed
+  `partial_args`. The typeface itself marks kernel-vouched facts apart from
+  chrome and from counterparty prose. (The `terminal` theme overrides `--font-ui`
+  back to mono; components never assume one or the other — they use the token.)
 - **Scale:** `h1 1.4rem` · `h2 1.1rem` · `h3 1rem` · body `.9rem/14px` ·
   `.small .85rem` · `.tiny .8rem`. Headings carry slight `letter-spacing`.
-- **Titles are lowercase CLI nouns** on **both** index and detail pages:
-  `run · action · process · tx · step · user · admin · peers`. A **detail** page
+- **Titles are lowercase group nouns** on **both** index and detail pages:
+  `browse · inbox · workshop · wallet · you · network · admin`. A **detail** page
   adds a `← group` back-link above the title and shows the resource id/name.
 - **Money, IDs, hashes, `@owner/name`:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
@@ -273,13 +284,16 @@ none float, none are colored.
 
 - `.card` (surface, border, radius, pad); `.action-card` for catalog items;
   `.grid` for card collections; `.card-list` for stacked cards.
-- **Action card:** the **ref is the title** (`_ref`, owner emphasized) and the
-  link to the action — never the bare name or the raw kind string. **Attribute
-  chips** (`.chip`) sit at the head, right-aligned, marking the *exception*:
-  - **Kind** (always, one chip): `W` wasm · `N` native · `H` http · `R` remote
+- **Action card:** a **media slot** (`.media`, §5.13) on top, then the **ref as
+  the title** (`_ref`, owner emphasized) and the link to the action — never the
+  bare name or the raw kind string — with one-line description, price, and the
+  reputation strip **below and outside** the media (kernel chrome never overlaps
+  counterparty pixels). **Attribute chips** (`.chip`) mark the *exception* only:
+  - **Kind** (one chip): `W` wasm · `N` native · `H` http · `R` remote
     (`kind == "remote_proxy"`, via the `kindBadge` helper). **`R` stands out by
     weight** (`.chip.filled`), never by hue.
-  - **Private** → a lock chip (`#lock`); public shows nothing.
+  - **Visibility** → a chip only for the non-default narrowing: `private` (lock)
+    or `local` (a `local` chip); `public` shows nothing.
   - **Inactive** → the card is dimmed (`.action-card.inactive`) plus a muted
     `inactive` chip (`.chip.tag`).
   - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
@@ -305,10 +319,14 @@ none float, none are colored.
 
 ### 5.6 Status, pills, money
 
-- `.pill` — square, bordered, `currentColor`. State variants:
+- `.pill` — bordered, `currentColor`. State variants:
   `.status-credited / -refunded / -escrow / -danger`.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
+- **Money display** renders mono + tabular with the unit `¤` (e.g. `12 ¤`,
+  `−12 ¤`, `↩ 9 ¤`). The `¤` glyph appears **only in money *display*** — **never
+  on a button**: a spend button is `verb (N)` (§5.1), the accent conveying
+  credits. In prose (help/flash/error) spell it "N credits".
 
 ### 5.7 Refs
 
@@ -349,12 +367,12 @@ split on the first `/`.
 | `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `step` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact. **Every** nav badge is the `_badge_poll` partial: htmx re-fetches its endpoint on the **one** configured interval (`badge_interval_seconds`, default 30s), body = bare count, **empty when zero** (`.badge:empty` hides it). Rendered identically in the sidebar and the mobile tab bar |
 | `.unread` | row modifier for a list row with unseen activity (e.g. a chat room): the primary-cell link is weighted (`tr.unread > td:first-child a`) so the row reads as "new", complementing the count badge |
 
-### 5.11 Federation (peers)
+### 5.11 Federation (network)
 
-`admin` (users, money, access) and `peers` (federation) are **two separate
+`admin` (users, money, access) and `network` (federation) are **two separate
 top-level nav entries** (`@sys` only), not one page with a sub-nav — federation
-is a distinct concern. `peers` owns the **this kernel** identity card. The
-`peers` page is a discovery → inspect → trust journey, all in the table grammar:
+is a distinct concern. `network` owns the **this kernel** identity card. The
+`network` page is a discovery → inspect → trust journey, in card + table grammar:
 **this kernel** (identity to share) ·
 **friends** (direct peers, each
 with Inspect + Unfriend) · **known network** (the gossip roster: one block per
@@ -367,17 +385,33 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
 ### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
-  profile popover and mobile drawer.
+  `+ new …` openers, row-lifecycle `⋯` menus, and the `you` hub.
 - One SVG sprite (`icons.svg`), recolored via `currentColor`, **never emoji**.
-  Every icon-only control carries an `aria-label`.
+  Every icon-only control carries an `aria-label`. The brand uses
+  `juice-logo.svg`.
+
+### 5.13 Media slot
+
+- `.media` is a **16:9** slot on the action card and the action-page hero. It
+  renders, in order of precedence: a **kernel image** (Conditional — no field yet,
+  `ROADMAP.md`), else the **`cardArt` fallback** — a deterministic inline SVG
+  seeded from the action's id/owner/kind, colored from tokens
+  (`var(--surface-2)`/`var(--accent)`), **presentation attributes only** (no
+  `style=`), no external fetch (CSP-safe).
+- The media is **counterparty content**: it is inert (§6), never carries chrome,
+  and kernel-captured facts (ref, price, reputation, any money control) render
+  **outside** it. On the payment sheet the image stays in the content zone, never
+  adjacent to the confirm.
+- The same slot backs `.kernel-card`'s `.banner` (a 4:1 variant) on `network`.
 
 ---
 
 ## 6. Invariants (enforced)
 
 - No inline `style=""`; tokens only; every decision is a named class.
-- **Accent = money movement + focus only.** Money buttons name the amount.
-  **Danger beats money.**
+- **Accent = money movement + focus only.** Money buttons name the amount as
+  `verb (N)` and carry **no `¤`**; money *display* uses `N ¤` in the mono
+  provenance face (§5.6). **Danger beats money.**
 - Counterparty content (names, descriptions, args, results, reasons) renders
   **inert**: escaped, no chrome, no accent, JSON in a code block. Trust
   affordances key on kernel-captured fields, never payload shape.
@@ -387,16 +421,17 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   link to the record; referenced entities link to their pages; list money is the
   signed perspective amount (gross/fee/parties live on the detail page). Every
   `<table>` sits in a `.table-scroll`.
-- Lowercase CLI titles; `page-head` (title + subtitle only) on index, back-link
-  on detail. Commands are quiet and inline — never a floating page-head cluster.
+- Lowercase group titles (`browse · inbox · workshop · wallet · you · network ·
+  admin`); `page-head` (title + subtitle only) on index, back-link on detail.
+  Commands are quiet and inline — never a floating page-head cluster.
 - **Copy is rationed (§3 Copy discipline):** subtitles orient in one phrase; no
   sentence narrates kernel/control behavior; disclosures appear once, at the point
   of consequence. Empty states and `help` name the thing, they don't lecture. A
   field caption never restates its label or explains a mechanism. The drift guard
   lints **app** templates (`apps/*/templates/`) for this, identically to the core.
-- One `aria-live` region; the `step` badge is the only async attention signal in
-  the core surface (an app MAY add its own app-scoped nav badge, e.g. chat unread);
-  no notification feed/toast stack.
+- One `aria-live` region; the step badge (on `inbox`) is the only async attention
+  signal in the core surface (an app MAY add its own app-scoped nav badge, e.g.
+  chat unread); no notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
   WCAG AA (theme test).
 - CSP: no inline script; palette registry is inert JSON; `Referrer-Policy:
@@ -411,5 +446,6 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   §5.1 (incl. the retired `.btn-primary`), any inline `style=`, any `.toolbar`,
   any `.linkbar`, the superseded `auth-tab` class,
   any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
-  phrase or into a second sentence, and any prose note (`.help` / `.card-note`) that
-  swells into a paragraph.
+  phrase or into a second sentence, any prose note (`.help` / `.card-note`) that
+  swells into a paragraph, and any **`¤` inside a `<button>` or `.btn*`** (money
+  buttons read `verb (N)`; `¤` belongs to money *display* only, §5.6).

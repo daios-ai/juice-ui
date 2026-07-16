@@ -1,22 +1,39 @@
 # Juice Web UI Requirements
 
-Version: 0.2.0
+Version: 0.3.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.2.0.** The interface is reorganised so its navigation
-> **mirrors the juice CLI command hierarchy** (`run`, `action`, `process`, `tx`,
-> `step`, `user`, and a superuser-only `admin`) instead of four fixed rooms. The
-> visual language becomes a **crisp terminal**: a monospace UI face and multiple
-> selectable colour themes, each defined by a **Ghostty 16-colour ANSI palette**,
-> replacing the single warm-ivory/charcoal pair (the accent, formerly "clay",
-> keeps its spend-only discipline). All create/edit operations open **floating
-> modal forms** with a no-JS `?form=` fallback, and the whole surface is
-> **keyboard-navigable** (a Ctrl/Cmd+K command palette plus vim-style shortcuts).
-> Admin/supervision is now **in scope**, gated to the `@sys` superuser, because
-> the kernel exposes it over HTTP (`/control/*`). Invariants that predate 0.2.0 —
-> the BFF architecture, session/token rules, spend-button discipline, inert
-> counterparty rendering, the single aria-live region, monospace tabular money,
-> the CSP, and the test discipline — are unchanged.
+> **What changed in 0.3.0.** The visual language turns from a *terminal* into a
+> **minimal marketplace storefront**. Two axes change; everything else that moves
+> money is preserved verbatim.
+>
+> 1. **Typography becomes provenance.** The UI face is no longer monospace
+>    everywhere. The default UI face is now the **proportional system stack** (the
+>    storefront register); **monospace is *reserved*** for kernel-vouched facts —
+>    money, `@owner/name`, ids, hashes, and sealed `partial_args`. The rendered
+>    typeface thus marks the trust boundary: proportional chrome, monospace truth.
+>    Corners soften (a card radius plus a tighter control radius, both tokens).
+> 2. **Navigation reads as a marketplace, not a command dump.** The primary
+>    groups are relabelled **browse** (discovery + run), **inbox** (steps),
+>    **workshop** (the provider surface: earnings + own actions + creation),
+>    **wallet** (balances, open processes, ledger), and **you** (identity hub),
+>    with **network** (federation) and **admin** kept `@sys`-only. This is a
+>    relabelling of the same CLI-mirrored concepts, not new authority.
+>
+> A **media slot** is added to the action card and page (§6.2): a 16:9 image with
+> a deterministic generated fallback until the kernel serves images (Conditional,
+> §10, tracked in `ROADMAP.md`).
+>
+> The old terminal identity is **not deleted** — it survives losslessly as a
+> selectable `terminal` theme (monospace UI face, square corners), because the
+> whole surface already renders through semantic tokens. The set of shipped
+> palettes is curated down, with new default **paper** (light) and **ink** (dark).
+>
+> Invariants that predate 0.3.0 are unchanged: the BFF architecture, session/token
+> rules, **the accent's spend-only discipline and the closed button vocabulary**,
+> inert counterparty rendering, the single aria-live region, **monospace tabular
+> money**, floating modal forms with the `?form=` fallback, keyboard navigation,
+> admin/supervision gating, the CSP, and the test discipline.
 Codename: `juice-ui`
 
 > **Gating condition.** A UI feature is mandatory only if it maps to an HTTP
@@ -50,15 +67,19 @@ server-side.
   responses and never reproduces kernel business logic (fees, settlement, schema
   validation): the UI presents kernel results; the kernel decides.
 
-**Navigation model.** The UI's navigation MUST mirror the juice CLI command
-hierarchy. The primary groups are `run`, `action`, `process`, `tx`, `step`, and
-`user`, plus an `admin` group shown **only to the `@sys` superuser**. Each group
-presents its concept, not a raw command dump: `run` is discovery + execution,
-`action` is the catalog and provider workspace, `process` and `tx` are evidence
-(computation lifetimes and the immutable ledger), `step` is work addressed to the
-user (carrying the sole attention badge), `user` is identity + wallet, and
-`admin` is operator supervision. The kernel still creates and closes processes
-automatically; the UI MUST NOT ask the user to manage that bookkeeping, but it
+**Navigation model.** The UI's navigation MUST present the juice CLI concepts as
+a marketplace, not a raw command dump. The primary groups are **browse**,
+**inbox**, **workshop**, **wallet**, and **you**, plus **network** (federation)
+and **admin**, both shown **only to the `@sys` superuser**. Each maps to the same
+CLI concepts as before: `browse` is discovery + execution (`run` + the catalog);
+`inbox` is `step` — work addressed to the user, carrying the sole attention badge;
+`workshop` is the provider surface (`action` management + earnings + creation);
+`wallet` is money evidence (`user` balances + `process` lifetimes + the `tx`
+ledger + receipts); `you` is identity + preferences; `network` is federation
+(peers), and `admin` is operator supervision. The relabelling grants no new
+authority — the underlying routes and superuser gating are unchanged. The kernel
+still creates and closes processes automatically; the UI MUST NOT ask the user to
+manage that bookkeeping, but it
 MAY surface a process's parked funds and awaiting-receipt state as evidence.
 
 **Reference discipline.** Each cross-cutting rule is defined once and applies
@@ -125,11 +146,11 @@ detectable.
 * **run** — server status (`GET /health`), read-only; natural-language discovery
   via `@sys/lookup`; catalog browse (`GET /v1/actions`); action detail; call
   execution (`POST /v1/run`), including run-by-ref from the palette.
-* **action** — catalog browse plus owner action management: create, list/show
-  (including inactive, via `GET /v1/actions?owner=@self`), update, enable,
-  disable, delete; public/private visibility toggle; AI synthesis via
-  `@sys/make`; OpenAPI import/unimport; stats; ratings list; earnings folded from
-  the owner's transactions.
+* **browse / workshop** — catalog browse plus owner action management: create,
+  list/show (including inactive, via `GET /v1/actions?owner=@self`), update,
+  enable, disable, delete; three-way `visibility` (private/local/public); AI
+  synthesis via `@sys/make`; OpenAPI import/unimport; stats; ratings list;
+  earnings folded from the owner's transactions.
 * **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
   surfacing parked funds and awaiting-receipt state.
 * **tx** — the immutable ledger: transactions list/show/rate; receipt
@@ -204,16 +225,21 @@ detectable.
 
 ### 6.1 Information architecture
 
-* The UI MUST present a left sidebar whose entries mirror the CLI command groups
-  (`run`, `action`, `process`, `tx`, `step`, `user`, and `admin` for `@sys`),
-  default-expanded with labels, collapsible, with collapse state persisted
-  server-side. The active group MUST carry `aria-current`. The `step` entry MUST
-  carry its waiting-count badge in every state.
-* The account menu (handle, balance, the theme picker, and sign-out) lives in a
-  popover at the sidebar foot; nothing that is itself a destination sits there.
-* Mobile MUST reflow the same layout: the sidebar becomes a fixed bottom tab bar
-  (the primary groups, step badge intact), with secondary items (theme, account,
-  logout) in a drawer.
+* The UI MUST present a left sidebar whose entries are the primary groups
+  (`browse`, `inbox`, `workshop`, `wallet`, `you`, then `network` and `admin` for
+  `@sys`), default-expanded with labels, collapsible, with collapse state
+  persisted server-side. The active group MUST carry `aria-current`. The `inbox`
+  entry MUST carry its waiting-count step badge in every state. A single nav model,
+  built once server-side, MUST drive the sidebar and the mobile tab bar (and the
+  command palette), so the three cannot drift.
+* The account/identity summary (handle, balance) and the theme picker live at the
+  sidebar foot / on the `you` hub; nothing that is itself a primary destination
+  sits in a popover.
+* Mobile MUST reflow to a fixed bottom **tab bar of four** — `browse`, `inbox`,
+  `chat`, `you` — with the step and chat badges intact; the remaining
+  destinations (`wallet`, `workshop`, `network`, `admin`) and preferences (theme,
+  sign-out) are reached inside the `you` hub. (The core rule that money moves only
+  through a named confirm is unaffected by which tab hosts a screen.)
 * The step badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting steps for the signed-in user, sourced from
@@ -241,8 +267,17 @@ detectable.
 
 * The omnibox MUST be present on every page and MUST issue `@sys/lookup`
   (required `query`, optional `limit`) via `POST /v1/run`. Results MUST render as
-  ranked cards showing name, owner, one-line description, price, and the
-  reputation strip.
+  ranked cards, each with a **media slot** (§6.2 media) above the ref
+  (owner-emphasized), one-line description, price, and the reputation strip.
+* **Media slot.** Every action card and the action page MUST carry a 16:9 media
+  slot. Until the kernel serves images (*Conditional*, §10; tracked in
+  `ROADMAP.md`), the slot MUST render a **deterministic generated fallback**
+  (seeded from the action's id/owner/kind, palette-constrained, produced
+  server-side as inline SVG — no external fetch, no `style=`, CSP-safe). When a
+  kernel image lands it MUST override the fallback. The media is decorative
+  counterparty content: kernel-captured chrome (ref, price, reputation) MUST
+  render **outside** the media box, and the payment sheet MUST NOT place the image
+  near the confirm (§8).
 * Price MUST appear on each card. Sort and filter by price MUST be available.
 * Catalog browse (`GET /v1/actions`, owner/name filters) MUST be available as the
   secondary path and the per-owner listing.
@@ -252,9 +287,10 @@ detectable.
 
 **Action page.**
 
-* MUST show description, owner block, reputation strip, price in large type, and
-  two schema panels rendered from `input_schema`/`output_schema` as field lists
-  (name, type, required, description), with raw JSON behind a toggle.
+* MUST show a hero pairing the media slot (§6.2 media) with the ref, owner block,
+  reputation strip, and price in large type, then description and two schema
+  panels rendered from `input_schema`/`output_schema` as field lists (name, type,
+  required, description), with raw JSON behind a toggle.
 * The reputation strip MUST show four metrics — runs, success rate, rating, mean
   latency — each with an icon, value, and a tooltip that is also the icon's
   `aria-label`. The rating MUST show mean and count.
@@ -330,16 +366,23 @@ open (parked steps), the result MUST say so and link to the Wallet.
 
 ### 6.4 action — catalog and provider workspace
 
-* Studio MUST present, in order: earnings, action list, creation zone.
+* Workshop MUST present, in order: earnings, action list, creation zone.
 * Earnings MUST be computed in the BFF by folding the user's own transactions;
   each figure MUST link to its underlying transactions. The BFF MUST NOT
   reproduce kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=@self`, include inactive
   actions, filter by state, and show kind, price, success rate, rating trend, a
-  last-failure peek, and inline htmx toggles for active/inactive and
-  public/private.
-* Visibility MUST be set via `PUT /v1/actions/{id}` with `{public: true|false}`.
-  No ACL, grant, or revoke operations exist; kernel access is public ∨ owner.
+  last-failure peek, an inline active/inactive toggle, and a **visibility**
+  control (below).
+* **Visibility** MUST be set via `PUT /v1/actions/{id}` with
+  `{visibility: "private" | "local" | "public"}` — the kernel's three-way
+  caller-scope (`private` owner-only, `local` any local caller of this kernel but
+  never peers, `public` anyone and the only value served in manifests/gossip). It
+  is a **three-way** selector, not a boolean toggle. No ACL, grant, or revoke
+  operations exist; a card MUST show a quiet chip only for the non-default
+  narrowing (`private`/`local`), nothing for `public`. Widening an OpenAPI-imported
+  action beyond `private` may require verified ownership; the UI surfaces the
+  kernel's rejection (§10) rather than driving a proof.
 * Editing source, schema, kind, or price MUST warn that saving deactivates the
   action until re-enabled, matching the kernel's contract-drift rule.
 * For `kind=wasm`, the UI MUST surface compile failure on enable as a typed build
@@ -406,22 +449,25 @@ open (parked steps), the result MUST say so and link to the Wallet.
   settling `Call` paying a provider — the terminal, priced, parties-visible
   confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
-* **Button vocabulary (closed set).** Spend: the accent, solid, names the amount (e.g.
-  "Pay 12 ¤ & Run", "Synthesize · 20 ¤", "Do it · 40 ¤"). Primary non-spend:
-  solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
-  Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
-  price. No other button styles exist.
+* **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
+  as `verb (N)` (e.g. "Run (12)", "Synthesize (20)", "Complete (5)") — the accent
+  colour conveys credits, so a spend button carries **no `¤` glyph**. Primary
+  non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct
+  from the accent — Delete, Disable, Decline, and force-end; force-end MUST name
+  the refund, not a price. No other button styles exist.
 * **Money and identity typography.** Money, IDs, hashes, and `@owner/name` MUST
-  render in monospace with tabular figures; the unit is `¤`. Ledger rows MUST
-  carry explicit `−`/`+`; spend buttons MUST state the unsigned gross. The owner
-  segment of `@owner/name` MUST be weight-emphasized in a confusable-distinct
-  monospace face and MUST NOT use the accent.
+  render in **monospace with tabular figures** (the provenance face), regardless
+  of the surrounding proportional chrome; money outside a button carries the unit
+  `¤` (e.g. `12 ¤`). Ledger rows MUST carry explicit `−`/`+`; spend buttons state
+  the unsigned gross as `verb (N)` (no `¤`, above). The owner segment of
+  `@owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
+  and MUST NOT use the accent.
 * **Status signals.** The credited, refunded, and escrow-pending states MUST be
   mutually distinct and distinct from the accent in both themes, each pairing a color
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
-* **Themes.** The UI ships **multiple selectable terminal themes**, each defined
+* **Themes.** The UI ships **multiple selectable themes**, each defined
   by a **Ghostty 16-colour ANSI palette** (`palette 0–15` plus
   background/foreground/cursor/selection). Every theme MUST derive from one set of
   semantic design tokens (CSS custom properties) mapped from the palette
@@ -436,10 +482,20 @@ open (parked steps), the result MUST say so and link to the Wallet.
   works without JavaScript. Every shipped theme MUST meet WCAG AA (≥4.5:1 body and
   muted text, ≥3:1 status signals and UI affordances) — enforced by test; a theme
   that cannot is not shipped. The accent MUST stay visually distinct from every
-  money-status colour. `prefers-reduced-motion` MUST be respected.
-* **Typography.** The UI face is the **system monospace stack** throughout — the
-  terminal identity — with tabular figures for money, IDs, hashes, and
-  `@owner/name`. Spacing is tight and corners near-square; no drop shadows.
+  money-status colour. The default light and dark themes are **paper** and
+  **ink** (proportional, soft corners). A theme MAY additionally override the
+  **structural** tokens (`--font-ui`, `--radius`) — the shipped `terminal` theme
+  does so to restore the monospace UI face and square corners — but the
+  **provenance** face (`--font-mono` on money, refs, ids, hashes) and every
+  money/accent discipline above hold in every theme. `prefers-reduced-motion` MUST
+  be respected.
+* **Typography.** The UI face is the **proportional system sans stack** (the
+  storefront register). **Monospace with tabular figures is reserved** for the
+  provenance set — money, IDs, hashes, `@owner/name`, and sealed `partial_args` —
+  so the typeface itself marks kernel-vouched facts apart from proportional chrome
+  and from counterparty prose. Corners are softly rounded (a card radius and a
+  tighter control radius, both tokens); no drop shadows. The `terminal` theme
+  reverts the UI face to monospace and the radius to square.
 * **Icons.** One set (Heroicons, outline/solid for inactive/active), recolorable
   to tokens, never emoji. Every icon-only control MUST carry an `aria-label`;
   hover tooltips are enhancement only.
