@@ -198,6 +198,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /transactions/{id}", s.requireAuth(s.getTransaction))
 	mux.HandleFunc("GET /transactions/{id}/verify", s.requireAuth(s.getTxVerify))
 	mux.HandleFunc("POST /transactions/{id}/rate", s.requireAuth(s.postRate))
+	mux.HandleFunc("POST /transfers", s.requireAuth(s.postTransfer))
 
 	// Inbox — steps addressed to you.
 	mux.HandleFunc("GET /inbox", s.requireAuth(s.getSteps))

@@ -1339,13 +1339,15 @@ type walletView struct {
 	Open         []client.Process
 	Transactions []client.Transaction
 	Actions      map[string]client.Action
+	Ledger       []client.LedgerEntry
 	MyHandle     string
 	Superuser    bool
+	OpenForm     string
 }
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var view walletView
+	view := walletView{OpenForm: openForm(r, "wallet")}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
@@ -1359,6 +1361,9 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 			view.Transactions = txs
 			view.Actions = s.actionsByID(ctx, tok, txs)
 		}
+		// The direct-movement ledger (deposits, withdrawals, transfers) is separate
+		// from the call ledger above; best-effort so a kernel without it still renders.
+		view.Ledger, _ = s.client.Ledger(ctx, tok, 20, 0)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1366,6 +1371,25 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Superuser = s.isSuperuser(r)
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
+}
+
+// postTransfer moves the caller's own credits to a local recipient (§12). The
+// confirm button names the amount (money movement), and the kernel enforces the
+// balance, self-transfer, and peer-recipient rules — the BFF only surfaces them.
+func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	recipient := strings.TrimSpace(r.FormValue("recipient"))
+	amount := parseInt64(r.FormValue("amount"))
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if recipient == "" || amount <= 0 {
+		s.flashRedirect(w, r, "/wallet", "error", "Enter a recipient and a positive amount.")
+		return
+	}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.Transfer(ctx, tok, recipient, amount, reason, "")
+		return e
+	})
+	s.flashResult(w, r, err, "/wallet", "Sent "+money(amount)+" credits to "+recipient+".")
 }
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
@@ -1595,8 +1619,9 @@ var formWhitelist = map[string]map[string]bool{
 	"action":        {"action-create": true, "action-make": true, "action-import": true, "action-unimport": true},
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
+	"wallet":        {"transfer": true},
 	"step":          {"step-create": true},
-	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-friend": true},
+	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-friend": true, "admin-rename": true},
 }
 
 // openForm returns the requested ?form value if it is whitelisted for the page

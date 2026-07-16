@@ -213,3 +213,31 @@
   </div>
 </dialog>
 {{end}}
+
+{{define "_form_transfer"}}
+<dialog id="form-transfer" class="modal-form"{{if eq .Data.OpenForm "transfer"}} open{{end}} aria-label="Send credits">
+  <div class="modal-head"><h2>Send credits</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/transfers">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="tr-to">Recipient</label>
+        <input id="tr-to" name="recipient" type="text" class="mono" placeholder="@handle" required>
+        <p class="help">A local user on this kernel.</p>
+      </div>
+      <div class="field">
+        <label for="tr-amt">Amount</label>
+        <input id="tr-amt" name="amount" type="number" min="1" step="1" class="mono" required>
+      </div>
+      <div class="field">
+        <label for="tr-why">Reason</label>
+        <input id="tr-why" name="reason" type="text" placeholder="optional">
+      </div>
+      <div class="cluster">
+        <button class="btn-money" type="submit">Send</button>
+        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}

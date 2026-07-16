@@ -595,3 +595,53 @@ func TestCallbackCreateStep(t *testing.T) {
 		t.Errorf("body = %s", gotBody)
 	}
 }
+
+func TestTransfer(t *testing.T) {
+	f := newFake()
+	defer f.srv.Close()
+	f.reply = `{"id":"L1","amount":10,"from_handle":"@me","to_handle":"@ana","operator_handle":"@me","created_at":"2024-01-01T00:00:00Z"}`
+	e, err := f.client().Transfer(context.Background(), "tok", "@ana", 10, "lunch", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "POST" || f.lastPath != "/v1/transfers" {
+		t.Errorf("transfer hit %s %s", f.lastMethod, f.lastPath)
+	}
+	body := string(f.lastBody)
+	if !strings.Contains(body, `"recipient":"@ana"`) || !strings.Contains(body, `"amount":10`) || !strings.Contains(body, `"reason":"lunch"`) {
+		t.Errorf("transfer body = %s", body)
+	}
+	if e.ToHandle != "@ana" || e.Amount != 10 {
+		t.Errorf("transfer entry = %+v", e)
+	}
+}
+
+func TestLedger(t *testing.T) {
+	f := newFake()
+	defer f.srv.Close()
+	f.reply = `[{"id":"L1","amount":100,"to_handle":"@me","operator_handle":"@sys","created_at":"2024-01-01T00:00:00Z"}]`
+	out, err := f.client().Ledger(context.Background(), "tok", 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "GET" || f.lastPath != "/v1/ledger?limit=20" {
+		t.Errorf("ledger hit %s %s", f.lastMethod, f.lastPath)
+	}
+	if len(out) != 1 || out[0].Amount != 100 || out[0].ToHandle != "@me" {
+		t.Errorf("ledger = %+v", out)
+	}
+}
+
+func TestAdminRename(t *testing.T) {
+	f := newFake()
+	defer f.srv.Close()
+	if err := f.client().AdminRename(context.Background(), "tok", "@old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "POST" || f.lastPath != "/control/users/@old/rename" {
+		t.Errorf("rename hit %s %s", f.lastMethod, f.lastPath)
+	}
+	if !strings.Contains(string(f.lastBody), `"new_handle":"@new"`) {
+		t.Errorf("rename body = %s (want normalized @new)", string(f.lastBody))
+	}
+}

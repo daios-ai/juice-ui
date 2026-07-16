@@ -612,6 +612,53 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 	return u, err
 }
 
+// LedgerEntry is one direct balance movement (deposit, withdrawal, or transfer)
+// from GET /v1/ledger. from_handle is absent on a deposit, to_handle on a
+// withdrawal; operator_handle is @sys for admin ops and the sender for a transfer.
+type LedgerEntry struct {
+	ID             string `json:"id"`
+	Amount         int64  `json:"amount"`
+	Reason         string `json:"reason,omitempty"`
+	ExternalKey    string `json:"external_key,omitempty"`
+	OperatorHandle string `json:"operator_handle,omitempty"`
+	FromHandle     string `json:"from_handle,omitempty"`
+	ToHandle       string `json:"to_handle,omitempty"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// Ledger lists the caller's own balance movements (newest first), paginated.
+func (c *Client) Ledger(ctx context.Context, token string, limit, offset int) ([]LedgerEntry, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/ledger"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out []LedgerEntry
+	err := c.do(ctx, http.MethodGet, path, token, nil, &out)
+	return out, err
+}
+
+// Transfer moves the caller's own credits to a local recipient (§12), returning
+// the ledger entry. The recipient is a @handle, public key, or id; the kernel
+// rejects a non-positive amount, a self-transfer, and a suspended/peer recipient.
+func (c *Client) Transfer(ctx context.Context, token, recipient string, amount int64, reason, externalKey string) (LedgerEntry, error) {
+	body := struct {
+		Recipient   string `json:"recipient"`
+		Amount      int64  `json:"amount"`
+		Reason      string `json:"reason,omitempty"`
+		ExternalKey string `json:"external_key,omitempty"`
+	}{recipient, amount, reason, externalKey}
+	var e LedgerEntry
+	err := c.do(ctx, http.MethodPost, "/v1/transfers", token, body, &e)
+	return e, err
+}
+
 // ---- actions ----
 
 // ListActions lists actions. owner and name are optional filters ("" to omit).

@@ -159,6 +159,15 @@ func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) e
 	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/unsuspend", token, nil, nil)
 }
 
+// AdminRename changes a user's handle (POST /control/users/{handle}/rename),
+// freeing the old handle for reuse. The kernel rejects renaming @sys.
+func (c *Client) AdminRename(ctx context.Context, token, handle, newHandle string) error {
+	body := struct {
+		NewHandle string `json:"new_handle"`
+	}{normalizeHandle(newHandle)}
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/rename", token, body, nil)
+}
+
 // AdminDeposit credits a user's balance (POST /control/deposit).
 func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
 	return c.adjust(ctx, token, "/control/deposit", handle, amount, reason, externalKey)

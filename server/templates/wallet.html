@@ -14,7 +14,7 @@
     <div class="label">parked ◷</div>
   </div>
 </div>
-<p class="card-note">Top-ups happen out of band — ask your operator.</p>
+<p class="card-note">Top-ups happen out of band — ask your operator. <a href="/wallet?form=transfer" data-modal="form-transfer">Send credits →</a></p>
 
 <h2>Open sessions</h2>
 {{if .Data.Open}}
@@ -46,4 +46,26 @@
 </table>
 </div>
 {{else}}<p class="muted">No transactions yet.</p>{{end}}
+
+{{if .Data.Ledger}}
+<h2>Credits &amp; transfers</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>From</th><th>To</th><th class="money">Amount</th><th>Reason</th><th>When</th></tr></thead>
+  <tbody>
+  {{range .Data.Ledger}}
+  <tr>
+    <td class="mono">{{if .FromHandle}}{{.FromHandle}}{{else}}<span class="muted">deposit</span>{{end}}</td>
+    <td class="mono">{{if .ToHandle}}{{.ToHandle}}{{else}}<span class="muted">withdrawal</span>{{end}}</td>
+    <td class="money">{{if eq .ToHandle $.Data.MyHandle}}<span class="sig-credited">+{{money .Amount}} ¤</span>{{else}}−{{money .Amount}} ¤{{end}}</td>
+    <td class="muted small">{{.Reason}}</td>
+    <td class="muted">{{shortTime .CreatedAt}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+{{template "_form_transfer" .}}
 {{end}}
