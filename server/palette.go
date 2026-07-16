@@ -28,26 +28,27 @@ type Command struct {
 // theme list.
 func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 	cmds := []Command{
-		{Name: "run", Hint: "Discover and run an action", Kind: "nav", Href: "/run"},
-		{Name: "action list", Hint: "Browse and manage actions", Kind: "nav", Href: "/actions"},
-		{Name: "action create", Hint: "Create a new action", Kind: "form", Href: "/actions?form=action-create"},
-		{Name: "action make", Hint: "Synthesize an action from a description", Kind: "form", Href: "/actions?form=action-make"},
-		{Name: "action import", Hint: "Import an OpenAPI spec", Kind: "form", Href: "/actions?form=action-import"},
-		{Name: "action unimport", Hint: "Unimport an OpenAPI spec", Kind: "form", Href: "/actions?form=action-unimport"},
-		{Name: "process list", Hint: "View computation processes", Kind: "nav", Href: "/processes"},
+		{Name: "browse", Hint: "Discover and run an action", Kind: "nav", Href: "/browse"},
+		{Name: "workshop", Hint: "Your actions, earnings, and creation", Kind: "nav", Href: "/workshop"},
+		{Name: "action create", Hint: "Create a new action", Kind: "form", Href: "/workshop?form=action-create"},
+		{Name: "action make", Hint: "Synthesize an action from a description", Kind: "form", Href: "/workshop?form=action-make"},
+		{Name: "action import", Hint: "Import an OpenAPI spec", Kind: "form", Href: "/workshop?form=action-import"},
+		{Name: "action unimport", Hint: "Unimport an OpenAPI spec", Kind: "form", Href: "/workshop?form=action-unimport"},
+		{Name: "wallet", Hint: "Balances, sessions, and the ledger", Kind: "nav", Href: "/wallet"},
+		{Name: "process list", Hint: "View computation sessions", Kind: "nav", Href: "/processes"},
 		{Name: "tx list", Hint: "View the transaction ledger", Kind: "nav", Href: "/transactions"},
-		{Name: "step list", Hint: "View steps addressed to you", Kind: "nav", Href: "/steps"},
-		{Name: "step create", Hint: "Create a step (developer affordance)", Kind: "form", Href: "/steps?form=step-create"},
-		{Name: "user me", Hint: "Your account and balances", Kind: "nav", Href: "/user"},
-		{Name: "user update", Hint: "Update email or password", Kind: "form", Href: "/user?form=user-update"},
+		{Name: "inbox", Hint: "Work addressed to you", Kind: "nav", Href: "/inbox"},
+		{Name: "step create", Hint: "Create a step (developer affordance)", Kind: "form", Href: "/inbox?form=step-create"},
+		{Name: "you", Hint: "Your account, balances, and preferences", Kind: "nav", Href: "/you"},
+		{Name: "account update", Hint: "Update email or password", Kind: "form", Href: "/you?form=user-update"},
 	}
 	if isSuperuser {
 		cmds = append(cmds,
 			Command{Name: "admin users", Hint: "List and manage users", Kind: "nav", Href: "/admin"},
 			Command{Name: "admin deposit", Hint: "Credit a user's balance", Kind: "form", Href: "/admin?form=admin-deposit"},
 			Command{Name: "admin withdraw", Hint: "Debit a user's balance", Kind: "form", Href: "/admin?form=admin-withdraw"},
-			Command{Name: "peers", Hint: "Federation peers and this kernel's identity", Kind: "nav", Href: "/admin/peers"},
-			Command{Name: "peers friend", Hint: "Befriend a kernel by key", Kind: "form", Href: "/admin/peers?form=admin-friend"},
+			Command{Name: "network", Hint: "Federation peers and this kernel's identity", Kind: "nav", Href: "/admin/peers"},
+			Command{Name: "network friend", Hint: "Befriend a kernel by key", Kind: "form", Href: "/admin/peers?form=admin-friend"},
 		)
 	}
 	for _, t := range themes {

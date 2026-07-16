@@ -1,7 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <h1>step</h1>
+  <h1>inbox</h1>
   <p class="subtitle">Work addressed to you.{{if $d.Superuser}} <span class="scope-note">superuser scope: all steps</span>{{end}}</p>
 </div>
 
@@ -31,10 +31,10 @@
 
 <h2>History</h2>
 <nav class="tabs control-tabs" aria-label="Step history">
-  {{template "_tab" (tab "all" "/steps" (eq $d.Filter ""))}}
-  {{template "_tab" (tab "done" "/steps?status=done" (eq $d.Filter "done"))}}
-  {{template "_tab" (tab "cancelled" "/steps?status=cancelled" (eq $d.Filter "cancelled"))}}
-  <a class="btn-quiet tabs-action" href="/steps?form=step-create" data-modal="form-step-create">+ new step</a>
+  {{template "_tab" (tab "all" "/inbox" (eq $d.Filter ""))}}
+  {{template "_tab" (tab "done" "/inbox?status=done" (eq $d.Filter "done"))}}
+  {{template "_tab" (tab "cancelled" "/inbox?status=cancelled" (eq $d.Filter "cancelled"))}}
+  <a class="btn-quiet tabs-action" href="/inbox?form=step-create" data-modal="form-step-create">+ new step</a>
 </nav>
 {{if $d.History}}
 <div class="table-scroll">
@@ -42,8 +42,8 @@
   <thead><tr><th>ID</th><th>Action</th><th>Status</th><th class="money">Price</th><th>Caller</th></tr></thead>
   <tbody>
   {{range $d.History}}
-  <tr class="rowable" tabindex="-1" data-href="/steps/{{.ID}}">
-    <td class="id mono"><a href="/steps/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+  <tr class="rowable" tabindex="-1" data-href="/inbox/{{.ID}}">
+    <td class="id mono"><a href="/inbox/{{.ID}}">{{truncate 8 .ID}}…</a></td>
     <td>{{if .Action}}<a href="/actions/{{.ActionID}}">{{template "_ref" .Action}}</a>{{else}}<span class="muted mono">{{truncate 8 .ActionID}}…</span>{{end}}</td>
     <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{.Status}}</span></td>
     <td class="money">{{money .Price}}</td>

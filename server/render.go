@@ -32,12 +32,28 @@ func StaticFS() fs.FS {
 	return sub
 }
 
+// NavItem is one entry in the single server-built nav model. The sidebar, the
+// mobile tab bar, and the palette all render from this list, so the three cannot
+// drift (the old layout hand-duplicated them). Icon is the full inline <svg> so a
+// core sprite entry and an app's inline icon render uniformly.
+type NavItem struct {
+	Slug     string
+	Label    string
+	Href     string
+	Icon     template.HTML
+	Active   bool
+	Badge    int    // static count (apps); 0 hides
+	BadgeURL string // polled badge endpoint; "" for none
+	Tab      bool   // also appears in the mobile 4-tab bar
+}
+
 // Page is the data passed to the layout for a full-page render.
 type Page struct {
 	Title        string
 	Theme        string          // theme slug, or "" to defer to prefers-color-scheme
 	Sidebar      string          // "collapsed" | "" (expanded); stamped to avoid flash
-	Active       string          // active nav group ("run"|"action"|…) for aria-current
+	Active       string          // active nav group ("browse"|"inbox"|…) for aria-current
+	Nav          []NavItem       // the single nav model (sidebar + tab bar + palette)
 	Handle       string          // signed-in handle for the nav, or "" when anonymous
 	KernelHandle string          // this kernel's own handle (from /health), or "" if unknown
 	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
@@ -317,7 +333,7 @@ func paneltab(label, key string, active bool) Tab {
 	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
 }
 
-// actionsHref builds the /actions URL for a given ownership scope ("" | "all")
+// actionsHref builds the /workshop URL for a given ownership scope ("" | "all")
 // and state filter ("" | "active" | "inactive"), so a tab in one axis preserves
 // the other axis's current value.
 func actionsHref(scope, filter string) string {
@@ -329,9 +345,9 @@ func actionsHref(scope, filter string) string {
 		q.Set("filter", filter)
 	}
 	if len(q) == 0 {
-		return "/actions"
+		return "/workshop"
 	}
-	return "/actions?" + q.Encode()
+	return "/workshop?" + q.Encode()
 }
 
 // badgeView is the model for the _badge_poll partial: a nav attention badge that

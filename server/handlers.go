@@ -204,7 +204,7 @@ type errorView struct{ Message string }
 
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions.IsAuthenticated(r.Context()) {
-		http.Redirect(w, r, "/run", http.StatusSeeOther)
+		http.Redirect(w, r, "/browse", http.StatusSeeOther)
 		return
 	}
 	view := loginView{Tab: loginTab(r)}
@@ -223,7 +223,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
 		return
 	}
-	http.Redirect(w, r, "/run", http.StatusSeeOther)
+	http.Redirect(w, r, "/browse", http.StatusSeeOther)
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +248,7 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	http.Redirect(w, r, "/run", http.StatusSeeOther)
+	http.Redirect(w, r, "/browse", http.StatusSeeOther)
 }
 
 // doLogin runs the PKCE authorization-code flow: the verifier is generated and
@@ -294,7 +294,7 @@ func (s *Server) postGrantStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	selector, provider := grantTarget(r)
 	if selector == "" {
-		s.flashRedirect(w, r, "/user", "error", "No account to connect.")
+		s.flashRedirect(w, r, "/you", "error", "No account to connect.")
 		return
 	}
 	redirectURI := s.publicBaseURL(r) + "/grants/callback"
@@ -326,11 +326,11 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	want, action, ok := s.sessions.TakeGrantState(ctx)
 	if !ok || state == "" || state != want {
-		s.flashRedirect(w, r, "/user", "error", "Couldn't verify that connection request. Please try again.")
+		s.flashRedirect(w, r, "/you", "error", "Couldn't verify that connection request. Please try again.")
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
-		s.flashRedirect(w, r, "/user", "error", "Connection was cancelled or denied.")
+		s.flashRedirect(w, r, "/you", "error", "Connection was cancelled or denied.")
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -340,7 +340,7 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/user", "success", "Connected "+action+".")
+	s.flashRedirect(w, r, "/you", "success", "Connected "+action+".")
 }
 
 // postGrantConnect attaches a static per-caller token to a delegated_bearer action
@@ -378,7 +378,7 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 		if s.handleErr(w, r, err) {
 			return
 		}
-		s.flashRedirect(w, r, "/user", "success", "Account disconnected.")
+		s.flashRedirect(w, r, "/you", "success", "Account disconnected.")
 		return
 	}
 	selector, _ := grantTarget(r)
@@ -388,7 +388,7 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/user", "success", "Disconnected "+selector+".")
+	s.flashRedirect(w, r, "/you", "success", "Disconnected "+selector+".")
 }
 
 // grantConnectView drives the consent-delta page: the plan for a selector, shown as
@@ -406,7 +406,7 @@ func (s *Server) getGrantConnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	selector := strings.TrimSpace(r.URL.Query().Get("selector"))
 	if selector == "" {
-		s.flashRedirect(w, r, "/user", "error", "No account to connect.")
+		s.flashRedirect(w, r, "/you", "error", "No account to connect.")
 		return
 	}
 	var plan client.GrantPlan
@@ -439,7 +439,7 @@ func backTo(r *http.Request) string {
 	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Path != "" && (ref.Host == "" || ref.Host == r.Host) {
 		return ref.Path
 	}
-	return "/user"
+	return "/you"
 }
 
 func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {
@@ -480,7 +480,7 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 
 // ---- run room (discover / marketplace) ----
 
-func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	view := discoverView{Query: q, LookupAvailable: true, OpenForm: openForm(r, "run")}
@@ -550,7 +550,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "run", "Run", view)
+	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
 }
 
 // postRunByRef runs an action named by "@owner/name" (the palette / run-page
@@ -561,11 +561,11 @@ func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimSpace(r.FormValue("action"))
 	args, argErr := buildArgs(r)
 	if ref == "" {
-		s.flashRedirect(w, r, "/run", "error", "No action specified.")
+		s.flashRedirect(w, r, "/browse", "error", "No action specified.")
 		return
 	}
 	if argErr != nil {
-		s.flashRedirect(w, r, "/run", "error", "Invalid JSON in arguments: "+argErr.Error())
+		s.flashRedirect(w, r, "/browse", "error", "Invalid JSON in arguments: "+argErr.Error())
 		return
 	}
 	var outcome Outcome
@@ -589,7 +589,7 @@ func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/transactions/"+outcome.TxID, http.StatusSeeOther)
 		return
 	}
-	s.flashRedirect(w, r, "/run", "info", outcome.Message)
+	s.flashRedirect(w, r, "/browse", "info", outcome.Message)
 }
 
 // ---- user (account + wallet) ----
@@ -615,7 +615,7 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "user", "Account", view, view.User.Available)
+	s.renderPage(w, r, http.StatusOK, "you", "You", view, view.User.Available)
 }
 
 func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
@@ -626,13 +626,13 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 
 	inp := client.UpdateMeInput{Email: email, CurrentPassword: currentPw, Password: newPw}
 	if inp.Email == "" && inp.Password == "" {
-		s.flashRedirect(w, r, "/user", "info", "Nothing to update.")
+		s.flashRedirect(w, r, "/you", "info", "Nothing to update.")
 		return
 	}
 	// Validate a new password (confirmation + length) before touching the kernel.
 	if newPw != "" {
 		if msg := validateNewPassword(newPw, r.FormValue("confirm_password")); msg != "" {
-			s.flashRedirect(w, r, "/user", "error", msg)
+			s.flashRedirect(w, r, "/you", "error", msg)
 			return
 		}
 	}
@@ -662,7 +662,7 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 		if ke, ok := client.AsKernelError(apiErr); ok && ke.Kind == client.KindUnauthenticated {
 			msg = "Current password is incorrect."
 		}
-		s.flashRedirect(w, r, "/user", "error", msg)
+		s.flashRedirect(w, r, "/you", "error", msg)
 		return
 	}
 
@@ -672,7 +672,7 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 	} else if newPw != "" {
 		notice = "Password changed."
 	}
-	s.flashRedirect(w, r, "/user", "success", notice)
+	s.flashRedirect(w, r, "/you", "success", notice)
 }
 
 // ---- steps ----
@@ -723,7 +723,7 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "steps", "Steps", view, myAvailable)
+	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view, myAvailable)
 }
 
 func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
@@ -750,7 +750,7 @@ func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "step_detail", "Step", view)
+	s.renderPage(w, r, http.StatusOK, "inbox_detail", "Step", view)
 }
 
 // postCreateStep creates a waiting step (a developer affordance): it needs the
@@ -764,7 +764,7 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 	}
 	partial, err := rawJSONOrEmpty(r.FormValue("partial_args"))
 	if err != nil {
-		s.flashRedirect(w, r, "/steps", "error", "Invalid JSON in partial args.")
+		s.flashRedirect(w, r, "/inbox", "error", "Invalid JSON in partial args.")
 		return
 	}
 	in.PartialArgs = partial
@@ -772,7 +772,7 @@ func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
 		_, e := s.client.CreateStep(ctx, tok, in)
 		return e
 	})
-	s.flashResult(w, r, oErr, "/steps", "Step created.")
+	s.flashResult(w, r, oErr, "/inbox", "Step created.")
 }
 
 const (
@@ -942,10 +942,10 @@ func orDefaultStr(v, def string) string {
 
 // ---- studio ----
 
-// getActions is the action room: manage your own actions (with earnings folded
+// getWorkshop is the workshop: manage your own actions (with earnings folded
 // from your transactions) and browse the public catalog. A superuser can widen
 // the management list to every action with ?scope=all.
-func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
 	scope := r.URL.Query().Get("scope")   // "" | "all" (superuser)
@@ -1013,7 +1013,7 @@ func (s *Server) getActions(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Mine = append(view.Mine, actionCardView{Action: a, Stats: st})
 	}
-	s.renderPage(w, r, http.StatusOK, "actions", "Actions", view, view.User.Available)
+	s.renderPage(w, r, http.StatusOK, "workshop", "Workshop", view, view.User.Available)
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
@@ -1029,7 +1029,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		in.Method = strings.TrimSpace(r.FormValue("method"))
 		in.Params = parseHTTPParams(r)
 	}
-	if !s.applySchemas(w, r, "/actions", &in.InputSchema, &in.OutputSchema) {
+	if !s.applySchemas(w, r, "/workshop", &in.InputSchema, &in.OutputSchema) {
 		return
 	}
 
@@ -1071,7 +1071,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		created = a
 		return e
 	})
-	s.flashResult(w, r, err, "/actions", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
+	s.flashResult(w, r, err, "/workshop", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
@@ -1086,7 +1086,7 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/actions", "success", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
+	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
 }
 
 func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
@@ -1101,7 +1101,7 @@ func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/actions", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
+	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
 }
 
 // postMakeAction calls @sys/make to synthesize a WASM action from a
@@ -1172,7 +1172,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 	if msg == "" {
 		msg = "Synthesis failed. Refine your description and try again."
 	}
-	s.flashRedirect(w, r, "/actions", "error", msg)
+	s.flashRedirect(w, r, "/workshop", "error", msg)
 }
 
 func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
@@ -1185,13 +1185,17 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 			return s.client.EnableAction(ctx, tok, id)
 		case "disable":
 			return s.client.DisableAction(ctx, tok, id)
-		case "make-public":
-			pub := true
-			_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
-			return e
-		case "make-private":
-			pub := false
-			_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub})
+		case "visibility":
+			// Three-way caller-scope (private/local/public); the form names the
+			// target value. Guard the whitelist so an arbitrary string never reaches
+			// the kernel.
+			v := r.FormValue("visibility")
+			switch v {
+			case "private", "local", "public":
+			default:
+				return nil
+			}
+			_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Visibility: &v})
 			return e
 		}
 		return nil
@@ -1321,10 +1325,48 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/actions", "success", "Action deleted. History is preserved.")
+	s.flashRedirect(w, r, "/workshop", "success", "Action deleted. History is preserved.")
 }
 
 // ---- processes ----
+
+// walletView backs the wallet page: balances, open processes (each force-endable),
+// and the ledger (transactions the viewer is a party to). It composes the same
+// data the processes and transactions pages show, in one money-focused screen.
+type walletView struct {
+	Available    int64
+	Locked       int64
+	Open         []client.Process
+	Transactions []client.Transaction
+	Actions      map[string]client.Action
+	MyHandle     string
+	Superuser    bool
+}
+
+func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var view walletView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		view.Available, view.Locked, view.MyHandle = me.Available, me.Locked, me.Handle
+		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
+			view.Open = filterStatus(procs, "open", true)
+		}
+		if txs, e := s.client.ListTransactions(ctx, tok, "", 0); e == nil {
+			view.Transactions = txs
+			view.Actions = s.actionsByID(ctx, tok, txs)
+		}
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	view.Superuser = s.isSuperuser(r)
+	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
+}
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -1533,14 +1575,14 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 			_ = s.render.Fragment(w, http.StatusOK, "_error", msg)
 			return
 		}
-		s.flashRedirect(w, r, "/steps", "error", msg)
+		s.flashRedirect(w, r, "/inbox", "error", msg)
 		return
 	}
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
 		return
 	}
-	s.flashRedirect(w, r, "/steps", "success", "Step completed.")
+	s.flashRedirect(w, r, "/inbox", "success", "Step completed.")
 }
 
 // ---- helpers ----
@@ -1670,7 +1712,7 @@ func coerce(typ, val string) (json.RawMessage, error) {
 }
 
 // parseLookup converts a @sys/lookup result into partial actionCardViews.
-// Kind is left empty; the goroutine in getRunRoom fills it via GetAction.
+// Kind is left empty; the goroutine in getBrowse fills it via GetAction.
 func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {
 		Results []struct {

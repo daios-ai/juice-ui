@@ -58,7 +58,7 @@ func TestAdminHiddenFromNonSuperuser(t *testing.T) {
 	}
 
 	// The nav must not show the admin group for @alice.
-	home := getBody(t, cl, srv.URL+"/run")
+	home := getBody(t, cl, srv.URL+"/browse")
 	if strings.Contains(home, `href="/admin"`) {
 		t.Error("non-superuser nav must not link to /admin")
 	}
@@ -87,11 +87,11 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		t.Error("/admin user handle must link to the user's detail page")
 	}
 	// Admin and Peers are now separate top-level sidebar entries (not a sub-nav).
-	if !strings.Contains(body, `href="/admin" title="Admin"`) {
+	if !strings.Contains(body, `href="/admin" title="admin"`) {
 		t.Error("superuser sidebar must have an Admin nav entry")
 	}
-	if !strings.Contains(body, `href="/admin/peers" title="Peers"`) || !strings.Contains(body, "#share-2") {
-		t.Error("superuser sidebar must have a separate Peers nav entry (share-2 icon)")
+	if !strings.Contains(body, `href="/admin/peers" title="network"`) || !strings.Contains(body, "#share-2") {
+		t.Error("superuser sidebar must have a separate network nav entry (share-2 icon)")
 	}
 	if strings.Contains(body, "linkbar") {
 		t.Error("/admin must not carry the retired users·peers sub-nav")
@@ -115,8 +115,8 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(pbody, "This kernel") {
 		t.Error("/admin/peers must render the 'This kernel' identity card")
 	}
-	if !strings.Contains(pbody, `href="/admin/peers" title="Peers" aria-current="page"`) {
-		t.Error("/admin/peers must mark the Peers nav entry active")
+	if !strings.Contains(pbody, `href="/admin/peers" title="network" aria-current="page"`) {
+		t.Error("/admin/peers must mark the network nav entry active")
 	}
 }
 
@@ -192,7 +192,7 @@ func TestAdminPeersHTMXReturnsFragment(t *testing.T) {
 	if !strings.Contains(s, "@peerb") {
 		t.Errorf("htmx peers fragment must carry the friends table: %s", s)
 	}
-	if strings.Contains(s, "This kernel") || strings.Contains(s, `hx-get="/steps/badge"`) {
+	if strings.Contains(s, "This kernel") || strings.Contains(s, `hx-get="/inbox/badge"`) {
 		t.Errorf("htmx peers fragment must be bare (no identity card, no layout chrome): %s", s)
 	}
 }
@@ -213,7 +213,7 @@ func TestAdminInspectHTMXReturnsStatusFragment(t *testing.T) {
 	if !strings.Contains(s, "direct") {
 		t.Errorf("htmx inspect fragment must carry reachability: %s", s)
 	}
-	if strings.Contains(s, "Transacted friends") || strings.Contains(s, `hx-get="/steps/badge"`) {
+	if strings.Contains(s, "Transacted friends") || strings.Contains(s, `hx-get="/inbox/badge"`) {
 		t.Errorf("htmx inspect fragment must be bare (status card only): %s", s)
 	}
 }
@@ -332,7 +332,7 @@ func TestAdminDepositRejectsNonSuperuser(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "@alice")
 
 	// Even with a valid CSRF token, a non-superuser deposit is 404 (route gated).
-	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/run"))
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/browse"))
 	form := url.Values{"handle": {"@alice"}, "amount": {"100"}, "gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/admin/deposit", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -533,9 +533,9 @@ func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 	defer f.close()
 	f.reply = `{"id":"a1","name":"x","kind":"http"}`
 	src := "https://ui/_kernel/chat/message"
-	pub := true
+	vis := "public"
 	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{
-		Source: &src, Method: "POST", Auth: json.RawMessage(`{"scheme":"delegated_bearer"}`), Public: &pub,
+		Source: &src, Method: "POST", Auth: json.RawMessage(`{"scheme":"delegated_bearer"}`), Visibility: &vis,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 	}
 	// omitempty: an update with no auth omits the field.
 	f.reply = `{"id":"a1","name":"x","kind":"http"}`
-	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{Public: &pub}); err != nil {
+	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{Visibility: &vis}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(f.lastBody), `"auth"`) {

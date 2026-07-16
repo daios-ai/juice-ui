@@ -1,0 +1,40 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>wallet</h1>
+  <p class="subtitle">Available and parked funds.{{if .Data.Superuser}} <span class="scope-note">superuser scope: all rows</span>{{end}}</p>
+</div>
+
+<div class="balances">
+  <div class="balance">
+    <div class="amount mono">{{money .Data.Available}} ¤</div>
+    <div class="label">available</div>
+  </div>
+  <div class="balance">
+    <div class="amount mono sig-escrow">{{money .Data.Locked}} ¤</div>
+    <div class="label">parked ◷</div>
+  </div>
+</div>
+<p class="card-note">Top-ups happen out of band — ask your operator.</p>
+
+<h2>Open sessions</h2>
+{{if .Data.Open}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th></tr></thead>
+  <tbody>{{range .Data.Open}}{{template "_process_row" .}}{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="muted">No open sessions.</p>{{end}}
+
+<h2>Ledger</h2>
+{{if .Data.Transactions}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>ID</th><th>Action</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
+  <tbody>
+  {{range .Data.Transactions}}{{template "_tx_row" (txrow . $.Data.MyHandle $.Data.Actions)}}{{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="muted">No transactions yet.</p>{{end}}
+{{end}}

@@ -128,14 +128,21 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
-// TestNoCurrencyGlyph enforces §5.1: the money accent color conveys "credits", so
-// no template renders the ¤ glyph. Money buttons read `verb (N)`; where the unit
-// must appear in prose it is spelled "credits".
-func TestNoCurrencyGlyph(t *testing.T) {
+// buttonBlockRe matches a <button …>…</button> element (non-greedy, DOTALL).
+var buttonBlockRe = regexp.MustCompile(`(?s)<button\b[^>]*>.*?</button>`)
+
+// TestNoCurrencyGlyphOnButtons enforces §5.1/§5.6: money DISPLAY renders `N ¤` in
+// the mono provenance face, but a spend button reads `verb (N)` — the accent
+// already conveys credits, so no ¤ ever appears inside a <button>. (In prose the
+// unit is spelled "credits".)
+func TestNoCurrencyGlyphOnButtons(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
-		if i := strings.IndexRune(string(mustRead(t, f)), '¤'); i >= 0 {
-			t.Errorf("%s: forbidden ¤ glyph — money buttons read `verb (N)`, prose says \"credits\" (grammar §5.1)", f)
+		src := string(mustRead(t, f))
+		for _, b := range buttonBlockRe.FindAllString(src, -1) {
+			if strings.ContainsRune(b, '¤') {
+				t.Errorf("%s: ¤ inside a <button> — spend buttons read `verb (N)`, the accent conveys credits (grammar §5.1): %s", f, b)
+			}
 		}
 	}
 }

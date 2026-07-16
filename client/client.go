@@ -112,13 +112,17 @@ type HTTPSpec struct {
 // other kinds), which is the structured view the UI renders. Identity is by
 // handle: the kernel returns owner_handle (not a user id) on every read.
 type Action struct {
-	ID           string          `json:"id"`
-	Action       string          `json:"action"`
-	OwnerHandle  string          `json:"owner_handle"`
-	Name         string          `json:"name"`
-	Kind         string          `json:"kind"`
-	Active       bool            `json:"active"`
-	Public       bool            `json:"public"`
+	ID          string `json:"id"`
+	Action      string `json:"action"`
+	OwnerHandle string `json:"owner_handle"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Active      bool   `json:"active"`
+	// Visibility is the kernel's three-way caller-scope: "private" (owner only),
+	// "local" (any local caller of this kernel, never peers), or "public" (anyone,
+	// and the only value served in manifests/gossip). It replaces the old boolean
+	// `public`. Empty on a legacy kernel; treat empty as "private" (the default).
+	Visibility   string          `json:"visibility"`
 	Price        int64           `json:"price"`
 	Description  string          `json:"description"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
@@ -150,6 +154,21 @@ func (a Action) Ref() string {
 	return a.OwnerHandle + "/" + a.Name
 }
 
+// Vis returns the normalized visibility ("private", "local", or "public"),
+// defaulting an empty value (legacy kernel) to "private" — the kernel default.
+func (a Action) Vis() string {
+	if a.Visibility == "" {
+		return "private"
+	}
+	return a.Visibility
+}
+
+// IsPublic / IsLocal / IsPrivate are template helpers for the visibility chip
+// and workshop control.
+func (a Action) IsPublic() bool  { return a.Vis() == "public" }
+func (a Action) IsLocal() bool   { return a.Vis() == "local" }
+func (a Action) IsPrivate() bool { return a.Vis() == "private" }
+
 // CreateActionInput is the body for POST /v1/actions. Schemas are inline JSON.
 // Auth is write-only upstream credential config {scheme, config, secrets}; never returned by the kernel.
 type CreateActionInput struct {
@@ -174,8 +193,10 @@ type UpdateActionInput struct {
 	Params       []HTTPParam     `json:"params,omitempty"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
-	Public       *bool           `json:"public,omitempty"`
-	Auth         json.RawMessage `json:"auth,omitempty"`
+	// Visibility sets the three-way caller-scope ("private"/"local"/"public").
+	// Replaces the old boolean `public`.
+	Visibility *string         `json:"visibility,omitempty"`
+	Auth       json.RawMessage `json:"auth,omitempty"`
 }
 
 // Process is a funded computation lifetime. Processes are auto-created by run.

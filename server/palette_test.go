@@ -33,7 +33,7 @@ func TestBuildCommandsGatesAdmin(t *testing.T) {
 
 func TestBuildCommandsHasCoreVerbs(t *testing.T) {
 	cmds := BuildCommands(false, ThemeList())
-	want := []string{"run", "action list", "action create", "process list", "tx list", "step list", "user me"}
+	want := []string{"browse", "workshop", "action create", "wallet", "tx list", "inbox", "you"}
 	have := map[string]bool{}
 	for _, c := range cmds {
 		have[c.Name] = true

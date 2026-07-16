@@ -1,10 +1,10 @@
 {{define "content"}}
 {{$d := .Data}}
-<p><a href="/actions">← action</a></p>
+<p><a href="/browse">← browse</a></p>
 <div class="action-head">
   <h1 class="mono">{{template "_ref" $d.Action.Ref}}</h1>
   <span class="chips">
-    {{if not $d.Action.Public}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{end}}
+    {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span>{{end}}
     {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
     {{if not $d.Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
     {{if $d.Action.PeerState}}<span class="chip tag" title="Peer {{$d.Action.PeerState}} — not callable right now">peer {{$d.Action.PeerState}}</span>{{end}}
@@ -55,11 +55,15 @@
     {{else}}
     <form method="post" action="/actions/{{$d.Action.ID}}/enable">{{$.CSRFField}}<button class="btn" type="submit">Enable</button></form>
     {{end}}
-    {{if $d.Action.Public}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/make-private">{{$.CSRFField}}<button class="btn" type="submit">Make private</button></form>
-    {{else}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/make-public">{{$.CSRFField}}<button class="btn" type="submit">Make public</button></form>
-    {{end}}
+    <form method="post" action="/actions/{{$d.Action.ID}}/visibility" class="cluster">{{$.CSRFField}}
+      <label for="vis-{{$d.Action.ID}}" class="sr-only">Visibility</label>
+      <select id="vis-{{$d.Action.ID}}" name="visibility" class="input-sm">
+        <option value="private"{{if $d.Action.IsPrivate}} selected{{end}}>private</option>
+        <option value="local"{{if $d.Action.IsLocal}} selected{{end}}>local</option>
+        <option value="public"{{if $d.Action.IsPublic}} selected{{end}}>public</option>
+      </select>
+      <button class="btn" type="submit">Set visibility</button>
+    </form>
     <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
     <form method="post" action="/actions/{{$d.Action.ID}}/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<button class="btn-danger" type="submit">Delete</button></form>
   </div>

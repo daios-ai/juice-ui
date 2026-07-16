@@ -9,7 +9,7 @@
 
 {{define "_form_action_create"}}
 <dialog id="form-action-create" class="modal-form"{{if eq .Data.OpenForm "action-create"}} open{{end}} aria-label="Create action">
-  <div class="modal-head"><h2>Create action</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Create action</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/actions">
       {{.CSRFField}}
@@ -99,7 +99,7 @@
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Create action</button>
-        <a class="btn" href="/actions" data-modal-close>Cancel</a>
+        <a class="btn" href="/workshop" data-modal-close>Cancel</a>
       </div>
       <p class="help muted flush">Created inactive.</p>
     </form>
@@ -109,7 +109,7 @@
 
 {{define "_form_action_make"}}
 <dialog id="form-action-make" class="modal-form"{{if eq .Data.OpenForm "action-make"}} open{{end}} aria-label="Synthesize an action">
-  <div class="modal-head"><h2>Synthesize an action</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Synthesize an action</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/actions/make"
           hx-post="/actions/make" hx-target="#make-result" hx-swap="innerHTML"
@@ -133,7 +133,7 @@
 
 {{define "_form_action_import"}}
 <dialog id="form-action-import" class="modal-form"{{if eq .Data.OpenForm "action-import"}} open{{end}} aria-label="Import OpenAPI">
-  <div class="modal-head"><h2>Import OpenAPI</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Import OpenAPI</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/actions/import">
       {{.CSRFField}}
@@ -144,7 +144,7 @@
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Import</button>
-        <a class="btn" href="/actions" data-modal-close>Cancel</a>
+        <a class="btn" href="/workshop" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>
@@ -153,7 +153,7 @@
 
 {{define "_form_action_unimport"}}
 <dialog id="form-action-unimport" class="modal-form"{{if eq .Data.OpenForm "action-unimport"}} open{{end}} aria-label="Unimport OpenAPI">
-  <div class="modal-head"><h2>Unimport OpenAPI</h2><a class="modal-close" href="/actions" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Unimport OpenAPI</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/actions/unimport">
       {{.CSRFField}}
@@ -164,7 +164,7 @@
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Unimport</button>
-        <a class="btn" href="/actions" data-modal-close>Cancel</a>
+        <a class="btn" href="/workshop" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>
@@ -173,9 +173,9 @@
 
 {{define "_form_step_create"}}
 <dialog id="form-step-create" class="modal-form"{{if eq .Data.OpenForm "step-create"}} open{{end}} aria-label="Create step">
-  <div class="modal-head"><h2>Create step</h2><a class="modal-close" href="/steps" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Create step</h2><a class="modal-close" href="/inbox" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/steps">
+    <form class="stack" method="post" action="/inbox">
       {{.CSRFField}}
       <div class="field"><label for="s-trace">Funding trace ID</label><input id="s-trace" name="trace_id" type="text" required></div>
       <div class="field"><label for="s-action">Next action ID</label><input id="s-action" name="action_id" type="text" required></div>
@@ -183,7 +183,7 @@
       <div class="field"><label for="s-partial">Partial args (JSON)</label><textarea id="s-partial" name="partial_args" placeholder="{}" rows="1"></textarea></div>
       <div class="cluster">
         <button class="btn" type="submit">Create step</button>
-        <a class="btn" href="/steps" data-modal-close>Cancel</a>
+        <a class="btn" href="/inbox" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>
@@ -192,9 +192,9 @@
 
 {{define "_form_user_update"}}
 <dialog id="form-user-update" class="modal-form"{{if eq .Data.OpenForm "user-update"}} open{{end}} aria-label="Update account">
-  <div class="modal-head"><h2>Update account</h2><a class="modal-close" href="/user" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Update account</h2><a class="modal-close" href="/you" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/user" data-confirm-password>
+    <form class="stack" method="post" action="/you" data-confirm-password>
       {{.CSRFField}}
       <div class="field">
         <label for="u-email">Email</label>
@@ -207,7 +207,7 @@
       <div class="field"><label for="u-new2">Confirm new password</label><input id="u-new2" name="confirm_password" type="password" autocomplete="new-password" minlength="8"></div>
       <div class="cluster">
         <button class="btn" type="submit">Save changes</button>
-        <a class="btn" href="/user" data-modal-close>Cancel</a>
+        <a class="btn" href="/you" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>

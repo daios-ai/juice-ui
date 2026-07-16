@@ -1,7 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <h1>user</h1>
+  <h1>you</h1>
   <p class="subtitle">Your identity and wallet.</p>
 </div>
 
@@ -12,7 +12,7 @@
     <dt>Handle</dt><dd class="mono">{{$d.User.Handle}}</dd>
     <dt>Email</dt><dd class="mono">{{$d.User.Email}}</dd>
   </dl>
-  <p class="card-note"><a href="/user?form=user-update" data-modal="form-user-update">Update account →</a></p>
+  <p class="card-note"><a href="/you?form=user-update" data-modal="form-user-update">Update account →</a></p>
 </div>
 
 <h2>Wallet</h2>

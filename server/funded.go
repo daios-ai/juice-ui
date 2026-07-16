@@ -92,7 +92,7 @@ type CallForm struct {
 // runForm builds a CallForm for running an action (repeatable, no locked args).
 func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome) CallForm {
 	return CallForm{
-		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", Verb: "Run",
+		CSRFField: csrf, PostURL: "/actions/" + actionID + "/browse", Verb: "Run",
 		Price: price, Editable: editable, ResultID: "run-result", Outcome: outcome,
 	}
 }
@@ -101,7 +101,7 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 // top). ResultID is per-step so many inbox forms don't collide.
 func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked json.RawMessage, outcome *Outcome) CallForm {
 	return CallForm{
-		CSRFField: csrf, PostURL: "/steps/" + stepID + "/complete", Verb: "Complete",
+		CSRFField: csrf, PostURL: "/inbox/" + stepID + "/complete", Verb: "Complete",
 		Price: price, Locked: locked, Editable: editable, IsApproval: isApproval,
 		ResultID: "step-result-" + stepID, Outcome: outcome, OneShot: true,
 	}

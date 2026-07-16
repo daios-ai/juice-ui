@@ -8,7 +8,7 @@
   <div class="action-card-head">
     <a class="action-card-ref mono" href="/actions/{{.Action.ID}}" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</a>
     <span class="chips">
-      {{if not .Action.Public}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{end}}
+      {{if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if .Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span>{{end}}
       {{with kindBadge .Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
       {{if not .Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
       {{if .Action.PeerState}}<span class="chip tag" title="Peer {{.Action.PeerState}} — not callable right now">peer {{.Action.PeerState}}</span>{{end}}
@@ -54,7 +54,7 @@
   <strong>Failed — fully refunded.</strong>
   <p>{{.Message}}</p>
   {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
-  <p><a href="/user">View your ledger →</a></p>
+  <p><a href="/you">View your ledger →</a></p>
 </div>
 {{else if .IsGrantRequired}}
 <div class="outcome rejected" role="status">
@@ -269,7 +269,7 @@
      the nav links the sidebar would (Account, Admin, Peers) plus the account
      block. The desktop popover uses _menu_account only (no nav duplication). */}}
 {{define "_menu_content"}}
-<a href="/user" class="menu-item" role="menuitem">
+<a href="/you" class="menu-item" role="menuitem">
   <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
   Account
 </a>

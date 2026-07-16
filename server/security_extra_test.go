@@ -128,7 +128,7 @@ func TestFormQueryOpensDialogNoJS(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/actions?form=action-create")
+	body := getBody(t, cl, srv.URL+"/workshop?form=action-create")
 	if !strings.Contains(body, `id="form-action-create"`) {
 		t.Fatal("action page missing the create dialog")
 	}
@@ -151,7 +151,7 @@ func TestPaletteRegistryInPage(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 
-	alice := getBody(t, loginClientAs(t, srv.URL, "@alice"), srv.URL+"/run")
+	alice := getBody(t, loginClientAs(t, srv.URL, "@alice"), srv.URL+"/browse")
 	if !strings.Contains(alice, `id="command-registry"`) {
 		t.Error("page must embed the command registry")
 	}
@@ -162,7 +162,7 @@ func TestPaletteRegistryInPage(t *testing.T) {
 		t.Error("non-superuser registry must not include admin commands")
 	}
 
-	sys := getBody(t, loginClientAs(t, srv.URL, "@sys"), srv.URL+"/run")
+	sys := getBody(t, loginClientAs(t, srv.URL, "@sys"), srv.URL+"/browse")
 	if !strings.Contains(sys, `admin users`) {
 		t.Error("superuser registry must include admin commands")
 	}

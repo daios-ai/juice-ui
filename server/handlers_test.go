@@ -428,7 +428,7 @@ func TestUserLedgerUsesUnifiedRow(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/user")
+	body := getBody(t, cl, srv.URL+"/you")
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("user ledger must link the action ref (was missing before)")
 	}
@@ -465,7 +465,7 @@ func TestWalletShowsBalancesAndDepositNote(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/user")
+	body := getBody(t, cl, srv.URL+"/you")
 	if !strings.Contains(body, "500") {
 		t.Error("wallet should show available balance")
 	}
@@ -492,7 +492,7 @@ func TestStudioPageTwoZones(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 	// Creation zone: AI synthesis form present (R6.3.6).
 	if !strings.Contains(body, "Synthesize") {
 		t.Error("studio must show AI synthesis creation zone")
@@ -523,7 +523,7 @@ func TestUserShowsConnectors(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	body := getBody(t, cl, srv.URL+"/user")
+	body := getBody(t, cl, srv.URL+"/you")
 
 	// The single directory-grouped connectors tree: the @sys folder node.
 	if !strings.Contains(body, ">Connected</h2>") || !strings.Contains(body, "<details") {
@@ -569,7 +569,7 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/user"))
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/you"))
 	form := url.Values{"action": {"@lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -626,7 +626,7 @@ func TestHtmxAuthLossRedirectsViaHeader(t *testing.T) {
 	defer k.Close()
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/steps/badge", nil) // requireAuth-gated
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox/badge", nil) // requireAuth-gated
 	req.Header.Set("HX-Request", "true")
 	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := cl.Do(req)
@@ -684,7 +684,7 @@ func TestKernelIdentityShown(t *testing.T) {
 	}
 	// The sidebar brand shows the kernel handle once signed in.
 	cl := loginClient(t, srv.URL)
-	if !strings.Contains(getBody(t, cl, srv.URL+"/run"), `class="lbl">@testnet`) {
+	if !strings.Contains(getBody(t, cl, srv.URL+"/browse"), `class="lbl">@testnet`) {
 		t.Error("sidebar brand must show the kernel handle")
 	}
 }
@@ -695,7 +695,7 @@ func TestActionCardChips(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 
 	// Ref is the card title/link, rendered via _ref (owner emphasized).
 	if !strings.Contains(body, `class="action-card-ref mono" href="/actions/A1"`) {
@@ -732,7 +732,7 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 
 	// Content-first: no floating command chrome, and color stays money/danger only.
 	if strings.Contains(body, `class="toolbar"`) {
@@ -763,10 +763,10 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	if !strings.Contains(body, `class="tabs control-tabs"`) {
 		t.Error("action filters must render as a .tabs row")
 	}
-	if !strings.Contains(body, `class="tab active" href="/actions" aria-current="page">all`) {
+	if !strings.Contains(body, `class="tab active" href="/workshop" aria-current="page">all`) {
 		t.Error("action filter tabs must mark 'all' active")
 	}
-	if !strings.Contains(body, `href="/actions?filter=active"`) {
+	if !strings.Contains(body, `href="/workshop?filter=active"`) {
 		t.Error("action filter tabs must offer the 'active' filter")
 	}
 }
@@ -780,7 +780,7 @@ func TestActionsScopeSwitch(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "@sys")
-	body := getBody(t, cl, srv.URL+"/actions?scope=all")
+	body := getBody(t, cl, srv.URL+"/workshop?scope=all")
 
 	if strings.Contains(body, ">all actions<") {
 		t.Error("the confusing 'all actions' filter tab must be gone (scope is its own switch)")
@@ -789,12 +789,12 @@ func TestActionsScopeSwitch(t *testing.T) {
 		t.Error("superuser must get a yours|everyone scope switch")
 	}
 	// everyone active on ?scope=all…
-	if !strings.Contains(body, `class="tab active" href="/actions?scope=all" aria-current="page">everyone`) {
+	if !strings.Contains(body, `class="tab active" href="/workshop?scope=all" aria-current="page">everyone`) {
 		t.Error("the 'everyone' scope tab must be active on ?scope=all")
 	}
 	// …and the state-filter tabs preserve the scope (carry scope=all; html/template
 	// escapes the & in the href).
-	if !strings.Contains(body, `href="/actions?filter=active&amp;scope=all"`) {
+	if !strings.Contains(body, `href="/workshop?filter=active&amp;scope=all"`) {
 		t.Error("filter tabs must preserve the scope (carry scope=all)")
 	}
 }
@@ -807,7 +807,7 @@ func TestStudioMakeActionSuccess(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// Get CSRF token from studio page.
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 	tok := csrfTokenFrom(t, body)
 
 	// POST to /studio/make with htmx headers.
@@ -861,7 +861,7 @@ func TestStudioMakeActionInsufficientCredits(t *testing.T) {
 
 	// Studio page shows the synthesis form regardless of balance; the kernel
 	// enforces the credit check at run time (v0.3 behaviour).
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 	if !strings.Contains(body, `action="/actions/make"`) {
 		t.Error("synthesis form must always be shown (kernel enforces credit check on run)")
 	}
@@ -879,7 +879,7 @@ func TestStudioLifecycleRedirect(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// Get CSRF token.
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 	tok := csrfTokenFrom(t, body)
 
 	// Disable action A1: must redirect to the action detail page.
@@ -916,13 +916,13 @@ func TestStepsInboxShowsWaitingStep(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/steps")
+	body := getBody(t, cl, srv.URL+"/inbox")
 
 	// S1 is waiting and requires U1 (the signed-in user) → must appear in Inbox.
 	if !strings.Contains(body, "Waiting for you") {
 		t.Error("steps page must have an Inbox section")
 	}
-	if !strings.Contains(body, `action="/steps/S1/complete"`) {
+	if !strings.Contains(body, `action="/inbox/S1/complete"`) {
 		t.Error("inbox must contain the step completion form for S1")
 	}
 }
@@ -934,7 +934,7 @@ func TestInboxGroupsByCreatingAction(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/steps")
+	body := getBody(t, cl, srv.URL+"/inbox")
 
 	// Both waiting steps share one creating action (@sys/make) → a single group,
 	// but the inbox must STILL name the creating action (not just the target), even
@@ -951,7 +951,7 @@ func TestInboxGroupsByCreatingAction(t *testing.T) {
 		t.Errorf("group heading must name the creating action @sys/make: %s", body)
 	}
 	// Both completion forms are present under the group, one per step.
-	if !strings.Contains(body, `action="/steps/S1/complete"`) || !strings.Contains(body, `action="/steps/S2/complete"`) {
+	if !strings.Contains(body, `action="/inbox/S1/complete"`) || !strings.Contains(body, `action="/inbox/S2/complete"`) {
 		t.Error("every waiting step keeps its own completion form")
 	}
 }
@@ -963,11 +963,11 @@ func TestCompleteStepHTMX(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/steps")
+	body := getBody(t, cl, srv.URL+"/inbox")
 	tok := csrfTokenFrom(t, body)
 
 	form := url.Values{"raw_args": {"{}"}, "gorilla.csrf.Token": {tok}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/steps/S1/complete", strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/inbox/S1/complete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
 	resp, err := cl.Do(req)
@@ -996,7 +996,7 @@ func TestInboxPageRendersSteps(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/steps")
+	body := getBody(t, cl, srv.URL+"/inbox")
 
 	// Step S1 (status=waiting, required_caller=@alice=current user) appears as a
 	// completable card. The price rides on the Complete button — the redundant
@@ -1020,7 +1020,7 @@ func TestWalletShowsLedger(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/user")
+	body := getBody(t, cl, srv.URL+"/you")
 	// Ledger must show both transactions from authKernel.
 	if !strings.Contains(body, "T1") && !strings.Contains(body, "/transactions/T1") {
 		t.Error("wallet ledger must link to transaction T1")
@@ -1046,7 +1046,7 @@ func TestStudioShowsEarnings(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/actions")
+	body := getBody(t, cl, srv.URL+"/workshop")
 	// T2 in authKernel is a seller transaction for U1 (target_user_id=U1, status=success).
 	// Earnings card must appear.
 	if !strings.Contains(body, "Earnings") {
@@ -1204,7 +1204,7 @@ func TestSettingsPage(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/user")
+	body := getBody(t, cl, srv.URL+"/you")
 	if !strings.Contains(body, "alice@test.com") {
 		t.Error("settings page must show current email")
 	}
@@ -1215,7 +1215,7 @@ func TestSettingsPage(t *testing.T) {
 
 	// Email update — success path.
 	form := url.Values{"gorilla.csrf.Token": {tok}, "email": {"new@test.com"}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/user", strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/you", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := cl.Do(req)
 	if err != nil {
@@ -1229,7 +1229,7 @@ func TestSettingsPage(t *testing.T) {
 	// Password change — wrong current password shows inline error, no redirect.
 	// The new password is valid locally (≥8, confirmed) so it reaches the kernel,
 	// which rejects the wrong current_password.
-	body2 := getBody(t, cl, srv.URL+"/user")
+	body2 := getBody(t, cl, srv.URL+"/you")
 	tok2 := csrfTokenFrom(t, body2)
 	form2 := url.Values{
 		"gorilla.csrf.Token": {tok2},
@@ -1237,7 +1237,7 @@ func TestSettingsPage(t *testing.T) {
 		"password":           {"newpassword"},
 		"confirm_password":   {"newpassword"},
 	}
-	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/user", strings.NewReader(form2.Encode()))
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/you", strings.NewReader(form2.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp2, err := cl.Do(req2)
 	if err != nil {
@@ -1271,8 +1271,8 @@ func TestParseLookup(t *testing.T) {
 
 func TestCatalogAsResults(t *testing.T) {
 	actions := []client.Action{
-		{ID: "A1", Name: "hello", OwnerHandle: "@alice", Kind: "wasm", Active: true, Public: true, Price: 50},
-		{ID: "A2", Name: "goodbye", OwnerHandle: "@bob", Kind: "ai", Active: true, Public: true, Price: 0},
+		{ID: "A1", Name: "hello", OwnerHandle: "@alice", Kind: "wasm", Active: true, Visibility: "public", Price: 50},
+		{ID: "A2", Name: "goodbye", OwnerHandle: "@bob", Kind: "ai", Active: true, Visibility: "public", Price: 0},
 	}
 	got := catalogAsResults(actions, "hello")
 	if len(got) != 1 {
@@ -1365,7 +1365,7 @@ func TestCreateActionAuth(t *testing.T) {
 			defer srv.Close()
 			cl := loginClient(t, srv.URL)
 
-			studioBody := getBody(t, cl, srv.URL+"/actions")
+			studioBody := getBody(t, cl, srv.URL+"/workshop")
 			csrfTok := csrfTokenFrom(t, studioBody)
 			tc.fields.Set("gorilla.csrf.Token", csrfTok)
 
@@ -1485,7 +1485,7 @@ func TestCreateActionHTTPParams(t *testing.T) {
 			defer srv.Close()
 			cl := loginClient(t, srv.URL)
 
-			csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions"))
+			csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))
 			tc.fields.Set("gorilla.csrf.Token", csrfTok)
 			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(tc.fields.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1543,7 +1543,7 @@ func TestUpdateAction(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// A CSRF token is valid session-wide; any page with a form yields one.
-	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions"))
+	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))
 	fields := url.Values{
 		"gorilla.csrf.Token": {csrfTok},
 		"description":        {"Weather lookup"},
@@ -1595,7 +1595,7 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions"))
+	csrfTok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))
 	fields := url.Values{
 		"gorilla.csrf.Token": {csrfTok},
 		"input_schema":       {`{not json`},

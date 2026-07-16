@@ -22,7 +22,7 @@
     {{if .Handle}}
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/run"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}</span></a>
+        <a class="brand" href="/browse"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
@@ -31,24 +31,8 @@
       </div>
 
       <nav class="nav" aria-label="Primary">
-        <a href="/run" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span class="lbl">run</span></a>
-        <a href="/actions" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span class="lbl">action</span></a>
-        <a href="/processes" title="Processes"{{if eq .Active "process"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layout-dashboard"/></svg><span class="lbl">process</span></a>
-        <a href="/transactions" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span class="lbl">tx</span></a>
-        <a href="/steps" title="Steps" class="nav-inbox"{{if eq .Active "step"}} aria-current="page"{{end}}>
-          <span class="ico-badge-wrap">
-            <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>
-            {{template "_badge_poll" (badge "/steps/badge" "Waiting steps" 0 .BadgeSecs)}}
-          </span>
-          <span class="lbl">step</span>
-        </a>
-        <a href="/user" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span class="lbl">user</span></a>
-        {{range .AppNav}}
+        {{range .Nav}}
         <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
-        {{end}}
-        {{if .IsSuperuser}}
-        <a href="/admin" title="Admin"{{if eq .Active "admin"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg><span class="lbl">admin</span></a>
-        <a href="/admin/peers" title="Peers"{{if eq .Active "peers"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#share-2"/></svg><span class="lbl">peers</span></a>
         {{end}}
       </nav>
 
@@ -87,14 +71,9 @@
 
   {{if .Handle}}
   <nav class="tab-bar" aria-label="Primary">
-    <a href="/run" class="tab" title="Run"{{if eq .Active "run"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#play"/></svg><span>run</span></a>
-    <a href="/actions" class="tab" title="Actions"{{if eq .Active "action"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg><span>action</span></a>
-    <a href="/steps" class="tab" title="Steps"{{if eq .Active "step"}} aria-current="page"{{end}}><span class="ico-badge-wrap"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#bell"/></svg>{{template "_badge_poll" (badge "/steps/badge" "Waiting steps" 0 .BadgeSecs)}}</span><span>step</span></a>
-    <a href="/transactions" class="tab" title="Transactions"{{if eq .Active "tx"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#coins"/></svg><span>tx</span></a>
-    <a href="/user" class="tab" title="Account"{{if eq .Active "user"}} aria-current="page"{{end}}><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg><span>user</span></a>
-    {{range .AppNav}}
+    {{range .Nav}}{{if .Tab}}
     <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span>{{.Label}}</span></a>
-    {{end}}
+    {{end}}{{end}}
   </nav>
   {{end}}
 
@@ -112,7 +91,7 @@
     <div class="modal-body">
       <dl class="help-grid">
         <dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette</dd>
-        <dt><kbd>g</kbd> then <kbd>r a p t s u</kbd></dt><dd>Go to run · action · process · tx · step · user</dd>
+        <dt><kbd>g</kbd> then <kbd>b i k w y</kbd></dt><dd>Go to browse · inbox · workshop · wallet · you</dd>
         <dt><kbd>/</kbd></dt><dd>Focus search</dd>
         <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>

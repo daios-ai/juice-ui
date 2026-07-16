@@ -390,7 +390,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 		wanted[validateName] = true
 		base := strings.TrimRight(c.deps.PublicURL, "/") + "/_kernel/chat/"
 		auth := authConfig()
-		pubTrue := true
+		visPublic := "public"
 		// Reconcile every op independently and accumulate failures rather than
 		// aborting on the first: a transient failure on one action must not starve
 		// the rest (a fail-fast loop once left delete-message private and inbox
@@ -434,7 +434,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 						InputSchema:  op.InputSchema,
 						OutputSchema: op.OutputSchema,
 						Description:  &desc,
-						Public:       &pubTrue,
+						Visibility:   &visPublic,
 					}); err != nil {
 						return fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, op.Name, err)
 					}
@@ -449,8 +449,8 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 						return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
 					}
 				}
-				if !a.Public {
-					if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &pubTrue}); err != nil {
+				if !a.IsPublic() {
+					if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Visibility: &visPublic}); err != nil {
 						return fmt.Errorf("chat: publish %s/%s: %w", chatHandle, op.Name, err)
 					}
 				}
@@ -637,7 +637,10 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 			break
 		}
 	}
-	pub := sp.public
+	vis := "private"
+	if sp.public {
+		vis = "public"
+	}
 	if a == nil {
 		na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
 			Name: sp.name, Kind: "http", Source: want, Method: "POST",
@@ -650,7 +653,7 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 		if sp.public {
-			if _, err := c.deps.Client.UpdateAction(ctx, tok, na.ID, client.UpdateActionInput{Public: &pub}); err != nil {
+			if _, err := c.deps.Client.UpdateAction(ctx, tok, na.ID, client.UpdateActionInput{Visibility: &vis}); err != nil {
 				return "", fmt.Errorf("chat: publish %s/%s: %w", chatHandle, sp.name, err)
 			}
 		}
@@ -660,7 +663,7 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 		desc := sp.desc
 		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
 			Source: &want, Method: "POST", InputSchema: sp.in, OutputSchema: sp.out,
-			Description: &desc, Public: &pub, Auth: sp.auth,
+			Description: &desc, Visibility: &vis, Auth: sp.auth,
 		}); err != nil {
 			return "", fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, sp.name, err)
 		}
@@ -674,8 +677,8 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 	}
-	if a.Public != sp.public {
-		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Public: &pub}); err != nil {
+	if a.IsPublic() != sp.public {
+		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Visibility: &vis}); err != nil {
 			return "", fmt.Errorf("chat: set visibility %s/%s: %w", chatHandle, sp.name, err)
 		}
 	}
@@ -724,8 +727,8 @@ func (c *Chat) enablePublic(ctx context.Context, tok, id string) error {
 	if err := c.deps.Client.EnableAction(ctx, tok, id); err != nil {
 		return fmt.Errorf("chat: enable %s: %w", id, err)
 	}
-	pub := true
-	if _, err := c.deps.Client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Public: &pub}); err != nil {
+	visPublic := "public"
+	if _, err := c.deps.Client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Visibility: &visPublic}); err != nil {
 		return fmt.Errorf("chat: publish %s: %w", id, err)
 	}
 	return nil

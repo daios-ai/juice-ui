@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="page-head">
   <div>
-    <h1>run</h1>
+    <h1>browse</h1>
     <p class="subtitle">Discover an action and run it.</p>
   </div>
 </div>
@@ -10,7 +10,7 @@
 <div class="banner banner-info" role="status">Semantic search unavailable — showing catalog results.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
 {{end}}
 
-<form class="card row" method="get" action="/run">
+<form class="card row" method="get" action="/browse">
   <div class="field stretch flush">
     <label for="q" class="sr-only">Search</label>
     <input id="q" name="q" type="text" value="{{.Data.Query}}" placeholder="e.g. summarize a document, send a payment">

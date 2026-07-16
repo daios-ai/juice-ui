@@ -127,7 +127,7 @@ if (palette) {
 }
 
 // --- global shortcuts ---
-const GO = { r: "/run", a: "/actions", p: "/processes", t: "/transactions", s: "/steps", u: "/user", x: "/admin" };
+const GO = { b: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/you", n: "/admin/peers", x: "/admin" };
 let goArmed = false;
 
 function typingContext(el) {

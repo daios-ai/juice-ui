@@ -153,14 +153,16 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /theme", s.postTheme)
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
-	// Home + legacy redirects (bookmarks / old links). The nav now mirrors the
-	// CLI command groups, so the old room URLs point at their new homes.
+	// Home + legacy redirects (bookmarks / old links). The nav is relabelled as a
+	// marketplace (browse/inbox/workshop/wallet/you), so the old CLI-noun URLs 301
+	// to their new homes.
 	mux.HandleFunc("GET /{$}", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/run", http.StatusSeeOther)
+		http.Redirect(w, r, "/browse", http.StatusSeeOther)
 	}))
 	for from, to := range map[string]string{
-		"/discover": "/run", "/inbox": "/steps", "/studio": "/actions",
-		"/settings": "/user", "/wallet": "/user",
+		"/run": "/browse", "/discover": "/browse", "/actions": "/browse",
+		"/steps": "/inbox", "/studio": "/workshop",
+		"/user": "/you", "/settings": "/you",
 	} {
 		dest := to
 		mux.HandleFunc("GET "+from, func(w http.ResponseWriter, r *http.Request) {
@@ -168,12 +170,12 @@ func New(o Options) (http.Handler, error) {
 		})
 	}
 
-	// Run — discovery and execution.
-	mux.HandleFunc("GET /run", s.requireAuth(s.getRun))
-	mux.HandleFunc("POST /run", s.requireAuth(s.postRunByRef))
+	// Browse — discovery, catalog, and execution.
+	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))
+	mux.HandleFunc("POST /run", s.requireAuth(s.postRunByRef)) // run-by-ref (palette)
 
-	// Action — catalog + provider workspace.
-	mux.HandleFunc("GET /actions", s.requireAuth(s.getActions))
+	// Workshop — the provider surface (own actions, earnings, creation).
+	mux.HandleFunc("GET /workshop", s.requireAuth(s.getWorkshop))
 	mux.HandleFunc("POST /actions", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /actions/import", s.requireAuth(s.postImport))
 	mux.HandleFunc("POST /actions/unimport", s.requireAuth(s.postUnimport))
@@ -183,32 +185,30 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /actions/{id}/enable", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/{id}/disable", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/{id}/delete", s.requireAuth(s.postActionDelete))
-	mux.HandleFunc("POST /actions/{id}/make-public", s.requireAuth(s.postActionLifecycle))
-	mux.HandleFunc("POST /actions/{id}/make-private", s.requireAuth(s.postActionLifecycle))
+	mux.HandleFunc("POST /actions/{id}/visibility", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/{id}/update-price", s.requireAuth(s.postUpdateActionPrice))
 	mux.HandleFunc("POST /actions/{id}/update", s.requireAuth(s.postUpdateAction))
 
-	// Process — computation lifetimes (evidence).
+	// Wallet — balances, open processes, ledger (evidence).
+	mux.HandleFunc("GET /wallet", s.requireAuth(s.getWallet))
 	mux.HandleFunc("GET /processes", s.requireAuth(s.getProcesses))
 	mux.HandleFunc("GET /processes/{id}", s.requireAuth(s.getProcess))
 	mux.HandleFunc("POST /processes/{id}/end", s.requireAuth(s.postEnd))
-
-	// Tx — the immutable ledger.
 	mux.HandleFunc("GET /transactions", s.requireAuth(s.getTransactions))
 	mux.HandleFunc("GET /transactions/{id}", s.requireAuth(s.getTransaction))
 	mux.HandleFunc("GET /transactions/{id}/verify", s.requireAuth(s.getTxVerify))
 	mux.HandleFunc("POST /transactions/{id}/rate", s.requireAuth(s.postRate))
 
-	// Step — work addressed to you.
-	mux.HandleFunc("GET /steps", s.requireAuth(s.getSteps))
-	mux.HandleFunc("GET /steps/badge", s.requireAuth(s.getStepsBadge))
-	mux.HandleFunc("GET /steps/{id}", s.requireAuth(s.getStep))
-	mux.HandleFunc("POST /steps", s.requireAuth(s.postCreateStep))
-	mux.HandleFunc("POST /steps/{id}/complete", s.requireAuth(s.postCompleteStep))
+	// Inbox — steps addressed to you.
+	mux.HandleFunc("GET /inbox", s.requireAuth(s.getSteps))
+	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getStepsBadge))
+	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getStep))
+	mux.HandleFunc("POST /inbox", s.requireAuth(s.postCreateStep))
+	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteStep))
 
-	// User — identity + wallet.
-	mux.HandleFunc("GET /user", s.requireAuth(s.getUser))
-	mux.HandleFunc("POST /user", s.requireAuth(s.postUser))
+	// You — identity hub + preferences.
+	mux.HandleFunc("GET /you", s.requireAuth(s.getUser))
+	mux.HandleFunc("POST /you", s.requireAuth(s.postUser))
 
 	// Grants (connect an upstream account to an action): the oauth_delegated
 	// browser flow (start/callback) and the delegated_bearer static-token path.
@@ -229,9 +229,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /admin/peers/{key}", s.requireSuperuser(s.getAdminInspect))
 	mux.HandleFunc("POST /admin/peers/friend", s.requireSuperuser(s.postAdminFriend))
 	mux.HandleFunc("POST /admin/peers/unfriend", s.requireSuperuser(s.postAdminUnfriend))
-
-	// Session-scoped preferences.
-	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getStepsBadge)) // legacy poll URL
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only
@@ -460,6 +457,55 @@ func (s *Server) appDeps() apps.Deps {
 	}
 }
 
+// spriteIcon renders a sprite symbol as the inline <svg> the nav uses, so a core
+// entry and an app's inline icon are the same NavItem.Icon shape.
+func spriteIcon(id string) template.HTML {
+	return template.HTML(`<svg class="ico" aria-hidden="true"><use href="/static/icons.svg#` + id + `"/></svg>`)
+}
+
+// buildNav assembles the single nav model: the marketplace groups, then app
+// entries, then the superuser-only network/admin. Tab=true marks the four mobile
+// bottom-bar entries (browse · inbox · chat · you). active is the current group.
+func (s *Server) buildNav(r *http.Request, active string) []NavItem {
+	nav := []NavItem{
+		{Slug: "browse", Label: "browse", Href: "/browse", Icon: spriteIcon("layers"), Tab: true},
+		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: spriteIcon("bell"), BadgeURL: "/inbox/badge", Tab: true},
+		{Slug: "workshop", Label: "workshop", Href: "/workshop", Icon: spriteIcon("pencil")},
+		{Slug: "wallet", Label: "wallet", Href: "/wallet", Icon: spriteIcon("wallet")},
+		{Slug: "you", Label: "you", Href: "/you", Icon: spriteIcon("user"), Tab: true},
+	}
+	// App entries (chat, agents) fold in after the core groups; chat also joins
+	// the mobile tab bar.
+	handle := s.sessions.Handle(r.Context())
+	super := s.isSuperuser(r)
+	for _, f := range s.apps {
+		for _, e := range f.Nav(handle, super) {
+			nav = append(nav, NavItem{
+				Slug:     e.Slug,
+				Label:    e.Label,
+				Href:     e.Href,
+				Icon:     e.Icon,
+				Badge:    e.Badge,
+				BadgeURL: e.BadgeURL,
+				Active:   e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
+				Tab:      e.Slug == "chat",
+			})
+		}
+	}
+	if super {
+		nav = append(nav,
+			NavItem{Slug: "network", Label: "network", Href: "/admin/peers", Icon: spriteIcon("share-2")},
+			NavItem{Slug: "admin", Label: "admin", Href: "/admin", Icon: spriteIcon("settings")},
+		)
+	}
+	for i := range nav {
+		if nav[i].Slug == active {
+			nav[i].Active = true
+		}
+	}
+	return nav
+}
+
 // appNav collects the sidebar entries contributed by apps for the
 // signed-in user, marking the entry whose Match prefixes the request path as the
 // current page.
@@ -496,11 +542,13 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 	}
 	super := s.isSuperuser(r)
 	kernelHandle, kernelFP := s.kernelIdentity(r.Context())
+	active := activeGroup(r.URL.Path)
 	return Page{
 		Title:        title,
 		Theme:        themeFromRequest(r),
 		Sidebar:      sidebarFromRequest(r),
-		Active:       activeGroup(r.URL.Path),
+		Active:       active,
+		Nav:          s.buildNav(r, active),
 		Handle:       s.sessions.Handle(r.Context()),
 		KernelHandle: kernelHandle,
 		KernelFP:     kernelFP,
@@ -526,20 +574,22 @@ func (s *Server) badgeSecs() int { return int(s.badgeTTL / time.Second) }
 // aria-current highlighting.
 func activeGroup(path string) string {
 	switch {
-	case path == "/run":
-		return "run"
-	case strings.HasPrefix(path, "/actions"):
-		return "action"
-	case strings.HasPrefix(path, "/processes"):
-		return "process"
-	case strings.HasPrefix(path, "/transactions"):
-		return "tx"
-	case strings.HasPrefix(path, "/steps"):
-		return "step"
-	case strings.HasPrefix(path, "/user"):
-		return "user"
+	case path == "/browse" || strings.HasPrefix(path, "/actions"):
+		// The catalog and every action detail/lifecycle page belong to browse.
+		return "browse"
+	case strings.HasPrefix(path, "/workshop"):
+		return "workshop"
+	case strings.HasPrefix(path, "/inbox"):
+		return "inbox"
+	case strings.HasPrefix(path, "/wallet"),
+		strings.HasPrefix(path, "/processes"),
+		strings.HasPrefix(path, "/transactions"):
+		// The wallet owns money evidence (processes + the tx ledger + receipts).
+		return "wallet"
+	case strings.HasPrefix(path, "/you"), strings.HasPrefix(path, "/grants"):
+		return "you"
 	case strings.HasPrefix(path, "/admin/peers"):
-		return "peers"
+		return "network"
 	case strings.HasPrefix(path, "/admin"):
 		return "admin"
 	}

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 )
 
@@ -77,7 +76,7 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 		Available: 1000,
 		Data:      userView{User: client.User{Handle: "@alice", Available: 1000, Locked: 250}},
 	}
-	if err := r.Render(rec, 200, "user", p); err != nil {
+	if err := r.Render(rec, 200, "you", p); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	body := rec.Body.String()
@@ -208,7 +207,7 @@ func TestAccountMenuHasNoNav(t *testing.T) {
 	}
 	// The mobile drawer keeps the nav (it replaces the sidebar).
 	if !strings.Contains(full, `href="/admin"`) || !strings.Contains(full, `href="/admin/peers"`) {
-		t.Error("mobile drawer (_menu_content) must carry Admin + Peers nav")
+		t.Error("mobile drawer (_menu_content) must carry Admin + network nav")
 	}
 }
 
@@ -243,10 +242,10 @@ func TestTabRenderer(t *testing.T) {
 
 func TestActionsHref(t *testing.T) {
 	cases := []struct{ scope, filter, want string }{
-		{"", "", "/actions"},
-		{"all", "", "/actions?scope=all"},
-		{"", "active", "/actions?filter=active"},
-		{"all", "inactive", "/actions?filter=inactive&scope=all"},
+		{"", "", "/workshop"},
+		{"all", "", "/workshop?scope=all"},
+		{"", "active", "/workshop?filter=active"},
+		{"all", "inactive", "/workshop?filter=inactive&scope=all"},
 	}
 	for _, c := range cases {
 		if got := actionsHref(c.scope, c.filter); got != c.want {
@@ -336,7 +335,7 @@ func TestUserPageShowsConnections(t *testing.T) {
 				{Provider: "api.acme.com", Actions: 0, Unused: true, ProviderKey: "oauth:a", CreatedAt: "2026-07-11T00:00:00Z"},
 			}},
 	}}
-	if err := r.Render(rec, 200, "user", p); err != nil {
+	if err := r.Render(rec, 200, "you", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
@@ -671,17 +670,17 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 	p := Page{
 		Handle:    "@me",
 		BadgeSecs: 15,
-		AppNav: []apps.NavEntry{{
-			Slug: "chat", Label: "chat", Href: "/chat", Match: "/chat",
-			Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, BadgeURL: "/chat/badge",
-		}},
+		Nav: []NavItem{
+			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), BadgeURL: "/inbox/badge", Tab: true},
+			{Slug: "chat", Label: "chat", Href: "/chat", Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, BadgeURL: "/chat/badge", Tab: true},
+		},
 		Data: struct{ Message string }{"x"},
 	}
 	if err := r.Render(rec, 200, "error", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if strings.Count(body, `hx-get="/steps/badge"`) < 2 {
+	if strings.Count(body, `hx-get="/inbox/badge"`) < 2 {
 		t.Errorf("steps badge poller must appear in sidebar AND tab bar: %s", body)
 	}
 	if !strings.Contains(body, `hx-get="/chat/badge"`) {
@@ -763,7 +762,7 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 	}
 	view := func(ps string) actionView {
 		return actionView{
-			Action: client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Public: true, Price: 10, PeerState: ps},
+			Action: client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
 			Form:   BuildForm(nil),
 		}
 	}
@@ -816,7 +815,7 @@ func TestActionRunPollsWhilePeerBlocked(t *testing.T) {
 	render := func(ps string) string {
 		rec := httptest.NewRecorder()
 		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: actionView{
-			Action:    client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Public: true, Price: 10, PeerState: ps},
+			Action:    client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
 			Form:      BuildForm(nil),
 			BadgeSecs: 15,
 		}}

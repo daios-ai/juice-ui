@@ -492,8 +492,12 @@ func (a *fakeAction) wire() string {
 	}
 	// Every @chat action carries delegated_bearer auth; the kernel reports the
 	// scheme + grant requirement (but not the write-only config).
-	return fmt.Sprintf(`{"id":%q,"name":%q,"kind":"http","active":%t,"public":%t,"description":%q,"auth_scheme":"delegated_bearer","requires_grant":true,"http":{"method":"POST","url":%q},"input_schema":%s,"output_schema":%s}`,
-		a.ID, a.Name, a.Active, a.Public, a.Description, a.URL, in, out)
+	vis := "private"
+	if a.Public {
+		vis = "public"
+	}
+	return fmt.Sprintf(`{"id":%q,"name":%q,"kind":"http","active":%t,"visibility":%q,"description":%q,"auth_scheme":"delegated_bearer","requires_grant":true,"http":{"method":"POST","url":%q},"input_schema":%s,"output_schema":%s}`,
+		a.ID, a.Name, a.Active, vis, a.Description, a.URL, in, out)
 }
 
 type fakeKernel struct {
@@ -577,8 +581,8 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		if in.Source != nil {
 			a.URL = *in.Source
 		}
-		if in.Public != nil {
-			a.Public = *in.Public
+		if in.Visibility != nil {
+			a.Public = *in.Visibility == "public"
 		}
 		if in.Description != nil {
 			a.Description = *in.Description
