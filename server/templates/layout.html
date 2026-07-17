@@ -56,10 +56,10 @@
       {{if .Handle}}
       <header class="topbar">
         <form class="omni" method="get" action="/browse" role="search">
-          <svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#search"/></svg>
-          <input type="text" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off">
-          <button type="button" class="kbd" data-open-palette aria-label="Command palette">⌘K</button>
+          <input type="search" enterkeyhint="search" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off">
+          <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
         </form>
+        <button type="button" class="kbd" data-open-palette aria-label="Command palette">⌘K</button>
         <label class="theme-pick" title="Theme">
           <span class="lbl">theme</span>
           <select data-theme-select aria-label="Theme">

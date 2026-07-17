@@ -1,7 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}
 {{$me := $d.Me.Handle}}
-<p><a href="/transactions">← tx</a></p>
+<nav class="crumb"><a href="/transactions">← transactions</a></nav>
 <h1>tx</h1>
 <p class="subtitle id mono">{{$d.Tx.ID}}</p>
 

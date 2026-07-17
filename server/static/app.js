@@ -37,14 +37,18 @@ document.body.addEventListener("htmx:afterRequest", (e) => {
 
 // A [data-autoscroll] log that grows via htmx swaps keeps its newest entry in view,
 // but only when the viewer was already at the bottom (never yanks a history reader).
-// The page is the scroll container and controls (e.g. a compose form) may sit below
-// the log, so we stick to the bottom of the document — revealing the newest entry
-// without hiding those trailing controls. Idempotent: a no-op poll never moves the
+// The page is the scroll container — the log and the compose form below it sit in
+// the document flow like everything else — so we pin the document's bottom, which
+// reveals the newest entry AND the form. Idempotent: a no-op poll never moves the
 // viewport (already-at-bottom → scrollTop unchanged).
 let stickBottom = false;
 function atBottom(box) {
   const last = box.lastElementChild;
   return !last || last.getBoundingClientRect().bottom <= window.innerHeight + 120;
+}
+function pinBottom() {
+  const sc = document.scrollingElement || document.documentElement;
+  sc.scrollTop = sc.scrollHeight;
 }
 document.body.addEventListener("htmx:beforeSwap", (e) => {
   const box = e.target?.closest?.("[data-autoscroll]");
@@ -52,10 +56,11 @@ document.body.addEventListener("htmx:beforeSwap", (e) => {
 });
 document.body.addEventListener("htmx:afterSwap", (e) => {
   const box = e.target?.closest?.("[data-autoscroll]");
-  if (!box || !stickBottom) return;
-  const sc = document.scrollingElement || document.documentElement;
-  sc.scrollTop = sc.scrollHeight;
+  if (box && stickBottom) pinBottom();
 });
+// On load, a page carrying a [data-autoscroll] log opens pinned to its end — a
+// room opens at the newest message with the composer in view.
+if (document.querySelector("[data-autoscroll]")) pinBottom();
 
 // Theme picker: apply the chosen terminal theme instantly, then persist it via
 // the real form POST (which also works with JS off). An empty value clears the

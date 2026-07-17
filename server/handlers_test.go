@@ -1314,6 +1314,37 @@ func TestCatalogAsResults(t *testing.T) {
 	}
 }
 
+// TestSearchIsOnePill guards the single search component: the segmented .omni
+// pill (input left, equal-height .omni-go submit segment right) is THE search,
+// rendered in the topbar (layout.html) and in-page on browse ≤720px — identical
+// anatomy in both, with a search-typed input so phone keyboards offer submit.
+func TestSearchIsOnePill(t *testing.T) {
+	for file, marker := range map[string]string{
+		"templates/browse.html": `class="omni browse-search"`,
+		"templates/layout.html": `class="omni"`,
+	} {
+		b, err := tmplFS.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		i := strings.Index(src, marker)
+		if i < 0 {
+			t.Fatalf("%s: no %s search pill", file, marker)
+		}
+		end := strings.Index(src[i:], "</form>")
+		if end < 0 {
+			t.Fatalf("%s: search pill form not closed", file)
+		}
+		form := src[i : i+end]
+		for _, want := range []string{`type="search"`, `enterkeyhint="search"`, `omni-go`, `type="submit"`} {
+			if !strings.Contains(form, want) {
+				t.Errorf("%s: search pill lacks %s — one segmented pill everywhere (input + submit segment)", file, want)
+			}
+		}
+	}
+}
+
 // TestCreateActionAuth verifies that postCreateAction forwards the correct auth
 // JSON for each supported scheme, and omits the field when no scheme is chosen.
 func TestCreateActionAuth(t *testing.T) {

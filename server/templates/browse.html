@@ -5,9 +5,10 @@
 {{end}}
 
 {{/* Mobile-only search — the topbar omnibox is hidden below 720px. */}}
-<form class="browse-search" method="get" action="/browse" role="search">
+<form class="omni browse-search" method="get" action="/browse" role="search">
   <label for="q" class="sr-only">Search</label>
-  <input id="q" name="q" type="text" value="{{$q}}" placeholder="what do you need done?">
+  <input id="q" name="q" type="search" enterkeyhint="search" value="{{$q}}" placeholder="what do you need done?">
+  <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
 </form>
 
 {{$cards := .Data.Catalog}}{{if $q}}{{$cards = .Data.Results}}{{end}}

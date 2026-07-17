@@ -12,6 +12,11 @@ Three laws underpin everything:
   extra button style, no bespoke widget. Adding a component means adding it here
   *and* to the drift guard (`server/grammar_test.go`). A small, fixed set is what
   makes runtime user customization tractable.
+- **Lean but flexible.** The grammar grows by generalization, never accretion.
+  A new need first composes existing components; only if that genuinely fails
+  does the set admit **one** general component with a stated principle, a
+  registry entry, and a drift guard — applied everywhere the principle holds. A
+  page-local widget is never admitted; every deviation is generalized or deleted.
 - **Content-first, calm.** Title → content. Commands live quietly *with* the
   content they act on (never a floating page-head cluster); color appears only at
   the real money/danger moment. Hierarchy comes from position and whitespace, not
@@ -29,6 +34,8 @@ Three laws underpin everything:
 | **Media** | `.media` (16:9 slot) · `_media` partial · `cardArt` fallback | the action image slot (§5.13) |
 | **Stat** | `.stat` (label · value · link) | a workshop earnings/metric tile |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
+| **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
+| **Search pill** | `.omni` + `.omni-go` submit segment | **the** search, segmented like a single pill: input left, equal-height icon-submit right. Topbar on desktop, in-page on browse ≤720px — identical anatomy in both |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | a peer kernel on `network` |
 | Field | `.field` + inputs/select/textarea | forms |
@@ -67,10 +74,10 @@ The frame every page renders into. Defined in `layout.html`.
 | **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
 | **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `@sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the step badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
-| **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. |
+| **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
 | **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar of four** (`browse · inbox• · chat• · you`) | Same layout reflowed. Badges stay on `inbox` and `chat`. The remaining destinations (`wallet`, `workshop`, `network`, `admin`) and preferences live inside the `you` hub — no hamburger drawer. |
+| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar of four** (`browse · inbox• · chat• · you`) | Same layout reflowed. Badges stay on `inbox` and `chat`. The remaining destinations (`wallet`, `workshop`, `network`, `admin`) and preferences live inside the `you` hub — no hamburger drawer. The topbar is hidden here, so browse renders the **same** `.omni` search pill in-page (`.browse-search` shows it ≤720px) — one component, both form factors. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -128,13 +135,14 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   `.small .85rem` · `.tiny .8rem`. Headings carry slight `letter-spacing`.
 - **Titles are lowercase group nouns** on **both** index and detail pages:
   `browse · inbox · workshop · wallet · you · network · admin`. A **detail** page
-  adds a `← group` back-link above the title and shows the resource id/name.
+  opens with the sticky **crumb** (`← group` back-link + record identity) above
+  the title and shows the resource id/name.
 - **Money, IDs, hashes, `@owner/name`:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**
   - *Index* = `page-head` (title + subtitle) → section `<h2>` → a `.tabs` filter
     row (with an optional inline `+ new …` command) → list.
-  - *Detail* = back-link → `<h1>` → `.subtitle` (the id) → cards.
+  - *Detail* = crumb (sticky back-link) → `<h1>` → `.subtitle` (the id) → cards.
 
 **Copy discipline — words are a component.** Prose is rationed like color. Every
 visible string is exactly one register:
@@ -311,6 +319,14 @@ none float, none are colored.
   `class="money"` so the title sits over its right-aligned values.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
+- **Chat is list → detail, like everything else.** The chat index is a rooms
+  table (`.rowable` rows, `tr.unread` weighting, unread `.badge`); a room is a
+  detail page: crumb (← chat · room name · members · leave/delete) → the message
+  stack (`.msgs`, `[data-autoscroll]`) in the document flow → the composer at the
+  document's end. **The page is the scroll container** — no fixed-height frame, no
+  inner scroll region. The document pins to its **newest** entry on open and on any
+  append while already at the bottom — never yanking a reader scrolled up into
+  history; the sticky crumb and the nav keep the way out always in reach.
 - **Record rows** (the same record type wherever it appears) render through **one
   shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.
   Row rules:
@@ -436,8 +452,9 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   signed perspective amount (gross/fee/parties live on the detail page). Every
   `<table>` sits in a `.table-scroll`.
 - Lowercase group titles (`browse · inbox · workshop · wallet · you · network ·
-  admin`); `page-head` (title + subtitle only) on index, back-link on detail.
-  Commands are quiet and inline — never a floating page-head cluster.
+  admin`); `page-head` (title + subtitle only) on index, sticky crumb on detail.
+  Commands are quiet and inline — never a floating page-head cluster (sticky is
+  the page's own header refusing to scroll away, not floating chrome).
 - **Copy is rationed (§3 Copy discipline):** subtitles orient in one phrase; no
   sentence narrates kernel/control behavior; disclosures appear once, at the point
   of consequence. Empty states and `help` name the thing, they don't lecture. A

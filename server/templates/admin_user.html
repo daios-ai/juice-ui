@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$u := .Data.User}}
-<p><a href="/admin">← admin</a></p>
+<nav class="crumb"><a href="/admin">← admin</a></nav>
 <h1>{{$u.Handle}}</h1>
 <div class="card">
   <dl class="locked-args">

@@ -2,57 +2,42 @@
 {{$d := .Data}}
 {{$me := $d.Me}}
 {{$rid := $d.Room.ID}}
-<p class="chat-back"><a href="/chat">← chat</a></p>
 
-<div class="chat-frame">
-  <div class="rooms">
-    <a class="btn-quiet" href="/chat?form=room-create" data-modal="form-room-create">+ new room</a>
-    {{range $d.Rooms}}
-    <a class="room{{if eq .ID $rid}} on{{end}}{{if .Unread}} unread{{end}}" href="/chat/room/{{.ID}}">
-      <span class="avatar" aria-hidden="true">{{initial .Name}}</span>
-      <span class="room-name">{{.Name}}</span>
-      {{if .Unread}}<span class="badge" aria-label="unread"></span>{{end}}
-    </a>
-    {{end}}
-  </div>
-
-  <div class="thread">
-    <div class="thread-head">
-      <b class="stretch">{{$d.Room.Name}}</b>
-      <details class="thread-members">
-        <summary class="btn-quiet">{{len $d.Room.Members}} members</summary>
-        <div class="members-panel">
-          {{if $d.IsOwner}}<a class="menu-item" href="/chat/room/{{$rid}}?form=add-member" data-modal="form-add-member">+ add member</a>{{end}}
-          {{range $d.Room.Members}}
-          <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span>{{if eq . $d.Room.Creator}} <span class="muted small">creator</span>{{end}}
-            {{if and $d.IsOwner (ne . $me)}}<form method="post" action="/chat/room/{{$rid}}/remove-member">{{$.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-quiet danger" type="submit">remove</button></form>{{end}}
-          </div>
-          {{end}}
-        </div>
-      </details>
-      {{if $d.IsOwner}}
-      <form method="post" action="/chat/room/{{$rid}}/delete" data-confirm="Delete this room for everyone?">{{.CSRFField}}<button class="btn-quiet danger" type="submit">Delete room</button></form>
-      {{else}}
-      <form method="post" action="/chat/room/{{$rid}}/leave" data-confirm="Leave this room?">{{.CSRFField}}<button class="btn-quiet" type="submit">Leave</button></form>
+<nav class="crumb">
+  <a href="/chat">← chat</a>
+  <b class="stretch">{{$d.Room.Name}}</b>
+  <details class="thread-members">
+    <summary class="btn-quiet">{{len $d.Room.Members}} members</summary>
+    <div class="members-panel">
+      {{if $d.IsOwner}}<a class="menu-item" href="/chat/room/{{$rid}}?form=add-member" data-modal="form-add-member">+ add member</a>{{end}}
+      {{range $d.Room.Members}}
+      <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span>{{if eq . $d.Room.Creator}} <span class="muted small">creator</span>{{end}}
+        {{if and $d.IsOwner (ne . $me)}}<form method="post" action="/chat/room/{{$rid}}/remove-member">{{$.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-quiet danger" type="submit">remove</button></form>{{end}}
+      </div>
       {{end}}
     </div>
+  </details>
+  {{if $d.IsOwner}}
+  <form method="post" action="/chat/room/{{$rid}}/delete" data-confirm="Delete this room for everyone?">{{.CSRFField}}<button class="btn-quiet danger" type="submit">Delete room</button></form>
+  {{else}}
+  <form method="post" action="/chat/room/{{$rid}}/leave" data-confirm="Leave this room?">{{.CSRFField}}<button class="btn-quiet" type="submit">Leave</button></form>
+  {{end}}
+</nav>
 
-    <div class="msgs" id="chat-messages" data-autoscroll
-         hx-get="/chat/room/{{$rid}}/messages" hx-include="#chat-after"
-         hx-trigger="every 4s" hx-target="#chat-messages" hx-swap="beforeend">
-      {{range $d.Msgs.Cards}}{{template "_chat_message" .}}{{else}}<p class="muted" id="chat-empty">No messages yet.</p>{{end}}
-    </div>
-    <input type="hidden" id="chat-after" name="after" value="{{$d.Msgs.After}}">
-
-    <form class="composer" method="post" action="/chat/room/{{$rid}}/message"
-          hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"
-          hx-target="#chat-messages" hx-swap="beforeend" data-reset-on-success>
-      {{.CSRFField}}
-      <textarea name="text" rows="1" placeholder="Message {{$d.Room.Name}}…" aria-label="Message"></textarea>
-      <button class="btn" type="submit">Send</button>
-    </form>
-  </div>
+<div class="msgs" id="chat-messages" data-autoscroll
+     hx-get="/chat/room/{{$rid}}/messages" hx-include="#chat-after"
+     hx-trigger="every 4s" hx-target="#chat-messages" hx-swap="beforeend">
+  {{range $d.Msgs.Cards}}{{template "_chat_message" .}}{{else}}<p class="muted" id="chat-empty">No messages yet.</p>{{end}}
 </div>
+<input type="hidden" id="chat-after" name="after" value="{{$d.Msgs.After}}">
+
+<form class="composer" method="post" action="/chat/room/{{$rid}}/message"
+      hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"
+      hx-target="#chat-messages" hx-swap="beforeend" data-reset-on-success>
+  {{.CSRFField}}
+  <textarea name="text" rows="1" placeholder="Message {{$d.Room.Name}}…" aria-label="Message"></textarea>
+  <button class="btn" type="submit">Send</button>
+</form>
 
 {{if $d.IsOwner}}
 <dialog id="form-add-member" class="modal-form"{{if eq $d.OpenForm "add-member"}} open{{end}} aria-label="Add member">

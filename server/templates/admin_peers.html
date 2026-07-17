@@ -37,7 +37,6 @@
   {{$isFriend := index $d.FriendKeys .PublicKey}}
   <details class="card roster-kernel">
     <summary>
-      <span class="thumb-s">{{cardArt .PublicKey .Handle "kernel"}}</span>
       <span class="mono"><b>{{.Handle}}</b> <span class="hash muted">{{truncate 16 .PublicKey}}…</span></span>
       {{if $isFriend}}<span class="pill status-credited">friend</span>{{end}}
       <span class="cluster roster-actions">

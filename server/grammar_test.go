@@ -141,6 +141,100 @@ func TestNoCurrencyGlyph(t *testing.T) {
 	}
 }
 
+// TestBackLinksLiveInCrumbs enforces the crumb principle ("the way up never
+// scrolls away", §5.3): every ←-back-link on a detail page sits inside the sticky
+// <nav class="crumb"> component — never a bare paragraph. Pager links (.pager-link,
+// "← previous") are the one sanctioned ← outside a crumb.
+func TestBackLinksLiveInCrumbs(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	crumbRe := regexp.MustCompile(`(?s)<nav class="crumb">.*?</nav>`)
+	backRe := regexp.MustCompile(`<a[^>]*>←`)
+	read := func(f string, isApp bool) string {
+		if isApp {
+			b, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return string(b)
+		}
+		return string(mustRead(t, f))
+	}
+	check := func(f string, isApp bool) {
+		src := read(f, isApp)
+		crumbs := crumbRe.FindAllStringIndex(src, -1)
+		for _, m := range backRe.FindAllStringIndex(src, -1) {
+			if strings.Contains(src[m[0]:m[1]], "pager-link") {
+				continue
+			}
+			inCrumb := false
+			for _, c := range crumbs {
+				if m[0] >= c[0] && m[1] <= c[1] {
+					inCrumb = true
+					break
+				}
+			}
+			if !inCrumb {
+				t.Errorf("%s: ← back-link outside <nav class=\"crumb\"> — the way up must never scroll away (grammar §5.3): …%s…", f, snippet(src, m[0]))
+			}
+		}
+	}
+	for _, f := range core {
+		check(f, false)
+	}
+	for _, f := range app {
+		check(f, true)
+	}
+}
+
+// TestNoRowThumbnails enforces §5.13: cardArt has exactly two homes — the action
+// card and the page hero (.media). The retired 3.4rem row thumbnail (.thumb-s) is
+// unreadable at row scale and must not reappear; a row identifies itself by its
+// ref and chips. The retired chat frame components are banned with it.
+func TestNoRowThumbnails(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	banned := []string{"thumb-s", "chat-frame", "chat-back", `class="rooms"`, "thread-head"}
+	check := func(f, src string) {
+		for _, bad := range banned {
+			if strings.Contains(src, bad) {
+				t.Errorf("%s: retired component %q must not reappear (grammar §5.13 / chat regrammar)", f, bad)
+			}
+		}
+	}
+	for _, f := range core {
+		check(f, string(mustRead(t, f)))
+	}
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(f, string(b))
+	}
+}
+
+// TestContainerIsTheOnlyWidthDecision enforces the width rule: the content
+// container is the ONE width decision — in-flow components fill it, never capping
+// themselves (no narrow strips inside broad pages). Pixel max-widths are allowed
+// only on the container itself, the topbar omnibox pill, top-layer overlays
+// (dialogs, the live region), and the bare entry card.
+func TestContainerIsTheOnlyWidthDecision(t *testing.T) {
+	b, err := staticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(b), "")
+	ruleRe := regexp.MustCompile(`(?s)([^{}]+)\{[^{}]*max-width:\s*\d+px`)
+	allowed := regexp.MustCompile(`^(\.container|\.omni|\.auth-card|\.live-region|dialog\.)`)
+	for _, m := range ruleRe.FindAllStringSubmatch(src, -1) {
+		sel := strings.TrimSpace(m[1])
+		if !allowed.MatchString(sel) {
+			t.Errorf("app.css: %q carries a px max-width — the container is the only width decision; in-flow components fill it (grammar §Main area)", sel)
+		}
+	}
+}
+
 // TestNoRetiredRawToggle ensures the old "edit as JSON" text-button toggle and its
 // .raw-switch wrapper are gone — the input-mode toggle is the .field-switch bare
 // tab-group switch (fields | JSON), identical on action-run and step-complete forms.
