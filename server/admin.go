@@ -3,6 +3,7 @@ package server
 import (
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -17,6 +18,7 @@ import (
 
 type adminView struct {
 	Users    []client.AdminUser
+	Pager    Pager
 	OpenForm string
 }
 
@@ -54,6 +56,19 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
+	// Active users first, then alphabetical by handle within each block, so the
+	// operator sees the live roster before the suspended tail.
+	sort.SliceStable(view.Users, func(i, j int) bool {
+		a, b := view.Users[i], view.Users[j]
+		if a.Suspended() != b.Suspended() {
+			return !a.Suspended() // active (not suspended) sorts first
+		}
+		return strings.ToLower(a.Handle) < strings.ToLower(b.Handle)
+	})
+	offset := queryOffset(r)
+	start, end, hasNext := pageSlice(len(view.Users), offset, pageSize)
+	view.Users = view.Users[start:end]
+	view.Pager = pageNav(r, offset, pageSize, hasNext)
 	s.renderPage(w, r, http.StatusOK, "admin", "Admin", view)
 }
 

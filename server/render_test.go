@@ -339,16 +339,20 @@ func TestUserPageShowsConnections(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	// The account inventory: one row per upstream account, by provider (the raw
-	// per-folder tree fragments a single account across many grants).
-	if !strings.Contains(body, "127.0.0.1:8080") {
-		t.Errorf("connected account (by provider) not shown: %s", body)
+	// The grant tree: a folder per directory (@chat), expandable to its actions.
+	if !strings.Contains(body, "<details") || !strings.Contains(body, "@chat") {
+		t.Errorf("grant folder (details tree) not rendered: %s", body)
 	}
+	// The folder summary disconnects the whole account (provider_key)…
 	if !strings.Contains(body, `name="account" value="bearer:h"`) {
-		t.Errorf("account-level disconnect (provider_key) missing: %s", body)
+		t.Errorf("account-level disconnect-all (provider_key) missing: %s", body)
 	}
-	// The unused account is surfaced as its own row.
-	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "no actions use this account") {
+	// …and each contained action has its own per-grant disconnect (by selector).
+	if !strings.Contains(body, `name="action" value="@chat/pay"`) {
+		t.Errorf("per-action disconnect missing: %s", body)
+	}
+	// The unused account folds in as its own folder with account-level disconnect.
+	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "No actions use this account") {
 		t.Errorf("unused account not surfaced: %s", body)
 	}
 	if !strings.Contains(body, `name="account" value="oauth:a"`) {
@@ -429,7 +433,7 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil)
+	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, true, "@alice")
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -439,6 +443,10 @@ func TestCallFormRun(t *testing.T) {
 	}
 	if strings.ContainsRune(body, '¤') {
 		t.Error("money button must not render the ¤ glyph")
+	}
+	// The first-payment hint rides inline (no payment sheet).
+	if !strings.Contains(body, "First payment to") || !strings.Contains(body, "@alice") {
+		t.Errorf("paid run with FirstPayee must show the first-payment hint inline: %s", body)
 	}
 	if strings.Contains(body, `data-oneshot="true"`) {
 		t.Error("action run form must repeat, not be one-shot")
@@ -456,16 +464,16 @@ func TestCallFormRun(t *testing.T) {
 }
 
 // TestCallFormComplete renders the shared _call_form for a step completion: a
-// one-shot money button "Complete (5)" and the pre-bound (locked) args shown via
-// the result renderer (<pre class="json">), with no verbal "prefilled" label.
+// one-shot NEUTRAL "Complete" button and the pre-bound (locked) args shown as a
+// read-only definition list above the editable fields, with no verbal label.
 func TestCallFormComplete(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	locked := json.RawMessage(`{"to":"@bob"}`)
-	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil)
+	locked := []LockedField{{Name: "to", Value: `"@bob"`}}
+	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil, nil)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -480,8 +488,10 @@ func TestCallFormComplete(t *testing.T) {
 	if !strings.Contains(body, `data-oneshot="true"`) {
 		t.Error("step completion form must be one-shot")
 	}
-	if !strings.Contains(body, `<pre class="json">`) || !strings.Contains(body, "@bob") {
-		t.Errorf("locked args must render via the result renderer (pre.json): %s", body)
+	// Sealed args render as a read-only dl (the completed part), separated from the
+	// editable part — same anatomy as the run form.
+	if !strings.Contains(body, `class="locked-args`) || !strings.Contains(body, "<dt>to</dt>") || !strings.Contains(body, "@bob") {
+		t.Errorf("locked args must render as a read-only dl: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
 		t.Error("locked args carry no verbal label — the visual contrast is the signposting")
@@ -530,8 +540,8 @@ func TestCallFormApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	locked := json.RawMessage(`{"message":"hi"}`)
-	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil)
+	locked := []LockedField{{Name: "message", Value: `"hi"`}}
+	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil, nil)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -556,7 +566,7 @@ func TestStatStripHonestEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(12, nil, true)); err != nil {
+	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(12, nil, true, true)); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
@@ -581,7 +591,7 @@ func TestStatStripCounts(t *testing.T) {
 	s := client.Stats{Uses: 10, Successes: 9, RatingCount: 4, RatingEstimate: 0.75, LatencyEstimate: 0.4}
 
 	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, true)); err != nil {
+	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	detail := rec.Body.String()
@@ -589,8 +599,10 @@ func TestStatStripCounts(t *testing.T) {
 		t.Errorf("detail strip must show success%% with run/rater counts: %s", detail)
 	}
 
+	// The card strip drops both the (N) counts and the leading price (the card
+	// shows price top-right), but keeps the iconned success/rating/latency line.
 	rec = httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, false)); err != nil {
+	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	card := rec.Body.String()
@@ -599,6 +611,9 @@ func TestStatStripCounts(t *testing.T) {
 	}
 	if strings.Contains(card, "(10)") || strings.Contains(card, "(4)") {
 		t.Errorf("card strip must NOT show counts: %s", card)
+	}
+	if strings.Contains(card, "#gem") {
+		t.Errorf("card strip must NOT lead with the price gem: %s", card)
 	}
 }
 
@@ -1026,8 +1041,8 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 	if !strings.Contains(body, "our credit there") {
 		t.Error("friend kernel card missing the our-credit figure")
 	}
-	if !strings.Contains(body, "250 ¤") {
-		t.Errorf("our credit value not rendered: %s", body)
+	if !strings.Contains(body, "250") || !strings.Contains(body, "icons.svg#gem") {
+		t.Errorf("our credit value not rendered with the gem mark: %s", body)
 	}
 	if !strings.Contains(body, `class="kernel-card`) || !strings.Contains(body, `class="media wide"`) {
 		t.Errorf("friend must render as a kernel card with a banner: %s", body)

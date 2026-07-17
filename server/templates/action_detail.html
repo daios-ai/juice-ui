@@ -15,23 +15,11 @@
       </span>
     </div>
     {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-    {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true)}}
+    {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true true)}}
   </div>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
-
-{{if $d.Action.HTTP}}
-<div class="card action-detail-card">
-  <dl class="locked-args flush">
-    <dt>Method</dt><dd class="mono">{{$d.Action.HTTP.Method}}</dd>
-    <dt>URL</dt><dd class="mono">{{$d.Action.HTTP.URL}}</dd>
-    {{if $d.Action.HTTP.Params}}
-    <dt>Params</dt><dd>{{range $d.Action.HTTP.Params}}<span class="mono">{{.Name}}:{{.In}}</span> {{end}}</dd>
-    {{end}}
-  </dl>
-</div>
-{{end}}
 
 <h2>Run</h2>
 {{template "_action_run" $d}}
@@ -50,6 +38,7 @@
 </div>
 {{end}}
 </div>
+{{template "_pager" $d.RatingsPager}}
 {{end}}
 
 {{if $d.IsOwner}}

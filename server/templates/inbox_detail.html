@@ -21,16 +21,10 @@
     <h3>Required caller</h3>
     <p class="mono">{{$d.Step.RequiredCallerHandle}}</p>
   </div>
-  {{if $d.Step.PartialArgs}}
-  <div>
-    <h3>Pre-bound arguments</h3>
-    <pre class="json">{{json $d.Step.PartialArgs}}</pre>
-  </div>
-  {{end}}
 </div>
 
 {{if $d.CanComplete}}
 <h2>Complete</h2>
-{{template "_call_form" (completeForm $.CSRFField $d.Step.ID $d.Step.Price $d.Form.Editable $d.Form.IsApproval nil nil)}}
+{{template "_call_form" (completeForm $.CSRFField $d.Step.ID $d.Step.Price $d.Form.Editable $d.Form.IsApproval $d.Form.Locked $d.Step.PartialArgs nil)}}
 {{end}}
 {{end}}

@@ -10,19 +10,12 @@
   <input id="q" name="q" type="text" value="{{$q}}" placeholder="what do you need done?">
 </form>
 
-<nav class="tabs control-tabs" aria-label="Filter">
-  {{template "_tab" (tab "all" (browseHref $q "") (eq .Data.Filter ""))}}
-  {{template "_tab" (tab "free" (browseHref $q "free") (eq .Data.Filter "free"))}}
-  {{template "_tab" (tab "paid" (browseHref $q "paid") (eq .Data.Filter "paid"))}}
-  {{template "_tab" (tab "from peers" (browseHref $q "peers") (eq .Data.Filter "peers"))}}
-  {{if $q}}<span class="muted small tabs-action">sorted by relevance</span>{{end}}
-</nav>
-
 {{$cards := .Data.Catalog}}{{if $q}}{{$cards = .Data.Results}}{{end}}
 {{if $cards}}
 <div class="grid">
   {{range $cards}}{{template "_action_card" .}}{{end}}
 </div>
+{{if not $q}}{{template "_pager" .Data.Pager}}{{end}}
 {{else}}
 <p class="muted">{{if $q}}No matches for "{{$q}}".{{else}}No actions here yet.{{end}}</p>
 {{end}}

@@ -261,7 +261,7 @@ detectable.
   script, to satisfy the CSP. Every palette command MUST target a real link or
   form, so the keyboard layer adds no capability unreachable without it.
 
-### 6.2 run — discovery, action page, payment sheet
+### 6.2 run — discovery, action page, run form
 
 **Discovery.**
 
@@ -271,9 +271,11 @@ detectable.
   `@sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
   MUST render as ranked cards, each with a **media slot** (§6.2 media), the ref
   (owner-emphasized) with **price right-aligned** in the title row, a one-line
-  description, and an **icon-less** reputation line (runs · success · latency).
-  The browse page is **headless** (no page-head): a filter tab row
-  (`all · free · paid · from peers`) sits directly above the grid.
+  description, and the **same reputation strip the action page uses** (icon +
+  tooltip: success · rating · latency), price-less on the card since price is
+  right-aligned in the title row. The browse page is **headless** (no page-head)
+  and shows a **flat catalog capped at 20 per page** with a pager (§7 pagination);
+  there are no filter tabs.
 * **Media slot.** Every action card and the action page MUST carry a 16:9 media
   slot. Until the kernel serves images (*Conditional*, §10; tracked in
   `ROADMAP.md`), the slot MUST render a **deterministic generated fallback**
@@ -281,8 +283,7 @@ detectable.
   server-side as inline SVG — no external fetch, no `style=`, CSP-safe). When a
   kernel image lands it MUST override the fallback. The media is decorative
   counterparty content: kernel-captured chrome (ref, price, reputation) MUST
-  render **outside** the media box, and the payment sheet MUST NOT place the image
-  near the confirm (§8).
+  render **outside** the media box (§8).
 * Price MUST appear on each card. Sort and filter by price MUST be available.
 * Catalog browse (`GET /v1/actions`, owner/name filters) MUST be available as the
   secondary path and the per-owner listing.
@@ -304,33 +305,33 @@ detectable.
 * The owner segment of `@owner/name` MUST be visually emphasized and link to an
   owner profile (public actions, aggregate stats, account age).
 
-**Payment sheet.**
+**Run form.**
 
-* Run on the action page MUST open a modal payment sheet. The sheet's confirm
-  MUST be the only money-moving control in the flow; the Run control that opens
-  it MUST NOT move money and MUST NOT use the accent.
-* The confirm button MUST state the amount (e.g. "Pay 12 ¤ & Run").
+* The action page has ONE anatomy: hero → description → an **inline run form**
+  (on the page, never a modal) → the result as a card **attached directly below
+  the form** → ratings. There is no floating/opener control and no inert
+  Method/URL block (an HTTP action's source is editable by its owner inside the
+  Edit modal only).
 * Inputs MUST be generated from `input_schema` (typed fields, required markers,
   descriptions as help text, client-side hints only; the kernel validates). A
   raw-JSON input MUST be available.
-* The sheet MUST show price as "maximum, all-in," current balance, projected
-  balance after the call, and "Refunded in full if it fails."
+* A **paid** run's confirm is the single money button reading `Run (N)` (the
+  accent conveys credits — no glyph on the button), and the form MUST disclose
+  "Maximum, all-in. Refunded in full if it fails." A **first payment** to this
+  owner MUST show a quiet first-payee hint (§8.3). A **free** run is the same
+  form with a neutral `Run` button.
 * The receipt MUST offer one-click re-run with the same args.
 
 ```text
-┌─────────────────────────────────────────────┐
-│  Run @lena/ocr-translate                     │
-│                                              │
-│  document_url   [https://…           ]       │
-│  target_lang    [German            ▾ ]       │
-│                                              │
-│  Price            12 ¤   (maximum, all-in)   │
-│  Your balance     87 ¤ → 75 ¤                │
-│                                              │
-│  Refunded in full if it fails.               │
-│                                              │
-│            [ Cancel ]   [ Pay 12 ¤ & Run ]   │
-└─────────────────────────────────────────────┘
+  @lena/ocr-translate                    ◆ 12
+  ─────────────────────────────────────────────
+  document_url   [https://…            ]
+  target_lang    [German             ▾ ]
+
+  [ Run (12) ]   Maximum, all-in. Refunded if it fails.
+  ┌─ result ──────────────────────────────────┐
+  │  Success.   { … }        Receipt · ▲ ▼      │
+  └────────────────────────────────────────────┘
 ```
 
 **Outcomes.** The three outcome classes MUST render distinctly:
@@ -408,7 +409,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * The creation zone MUST offer two paths, each with a the accent spend button stating
   the price:
   * `@sys/make`: `POST /v1/run {action: "@sys/make", args: {description}}`,
-    button `[ Synthesize · 20 ¤ ]` (price from `native.make.price`). The call is
+    button `[ Synthesize (20) ]` (price from `native.make.price`). The call is
     synchronous: the UI MUST show progress against elapsed time and render
     `{status, action_id, action_name, diagnostics, tests}`. On `status="success"`
     the action is already registered and active, owned by the caller; the UI MUST
@@ -432,10 +433,14 @@ open (parked steps), the result MUST say so and link to the Wallet.
 ### 6.5 user & tx — money, ledger, and receipts
 
 * The Wallet MUST show two balances (credited / escrow-pending signals):
-  **available** and **parked** (all locked funds; the open-processes list itemizes
+  **available** and **parked** (all locked funds; the open-sessions list itemizes
   them, each with a force-end control naming its consequence — cancels waiting
   steps, refunds parked prices — via `POST /v1/processes/{id}/end`). "locked" is not
   a user-facing label.
+* The wallet MUST link to the full **sessions** page (`GET /v1/processes`, open +
+  closed), which itself MUST offer the same force-end control on each open row and
+  paginate (§7). The wallet's own activity table is a preview (most recent 10) that
+  links to the paginated ledger.
 * The ledger MUST list every credit and debit, newest first, each row linking to
   its receipt. Closed processes (including `run`-created ephemerals) MUST appear
   here.
@@ -465,23 +470,31 @@ open (parked steps), the result MUST say so and link to the Wallet.
   confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
-  as `verb (N)` (e.g. "Run (12)", "Synthesize (20)", "Complete (5)") — the accent
-  colour conveys credits, so a spend button carries **no `¤` glyph**. Primary
-  non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct
-  from the accent — Delete, Disable, Decline, and force-end; force-end MUST name
-  the refund, not a price. No other button styles exist.
+  as `verb (N)` (e.g. "Run (12)", "Synthesize (20)") — the accent colour conveys
+  credits, so a spend button carries **no credit glyph**. Primary non-spend: solid
+  ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
+  Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
+  price. No other button styles exist. (A **step completion** is NOT a spend
+  button — it is the neutral `Complete` naming no amount; the completer does the
+  work but the money was reserved by the step's creator.)
 * **Money and identity typography.** Money, IDs, hashes, and `@owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
-  of the surrounding proportional chrome; money outside a button carries the unit
-  `¤` (e.g. `12 ¤`). Ledger rows MUST carry explicit `−`/`+`; spend buttons state
-  the unsigned gross as `verb (N)` (no `¤`, above). The owner segment of
-  `@owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
-  and MUST NOT use the accent.
+  of the surrounding proportional chrome; a money amount outside a button carries
+  the **credit mark** — the diamond/gem icon (rendered via the `gem` helper /
+  `#gem` sprite), e.g. `12 ◆` — never the `¤` character. Ledger rows MUST carry
+  explicit `−`/`+`; spend buttons state the unsigned gross as `verb (N)` (no glyph,
+  above). The owner segment of `@owner/name` MUST be weight-emphasized in a
+  confusable-distinct monospace face and MUST NOT use the accent.
 * **Status signals.** The credited, refunded, and escrow-pending states MUST be
   mutually distinct and distinct from the accent in both themes, each pairing a color
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
+* **Pagination.** No list renders unbounded. Every long list — browse, the
+  transaction ledger, the workshop management table, the admin roster, an action's
+  ratings, and open/closed sessions — MUST page with `limit`/`offset` at **20 per
+  page** through **one shared, quiet pager** (`← previous · page N · next →`; a
+  boundary renders a dimmed non-link). The pager carries no accent (money-reserved).
 * **Themes.** The UI ships **multiple selectable themes**, each defined
   by a **Ghostty 16-colour ANSI palette** (`palette 0–15` plus
   background/foreground/cursor/selection). Every theme MUST derive from one set of
@@ -561,7 +574,7 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    from a list view or by a GET.
 3. Parse `@owner/name` by the first-slash rule everywhere; render the owner
    segment distinguished, in a confusable-distinct monospace face, with the owner
-   profile one click away; show a first-time-payee hint on the payment sheet.
+   profile one click away; show a first-time-payee hint on the run form.
 4. Show, on a step card before the confirm, whose funds move, how much, and the
    sealed `partial_args`.
 5. Render receipt-verification failures with the failed check named, and MUST NOT
@@ -636,7 +649,7 @@ decision owed to them, or sell a capability — and everything else is evidence
 about those activities. Money borrows the most over-tested patterns on the web:
 the checkout and the order receipt. The kernel's "a price is a price" — one number
 up front, one receipt at the end, refund on failure — is the mental model of
-buying something online, which is why the payment sheet and receipt page are the
+buying something online, which is why the run form and receipt page are the
 two load-bearing artifacts, and why the the accent spend-verb captures consent
 atomically with the amount, mirroring the kernel's park-before-execute.
 

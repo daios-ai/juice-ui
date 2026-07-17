@@ -138,7 +138,7 @@ func TestListActionsEncodesFilters(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `[{"id":"a1","action":"@alice/greet","name":"greet"}]`
-	acts, err := f.client().ListActions(context.Background(), "tok", "alice", "greet", true)
+	acts, err := f.client().ListActions(context.Background(), "tok", "alice", "greet", true, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,12 +283,38 @@ func TestListActionsNullBecomesEmpty(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `null` // kernel returns null for empty lists (verified live)
-	acts, err := f.client().ListActions(context.Background(), "tok", "", "", false)
+	acts, err := f.client().ListActions(context.Background(), "tok", "", "", false, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(acts) != 0 {
 		t.Errorf("expected empty, got %+v", acts)
+	}
+}
+
+func TestListActionsPagination(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	// limit>0 → a single server page at the given offset (no client-side loop).
+	f.reply = `[{"id":"a1"},{"id":"a2"}]`
+	page, err := f.client().ListActions(context.Background(), "tok", "", "", false, 2, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 2 {
+		t.Errorf("single page = %+v", page)
+	}
+	if !strings.Contains(f.lastPath, "limit=2") || !strings.Contains(f.lastPath, "offset=20") {
+		t.Errorf("limit/offset not sent: %s", f.lastPath)
+	}
+	// limit==0 → fetch ALL by paging with the ceiling; a short first page ends it.
+	f.reply = `[{"id":"x"}]`
+	all, err := f.client().ListActions(context.Background(), "tok", "", "", false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || !strings.Contains(f.lastPath, "limit=200") {
+		t.Errorf("get-all must page with the ceiling limit: %s (%+v)", f.lastPath, all)
 	}
 }
 

@@ -11,17 +11,17 @@
 <div class="stat-row">
   <div class="stat">
     <div class="label">this month</div>
-    <div class="value sig-credited">+{{money $d.MonthEarned}} ¤</div>
+    <div class="value sig-credited">+{{money $d.MonthEarned}} {{gem}}</div>
     <a href="/transactions">{{$d.Earnings.Count}} call{{if ne $d.Earnings.Count 1}}s{{end}} all-time →</a>
   </div>
   <div class="stat">
     <div class="label">parked ◷</div>
-    <div class="value sig-escrow">{{money $d.User.Locked}} ¤</div>
+    <div class="value sig-escrow">{{money $d.User.Locked}} {{gem}}</div>
     <a href="/wallet">open sessions →</a>
   </div>
   <div class="stat">
     <div class="label">all time</div>
-    <div class="value sig-credited">+{{money $d.Earnings.Earned}} ¤</div>
+    <div class="value sig-credited">+{{money $d.Earnings.Earned}} {{gem}}</div>
     <a href="/transactions">full ledger →</a>
   </div>
 </div>
@@ -64,11 +64,11 @@
       {{if .LastFailure}}<span class="chip tag" title="Last failure: {{.LastFailure}}">last failed</span>{{end}}
     </td>
     <td>{{if $a.Active}}<span class="pill status-credited">active</span>{{else}}<span class="pill inactive">inactive</span>{{end}}</td>
-    <td class="money">{{if gt $a.Price 0}}{{money $a.Price}} ¤{{else}}<span class="muted">free</span>{{end}}</td>
+    <td class="money">{{if gt $a.Price 0}}{{money $a.Price}} {{gem}}{{else}}<span class="muted">free</span>{{end}}</td>
     <td class="money">{{if .Stats}}{{.Stats.Uses}}{{else}}0{{end}}</td>
     <td>{{if and .Stats (gt .Stats.Uses 0)}}{{pct .Stats.Successes .Stats.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
     <td>{{if and .Stats (gt .Stats.RatingCount 0)}}{{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}% <span class="muted mono">({{.Stats.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>
-    <td class="money">{{if gt .Earned 0}}<span class="sig-credited">+{{money .Earned}} ¤</span>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="money">{{if gt .Earned 0}}<span class="sig-credited">+{{money .Earned}} {{gem}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
     <td>
       <button class="btn-quiet" data-menu="row-{{$a.ID}}" aria-haspopup="menu" aria-label="Manage">⋯</button>
       <div class="menu" id="row-{{$a.ID}}" role="menu" hidden>
@@ -92,6 +92,7 @@
   </tbody>
 </table>
 </div>
+{{template "_pager" $d.Pager}}
 {{else}}
 <p class="muted">No actions yet. Create one, synthesize one, or import an OpenAPI spec.</p>
 {{end}}

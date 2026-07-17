@@ -33,11 +33,6 @@ document.body.addEventListener("htmx:afterRequest", (e) => {
     form.reset();
     for (const ta of form.querySelectorAll("textarea")) resizeTA(ta);
   }
-  // A payment sheet closes once its run has returned (the outcome renders on the
-  // page below the hero, not inside the dialog).
-  if (e.detail?.successful && form?.matches?.("[data-sheet-form]")) {
-    form.closest("dialog")?.close();
-  }
 });
 
 // A [data-autoscroll] log that grows via htmx swaps keeps its newest entry in view,

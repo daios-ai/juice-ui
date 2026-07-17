@@ -14,19 +14,25 @@
     <div class="muted small mono">{{$d.User.Email}}</div>
   </div>
   <div class="balance">
-    <div class="amount money">{{money $d.User.Available}} ¤</div>
-    <div class="label">available{{if gt $d.User.Locked 0}} · <span class="sig-escrow mono">{{money $d.User.Locked}} ¤ ◷</span> parked{{end}}</div>
+    <div class="amount money">{{money $d.User.Available}} {{gem}}</div>
+    <div class="label">available{{if gt $d.User.Locked 0}} · <span class="sig-escrow mono">{{money $d.User.Locked}} {{gem}} ◷</span> parked{{end}}</div>
   </div>
 </div>
 
+{{/* Section tiles — the sidebar destinations that aren't in the mobile tab bar,
+     as real icon tiles (not bare word rows). Driven by the nav model, so scope
+     (superuser, installed apps) is honored server-side. */}}
+<nav class="you-tiles" aria-label="Sections">
+  {{range .Nav}}{{if and (not .Tab) (ne .Slug "you")}}
+  <a class="you-tile" href="{{.Href}}">
+    <span class="you-tile-ico" aria-hidden="true">{{.Icon}}</span>
+    <span class="you-tile-name">{{.Label}}</span>
+    {{if eq .Slug "wallet"}}<span class="you-tile-detail mono">{{money $d.User.Available}} {{gem}}</span>{{end}}
+  </a>
+  {{end}}{{end}}
+</nav>
+
 <div class="you-list">
-  <a class="you-row" href="/wallet">wallet<span class="detail">{{money $d.User.Available}} ¤</span></a>
-  <a class="you-row" href="/workshop">workshop<span class="detail">your actions &amp; earnings</span></a>
-  {{range .Nav}}{{if eq .Slug "agents"}}<a class="you-row" href="{{.Href}}">agents</a>{{end}}{{end}}
-  {{if .IsSuperuser}}
-  <a class="you-row" href="/admin/peers">network<span class="detail">@sys</span></a>
-  <a class="you-row" href="/admin">admin<span class="detail">@sys</span></a>
-  {{end}}
   <a class="you-row" href="/you?form=user-update" data-modal="form-user-update">account<span class="detail">email · password</span></a>
   <div class="you-row"><span>theme</span>
     <span class="detail">
@@ -44,23 +50,62 @@
 </div>
 
 <h2>Connected accounts</h2>
-{{/* One row per upstream account (the inventory), by provider — not the raw
-     per-folder tree, which fragments a single account across many grants. */}}
-{{if $d.User.Connections}}
-<div class="card-list">
-  {{range $d.User.Connections}}
-  <div class="card row">
-    <div class="stretch">
-      <b>{{.Provider}}</b>
-      <div class="small muted">{{if .Unused}}no actions use this account{{else}}{{.Actions}} action{{if ne .Actions 1}}s{{end}} connected{{end}}</div>
+{{/* The grant tree: each folder is a directory of grants (e.g. @chat/msg) backed
+     by an account. The summary disconnects the whole account; expand to disconnect
+     a single action's grant. Unused accounts fold in with account-level disconnect. */}}
+{{if or $d.User.Connectors $d.User.Connections}}
+<div class="card-list grant-tree">
+  {{range $d.User.Connectors}}
+  <details class="card">
+    <summary>
+      <span class="grant-dir mono"><b>{{.Directory}}</b></span>
+      {{range .Connections}}<span class="muted small">{{.Provider}}</span>{{end}}
+      <span class="muted small">{{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}</span>
+      <span class="cluster grant-actions">
+        {{range .Connections}}{{if .ProviderKey}}
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}? Every action it backs is disconnected.">
+          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect all</button>
+        </form>
+        {{end}}{{end}}
+      </span>
+    </summary>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Action</th><th>Scopes</th><th>Connected</th><th></th></tr></thead>
+      <tbody>
+      {{range .Actions}}
+      <tr>
+        <td>{{template "_ref" .Action}}</td>
+        <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
+        <td class="muted">{{shortTime .CreatedAt}}</td>
+        <td>
+          <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}? Running it will ask you to connect again.">
+            {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger small" type="submit">Disconnect</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
     </div>
-    {{if .ProviderKey}}
-    <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Provider}}? Every action it backs will ask you to connect again.">
-      {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect</button>
-    </form>
-    {{end}}
-  </div>
+  </details>
   {{end}}
+  {{range $d.User.Connections}}{{if .Unused}}
+  <details class="card">
+    <summary>
+      <span class="grant-dir mono"><b>{{.Provider}}</b></span>
+      <span class="chip tag">unused</span>
+      <span class="cluster grant-actions">
+        {{if .ProviderKey}}
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}?">
+          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect all</button>
+        </form>
+        {{end}}
+      </span>
+    </summary>
+    <p class="muted flush">No actions use this account.</p>
+  </details>
+  {{end}}{{end}}
 </div>
 {{else}}<p class="muted">No connected accounts yet.</p>{{end}}
 

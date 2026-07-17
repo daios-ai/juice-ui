@@ -212,6 +212,13 @@ tr.unread > td:first-child a { font-weight: 700; }
    to the right and not styled as a tab. */
 .control-tabs { align-items: center; }
 .tabs .tabs-action { margin-left: auto; border-bottom: 0; }
+/* Pager — quiet offset navigation under a list. No accent (money-reserved);
+   a boundary is a dimmed non-link. */
+.pager { display: flex; align-items: center; justify-content: center; gap: 1.25rem; margin: 1.4rem 0 .5rem; }
+.pager-link { color: var(--text); text-decoration: none; font-size: .9rem; }
+.pager-link:hover { text-decoration: underline; }
+.pager-link.disabled { color: var(--text-muted); opacity: .5; }
+.pager-page { color: var(--text-muted); font-size: .82rem; font-variant-numeric: tabular-nums; }
 /* Section heading with an inline secondary switch on the right (e.g. the
    actions scope: yours | everyone). The switch is a bare tab group, no band. */
 .subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 1.4rem; }
@@ -383,7 +390,6 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .card-top .price { flex: 0 0 auto; font-size: .9rem; }
 .card-desc { margin: 0; font-size: .85rem; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-desc .chip { vertical-align: 1px; }
-.card-meta { margin: .35rem 0 0; font-size: .78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 /* legacy head (kept for any old refs) */
 .action-card-head { display: flex; align-items: center; gap: .4rem; margin: .5rem 0 .1rem; }
 .action-card-ref { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); font-size: 1rem; }
@@ -534,14 +540,11 @@ textarea {
 .sig-refunded { color: var(--refunded); }
 .sig-escrow   { color: var(--escrow); }
 
-/* Payment sheet: the cost block + disclosures + action row. */
-.cost-sheet { border-top: 1px solid var(--border); margin-top: .5rem; padding-top: .75rem; }
-.cost-row { display: flex; align-items: baseline; gap: .5rem; padding: .2rem 0; font-size: .9rem; }
-.cost-row span:first-child { min-width: 6.5rem; color: var(--text-muted); }
-.disclosure { font-size: .82rem; color: var(--text-muted); margin: .5rem 0 0; }
-.payee-hint { font-size: .82rem; color: var(--escrow); margin: .3rem 0 0; }
-.sheet-actions { display: flex; align-items: center; gap: .6rem; justify-content: flex-end; margin-top: 1rem; }
-.sheet-actions .progress { margin-right: auto; flex: 0 1 auto; }
+/* The run/step form's sealed args sit read-only above the editable fields,
+   separated by a hairline so the two halves of the one form read distinctly. */
+.locked-args.flush + [data-fields], form .locked-args { border-bottom: 1px solid var(--border); padding-bottom: .6rem; margin-bottom: .2rem; }
+/* The run result renders as a card attached just below the form. */
+.outcome { margin-top: .85rem; }
 
 /* Cost breakdown */
 .cost { display: flex; gap: 1.5rem; }
@@ -631,6 +634,22 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .stat .label { color: var(--text-muted); font-size: .82rem; }
 .stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 700; margin: .2rem 0 .1rem; }
 .stat a { font-size: .82rem; color: var(--text-muted); }
+
+/* you-tiles — the sidebar destinations as icon tiles (the mobile-reachable hub),
+   not bare word rows. A responsive grid that wraps down to a single column. */
+.you-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .75rem; margin: 0 0 1.4rem; max-width: 560px; }
+.you-tile {
+  display: flex; flex-direction: column; gap: .35rem; padding: .9rem 1rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text);
+}
+.you-tile:hover { border-color: var(--border-strong); text-decoration: none; }
+.you-tile-ico { display: inline-flex; color: var(--text-muted); }
+.you-tile-ico .ico { width: 1.25rem; height: 1.25rem; }
+.you-tile-name { font-weight: 600; font-size: .95rem; }
+.you-tile-detail { font-variant-numeric: tabular-nums; font-size: .82rem; color: var(--text-muted); }
+/* Grant tree — the folder directory reads in the provenance (mono) face. */
+.grant-tree .grant-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* you-row — a link/setting row on the `you` identity hub. */
 .you-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.2rem; }

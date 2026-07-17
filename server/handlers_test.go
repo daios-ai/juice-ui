@@ -527,15 +527,18 @@ func TestUserShowsConnectors(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	body := getBody(t, cl, srv.URL+"/you")
 
-	// Connected accounts renders the account inventory (one row per upstream
-	// account, by provider) — not the raw per-folder tree, which fragments one
-	// account across many grants.
-	if !strings.Contains(body, ">Connected accounts</h2>") || !strings.Contains(body, "gmail.com") {
-		t.Error("/you must list connected accounts by provider")
+	// Connected accounts renders the grant tree: a folder per directory, its
+	// account provider in the summary, expandable to the contained grants.
+	if !strings.Contains(body, ">Connected accounts</h2>") || !strings.Contains(body, "<details") || !strings.Contains(body, "gmail.com") {
+		t.Error("/you must render the grant tree (folders per directory)")
 	}
-	// Account-level disconnect keys on the provider_key (account=), one per account.
+	// The folder summary offers account-level disconnect (account=provider_key)…
 	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="oauth:G"`) {
 		t.Error("/you must offer an account-level disconnect (account=provider_key)")
+	}
+	// …and each contained grant offers a per-action disconnect (action=selector).
+	if !strings.Contains(body, `name="action" value="@sys/gmail-send"`) {
+		t.Error("/you grant tree must offer per-action disconnect")
 	}
 }
 
@@ -1063,8 +1066,8 @@ func TestStudioShowsEarnings(t *testing.T) {
 			t.Errorf("workshop must show the %q earnings tile", tile)
 		}
 	}
-	if !strings.Contains(body, "+45 ¤") {
-		t.Errorf("all-time earnings tile must show the +45 net: %s", body)
+	if !strings.Contains(body, "+45") || !strings.Contains(body, "icons.svg#gem") {
+		t.Errorf("all-time earnings tile must show the +45 net with the gem mark: %s", body)
 	}
 }
 
@@ -1143,18 +1146,22 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 		t.Errorf("run form must post to /actions/A1/run, not the renamed collateral: %s", page)
 	}
 
-	// Decomposed http object is rendered inertly.
-	for _, want := range []string{"GET", "https://api.x/{city}", "city:path", "units:query"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("action page missing %q", want)
-		}
+	// The page has ONE run anatomy (hero → form → result) — no inert Method/URL
+	// block dumped above the form.
+	if strings.Contains(page, "<dt>Method</dt>") || strings.Contains(page, `class="action-detail-card"`) {
+		t.Errorf("action page must not dump a Method/URL block; the source lives in the edit modal: %s", page)
 	}
-	// General edit form: routed to /update, with prefilled schemas + http subsection.
+	// The http source is editable by the owner inside the edit modal only: routed to
+	// /update, with prefilled schemas + the http subsection (source URL, method,
+	// param bindings).
 	for _, want := range []string{
 		`action="/actions/A1/update"`,
 		`name="input_schema"`,
 		`name="output_schema"`,
 		`name="source"`,
+		`value="https://api.x/{city}"`,
+		`value="city"`,
+		`value="units"`,
 		"Saving deactivates the action",
 	} {
 		if !strings.Contains(page, want) {

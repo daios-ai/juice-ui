@@ -1,26 +1,42 @@
 {{define "content"}}
+{{$d := .Data}}
 <div class="page-head"><div>
-<h1>process</h1>
-<p class="subtitle">Computation lifetimes.{{if .Data.Superuser}} <span class="scope-note">superuser scope: all processes</span>{{end}}</p>
+<h1>sessions</h1>
+<p class="subtitle">Computation lifetimes.{{if $d.Superuser}} <span class="scope-note">superuser scope: all sessions</span>{{end}}</p>
 </div></div>
 
 <h2>Open</h2>
-{{if .Data.Open}}
+{{if $d.Open}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th></tr></thead>
-  <tbody>{{range .Data.Open}}{{template "_process_row" .}}{{end}}</tbody>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Open}}
+  <tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
+    <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">awaiting</span>{{end}}</td>
+    <td class="money">{{money (sum .Available .Locked)}}</td>
+    <td>
+      <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} credits are refunded to you.">
+        {{$d.CSRFField}}<button class="btn-danger small" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
 </table>
 </div>
-{{else}}<p class="muted">No open processes.</p>{{end}}
+{{else}}<p class="muted">No open sessions.</p>{{end}}
 
 <h2>History (closed)</h2>
-{{if .Data.Closed}}
+{{if $d.Closed}}
 <div class="table-scroll">
 <table>
   <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th></tr></thead>
-  <tbody>{{range .Data.Closed}}{{template "_process_row" .}}{{end}}</tbody>
+  <tbody>{{range $d.Closed}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
 </div>
-{{else}}<p class="muted">No closed processes yet.</p>{{end}}
+{{else}}<p class="muted">No closed sessions yet.</p>{{end}}
+
+{{template "_pager" $d.Pager}}
 {{end}}

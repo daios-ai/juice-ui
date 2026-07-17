@@ -81,28 +81,35 @@ type CallForm struct {
 	PostURL    string
 	Verb       string          // "Run" | "Complete"
 	Price      int64           // >0 → money button "Verb (N)"; 0 → plain "Verb"
-	Locked     json.RawMessage // pre-bound args (steps); nil for a plain run
+	Locked     []LockedField   // a step's pre-bound args, shown read-only above the fields
+	LockedRaw  json.RawMessage // fallback raw pre-bound args when the schema gave no split
 	Editable   FormModel
 	IsApproval bool   // no editable input — just acknowledge
 	ResultID   string // id of the below-form result target
 	Outcome    *Outcome
-	OneShot    bool // completion is spent once (steps); a run repeats (actions)
+	OneShot    bool   // completion is spent once (steps); a run repeats (actions)
+	FirstPayee bool   // paid run: the viewer has never paid this owner (anti-phishing hint)
+	PayeeOwner string // "@owner" named in the first-payment hint
 }
 
 // runForm builds a CallForm for running an action (repeatable, no locked args).
-func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome) CallForm {
+// firstPayee/payeeOwner drive the first-payment hint (§8.3) on a paid run.
+func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome, firstPayee bool, payeeOwner string) CallForm {
 	return CallForm{
 		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", Verb: "Run",
 		Price: price, Editable: editable, ResultID: "run-result", Outcome: outcome,
+		FirstPayee: firstPayee, PayeeOwner: payeeOwner,
 	}
 }
 
-// completeForm builds a CallForm for completing a step (one-shot; locked args on
-// top). ResultID is per-step so many inbox forms don't collide.
-func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked json.RawMessage, outcome *Outcome) CallForm {
+// completeForm builds a CallForm for completing a step (one-shot; the sealed args
+// render read-only above the editable fields). ResultID is per-step so many
+// inbox forms don't collide. locked is the structured split; lockedRaw is the
+// raw fallback when the schema produced no structured fields.
+func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome) CallForm {
 	return CallForm{
 		CSRFField: csrf, PostURL: "/inbox/" + stepID + "/complete", Verb: "Complete",
-		Price: price, Locked: locked, Editable: editable, IsApproval: isApproval,
+		Price: price, Locked: locked, LockedRaw: lockedRaw, Editable: editable, IsApproval: isApproval,
 		ResultID: "step-result-" + stepID, Outcome: outcome, OneShot: true,
 	}
 }

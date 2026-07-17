@@ -14,7 +14,7 @@ func TestAdminListUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "GET" || f.lastPath != "/control/users" {
+	if f.lastMethod != "GET" || !strings.HasPrefix(f.lastPath, "/control/users?") || !strings.Contains(f.lastPath, "limit=200") {
 		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
 	}
 	if f.lastAuth != "Bearer tok" {

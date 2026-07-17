@@ -6,17 +6,17 @@
 
 <div class="balances">
   <div class="balance">
-    <div class="amount mono">{{money .Data.Available}} ¤</div>
+    <div class="amount mono">{{money .Data.Available}} {{gem}}</div>
     <div class="label">available</div>
   </div>
   <div class="balance">
-    <div class="amount mono sig-escrow">{{money .Data.Locked}} ¤</div>
+    <div class="amount mono sig-escrow">{{money .Data.Locked}} {{gem}}</div>
     <div class="label">parked ◷</div>
   </div>
 </div>
 <p class="card-note">Top-ups happen out of band — ask your operator. <a href="/wallet?form=transfer" data-modal="form-transfer">Send credits →</a></p>
 
-<h2>Open sessions</h2>
+<div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
 {{if .Data.Open}}
 <div class="card-list">
   {{range .Data.Open}}
@@ -24,7 +24,7 @@
     <div class="stretch">
       <a class="mono" href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a>
       <div class="small muted">
-        <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} ¤ parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
+        <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} {{gem}} parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
       </div>
     </div>
     <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} credits are refunded to you.">
@@ -35,7 +35,7 @@
 </div>
 {{else}}<p class="muted">No open sessions.</p>{{end}}
 
-<h2>Ledger</h2>
+<div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
 {{if .Data.Transactions}}
 <div class="table-scroll">
 <table>
@@ -57,7 +57,7 @@
   <tr>
     <td class="mono">{{if .FromHandle}}{{.FromHandle}}{{else}}<span class="muted">deposit</span>{{end}}</td>
     <td class="mono">{{if .ToHandle}}{{.ToHandle}}{{else}}<span class="muted">withdrawal</span>{{end}}</td>
-    <td class="money">{{if eq .ToHandle $.Data.MyHandle}}<span class="sig-credited">+{{money .Amount}} ¤</span>{{else}}−{{money .Amount}} ¤{{end}}</td>
+    <td class="money">{{if eq .ToHandle $.Data.MyHandle}}<span class="sig-credited">+{{money .Amount}} {{gem}}</span>{{else}}−{{money .Amount}} {{gem}}{{end}}</td>
     <td class="muted small">{{.Reason}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>
   </tr>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 // Admin (superuser) operations. The kernel serves these on the same TCP API as
@@ -135,11 +136,28 @@ type Identity struct {
 	Addrs     []string `json:"addrs"`
 }
 
-// AdminListUsers returns every user (GET /control/users).
+// AdminListUsers returns every user (GET /control/users). The kernel pages every
+// list endpoint (default 50, ceiling 200, §R6), so we page through with offset —
+// a single unpaged call would silently truncate at 50, and the admin roster must
+// be sorted and paginated over the full set.
 func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser, error) {
+	const page = 200 // server ceiling
 	var out []AdminUser
-	err := c.do(ctx, http.MethodGet, "/control/users", token, nil, &out)
-	return out, err
+	for offset := 0; ; offset += page {
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(page))
+		if offset > 0 {
+			q.Set("offset", strconv.Itoa(offset))
+		}
+		var batch []AdminUser
+		if err := c.do(ctx, http.MethodGet, "/control/users?"+q.Encode(), token, nil, &batch); err != nil {
+			return out, err
+		}
+		out = append(out, batch...)
+		if len(batch) < page {
+			return out, nil
+		}
+	}
 }
 
 // AdminGetUser returns one user by handle (GET /control/users/{handle}).

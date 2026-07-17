@@ -7,25 +7,12 @@
      the deterministic cardArt fallback until then. Takes an Action. */}}
 {{define "_media"}}<span class="media">{{cardArt .ID .OwnerHandle .Kind}}</span>{{end}}
 
-{{/* _card_meta — the icon-less stats line under a browse card (runs · success ·
-     latency). Receives *Stats (nil when the action has never run). The action
-     PAGE keeps the richer icon+tooltip _stat_strip; cards stay calm. */}}
-{{define "_card_meta"}}
-<div class="card-meta mono">
-{{- if and . (gt .Uses 0) -}}
-  {{.Uses}} runs · {{pct .Successes .Uses}}%{{if gt .RatingCount 0}} · {{ratingPct .RatingEstimate .RatingCount}}% good{{end}} · ~{{printf "%.0f" .LatencyEstimate}}s
-{{- else -}}
-  <span class="muted">no runs yet</span>
-{{- end -}}
-</div>
-{{end}}
-
 {{define "_action_card"}}
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
     <a class="card-title ref mono" href="/actions/{{.Action.ID}}" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</a>
-    <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}} ¤{{else}}<span class="free">free</span>{{end}}</span>
+    <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}} {{gem}}{{else}}<span class="free">free</span>{{end}}</span>
   </div>
   <p class="card-desc">
     {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
@@ -34,7 +21,7 @@
     {{- if .Action.PeerState}}<span class="chip tag" title="Peer {{.Action.PeerState}}">peer {{.Action.PeerState}}</span> {{end -}}
     {{.Action.Description}}
   </p>
-  {{template "_card_meta" .Stats}}
+  {{template "_stat_strip" (statStrip .Action.Price .Stats false false)}}
 </article>
 {{end}}
 
@@ -44,8 +31,8 @@
      "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). */}}
 {{define "_stat_strip"}}
 <p class="stat-strip">
-  <span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Price}}</span>
-  · {{if gt .S.Uses 0}}<span title="Success rate — {{.S.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
+  {{if .WithPrice}}<span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Price}}</span>
+  · {{end}}{{if gt .S.Uses 0}}<span title="Success rate — {{.S.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
   · {{if gt .S.RatingCount 0}}<span title="Rating — {{.S.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
   · {{if gt .S.Uses 0}}<span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
 </p>
@@ -151,19 +138,21 @@
       hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
       hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
-  {{if .Locked}}<pre class="json">{{json .Locked}}</pre>{{end}}
+  {{/* The sealed part (a step's pre-bound args), read-only, above the fields the
+       completer must still supply — the two halves of one form. */}}
+  {{if .Locked}}<dl class="locked-args flush">{{range .Locked}}<dt>{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{else if .LockedRaw}}<pre class="json">{{json .LockedRaw}}</pre>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="row">
     {{/* A step completion (OneShot) is NEUTRAL and names NO amount: the completer
          is doing requested work, not paying — the funds were reserved by whoever
-         created the step. Only a paid *run* names the amount (and that flows
-         through the payment sheet, not this inline form). */}}
+         created the step. Only a paid *run* names the amount. */}}
     <button class="{{if and (gt .Price 0) (not .OneShot)}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if and (gt .Price 0) (not .OneShot)}} ({{money .Price}}){{end}}</button>
     <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running…</span>
     </div>
   </div>
   {{if and (gt .Price 0) (not .OneShot)}}<p class="help muted flush">Maximum, all-in. Refunded in full if it fails.</p>{{end}}
+  {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
 <div id="{{.ResultID}}">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
 {{end}}
@@ -173,6 +162,19 @@
      marks a JS panel toggle (login): it adds data-tab + role="tab". Build one
      via the `tab` / `paneltab` helpers. */}}
 {{define "_tab"}}<a class="tab{{if .Active}} active{{end}}" href="{{.Href}}"{{with .Data}} data-tab="{{.}}" role="tab"{{end}}{{if .Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+
+{{/* _pager — offset pagination for a list (§5). Quiet links, never accented: a
+     boundary renders a dimmed non-link. Renders nothing on a single page. Build
+     the model with pageNav in the handler. */}}
+{{define "_pager"}}
+{{if or .PrevHref .NextHref}}
+<nav class="pager" aria-label="Pagination">
+  {{if .PrevHref}}<a class="pager-link" href="{{.PrevHref}}" rel="prev">← previous</a>{{else}}<span class="pager-link disabled" aria-disabled="true">← previous</span>{{end}}
+  <span class="pager-page">page {{.Page}}</span>
+  {{if .NextHref}}<a class="pager-link" href="{{.NextHref}}" rel="next">next →</a>{{else}}<span class="pager-link disabled" aria-disabled="true">next →</span>{{end}}
+</nav>
+{{end}}
+{{end}}
 
 {{define "_error"}}
 <div class="banner banner-error" role="alert">{{.}}</div>
@@ -337,7 +339,7 @@
         {{if .Denied}}<span class="pill inactive">denied</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
-      <div class="small muted">their credit here <span class="mono">{{money (sum .Available .Locked)}} ¤</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}} ¤</span></div>
+      <div class="small muted">their credit here <span class="mono">{{money (sum .Available .Locked)}} {{gem}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}} {{gem}}</span></div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{if .Denied}}
@@ -388,38 +390,12 @@
 <div id="action-run" hx-get="/actions/{{.Action.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
   <div class="banner banner-info">Peer {{.Action.PeerState}}.</div>
 </div>
-{{else if gt .Action.Price 0}}
-{{/* Paid: a neutral opener + a modal payment sheet whose confirm is the only
-     money-moving control (the opener moves nothing, so it is NOT the accent). */}}
-<div id="action-run">
-  <a class="btn" href="/actions/{{.Action.ID}}?form=run" data-modal="form-run">Run…</a>
-  <div id="run-result">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
-  <dialog id="form-run" class="modal-form"{{if eq .OpenForm "run"}} open{{end}} aria-label="Run action">
-    <div class="modal-head"><h2>Run {{template "_ref" .Action.Ref}}</h2><a class="modal-close" href="/actions/{{.Action.ID}}" data-modal-close aria-label="Close">×</a></div>
-    <div class="modal-body">
-      <form class="stack" method="post" action="/actions/{{.Action.ID}}/run" data-run-panel data-sheet-form
-            hx-post="/actions/{{.Action.ID}}/run" hx-target="#run-result" hx-swap="innerHTML"
-            hx-indicator="#run-progress" hx-disabled-elt="find button[type='submit']">
-        {{.CSRFField}}
-        {{template "_form_fields" .Form}}
-        <div class="cost-sheet">
-          <div class="cost-row"><span>Price</span><b class="mono">{{money .Action.Price}} ¤</b> <span class="muted small">maximum, all-in</span></div>
-          <div class="cost-row"><span>Your balance</span><b class="mono">{{money .Available}} ¤ → {{money (sub .Available .Action.Price)}} ¤</b></div>
-        </div>
-        <p class="disclosure">Refunded in full if it fails.</p>
-        {{if .FirstPayee}}<p class="payee-hint">First payment to <span class="ref"><span class="owner">{{refOwner .Action.Ref}}</span></span>.</p>{{end}}
-        <div class="sheet-actions">
-          <div id="run-progress" class="progress" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>Running…</span></div>
-          <a class="btn-quiet" href="/actions/{{.Action.ID}}" data-modal-close>Cancel</a>
-          <button class="btn-money" type="submit">Run ({{money .Action.Price}})</button>
-        </div>
-      </form>
-    </div>
-  </dialog>
-</div>
 {{else}}
+{{/* One anatomy: an inline form (fields → button → result below). A paid run
+     names the amount on the button and shows the refund + first-payment hint;
+     nothing floats in a modal. */}}
 <div id="action-run">
-{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome)}}
+{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome .FirstPayee (refOwner .Action.Ref))}}
 </div>
 {{end}}
 {{end}}

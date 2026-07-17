@@ -78,28 +78,27 @@ type actionCardView struct {
 
 type discoverView struct {
 	Query           string
-	Filter          string // "" (all) | "free" | "paid" | "peers"
 	LookupAvailable bool
 	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []actionCardView
 	Catalog         []actionCardView
-	OpenForm        string
+	Pager           Pager // catalog paging (search results are single-page, ranked)
 }
 
 type actionView struct {
-	Action     client.Action
-	Stats      *client.Stats // nil until the action has usage
-	Ratings    []client.Rating
-	Form       FormModel
-	IsOwner    bool
-	IsPaid     bool
-	Available  int64 // viewer's available balance, for the payment sheet's before→after
-	FirstPayee bool  // viewer has never paid this action's owner (first-payee hint)
-	Outcome    *Outcome
-	OpenForm   string
-	Error      string
-	CSRFField  template.HTML // carried so the polled _action_run fragment's form keeps its token
-	BadgeSecs  int           // poll interval for the self-terminating peer-state poll
+	Action       client.Action
+	Stats        *client.Stats // nil until the action has usage
+	Ratings      []client.Rating
+	RatingsPager Pager
+	Form         FormModel
+	IsOwner      bool
+	IsPaid       bool
+	FirstPayee   bool // viewer has never paid this action's owner (first-payee hint)
+	Outcome      *Outcome
+	OpenForm     string
+	Error        string
+	CSRFField    template.HTML // carried so the polled _action_run fragment's form keeps its token
+	BadgeSecs    int           // poll interval for the self-terminating peer-state poll
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -113,6 +112,7 @@ type actionsView struct {
 	Filter      string // "active" | "inactive" | "" (all) — applies to Mine
 	Scope       string // "" (own+public) | "all" (superuser sees every action)
 	Superuser   bool
+	Pager       Pager // paging over the (filtered) management table
 	OpenForm    string
 	Error       string
 	Notice      string
@@ -129,6 +129,8 @@ type makeResultView struct {
 type processesView struct {
 	Open, Closed []client.Process
 	Superuser    bool
+	CSRFField    template.HTML // carried so the inline End·refund forms keep their token
+	Pager        Pager
 }
 
 type processView struct {
@@ -144,6 +146,7 @@ type transactionsView struct {
 	Actions      map[string]client.Action // action_id → Action; missing if deleted
 	MyHandle     string
 	Superuser    bool
+	Pager        Pager
 }
 
 // actionsByID fetches each transaction's action once (deduped) so lists can
@@ -486,44 +489,26 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 
 // ---- run room (discover / marketplace) ----
 
-// filterCards keeps the cards matching a browse filter ("" all, "free" price 0,
-// "paid" price>0, "peers" remote_proxy) — applied in the BFF over the fetched set.
-func filterCards(cards []actionCardView, filter string) []actionCardView {
-	if filter == "" {
-		return cards
-	}
-	out := cards[:0:0]
-	for _, c := range cards {
-		keep := false
-		switch filter {
-		case "free":
-			keep = c.Action.Price == 0
-		case "paid":
-			keep = c.Action.Price > 0
-		case "peers":
-			keep = c.Action.Kind == "remote_proxy"
-		}
-		if keep {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	filter := r.URL.Query().Get("filter")
-	view := discoverView{Query: q, Filter: filter, LookupAvailable: true, OpenForm: openForm(r, "run")}
+	offset := queryOffset(r)
+	view := discoverView{Query: q, LookupAvailable: true}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q == "" {
-			cat, e := s.client.ListActions(ctx, tok, "", "", false)
+			// Fetch the whole visible catalog and slice one page here: the kernel
+			// paginates raw rows before its visibility filter, so a server-side page
+			// can't page the visible set (see pageSlice).
+			cat, e := s.client.ListActions(ctx, tok, "", "", false, 0, 0)
 			if e != nil {
 				return e
 			}
-			cards := make([]actionCardView, len(cat))
+			start, end, hasNext := pageSlice(len(cat), offset, pageSize)
+			page := cat[start:end]
+			view.Pager = pageNav(r, offset, pageSize, hasNext)
+			cards := make([]actionCardView, len(page))
 			var wg sync.WaitGroup
-			for i, a := range cat {
+			for i, a := range page {
 				cards[i] = actionCardView{Action: a}
 				wg.Add(1)
 				go func(i int, id string) {
@@ -553,7 +538,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			if view.Reason == "" {
 				view.Reason = out.Message
 			}
-			cat, e := s.client.ListActions(ctx, tok, "", "", false)
+			cat, e := s.client.ListActions(ctx, tok, "", "", false, 0, 0)
 			if e != nil {
 				return e
 			}
@@ -581,8 +566,6 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	view.Catalog = filterCards(view.Catalog, filter)
-	view.Results = filterCards(view.Results, filter)
 	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
 }
 
@@ -892,7 +875,6 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			Form:      BuildForm(a.InputSchema),
 			IsOwner:   a.OwnerHandle == me.Handle,
 			IsPaid:    a.Price > 0,
-			Available: me.Available,
 			OpenForm:  openForm(r, "action-detail"),
 			CSRFField: csrf.TemplateField(r),
 			BadgeSecs: s.badgeSecs(),
@@ -900,11 +882,15 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats = &st
 		}
-		if ratings, e := s.client.ActionRatings(ctx, tok, id); e == nil {
-			view.Ratings = ratings
+		// Ratings: fetch all, slice one page here (uniform with the other lists).
+		ratingsOffset := queryOffset(r)
+		if all, e := s.client.ActionRatings(ctx, tok, id, 0, 0); e == nil {
+			start, end, hasNext := pageSlice(len(all), ratingsOffset, pageSize)
+			view.Ratings = all[start:end]
+			view.RatingsPager = pageNav(r, ratingsOffset, pageSize, hasNext)
 		}
-		// First-payee hint on the payment sheet (§8.3): show it unless the viewer
-		// has already transacted with this action's owner. Bounded, best-effort.
+		// First-payee hint on the run form (§8.3): show it unless the viewer has
+		// already transacted with this action's owner. Bounded, best-effort.
 		if a.Price > 0 && a.OwnerHandle != me.Handle {
 			view.FirstPayee = true
 			if txs, e := s.client.ListTransactions(ctx, tok, "", 200); e == nil {
@@ -1014,7 +1000,7 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 		if scope == "all" {
 			ownerFilter = "" // whole catalog; superuser sees all rows
 		}
-		a, e := s.client.ListActions(ctx, tok, ownerFilter, "", true)
+		a, e := s.client.ListActions(ctx, tok, ownerFilter, "", true, 0, 0)
 		if e != nil {
 			return e
 		}
@@ -1079,6 +1065,12 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 			LastFailure: perActionFailure[a.ID],
 		})
 	}
+	// Page the (filtered) management table; earnings tiles above still reflect the
+	// full fold, not the visible page.
+	offset := queryOffset(r)
+	start, end, hasNext := pageSlice(len(view.Mine), offset, pageSize)
+	view.Mine = view.Mine[start:end]
+	view.Pager = pageNav(r, offset, pageSize, hasNext)
 	s.renderPage(w, r, http.StatusOK, "workshop", "Workshop", view, view.User.Available)
 }
 
@@ -1423,7 +1415,9 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
 			view.Open = filterStatus(procs, "open", true)
 		}
-		if txs, e := s.client.ListTransactions(ctx, tok, "", 0); e == nil {
+		// A preview only — the most recent 10; "all transactions →" links to the
+		// paginated ledger. Capped kernel-side via ?limit rather than fetching all.
+		if txs, e := s.client.ListTransactions(ctx, tok, "", 10); e == nil {
 			view.Transactions = txs
 			view.Actions = s.actionsByID(ctx, tok, txs)
 		}
@@ -1469,10 +1463,27 @@ func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
+	open := filterStatus(procs, "open", true)
+	closed := filterStatus(procs, "open", false)
+	offset := queryOffset(r)
+	page := func(rows []client.Process) ([]client.Process, bool) {
+		if offset >= len(rows) {
+			return nil, false
+		}
+		end := offset + pageSize
+		if end >= len(rows) {
+			return rows[offset:], false
+		}
+		return rows[offset:end], true
+	}
+	openPage, openMore := page(open)
+	closedPage, closedMore := page(closed)
 	s.renderPage(w, r, http.StatusOK, "processes", "Processes", processesView{
-		Open:      filterStatus(procs, "open", true),
-		Closed:    filterStatus(procs, "open", false),
+		Open:      openPage,
+		Closed:    closedPage,
 		Superuser: s.isSuperuser(r),
+		CSRFField: csrf.TemplateField(r),
+		Pager:     pageNav(r, offset, pageSize, openMore || closedMore),
 	})
 }
 
@@ -1523,17 +1534,24 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	var txs []client.Transaction
 	actions := map[string]client.Action{}
 	var myHandle string
+	offset := queryOffset(r)
+	hasNext := false
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
 		myHandle = me.Handle
-		t, e := s.client.ListTransactions(ctx, tok, "", 0)
+		// Fetch the full ledger and slice one page here: the kernel paginates raw
+		// rows before its party filter, so a server-side page can't page the
+		// viewer's filtered set (see pageSlice).
+		all, e := s.client.ListTransactions(ctx, tok, "", 0)
 		if e != nil {
 			return e
 		}
-		txs = t
+		start, end, more := pageSlice(len(all), offset, pageSize)
+		hasNext = more
+		txs = all[start:end]
 		actions = s.actionsByID(ctx, tok, txs)
 		return nil
 	})
@@ -1542,6 +1560,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{
 		Transactions: txs, Actions: actions, MyHandle: myHandle, Superuser: s.isSuperuser(r),
+		Pager: pageNav(r, offset, pageSize, hasNext),
 	})
 }
 
@@ -1681,9 +1700,8 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 // The no-JS fallback renders the named dialog with the [open] attribute, so the
 // value is validated here before it ever reaches a template.
 var formWhitelist = map[string]map[string]bool{
-	"run":           {},
 	"action":        {"action-create": true, "action-make": true, "action-import": true, "action-unimport": true},
-	"action-detail": {"action-edit": true, "run": true},
+	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},
 	"step":          {"step-create": true},

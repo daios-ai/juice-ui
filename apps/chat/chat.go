@@ -369,7 +369,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 	rev := authRev()
 	force := c.st.AuthRev != rev
 	err := c.sa.Do(ctx, func(tok string) error {
-		existing, err := c.deps.Client.ListActions(ctx, tok, chatHandle, "", true)
+		existing, err := c.deps.Client.ListActions(ctx, tok, chatHandle, "", true, 0, 0)
 		if err != nil {
 			return err
 		}
@@ -648,7 +648,7 @@ func (sp specialAction) visibilityOf() string {
 // pushed on create only.
 func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAction) (string, error) {
 	want := strings.TrimRight(c.deps.PublicURL, "/") + "/_kernel/chat/" + sp.name
-	existing, err := c.deps.Client.ListActions(ctx, tok, chatHandle, "", true)
+	existing, err := c.deps.Client.ListActions(ctx, tok, chatHandle, "", true, 0, 0)
 	if err != nil {
 		return "", err
 	}

@@ -28,7 +28,8 @@ Three laws underpin everything:
 | Card / grid / table | `.card` · `.grid` · `.card-list` · `.action-card` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `_media` partial · `cardArt` fallback | the action image slot (§5.13) |
 | **Stat** | `.stat` (label · value · link) | a workshop earnings/metric tile |
-| **you-row** | `.you-row` | a link/setting row on the `you` hub |
+| **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
+| **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | a peer kernel on `network` |
 | Field | `.field` + inputs/select/textarea | forms |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
@@ -197,18 +198,18 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, befriend, inspect, navigate, add-row |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no `¤` glyph**. A **step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N" |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. A **step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N" |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, unfriend, force-end |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 
 **Rules.** These are the *only* button styles. The money tier is the **authorizing
 control** — the form submit that actually moves credits (`Run (12)`,
-`Synthesize (20)`, Deposit/Withdraw, `Complete (5)`). An *opener* that merely
-opens such a form is a quiet `.btn-quiet`, not a colored button — the money color
-appears on the confirm inside the modal. **Danger beats money** (an op that is
-both destructive and monetary is danger — e.g. force-end). Money buttons state
-the amount in parens when it is fixed/known — `verb (N)`, **never** a `¤` glyph
+`Synthesize (20)`, Deposit/Withdraw). The run form is **inline** (on the action
+page), not a modal — its `Run (N)` confirm is the money control directly. **Danger
+beats money** (an op that is both destructive and monetary is danger — e.g.
+force-end). Money buttons state the amount in parens when it is fixed/known —
+`verb (N)`, **never** a credit glyph
 (the accent color already says "credits"); where the unit must be spelled in prose
 (help text, flashes, errors), write "N credits". When the operator types the amount
 (deposit/withdraw) the adjacent field is the amount. Destructive buttons that
@@ -270,9 +271,11 @@ none float, none are colored.
   disable hidden inputs so they aren't submitted. Secrets are masked, write-only,
   never pre-filled.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
-  (action run **and** step completion): optional **locked block** (pre-bound args
-  via the result renderer, no labels), the **editable input**, **one money button**
-  (`verb (N)`, §5.1) with `.progress` + `hx-disabled-elt`, then the **result below**
+  (action run **and** step completion), always inline (never a modal): optional
+  **locked block** (a step's pre-bound args as a read-only `.locked-args` dl, no
+  verbal label — the sealed half of the form), the **editable input**, **one
+  button** (a paid run's `Run (N)` money button, §5.1; a step's neutral `Complete`)
+  with `.progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Steps are **one-shot** (`data-oneshot`); actions repeat.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the field-switch), **approval** (nothing left to fill → just the button), or a
@@ -286,9 +289,13 @@ none float, none are colored.
   `.grid` for card collections; `.card-list` for stacked cards.
 - **Action card:** a **media slot** (`.media`, §5.13) on top, then the **ref as
   the title** (`_ref`, owner emphasized) and the link to the action — never the
-  bare name or the raw kind string — with one-line description, price, and the
-  reputation strip **below and outside** the media (kernel chrome never overlaps
-  counterparty pixels). **Attribute chips** (`.chip`) mark the *exception* only:
+  bare name or the raw kind string — with the price right-aligned in the title row,
+  a one-line description, and **the same `_stat_strip`** the action page uses
+  (icon + tooltip: success · rating · latency), rendered **price-less** on the card
+  (`statStrip … withPrice=false`) since price is already in the title row. The strip
+  sits **below and outside** the media (kernel chrome never overlaps counterparty
+  pixels). One strip, one grammar, both surfaces. **Attribute chips** (`.chip`)
+  mark the *exception* only:
   - **Kind** (one chip): `W` wasm · `N` native · `H` http · `R` remote
     (`kind == "remote_proxy"`, via the `kindBadge` helper). **`R` stands out by
     weight** (`.chip.filled`), never by hue.
@@ -323,10 +330,13 @@ none float, none are colored.
   `.status-credited / -refunded / -escrow / -danger`.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
-- **Money display** renders mono + tabular with the unit `¤` (e.g. `12 ¤`,
-  `−12 ¤`, `↩ 9 ¤`). The `¤` glyph appears **only in money *display*** — **never
-  on a button**: a spend button is `verb (N)` (§5.1), the accent conveying
-  credits. In prose (help/flash/error) spell it "N credits".
+- **Money display** renders mono + tabular with the **credit mark** — the
+  diamond/gem icon via the `gem` helper (`#gem` sprite), placed after the amount
+  (e.g. `12 ◆`, `+45 ◆`). The `¤` character is **banned from every template**
+  (`grammar_test.go` `TestNoCurrencyGlyph`) — it is the retired mark. The credit
+  mark appears **only in money *display*** — **never on a button**: a spend button
+  is `verb (N)` (§5.1), the accent conveying credits. In prose (help/flash/error)
+  spell it "N credits".
 
 ### 5.7 Refs
 
@@ -400,8 +410,8 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   `style=`), no external fetch (CSP-safe).
 - The media is **counterparty content**: it is inert (§6), never carries chrome,
   and kernel-captured facts (ref, price, reputation, any money control) render
-  **outside** it. On the payment sheet the image stays in the content zone, never
-  adjacent to the confirm.
+  **outside** it (the media is in the hero; the run form and its money control are
+  a separate section below).
 - The same slot backs `.kernel-card`'s `.banner` (a 4:1 variant) on `network`.
 
 ---
@@ -413,9 +423,9 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   on `.btn-money`, the `.badge`, the focus ring, `.req`, and the progress bar —
   never on links, tab underlines, active nav, or the active mobile tab (those key
   on text weight + surface). Money buttons name the amount as `verb (N)` and carry
-  **no `¤`**; money *display* uses `N ¤` in the mono provenance face (§5.6).
-  **Danger beats money.** A **step completion is neutral** (`Complete`, no
-  amount, no accent): the completer is not the payer (§5.1).
+  **no credit glyph**; money *display* uses `N ◆` (the gem mark) in the mono
+  provenance face (§5.6). **Danger beats money.** A **step completion is neutral**
+  (`Complete`, no amount, no accent): the completer is not the payer (§5.1).
 - Counterparty content (names, descriptions, args, results, reasons) renders
   **inert**: escaped, no chrome, no accent, JSON in a code block. Trust
   affordances key on kernel-captured fields, never payload shape.
@@ -451,5 +461,6 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   any `.linkbar`, the superseded `auth-tab` class,
   any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
   phrase or into a second sentence, any prose note (`.help` / `.card-note`) that
-  swells into a paragraph, and any **`¤` inside a `<button>` or `.btn*`** (money
-  buttons read `verb (N)`; `¤` belongs to money *display* only, §5.6).
+  swells into a paragraph, and any **`¤` character anywhere in a template**
+  (`TestNoCurrencyGlyph`) — the credit mark is the `gem` helper (`◆`), and buttons
+  read `verb (N)` (§5.6).

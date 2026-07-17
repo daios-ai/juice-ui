@@ -16,7 +16,7 @@
   {{$step := .Step}}
   <div class="step-card">
     <div class="step-ask">{{if $req}}{{template "_ref" $req}} needs {{end}}{{template "_ref" $step.Ref}}{{if $step.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
-    {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval $step.PartialArgs nil)}}
+    {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval .Form.Locked $step.PartialArgs nil)}}
   </div>
   {{end}}
 {{end}}

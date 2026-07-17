@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,13 +107,13 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"tab":          tab,
 		"paneltab":     paneltab,
 		"actionsHref":  actionsHref,
-		"browseHref":   browseHref,
 		"runForm":      runForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
 		"badge":        badge,
 		"cardArt":      CardArt,
 		"initial":      initial,
+		"gem":          gem,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -314,19 +315,20 @@ type Tab struct {
 // StatStrip feeds the _stat_strip partial. Counts toggles the (N) run/rater
 // counts — shown on the action detail page, omitted on the list cards.
 type StatStrip struct {
-	Price  int64
-	S      client.Stats
-	Counts bool
+	Price     int64
+	S         client.Stats
+	Counts    bool
+	WithPrice bool // detail page leads with price; cards omit it (shown top-right)
 }
 
 // statStrip builds a StatStrip. It is nil-safe (a card's *client.Stats is nil
 // until the action has usage), so an unused action renders honest empty states.
-func statStrip(price int64, s *client.Stats, counts bool) StatStrip {
+func statStrip(price int64, s *client.Stats, counts, withPrice bool) StatStrip {
 	var v client.Stats
 	if s != nil {
 		v = *s
 	}
-	return StatStrip{Price: price, S: v, Counts: counts}
+	return StatStrip{Price: price, S: v, Counts: counts, WithPrice: withPrice}
 }
 
 // tab builds a plain navigation tab (list filters, scope switch).
@@ -338,6 +340,13 @@ func paneltab(label, key string, active bool) Tab {
 	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
 }
 
+// gemGlyph is the inline credit mark — the diamond/gem icon, reserved for credit
+// amounts. Kept as one helper so every amount renders the identical mark and the
+// ¤ character stays out of the templates entirely (grammar guard).
+var gemGlyph = template.HTML(`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg>`)
+
+func gem() template.HTML { return gemGlyph }
+
 // initial returns the first letter of a handle (skipping a leading @), uppercased,
 // for an avatar monogram. "" → "?".
 func initial(handle string) string {
@@ -347,20 +356,84 @@ func initial(handle string) string {
 	return "?"
 }
 
-// browseHref builds the /browse URL for a filter tab, preserving the query so a
-// filter and a search compose.
-func browseHref(query, filter string) string {
-	q := url.Values{}
-	if query != "" {
-		q.Set("q", query)
+// Pager is the model for the _pager partial: prev/next links (empty at a
+// boundary) and the 1-based page number. Money accent is reserved, so the pager
+// renders as quiet links, never accented.
+type Pager struct {
+	PrevHref string
+	NextHref string
+	Page     int
+}
+
+// pageSize is the uniform list page size across the UI (browse, transactions,
+// the workshop table, the admin roster, ratings).
+const pageSize = 20
+
+// pageNav builds a Pager for an offset-paginated list. It preserves the current
+// query (search terms, form state) and only rewrites the offset param, so paging
+// composes with a search. hasNext is the caller's "there is another page" signal
+// (typically an over-fetch by one: len(fetched) > pageSize).
+func pageNav(r *http.Request, offset, size int, hasNext bool) Pager {
+	if size < 1 {
+		size = pageSize
 	}
-	if filter != "" {
-		q.Set("filter", filter)
+	if offset < 0 {
+		offset = 0
 	}
-	if len(q) == 0 {
-		return "/browse"
+	href := func(off int) string {
+		q := r.URL.Query()
+		if off <= 0 {
+			q.Del("offset")
+		} else {
+			q.Set("offset", strconv.Itoa(off))
+		}
+		if len(q) == 0 {
+			return r.URL.Path
+		}
+		return r.URL.Path + "?" + q.Encode()
 	}
-	return "/browse?" + q.Encode()
+	p := Pager{Page: offset/size + 1}
+	if offset > 0 {
+		p.PrevHref = href(offset - size)
+	}
+	if hasNext {
+		p.NextHref = href(offset + size)
+	}
+	return p
+}
+
+// pageSlice returns the [start,end) window of n items for the given offset and
+// page size, plus whether a further page exists — clamping offset into range.
+//
+// The UI paginates client-side over a fully-fetched list because the kernel
+// applies `limit`/`offset` to RAW rows *before* its visibility/party filter, so a
+// server-side page of a filtered list (browse actions, a user's transactions) can
+// come back with fewer — or zero — visible rows than exist. Fetching the visible
+// set whole and slicing here is the only correct offset pagination for those.
+func pageSlice(n, offset, size int) (start, end int, hasNext bool) {
+	if size < 1 {
+		size = pageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > n {
+		offset = n
+	}
+	end = offset + size
+	if end > n {
+		end = n
+	}
+	return offset, end, offset+size < n
+}
+
+// queryOffset reads a non-negative ?offset from the request (0 on absence/garbage).
+func queryOffset(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("offset"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // actionsHref builds the /workshop URL for a given ownership scope ("" | "all")

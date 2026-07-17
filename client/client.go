@@ -666,7 +666,32 @@ func (c *Client) Transfer(ctx context.Context, token, recipient string, amount i
 // authenticated → + own active; superuser → all owners' active); pass all=true
 // (?all=1) to include the caller's own inactive/private rows — required to show
 // a user their inactive drafts.
-func (c *Client) ListActions(ctx context.Context, token, owner, name string, all bool) ([]Action, error) {
+//
+// limit>0 returns a single server page of that size at the given offset (newest
+// first). limit==0 returns the FULL set: the kernel pages every list endpoint
+// with a default of 50 (ceiling 200, §R6), so an unpaged call would silently
+// truncate — the workshop and @chat's own-action reconciliation need every row,
+// so we page through with offset.
+func (c *Client) ListActions(ctx context.Context, token, owner, name string, all bool, limit, offset int) ([]Action, error) {
+	if limit > 0 {
+		return c.actionsPage(ctx, token, owner, name, all, limit, offset)
+	}
+	const page = 200 // server ceiling
+	var out []Action
+	for off := 0; ; off += page {
+		batch, err := c.actionsPage(ctx, token, owner, name, all, page, off)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, batch...)
+		if len(batch) < page {
+			return out, nil
+		}
+	}
+}
+
+// actionsPage fetches one page of actions (GET /v1/actions?…&limit=&offset=).
+func (c *Client) actionsPage(ctx context.Context, token, owner, name string, all bool, limit, offset int) ([]Action, error) {
 	q := url.Values{}
 	if owner != "" {
 		q.Set("owner", normalizeHandle(owner))
@@ -676,6 +701,12 @@ func (c *Client) ListActions(ctx context.Context, token, owner, name string, all
 	}
 	if all {
 		q.Set("all", "1") // include the caller's own inactive/private rows (else active-only)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
 	}
 	path := "/v1/actions"
 	if len(q) > 0 {
@@ -738,9 +769,42 @@ func (c *Client) ActionStats(ctx context.Context, token, actionID string) (Stats
 	return s, err
 }
 
-func (c *Client) ActionRatings(ctx context.Context, token, id string) ([]Rating, error) {
+// ActionRatings lists an action's ratings (newest first). limit>0 fetches a
+// single page of that size at offset; limit==0 fetches the FULL set (paging with
+// the ceiling) so the UI can slice its own pages — the kernel would otherwise
+// truncate at its default of 50.
+func (c *Client) ActionRatings(ctx context.Context, token, id string, limit, offset int) ([]Rating, error) {
+	if limit > 0 {
+		return c.ratingsPage(ctx, token, id, limit, offset)
+	}
+	const page = 200 // server ceiling
+	var out []Rating
+	for off := 0; ; off += page {
+		batch, err := c.ratingsPage(ctx, token, id, page, off)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, batch...)
+		if len(batch) < page {
+			return out, nil
+		}
+	}
+}
+
+func (c *Client) ratingsPage(ctx context.Context, token, id string, limit, offset int) ([]Rating, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/actions/" + url.PathEscape(id) + "/ratings"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
 	var r []Rating
-	err := c.do(ctx, http.MethodGet, "/v1/actions/"+url.PathEscape(id)+"/ratings", token, nil, &r)
+	err := c.do(ctx, http.MethodGet, path, token, nil, &r)
 	return r, err
 }
 
