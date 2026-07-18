@@ -311,8 +311,14 @@ none float, none are colored.
     or `local` (a `local` chip); `public` shows nothing.
   - **Inactive** → the card is dimmed (`.action-card.inactive`) plus a muted
     `inactive` chip (`.chip.tag`).
+  - **Needs account** → a filled key-icon chip (`.chip.filled`, `#key`) only
+    when the action requires a per-caller grant the viewer hasn't connected.
+    On the action page the run form is replaced by the connect gesture
+    (banner + `Connect account`) — **a doomed run is never offered**, the
+    same rule as peer-blocked runs.
   - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
-    is spent on them (every hue is a reserved money/trust signal).
+    is spent on them (every hue is a reserved money/trust signal); emphasis is
+    by weight (`.chip.filled`), never by hue.
 - **Tables:** full width, hairline row borders, muted `th`. A clickable row is
   `.rowable` + `tabindex="-1"` + `data-href`; navigable with `j`/`k`/`Enter`.
 - **Money columns are right-aligned, header included** — a money `<th>` carries

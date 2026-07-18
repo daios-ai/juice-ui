@@ -70,10 +70,11 @@ type studioEarnings struct {
 }
 
 type actionCardView struct {
-	Action      client.Action
-	Stats       *client.Stats
-	Earned      int64  // net earned by this action (folded from transactions), workshop table
-	LastFailure string // reason of the latest failed call, a quiet peek
+	Action       client.Action
+	Stats        *client.Stats
+	NeedsConnect bool   // demands a per-caller grant the viewer hasn't connected
+	Earned       int64  // net earned by this action (folded from transactions), workshop table
+	LastFailure  string // reason of the latest failed call, a quiet peek
 }
 
 type discoverView struct {
@@ -93,6 +94,7 @@ type actionView struct {
 	Form         FormModel
 	IsOwner      bool
 	IsPaid       bool
+	NeedsConnect bool // demands a per-caller grant the viewer hasn't connected
 	FirstPayee   bool // viewer has never paid this action's owner (first-payee hint)
 	Outcome      *Outcome
 	OpenForm     string
@@ -295,11 +297,15 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
 
 // ---- delegated OAuth grants ----
 
-// postGrantStart begins the consent for an oauth_delegated action: it asks the
+// getGrantStart begins the consent for an oauth_delegated action: it asks the
 // kernel for the provider authorize URL, stashes the opaque state server-side,
 // and redirects the browser to the provider. The provider returns to
-// getGrantCallback. (Mirrors doLogin's two-step split across requests.)
-func (s *Server) postGrantStart(w http.ResponseWriter, r *http.Request) {
+// getGrantCallback. A navigational GET, per the OAuth authorization request
+// (RFC 6749): a form POST cannot start it, because form-action 'self' blocks a
+// submission's cross-origin redirect; the flow's CSRF defense is the state
+// match at the callback plus the kernel's PKCE challenge (RFC 9700), not a
+// form token.
+func (s *Server) getGrantStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	selector, provider := grantTarget(r)
 	if selector == "" {
@@ -430,6 +436,25 @@ func (s *Server) getGrantConnect(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "grant_connect", "Connect an account", grantConnectView{Selector: selector, Plan: plan})
 }
 
+// grantedRefs flattens the caller's granted action refs from the /v1/me
+// connectors tree into a lookup set.
+func grantedRefs(me client.User) map[string]bool {
+	g := map[string]bool{}
+	for _, c := range me.Connectors {
+		for _, a := range c.Actions {
+			g[a.Action] = true
+		}
+	}
+	return g
+}
+
+// needsConnect reports whether a run is doomed for the viewer: the action
+// demands a per-caller grant they don't hold. Safe on a nil set (unknown
+// grants → no flag; the run outcome still catches the 403).
+func needsConnect(a client.Action, granted map[string]bool) bool {
+	return a.RequiresGrant && !granted[a.Ref()]
+}
+
 // grantTarget reads the selector (and optional provider) a grant form posts. It
 // accepts the modern `selector`+`provider` fields and falls back to the legacy
 // `action` field — a full @owner/name is the degenerate single-action selector.
@@ -441,11 +466,14 @@ func grantTarget(r *http.Request) (selector, provider string) {
 	return selector, strings.TrimSpace(r.FormValue("provider"))
 }
 
-// backTo returns a same-origin path from the request's Referer to return to (so a
-// connect made from an action page lands back there), or /user as a fallback. Only
-// a same-host path is honored, never an absolute/off-site URL.
+// backTo returns a same-origin path (query included — the consent page is
+// addressed by ?selector=…) from the request's Referer, or /you as a fallback.
+// Only a same-host path is honored, never an absolute/off-site URL.
 func backTo(r *http.Request) string {
 	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Path != "" && (ref.Host == "" || ref.Host == r.Host) {
+		if ref.RawQuery != "" {
+			return ref.Path + "?" + ref.RawQuery
+		}
 		return ref.Path
 	}
 	return "/you"
@@ -494,7 +522,17 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	offset := queryOffset(r)
 	view := discoverView{Query: q, LookupAvailable: true}
+	var granted map[string]bool
+	var available int64
+	haveMe := false
 	err := s.sessions.Do(ctx, func(tok string) error {
+		// One /v1/me read serves both the needs-account flag and the balance
+		// renderPage would otherwise re-fetch. Best-effort: the page must not
+		// fail for a chip.
+		if me, e := s.client.Me(ctx, tok); e == nil {
+			granted = grantedRefs(me)
+			available, haveMe = me.Available, true
+		}
 		if q == "" {
 			// Fetch the whole visible catalog and slice one page here: the kernel
 			// paginates raw rows before its visibility filter, so a server-side page
@@ -509,7 +547,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			cards := make([]actionCardView, len(page))
 			var wg sync.WaitGroup
 			for i, a := range page {
-				cards[i] = actionCardView{Action: a}
+				cards[i] = actionCardView{Action: a, NeedsConnect: needsConnect(a, granted)}
 				wg.Add(1)
 				go func(i int, id string) {
 					defer wg.Done()
@@ -561,9 +599,18 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			}(i, view.Results[i].Action.ID)
 		}
 		wg.Wait()
+		// Flag after the fetches: a partial lookup entry only carries
+		// requires_grant once its full record is in.
+		for i := range view.Results {
+			view.Results[i].NeedsConnect = needsConnect(view.Results[i].Action, granted)
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
+		return
+	}
+	if haveMe {
+		s.renderPage(w, r, http.StatusOK, "browse", "Browse", view, available)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
@@ -871,13 +918,14 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view = actionView{
-			Action:    a,
-			Form:      BuildForm(a.InputSchema),
-			IsOwner:   a.OwnerHandle == me.Handle,
-			IsPaid:    a.Price > 0,
-			OpenForm:  openForm(r, "action-detail"),
-			CSRFField: csrf.TemplateField(r),
-			BadgeSecs: s.badgeSecs(),
+			Action:       a,
+			Form:         BuildForm(a.InputSchema),
+			IsOwner:      a.OwnerHandle == me.Handle,
+			IsPaid:       a.Price > 0,
+			NeedsConnect: needsConnect(a, grantedRefs(me)),
+			OpenForm:     openForm(r, "action-detail"),
+			CSRFField:    csrf.TemplateField(r),
+			BadgeSecs:    s.badgeSecs(),
 		}
 		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 			view.Stats = &st
@@ -931,7 +979,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerHandle == me.Handle, IsPaid: a.Price > 0}
+		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerHandle == me.Handle, IsPaid: a.Price > 0, NeedsConnect: needsConnect(a, grantedRefs(me))}
 		if argErr == nil {
 			out, e := s.caller.Run(ctx, tok, a.Ref(), args)
 			if e != nil {

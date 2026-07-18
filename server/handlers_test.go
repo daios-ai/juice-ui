@@ -36,6 +36,12 @@ func authKernel() *httptest.Server {
 		   "actions":[{"action":"@sys/gmail-send","scopes":["send"],"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}],
 		 "connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}`))
 	})
+	mux.HandleFunc("POST /v1/grants/start", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"state":"ST1","authorize_url":"https://provider.test/auth?client_id=cid&state=ST1"}`))
+	})
+	mux.HandleFunc("GET /v1/grants/plan", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"groups":[{"provider_key":"bearer:api.lena.dev","provider":"api.lena.dev","scheme":"delegated_bearer","scopes":[],"connected":true,"covered":true,"actions":[{"action_id":"AL","action":"@lena/api","granted":true}]}],"skipped_loginless":0,"skipped_uncallable":0}`))
+	})
 	mux.HandleFunc("PUT /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		var inp struct {
 			CurrentPassword string `json:"current_password"`
@@ -67,22 +73,33 @@ func authKernel() *httptest.Server {
 		// threads all=1 for the owner's own list.
 		a1 := `{"id":"A1","action":"@alice/hello","owner_handle":"@alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0}`
 		a3 := `{"id":"A3","action":"@alice/draft","owner_handle":"@alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0}`
+		// Two delegated actions: /v1/me grants @sys/gmail-send (AG) but not
+		// @sys/gmail-read (AN) — the needs-account chip must split them.
+		ag := `{"id":"AG","action":"@sys/gmail-send","owner_handle":"@sys","name":"gmail-send","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true}`
+		an := `{"id":"AN","action":"@sys/gmail-read","owner_handle":"@sys","name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true}`
 		if r.URL.Query().Get("all") == "1" {
 			w.Write([]byte("[" + a1 + "," + a3 + "]"))
 		} else {
-			w.Write([]byte("[" + a1 + "]"))
+			w.Write([]byte("[" + a1 + "," + ag + "," + an + "]"))
 		}
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		// AG/AN are the delegated pair (granted / ungranted, see GET /v1/actions);
 		// "owned"/"A1" belong to @alice (the signed-in user); anything else to @bob.
 		owner := "@bob"
 		name := "x"
-		if r.PathValue("id") == "owned" || r.PathValue("id") == "A1" {
+		grant := ""
+		switch r.PathValue("id") {
+		case "owned", "A1":
 			owner = "@alice"
+		case "AG":
+			owner, name, grant = "@sys", "gmail-send", `"auth_scheme":"oauth_delegated","requires_grant":true,`
+		case "AN":
+			owner, name, grant = "@sys", "gmail-read", `"auth_scheme":"oauth_delegated","requires_grant":true,`
 		}
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"` + owner + `/` + name +
 			`","owner_handle":"` + owner + `","name":"` + name + `","kind":"http",` +
-			`"active":true,"public":true,"price":0,` +
+			`"active":true,"public":true,"price":0,` + grant +
 			`"input_schema":{"type":"object","properties":{}},"output_schema":{"type":"object"}}`))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
@@ -594,6 +611,105 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	}
 }
 
+// TestGrantStartRedirectsToProvider: the browser-consent start is a
+// navigational GET (never a form — form-action 'self' would block the
+// submission's cross-origin redirect) that 303s straight to the provider's
+// authorize URL.
+func TestGrantStartRedirectsToProvider(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	resp, err := cl.Get(srv.URL + "/grants/start?selector=%40g%2Fmail&provider=oauth%3AG")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "https://provider.test/auth?client_id=cid&state=ST1" {
+		t.Errorf("redirected to %q, want the provider authorize URL", loc)
+	}
+}
+
+// TestBackToKeepsQuery: backTo must preserve the Referer's query — the consent
+// page is addressed by ?selector=…, and dropping it made the success redirect
+// land on a selector-less /grants/connect, whose guard then overwrote the
+// success flash with "No account to connect."
+func TestBackToKeepsQuery(t *testing.T) {
+	mk := func(ref string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "http://ui.test/grants/connect", nil)
+		if ref != "" {
+			r.Header.Set("Referer", ref)
+		}
+		return r
+	}
+	cases := []struct{ ref, want string }{
+		{"http://ui.test/grants/connect?selector=%40lena%2Fapi", "/grants/connect?selector=%40lena%2Fapi"},
+		{"http://ui.test/actions/abc", "/actions/abc"},
+		{"http://evil.test/grants/connect?selector=x", "/you"}, // off-site Referer never honored
+		{"", "/you"},
+	}
+	for _, c := range cases {
+		if got := backTo(mk(c.ref)); got != c.want {
+			t.Errorf("backTo(Referer=%q) = %q, want %q", c.ref, got, c.want)
+		}
+	}
+}
+
+// TestGrantConnectReturnsToConsentPage: a token paste made on the consent page
+// must land back on it (query intact) with the success flash — not on the
+// selector-less page whose guard flashes "No account to connect."
+func TestGrantConnectReturnsToConsentPage(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/grants" {
+			w.Write([]byte(`{"status":"connected","actions":["@lena/api"]}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer wrap.Close()
+
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/you"))
+	form := url.Values{"selector": {"@lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", srv.URL+"/grants/connect?selector=%40lena%2Fapi")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d, want 303", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if loc != "/grants/connect?selector=%40lena%2Fapi" {
+		t.Fatalf("redirected to %q, want the consent page with its selector", loc)
+	}
+	body := getBody(t, cl, srv.URL+loc)
+	if strings.Contains(body, "No account to connect.") {
+		t.Error("post-connect page must not flash the selector-missing error")
+	}
+	if !strings.Contains(body, "Account connected") {
+		t.Error("post-connect page must carry the success flash")
+	}
+	if !strings.Contains(body, ">connected</span>") {
+		t.Error("consent plan must show the connected pill after the paste")
+	}
+}
+
 // --- kernel-down handling (snag #2) ---
 
 func TestHealthDownReturns503(t *testing.T) {
@@ -728,6 +844,75 @@ func TestActionCardChips(t *testing.T) {
 		if strings.Contains(body, gone) {
 			t.Errorf("must not contain legacy %q", gone)
 		}
+	}
+}
+
+// TestNeedsAccountChip: the filled key chip marks exactly the delegated actions
+// the viewer hasn't connected. The fake kernel grants @sys/gmail-send (AG) but
+// not @sys/gmail-read (AN); both carry requires_grant.
+func TestNeedsAccountChip(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	card := func(body, id string) string {
+		t.Helper()
+		for _, a := range strings.Split(body, "<article") {
+			if strings.Contains(a, `/actions/`+id+`"`) {
+				return a
+			}
+		}
+		t.Fatalf("no card for %s on /browse", id)
+		return ""
+	}
+	browse := getBody(t, cl, srv.URL+"/browse")
+	if !strings.Contains(card(browse, "AN"), "icons.svg#key") {
+		t.Error("ungranted delegated action must carry the key chip on its card")
+	}
+	if strings.Contains(card(browse, "AG"), "icons.svg#key") {
+		t.Error("granted delegated action must NOT carry the key chip")
+	}
+	if strings.Contains(card(browse, "A1"), "icons.svg#key") {
+		t.Error("a grant-free action must NOT carry the key chip")
+	}
+
+	// Same split on the action page's chips row.
+	if !strings.Contains(getBody(t, cl, srv.URL+"/actions/AN"), "icons.svg#key") {
+		t.Error("ungranted action page must show the key chip")
+	}
+	if strings.Contains(getBody(t, cl, srv.URL+"/actions/AG"), "icons.svg#key") {
+		t.Error("granted action page must NOT show the key chip")
+	}
+}
+
+// TestRunFormGatedOnNeedsConnect: a run without the grant is doomed, so the run
+// region offers the connect gesture instead of the form (same rule as the
+// peer-state gate). A granted action keeps its form.
+func TestRunFormGatedOnNeedsConnect(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	gated := getBody(t, cl, srv.URL+"/actions/AN")
+	if !strings.Contains(gated, "Needs a connected account.") ||
+		!strings.Contains(gated, `/grants/connect?selector=`) ||
+		!strings.Contains(gated, ">Connect account</a>") {
+		t.Error("ungranted action page must replace the run form with the connect gesture")
+	}
+	if strings.Contains(gated, `hx-post="/actions/AN/run"`) {
+		t.Error("ungranted action page must not offer the doomed run form")
+	}
+
+	open := getBody(t, cl, srv.URL+"/actions/AG")
+	if !strings.Contains(open, `hx-post="/actions/AG/run"`) {
+		t.Error("granted action page must keep the run form")
+	}
+	if strings.Contains(open, "Needs a connected account.") {
+		t.Error("granted action page must not show the connect gate")
 	}
 }
 

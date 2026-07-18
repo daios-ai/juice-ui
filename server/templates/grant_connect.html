@@ -20,12 +20,7 @@
   {{if .Covered}}
   <p class="muted small flush">This account already covers every action above.</p>
   {{else if eq .Scheme "oauth_delegated"}}
-  <form method="post" action="/grants/start" class="row compact">
-    {{$.CSRFField}}
-    <input type="hidden" name="selector" value="{{$d.Selector}}">
-    <input type="hidden" name="provider" value="{{.ProviderKey}}">
-    <button class="btn" type="submit">Connect with your browser</button>
-  </form>
+  <p class="row compact"><a class="btn" href="/grants/start?selector={{$d.Selector}}&provider={{.ProviderKey}}">Connect with your browser</a></p>
   {{else}}
   <form method="post" action="/grants/connect" class="row compact">
     {{$.CSRFField}}

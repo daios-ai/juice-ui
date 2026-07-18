@@ -17,6 +17,7 @@
   <p class="card-desc">
     {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
     {{- if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span> {{else if .Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span> {{end -}}
+    {{- if .NeedsConnect}}<span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span> {{end -}}
     {{- if not .Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span> {{end -}}
     {{- if .Action.PeerState}}<span class="chip tag" title="Peer {{.Action.PeerState}}">peer {{.Action.PeerState}}</span> {{end -}}
     {{.Action.Description}}
@@ -389,6 +390,14 @@
 {{if .Action.PeerState}}
 <div id="action-run" hx-get="/actions/{{.Action.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
   <div class="banner banner-info">Peer {{.Action.PeerState}}.</div>
+</div>
+{{else if .NeedsConnect}}
+{{/* A run without the per-caller grant is doomed (403 grant_required) — offer
+     the connect gesture instead of the form. No poller: connecting returns
+     here by full navigation. */}}
+<div id="action-run">
+  <div class="banner banner-info">Needs a connected account.</div>
+  <p><a class="btn" href="/grants/connect?selector={{.Action.Ref}}">Connect account</a></p>
 </div>
 {{else}}
 {{/* One anatomy: an inline form (fields → button → result below). A paid run

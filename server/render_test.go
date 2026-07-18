@@ -308,9 +308,14 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 	if !strings.Contains(body, `value="bearer:api.acme.com"`) || !strings.Contains(body, `value="@acme"`) {
 		t.Errorf("token form must carry provider_key + selector: %s", body)
 	}
-	// The oauth group offers the browser consent instead.
-	if !strings.Contains(body, `action="/grants/start"`) {
-		t.Errorf("oauth group must offer the browser consent: %s", body)
+	// The oauth group offers the browser consent instead — a navigational link,
+	// never a form: form-action 'self' blocks a submission's cross-origin
+	// redirect to the provider.
+	if !strings.Contains(body, `href="/grants/start?selector=`) {
+		t.Errorf("oauth group must offer the browser-consent link: %s", body)
+	}
+	if strings.Contains(body, `action="/grants/start"`) {
+		t.Errorf("consent start must not be a form (CSP form-action blocks its redirect): %s", body)
 	}
 	if !strings.Contains(body, "2 action") {
 		t.Errorf("skipped-uncallable count not surfaced: %s", body)

@@ -214,7 +214,7 @@ func New(o Options) (http.Handler, error) {
 	// Grants (connect an upstream account to an action): the oauth_delegated
 	// browser flow (start/callback) and the delegated_bearer static-token path.
 	mux.HandleFunc("GET /grants/connect", s.requireAuth(s.getGrantConnect))
-	mux.HandleFunc("POST /grants/start", s.requireAuth(s.postGrantStart))
+	mux.HandleFunc("GET /grants/start", s.requireAuth(s.getGrantStart))
 	mux.HandleFunc("GET /grants/callback", s.requireAuth(s.getGrantCallback))
 	mux.HandleFunc("POST /grants/connect", s.requireAuth(s.postGrantConnect))
 	mux.HandleFunc("POST /grants/disconnect", s.requireAuth(s.postGrantDisconnect))
