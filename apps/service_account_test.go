@@ -214,10 +214,3 @@ func TestSuspendedLogsUnsuspendHintBacksOffAndSelfHeals(t *testing.T) {
 	f.setAuth(200, "")
 	waitFor(t, sa.Ready, time.Second, "self-heal to Ready after unsuspend")
 }
-
-func TestServiceAccountEmail(t *testing.T) {
-	sa := NewServiceAccount(Deps{}, "@chat", "p")
-	if sa.email() != "chat@juice-ui.local" {
-		t.Errorf("email = %q", sa.email())
-	}
-}

@@ -14,19 +14,16 @@ import (
 // (2026-07-06). These never touch the kernel DB directly; the BFF is an ordinary
 // HTTP client of the control surface.
 
-// AdminUser is a user row from the control surface. The kernel signals the
-// suspended (and denied) state by the PRESENCE of suspended_at/denied_at: it omits
-// the field when the state is unset and includes the timestamp when set. (An older
-// kernel sent the RFC3339 zero value instead of a real time; the presence check
-// below handles both.)
+// AdminUser is a user row from the control surface. The kernel signals suspension
+// by the PRESENCE of suspended_at: it omits the field when active and includes the
+// timestamp when suspended. Email was retired in v0.9 in favour of Description.
 type AdminUser struct {
 	ID          string `json:"id"`
 	Handle      string `json:"handle"`
-	Email       string `json:"email"`
+	Description string `json:"description"`
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
 	SuspendedAt string `json:"suspended_at,omitempty"`
-	DeniedAt    string `json:"denied_at,omitempty"` // same presence semantics; add Denied() if ever surfaced
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -48,26 +45,27 @@ type Adjustment struct {
 	TargetHandle   string `json:"target_handle"`
 }
 
-// Peer is a friend (proxy user) row from the control surface. Available/Locked are
-// the peer's own wallet here; PeerCredit and LastSeen are the §13 friend-sync cache
-// — our prepaid credit held on the peer, and when we last heard from it.
+// Peer is a subscribed/known peer (proxy user) row from the control surface.
+// Available/Locked are the peer's own wallet here; PeerCredit and LastSeen are the
+// §13 peer-sync cache — our prepaid credit held on the peer, and when we last heard
+// from it. SuspendedAt is present only on a suspended row under ?all=1 (v0.9 unified
+// moderation; denied_at was retired).
 type Peer struct {
-	Handle     string `json:"handle"`
-	PublicKey  string `json:"public_key"`
-	Available  int64  `json:"available"`
-	Locked     int64  `json:"locked"`
-	PeerCredit int64  `json:"peer_credit"`         // our spendable credit on the peer
-	LastSeen   string `json:"last_seen"`           // RFC3339; "" / null when never seen
-	DeniedAt   string `json:"denied_at,omitempty"` // set only on a denied (unfriended) row under ?all=1
+	Handle      string `json:"handle"`
+	PublicKey   string `json:"public_key"`
+	Available   int64  `json:"available"`
+	Locked      int64  `json:"locked"`
+	PeerCredit  int64  `json:"peer_credit"`            // our spendable credit on the peer
+	LastSeen    string `json:"last_seen"`              // RFC3339; "" / null when never seen
+	SuspendedAt string `json:"suspended_at,omitempty"` // set only on a suspended row under ?all=1
 }
 
-// Denied reports whether this peer is deny-listed (unfriended). Detection is by
-// presence: the kernel returns denied_at only on a denied row (verified live
-// 2026-07-13 via a two-kernel friend→unfriend), so a non-empty string means
-// denied — matching AdminUser's presence semantics.
-func (p Peer) Denied() bool { return p.DeniedAt != "" }
+// Suspended reports whether this peer is frozen (its inbound calls are refused).
+// Detection is by presence: the kernel returns suspended_at only on a suspended row
+// (verified live 2026-07-19), so a non-empty string means suspended.
+func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
 
-// Peers is the /control/peers response: friends plus (with gossip) the
+// Peers is the /control/peers response: known peers plus (with gossip) the
 // known-network roster.
 type Peers struct {
 	Peers  []Peer             `json:"peers"`
@@ -113,17 +111,19 @@ type Reachability struct {
 	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }
 
-// Inspection is GET /control/peers/inspect?key= — a remote kernel's identity,
-// public actions, transacted friends, and reachability. Online and Source are
-// top-level fields of the response (verified live 2026-07-13): Online is true only
-// when the live probe reached the peer; Source is "live" | "local" (last-known,
-// online=false) | "none". An earlier version decoded these from inside
-// Reachability, where they never appear — so inspect always showed "offline".
+// Inspection is GET /control/peers/inspect?key= — a remote kernel's identity, its
+// About (the peer's @sys description), public actions (each with a Description),
+// transacted peers, and reachability. Online and Source are top-level fields
+// (verified live): Online is true only when the live probe reached the peer; Source
+// is "live" | "local" (last-known, online=false) | "none". The transacted-peers
+// field is still wire-named "friends" (verified live 2026-07-19) despite the v0.9
+// "peers" terminology.
 type Inspection struct {
 	Handle       string       `json:"handle"`
 	PublicKey    string       `json:"public_key"`
+	About        string       `json:"about"`
 	Actions      []ActionStat `json:"actions"`
-	Friends      []Peer       `json:"friends"`
+	Peers        []Peer       `json:"friends"`
 	Online       bool         `json:"online"`
 	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
 	Reachability Reachability `json:"reachability"`
@@ -209,8 +209,8 @@ func (c *Client) adjust(ctx context.Context, token, path, handle string, amount 
 	return a, err
 }
 
-// AdminListPeers returns friends, optionally with the gossip roster (gossip) and
-// optionally including denied/unfriended peers (all) — GET
+// AdminListPeers returns known peers, optionally with the gossip roster (gossip)
+// and optionally including suspended peers (all) — GET
 // /control/peers[?gossip=1][&all=1]. The kernel requires the literal value "1"
 // ("true" is read as false), so each flag is emitted as "1" or omitted.
 func (c *Client) AdminListPeers(ctx context.Context, token string, gossip, all bool) (Peers, error) {
@@ -237,14 +237,29 @@ func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, err
 	return id, err
 }
 
-// AdminFriend befriends a kernel by public key (POST /control/peers/friend).
-func (c *Client) AdminFriend(ctx context.Context, token, key string) error {
-	return c.do(ctx, http.MethodPost, "/control/peers/friend", token, map[string]string{"key": key}, nil)
+// AdminSubscribe subscribes to a kernel by public key (POST /control/peers/subscribe),
+// importing its active public actions as owner-qualified proxies.
+func (c *Client) AdminSubscribe(ctx context.Context, token, key string) error {
+	return c.do(ctx, http.MethodPost, "/control/peers/subscribe", token, map[string]string{"key": key}, nil)
 }
 
-// AdminUnfriend ends a peer relation by handle or key (POST /control/peers/unfriend).
-func (c *Client) AdminUnfriend(ctx context.Context, token, handleOrKey string) error {
-	return c.do(ctx, http.MethodPost, "/control/peers/unfriend", token, map[string]string{"handle": handleOrKey}, nil)
+// AdminUnsubscribe stops consuming a peer by handle or key (POST
+// /control/peers/unsubscribe), deactivating its imported proxies here.
+func (c *Client) AdminUnsubscribe(ctx context.Context, token, handleOrKey string) error {
+	return c.do(ctx, http.MethodPost, "/control/peers/unsubscribe", token, map[string]string{"handle": handleOrKey}, nil)
+}
+
+// AdminSuspendPeer freezes a peer's inbound calls (POST /control/users/{key}/suspend).
+// The moderation route is unified with users (v0.9): it resolves a raw base64url
+// public key as well as a handle, so the key is passed unnormalized (a leading @
+// would make the kernel read it as a handle).
+func (c *Client) AdminSuspendPeer(ctx context.Context, token, key string) error {
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(key)+"/suspend", token, nil, nil)
+}
+
+// AdminUnsuspendPeer lifts a peer suspension (POST /control/users/{key}/unsuspend).
+func (c *Client) AdminUnsuspendPeer(ctx context.Context, token, key string) error {
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(key)+"/unsuspend", token, nil, nil)
 }
 
 // AdminInspect inspects a remote kernel by key (GET /control/peers/inspect?key=).

@@ -41,11 +41,12 @@ type Tokens struct {
 }
 
 // User is the self profile (GET /v1/me) and the create-user response. Money is
-// integer credits. Verified live: id, handle, email, available, locked.
+// integer credits. The kernel retired email in v0.9; Description is the free-text
+// "about" an account may set (empty until set).
 type User struct {
 	ID          string       `json:"id"`
 	Handle      string       `json:"handle"`
-	Email       string       `json:"email"`
+	Description string       `json:"description"`
 	Available   int64        `json:"available"`
 	Locked      int64        `json:"locked"`
 	Connectors  []Connector  `json:"connectors"`  // directory-grouped consent tree (§8)
@@ -478,6 +479,30 @@ func (c *Client) Logout(ctx context.Context, refreshToken string) error {
 	return c.do(ctx, http.MethodPost, "/v1/auth/logout", "", map[string]string{"refresh_token": refreshToken}, nil)
 }
 
+// RecoverStart begins seed-phrase recovery (§12): it returns a single-use,
+// TTL-bound nonce the caller signs with the account's recovery key. Unauthenticated
+// (a locked-out user has no token). ErrInvalidState if no recovery key is enrolled.
+func (c *Client) RecoverStart(ctx context.Context, handle string) (string, error) {
+	var resp struct {
+		Nonce string `json:"nonce"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/auth/recover/start", "", map[string]string{"handle": normalizeHandle(handle)}, &resp)
+	return resp.Nonce, err
+}
+
+// RecoverComplete resets the password by proving possession of the recovery key:
+// signature is base64url(Ed25519-sign over JCS({"recovery_challenge": nonce})).
+// Unauthenticated; a bad signature or expired nonce is ErrUnauthorized.
+func (c *Client) RecoverComplete(ctx context.Context, handle, nonce, signature, password string) error {
+	body := map[string]string{
+		"handle":    normalizeHandle(handle),
+		"nonce":     nonce,
+		"signature": signature,
+		"password":  password,
+	}
+	return c.do(ctx, http.MethodPost, "/v1/auth/recover/complete", "", body, nil)
+}
+
 // ---- grants and connections (delegated consent, §8) ----
 
 // GrantPlan is the consent plan for a selector (GET /v1/grants/plan): the caller's
@@ -587,8 +612,14 @@ func (c *Client) DeleteConnection(ctx context.Context, token, account string) er
 
 // ---- users ----
 
-func (c *Client) CreateUser(ctx context.Context, handle, email, password string) (User, error) {
-	body := map[string]string{"handle": normalizeHandle(handle), "email": email, "password": password}
+// CreateUser registers a password account. recoveryPubKey is the base64url
+// Ed25519 recovery key derived client-side from the seed phrase (§12); pass ""
+// to enroll no recovery key (headless service accounts).
+func (c *Client) CreateUser(ctx context.Context, handle, password, recoveryPubKey string) (User, error) {
+	body := map[string]string{"handle": normalizeHandle(handle), "password": password}
+	if recoveryPubKey != "" {
+		body["recovery_public_key"] = recoveryPubKey
+	}
 	var u User
 	err := c.do(ctx, http.MethodPost, "/v1/users", "", body, &u)
 	return u, err
@@ -600,10 +631,12 @@ func (c *Client) Me(ctx context.Context, token string) (User, error) {
 	return u, err
 }
 
+// UpdateMeInput is the PUT /v1/me body. Description is a pointer so a caller can
+// send "" to clear the about text (distinct from "leave unchanged" = nil).
 type UpdateMeInput struct {
-	Email           string `json:"email,omitempty"`
-	CurrentPassword string `json:"current_password,omitempty"`
-	Password        string `json:"password,omitempty"`
+	Description     *string `json:"description,omitempty"`
+	CurrentPassword string  `json:"current_password,omitempty"`
+	Password        string  `json:"password,omitempty"`
 }
 
 func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (User, error) {

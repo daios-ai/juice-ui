@@ -11,7 +11,7 @@
   <span class="avatar lg" aria-hidden="true">{{initial $d.User.Handle}}</span>
   <div class="stretch">
     <div class="mono"><b>{{$d.User.Handle}}</b></div>
-    <div class="muted small mono">{{$d.User.Email}}</div>
+    {{if $d.User.Description}}<div class="muted small">{{$d.User.Description}}</div>{{end}}
   </div>
   <div class="balance">
     <div class="amount money">{{money $d.User.Available}} {{gem}}</div>
@@ -33,7 +33,7 @@
 </nav>
 
 <div class="you-list">
-  <a class="you-row" href="/you?form=user-update" data-modal="form-user-update">account<span class="detail">email · password</span></a>
+  <a class="you-row" href="/you?form=user-update" data-modal="form-user-update">account<span class="detail">about · password</span></a>
   <div class="you-row"><span>theme</span>
     <span class="detail">
       <form method="post" action="/theme" data-theme-form>

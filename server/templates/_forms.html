@@ -197,8 +197,8 @@
     <form class="stack" method="post" action="/you" data-confirm-password>
       {{.CSRFField}}
       <div class="field">
-        <label for="u-email">Email</label>
-        <input id="u-email" name="email" type="email" value="{{.Data.User.Email}}">
+        <label for="u-desc">About</label>
+        <input id="u-desc" name="description" type="text" value="{{.Data.User.Description}}" placeholder="a short description (optional)" autocomplete="off">
       </div>
       <hr class="card-sep">
       <p class="help muted flush">Leave blank to keep your current password.</p>

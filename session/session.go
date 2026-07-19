@@ -14,9 +14,10 @@ const (
 	keyAccess      = "access_token"
 	keyRefresh     = "refresh_token"
 	keyVerifier    = "pkce_verifier"
-	keyHandle      = "handle"       // the signed-in user's handle, for display only
-	keyGrantState  = "grant_state"  // opaque state for an in-flight OAuth grant consent
-	keyGrantAction = "grant_action" // the action the in-flight grant is for (for the return redirect)
+	keyHandle      = "handle"          // the signed-in user's handle, for display only
+	keyGrantState  = "grant_state"     // opaque state for an in-flight OAuth grant consent
+	keyGrantAction = "grant_action"    // the action the in-flight grant is for (for the return redirect)
+	keyRecovery    = "recovery_phrase" // one-shot seed phrase to show once after signup
 )
 
 // ErrNoSession is returned by Do when no authenticated session is present.
@@ -127,6 +128,32 @@ func (m *Manager) TakeGrantState(ctx context.Context) (state, action string, ok 
 	m.sm.Remove(ctx, keyGrantState)
 	m.sm.Remove(ctx, keyGrantAction)
 	return state, action, true
+}
+
+// PutRecoveryPhrase stashes the freshly-generated seed phrase server-side, keyed
+// by the session cookie, so it can be shown exactly once on the post-signup page
+// and never re-rendered. It never leaves the server except on that one render.
+func (m *Manager) PutRecoveryPhrase(ctx context.Context, phrase string) {
+	m.sm.Put(ctx, keyRecovery, phrase)
+}
+
+// PeekRecoveryPhrase returns the stashed phrase without clearing it, so the
+// standalone phrase page survives reloads until the user acknowledges it. ok is
+// false when none is pending.
+func (m *Manager) PeekRecoveryPhrase(ctx context.Context) (phrase string, ok bool) {
+	phrase = m.sm.GetString(ctx, keyRecovery)
+	return phrase, phrase != ""
+}
+
+// TakeRecoveryPhrase returns and clears the stashed seed phrase (one-shot). ok is
+// false when none is pending, so the phrase page redirects away on a reload.
+func (m *Manager) TakeRecoveryPhrase(ctx context.Context) (phrase string, ok bool) {
+	phrase = m.sm.GetString(ctx, keyRecovery)
+	if phrase == "" {
+		return "", false
+	}
+	m.sm.Remove(ctx, keyRecovery)
+	return phrase, true
 }
 
 // Do runs fn with the current access token. If fn returns ErrUnauthenticated,

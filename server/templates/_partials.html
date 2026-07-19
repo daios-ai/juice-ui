@@ -11,7 +11,7 @@
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
-    <a class="card-title ref mono" href="/actions/{{.Action.ID}}" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</a>
+    <span class="card-title" title="{{.Action.Ref}}">{{template "_reflink" (reflink .Action.Ref .Action.ID)}}</span>
     <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}} {{gem}}{{else}}<span class="free">free</span>{{end}}</span>
   </div>
   <p class="card-desc">
@@ -117,7 +117,7 @@
 {{$tx := .Tx}}
 <tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
   <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}…</a></td>
-  <td>{{if .Ref}}<a href="/actions/{{$tx.ActionID}}">{{template "_ref" .Ref}}</a>{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
+  <td>{{if .Ref}}{{template "_reflink" (reflink .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
   <td class="muted small">{{if eq .Viewer $tx.TargetHandle}}seller{{else if eq .Viewer $tx.OwnerHandle}}buyer{{else if eq .Viewer $tx.CallerHandle}}caller{{else}}—{{end}}</td>
   <td class="money">{{txAmount $tx .Viewer}}</td>
   <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
@@ -126,8 +126,15 @@
 {{end}}
 
 {{/* _ref renders @owner/name with the owner segment weight-emphasized and
-     confusable-distinct (mono), never styled as chrome. */}}
-{{define "_ref"}}<span class="ref mono"><span class="owner">{{refOwner .}}</span>/{{refName .}}</span>{{end}}
+     confusable-distinct (mono). The owner links to its owner page (a handle's
+     public actions), like a channel; the name is plain here. Use _reflink where
+     the name should also link to the action. */}}
+{{define "_ref"}}<span class="ref mono"><span class="owner"><a href="/users/{{refOwner .}}">{{refOwner .}}</a></span>/{{refName .}}</span>{{end}}
+
+{{/* _reflink is _ref for a marketplace action link: owner → owner page, name →
+     the action. Input: refLinkArgs {Ref, ID}. Avoids nesting the owner <a> inside
+     an action <a> at sites that would otherwise wrap the whole ref in one link. */}}
+{{define "_reflink"}}<span class="ref mono"><span class="owner"><a href="/users/{{refOwner .Ref}}">{{refOwner .Ref}}</a></span>/<a href="/actions/{{.ID}}">{{refName .Ref}}</a></span>{{end}}
 
 {{/* _call_form — THE run/complete form. Running an action and completing a step
      are the same act, so both render here: locked args (a step's pre-bound input)
@@ -182,7 +189,8 @@
 {{end}}
 
 {{/* _action_stats renders a compact table of a federation kernel's actions
-     (name/price/uses/rating). Input: []client.ActionStat. */}}
+     (name + description/price/uses/rating). Input: []client.ActionStat. The refs
+     are remote-owned, so they stay plain (no local owner link). */}}
 {{define "_action_stats"}}
 <div class="table-scroll">
 <table class="stats-table">
@@ -190,7 +198,7 @@
   <tbody>
   {{range .}}
   <tr>
-    <td>{{template "_ref" .Name}}</td>
+    <td><span class="ref mono"><span class="owner">{{refOwner .Name}}</span>/{{refName .Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
     <td class="money">{{money .Price}}</td>
     <td class="money">{{.Uses}}</td>
     <td class="money">{{if gt .Uses 0}}{{ratingPct .Rating .Uses}}%{{else}}—{{end}}</td>
@@ -323,33 +331,38 @@
 {{end}}
 {{end}}
 
-{{/* _peers_friends — the friended-peers table, extracted so an htmx poll on the
+{{/* _peers_subscribed — the known-peers table, extracted so an htmx poll on the
      peers page can refresh last_seen/peer_credit without a reload. Root is the
      adminPeersView (so $.CSRFField resolves whether embedded or served standalone
-     via render.Fragment). The Known-network roster is deliberately NOT polled —
-     swapping it would reset its <details> state. */}}
-{{define "_peers_friends"}}
+     via render.Fragment). Each row carries the two orthogonal levers: Unsubscribe
+     (stop consuming the peer's actions) and Suspend (freeze the peer's inbound
+     calls). The Known-network roster is deliberately NOT polled — swapping it
+     would reset its <details> state. */}}
+{{define "_peers_subscribed"}}
 {{if .Peers}}
 <div class="net-grid">
   {{range .Peers}}
-  <div class="kernel-card{{if .Denied}} inactive{{end}}">
+  <div class="kernel-card{{if .Suspended}} inactive{{end}}">
     <span class="media wide">{{cardArt .PublicKey .Handle "kernel"}}</span>
     <div class="kernel-body">
       <div class="row">
         <b class="ref mono grow"><span class="owner">{{.Handle}}</span></b>
-        {{if .Denied}}<span class="pill inactive">denied</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
+        {{if .Suspended}}<span class="pill status-danger">suspended</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
       <div class="small muted">their credit here <span class="mono">{{money (sum .Available .Locked)}} {{gem}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}} {{gem}}</span></div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{if .Denied}}
-        <form method="post" action="/admin/peers/friend" data-confirm="Re-friend {{.Handle}}? This clears the denial and restarts the handshake; their actions import again.">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Re-friend</button>
+        <form method="post" action="/admin/peers/unsubscribe" data-confirm="Unsubscribe {{.Handle}}? Their proxies deactivate here; balance and history are preserved.">
+          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet" type="submit">Unsubscribe</button>
+        </form>
+        {{if .Suspended}}
+        <form method="post" action="/admin/peers/unsuspend">
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Unsuspend</button>
         </form>
         {{else}}
-        <form method="post" action="/admin/peers/unfriend" data-confirm="Unfriend {{.Handle}}? Their proxies deactivate; balance and history are preserved.">
-          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet danger" type="submit">Unfriend</button>
+        <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{.Handle}}? Their inbound calls are refused until you unsuspend.">
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet danger" type="submit">Suspend</button>
         </form>
         {{end}}
       </div>
@@ -357,7 +370,7 @@
   </div>
   {{end}}
 </div>
-{{else}}<p class="muted">No friends yet. Befriend a kernel by its public key, or from the known network below.</p>{{end}}
+{{else}}<p class="muted">No subscriptions yet. Subscribe to a kernel by its public key, or from the known network below.</p>{{end}}
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect

@@ -13,12 +13,12 @@
 {{if $d.Users}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>Handle</th><th>Email</th><th class="money">Available</th><th class="money">Parked</th><th>State</th><th></th></tr></thead>
+  <thead><tr><th>Handle</th><th>About</th><th class="money">Available</th><th class="money">Parked</th><th>State</th><th></th></tr></thead>
   <tbody>
   {{range $d.Users}}
   <tr>
     <td class="mono"><a href="/admin/users/{{.Handle}}">{{.Handle}}</a></td>
-    <td class="mono muted">{{.Email}}</td>
+    <td class="muted">{{.Description}}</td>
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
     <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>

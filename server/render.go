@@ -99,6 +99,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"ratingPct":    ratingPct,
 		"refOwner":     refOwner,
 		"refName":      refName,
+		"reflink":      func(ref, id string) refLinkArgs { return refLinkArgs{Ref: ref, ID: id} },
 		"shortTime":    shortTime,
 		"relTime":      relTime,
 		"txAmount":     txAmount,
@@ -293,6 +294,14 @@ func refOwner(ref string) string {
 		return ref[:i]
 	}
 	return ref
+}
+
+// refLinkArgs feeds the _reflink partial: the ref (for owner/name split) plus the
+// action id the name links to. Used where a ref appears as a marketplace action
+// link — the owner segment links to the owner page, the name to the action.
+type refLinkArgs struct {
+	Ref string
+	ID  string
 }
 
 // refName returns the name segment of "@owner/name" (everything after the first

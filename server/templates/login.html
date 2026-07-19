@@ -29,6 +29,7 @@
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
       <button class="btn" type="submit">Sign in</button>
+      <p class="small"><a href="/recover">Forgot password?</a></p>
     </form>
 
     <form class="auth-panel stack" method="post" action="/signup" data-panel="signup" data-confirm-password{{if ne $tab "signup"}} hidden{{end}}>
@@ -36,10 +37,6 @@
       <div class="field">
         <label for="c_handle">Handle</label>
         <input id="c_handle" name="handle" type="text" placeholder="@you" required>
-      </div>
-      <div class="field">
-        <label for="c_email">Email</label>
-        <input id="c_email" name="email" type="email" required>
       </div>
       <div class="field">
         <label for="c_password">Password</label>

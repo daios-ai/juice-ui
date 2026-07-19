@@ -20,30 +20,30 @@
   </div>
 </div>
 
-<h2>Friends</h2>
+<h2>Subscriptions</h2>
 <div class="row control-row">
-  <a class="btn-quiet" href="/admin/peers?form=admin-friend" data-modal="form-admin-friend">+ friend a kernel</a>
-  {{if $d.ShowDenied}}<a class="btn-quiet" href="/admin/peers">Hide denied</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show denied</a>{{end}}
+  <a class="btn-quiet" href="/admin/peers?form=admin-subscribe" data-modal="form-admin-subscribe">+ subscribe to a kernel</a>
+  {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
 </div>
-<div id="peers-friends" hx-get="/admin/peers{{if $d.ShowDenied}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
-{{template "_peers_friends" $d}}
+<div id="peers-subscribed" hx-get="/admin/peers{{if $d.ShowSuspended}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
+{{template "_peers_subscribed" $d}}
 </div>
 
 <h2>Known network</h2>
-<p class="subtitle">Discovered through gossip — not yet friends.</p>
+<p class="subtitle">Discovered through gossip — not yet subscribed.</p>
 {{if $d.Roster}}
 <div class="card-list">
   {{range $d.Roster}}
-  {{$isFriend := index $d.FriendKeys .PublicKey}}
+  {{$isSub := index $d.SubscribedKeys .PublicKey}}
   <details class="card roster-kernel">
     <summary>
       <span class="mono"><b>{{.Handle}}</b> <span class="hash muted">{{truncate 16 .PublicKey}}…</span></span>
-      {{if $isFriend}}<span class="pill status-credited">friend</span>{{end}}
+      {{if $isSub}}<span class="pill status-credited">subscribed</span>{{end}}
       <span class="cluster roster-actions">
         <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{if not $isFriend}}
-        <form method="post" action="/admin/peers/friend" data-confirm="Befriend {{.Handle}}? Their active public actions import immediately.">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn small" type="submit">Befriend</button>
+        {{if not $isSub}}
+        <form method="post" action="/admin/peers/subscribe" data-confirm="Subscribe to {{.Handle}}? Their active public actions import immediately.">
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn small" type="submit">Subscribe</button>
         </form>
         {{end}}
       </span>
@@ -69,18 +69,18 @@
 <p class="muted">No kernels discovered yet.</p>
 {{end}}
 
-<dialog id="form-admin-friend" class="modal-form"{{if eq $d.OpenForm "admin-friend"}} open{{end}} aria-label="Friend a kernel">
-  <div class="modal-head"><h2>Friend a kernel</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-admin-subscribe" class="modal-form"{{if eq $d.OpenForm "admin-subscribe"}} open{{end}} aria-label="Subscribe to a kernel">
+  <div class="modal-head"><h2>Subscribe to a kernel</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/admin/peers/friend">
+    <form class="stack" method="post" action="/admin/peers/subscribe">
       {{.CSRFField}}
       <div class="field">
-        <label for="fr-key">Peer public key</label>
-        <p class="help">The peer's base64url Ed25519 key — its global name.</p>
-        <input id="fr-key" name="key" type="text" required>
+        <label for="sub-key">Peer public key</label>
+        <p class="help">The peer's base64url Ed25519 key — its global name. Calls stay rejected until the peer holds credit here.</p>
+        <input id="sub-key" name="key" type="text" required>
       </div>
       <div class="cluster">
-        <button class="btn" type="submit">Send friend request</button>
+        <button class="btn" type="submit">Subscribe</button>
         <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
       </div>
     </form>

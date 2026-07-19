@@ -321,3 +321,21 @@ for (const dlg of document.querySelectorAll('dialog.modal-form[open]')) {
     }
   }
 }
+
+// Copy-to-clipboard: a [data-copy="#sel"] button copies the target's text — for a
+// list (the recovery phrase) it joins the items in order with spaces, so the
+// clipboard holds the phrase exactly as it must be re-entered.
+document.body.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-copy]');
+  if (!btn || !navigator.clipboard) return;
+  const el = document.querySelector(btn.getAttribute('data-copy'));
+  if (!el) return;
+  const text = el.children.length
+    ? Array.from(el.children).map((c) => c.textContent.trim()).join(' ')
+    : el.textContent.trim();
+  navigator.clipboard.writeText(text).then(() => {
+    const label = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = label; }, 1500);
+  });
+});

@@ -907,19 +907,19 @@ func TestCallOutcomePeerBranches(t *testing.T) {
 	}
 }
 
-// TestPeersFriendsPollerAndDeniedToggle checks items 1 & 6: the Friends table is an
-// htmx-polled fragment, and a Show/Hide-denied toggle drives the ?all=1 view.
-func TestPeersFriendsPollerAndDeniedToggle(t *testing.T) {
+// TestPeersPollerAndSuspendedToggle checks the peers table is an htmx-polled
+// fragment, and a Show/Hide-suspended toggle drives the ?all=1 view.
+func TestPeersPollerAndSuspendedToggle(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
 	}
-	renderPeers := func(showDenied bool) string {
+	renderPeers := func(showSuspended bool) string {
 		rec := httptest.NewRecorder()
 		p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
-			Identity:   client.Identity{Handle: "@me", PublicKey: "PK"},
-			Peers:      []client.Peer{{Handle: "@peerb", PublicKey: "KEY", PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
-			ShowDenied: showDenied,
+			Identity:      client.Identity{Handle: "@me", PublicKey: "PK"},
+			Peers:         []client.Peer{{Handle: "@peerb", PublicKey: "KEY", PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+			ShowSuspended: showSuspended,
 		}}
 		if err := r.Render(rec, 200, "admin_peers", p); err != nil {
 			t.Fatalf("render: %v", err)
@@ -927,48 +927,50 @@ func TestPeersFriendsPollerAndDeniedToggle(t *testing.T) {
 		return rec.Body.String()
 	}
 	body := renderPeers(false)
-	if !strings.Contains(body, `id="peers-friends"`) || !strings.Contains(body, `hx-get="/admin/peers"`) || !strings.Contains(body, "every 15s") {
-		t.Errorf("Friends table must be an htmx-polled fragment: %s", body)
+	if !strings.Contains(body, `id="peers-subscribed"`) || !strings.Contains(body, `hx-get="/admin/peers"`) || !strings.Contains(body, "every 15s") {
+		t.Errorf("peers table must be an htmx-polled fragment: %s", body)
 	}
-	if !strings.Contains(body, `href="/admin/peers?all=1"`) || !strings.Contains(body, "Show denied") {
-		t.Errorf("peers page must offer a Show-denied toggle: %s", body)
+	if !strings.Contains(body, `href="/admin/peers?all=1"`) || !strings.Contains(body, "Show suspended") {
+		t.Errorf("peers page must offer a Show-suspended toggle: %s", body)
 	}
-	denied := renderPeers(true)
-	if !strings.Contains(denied, "Hide denied") || !strings.Contains(denied, `hx-get="/admin/peers?all=1"`) {
-		t.Errorf("denied view must show a Hide toggle and poll ?all=1: %s", denied)
+	suspended := renderPeers(true)
+	if !strings.Contains(suspended, "Hide suspended") || !strings.Contains(suspended, `hx-get="/admin/peers?all=1"`) {
+		t.Errorf("suspended view must show a Hide toggle and poll ?all=1: %s", suspended)
 	}
 }
 
-// TestPeersDeniedRowOffersRefriend checks item 6: a denied peer (denied_at set) is
-// marked and offers Re-friend (which clears the denial), while a live friend offers
-// Unfriend.
-func TestPeersDeniedRowOffersRefriend(t *testing.T) {
+// TestPeerRowOffersUnsubscribeAndSuspend: an active peer offers both Unsubscribe
+// (by handle) and Suspend (by key); a suspended peer is marked and offers Unsuspend.
+func TestPeerRowOffersUnsubscribeAndSuspend(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
-		Identity:   client.Identity{Handle: "@me", PublicKey: "PK"},
-		ShowDenied: true,
+		Identity:      client.Identity{Handle: "@me", PublicKey: "PK"},
+		ShowSuspended: true,
 		Peers: []client.Peer{
-			{Handle: "@friend", PublicKey: "KF"},
-			{Handle: "@gone", PublicKey: "KG", DeniedAt: "2026-07-13T17:50:24Z"},
+			{Handle: "@active", PublicKey: "KF"},
+			{Handle: "@frozen", PublicKey: "KG", SuspendedAt: "2026-07-19T17:50:24Z"},
 		},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, ">denied<") {
-		t.Errorf("denied peer must be marked: %s", body)
+	if !strings.Contains(body, ">suspended<") {
+		t.Errorf("suspended peer must be marked: %s", body)
 	}
-	// The denied row re-friends by key; the live friend row unfriends by handle.
-	if !strings.Contains(body, `action="/admin/peers/friend"`) || !strings.Contains(body, `value="KG"`) {
-		t.Errorf("denied row must offer Re-friend prefilled with its key: %s", body)
+	// Unsubscribe posts by handle; suspend/unsuspend post by key.
+	if !strings.Contains(body, `action="/admin/peers/unsubscribe"`) || !strings.Contains(body, `value="@active"`) {
+		t.Errorf("active row must offer Unsubscribe by handle: %s", body)
 	}
-	if !strings.Contains(body, `value="@friend"`) {
-		t.Errorf("live friend row must still offer Unfriend: %s", body)
+	if !strings.Contains(body, `action="/admin/peers/suspend"`) || !strings.Contains(body, `value="KF"`) {
+		t.Errorf("active row must offer Suspend by key: %s", body)
+	}
+	if !strings.Contains(body, `action="/admin/peers/unsuspend"`) || !strings.Contains(body, `value="KG"`) {
+		t.Errorf("suspended row must offer Unsuspend by key: %s", body)
 	}
 }
 
@@ -1003,7 +1005,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-		Key: "KDOWN", IsFriend: false,
+		Key: "KDOWN", IsSubscribed: false,
 		Inspection: client.Inspection{Handle: "", Online: false, Source: "none",
 			Reachability: client.Reachability{Path: "unreachable", Error: "fed: cannot resolve peer 12D3KooW…: routing: not found"}},
 	}}
@@ -1011,8 +1013,8 @@ func TestInspectOfflineStranger(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, ">Befriend<") {
-		t.Error("an unreachable kernel must not offer Befriend")
+	if strings.Contains(body, ">Subscribe<") {
+		t.Error("an unreachable kernel must not offer Subscribe")
 	}
 	// Standardized short reason; the raw fed error is only in a title tooltip.
 	if !strings.Contains(body, ">unreachable</span>") {

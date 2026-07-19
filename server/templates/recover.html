@@ -1,0 +1,32 @@
+{{define "content"}}
+<div class="auth">
+  <div class="card auth-card">
+    <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
+    <p class="subtitle auth-subtitle">Reset your password with your recovery phrase.</p>
+
+    {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
+
+    <form class="auth-panel stack" method="post" action="/recover" data-confirm-password>
+      {{.CSRFField}}
+      <div class="field">
+        <label for="r_handle">Handle</label>
+        <input id="r_handle" name="handle" type="text" placeholder="@you" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="r_phrase">Recovery phrase</label>
+        <textarea id="r_phrase" name="phrase" rows="3" placeholder="your twelve words, in order" autocomplete="off" required></textarea>
+      </div>
+      <div class="field">
+        <label for="r_password">New password</label>
+        <input id="r_password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div class="field">
+        <label for="r_password2">Confirm new password</label>
+        <input id="r_password2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button class="btn" type="submit">Reset password</button>
+      <p class="small"><a href="/login">Back to sign in</a></p>
+    </form>
+  </div>
+</div>
+{{end}}

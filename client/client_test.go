@@ -432,14 +432,15 @@ func TestReceiptVerification(t *testing.T) {
 func TestUpdateMeSendsFields(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","handle":"@alice","email":"new@test.com"}`
-	inp := UpdateMeInput{Email: "new@test.com"}
+	f.reply = `{"id":"U1","handle":"@alice","description":"hi there"}`
+	desc := "hi there"
+	inp := UpdateMeInput{Description: &desc}
 	u, err := f.client().UpdateMe(context.Background(), "tok", inp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Email != "new@test.com" {
-		t.Errorf("email = %q", u.Email)
+	if u.Description != "hi there" {
+		t.Errorf("description = %q", u.Description)
 	}
 	if f.lastMethod != http.MethodPut || f.lastPath != "/v1/me" {
 		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
@@ -448,11 +449,25 @@ func TestUpdateMeSendsFields(t *testing.T) {
 	if err := json.Unmarshal(f.lastBody, &sent); err != nil {
 		t.Fatal(err)
 	}
-	if sent.Email != "new@test.com" {
-		t.Errorf("sent email = %q", sent.Email)
+	if sent.Description == nil || *sent.Description != "hi there" {
+		t.Errorf("sent description = %v", sent.Description)
 	}
 	if sent.CurrentPassword != "" || sent.Password != "" {
 		t.Error("omitempty: password fields must be absent when empty")
+	}
+}
+
+// TestUpdateMeClearDescription: a pointer-to-"" must serialize (clear), while nil
+// omits — the distinction the kernel needs to tell "clear" from "leave alone".
+func TestUpdateMeClearDescription(t *testing.T) {
+	empty := ""
+	sent, _ := json.Marshal(UpdateMeInput{Description: &empty})
+	if !strings.Contains(string(sent), `"description":""`) {
+		t.Errorf("clear description must serialize an empty string: %s", sent)
+	}
+	omitted, _ := json.Marshal(UpdateMeInput{Password: "x"})
+	if strings.Contains(string(omitted), "description") {
+		t.Errorf("nil description must be omitted: %s", omitted)
 	}
 }
 

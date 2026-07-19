@@ -27,19 +27,19 @@ type adminUserView struct {
 }
 
 type adminPeersView struct {
-	Identity   client.Identity
-	Peers      []client.Peer
-	Roster     []client.DiscoveredKernel
-	FriendKeys map[string]bool // public keys we already friend (hide Befriend for these)
-	ShowDenied bool            // ?all=1 — friends list includes denied/unfriended peers
-	CSRFField  template.HTML   // carried on the view so the polled fragment's forms keep their token
-	OpenForm   string
+	Identity       client.Identity
+	Peers          []client.Peer
+	Roster         []client.DiscoveredKernel
+	SubscribedKeys map[string]bool // public keys we already subscribe to (hide Subscribe for these)
+	ShowSuspended  bool            // ?all=1 — peers list includes suspended peers
+	CSRFField      template.HTML   // carried on the view so the polled fragment's forms keep their token
+	OpenForm       string
 }
 
 type adminInspectView struct {
-	Key        string
-	Inspection client.Inspection
-	IsFriend   bool
+	Key          string
+	Inspection   client.Inspection
+	IsSubscribed bool
 }
 
 func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
@@ -137,39 +137,39 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	showDenied := r.URL.Query().Get("all") == "1"
-	view := adminPeersView{OpenForm: openForm(r, "admin"), ShowDenied: showDenied, CSRFField: csrf.TemplateField(r)}
+	showSuspended := r.URL.Query().Get("all") == "1"
+	view := adminPeersView{OpenForm: openForm(r, "admin"), ShowSuspended: showSuspended, CSRFField: csrf.TemplateField(r)}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
 			view.Identity = id
 		}
-		// gossip roster included; all=showDenied also lists denied/unfriended peers.
-		p, e := s.client.AdminListPeers(ctx, tok, true, showDenied)
+		// gossip roster included; all=showSuspended also lists suspended peers.
+		p, e := s.client.AdminListPeers(ctx, tok, true, showSuspended)
 		if e != nil {
 			return e
 		}
 		view.Peers = p.Peers
 		view.Roster = p.Roster
-		view.FriendKeys = make(map[string]bool, len(p.Peers))
+		view.SubscribedKeys = make(map[string]bool, len(p.Peers))
 		for _, peer := range p.Peers {
-			view.FriendKeys[peer.PublicKey] = true
+			view.SubscribedKeys[peer.PublicKey] = true
 		}
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
 		return
 	}
-	// An htmx poll refreshes just the Friends table (last_seen/peer_credit move);
+	// An htmx poll refreshes just the peers table (last_seen/peer_credit move);
 	// the roster is left static so its <details> state survives.
 	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_peers_friends", view)
+		_ = s.render.Fragment(w, http.StatusOK, "_peers_subscribed", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "admin_peers", "Peers", view)
 }
 
 // getAdminInspect renders a remote kernel's identity, reachability, public
-// actions, and transacted friends (admin inspect <key>).
+// actions (with descriptions), and transacted peers (admin inspect <key>).
 func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx := r.Context()
@@ -180,11 +180,11 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Inspection = insp
-		// A peer we already friend shows differently (no Befriend prompt).
+		// A peer we already subscribe to shows differently (no Subscribe prompt).
 		if peers, e := s.client.AdminListPeers(ctx, tok, false, false); e == nil {
 			for _, p := range peers.Peers {
 				if p.PublicKey == key {
-					view.IsFriend = true
+					view.IsSubscribed = true
 				}
 			}
 		}
@@ -203,24 +203,47 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "admin_inspect", "Inspect", view)
 }
 
-func (s *Server) postAdminFriend(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postAdminSubscribe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key := strings.TrimSpace(r.FormValue("key"))
 	if key == "" {
 		s.flashRedirect(w, r, "/admin/peers", "error", "A peer public key is required.")
 		return
 	}
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminFriend(ctx, tok, key) })
-	s.flashResult(w, r, err, "/admin/peers", "Friend request sent; actions imported.")
+	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminSubscribe(ctx, tok, key) })
+	s.flashResult(w, r, err, "/admin/peers", "Subscribed — actions imported.")
 }
 
-func (s *Server) postAdminUnfriend(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postAdminUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	peer := strings.TrimSpace(r.FormValue("peer"))
 	if peer == "" {
 		s.flashRedirect(w, r, "/admin/peers", "error", "A peer handle or key is required.")
 		return
 	}
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnfriend(ctx, tok, peer) })
-	s.flashResult(w, r, err, "/admin/peers", "Unfriended "+peer+". Proxies deactivated; history preserved.")
+	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnsubscribe(ctx, tok, peer) })
+	s.flashResult(w, r, err, "/admin/peers", "Unsubscribed "+peer+" — proxies deactivated; history preserved.")
+}
+
+// postAdminPeerSuspend freezes or unfreezes a peer by key. The path's last
+// segment selects the verb (suspend/unsuspend), mirroring postAdminUserOp.
+func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	key := strings.TrimSpace(r.FormValue("key"))
+	if key == "" {
+		s.flashRedirect(w, r, "/admin/peers", "error", "A peer public key is required.")
+		return
+	}
+	unsuspend := strings.HasSuffix(r.URL.Path, "/unsuspend")
+	err := s.sessions.Do(ctx, func(tok string) error {
+		if unsuspend {
+			return s.client.AdminUnsuspendPeer(ctx, tok, key)
+		}
+		return s.client.AdminSuspendPeer(ctx, tok, key)
+	})
+	verb := "suspended — inbound calls refused"
+	if unsuspend {
+		verb = "unsuspended"
+	}
+	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
 }

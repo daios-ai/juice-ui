@@ -5,7 +5,7 @@
 <div class="card">
   <dl class="locked-args">
     <dt>Handle</dt><dd class="mono">{{$u.Handle}}</dd>
-    <dt>Email</dt><dd class="mono">{{$u.Email}}</dd>
+    {{if $u.Description}}<dt>About</dt><dd>{{$u.Description}}</dd>{{end}}
     <dt>Available</dt><dd class="money">{{money $u.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $u.Locked}}</dd>
     <dt>State</dt><dd>{{if $u.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>

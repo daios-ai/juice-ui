@@ -130,18 +130,18 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if f.lastPath != "/control/peers" {
 		t.Errorf("peers bare path = %q", f.lastPath)
 	}
-	// ?all=1 surfaces denied peers, marked by presence of denied_at (verified live).
-	f.reply = `{"peers":[{"handle":"@peerb","public_key":"KEY","available":0,"locked":0,"denied_at":"2026-07-13T17:50:24Z"}]}`
+	// ?all=1 surfaces suspended peers, marked by presence of suspended_at (verified live).
+	f.reply = `{"peers":[{"handle":"@peerb","public_key":"KEY","available":0,"locked":0,"suspended_at":"2026-07-19T17:50:24Z"}]}`
 	dp, err := f.client().AdminListPeers(context.Background(), "tok", false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dp.Peers) != 1 || !dp.Peers[0].Denied() {
-		t.Errorf("denied peer must decode denied_at and report Denied(): %+v", dp.Peers)
+	if len(dp.Peers) != 1 || !dp.Peers[0].Suspended() {
+		t.Errorf("suspended peer must decode suspended_at and report Suspended(): %+v", dp.Peers)
 	}
-	// A friend row (no denied_at) is not denied.
-	if (Peer{Handle: "@x"}).Denied() {
-		t.Error("a peer without denied_at must not be Denied()")
+	// An active row (no suspended_at) is not suspended.
+	if (Peer{Handle: "@x"}).Suspended() {
+		t.Error("a peer without suspended_at must not be Suspended()")
 	}
 	f.reply = `{"handle":"@k","public_key":"PK","addrs":["/ip4/127.0.0.1/tcp/1"]}`
 	id, err := f.client().AdminIdentity(context.Background(), "tok")
@@ -153,20 +153,27 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	}
 }
 
-func TestAdminFriendUnfriendInspect(t *testing.T) {
+func TestAdminSubscribeUnsubscribeInspect(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	if err := f.client().AdminFriend(context.Background(), "tok", "PKEY"); err != nil {
+	if err := f.client().AdminSubscribe(context.Background(), "tok", "PKEY"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/peers/friend" || !strings.Contains(string(f.lastBody), `"key":"PKEY"`) {
-		t.Errorf("friend request = %s body=%s", f.lastPath, f.lastBody)
+	if f.lastPath != "/control/peers/subscribe" || !strings.Contains(string(f.lastBody), `"key":"PKEY"`) {
+		t.Errorf("subscribe request = %s body=%s", f.lastPath, f.lastBody)
 	}
-	if err := f.client().AdminUnfriend(context.Background(), "tok", "@peerb"); err != nil {
+	if err := f.client().AdminUnsubscribe(context.Background(), "tok", "@peerb"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/peers/unfriend" || !strings.Contains(string(f.lastBody), `"handle":"@peerb"`) {
-		t.Errorf("unfriend request = %s body=%s", f.lastPath, f.lastBody)
+	if f.lastPath != "/control/peers/unsubscribe" || !strings.Contains(string(f.lastBody), `"handle":"@peerb"`) {
+		t.Errorf("unsubscribe request = %s body=%s", f.lastPath, f.lastBody)
+	}
+	// Peer suspend uses the unified user route with the RAW key (no @ prefix).
+	if err := f.client().AdminSuspendPeer(context.Background(), "tok", "PKEY"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/control/users/PKEY/suspend" {
+		t.Errorf("peer suspend path = %q (key must not be @-normalized)", f.lastPath)
 	}
 	// online/source are TOP-LEVEL fields of the inspection; reachability holds the
 	// transport diagnostics (path/rtt/protocols/error). Decoding online from inside

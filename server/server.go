@@ -149,6 +149,12 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /login", s.getLogin)
 	mux.HandleFunc("POST /login", s.postLogin)
 	mux.HandleFunc("POST /signup", s.postSignup)
+	mux.HandleFunc("GET /recover", s.getRecover) // seed-phrase password reset (unauthenticated)
+	mux.HandleFunc("POST /recover", s.postRecover)
+	// Post-signup recovery phrase: standalone and unauthenticated (outside the app);
+	// the user acknowledges it here, then signs in to gain access.
+	mux.HandleFunc("GET /recovery-phrase", s.getRecoveryPhrase)
+	mux.HandleFunc("POST /recovery-phrase", s.postRecoveryPhrase)
 	mux.HandleFunc("POST /logout", s.postLogout)
 	mux.HandleFunc("POST /theme", s.postTheme)
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
@@ -211,6 +217,9 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /you", s.requireAuth(s.getUser))
 	mux.HandleFunc("POST /you", s.requireAuth(s.postUser))
 
+	// Owner page — a handle's public actions (like a channel).
+	mux.HandleFunc("GET /users/{handle}", s.requireAuth(s.getOwner))
+
 	// Grants (connect an upstream account to an action): the oauth_delegated
 	// browser flow (start/callback) and the delegated_bearer static-token path.
 	mux.HandleFunc("GET /grants/connect", s.requireAuth(s.getGrantConnect))
@@ -228,8 +237,10 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/withdraw", s.requireSuperuser(s.postAdminAdjust))
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	mux.HandleFunc("GET /admin/peers/{key}", s.requireSuperuser(s.getAdminInspect))
-	mux.HandleFunc("POST /admin/peers/friend", s.requireSuperuser(s.postAdminFriend))
-	mux.HandleFunc("POST /admin/peers/unfriend", s.requireSuperuser(s.postAdminUnfriend))
+	mux.HandleFunc("POST /admin/peers/subscribe", s.requireSuperuser(s.postAdminSubscribe))
+	mux.HandleFunc("POST /admin/peers/unsubscribe", s.requireSuperuser(s.postAdminUnsubscribe))
+	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
+	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only

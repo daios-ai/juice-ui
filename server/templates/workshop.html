@@ -58,7 +58,7 @@
   {{$a := .Action}}
   <tr class="rowable{{if not $a.Active}} dim{{end}}" tabindex="-1" data-href="/actions/{{$a.ID}}">
     <td>
-      <a href="/actions/{{$a.ID}}">{{template "_ref" $a.Ref}}</a>
+      {{template "_reflink" (reflink $a.Ref $a.ID)}}
       {{if $a.IsPrivate}}<span class="chip" title="Private"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $a.IsLocal}}<span class="chip tag" title="Local">local</span>{{end}}
       {{if .LastFailure}}<span class="chip tag" title="Last failure: {{.LastFailure}}">last failed</span>{{end}}
     </td>

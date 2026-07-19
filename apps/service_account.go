@@ -164,7 +164,9 @@ func (s *ServiceAccount) ensureAccount(ctx context.Context) error {
 	if done {
 		return nil
 	}
-	_, err := s.deps.Client.CreateUser(ctx, s.handle, s.email(), s.password)
+	// Service accounts are headless: no seed phrase, no recovery key (the password
+	// lives in the app config). Pass an empty recovery key.
+	_, err := s.deps.Client.CreateUser(ctx, s.handle, s.password, "")
 	if err == nil || !errors.Is(err, client.ErrRateLimited) {
 		s.mu.Lock()
 		s.ensured = true
@@ -208,11 +210,6 @@ func (s *ServiceAccount) Do(ctx context.Context, fn func(token string) error) er
 	tok = s.toks.AccessToken
 	s.mu.Unlock()
 	return fn(tok)
-}
-
-// email is the deterministic placeholder address used to create the account.
-func (s *ServiceAccount) email() string {
-	return strings.TrimPrefix(s.handle, "@") + "@juice-ui.local"
 }
 
 // logFailure logs a provisioning failure with an actionable, state-aware message,

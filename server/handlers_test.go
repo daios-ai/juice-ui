@@ -31,7 +31,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"status":"ok","handle":"@testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"alice@test.com","available":500,"locked":0,
+		w.Write([]byte(`{"id":"U1","handle":"@alice","description":"","available":500,"locked":0,
 		 "connectors":[{"directory":"@sys","connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}],
 		   "actions":[{"action":"@sys/gmail-send","scopes":["send"],"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}],
 		 "connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}`))
@@ -52,7 +52,13 @@ func authKernel() *httptest.Server {
 			w.Write([]byte(`{"error":"invalid current password"}`))
 			return
 		}
-		w.Write([]byte(`{"id":"U1","handle":"@alice","email":"new@test.com","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","handle":"@alice","description":"about me","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("POST /v1/auth/recover/start", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"nonce":"NONCE1","expires_in_seconds":600}`))
+	})
+	mux.HandleFunc("POST /v1/auth/recover/complete", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[]`))
@@ -297,13 +303,13 @@ func TestSignupDuplicateShowsFriendlyError(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 
-	// "dupe" email → kernel returns a raw UNIQUE-constraint 500.
+	// "dupe" handle → kernel returns a raw UNIQUE-constraint 500.
 	_, body := signupPost(t, srv, url.Values{
-		"handle": {"@x"}, "email": {"dupe@test.com"},
+		"handle":   {"@dupe"},
 		"password": {"password1"}, "confirm_password": {"password1"},
 	})
-	if !strings.Contains(body, "already registered") {
-		t.Error("duplicate signup must show a friendly 'already registered' message")
+	if !strings.Contains(body, "already taken") {
+		t.Error("duplicate signup must show a friendly 'already taken' message")
 	}
 	// Must NOT show the run-outcome text or leak the raw constraint string.
 	if strings.Contains(body, "fully refunded") || strings.Contains(body, "action failed to run") {
@@ -326,7 +332,7 @@ func TestSignupPasswordValidation(t *testing.T) {
 
 	// Mismatch → blocked with a clear message, never reaches the kernel.
 	_, mismatch := signupPost(t, srv, url.Values{
-		"handle": {"@x"}, "email": {"ok@test.com"},
+		"handle":   {"@x"},
 		"password": {"password1"}, "confirm_password": {"password2"},
 	})
 	if !strings.Contains(mismatch, "don&#39;t match") && !strings.Contains(mismatch, "don't match") {
@@ -334,11 +340,141 @@ func TestSignupPasswordValidation(t *testing.T) {
 	}
 	// Too short → min-length message.
 	_, short := signupPost(t, srv, url.Values{
-		"handle": {"@x"}, "email": {"ok@test.com"},
+		"handle":   {"@x"},
 		"password": {"short"}, "confirm_password": {"short"},
 	})
 	if !strings.Contains(short, "at least 8") {
 		t.Errorf("short password must be rejected: %s", firstError(short))
+	}
+}
+
+// TestSignupShowsRecoveryPhraseThenLogin: signup does NOT log the user in — it
+// sends them to a standalone phrase page (outside the app) that survives reloads,
+// gates entry behind an "I understand" acknowledgement, and only then routes them
+// to sign in.
+func TestSignupShowsRecoveryPhraseThenLogin(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	cl := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	post := func(path string, form url.Values) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	page := getBody(t, cl, srv.URL+"/login?tab=signup")
+	resp := post("/signup", url.Values{"handle": {"@newbie"}, "password": {"password1"}, "confirm_password": {"password1"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}})
+	resp.Body.Close()
+	if loc := resp.Header.Get("Location"); loc != "/recovery-phrase" {
+		t.Fatalf("signup must redirect to the phrase page (not into the app), got %q", loc)
+	}
+
+	// Standalone (no app chrome), 12 words, copy button, acknowledgement checkbox.
+	body := getBody(t, cl, srv.URL+"/recovery-phrase")
+	if strings.Count(body, "<li>") < 12 {
+		t.Errorf("phrase page must show the 12 words: %s", body)
+	}
+	if !strings.Contains(body, `data-copy="#phrase-words"`) || !strings.Contains(body, `name="understand"`) {
+		t.Error("phrase page must offer a copy button and an acknowledgement checkbox")
+	}
+	if strings.Contains(body, `class="sidebar"`) || strings.Contains(body, `class="topbar"`) {
+		t.Error("the phrase page must be standalone — no app chrome")
+	}
+	// It survives a reload (peek, not one-shot) so the user can re-copy.
+	if strings.Count(getBody(t, cl, srv.URL+"/recovery-phrase"), "<li>") < 12 {
+		t.Error("phrase page must survive a reload until acknowledged")
+	}
+
+	tok := csrfTokenFrom(t, body)
+	// Acknowledgement without the box goes back to the phrase page, not on.
+	r1 := post("/recovery-phrase", url.Values{"gorilla.csrf.Token": {tok}})
+	r1.Body.Close()
+	if r1.Header.Get("Location") != "/recovery-phrase" {
+		t.Errorf("acknowledgement without the checkbox must return to the phrase page, got %q", r1.Header.Get("Location"))
+	}
+	// With the box: cleared and routed to sign in — the point access is granted.
+	r2 := post("/recovery-phrase", url.Values{"understand": {"on"}, "gorilla.csrf.Token": {tok}})
+	r2.Body.Close()
+	if r2.StatusCode != http.StatusSeeOther || r2.Header.Get("Location") != "/login" {
+		t.Fatalf("acknowledgement must route to /login, got %d %q", r2.StatusCode, r2.Header.Get("Location"))
+	}
+	// Now cleared: revisiting the phrase page falls through to login.
+	r3, _ := cl.Get(srv.URL + "/recovery-phrase")
+	r3.Body.Close()
+	if r3.Header.Get("Location") != "/login" {
+		t.Errorf("after acknowledgement the phrase page must redirect to login, got %q", r3.Header.Get("Location"))
+	}
+}
+
+// TestRecoverResetsPassword drives the seed-phrase reset: the BFF signs the
+// kernel nonce with the phrase-derived key and completes the reset.
+func TestRecoverResetsPassword(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	cl := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	page := getBody(t, cl, srv.URL+"/recover")
+	if !strings.Contains(page, `name="phrase"`) {
+		t.Fatalf("recover page must have a phrase field: %s", page)
+	}
+	const phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	form := url.Values{
+		"handle": {"@alice"}, "phrase": {phrase},
+		"password": {"brandnewpw"}, "confirm_password": {"brandnewpw"},
+		"gorilla.csrf.Token": {csrfTokenFrom(t, page)},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/recover", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Fatalf("successful reset must redirect to /login, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+// TestOwnerPageListsPublicActions: /users/{handle} renders the handle and that
+// owner's public action cards.
+// TestOwnerPageShowsVisibleSetAcrossLevels: the owner page shows what the viewer
+// may see across private/local/public — your own page includes your private and
+// inactive actions (all=1 in your own scope), anyone else's shows only the
+// caller-visible active set — and the page never labels the list a single level.
+func TestOwnerPageShowsVisibleSetAcrossLevels(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL) // signed in as @alice
+
+	// Your own page: A3 is @alice's inactive/private draft — it must appear (and
+	// self-labels via the card's inactive/lock chips).
+	own := getBody(t, cl, srv.URL+"/users/@alice")
+	if !strings.Contains(own, "@alice") || !strings.Contains(own, `class="action-card`) {
+		t.Error("owner page must show the handle and action cards")
+	}
+	if !strings.Contains(own, "draft") {
+		t.Error("your own owner page must include your private/inactive actions")
+	}
+	if strings.Contains(own, "Public actions") {
+		t.Error("owner page must not label the whole list 'Public actions'")
+	}
+
+	// Someone else's page: caller-visible active set only (all=0) — no private/inactive.
+	if strings.Contains(getBody(t, cl, srv.URL+"/users/@bob"), "draft") {
+		t.Error("another owner's page must not surface inactive/private actions")
 	}
 }
 
@@ -427,10 +563,10 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 		t.Error("transaction id must link to the record")
 	}
 	if !strings.Contains(body, `href="/actions/owned"`) {
-		t.Error("action ref must link to the action")
+		t.Error("action name must link to the action")
 	}
-	if !strings.Contains(body, `class="owner">@alice`) {
-		t.Error("action ref must render via _ref with owner emphasized")
+	if !strings.Contains(body, `href="/users/@alice"`) {
+		t.Error("action owner must link to its owner page")
 	}
 	// The Amount column is right-aligned, so its header is too (class="money").
 	if !strings.Contains(body, `<th class="money">Amount</th>`) {
@@ -467,9 +603,9 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/transactions/T1")
-	// Action ref with owner emphasis
-	if !strings.Contains(body, `class="owner">@alice`) {
-		t.Error("transaction detail must show the action ref")
+	// Action ref: owner links to its owner page.
+	if !strings.Contains(body, `href="/users/@alice"`) {
+		t.Error("transaction detail must show the action ref with a linked owner")
 	}
 	// Buyer: current user (@alice) is the buyer party
 	if !strings.Contains(body, "@alice") {
@@ -811,14 +947,17 @@ func TestActionCardChips(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	// Browse renders active public actions as image cards. The ref is the title
-	// link (via _ref, owner emphasized); the kind chip is exceptional-only.
+	// Browse renders active public actions as image cards. The ref is the title:
+	// the owner links to its owner page, the name to the action (YouTube model).
 	browse := getBody(t, cl, srv.URL+"/browse")
-	if !strings.Contains(browse, `class="card-title ref mono" href="/actions/A1"`) {
-		t.Error("browse card must use the ref as the title link")
+	if !strings.Contains(browse, `class="card-title"`) {
+		t.Error("browse card must carry a card title")
 	}
-	if !strings.Contains(browse, `class="owner">@alice`) {
-		t.Error("card ref must render via _ref with owner emphasized")
+	if !strings.Contains(browse, `href="/actions/A1"`) {
+		t.Error("browse card name must link to the action")
+	}
+	if !strings.Contains(browse, `href="/users/@alice"`) {
+		t.Error("browse card owner must link to its owner page")
 	}
 	if strings.Contains(browse, `title="WebAssembly action">W`) {
 		t.Error("browse card must NOT show an always-on kind chip (exceptional-only)")
@@ -1413,16 +1552,13 @@ func TestSettingsPage(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/you")
-	if !strings.Contains(body, "alice@test.com") {
-		t.Error("settings page must show current email")
-	}
 	if !strings.Contains(body, "@alice") {
 		t.Error("settings page must show handle")
 	}
 	tok := csrfTokenFrom(t, body)
 
-	// Email update — success path.
-	form := url.Values{"gorilla.csrf.Token": {tok}, "email": {"new@test.com"}}
+	// Description update — success path.
+	form := url.Values{"gorilla.csrf.Token": {tok}, "description": {"a short about"}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/you", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := cl.Do(req)
@@ -1431,7 +1567,7 @@ func TestSettingsPage(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("settings email update: want 200, got %d", resp.StatusCode)
+		t.Fatalf("settings description update: want 200, got %d", resp.StatusCode)
 	}
 
 	// Password change — wrong current password shows inline error, no redirect.

@@ -139,17 +139,22 @@ func TestAdminPeersRendersGossipRoster(t *testing.T) {
 			t.Errorf("roster missing %q", want)
 		}
 	}
-	// A non-friend roster kernel offers Inspect + Befriend (prefilled with its key).
+	// A non-subscribed roster kernel offers Inspect + Subscribe (prefilled with its key).
 	if !strings.Contains(body, "/admin/peers/KEYC") {
 		t.Error("roster kernel must link to its inspect page")
 	}
 	if !strings.Contains(body, `value="KEYC"`) {
-		t.Error("non-friend roster kernel must offer Befriend prefilled with its key")
+		t.Error("non-subscribed roster kernel must offer Subscribe prefilled with its key")
 	}
-	// An already-friend roster kernel (@peerb/KEYB) must NOT offer Befriend, and
-	// should be marked as a friend instead.
-	if strings.Contains(body, `value="KEYB"`) {
-		t.Error("a roster kernel we already friend must not offer Befriend")
+	// An already-subscribed roster kernel (@peerb/KEYB) must NOT offer Subscribe in
+	// the known-network roster (its Subscribe-confirm must be absent), and should be
+	// marked as subscribed instead. (KEYB still appears in the subscriptions table's
+	// own unsubscribe/suspend forms, so we key off the roster's confirm text.)
+	if strings.Contains(body, "Subscribe to @peerb") {
+		t.Error("a roster kernel we already subscribe to must not offer Subscribe")
+	}
+	if !strings.Contains(body, ">subscribed</span>") {
+		t.Error("an already-subscribed roster kernel must be marked subscribed")
 	}
 	// Stats are collapsed into <details> (name-only by default).
 	if !strings.Contains(body, `class="card roster-kernel"`) || !strings.Contains(body, "<summary>") {
@@ -269,35 +274,35 @@ func TestAdminInspectRenders(t *testing.T) {
 	if strings.Contains(body, "Reachability</dt>") {
 		t.Error("the separate Reachability row should be folded into Status")
 	}
-	// A stranger (KEYC is not a friend) offers Befriend and carries no friend badge.
-	if !strings.Contains(body, `action="/admin/peers/friend"`) || !strings.Contains(body, ">Befriend<") {
-		t.Error("a non-friend inspect must offer Befriend")
+	// A stranger (KEYC is not subscribed) offers Subscribe and carries no subscribed badge.
+	if !strings.Contains(body, `action="/admin/peers/subscribe"`) || !strings.Contains(body, ">Subscribe<") {
+		t.Error("a non-subscribed inspect must offer Subscribe")
 	}
-	if strings.Contains(body, ">friend</span>") {
-		t.Error("a non-friend must not show the friend badge")
+	if strings.Contains(body, ">subscribed</span>") {
+		t.Error("a non-subscribed peer must not show the subscribed badge")
 	}
 }
 
-// TestAdminInspectFriendShowsBadgeAndUnfriend checks the relationship UI: an
-// already-friended kernel shows the friend badge in the header and offers the
-// symmetric Unfriend action (not Befriend).
-func TestAdminInspectFriendShowsBadgeAndUnfriend(t *testing.T) {
+// TestAdminInspectSubscribedShowsBadgeAndUnsubscribe checks the relationship UI: an
+// already-subscribed kernel shows the subscribed badge in the header and offers the
+// symmetric Unsubscribe action (not Subscribe).
+func TestAdminInspectSubscribedShowsBadgeAndUnsubscribe(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "@sys")
 
-	// KEYB is a friend in the fake /control/peers, so IsFriend is true.
+	// KEYB is a peer in the fake /control/peers, so IsSubscribed is true.
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
-	if !strings.Contains(body, ">friend</span>") {
-		t.Error("a friended kernel must show the friend badge (in the header)")
+	if !strings.Contains(body, ">subscribed</span>") {
+		t.Error("a subscribed kernel must show the subscribed badge (in the header)")
 	}
-	if !strings.Contains(body, `action="/admin/peers/unfriend"`) || !strings.Contains(body, ">Unfriend<") {
-		t.Error("a friended kernel must offer the symmetric Unfriend action")
+	if !strings.Contains(body, `action="/admin/peers/unsubscribe"`) || !strings.Contains(body, ">Unsubscribe<") {
+		t.Error("a subscribed kernel must offer the symmetric Unsubscribe action")
 	}
-	if strings.Contains(body, ">Befriend<") {
-		t.Error("a friend must not offer Befriend")
+	if strings.Contains(body, ">Subscribe<") {
+		t.Error("a subscribed peer must not offer Subscribe")
 	}
 }
 

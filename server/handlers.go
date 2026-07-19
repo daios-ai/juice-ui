@@ -238,7 +238,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
-	handle, email, password := r.FormValue("handle"), r.FormValue("email"), r.FormValue("password")
+	handle, password := r.FormValue("handle"), r.FormValue("password")
 	ctx := r.Context()
 	// Validate the password locally: confirmation match and minimum length (the
 	// kernel enforces neither). Stay on the create-account tab on error.
@@ -246,20 +246,180 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: msg})
 		return
 	}
-	if _, err := s.client.CreateUser(ctx, handle, email, password); err != nil {
+	// Generate the recovery phrase locally and enrol only its derived public key
+	// (§12): the phrase is the sole reset path, so a generation failure aborts
+	// signup rather than creating an unrecoverable account.
+	mnemonic, err := generateMnemonic()
+	if err != nil {
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: "Couldn't set up account recovery. Please try again."})
+		return
+	}
+	recPub, err := recoveryPubKey(mnemonic)
+	if err != nil {
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: "Couldn't set up account recovery. Please try again."})
+		return
+	}
+	if _, err := s.client.CreateUser(ctx, handle, password, recPub); err != nil {
 		// Stay on the create-account tab so the user sees the error in context.
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: signupErrorMessage(err)})
 		return
 	}
-	if err := s.doLogin(ctx, handle, password); err != nil {
-		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{
-			Tab:    "signin",
-			Notice: "Account created. Please sign in.",
-			Error:  loginErrorMessage(err),
-		})
+	// Do NOT sign in yet. The recovery phrase is shown on a standalone page
+	// (unauthenticated → no app chrome); the user gains access only by signing in
+	// after acknowledging it. Stash the phrase against the session cookie.
+	s.sessions.PutRecoveryPhrase(ctx, mnemonic)
+	http.Redirect(w, r, "/recovery-phrase", http.StatusSeeOther)
+}
+
+// recoveryPhraseView carries the freshly-minted seed phrase to its standalone page.
+type recoveryPhraseView struct {
+	Words []string
+}
+
+// getRecoveryPhrase shows the seed phrase on a standalone, unauthenticated page
+// after signup. It peeks (the phrase survives reloads) so the user can copy it;
+// a visit with none pending falls through to login.
+func (s *Server) getRecoveryPhrase(w http.ResponseWriter, r *http.Request) {
+	phrase, ok := s.sessions.PeekRecoveryPhrase(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/browse", http.StatusSeeOther)
+	s.renderPage(w, r, http.StatusOK, "recovery_phrase", "Your recovery phrase", recoveryPhraseView{Words: strings.Fields(phrase)})
+}
+
+// postRecoveryPhrase is the acknowledgement: the "I understand" box (natively
+// required) must be present. It clears the phrase and sends the user to sign in —
+// the point at which they gain access to the app.
+func (s *Server) postRecoveryPhrase(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if _, ok := s.sessions.PeekRecoveryPhrase(ctx); !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if r.FormValue("understand") == "" {
+		http.Redirect(w, r, "/recovery-phrase", http.StatusSeeOther) // peek re-shows it
+		return
+	}
+	s.sessions.TakeRecoveryPhrase(ctx) // clear
+	s.flashRedirect(w, r, "/login", "success", "Account created — sign in with your password.")
+}
+
+// recoverView drives the password-reset page.
+type recoverView struct {
+	Error, Notice string
+}
+
+func (s *Server) getRecover(w http.ResponseWriter, r *http.Request) {
+	s.renderPage(w, r, http.StatusOK, "recover", "Reset password", recoverView{})
+}
+
+// postRecover resets a password from the recovery phrase: it fetches a nonce,
+// signs it locally with the phrase-derived key, and completes the reset. The
+// phrase never reaches the kernel — only the signature does.
+func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	handle := strings.TrimSpace(r.FormValue("handle"))
+	phrase := strings.Join(strings.Fields(r.FormValue("phrase")), " ") // normalize spacing
+	newPw := r.FormValue("password")
+	fail := func(msg string) {
+		s.renderPage(w, r, http.StatusOK, "recover", "Reset password", recoverView{Error: msg})
+	}
+	if handle == "" || phrase == "" {
+		fail("Enter your handle and recovery phrase.")
+		return
+	}
+	if msg := validateNewPassword(newPw, r.FormValue("confirm_password")); msg != "" {
+		fail(msg)
+		return
+	}
+	nonce, err := s.client.RecoverStart(ctx, handle)
+	if err != nil {
+		fail(recoverErrorMessage(err))
+		return
+	}
+	sig, err := signRecoveryChallenge(phrase, nonce)
+	if err != nil {
+		fail("That recovery phrase isn't valid — check the words and spacing.")
+		return
+	}
+	if err := s.client.RecoverComplete(ctx, handle, nonce, sig, newPw); err != nil {
+		fail(recoverErrorMessage(err))
+		return
+	}
+	s.flashRedirect(w, r, "/login", "success", "Password reset — sign in with your new password.")
+}
+
+// atHandle ensures a leading @ on a non-empty handle, so a path segment or a
+// stored handle compares and resolves consistently.
+func atHandle(h string) string {
+	if h == "" || strings.HasPrefix(h, "@") {
+		return h
+	}
+	return "@" + h
+}
+
+// ownerView is a handle's action catalogue, shown as the same cards the
+// marketplace uses. Each card self-labels its visibility (private/local/public)
+// and inactive state via its chips, so the page asserts no single level. The
+// kernel has no public user-profile endpoint, so there is no bio — the handle
+// and its catalogue are the page.
+type ownerView struct {
+	Handle string
+	Cards  []actionCardView
+}
+
+func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	handle := atHandle(r.PathValue("handle"))
+	// Show what the viewer may see across all three visibility levels. For anyone
+	// else's page that is the caller-visible active set (public + local); on your
+	// own page it is everything you own — private and inactive included — so all=1
+	// is passed exactly when the viewer is the owner (the kernel widens ?all only
+	// within the caller's own scope, §14).
+	isOwner := handle == atHandle(s.sessions.Handle(ctx))
+	view := ownerView{Handle: handle}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		acts, e := s.client.ListActions(ctx, tok, handle, "", isOwner, 0, 0)
+		if e != nil {
+			return e
+		}
+		cards := make([]actionCardView, len(acts))
+		var wg sync.WaitGroup
+		for i, a := range acts {
+			cards[i] = actionCardView{Action: a}
+			wg.Add(1)
+			go func(i int, id string) {
+				defer wg.Done()
+				if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
+					cards[i].Stats = &st
+				}
+			}(i, a.ID)
+		}
+		wg.Wait()
+		view.Cards = cards
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "owner", handle, view)
+}
+
+// recoverErrorMessage maps a recovery failure to actionable copy without leaking
+// which of handle/phrase/nonce was wrong beyond what helps the user.
+func recoverErrorMessage(err error) string {
+	if ke, ok := client.AsKernelError(err); ok {
+		switch ke.Kind {
+		case client.KindInvalidState:
+			return "This account has no recovery phrase enrolled, so it can't be reset this way."
+		case client.KindNotFound:
+			return "No account with that handle."
+		case client.KindUnauthorized, client.KindUnauthenticated:
+			return "That recovery phrase didn't match this account. Check the words and try again."
+		}
+	}
+	return userMessage(err)
 }
 
 // doLogin runs the PKCE authorization-code flow: the verifier is generated and
@@ -683,15 +843,14 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	email := strings.TrimSpace(r.FormValue("email"))
+	desc := strings.TrimSpace(r.FormValue("description"))
 	currentPw := r.FormValue("current_password")
 	newPw := r.FormValue("password")
 
-	inp := client.UpdateMeInput{Email: email, CurrentPassword: currentPw, Password: newPw}
-	if inp.Email == "" && inp.Password == "" {
-		s.flashRedirect(w, r, "/you", "info", "Nothing to update.")
-		return
-	}
+	// Description is always sent (prefilled with the current value, so an empty
+	// field is a deliberate clear) — this also satisfies the kernel's "at least
+	// one of description or password" rule on every save.
+	inp := client.UpdateMeInput{Description: &desc, CurrentPassword: currentPw, Password: newPw}
 	// Validate a new password (confirmation + length) before touching the kernel.
 	if newPw != "" {
 		if msg := validateNewPassword(newPw, r.FormValue("confirm_password")); msg != "" {
@@ -729,10 +888,8 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	notice := "Account updated."
-	if email != "" && newPw == "" {
-		notice = "Email updated."
-	} else if newPw != "" {
+	notice := "Profile updated."
+	if newPw != "" {
 		notice = "Password changed."
 	}
 	s.flashRedirect(w, r, "/you", "success", notice)
@@ -1753,7 +1910,7 @@ var formWhitelist = map[string]map[string]bool{
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},
 	"step":          {"step-create": true},
-	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-friend": true, "admin-rename": true},
+	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-subscribe": true},
 }
 
 // openForm returns the requested ?form value if it is whitelisted for the page
@@ -1926,15 +2083,15 @@ func signupErrorMessage(err error) string {
 		if ke.Kind == client.KindRateLimited {
 			return "Too many sign-up attempts from your network. Please wait a moment and try again."
 		}
-		// A duplicate handle/email surfaces as a raw 500 (the kernel leaks its
+		// A duplicate handle surfaces as a raw 500 (the kernel leaks its
 		// UNIQUE-constraint failure). Detect it by the message and translate to a
 		// friendly line — never the run-outcome UserMessage() ("action failed /
 		// refunded"), which makes no sense for account creation, and never the raw
 		// constraint text.
 		m := strings.ToLower(ke.KernelMessage)
-		for _, hint := range []string{"constraint", "unique", "already", "exists", "duplicate", "email", "handle"} {
+		for _, hint := range []string{"constraint", "unique", "already", "exists", "duplicate", "handle"} {
 			if strings.Contains(m, hint) {
-				return "That handle or email is already registered — try signing in, or use different details."
+				return "That handle is already taken — try signing in, or pick a different one."
 			}
 		}
 	}
