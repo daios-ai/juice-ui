@@ -335,6 +335,23 @@ func (p ANSIPalette) block() string {
 	if p.Square {
 		b.WriteString("  --radius: 0; --radius-s: 0;\n")
 	}
+	// Card-art parameters. The generated media slot (cardart.go) colors itself
+	// oklch(var(--art-ground) H) / oklch(var(--art-glyph) H), supplying only the
+	// hue angle H from the provider's handle. Lightness and chroma stay with the
+	// theme, so the art tracks light/dark like every other token, and the ~0.45
+	// lightness gap between the pair guarantees the glyph stays legible on its
+	// ground at every hue. These are the one token pair that is not a flat color:
+	// a hue-parameterized family is the whole point.
+	// --art-ground-2 is the far corner of the ground's diagonal gradient: a
+	// little darker and a little more saturated, which reads as shading rather
+	// than as a second colour.
+	if p.Dark {
+		b.WriteString("  --art-ground: 0.31 0.045; --art-ground-2: 0.24 0.065;" +
+			" --art-glyph: 0.80 0.13;\n")
+	} else {
+		b.WriteString("  --art-ground: 0.94 0.040; --art-ground-2: 0.87 0.075;" +
+			" --art-glyph: 0.48 0.15;\n")
+	}
 	return b.String()
 }
 
