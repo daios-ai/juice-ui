@@ -40,8 +40,8 @@ func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 		{Name: "tx list", Hint: "View the transaction ledger", Kind: "nav", Href: "/transactions"},
 		{Name: "inbox", Hint: "Work addressed to you", Kind: "nav", Href: "/inbox"},
 		{Name: "step create", Hint: "Create a step (developer affordance)", Kind: "form", Href: "/inbox?form=step-create"},
-		{Name: "you", Hint: "Your account, balances, and preferences", Kind: "nav", Href: "/you"},
-		{Name: "account update", Hint: "Update your profile or password", Kind: "form", Href: "/you?form=user-update"},
+		{Name: "settings", Hint: "Your account, preferences, and connected accounts", Kind: "nav", Href: "/settings"},
+		{Name: "account update", Hint: "Update your profile or password", Kind: "form", Href: "/settings?form=user-update"},
 	}
 	if isSuperuser {
 		cmds = append(cmds,

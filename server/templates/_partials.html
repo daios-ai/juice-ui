@@ -58,7 +58,7 @@
   <strong>Failed — fully refunded.</strong>
   <p>{{.Message}}</p>
   {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
-  <p><a href="/you">View your ledger →</a></p>
+  <p><a href="/settings">View your ledger →</a></p>
 </div>
 {{else if .IsGrantRequired}}
 <div class="outcome rejected" role="status">
@@ -278,16 +278,6 @@
 <div class="menu-caption mono">{{.Handle}}</div>
 <div class="menu-caption money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</div>
 <div class="menu-divider"></div>
-<form method="post" action="/theme" class="theme-picker menu-field" data-theme-form>
-  {{.CSRFField}}
-  <label class="tiny muted" for="theme-select">Theme</label>
-  <select name="theme" id="theme-select" data-theme-select aria-label="Terminal theme">
-    <option value=""{{if eq .Theme ""}} selected{{end}}>System default</option>
-    {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
-  </select>
-  <noscript><button type="submit" class="btn small">Apply</button></noscript>
-</form>
-<div class="menu-divider"></div>
 <form method="post" action="/logout">
   {{.CSRFField}}
   <button type="submit" class="menu-item" role="menuitem">
@@ -297,22 +287,18 @@
 </form>
 {{end}}
 
-{{/* _menu_content — the mobile drawer: it replaces the sidebar, so it carries
-     the nav links the sidebar would (Account, Admin, Peers) plus the account
-     block. The desktop popover uses _menu_account only (no nav duplication). */}}
+{{/* _menu_content — the mobile drawer: it replaces the sidebar, so it carries the
+     whole nav, driven by the same .Nav model the sidebar renders. Nothing is
+     privileged and nothing can drift. The desktop popover uses _menu_account only
+     (no nav duplication). */}}
 {{define "_menu_content"}}
-<a href="/you" class="menu-item" role="menuitem">
-  <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#user"/></svg>
-  Account
-</a>
-{{if .IsSuperuser}}
-<a href="/admin" class="menu-item" role="menuitem">
-  <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#settings"/></svg>
-  Admin
-</a>
-<a href="/admin/peers" class="menu-item" role="menuitem">
-  <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#share-2"/></svg>
-  Peers
+{{range .Nav}}
+{{if .Divider}}<div class="menu-divider"></div>{{end}}
+<a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>
+  {{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>
+  {{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>
+  {{else}}{{.Icon}}{{end}}
+  {{.Label}}
 </a>
 {{end}}
 <div class="menu-divider"></div>

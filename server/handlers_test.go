@@ -678,7 +678,7 @@ func TestUserShowsConnectors(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	body := getBody(t, cl, srv.URL+"/you")
+	body := getBody(t, cl, srv.URL+"/settings")
 
 	// Connected accounts renders the grant tree: a folder per directory, its
 	// account provider in the summary, expandable to the contained grants.
@@ -721,7 +721,7 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/you"))
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/settings"))
 	form := url.Values{"action": {"@lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -787,8 +787,8 @@ func TestBackToKeepsQuery(t *testing.T) {
 	cases := []struct{ ref, want string }{
 		{"http://ui.test/grants/connect?selector=%40lena%2Fapi", "/grants/connect?selector=%40lena%2Fapi"},
 		{"http://ui.test/actions/abc", "/actions/abc"},
-		{"http://evil.test/grants/connect?selector=x", "/you"}, // off-site Referer never honored
-		{"", "/you"},
+		{"http://evil.test/grants/connect?selector=x", "/settings"}, // off-site Referer never honored
+		{"", "/settings"},
 	}
 	for _, c := range cases {
 		if got := backTo(mk(c.ref)); got != c.want {
@@ -817,7 +817,7 @@ func TestGrantConnectReturnsToConsentPage(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/you"))
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/settings"))
 	form := url.Values{"selector": {"@lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1551,7 +1551,7 @@ func TestSettingsPage(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/you")
+	body := getBody(t, cl, srv.URL+"/settings")
 	if !strings.Contains(body, "@alice") {
 		t.Error("settings page must show handle")
 	}
@@ -1559,7 +1559,7 @@ func TestSettingsPage(t *testing.T) {
 
 	// Description update — success path.
 	form := url.Values{"gorilla.csrf.Token": {tok}, "description": {"a short about"}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/you", strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := cl.Do(req)
 	if err != nil {
@@ -1573,7 +1573,7 @@ func TestSettingsPage(t *testing.T) {
 	// Password change — wrong current password shows inline error, no redirect.
 	// The new password is valid locally (≥8, confirmed) so it reaches the kernel,
 	// which rejects the wrong current_password.
-	body2 := getBody(t, cl, srv.URL+"/you")
+	body2 := getBody(t, cl, srv.URL+"/settings")
 	tok2 := csrfTokenFrom(t, body2)
 	form2 := url.Values{
 		"gorilla.csrf.Token": {tok2},
@@ -1581,7 +1581,7 @@ func TestSettingsPage(t *testing.T) {
 		"password":           {"newpassword"},
 		"confirm_password":   {"newpassword"},
 	}
-	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/you", strings.NewReader(form2.Encode()))
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/settings", strings.NewReader(form2.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp2, err := cl.Do(req2)
 	if err != nil {

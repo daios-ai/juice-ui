@@ -16,8 +16,8 @@ Status: design draft — endpoint surface gated against the running kernel
 > 2. **Navigation reads as a marketplace, not a command dump.** The primary
 >    groups are relabelled **browse** (discovery + run), **inbox** (steps),
 >    **workshop** (the provider surface: earnings + own actions + creation),
->    **wallet** (balances, open processes, ledger), and **you** (identity hub),
->    with **network** (federation) and **admin** kept `@sys`-only. This is a
+>    **wallet** (balances, open processes, ledger), and **settings** (account +
+>    preferences), with **network** (federation) and **admin** kept `@sys`-only. This is a
 >    relabelling of the same CLI-mirrored concepts, not new authority.
 >
 > A **media slot** is added to the action card and page (§6.2): a 16:9 image with
@@ -69,13 +69,14 @@ server-side.
 
 **Navigation model.** The UI's navigation MUST present the juice CLI concepts as
 a marketplace, not a raw command dump. The primary groups are **browse**,
-**inbox**, **workshop**, **wallet**, and **you**, plus **network** (federation)
+**inbox**, **workshop**, **wallet**, and **settings**, plus **network** (federation)
 and **admin**, both shown **only to the `@sys` superuser**. Each maps to the same
 CLI concepts as before: `browse` is discovery + execution (`run` + the catalog);
 `inbox` is `step` — work addressed to the user, carrying the sole attention badge;
 `workshop` is the provider surface (`action` management + earnings + creation);
 `wallet` is money evidence (`user` balances + `process` lifetimes + the `tx`
-ledger + receipts); `you` is identity + preferences; `network` is federation
+ledger + receipts); `settings` is account, preferences, and connected accounts;
+`network` is federation
 (peers), and `admin` is operator supervision. The relabelling grants no new
 authority — the underlying routes and superuser gating are unchanged. The kernel
 still creates and closes processes automatically; the UI MUST NOT ask the user to
@@ -226,20 +227,26 @@ detectable.
 ### 6.1 Information architecture
 
 * The UI MUST present a left sidebar whose entries are the primary groups
-  (`browse`, `inbox`, `workshop`, `wallet`, `you`, then `network` and `admin` for
+  (`browse`, `inbox`, `workshop`, `wallet`, `settings`, then `network` and `admin` for
   `@sys`), default-expanded with labels, collapsible, with collapse state
   persisted server-side. The active group MUST carry `aria-current`. The `inbox`
-  entry MUST carry its waiting-count step badge in every state. A single nav model,
-  built once server-side, MUST drive the sidebar and the mobile tab bar (and the
-  command palette), so the three cannot drift.
-* The account/identity summary (handle, balance) and the theme picker live at the
-  sidebar foot / on the `you` hub; nothing that is itself a primary destination
-  sits in a popover.
-* Mobile MUST reflow to a fixed bottom **tab bar of four** — `browse`, `inbox`,
-  `chat`, `you` — with the step and chat badges intact; the remaining
-  destinations (`wallet`, `workshop`, `network`, `admin`) and preferences (theme,
-  sign-out) are reached inside the `you` hub. (The core rule that money moves only
-  through a named confirm is unaffected by which tab hosts a screen.)
+  entry MUST carry its waiting-count step badge in every state — a constraint on
+  the entry wherever it renders, not on any one surface. A single nav model, built
+  once server-side, MUST drive the sidebar and the mobile drawer (and the command
+  palette), so the three cannot drift.
+* The account/identity summary (handle, balance) lives at the sidebar foot;
+  nothing that is itself a primary destination sits in a popover. Preferences are
+  not chrome: the theme picker MUST appear exactly once, on `settings`.
+* Mobile MUST reflow to **a single menu affordance** opening a drawer that
+  carries the **whole** nav. No fixed-size bar is permissible: the nav is
+  unbounded, since every registered app contributes entries at runtime, so any bar
+  would need an overflow, and the split between bar and overflow would be
+  arbitrary and would shift as apps install — unlearnable. One model, two
+  renderings: sidebar where there is room, drawer where there is not. The drawer
+  MUST be reachable without JavaScript by the same `?form=`-style fallback used
+  elsewhere. The closed affordance MUST carry the step badge, so the sole core
+  attention signal survives the drawer being shut. (The core rule that money moves
+  only through a named confirm is unaffected by which surface hosts a screen.)
 * The step badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting steps for the signed-in user, sourced from

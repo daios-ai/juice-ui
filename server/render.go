@@ -45,7 +45,6 @@ type NavItem struct {
 	Active   bool
 	Badge    int    // static count (apps); 0 hides
 	BadgeURL string // polled badge endpoint; "" for none
-	Tab      bool   // also appears in the mobile 4-tab bar
 	Divider  bool   // render a separator before this entry (marks the apps group)
 }
 
@@ -55,7 +54,7 @@ type Page struct {
 	Theme        string          // theme slug, or "" to defer to prefers-color-scheme
 	Sidebar      string          // "collapsed" | "" (expanded); stamped to avoid flash
 	Active       string          // active nav group ("browse"|"inbox"|…) for aria-current
-	Nav          []NavItem       // the single nav model (sidebar + tab bar + palette)
+	Nav          []NavItem       // the single nav model (sidebar + drawer + palette)
 	Handle       string          // signed-in handle for the nav, or "" when anonymous
 	KernelHandle string          // this kernel's own handle (from /health), or "" if unknown
 	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
@@ -69,6 +68,8 @@ type Page struct {
 	FlashKind    string          // "success" | "error" | "info" | ""
 	AppNav       []apps.NavEntry // sidebar entries contributed by apps
 	BadgeSecs    int             // nav-badge poll interval in seconds (steps + apps)
+	Path         string          // current path, for links that must return to it
+	MenuOpen     bool            // ?menu=open: server-render the nav drawer [open] (no-JS path)
 	Data         any             // page-specific view model
 }
 

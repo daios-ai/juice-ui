@@ -469,7 +469,7 @@ func (s *Server) getGrantStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	selector, provider := grantTarget(r)
 	if selector == "" {
-		s.flashRedirect(w, r, "/you", "error", "No account to connect.")
+		s.flashRedirect(w, r, "/settings", "error", "No account to connect.")
 		return
 	}
 	redirectURI := s.publicBaseURL(r) + "/grants/callback"
@@ -501,11 +501,11 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	want, action, ok := s.sessions.TakeGrantState(ctx)
 	if !ok || state == "" || state != want {
-		s.flashRedirect(w, r, "/you", "error", "Couldn't verify that connection request. Please try again.")
+		s.flashRedirect(w, r, "/settings", "error", "Couldn't verify that connection request. Please try again.")
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
-		s.flashRedirect(w, r, "/you", "error", "Connection was cancelled or denied.")
+		s.flashRedirect(w, r, "/settings", "error", "Connection was cancelled or denied.")
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -515,7 +515,7 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/you", "success", "Connected "+action+".")
+	s.flashRedirect(w, r, "/settings", "success", "Connected "+action+".")
 }
 
 // postGrantConnect attaches a static per-caller token to a delegated_bearer action
@@ -553,7 +553,7 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 		if s.handleErr(w, r, err) {
 			return
 		}
-		s.flashRedirect(w, r, "/you", "success", "Account disconnected.")
+		s.flashRedirect(w, r, "/settings", "success", "Account disconnected.")
 		return
 	}
 	selector, _ := grantTarget(r)
@@ -563,7 +563,7 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/you", "success", "Disconnected "+selector+".")
+	s.flashRedirect(w, r, "/settings", "success", "Disconnected "+selector+".")
 }
 
 // grantConnectView drives the consent-delta page: the plan for a selector, shown as
@@ -581,7 +581,7 @@ func (s *Server) getGrantConnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	selector := strings.TrimSpace(r.URL.Query().Get("selector"))
 	if selector == "" {
-		s.flashRedirect(w, r, "/you", "error", "No account to connect.")
+		s.flashRedirect(w, r, "/settings", "error", "No account to connect.")
 		return
 	}
 	var plan client.GrantPlan
@@ -627,7 +627,7 @@ func grantTarget(r *http.Request) (selector, provider string) {
 }
 
 // backTo returns a same-origin path (query included — the consent page is
-// addressed by ?selector=…) from the request's Referer, or /you as a fallback.
+// addressed by ?selector=…) from the request's Referer, or /settings as a fallback.
 // Only a same-host path is honored, never an absolute/off-site URL.
 func backTo(r *http.Request) string {
 	if ref, err := url.Parse(r.Header.Get("Referer")); err == nil && ref.Path != "" && (ref.Host == "" || ref.Host == r.Host) {
@@ -636,7 +636,7 @@ func backTo(r *http.Request) string {
 		}
 		return ref.Path
 	}
-	return "/you"
+	return "/settings"
 }
 
 func (s *Server) postTheme(w http.ResponseWriter, r *http.Request) {
@@ -817,7 +817,7 @@ func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
 
 // ---- user (account + wallet) ----
 
-func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	view := userView{OpenForm: openForm(r, "user")}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -838,10 +838,10 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "you", "You", view, view.User.Available)
+	s.renderPage(w, r, http.StatusOK, "settings", "Settings", view, view.User.Available)
 }
 
-func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	desc := strings.TrimSpace(r.FormValue("description"))
 	currentPw := r.FormValue("current_password")
@@ -854,7 +854,7 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 	// Validate a new password (confirmation + length) before touching the kernel.
 	if newPw != "" {
 		if msg := validateNewPassword(newPw, r.FormValue("confirm_password")); msg != "" {
-			s.flashRedirect(w, r, "/you", "error", msg)
+			s.flashRedirect(w, r, "/settings", "error", msg)
 			return
 		}
 	}
@@ -884,7 +884,7 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 		if ke, ok := client.AsKernelError(apiErr); ok && ke.Kind == client.KindUnauthenticated {
 			msg = "Current password is incorrect."
 		}
-		s.flashRedirect(w, r, "/you", "error", msg)
+		s.flashRedirect(w, r, "/settings", "error", msg)
 		return
 	}
 
@@ -892,7 +892,7 @@ func (s *Server) postUser(w http.ResponseWriter, r *http.Request) {
 	if newPw != "" {
 		notice = "Password changed."
 	}
-	s.flashRedirect(w, r, "/you", "success", notice)
+	s.flashRedirect(w, r, "/settings", "success", notice)
 }
 
 // ---- steps ----

@@ -140,8 +140,6 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .omni .omni-go .ico { width: 1.05rem; height: 1.05rem; }
 .kbd { flex: 0 0 auto; font-family: var(--font-mono); font-size: .68rem; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: .05rem .3rem; background: none; cursor: pointer; }
 .kbd:hover { color: var(--text); }
-.theme-pick { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--text-muted); flex: 0 0 auto; }
-.theme-pick select { font-size: .8rem; padding: .3rem .4rem; }
 /* The same pill rendered in-page on browse ≤720px (the topbar is hidden there). */
 .browse-search { display: none; margin: 0 0 1rem; }
 
@@ -185,11 +183,30 @@ td.money, th.money { text-align: right; }
 .menu-field { padding: .3rem .55rem; }
 .menu-field select { font-size: .85rem; padding: .3rem .4rem; }
 
-/* Mobile hamburger — hidden on desktop, floats at top of main-area */
-.mobile-menu { display: none; position: relative; }
-details.mobile-menu > summary { list-style: none; }
-details.mobile-menu > summary::-webkit-details-marker { display: none; }
-.mobile-drawer { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; }
+/* Mobile nav: one button, the whole nav. Hidden on desktop, where the sidebar
+   renders the same model. The drawer is a <dialog> rather than a .menu popover
+   so showModal() supplies the focus trap, Escape, and top-layer stacking. */
+.menu-bar {
+  display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.menu-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  gap: .1rem; padding: .45rem .5rem; color: var(--text-muted);
+  font-size: .7rem; background: none; border: 0; font-family: inherit; cursor: pointer;
+}
+.menu-btn .ico { width: 1.3rem; height: 1.3rem; }
+.menu-btn:hover { color: var(--text); }
+dialog.drawer { max-width: 22rem; width: 100%; padding: 0;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); }
+dialog.drawer::backdrop { background: rgba(0,0,0,.5); }
+/* No-JS: ?menu=open server-renders it [open] and it falls back to an in-flow
+   card, so the whole nav stays reachable without JavaScript (§6.1). */
+dialog.drawer[open]:not(:modal) { display: block; margin: 1rem auto; position: static; }
+.drawer-body { padding: .4rem; max-height: 70vh; overflow-y: auto; }
+.drawer-body .menu-item[aria-current="page"] { color: var(--text); font-weight: 600; }
 
 /* Inbox badge */
 .ico-badge-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
@@ -209,7 +226,7 @@ tr.unread > td:first-child a { font-weight: 700; }
 
 /* .tabs — THE view-switch component: the entry screen's sign in / create
    account toggle and in-content list filters (all/active/inactive, …). The
-   mobile bottom bar is a separate component (.tab-bar). */
+   mobile nav bar is a separate component (.menu-bar). */
 .tabs { display: flex; gap: .25rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .tabs .tab {
   padding: .4rem .75rem; color: var(--text-muted); text-decoration: none;
@@ -233,21 +250,6 @@ tr.unread > td:first-child a { font-weight: 700; }
 .subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 1.4rem; }
 .subhead h2 { margin: 0; }
 .subhead .tabs { margin: 0; border-bottom: 0; }
-
-/* Mobile bottom tab bar — hidden on desktop */
-.tab-bar {
-  display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
-  background: var(--surface); border-top: 1px solid var(--border);
-  padding-bottom: env(safe-area-inset-bottom, 0);
-}
-.tab-bar .tab {
-  flex: 1; display: flex; flex-direction: column; align-items: center;
-  gap: .1rem; padding: .4rem .5rem; color: var(--text-muted);
-  font-size: .7rem; text-decoration: none;
-}
-.tab-bar .tab .ico { width: 1.3rem; height: 1.3rem; }
-.tab-bar .tab:hover { color: var(--text); text-decoration: none; }
-.tab-bar .tab[aria-current="page"] { color: var(--text); font-weight: 600; }
 
 /* Accessible aria-live announcement region */
 .live-region {
@@ -321,17 +323,17 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 /* Narrow screens: hide sidebar, show bottom tab bar */
 @media (max-width: 720px) {
   .sidebar { display: none; }
-  /* The four-tab bottom bar (browse · inbox · chat · you) is the mobile nav;
-     secondary destinations live in the `you` hub, so no hamburger drawer. */
-  .mobile-menu { display: none; }
+  /* One menu button opens the whole nav. The nav is unbounded (apps register
+     entries at runtime), so no fixed-size bar could cover it, and any subset
+     that fits would be an arbitrary one the user cannot learn. */
+  .menu-bar { display: flex; }
   .topbar { display: none; } /* the browse page keeps its own search on mobile */
   .browse-search { display: flex; }
-  .tab-bar { display: flex; }
-  .container { padding-bottom: 5.5rem; padding-left: 1rem; padding-right: 1rem; }
+  .container { padding-bottom: 4.5rem; padding-left: 1rem; padding-right: 1rem; }
 
   /* Dialogs become bottom sheets: full-width, anchored to the bottom edge, the
      confirm in the thumb zone. The <dialog>/?form= machinery is unchanged. */
-  dialog.modal-form, dialog.modal-confirm, dialog.palette {
+  dialog.modal-form, dialog.modal-confirm, dialog.palette, dialog.drawer {
     max-width: 100%; width: 100%; margin: auto 0 0; border-radius: var(--radius) var(--radius) 0 0;
     border-bottom: none;
   }
@@ -654,23 +656,10 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 700; margin: .2rem 0 .1rem; }
 .stat a { font-size: .82rem; color: var(--text-muted); }
 
-/* you-tiles — the sidebar destinations as icon tiles (the mobile-reachable hub),
-   not bare word rows. A responsive grid that wraps down to a single column. */
-.you-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .75rem; margin: 0 0 1.4rem; }
-.you-tile {
-  display: flex; flex-direction: column; gap: .35rem; padding: .9rem 1rem;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  color: var(--text);
-}
-.you-tile:hover { border-color: var(--border-strong); text-decoration: none; }
-.you-tile-ico { display: inline-flex; color: var(--text-muted); }
-.you-tile-ico .ico { width: 1.25rem; height: 1.25rem; }
-.you-tile-name { font-weight: 600; font-size: .95rem; }
-.you-tile-detail { font-variant-numeric: tabular-nums; font-size: .82rem; color: var(--text-muted); }
 /* Grant tree — the folder directory reads in the provenance (mono) face. */
 .grant-tree .grant-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* you-row — a link/setting row on the `you` identity hub. */
+/* you-row — a link/setting row on the settings page. */
 .you-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.2rem; }
 .you-row-form { margin: 0; }
 .you-row-form .you-row { width: 100%; cursor: pointer; }

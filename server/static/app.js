@@ -100,7 +100,7 @@ function positionMenu(btn, menu) {
   menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
 }
 function closeAllMenus() {
-  for (const m of document.querySelectorAll('.menu:not([hidden]):not(.mobile-drawer)')) {
+  for (const m of document.querySelectorAll('.menu:not([hidden])')) {
     m.hidden = true;
     document.querySelector(`[data-menu="${m.id}"]`)?.setAttribute('aria-expanded', 'false');
   }
@@ -123,12 +123,8 @@ document.addEventListener('mousedown', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
 
-// Close mobile drawer when clicking outside it.
-document.addEventListener('click', (e) => {
-  for (const d of document.querySelectorAll('details.mobile-menu[open]')) {
-    if (!d.contains(e.target)) d.removeAttribute('open');
-  }
-});
+// The mobile nav drawer is a <dialog> opened via [data-modal], so showModal()
+// supplies its focus trap, Escape handling and light dismiss. Nothing here.
 
 // Confirmation modal — forms with data-confirm="message" show a styled dialog.
 (function() {
@@ -297,7 +293,7 @@ document.addEventListener('click', (e) => {
       e.preventDefault();
       closeAllMenus(); // a trigger may live inside a dropdown (e.g. New action ▾)
       openDialog(dlg);
-      if (window.history && location.search.includes('form=')) {
+      if (window.history && /[?&](form|menu)=/.test(location.search)) {
         history.replaceState(null, '', location.pathname);
       }
     }
@@ -312,11 +308,11 @@ document.addEventListener('click', (e) => {
 // A dialog server-rendered [open] (no-JS fallback path reached with JS on): if it
 // is not already modal, close and reopen it modally so the backdrop and focus
 // trap apply, and clean the URL.
-for (const dlg of document.querySelectorAll('dialog.modal-form[open]')) {
+for (const dlg of document.querySelectorAll('dialog.modal-form[open], dialog.drawer[open]')) {
   if (!dlg.matches(':modal') && typeof dlg.showModal === 'function') {
     dlg.close();
     dlg.showModal();
-    if (window.history && location.search.includes('form=')) {
+    if (window.history && /[?&](form|menu)=/.test(location.search)) {
       history.replaceState(null, '', location.pathname);
     }
   }

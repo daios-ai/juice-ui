@@ -55,7 +55,7 @@ func TestUnauthRedirectsToLogin(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
 	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/", "/browse", "/workshop", "/inbox", "/you", "/wallet", "/processes", "/transactions"} {
+	for _, path := range []string{"/", "/browse", "/workshop", "/inbox", "/settings", "/wallet", "/processes", "/transactions"} {
 		resp, err := cl.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)

@@ -192,9 +192,9 @@
 
 {{define "_form_user_update"}}
 <dialog id="form-user-update" class="modal-form"{{if eq .Data.OpenForm "user-update"}} open{{end}} aria-label="Update account">
-  <div class="modal-head"><h2>Update account</h2><a class="modal-close" href="/you" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Update account</h2><a class="modal-close" href="/settings" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/you" data-confirm-password>
+    <form class="stack" method="post" action="/settings" data-confirm-password>
       {{.CSRFField}}
       <div class="field">
         <label for="u-desc">About</label>
@@ -207,7 +207,7 @@
       <div class="field"><label for="u-new2">Confirm new password</label><input id="u-new2" name="confirm_password" type="password" autocomplete="new-password" minlength="8"></div>
       <div class="cluster">
         <button class="btn" type="submit">Save changes</button>
-        <a class="btn" href="/you" data-modal-close>Cancel</a>
+        <a class="btn" href="/settings" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>
