@@ -161,6 +161,28 @@ func TestCorpusIsUnpruned(t *testing.T) {
 	}
 }
 
+// Apache-2.0 §6 grants no trademark rights, so glyphs depicting a mark cannot
+// ride the artwork's licence onto a commercial listing. Unlike the trust
+// glyphs, excluding these costs no accuracy: nothing else needs them. See
+// icons/NOTICE.
+func TestTrademarkedGlyphsExcluded(t *testing.T) {
+	c := index()
+	for _, name := range []string{"android", "flutter_dash"} {
+		if _, ok := c.byName[name]; ok {
+			t.Errorf("trademarked glyph %q must not be in the corpus", name)
+		}
+		if _, ok := Glyph(name); ok {
+			t.Errorf("trademarked glyph %q is still reachable", name)
+		}
+	}
+	// And no query may reach one.
+	for _, ref := range []string{"@x/android-build", "@y/flutter-app", "@z/logo-forge"} {
+		if m, ok := Pick(ref); ok && (m.Name == "android" || m.Name == "flutter_dash") {
+			t.Errorf("%s reached trademarked glyph %q", ref, m.Name)
+		}
+	}
+}
+
 // Whatever a query reaches, the artwork itself must stay CSP-clean, since it is
 // inlined verbatim into the page.
 func TestGlyphMarkupIsInert(t *testing.T) {

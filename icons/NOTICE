@@ -1,0 +1,58 @@
+Third-party notices for the juice-ui icons package
+==================================================
+
+Icon artwork
+------------
+
+index.json.gz embeds icon artwork from the Material Icons / Material Symbols
+set published by Google:
+
+    https://github.com/google/material-design-icons
+
+Copyright the Material Design Authors. Licensed under the Apache License,
+Version 2.0; the full licence text is in icons/LICENSE alongside this file.
+Upstream ships no NOTICE file of its own (verified: the repository has none),
+so nothing further is required to be reproduced.
+
+Modifications
+-------------
+
+Apache-2.0 §4(b) requires that modified files carry prominent notice of the
+change. The artwork here is modified from upstream as follows.
+
+  * Fetched as the 24x24 `24px.svg` asset of each icon from the published
+    asset URL pattern (`fonts.gstatic.com/s/i/materialicons/{icon}/v{n}/`).
+  * Reduced to the inner markup of the `<svg>` element: the wrapper element
+    and its attributes are dropped, as is the transparent 24x24 bounding
+    shape that upstream includes for layout.
+  * Re-serialised into a single gzipped JSON index keyed by icon name, rather
+    than one file per icon.
+  * No path geometry is altered. Colour is applied by the caller at render
+    time through a theme token; the stored markup carries no fill of its own.
+
+Icons omitted
+-------------
+
+The corpus is otherwise complete. Three icons are excluded:
+
+  * `screen_search_desktop` — its artwork carries an inline `style=`
+    attribute, which this application's Content-Security-Policy forbids.
+  * `android`, `flutter_dash` — these depict trademarks. Apache-2.0 §6
+    grants no trademark rights, and the licence under which the artwork is
+    supplied therefore does not extend to reproducing the marks on
+    third-party commercial listings. The exclusion is enforced by
+    TestTrademarkedGlyphsExcluded in icons_test.go.
+
+Icon metadata
+-------------
+
+The search terms in index.json.gz — each icon's categories and synonym tags —
+were obtained from the Google Fonts icon metadata endpoint:
+
+    https://fonts.google.com/metadata/icons
+
+This endpoint is undocumented and states no licence terms. The Apache-2.0
+grant covering the artwork repository does not evidently extend to it. This is
+unresolved. Should it need resolving, the equivalent names and categories are
+derivable from the Apache-2.0 repository itself, at some cost to match quality,
+since the synonym lists are what make the retrieval work.
