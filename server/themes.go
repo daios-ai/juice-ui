@@ -342,10 +342,15 @@ func (p ANSIPalette) block() string {
 	// lightness gap between the pair guarantees the glyph stays legible on its
 	// ground at every hue. These are the one token pair that is not a flat color:
 	// a hue-parameterized family is the whole point.
+	// --art-ground-2 is the far corner of the ground's diagonal gradient: a
+	// little darker and a little more saturated, which reads as shading rather
+	// than as a second colour.
 	if p.Dark {
-		b.WriteString("  --art-ground: 0.30 0.048; --art-glyph: 0.80 0.13;\n")
+		b.WriteString("  --art-ground: 0.31 0.045; --art-ground-2: 0.24 0.065;" +
+			" --art-glyph: 0.80 0.13;\n")
 	} else {
-		b.WriteString("  --art-ground: 0.93 0.045; --art-glyph: 0.48 0.15;\n")
+		b.WriteString("  --art-ground: 0.94 0.040; --art-ground-2: 0.87 0.075;" +
+			" --art-glyph: 0.48 0.15;\n")
 	}
 	return b.String()
 }

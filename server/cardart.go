@@ -74,9 +74,20 @@ func CardArt(id, owner, name, kind string) template.HTML {
 		}
 	}
 
+	// The ground is a diagonal two-stop gradient rather than a flat fill: the far
+	// corner is darker, more saturated and nudged along the hue circle, which
+	// reads as shading on one colour rather than as two colours. The gradient id
+	// is derived from the card's own identity so several cards on a page cannot
+	// collide on it.
+	gid := "ag" + strconv.FormatUint(uint64(hashOf(id+"|"+owner+"|"+name+"|"+kind)), 36)
+
 	var b strings.Builder
 	b.WriteString(`<svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice" role="img" aria-hidden="true">`)
-	b.WriteString(`<rect width="320" height="180" fill="oklch(var(--art-ground) ` + itoa(hue) + `)"/>`)
+	b.WriteString(`<defs><linearGradient id="` + gid + `" x1="0" y1="0" x2="1" y2="1">` +
+		`<stop offset="0" stop-color="oklch(var(--art-ground) ` + itoa(hue) + `)"/>` +
+		`<stop offset="1" stop-color="oklch(var(--art-ground-2) ` + itoa(shadeHue(hue)) + `)"/>` +
+		`</linearGradient></defs>`)
+	b.WriteString(`<rect width="320" height="180" fill="url(#` + gid + `)"/>`)
 	if art, ok := icons.Glyph(glyph); ok {
 		// The corpus glyph is a 24x24 viewBox; center it at 72px on the 320x180
 		// field. It carries no fill of its own, so the enclosing <g> colors it.
@@ -86,6 +97,11 @@ func CardArt(id, owner, name, kind string) template.HTML {
 	b.WriteString(`</svg>`)
 	return template.HTML(b.String())
 }
+
+// shadeHue nudges the gradient's far stop along the hue circle. The shift is
+// small enough to stay one colour but enough to keep the shading from looking
+// like a flat darkening.
+func shadeHue(h int) int { return (h + 22) % 360 }
 
 // hueSeed picks the most stable identifier available. Owner is preferred so a
 // provider's cards share a color; id and kind only stand in for records that

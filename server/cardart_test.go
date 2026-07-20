@@ -25,9 +25,9 @@ func TestCardArtDeterministic(t *testing.T) {
 // the individual actions do. This is the signal §6.2 asks the media slot to carry.
 func TestCardArtHueIsPerOwner(t *testing.T) {
 	hue := func(art string) string {
-		_, rest, ok := strings.Cut(art, `<rect width="320" height="180" fill="oklch(var(--art-ground) `)
+		_, rest, ok := strings.Cut(art, `stop-color="oklch(var(--art-ground) `)
 		if !ok {
-			t.Fatalf("no ground rect in %.120s", art)
+			t.Fatalf("no ground stop in %.160s", art)
 		}
 		h, _, _ := strings.Cut(rest, ")")
 		return h
@@ -73,13 +73,32 @@ func TestCardArtCSPSafe(t *testing.T) {
 		if strings.Contains(art, "style=") {
 			t.Error("CardArt must not use inline style= (CSP / grammar)")
 		}
-		for _, bad := range []string{"http://", "https://", "url(", "<script", "#"} {
+		for _, bad := range []string{"http://", "https://", "<script"} {
 			if strings.Contains(art, bad) {
 				t.Errorf("CardArt must not contain %q", bad)
 			}
 		}
-		if !strings.Contains(art, "var(--art-ground)") || !strings.Contains(art, "var(--art-glyph)") {
-			t.Error("CardArt must color from theme tokens")
+		// url() is allowed only as a local fragment (the ground gradient); any
+		// other form would be a fetch, which the CSP forbids.
+		for rest := art; ; {
+			i := strings.Index(rest, "url(")
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len("url("):]
+			if !strings.HasPrefix(rest, "#") {
+				t.Errorf("CardArt must only use url(#fragment), got url(%.20s", rest)
+			}
+		}
+		// No raw hex: every color resolves through a theme token. "#" is legal
+		// only as the gradient's own fragment reference.
+		if strings.Contains(strings.ReplaceAll(art, "url(#", ""), "#") {
+			t.Error("CardArt must not contain raw hex colors")
+		}
+		for _, tok := range []string{"var(--art-ground)", "var(--art-ground-2)", "var(--art-glyph)"} {
+			if !strings.Contains(art, tok) {
+				t.Errorf("CardArt must color from theme tokens, missing %s", tok)
+			}
 		}
 		if !strings.HasPrefix(art, "<svg") || !strings.HasSuffix(art, "</svg>") {
 			t.Error("CardArt must be a single <svg> element")
@@ -87,6 +106,38 @@ func TestCardArtCSPSafe(t *testing.T) {
 		if n := strings.Count(art, "<svg"); n != 1 {
 			t.Errorf("nested svg: found %d roots", n)
 		}
+	}
+}
+
+// Gradient ids share one document with every other card on the page, so two
+// different cards must never claim the same id.
+func TestCardArtGradientIDsUnique(t *testing.T) {
+	gid := func(art string) string {
+		_, rest, ok := strings.Cut(art, `<linearGradient id="`)
+		if !ok {
+			t.Fatalf("no gradient in %.160s", art)
+		}
+		g, _, _ := strings.Cut(rest, `"`)
+		return g
+	}
+	seen := map[string]string{}
+	for _, c := range []struct{ id, owner, name, kind string }{
+		{"1", "@chat", "inbox", "http"}, {"2", "@chat", "output", "http"},
+		{"3", "@mail", "list", "http"}, {"4", "@mail", "send", "http"},
+		{"5", "@sys", "make", "native"}, {"6", "@sys", "lookup", "native"},
+		{"7", "@kai", "", "wasm"}, {"8", "@lena", "ocr-translate", "http"},
+	} {
+		ref := c.owner + "/" + c.name
+		g := gid(string(CardArt(c.id, c.owner, c.name, c.kind)))
+		if prev, dup := seen[g]; dup {
+			t.Errorf("gradient id %q shared by %s and %s", g, prev, ref)
+		}
+		seen[g] = ref
+	}
+	// And it stays stable for the same card, or the art would not be deterministic.
+	if gid(string(CardArt("1", "@chat", "inbox", "http"))) !=
+		gid(string(CardArt("1", "@chat", "inbox", "http"))) {
+		t.Error("gradient id must be deterministic")
 	}
 }
 
