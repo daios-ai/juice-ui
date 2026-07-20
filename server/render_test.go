@@ -76,7 +76,7 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 		Available: 1000,
 		Data:      userView{User: client.User{Handle: "@alice", Available: 1000, Locked: 250}},
 	}
-	if err := r.Render(rec, 200, "you", p); err != nil {
+	if err := r.Render(rec, 200, "settings", p); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	body := rec.Body.String()
@@ -190,7 +190,14 @@ func TestAccountMenuHasNoNav(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := Page{Handle: "@sys", IsSuperuser: true, Themes: ThemeList()}
+	// The drawer renders whatever the nav model holds — it no longer hard-codes
+	// its own links — so the fixture supplies the nav the sidebar would get.
+	data := Page{Handle: "@sys", IsSuperuser: true, Themes: ThemeList(), Nav: []NavItem{
+		{Slug: "browse", Label: "browse", Href: "/browse"},
+		{Slug: "settings", Label: "settings", Href: "/settings"},
+		{Slug: "network", Label: "network", Href: "/admin/peers"},
+		{Slug: "admin", Label: "admin", Href: "/admin"},
+	}}
 	acctRec, fullRec := httptest.NewRecorder(), httptest.NewRecorder()
 	if err := r.Fragment(acctRec, 200, "_menu_account", data); err != nil {
 		t.Fatal(err)
@@ -340,7 +347,7 @@ func TestUserPageShowsConnections(t *testing.T) {
 				{Provider: "api.acme.com", Actions: 0, Unused: true, ProviderKey: "oauth:a", CreatedAt: "2026-07-11T00:00:00Z"},
 			}},
 	}}
-	if err := r.Render(rec, 200, "you", p); err != nil {
+	if err := r.Render(rec, 200, "settings", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
@@ -687,8 +694,8 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 		Handle:    "@me",
 		BadgeSecs: 15,
 		Nav: []NavItem{
-			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), BadgeURL: "/inbox/badge", Tab: true},
-			{Slug: "chat", Label: "chat", Href: "/chat", Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, BadgeURL: "/chat/badge", Tab: true},
+			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), BadgeURL: "/inbox/badge"},
+			{Slug: "chat", Label: "chat", Href: "/chat", Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, BadgeURL: "/chat/badge"},
 		},
 		Data: struct{ Message string }{"x"},
 	}
@@ -697,14 +704,14 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if strings.Count(body, `hx-get="/inbox/badge"`) < 2 {
-		t.Errorf("steps badge poller must appear in sidebar AND tab bar: %s", body)
+		t.Errorf("steps badge poller must appear in sidebar AND drawer: %s", body)
 	}
 	if !strings.Contains(body, `hx-get="/chat/badge"`) {
 		t.Errorf("app badge poller missing: %s", body)
 	}
-	// steps(sidebar+tab) + chat(sidebar+tab) = 4 pollers, all on the configured 15s.
-	if n := strings.Count(body, `every 15s`); n < 4 {
-		t.Errorf("configured interval applied to %d pollers, want >= 4: %s", n, body)
+	// steps(sidebar+drawer+menu button) + chat(sidebar+drawer) = 5 pollers, all on 15s.
+	if n := strings.Count(body, `every 15s`); n < 5 {
+		t.Errorf("configured interval applied to %d pollers, want >= 5: %s", n, body)
 	}
 	if strings.Contains(body, `id="inbox-badge"`) {
 		t.Error("legacy inbox-badge id should be gone")
@@ -1076,5 +1083,62 @@ func TestRelTime(t *testing.T) {
 		if got := relTime(c.in); got != c.want {
 			t.Errorf("relTime(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// The mobile nav must survive JavaScript being off. ?menu=open server-renders
+// the drawer [open] so it falls back to an in-flow card, and the trigger is a
+// real link rather than a bare button — the same guarantee §6.1 makes for
+// ?form=. Without this the drawer is unreachable with JS off, which would be
+// worse than the tab bar it replaces.
+func TestNavDrawerWorksWithoutJS(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nav := []NavItem{{Slug: "browse", Label: "browse", Href: "/browse"}}
+	render := func(open bool) string {
+		rec := httptest.NewRecorder()
+		p := Page{Handle: "@me", Nav: nav, MenuOpen: open, Path: "/browse",
+			Data: struct{ Message string }{"x"}}
+		if err := r.Render(rec, 200, "error", p); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return rec.Body.String()
+	}
+	closed, open := render(false), render(true)
+
+	// The trigger is a real link to the fallback URL, not a bare button, and it
+	// anchors to the drawer so the no-JS landing is unambiguous.
+	if !strings.Contains(closed, `href="?menu=open#nav-drawer"`) {
+		t.Error("menu trigger must be a real anchored link for the no-JS path")
+	}
+	if strings.Contains(closed, `<dialog id="nav-drawer" class="drawer" aria-label="Navigation" open`) {
+		t.Error("drawer must not render open without ?menu=open")
+	}
+	if !strings.Contains(open, ` open>`) {
+		t.Error("?menu=open must server-render the drawer [open]")
+	}
+	// Closing must also be a link, so it works with JS off.
+	if !strings.Contains(open, `class="modal-close" href="/browse"`) {
+		t.Error("drawer close must be a real link back to the current path")
+	}
+}
+
+// The theme picker is a set-once preference, so it must not sit in persistent
+// chrome. Exactly one exists, and it is on the settings page.
+func TestThemePickerOnlyInSettings(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "@me", Themes: ThemeList(), Nav: []NavItem{{Slug: "browse", Href: "/browse"}},
+		Data: struct{ Message string }{"x"}}
+	if err := r.Render(rec, 200, "error", p); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(rec.Body.String(), "data-theme-select"); n != 0 {
+		t.Errorf("chrome carries %d theme pickers, want 0 (settings owns it)", n)
 	}
 }

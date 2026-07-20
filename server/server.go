@@ -160,15 +160,15 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
 	// Home + legacy redirects (bookmarks / old links). The nav is relabelled as a
-	// marketplace (browse/inbox/workshop/wallet/you), so the old CLI-noun URLs 301
-	// to their new homes.
+	// marketplace (browse/inbox/workshop/wallet/settings), so the old CLI-noun URLs
+	// 301 to their new homes.
 	mux.HandleFunc("GET /{$}", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/browse", http.StatusSeeOther)
 	}))
 	for from, to := range map[string]string{
 		"/run": "/browse", "/discover": "/browse", "/actions": "/browse",
 		"/steps": "/inbox", "/studio": "/workshop",
-		"/user": "/you", "/settings": "/you",
+		"/user": "/settings", "/you": "/settings",
 	} {
 		dest := to
 		mux.HandleFunc("GET "+from, func(w http.ResponseWriter, r *http.Request) {
@@ -213,9 +213,9 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /inbox", s.requireAuth(s.postCreateStep))
 	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteStep))
 
-	// You — identity hub + preferences.
-	mux.HandleFunc("GET /you", s.requireAuth(s.getUser))
-	mux.HandleFunc("POST /you", s.requireAuth(s.postUser))
+	// Settings — account, preferences, connected accounts.
+	mux.HandleFunc("GET /settings", s.requireAuth(s.getSettings))
+	mux.HandleFunc("POST /settings", s.requireAuth(s.postSettings))
 
 	// Owner page — a handle's public actions (like a channel).
 	mux.HandleFunc("GET /users/{handle}", s.requireAuth(s.getOwner))
@@ -493,18 +493,21 @@ var (
 )
 
 // buildNav assembles the single nav model: the marketplace groups, then app
-// entries, then the superuser-only network/admin. Tab=true marks the four mobile
-// bottom-bar entries (browse · inbox · chat · you). active is the current group.
+// entries, then the superuser-only network/admin. active is the current group.
+//
+// There is no privileged subset. The list is unbounded — every registered app
+// contributes entries at runtime — so no fixed-size bar could ever cover it.
+// Where there is room the sidebar renders the whole list; where there isn't, the
+// drawer renders the same list. One model, two renderings.
 func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	nav := []NavItem{
-		{Slug: "browse", Label: "browse", Href: "/browse", Icon: iconBrowse, Tab: true},
-		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge", Tab: true},
+		{Slug: "browse", Label: "browse", Href: "/browse", Icon: iconBrowse},
+		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge"},
 		{Slug: "workshop", Label: "workshop", Href: "/workshop", Icon: iconWorkshop},
 		{Slug: "wallet", Label: "wallet", Href: "/wallet", Icon: iconWallet},
-		{Slug: "you", Label: "you", Href: "/you", Icon: iconYou, Tab: true},
+		{Slug: "settings", Label: "settings", Href: "/settings", Icon: iconYou},
 	}
-	// App entries (chat, agents) fold in after the core groups; chat also joins
-	// the mobile tab bar.
+	// App entries (chat, agents) fold in after the core groups.
 	handle := s.sessions.Handle(r.Context())
 	super := s.isSuperuser(r)
 	firstApp := true
@@ -518,8 +521,8 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 				Badge:    e.Badge,
 				BadgeURL: e.BadgeURL,
 				Active:   e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
-				Tab:      e.Slug == "chat",
-				Divider:  firstApp, // separate the apps group from the core groups
+
+				Divider: firstApp, // separate the apps group from the core groups
 			})
 			firstApp = false
 		}
@@ -576,7 +579,12 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 	kernelHandle, kernelFP := s.kernelIdentity(r.Context())
 	active := activeGroup(r.URL.Path)
 	return Page{
-		Title:        title,
+		Title: title,
+		Path:  r.URL.Path,
+		// ?menu=open is the no-JS route into the mobile nav: the drawer is
+		// server-rendered [open] and falls back to an in-flow card, exactly as
+		// ?form= does for modals (§6.1). With JS, data-modal intercepts first.
+		MenuOpen:     r.URL.Query().Get("menu") == "open",
 		Theme:        themeFromRequest(r),
 		Sidebar:      sidebarFromRequest(r),
 		Active:       active,
@@ -618,8 +626,8 @@ func activeGroup(path string) string {
 		strings.HasPrefix(path, "/transactions"):
 		// The wallet owns money evidence (processes + the tx ledger + receipts).
 		return "wallet"
-	case strings.HasPrefix(path, "/you"), strings.HasPrefix(path, "/grants"):
-		return "you"
+	case strings.HasPrefix(path, "/settings"), strings.HasPrefix(path, "/grants"):
+		return "settings"
 	case strings.HasPrefix(path, "/admin/peers"):
 		return "network"
 	case strings.HasPrefix(path, "/admin"):

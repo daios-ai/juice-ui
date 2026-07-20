@@ -55,19 +55,40 @@
     <div class="main-area">
       {{if .Handle}}
       <header class="topbar">
+        {{/* Mobile nav trigger: top-left, opening the sidebar as a left panel.
+             It is a real anchored link so the drawer stays reachable with JS off
+             (the ?form= fallback of §6.1); data-modal intercepts when JS is on.
+             The badge rides it so §6.1's sole core attention signal survives the
+             panel being shut — app-scoped badges render on their own entries. */}}
+        <a href="?menu=open#nav-drawer" class="menu-trigger" data-modal="nav-drawer" aria-haspopup="dialog" aria-label="Menu">
+          <span class="ico-badge-wrap">
+            <svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
+            {{template "_badge_poll" (badge "/inbox/badge" "Waiting steps" 0 .BadgeSecs)}}
+          </span>
+        </a>
         <form class="omni" method="get" action="/browse" role="search">
           <input type="search" enterkeyhint="search" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off">
           <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
         </form>
         <button type="button" class="kbd" data-open-palette aria-label="Command palette">⌘K</button>
-        <label class="theme-pick" title="Theme">
-          <span class="lbl">theme</span>
-          <select data-theme-select aria-label="Theme">
-            <option value="">System</option>
-            {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
-          </select>
-        </label>
       </header>
+      {{end}}
+
+      {{/* Mobile navigation: the sidebar, rendered as a left panel. Same nav
+           model, so the two cannot drift and no destination is privileged over
+           another; only the presentation differs, chosen by how much room the
+           screen has. It sits here, not at the end of <body>: showModal() puts
+           it in the top layer regardless, but the no-JS in-flow fallback renders
+           where it stands, and that must be under the topbar rather than at the
+           foot of a long page. */}}
+      {{if .Handle}}
+      <dialog id="nav-drawer" class="drawer" aria-label="Navigation"{{if .MenuOpen}} open{{end}}>
+        <div class="modal-head">
+          <span class="brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}</span></span>
+          <a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a>
+        </div>
+        <div class="drawer-body">{{template "_menu_content" .}}</div>
+      </dialog>
       {{end}}
 
       <div class="content">
@@ -78,14 +99,6 @@
       </div>
     </div>
   </div>
-
-  {{if .Handle}}
-  <nav class="tab-bar" aria-label="Primary">
-    {{range .Nav}}{{if .Tab}}
-    <a href="{{.Href}}" class="tab" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span>{{.Label}}</span></a>
-    {{end}}{{end}}
-  </nav>
-  {{end}}
 
   <div aria-live="polite" aria-atomic="true" id="live-region" class="live-region"></div>
 
@@ -101,7 +114,7 @@
     <div class="modal-body">
       <dl class="help-grid">
         <dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette</dd>
-        <dt><kbd>g</kbd> then <kbd>b i k w y</kbd></dt><dd>Go to browse · inbox · workshop · wallet · you</dd>
+        <dt><kbd>g</kbd> then <kbd>b i k w y</kbd></dt><dd>Go to browse · inbox · workshop · wallet · settings</dd>
         <dt><kbd>/</kbd></dt><dd>Focus search</dd>
         <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>

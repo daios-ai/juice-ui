@@ -133,7 +133,7 @@ if (palette) {
 }
 
 // --- global shortcuts ---
-const GO = { b: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/you", n: "/admin/peers", x: "/admin" };
+const GO = { b: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/settings", n: "/admin/peers", x: "/admin" };
 let goArmed = false;
 
 function typingContext(el) {
