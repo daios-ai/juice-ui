@@ -12,7 +12,8 @@
 * { box-sizing: border-box; }
 
 /* Shell layout constant: the sticky topbar's height, which sticky page chrome
-   (the crumb) offsets against. 0 below 720px, where the topbar is hidden. */
+   (the crumb) offsets against. The topbar is present at every width — below
+   720px it also hosts the nav trigger. */
 :root { --topbar-h: 3.4rem; }
 
 body {
@@ -126,7 +127,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .ico-inline { width: 1em; height: 1em; vertical-align: -.15em; display: inline-block; }
 
 /* Topbar: sticky bar with the persistent omnibox (present on every page,
-   requirements §6.2) + theme picker. Hidden on mobile (browse keeps a search). */
+   requirements §6.2). Below 720px it also carries the nav trigger at its left. */
 .topbar { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 1rem; height: var(--topbar-h); padding: 0 1.5rem; background: var(--bg); border-bottom: 1px solid var(--border); }
 /* Search pill — ONE component, both form factors: the topbar on desktop, in-page
    on browse ≤720px. Segmented: input fills the left, the equal-height icon
@@ -183,29 +184,30 @@ td.money, th.money { text-align: right; }
 .menu-field { padding: .3rem .55rem; }
 .menu-field select { font-size: .85rem; padding: .3rem .4rem; }
 
-/* Mobile nav: one button, the whole nav. Hidden on desktop, where the sidebar
-   renders the same model. The drawer is a <dialog> rather than a .menu popover
-   so showModal() supplies the focus trap, Escape, and top-layer stacking. */
-.menu-bar {
-  display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
-  background: var(--surface); border-top: 1px solid var(--border);
-  padding-bottom: env(safe-area-inset-bottom, 0);
+/* Mobile nav: the sidebar as a left panel. The trigger sits top-left in the
+   topbar; the panel is a <dialog> rather than a .menu popover so showModal()
+   supplies the focus trap, Escape and top-layer stacking. Hidden on desktop,
+   where the sidebar renders the same model in place. */
+.menu-trigger {
+  display: none; align-items: center; color: var(--text-muted);
+  padding: .3rem; border-radius: var(--radius); flex: 0 0 auto;
 }
-.menu-btn {
-  flex: 1; display: flex; flex-direction: column; align-items: center;
-  gap: .1rem; padding: .45rem .5rem; color: var(--text-muted);
-  font-size: .7rem; background: none; border: 0; font-family: inherit; cursor: pointer;
+.menu-trigger:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+.menu-trigger .ico { width: 1.35rem; height: 1.35rem; }
+dialog.drawer {
+  width: var(--sb-w-wide, 17rem); max-width: 85%; height: 100%; max-height: 100%;
+  margin: 0 auto 0 0; padding: 0; border: 0; border-right: 1px solid var(--border);
+  border-radius: 0; background: var(--surface); color: var(--text);
 }
-.menu-btn .ico { width: 1.3rem; height: 1.3rem; }
-.menu-btn:hover { color: var(--text); }
-dialog.drawer { max-width: 22rem; width: 100%; padding: 0;
-  border: 1px solid var(--border-strong); border-radius: var(--radius);
-  background: var(--surface); color: var(--text); }
 dialog.drawer::backdrop { background: rgba(0,0,0,.5); }
+dialog.drawer .modal-head .brand { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
 /* No-JS: ?menu=open server-renders it [open] and it falls back to an in-flow
    card, so the whole nav stays reachable without JavaScript (§6.1). */
-dialog.drawer[open]:not(:modal) { display: block; margin: 1rem auto; position: static; }
-.drawer-body { padding: .4rem; max-height: 70vh; overflow-y: auto; }
+dialog.drawer[open]:not(:modal) {
+  display: block; position: static; height: auto; width: 100%; max-width: 100%;
+  margin: 0; border-right: 0; border-top: 1px solid var(--border);
+}
+.drawer-body { padding: .4rem; overflow-y: auto; }
 .drawer-body .menu-item[aria-current="page"] { color: var(--text); font-weight: 600; }
 
 /* Inbox badge */
@@ -226,7 +228,7 @@ tr.unread > td:first-child a { font-weight: 700; }
 
 /* .tabs — THE view-switch component: the entry screen's sign in / create
    account toggle and in-content list filters (all/active/inactive, …). The
-   mobile nav bar is a separate component (.menu-bar). */
+   mobile nav trigger is a separate component (.menu-trigger). */
 .tabs { display: flex; gap: .25rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .tabs .tab {
   padding: .4rem .75rem; color: var(--text-muted); text-decoration: none;
@@ -320,28 +322,26 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .help-grid { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0; }
 .help-grid kbd { font-family: var(--font-mono); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .05rem .35rem; font-size: .85rem; }
 
-/* Narrow screens: hide sidebar, show bottom tab bar */
+/* Narrow screens: the sidebar becomes a left panel behind a top-left trigger */
 @media (max-width: 720px) {
   .sidebar { display: none; }
-  /* One menu button opens the whole nav. The nav is unbounded (apps register
-     entries at runtime), so no fixed-size bar could cover it, and any subset
-     that fits would be an arbitrary one the user cannot learn. */
-  .menu-bar { display: flex; }
-  .topbar { display: none; } /* the browse page keeps its own search on mobile */
-  .browse-search { display: flex; }
-  .container { padding-bottom: 4.5rem; padding-left: 1rem; padding-right: 1rem; }
+  /* The sidebar becomes a left panel behind a top-left trigger. The nav is
+     unbounded (apps register entries at runtime), so no fixed-size bar could
+     cover it, and any subset that fits would be an arbitrary one the user
+     cannot learn. The topbar stays: it hosts the trigger and the omnibox. */
+  .menu-trigger { display: flex; }
+  .topbar { padding: 0 .75rem; gap: .6rem; }
+  .kbd { display: none; } /* a keyboard hint has no meaning on a touch device */
+  .container { padding-left: 1rem; padding-right: 1rem; }
 
   /* Dialogs become bottom sheets: full-width, anchored to the bottom edge, the
      confirm in the thumb zone. The <dialog>/?form= machinery is unchanged. */
-  dialog.modal-form, dialog.modal-confirm, dialog.palette, dialog.drawer {
+  dialog.modal-form, dialog.modal-confirm, dialog.palette {
     max-width: 100%; width: 100%; margin: auto 0 0; border-radius: var(--radius) var(--radius) 0 0;
     border-bottom: none;
   }
   dialog.palette { margin: 0 0 auto; border-radius: 0 0 var(--radius) var(--radius); }
   .modal-body { max-height: 76vh; }
-  /* No topbar here (display:none above), so sticky page chrome that offsets
-     against it starts at the viewport edge. */
-  :root { --topbar-h: 0px; }
   /* Stacked, full-width actions (confirm on top of the thumb, cancel above it). */
   .modal-actions, .modal-form .cluster:last-child {
     flex-direction: column-reverse; align-items: stretch;

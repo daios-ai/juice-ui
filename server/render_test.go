@@ -1108,9 +1108,8 @@ func TestNavDrawerWorksWithoutJS(t *testing.T) {
 	}
 	closed, open := render(false), render(true)
 
-	// The trigger is a link to the fallback URL, not a button, and it anchors to
-	// the drawer — which sits below a 100vh layout, so without the fragment a
-	// no-JS user lands on nothing.
+	// The trigger is a real link to the fallback URL, not a bare button, and it
+	// anchors to the drawer so the no-JS landing is unambiguous.
 	if !strings.Contains(closed, `href="?menu=open#nav-drawer"`) {
 		t.Error("menu trigger must be a real anchored link for the no-JS path")
 	}

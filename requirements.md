@@ -237,8 +237,9 @@ detectable.
 * The account/identity summary (handle, balance) lives at the sidebar foot;
   nothing that is itself a primary destination sits in a popover. Preferences are
   not chrome: the theme picker MUST appear exactly once, on `settings`.
-* Mobile MUST reflow to **a single menu affordance** opening a drawer that
-  carries the **whole** nav. No fixed-size bar is permissible: the nav is
+* Mobile MUST reflow to **a single menu affordance at the top left** opening the
+  sidebar as a **left panel** carrying the **whole** nav — the same object the
+  sidebar is, at a different width, not a different component. No fixed-size bar is permissible: the nav is
   unbounded, since every registered app contributes entries at runtime, so any bar
   would need an overflow, and the split between bar and overflow would be
   arbitrary and would shift as apps install — unlearnable. One model, two
