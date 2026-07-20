@@ -5,7 +5,7 @@
 
 {{/* _media — the 16:9 image slot (§5.13). A kernel image later (ROADMAP);
      the deterministic cardArt fallback until then. Takes an Action. */}}
-{{define "_media"}}<span class="media">{{cardArt .ID .OwnerHandle .Kind}}</span>{{end}}
+{{define "_media"}}<span class="media">{{cardArt .ID .OwnerHandle .Name .Kind}}</span>{{end}}
 
 {{define "_action_card"}}
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
@@ -343,7 +343,7 @@
 <div class="net-grid">
   {{range .Peers}}
   <div class="kernel-card{{if .Suspended}} inactive{{end}}">
-    <span class="media wide">{{cardArt .PublicKey .Handle "kernel"}}</span>
+    <span class="media wide">{{cardArt .PublicKey .Handle "" "kernel"}}</span>
     <div class="kernel-body">
       <div class="row">
         <b class="ref mono grow"><span class="owner">{{.Handle}}</span></b>

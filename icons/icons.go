@@ -19,8 +19,11 @@
 package icons
 
 import (
+	"bytes"
+	"compress/gzip"
 	_ "embed"
 	"encoding/json"
+	"io"
 	"math"
 	"sort"
 	"strings"
@@ -28,8 +31,13 @@ import (
 	"unicode"
 )
 
-//go:embed index.json
-var indexJSON []byte
+// The index carries each icon's terms and its artwork (the inner markup of a
+// 24x24 viewBox, carrying no fill of its own so a caller colors it). Stored
+// gzipped: 1.4MB of JSON compresses to under a third of that, and the cost is
+// one decompression at first use.
+//
+//go:embed index.json.gz
+var indexGz []byte
 
 // Match is one ranked icon.
 type Match struct {
@@ -61,10 +69,12 @@ type entry struct {
 	Cats []string `json:"c"`
 	Tags []string `json:"t"`
 	Pop  int      `json:"p"`
+	Art  string   `json:"d"`
 }
 
 type doc struct {
 	name  string
+	art   string
 	terms map[string]bool // name + categories + tags
 	inThe map[string]bool // terms occurring in the name alone
 	norm  float64         // precomputed length normalization
@@ -72,8 +82,9 @@ type doc struct {
 }
 
 type corpus struct {
-	docs []doc
-	idf  map[string]float64
+	docs   []doc
+	idf    map[string]float64
+	byName map[string]int
 }
 
 var (
@@ -82,25 +93,43 @@ var (
 )
 
 func index() *corpus {
-	once.Do(func() { loaded = build(indexJSON) })
+	once.Do(func() { loaded = build(indexGz) })
 	return loaded
 }
 
-func build(raw []byte) *corpus {
-	var entries []entry
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		// The index is a vendored build artifact; a parse failure is a
-		// programming error, not a runtime condition. Degrade to an empty
-		// corpus so callers simply get no match.
-		return &corpus{idf: map[string]float64{}}
+// empty is the degraded corpus. The index is a vendored build artifact, so a
+// read or parse failure is a programming error rather than a runtime condition;
+// callers simply get no match instead of a panic in a request path.
+func empty() *corpus {
+	return &corpus{idf: map[string]float64{}, byName: map[string]int{}}
+}
+
+func build(gz []byte) *corpus {
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	if err != nil {
+		return empty()
+	}
+	defer zr.Close()
+	raw, err := io.ReadAll(zr)
+	if err != nil {
+		return empty()
 	}
 
-	c := &corpus{docs: make([]doc, 0, len(entries)), idf: make(map[string]float64)}
+	var entries []entry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return empty()
+	}
+
+	c := &corpus{
+		docs:   make([]doc, 0, len(entries)),
+		idf:    make(map[string]float64),
+		byName: make(map[string]int, len(entries)),
+	}
 	df := make(map[string]int)
 	total := 0.0
 
 	for _, e := range entries {
-		d := doc{name: e.Name, terms: map[string]bool{}, inThe: map[string]bool{}, pop: e.Pop}
+		d := doc{name: e.Name, art: e.Art, terms: map[string]bool{}, inThe: map[string]bool{}, pop: e.Pop}
 		for _, t := range tokenize(e.Name) {
 			d.terms[t] = true
 			d.inThe[t] = true
@@ -122,6 +151,7 @@ func build(raw []byte) *corpus {
 			df[t]++
 		}
 		total += float64(len(d.terms))
+		c.byName[d.name] = len(c.docs)
 		c.docs = append(c.docs, d)
 	}
 
@@ -204,6 +234,19 @@ func Top(ref string, n int) []Match {
 		scored = scored[:n]
 	}
 	return scored
+}
+
+// Glyph returns an icon's artwork: the inner markup of a 24x24 viewBox, using
+// presentation attributes only and carrying no fill of its own, so the caller
+// colors it by setting fill on an enclosing element. Trust and money glyphs are
+// absent from the index, so no name can return one.
+func Glyph(name string) (string, bool) {
+	c := index()
+	i, ok := c.byName[name]
+	if !ok || c.docs[i].art == "" {
+		return "", false
+	}
+	return c.docs[i].art, true
 }
 
 // queryTerms tokenizes a reference and keeps only terms the corpus knows,
