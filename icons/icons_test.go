@@ -138,35 +138,38 @@ func TestOwnerIsIgnored(t *testing.T) {
 	}
 }
 
-func TestNoTrustOrMoneyGlyphs(t *testing.T) {
-	// Counterparty text must not be able to obtain a trust or money glyph;
-	// they are pruned from the index, so no query can return one.
-	banned := []string{
-		"verified", "verified_user", "shield", "lock", "https", "star",
-		"check", "check_circle", "done", "task_alt", "gpp_good", "security",
-		"payment", "payments", "paid", "credit_card", "account_balance_wallet",
-		"attach_money", "monetization_on", "diamond", "token", "workspace_premium",
-	}
+// The corpus is deliberately whole: trust and money glyphs are reachable,
+// because the media box is decoration and every kernel-vouched fact renders as
+// chrome outside it. This test pins that decision so nobody silently re-prunes,
+// and pins the one exclusion that is technical rather than editorial.
+func TestCorpusIsUnpruned(t *testing.T) {
 	present := map[string]bool{}
 	for i := range index().docs {
 		present[index().docs[i].name] = true
 	}
-	for _, b := range banned {
-		if present[b] {
-			t.Errorf("banned glyph %q present in index", b)
+	for _, name := range []string{
+		"verified", "shield", "lock", "star", "check", "done", "security",
+		"payments", "paid", "credit_card", "account_balance_wallet", "diamond",
+	} {
+		if !present[name] {
+			t.Errorf("%q missing: the corpus is meant to be unpruned", name)
 		}
 	}
+	// Excluded for CSP, not for meaning: its artwork carries an inline style=.
+	if present["screen_search_desktop"] {
+		t.Error("screen_search_desktop carries inline style= and must stay out")
+	}
+}
 
-	// And directly: tag-stuffing must not yield one.
-	for _, ref := range []string{
-		"@evil/verified-secure-trusted", "@evil/official-shield-badge",
-		"@evil/payment-money-wallet", "@evil/lock-security-safe",
-	} {
-		if m, ok := Pick(ref); ok {
-			for _, b := range banned {
-				if m.Name == b {
-					t.Errorf("%s obtained banned glyph %q", ref, b)
-				}
+// Whatever a query reaches, the artwork itself must stay CSP-clean, since it is
+// inlined verbatim into the page.
+func TestGlyphMarkupIsInert(t *testing.T) {
+	c := index()
+	for i := range c.docs {
+		art := c.docs[i].art
+		for _, bad := range []string{"style=", "url(", "<script", "http://", "https://", "#", "id="} {
+			if strings.Contains(art, bad) {
+				t.Fatalf("glyph %q contains %q", c.docs[i].name, bad)
 			}
 		}
 	}

@@ -13,9 +13,19 @@
 // "translate" therefore dominate common ones such as "arrow" without any
 // hand-tuned stoplist.
 //
-// Trust glyphs (shield, verified, lock, badge, star, check) and money glyphs
-// are pruned from the index, so counterparty-authored text can never obtain
-// one. See docs/action-thumbnails.md.
+// The corpus is the whole published icon set, deliberately unpruned. An earlier
+// cut withheld the trust glyphs (shield, verified, lock, badge, star, check) and
+// the money glyphs on the reasoning that counterparty-authored text could reach
+// one. That reasoning does not survive contact with where the glyph actually
+// renders: inside the media box, which is decoration, while every kernel-vouched
+// fact — ref, price, reputation — renders as chrome outside it. A drawn shield
+// there asserts no more than a provider-supplied photograph of a shield would,
+// and that is an accepted, socially policed risk (docs/action-thumbnails.md §5).
+// It is not a trust affordance in the sense requirements.md §8.1 governs, since
+// nothing keys off it.
+//
+// The single exclusion is technical: one icon carries an inline style=, which
+// the CSP forbids.
 package icons
 
 import (

@@ -25,9 +25,12 @@ import (
 //
 // The art is inline <svg> with presentation attributes only (no style=, no
 // external URL) so it satisfies the CSP, and every color comes from theme tokens
-// so it tracks the active theme rather than baking in hues. Counterparty content
-// stays outside it: the ref, price and reputation render as chrome beside the
-// frame, never over it.
+// so it tracks the active theme rather than baking in hues.
+//
+// The media box is decoration, and that is load-bearing: the ref, price and
+// reputation render as chrome beside the frame, never over it. Because nothing
+// keys off the glyph, the icon corpus is unpruned — a matched shield or coin
+// asserts no more than a provider-supplied photograph of one would.
 
 // artHues are the ground hue angles, in oklch degrees. Eight, not more: with
 // twelve, adjacent angles (60° and 75°) were indistinguishable at this chroma,

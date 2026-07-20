@@ -48,12 +48,21 @@ block referenced by `<use>`.
 Heroicons (MIT, already the §7 set) is the first choice; a second set is
 introduced only if a needed glyph is missing.
 
-**Excluded vocabulary.** Descriptions and names are counterparty-authored. The
-matchable icon subset MUST omit every trust-signalling glyph — shield, lock,
-verified, badge, star, check — and every money glyph. Otherwise a provider
-tag-stuffs `verified secure trusted` and earns a forged trust affordance, which
-`requirements.md` §8.1 forbids. This holds regardless of how the glyph is
-selected.
+**Vocabulary: unpruned, deliberately.** An earlier cut withheld the trust
+glyphs (shield, verified, lock, badge, star, check) and the money glyphs,
+reasoning that a provider could tag-stuff `verified secure trusted` and earn a
+forged affordance. That reasoning does not survive asking where the glyph
+renders: *inside* the media box, which is decoration, while every kernel-vouched
+fact — ref, price, reputation — renders as chrome outside it. Nothing keys off
+the glyph, so it is not a trust affordance in the sense `requirements.md` §8.1
+governs; a drawn shield asserts no more than the provider-supplied photograph of
+a shield that §5 already accepts. Withholding them also cost real accuracy:
+`validate-user` fell to `supervised_user_circle` instead of `verified_user`, and
+`invoice-parse` matched nothing rather than `receipt_long`.
+
+The one exclusion is technical, not editorial: a single icon carries an inline
+`style=`, which the CSP forbids. The residual risk is the one in §5 — a picture
+can depict a lie — and its recourse is the same: ratings and `admin` suspension.
 
 **Rejected: tag-index / embedding selection.** Deriving the keyword map from
 Material Symbols' ~3,600 icons and their published tags scales better, and an
