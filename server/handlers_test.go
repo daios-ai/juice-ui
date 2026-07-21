@@ -209,6 +209,24 @@ func boolStr(b bool) string {
 // regex read would not.
 var csrfFieldRe = regexp.MustCompile(`name="gorilla.csrf.Token" value="([^"]+)"`)
 
+// connectSelRe matches the selector query param of the first /grants/connect
+// link. connectSelector URL-decodes it so assertions are robust to
+// html/template's URL-query escaping (e.g. @ → %40).
+var connectSelRe = regexp.MustCompile(`/grants/connect\?selector=([^"&]*)`)
+
+func connectSelector(t *testing.T, body string) string {
+	t.Helper()
+	m := connectSelRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no /grants/connect link in body")
+	}
+	sel, err := url.QueryUnescape(m[1])
+	if err != nil {
+		t.Fatalf("bad selector encoding %q: %v", m[1], err)
+	}
+	return sel
+}
+
 // loginClient performs a full PKCE login through the BFF handler and returns a
 // cookie-jar client that is authenticated for subsequent requests.
 func loginClient(t *testing.T, base string) *http.Client {
@@ -1045,6 +1063,12 @@ func TestRunFormGatedOnNeedsConnect(t *testing.T) {
 	if strings.Contains(gated, `hx-post="/actions/AN/run"`) {
 		t.Error("ungranted action page must not offer the doomed run form")
 	}
+	// The connect link must target the action's FOLDER (@sys), not the degenerate
+	// single-action selector (@sys/gmail-read) — one paste then connects the whole
+	// provider group, per the kernel's directory grouping.
+	if sel := connectSelector(t, gated); sel != "@sys" {
+		t.Errorf("connect link selector = %q, want the folder @sys (not the bare action ref)", sel)
+	}
 
 	open := getBody(t, cl, srv.URL+"/actions/AG")
 	if !strings.Contains(open, `hx-post="/actions/AG/run"`) {
@@ -1052,6 +1076,49 @@ func TestRunFormGatedOnNeedsConnect(t *testing.T) {
 	}
 	if strings.Contains(open, "Needs a connected account.") {
 		t.Error("granted action page must not show the connect gate")
+	}
+}
+
+// TestRunGrantRequiredConnectsFolder: a run rejected pre-lock with grant_required
+// (e.g. the grant was revoked after page load) renders a connect affordance whose
+// selector is the action's FOLDER (@sys), not the bare failing ref
+// (@sys/gmail-read) — so one key paste connects every @sys/* action sharing the
+// provider, not just the one that failed. Guards the run-outcome connect site,
+// the twin of the NeedsConnect gate above.
+func TestRunGrantRequiredConnectsFolder(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/run" {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"code":"grant_required","meta":{"action":"@sys/gmail-read"},"error":"grant required"}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r) // login/action/me reads via authKernel
+	}))
+	defer wrap.Close()
+
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions/AN"))
+	form := url.Values{"gorilla.csrf.Token": {tok}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/AN/run", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // htmx path renders the _call_outcome fragment
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if !strings.Contains(string(body), "Connect an account to run this.") {
+		t.Fatalf("run outcome did not render the grant-required connect affordance: %s", body)
+	}
+	if sel := connectSelector(t, string(body)); sel != "@sys" {
+		t.Errorf("run-outcome connect selector = %q, want the folder @sys (not the bare action ref)", sel)
 	}
 }
 

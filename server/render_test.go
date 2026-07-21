@@ -91,6 +91,24 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	}
 }
 
+func TestRefFolder(t *testing.T) {
+	// refFolder derives the grant selector that connects a delegated action's
+	// whole provider group — the ref up to its LAST slash (the kernel directory),
+	// not the degenerate single-action selector. Contrast refOwner (first slash).
+	cases := []struct{ in, want string }{
+		{"@service/a", "@service"},
+		{"@service/msg/message", "@service/msg"},
+		{"@sys/llm/chat", "@sys/llm"},
+		{"@service", "@service"}, // no slash — returned unchanged
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := refFolder(c.in); got != c.want {
+			t.Errorf("refFolder(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestPct(t *testing.T) {
 	cases := []struct {
 		n, d int64
@@ -272,10 +290,15 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	// The affordance links to the consent-plan page for the action's selector; the
-	// per-scheme consent forms live on that page (v0.7 §14 delta display).
-	if !strings.Contains(body, `href="/grants/connect?selector=`) || !strings.Contains(body, `%40sys%2fgmail-send`) {
-		t.Errorf("grant_required outcome must link to the connect plan for the action: %s", body)
+	// The affordance links to the consent-plan page for the action's FOLDER
+	// selector (@sys, not the bare @sys/gmail-send) — one gesture connects the
+	// whole provider group; the per-scheme consent forms live on that page
+	// (v0.7 §14 delta display).
+	if !strings.Contains(body, `href="/grants/connect?selector=%40sys"`) {
+		t.Errorf("grant_required outcome must link to the folder connect plan: %s", body)
+	}
+	if strings.Contains(body, "gmail-send") {
+		t.Error("connect link must use the folder selector, not the degenerate single-action ref")
 	}
 	if !strings.Contains(body, "Connect") || strings.Contains(body, "failed") {
 		t.Error("grant_required must read as a Connect affordance, not a failure")

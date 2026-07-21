@@ -64,7 +64,7 @@
 <div class="outcome rejected" role="status">
   <strong>Connect an account to run this.</strong>
   <p>{{.Message}} You weren't charged.</p>
-  <p><a class="btn" href="/grants/connect?selector={{.ActionRef}}">Connect account</a></p>
+  <p><a class="btn" href="/grants/connect?selector={{refFolder .ActionRef}}">Connect account</a></p>
 </div>
 {{else if .IsPeerUnreachable}}
 <div class="outcome failed" role="status">
@@ -396,7 +396,7 @@
      here by full navigation. */}}
 <div id="action-run">
   <div class="banner banner-info">Needs a connected account.</div>
-  <p><a class="btn" href="/grants/connect?selector={{.Action.Ref}}">Connect account</a></p>
+  <p><a class="btn" href="/grants/connect?selector={{refFolder .Action.Ref}}">Connect account</a></p>
 </div>
 {{else}}
 {{/* One anatomy: an inline form (fields → button → result below). A paid run

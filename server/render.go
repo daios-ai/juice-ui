@@ -100,6 +100,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"ratingPct":    ratingPct,
 		"refOwner":     refOwner,
 		"refName":      refName,
+		"refFolder":    refFolder,
 		"reflink":      func(ref, id string) refLinkArgs { return refLinkArgs{Ref: ref, ID: id} },
 		"shortTime":    shortTime,
 		"relTime":      relTime,
@@ -312,6 +313,21 @@ func refName(ref string) string {
 		return ref[i+1:]
 	}
 	return ""
+}
+
+// refFolder returns the folder of a ref: everything up to the LAST '/'
+// (@service/a → @service, @chat/msg/message → @chat/msg). This is the kernel's
+// `directory` grouping — the grant selector that connects a delegated action's
+// whole provider group in one gesture, not the degenerate single-action
+// selector that would connect only the one failing action. Distinct from
+// refOwner, which splits on the FIRST slash (and would wrongly collapse
+// @chat/msg/message to @chat, sweeping in @chat/register). A ref with no slash
+// is returned unchanged.
+func refFolder(ref string) string {
+	if i := strings.LastIndexByte(ref, '/'); i >= 0 {
+		return ref[:i]
+	}
+	return ref
 }
 
 // Tab is one rendered tab for the _tab partial. Active drives both the class and
