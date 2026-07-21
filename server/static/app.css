@@ -587,7 +587,7 @@ textarea {
 /* Outcome panels */
 .outcome { border-left: 3px solid var(--border-strong); padding: .7rem 1rem; border-radius: var(--radius); background: var(--surface-2); }
 .outcome.rejected { border-left-color: var(--escrow); }
-.outcome.failed   { border-left-color: var(--refunded); }
+.outcome.failed   { border-left-color: var(--danger); }
 .outcome.success  { border-left-color: var(--credited); }
 
 /* Code blocks for inline JSON */
