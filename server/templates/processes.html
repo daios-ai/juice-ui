@@ -9,7 +9,7 @@
 {{if $d.Open}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Amount</th><th></th></tr></thead>
   <tbody>
   {{range $d.Open}}
   <tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
@@ -17,7 +17,7 @@
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">awaiting</span>{{end}}</td>
     <td class="money">{{money (sum .Available .Locked)}}</td>
     <td>
-      <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} credits are refunded to you.">
+      <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
         {{$d.CSRFField}}<button class="btn-danger small" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
       </form>
     </td>
@@ -32,7 +32,7 @@
 {{if $d.Closed}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Status</th><th class="money">Credits</th></tr></thead>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Amount</th></tr></thead>
   <tbody>{{range $d.Closed}}{{template "_process_row" .}}{{end}}</tbody>
 </table>
 </div>

@@ -88,6 +88,7 @@ type Renderer struct {
 func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":        money,
+		"dollarsInput": dollarsInput,
 		"sum":          func(a, b int64) int64 { return a + b },
 		"sub":          func(a, b int64) int64 { return a - b },
 		"json":         prettyJSON,
@@ -116,7 +117,6 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"badge":        badge,
 		"cardArt":      CardArt,
 		"initial":      initial,
-		"gem":          gem,
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -195,18 +195,36 @@ func (r *Renderer) Fragment(w http.ResponseWriter, status int, name string, data
 
 // ---- template helpers ----
 
-// money formats integer credits with thousands separators. Money is rendered in
-// a monospace face by the stylesheet (R8.5).
+// money formats integer credits as dollars — the single source of truth for every
+// displayed amount. 1000 credits = $1, always 3 decimals, thousands-grouped, sign
+// before the $: money(12)="$0.012", money(1000)="$1.000", money(-2500)="-$2.500",
+// money(1234567)="$1,234.567". Rendered in a monospace tabular face by the
+// stylesheet (R8.5); the credit↔dollar ratio is lossless (1 credit = $0.001).
 func money(n int64) string {
 	neg := n < 0
 	if neg {
 		n = -n
 	}
+	out := "$" + group3(n/1000) + "." + fmt.Sprintf("%03d", n%1000)
+	if neg {
+		return "-" + out
+	}
+	return out
+}
+
+// dollarsInput formats non-negative credits as a bare decimal for an HTML number
+// input's value (no $, no commas — number inputs reject those): 12 → "0.012".
+func dollarsInput(n int64) string {
+	if n < 0 {
+		n = -n
+	}
+	return fmt.Sprintf("%d.%03d", n/1000, n%1000)
+}
+
+// group3 renders a non-negative integer with thousands-separating commas.
+func group3(n int64) string {
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {
-		if neg {
-			return "-" + s
-		}
 		return s
 	}
 	var parts []string
@@ -215,11 +233,7 @@ func money(n int64) string {
 		s = s[:len(s)-3]
 	}
 	parts = append([]string{s}, parts...)
-	out := strings.Join(parts, ",")
-	if neg {
-		return "-" + out
-	}
-	return out
+	return strings.Join(parts, ",")
 }
 
 // indentJSON pretty-prints inline JSON (args/result) as indented text (R4.2),
@@ -365,13 +379,6 @@ func tab(label, href string, active bool) Tab { return Tab{Label: label, Href: h
 func paneltab(label, key string, active bool) Tab {
 	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
 }
-
-// gemGlyph is the inline credit mark — the diamond/gem icon, reserved for credit
-// amounts. Kept as one helper so every amount renders the identical mark and the
-// ¤ character stays out of the templates entirely (grammar guard).
-var gemGlyph = template.HTML(`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg>`)
-
-func gem() template.HTML { return gemGlyph }
 
 // initial returns the first letter of a handle (skipping a leading @), uppercased,
 // for an avatar monogram. "" → "?".

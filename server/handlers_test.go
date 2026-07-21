@@ -562,11 +562,11 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/transactions")
 	// Signed, perspective amounts: @alice is buyer on T1 (−gross) and seller on
 	// T2 (+net) — the Role/Gross/Fee columns are gone (they live on the detail).
-	if !strings.Contains(body, "-100") {
-		t.Error("buyer transaction must show the negative gross (−100)")
+	if !strings.Contains(body, "-$0.100") {
+		t.Error("buyer transaction must show the negative gross (−$0.100)")
 	}
-	if !strings.Contains(body, "+45") || !strings.Contains(body, "sig-credited") {
-		t.Error("seller transaction must show the positive net (+45) as credited")
+	if !strings.Contains(body, "+$0.045") || !strings.Contains(body, "sig-credited") {
+		t.Error("seller transaction must show the positive net (+$0.045) as credited")
 	}
 	// Gross/fee/full-party breakdown stays on the detail page; the list shows the
 	// signed perspective amount (plus the viewer's role, a lightweight label).
@@ -605,7 +605,7 @@ func TestUserLedgerUsesUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("user ledger must link the action ref (was missing before)")
 	}
-	if !strings.Contains(body, "-100") || !strings.Contains(body, "+45") {
+	if !strings.Contains(body, "-$0.100") || !strings.Contains(body, "+$0.045") {
 		t.Error("user ledger must show the signed perspective amounts")
 	}
 	if strings.Contains(body, "<th>Gross</th>") {
@@ -762,6 +762,56 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	// The legacy `action` form field is mapped to the v0.7 `selector`.
 	if !strings.Contains(got, `"selector":"@lena/api"`) || !strings.Contains(got, `"token":"PAT-123"`) {
 		t.Errorf("kernel /v1/grants body = %s", got)
+	}
+}
+
+// TestCreateActionParsesDollarPrice: a price typed in dollars on the create form
+// reaches the kernel as the correct integer credits (the parseDollars inverse of
+// the money display). "$0.012" MUST arrive as "price":12, not 0 or 12000.
+func TestCreateActionParsesDollarPrice(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	var mu sync.Mutex
+	var gotBody string
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/actions" {
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			gotBody = string(b)
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"id":"A9","action":"@alice/priced","owner_handle":"@alice","name":"priced","kind":"http","price":12}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer wrap.Close()
+
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))
+	form := url.Values{
+		"name":               {"priced"},
+		"kind":               {"http"},
+		"price":              {"$0.012"},
+		"gorilla.csrf.Token": {tok},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	mu.Lock()
+	got := gotBody
+	mu.Unlock()
+	if !strings.Contains(got, `"price":12`) {
+		t.Errorf("dollar price $0.012 must reach the kernel as 12 credits; kernel body = %s", got)
 	}
 }
 
@@ -1433,10 +1483,10 @@ func TestWalletShowsLedger(t *testing.T) {
 	// Each row encodes the viewer's role by the signed amount: as seller (T2, payee)
 	// @alice sees a credited +net; as buyer (T1, payer) she sees a −gross debit.
 	txBody := getBody(t, cl, srv.URL+"/transactions")
-	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+45") {
+	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+$0.045") {
 		t.Error("transactions ledger must show @alice's seller credit (+net) on T2")
 	}
-	if !strings.Contains(txBody, ">-100<") {
+	if !strings.Contains(txBody, ">-$0.100<") {
 		t.Error("transactions ledger must show @alice's buyer debit (−gross) on T1")
 	}
 }
@@ -1457,8 +1507,8 @@ func TestStudioShowsEarnings(t *testing.T) {
 			t.Errorf("workshop must show the %q earnings tile", tile)
 		}
 	}
-	if !strings.Contains(body, "+45") || !strings.Contains(body, "icons.svg#gem") {
-		t.Errorf("all-time earnings tile must show the +45 net with the gem mark: %s", body)
+	if !strings.Contains(body, "+$0.045") {
+		t.Errorf("all-time earnings tile must show the +$0.045 net: %s", body)
 	}
 }
 

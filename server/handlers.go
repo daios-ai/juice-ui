@@ -1286,7 +1286,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		Kind:        r.FormValue("kind"),
 		Source:      strings.TrimSpace(r.FormValue("source")),
 		Description: r.FormValue("description"),
-		Price:       parseInt64(r.FormValue("price")),
+		Price:       parseDollars(r.FormValue("price")),
 	}
 	if in.Kind == "http" {
 		in.Method = strings.TrimSpace(r.FormValue("method"))
@@ -1386,7 +1386,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		if me.Available < 20 {
-			view = makeResultView{Error: fmt.Sprintf("You need at least 20 credits to synthesize an action. Your balance is %s credits.", money(me.Available))}
+			view = makeResultView{Error: fmt.Sprintf("You need at least $0.020 to synthesize an action. Your balance is %s.", money(me.Available))}
 			return nil
 		}
 		out, e := s.caller.Run(ctx, tok, "@sys/make", mustArgs(map[string]any{"description": desc}))
@@ -1478,7 +1478,7 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	price := parseInt64(r.FormValue("price"))
+	price := parseDollars(r.FormValue("price"))
 	if price < 0 {
 		s.flashRedirect(w, r, "/actions/"+id, "error", "Price must be non-negative.")
 		return
@@ -1558,7 +1558,7 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 	desc := r.FormValue("description")
 	in := client.UpdateActionInput{Description: &desc}
 	if r.PostForm.Has("price") {
-		p := parseInt64(r.FormValue("price"))
+		p := parseDollars(r.FormValue("price"))
 		if p >= 0 {
 			in.Price = &p
 		}
@@ -1644,7 +1644,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	recipient := strings.TrimSpace(r.FormValue("recipient"))
-	amount := parseInt64(r.FormValue("amount"))
+	amount := parseDollars(r.FormValue("amount"))
 	reason := strings.TrimSpace(r.FormValue("reason"))
 	if recipient == "" || amount <= 0 {
 		s.flashRedirect(w, r, "/wallet", "error", "Enter a recipient and a positive amount.")
@@ -1654,7 +1654,7 @@ func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
 		_, e := s.client.Transfer(ctx, tok, recipient, amount, reason, "")
 		return e
 	})
-	s.flashResult(w, r, err, "/wallet", "Sent "+money(amount)+" credits to "+recipient+".")
+	s.flashResult(w, r, err, "/wallet", "Sent "+money(amount)+" to "+recipient+".")
 }
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
@@ -1937,6 +1937,30 @@ func filterStatus(procs []client.Process, status string, match bool) []client.Pr
 func parseInt64(s string) int64 {
 	n, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	return n
+}
+
+// parseDollars is the mirror of money: it reads a dollar amount from a form field
+// and returns integer credits (1000 credits = $1, 3-decimal precision). It tolerates
+// a leading "$" and thousands commas, so "$1,234.567" → 1234567 and "0.012" → 12.
+// Like parseInt64 it is lenient — a blank or unparsable field yields 0 — matching
+// the kernel-validates-not-the-BFF discipline.
+func parseDollars(s string) int64 {
+	s = strings.TrimSpace(s)
+	s = strings.NewReplacer("$", "", ",", "", " ", "").Replace(s)
+	if s == "" {
+		return 0
+	}
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	whole, frac, _ := strings.Cut(s, ".")
+	dollars, _ := strconv.ParseInt(whole, 10, 64) // "" → 0
+	frac = (frac + "000")[:3]                     // right-pad / truncate to milli-dollars
+	milli, _ := strconv.ParseInt(frac, 10, 64)
+	credits := dollars*1000 + milli
+	if neg {
+		return -credits
+	}
+	return credits
 }
 
 func lastSegment(path string) string {

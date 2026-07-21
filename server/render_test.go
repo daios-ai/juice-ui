@@ -18,7 +18,7 @@ func TestNewRendererParsesAllTemplates(t *testing.T) {
 }
 
 func TestMoneyFormatting(t *testing.T) {
-	cases := map[int64]string{0: "0", 5: "5", 100: "100", 1000: "1,000", 1234567: "1,234,567", -2500: "-2,500"}
+	cases := map[int64]string{0: "$0.000", 5: "$0.005", 100: "$0.100", 1000: "$1.000", 1234567: "$1,234.567", -2500: "-$2.500"}
 	for in, want := range cases {
 		if got := money(in); got != want {
 			t.Errorf("money(%d) = %q want %q", in, got, want)
@@ -83,11 +83,49 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	if !strings.Contains(body, `data-theme="dracula"`) {
 		t.Error("theme not stamped onto <html>")
 	}
-	if !strings.Contains(body, "1,000") {
+	if !strings.Contains(body, "$1.000") {
 		t.Error("available balance not rendered with money formatting")
 	}
 	if !strings.Contains(body, "@alice") {
 		t.Error("handle not rendered in nav")
+	}
+}
+
+func TestDollarsInput(t *testing.T) {
+	// dollarsInput renders a bare decimal for number-input values (no $, no commas).
+	cases := map[int64]string{0: "0.000", 12: "0.012", 1000: "1.000", 1234567: "1234.567"}
+	for in, want := range cases {
+		if got := dollarsInput(in); got != want {
+			t.Errorf("dollarsInput(%d) = %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseDollars(t *testing.T) {
+	// parseDollars is the inverse of money: a dollar string → integer credits,
+	// tolerating a leading $ and thousands commas, truncating beyond milli-dollars.
+	cases := map[string]int64{
+		"0.012":      12,
+		"1":          1000,
+		"1.5":        1500,
+		".5":         500,
+		"$0.020":     20,
+		"$1,234.567": 1234567,
+		"-2.5":       -2500,
+		"":           0,
+		"  12.000  ": 12000,
+		"1.2345":     1234, // 4th decimal truncated
+	}
+	for in, want := range cases {
+		if got := parseDollars(in); got != want {
+			t.Errorf("parseDollars(%q) = %d want %d", in, got, want)
+		}
+	}
+	// Round-trips: money(parseDollars(dollarsInput(n))) is stable for whole credits.
+	for _, n := range []int64{0, 12, 20, 1000, 1234567} {
+		if got := parseDollars(dollarsInput(n)); got != n {
+			t.Errorf("round-trip parseDollars(dollarsInput(%d)) = %d", n, got)
+		}
 	}
 }
 
@@ -146,13 +184,13 @@ func TestTxAmount(t *testing.T) {
 		tx           client.Transaction
 		want         []string // substrings the rendered cell must contain
 	}{
-		{"buyer pays gross", "@buyer", mk("success", 100, 90, 10), []string{"-100"}},
-		{"seller earns net", "@seller", mk("success", 100, 90, 10), []string{"sig-credited", "+90"}},
-		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+10"}},
+		{"buyer pays gross", "@buyer", mk("success", 100, 90, 10), []string{"-$0.100"}},
+		{"seller earns net", "@seller", mk("success", 100, 90, 10), []string{"sig-credited", "+$0.090"}},
+		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+$0.010"}},
 		{"no stake shows dash", "@bystander", mk("success", 100, 90, 10), []string{"—"}},
-		{"failed refunds buyer", "@buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "100"}},
+		{"failed refunds buyer", "@buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "$0.100"}},
 		{"failed non-buyer dash", "@seller", mk("failure", 100, 0, 0), []string{"—"}},
-		{"open parks buyer", "@buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "100"}},
+		{"open parks buyer", "@buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "$0.100"}},
 	}
 	for _, c := range cases {
 		got := string(txAmount(c.tx, c.viewer))
@@ -165,13 +203,13 @@ func TestTxAmount(t *testing.T) {
 
 	// Self-call by a normal user (buyer == seller): nets to −fee.
 	self := client.Transaction{OwnerHandle: "@a", TargetHandle: "@a", Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(txAmount(self, "@a")); !strings.Contains(got, "-10") {
-		t.Errorf("self-call = %q, want -10 (the fee)", got)
+	if got := string(txAmount(self, "@a")); !strings.Contains(got, "-$0.010") {
+		t.Errorf("self-call = %q, want -$0.010 (the fee)", got)
 	}
 	// @sys as the seller collects net + fee = gross.
 	sysSell := client.Transaction{OwnerHandle: "@a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+100") {
-		t.Errorf("@sys-as-seller = %q, want +100 (net+fee)", got)
+	if got := string(txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+$0.100") {
+		t.Errorf("@sys-as-seller = %q, want +$0.100 (net+fee)", got)
 	}
 }
 
@@ -473,8 +511,8 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run (12)") {
-		t.Errorf("run form must have a money button reading %q: %s", "Run (12)", body)
+	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run ($0.012)") {
+		t.Errorf("run form must have a money button reading %q: %s", "Run ($0.012)", body)
 	}
 	if strings.ContainsRune(body, '¤') {
 		t.Error("money button must not render the ¤ glyph")
@@ -762,28 +800,28 @@ func TestConfirmModalIsNativeDialog(t *testing.T) {
 	}
 }
 
-// TestCreditsColumnIsSingleTotal guards snag #3: lists show one "Credits" column =
+// TestCreditsColumnIsSingleTotal guards snag #3: lists show one amount column =
 // available + parked (total); the split stays only on prominent wallet/detail views.
 func TestCreditsColumnIsSingleTotal(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// List → a single Credits column showing the total.
+	// List → a single amount column showing the total.
 	rec := httptest.NewRecorder()
 	list := Page{Handle: "@me", Data: processesView{Open: []client.Process{{ID: "p1", Status: "open", Available: 30, Locked: 70}}}}
 	if err := r.Render(rec, 200, "processes", list); err != nil {
 		t.Fatalf("render processes: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `<th class="money">Credits</th>`) {
-		t.Errorf("list must have a single Credits column: %s", body)
+	if !strings.Contains(body, `<th class="money">Amount</th>`) {
+		t.Errorf("list must have a single amount column: %s", body)
 	}
 	if strings.Contains(body, ">Parked<") || strings.Contains(body, ">Available<") {
 		t.Errorf("list must drop the standing Available/Parked columns: %s", body)
 	}
-	if !strings.Contains(body, ">100<") {
-		t.Errorf("Credits cell must show the total 30+70=100: %s", body)
+	if !strings.Contains(body, ">$0.100<") {
+		t.Errorf("amount cell must show the total 30+70=100 credits = $0.100: %s", body)
 	}
 
 	// Detail → the available + parked split is kept.
@@ -1078,8 +1116,8 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 	if !strings.Contains(body, "our credit there") {
 		t.Error("friend kernel card missing the our-credit figure")
 	}
-	if !strings.Contains(body, "250") || !strings.Contains(body, "icons.svg#gem") {
-		t.Errorf("our credit value not rendered with the gem mark: %s", body)
+	if !strings.Contains(body, "$0.250") {
+		t.Errorf("our credit value not rendered as dollars: %s", body)
 	}
 	if !strings.Contains(body, `class="kernel-card`) || !strings.Contains(body, `class="media wide"`) {
 		t.Errorf("friend must render as a kernel card with a banner: %s", body)

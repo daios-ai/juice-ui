@@ -331,12 +331,12 @@ detectable.
 * The receipt MUST offer one-click re-run with the same args.
 
 ```text
-  @lena/ocr-translate                    ◆ 12
+  @lena/ocr-translate                    $0.012
   ─────────────────────────────────────────────
   document_url   [https://…            ]
   target_lang    [German             ▾ ]
 
-  [ Run (12) ]   Maximum, all-in. Refunded if it fails.
+  [ Run ($0.012) ]   Maximum, all-in. Refunded if it fails.
   ┌─ result ──────────────────────────────────┐
   │  Success.   { … }        Receipt · ▲ ▼      │
   └────────────────────────────────────────────┘
@@ -417,7 +417,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * The creation zone MUST offer two paths, each with a the accent spend button stating
   the price:
   * `@sys/make`: `POST /v1/run {action: "@sys/make", args: {description}}`,
-    button `[ Synthesize (20) ]` (price from `native.make.price`). The call is
+    button `[ Synthesize ($0.020) ]` (price from `native.make.price`). The call is
     synchronous: the UI MUST show progress against elapsed time and render
     `{status, action_id, action_name, diagnostics, tests}`. On `status="success"`
     the action is already registered and active, owned by the caller; the UI MUST
@@ -478,21 +478,26 @@ open (parked steps), the result MUST say so and link to the Wallet.
   confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
-  as `verb (N)` (e.g. "Run (12)", "Synthesize (20)") — the accent colour conveys
-  credits, so a spend button carries **no credit glyph**. Primary non-spend: solid
-  ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
+  as `verb ($N.NNN)` (e.g. "Run ($0.012)", "Synthesize ($0.020)") — the `$`-prefixed
+  dollar amount is the same one the money helper renders everywhere. Primary
+  non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist. (A **step completion** is NOT a spend
   button — it is the neutral `Complete` naming no amount; the completer does the
   work but the money was reserved by the step's creator.)
 * **Money and identity typography.** Money, IDs, hashes, and `@owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
-  of the surrounding proportional chrome; a money amount outside a button carries
-  the **credit mark** — the diamond/gem icon (rendered via the `gem` helper /
-  `#gem` sprite), e.g. `12 ◆` — never the `¤` character. Ledger rows MUST carry
-  explicit `−`/`+`; spend buttons state the unsigned gross as `verb (N)` (no glyph,
-  above). The owner segment of `@owner/name` MUST be weight-emphasized in a
-  confusable-distinct monospace face and MUST NOT use the accent.
+  of the surrounding proportional chrome. Money MUST render in **dollars**,
+  `$`-prefixed, **always three decimals**, thousands-grouped (`$1,234.567`), with
+  the sign before the `$` (`-$2.500`). The wire unit is the integer **credit**
+  (`1000 credits = $1`, so 1 credit = `$0.001`, exact); dollars are a
+  presentation-only transform produced by **one** helper (`money`), so a future
+  change to the money format is a single edit. No diamond/gem/`◆` mark and never
+  the `¤` character. Ledger rows MUST carry explicit `−`/`+`; spend buttons state
+  the unsigned gross as `verb ($N.NNN)` (above). Editable amount inputs are typed
+  in dollars and parsed server-side back to credits. The owner segment of
+  `@owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
+  and MUST NOT use the accent.
 * **Status signals.** The credited, refunded, and escrow-pending states MUST be
   mutually distinct and distinct from the accent in both themes, each pairing a color
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending

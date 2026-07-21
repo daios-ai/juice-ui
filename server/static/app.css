@@ -145,7 +145,7 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .browse-search { display: none; margin: 0 0 1rem; }
 
 /* Price is money DISPLAY (mono, tabular), not a control — never the accent
-   (accent = money movement only). The unit ¤ is added in the template. */
+   (accent = money movement only). The `$` prefix comes from the money helper. */
 .price { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
 .price-lg { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.7rem; font-weight: 700; }
 .price-lg .cap { display: block; font-family: var(--font-ui); font-size: .72rem; font-weight: 500; color: var(--text-muted); }

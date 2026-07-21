@@ -12,7 +12,7 @@
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
     <span class="card-title" title="{{.Action.Ref}}">{{template "_reflink" (reflink .Action.Ref .Action.ID)}}</span>
-    <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}} {{gem}}{{else}}<span class="free">free</span>{{end}}</span>
+    <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}}{{else}}<span class="free">free</span>{{end}}</span>
   </div>
   <p class="card-desc">
     {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
@@ -32,7 +32,7 @@
      "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). */}}
 {{define "_stat_strip"}}
 <p class="stat-strip">
-  {{if .WithPrice}}<span class="price" title="Price per run"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Price}}</span>
+  {{if .WithPrice}}<span class="price" title="Price per run">{{money .Price}}</span>
   · {{end}}{{if gt .S.Uses 0}}<span title="Success rate — {{.S.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
   · {{if gt .S.RatingCount 0}}<span title="Rating — {{.S.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
   · {{if gt .S.Uses 0}}<span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
@@ -258,7 +258,7 @@
 </div>
 {{else}}
 <div class="outcome failed" role="status">
-  <strong>Synthesis failed — your 20 credits were fully refunded.</strong>
+  <strong>Synthesis failed — your $0.020 was fully refunded.</strong>
   {{if .Diagnostics}}
   <ul>
     {{range .Diagnostics}}<li>{{.}}</li>{{end}}
@@ -276,7 +276,7 @@
      the desktop profile popover (nav lives in the sidebar). */}}
 {{define "_menu_account"}}
 <div class="menu-caption mono">{{.Handle}}</div>
-<div class="menu-caption money"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#gem"/></svg> {{money .Available}}</div>
+<div class="menu-caption money">{{money .Available}}</div>
 <div class="menu-divider"></div>
 <form method="post" action="/logout">
   {{.CSRFField}}
@@ -336,7 +336,7 @@
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
-      <div class="small muted">their credit here <span class="mono">{{money (sum .Available .Locked)}} {{gem}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}} {{gem}}</span></div>
+      <div class="small muted">their credit here <span class="mono">{{money (sum .Available .Locked)}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}}</span></div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         <form method="post" action="/admin/peers/unsubscribe" data-confirm="Unsubscribe {{.Handle}}? Their proxies deactivate here; balance and history are preserved.">

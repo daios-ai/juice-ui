@@ -113,7 +113,7 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 	op := lastSegment(r.URL.Path)
 	ctx := r.Context()
 	handle := strings.TrimSpace(r.FormValue("handle"))
-	amount := parseInt64(r.FormValue("amount"))
+	amount := parseDollars(r.FormValue("amount"))
 	reason := strings.TrimSpace(r.FormValue("reason"))
 	extKey := strings.TrimSpace(r.FormValue("external_key"))
 	if handle == "" || amount <= 0 {
@@ -132,7 +132,7 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 	if op == "withdraw" {
 		verb = "Withdrew"
 	}
-	s.flashResult(w, r, err, "/admin", verb+" "+money(amount)+" credits · "+handle+".")
+	s.flashResult(w, r, err, "/admin", verb+" "+money(amount)+" · "+handle+".")
 }
 
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {

@@ -87,7 +87,7 @@
       </div>
       <div class="field">
         <label for="c-price">Price</label>
-        <input id="c-price" name="price" type="number" min="0" value="0" class="input-sm">
+        <input id="c-price" name="price" type="number" min="0" step="0.001" value="0.000" class="input-sm">
       </div>
       <div class="field">
         <label for="c-in">Input schema (JSON)</label>
@@ -121,10 +121,10 @@
         <textarea id="m-desc" name="description" placeholder="e.g. Given a list of numbers, return their mean and standard deviation." required rows="1"></textarea>
       </div>
       <div class="row">
-        <button class="btn-money" type="submit">Synthesize (20)</button>
+        <button class="btn-money" type="submit">Synthesize ($0.020)</button>
         <div id="make-progress" class="progress" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>Synthesizing…</span></div>
       </div>
-      <p class="help muted flush">Costs 20 credits. Refunded in full if synthesis fails.</p>
+      <p class="help muted flush">Costs $0.020. Refunded in full if synthesis fails.</p>
     </form>
     <div id="make-result"></div>
   </div>
@@ -227,7 +227,7 @@
       </div>
       <div class="field">
         <label for="tr-amt">Amount</label>
-        <input id="tr-amt" name="amount" type="number" min="1" step="1" class="mono" required>
+        <input id="tr-amt" name="amount" type="number" min="0.001" step="0.001" class="mono" required>
       </div>
       <div class="field">
         <label for="tr-why">Reason</label>

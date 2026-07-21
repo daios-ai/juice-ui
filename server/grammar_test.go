@@ -128,15 +128,20 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
-// TestNoCurrencyGlyph enforces §5.1: the credit mark is the gem/diamond icon
-// (the `gem` helper → #gem sprite), never the ¤ character. A credit amount reads
-// `N {{gem}}`; a spend button reads `verb (N)` (the accent conveys credits). The
-// ¤ glyph must not appear in any template — it is a regression of the old mark.
+// TestNoCurrencyGlyph enforces the money grammar (§7): every amount renders in
+// dollars through the single `money` helper (`$N.NNN`), and a spend button reads
+// `verb ($N.NNN)`. Neither the ¤ character nor the retired gem/diamond mark (the
+// `gem` helper or `#gem` sprite) may appear in any template — both are regressions
+// of superseded marks.
 func TestNoCurrencyGlyph(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
-		if strings.ContainsRune(string(mustRead(t, f)), '¤') {
-			t.Errorf("%s: the ¤ glyph is banned — render credit amounts with the {{gem}} helper (grammar §5.1)", f)
+		src := string(mustRead(t, f))
+		if strings.ContainsRune(src, '¤') {
+			t.Errorf("%s: the ¤ glyph is banned — render amounts with the {{money}} helper (§7)", f)
+		}
+		if strings.Contains(src, "{{gem}}") || strings.Contains(src, "#gem") {
+			t.Errorf("%s: the gem/diamond mark is retired — money renders in dollars via {{money}} (§7)", f)
 		}
 	}
 }
