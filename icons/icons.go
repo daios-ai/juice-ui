@@ -181,7 +181,7 @@ func build(gz []byte) *corpus {
 }
 
 // Pick returns the best-matching icon for an action reference, which may be a
-// bare name ("ocr-translate") or a full ref ("@lena/ocr-translate"); the owner
+// bare name ("ocr-translate") or a full ref ("lena/ocr-translate"); the owner
 // segment names the provider, not the operation, and is discarded. The second
 // result is false when no candidate clears MinScore.
 func Pick(ref string) (Match, bool) {
@@ -263,14 +263,15 @@ func Glyph(name string) (string, bool) {
 // trying a naive singular form for unknown plurals.
 func queryTerms(c *corpus, ref string) []string {
 	ref = strings.TrimSpace(ref)
-	if strings.HasPrefix(ref, "@") {
-		// Split once on the first slash after the handle: the owner is the
-		// provider, the remainder is the operation.
-		if i := strings.Index(ref, "/"); i >= 0 {
-			ref = ref[i+1:]
-		} else {
-			return nil // a bare handle names no operation
-		}
+	ref = strings.TrimPrefix(ref, "@") // migration-period sigil tolerated
+	// A full ref is owner/name: strip the owner segment (through the first
+	// slash) so provider handles never leak into the icon query — with bare
+	// v0.12 refs the owner is no longer marked by a sigil, so any ref that
+	// contains a slash is treated as owner-qualified. Callers passing a bare
+	// action NAME containing slashes do not exist (names reach here as full
+	// refs); a bare handle names no operation.
+	if i := strings.Index(ref, "/"); i >= 0 {
+		ref = ref[i+1:]
 	}
 
 	seen := map[string]bool{}

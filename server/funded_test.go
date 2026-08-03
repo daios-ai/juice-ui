@@ -38,7 +38,7 @@ func TestRunSuccess(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "@sys/lookup", nil)
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestRunInputRejected(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "@sys/lookup", nil)
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRunExecutionFailed(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "@sys/lookup", nil)
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,19 +94,19 @@ func TestRunExecutionFailed(t *testing.T) {
 func TestRunGrantRequired(t *testing.T) {
 	f := &fakeKernel{
 		runStatus: 403,
-		runBody:   `{"error":"grant required","code":"grant_required","meta":{"action":"@sys/gmail-send"}}`,
+		runBody:   `{"error":"grant required","code":"grant_required","meta":{"action":"sys/gmail-send"}}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "@sys/gmail-send", nil)
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/gmail-send", nil)
 	if err != nil {
 		t.Fatalf("grant_required must be an outcome, not an error: %v", err)
 	}
 	if out.Class != GrantRequired || !out.IsGrantRequired() {
 		t.Fatalf("class = %v want GrantRequired", out.Class)
 	}
-	if out.ActionRef != "@sys/gmail-send" {
-		t.Errorf("ActionRef = %q want @sys/gmail-send", out.ActionRef)
+	if out.ActionRef != "sys/gmail-send" {
+		t.Errorf("ActionRef = %q want sys/gmail-send", out.ActionRef)
 	}
 }
 
@@ -115,9 +115,9 @@ func TestRunGrantRequiredFallsBackToRunRef(t *testing.T) {
 	f := &fakeKernel{runStatus: 403, runBody: `{"error":"grant required","code":"grant_required"}`}
 	c, stop := f.start(t)
 	defer stop()
-	out, _ := NewCaller(c).Run(context.Background(), "tok", "@sys/gmail-send", nil)
-	if out.ActionRef != "@sys/gmail-send" {
-		t.Errorf("ActionRef fallback = %q want @sys/gmail-send", out.ActionRef)
+	out, _ := NewCaller(c).Run(context.Background(), "tok", "sys/gmail-send", nil)
+	if out.ActionRef != "sys/gmail-send" {
+		t.Errorf("ActionRef fallback = %q want sys/gmail-send", out.ActionRef)
 	}
 }
 
@@ -126,11 +126,11 @@ func TestRunPeerUnreachable(t *testing.T) {
 	// not a raw error dumped through the generic path.
 	f := &fakeKernel{
 		runStatus: 502,
-		runBody:   `{"error":"peer offline","code":"peer_unreachable","meta":{"peer":"@peerb"}}`,
+		runBody:   `{"error":"peer offline","code":"peer_unreachable","meta":{"peer":"peerb"}}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "@peerb/greet", nil)
+	out, err := NewCaller(c).Run(context.Background(), "tok", "peerb/greet", nil)
 	if err != nil {
 		t.Fatalf("peer_unreachable must be an outcome, not an error: %v", err)
 	}
@@ -147,11 +147,11 @@ func TestRunPeerUnfunded(t *testing.T) {
 	// first-class not-charged outcome, distinct from the caller's own funds.
 	f := &fakeKernel{
 		runStatus: 402,
-		runBody:   `{"error":"peer credit exhausted","code":"peer_unfunded","meta":{"peer":"@peerb"}}`,
+		runBody:   `{"error":"peer credit exhausted","code":"peer_unfunded","meta":{"peer":"peerb"}}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "@peerb/greet", nil)
+	out, err := NewCaller(c).Run(context.Background(), "tok", "peerb/greet", nil)
 	if err != nil {
 		t.Fatalf("peer_unfunded must be an outcome, not an error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRunInsufficientFundsIsError(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	_, err := NewCaller(c).Run(context.Background(), "tok", "@sys/lookup", nil)
+	_, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil)
 	if !isKind(err, client.KindInsufficientFunds) {
 		t.Errorf("expected insufficient-funds error, got %v", err)
 	}

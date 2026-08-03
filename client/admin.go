@@ -8,11 +8,12 @@ import (
 )
 
 // Admin (superuser) operations. The kernel serves these on the same TCP API as
-// everything else, under /control/*, gated by an IsSuperuser check on the @sys
+// everything else, under /control/*, gated by an IsSuperuser check on the sys
 // bearer token (API.md C13). A non-superuser bearer is rejected 403
 // ("superuser required") → KindUnauthorized. Routes and shapes verified live
-// (2026-07-06). These never touch the kernel DB directly; the BFF is an ordinary
-// HTTP client of the control surface.
+// (2026-07-06; re-gated against the v0.12 kernel 2026-08-03). These never touch
+// the kernel DB directly; the BFF is an ordinary HTTP client of the control
+// surface.
 
 // AdminUser is a user row from the control surface. The kernel signals suspension
 // by the PRESENCE of suspended_at: it omits the field when active and includes the
@@ -45,20 +46,30 @@ type Adjustment struct {
 	TargetHandle   string `json:"target_handle"`
 }
 
-// Peer is a subscribed/known peer (proxy user) row from the control surface.
-// Available/Locked are the peer's own wallet here; PeerCredit and LastSeen are the
-// §13 peer-sync cache — our prepaid credit held on the peer, and when we last heard
-// from it. SuspendedAt is present only on a suspended row under ?all=1 (v0.9 unified
-// moderation; denied_at was retired).
+// Peer is a known peer (proxy user) row from the control surface. Available is
+// the BILATERAL POSITION under the v0.12 exposure model and may be NEGATIVE:
+// positive = the peer prepaid (this kernel owes it service), negative = the
+// peer owes this kernel. PeerCredit and LastSeen are the §13 peer-sync cache —
+// this kernel's cached credit on the peer, and when we last heard from it.
+// SettlementDue is the kernel's Y-trigger signal: information, never authority
+// (crossing it stops nothing; only the global cap X refuses calls). SuspendedAt
+// is present only on a suspended row under ?all=1 (v0.9 unified moderation).
 type Peer struct {
-	Handle      string `json:"handle"`
-	PublicKey   string `json:"public_key"`
-	Available   int64  `json:"available"`
-	Locked      int64  `json:"locked"`
-	PeerCredit  int64  `json:"peer_credit"`            // our spendable credit on the peer
-	LastSeen    string `json:"last_seen"`              // RFC3339; "" / null when never seen
-	SuspendedAt string `json:"suspended_at,omitempty"` // set only on a suspended row under ?all=1
+	Handle        string `json:"handle"`
+	PublicKey     string `json:"public_key"`
+	Available     int64  `json:"available"`
+	Locked        int64  `json:"locked"`
+	PeerCredit    int64  `json:"peer_credit"`              // our cached credit on the peer
+	LastSeen      string `json:"last_seen"`                // RFC3339; "" / null when never seen
+	SettlementDue bool   `json:"settlement_due,omitempty"` // gross receivables crossed Y (§13)
+	SuspendedAt   string `json:"suspended_at,omitempty"`   // set only on a suspended row under ?all=1
 }
+
+// Position is the bilateral position for display: the signed Available.
+// Render it with its reading — "we owe them" (positive: the peer prepaid or
+// earned here) / "owes us" (negative) — never as a bare negative number
+// (requirements.md §6.6).
+func (p Peer) Position() int64 { return p.Available }
 
 // Suspended reports whether this peer is frozen (its inbound calls are refused).
 // Detection is by presence: the kernel returns suspended_at only on a suspended row
@@ -112,7 +123,7 @@ type Reachability struct {
 }
 
 // Inspection is GET /control/peers/inspect?key= — a remote kernel's identity, its
-// About (the peer's @sys description), public actions (each with a Description),
+// About (the peer's sys description), public actions (each with a Description),
 // transacted peers, and reachability. Online and Source are top-level fields
 // (verified live): Online is true only when the live probe reached the peer; Source
 // is "live" | "local" (last-known, online=false) | "none". The transacted-peers
@@ -129,11 +140,21 @@ type Inspection struct {
 	Reachability Reachability `json:"reachability"`
 }
 
-// Identity is this kernel's own federation identity (/control/identity).
+// Identity is this kernel's own federation identity plus its global exposure
+// evidence (/control/identity; exposure fields verified live 2026-08-03):
+// ExposureMax is the cap X on gross unsecured receivables across ALL peers,
+// GrossReceivables the current G, SettlementTrigger the flag level Y, and
+// SettlementQuantum the smallest fee-rational external payment Q (0 = the
+// probabilistic residual path is disabled). SettlementDue mirrors G ≥ Y.
 type Identity struct {
-	Handle    string   `json:"handle"`
-	PublicKey string   `json:"public_key"`
-	Addrs     []string `json:"addrs"`
+	Handle            string   `json:"handle"`
+	PublicKey         string   `json:"public_key"`
+	Addrs             []string `json:"addrs"`
+	ExposureMax       int64    `json:"exposure_max"`
+	GrossReceivables  int64    `json:"gross_receivables"`
+	SettlementTrigger int64    `json:"settlement_trigger"`
+	SettlementQuantum int64    `json:"settlement_quantum"`
+	SettlementDue     bool     `json:"settlement_due"`
 }
 
 // AdminListUsers returns every user (GET /control/users). The kernel pages every
@@ -178,7 +199,7 @@ func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) e
 }
 
 // AdminRename changes a user's handle (POST /control/users/{handle}/rename),
-// freeing the old handle for reuse. The kernel rejects renaming @sys.
+// freeing the old handle for reuse. The kernel rejects renaming sys.
 func (c *Client) AdminRename(ctx context.Context, token, handle, newHandle string) error {
 	body := struct {
 		NewHandle string `json:"new_handle"`
@@ -237,8 +258,10 @@ func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, err
 	return id, err
 }
 
-// AdminSubscribe subscribes to a kernel by public key (POST /control/peers/subscribe),
-// importing its active public actions as owner-qualified proxies.
+// AdminSubscribe bulk-caches a kernel's active public actions as local proxy
+// rows (POST /control/peers/subscribe). Under v0.12 this is an OPTIONAL warm:
+// a remote action also resolves and caches on first call (juicedocs §13
+// "resolve, don't subscribe").
 func (c *Client) AdminSubscribe(ctx context.Context, token, key string) error {
 	return c.do(ctx, http.MethodPost, "/control/peers/subscribe", token, map[string]string{"key": key}, nil)
 }
@@ -250,9 +273,9 @@ func (c *Client) AdminUnsubscribe(ctx context.Context, token, handleOrKey string
 }
 
 // AdminSuspendPeer freezes a peer's inbound calls (POST /control/users/{key}/suspend).
-// The moderation route is unified with users (v0.9): it resolves a raw base64url
-// public key as well as a handle, so the key is passed unnormalized (a leading @
-// would make the kernel read it as a handle).
+// The moderation route is unified with users (v0.9): the three account forms are
+// disjoint syntactic productions (bare handle / base64url key / UUID), so the
+// key is passed through untouched and the kernel disambiguates by shape.
 func (c *Client) AdminSuspendPeer(ctx context.Context, token, key string) error {
 	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(key)+"/suspend", token, nil, nil)
 }
@@ -267,4 +290,95 @@ func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspectio
 	var out Inspection
 	err := c.do(ctx, http.MethodGet, "/control/peers/inspect?key="+url.QueryEscape(key), token, nil, &out)
 	return out, err
+}
+
+// PendingTransfer is one buyer-side value-transfer record from the v0.12
+// transfer queue (GET /control/transfers). Status is "pending" (no settleable
+// receipt yet), "quarantined" (a receipt that failed validation — evidence
+// insufficient, reconciled out of band), or terminal "settled"/"refunded".
+// Field set kept lenient: shapes gated against the running kernel in the
+// admin handler tests; unknown fields are ignored by encoding/json.
+type PendingTransfer struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	Peer      string `json:"peer,omitempty"` // the serving peer (handle or key)
+	StepID    string `json:"step_id,omitempty"`
+	Amount    int64  `json:"amount,omitempty"`  // the delivered value
+	Reserve   int64  `json:"reserve,omitempty"` // total locked from the buyer
+	Reason    string `json:"reason,omitempty"`  // why quarantined, when it is
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// AdminListTransfers lists value-transfer records (GET /control/transfers).
+// An empty status lists the kernel's default: the unresolved set (pending +
+// quarantined); a specific status ("pending", "quarantined", "settled",
+// "refunded") filters to it. Paged like every kernel list.
+func (c *Client) AdminListTransfers(ctx context.Context, token, status string, limit, offset int) ([]PendingTransfer, error) {
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/control/transfers"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out []PendingTransfer
+	err := c.do(ctx, http.MethodGet, path, token, nil, &out)
+	return out, err
+}
+
+// AdminGetTransfer reads one value-transfer record (GET /control/transfers/{id}).
+func (c *Client) AdminGetTransfer(ctx context.Context, token, id string) (PendingTransfer, error) {
+	var t PendingTransfer
+	err := c.do(ctx, http.MethodGet, "/control/transfers/"+url.PathEscape(id), token, nil, &t)
+	return t, err
+}
+
+// AdminRetryTransfer re-presents a transfer's stored signed completion and
+// settles strictly on receipt evidence (POST /control/transfers/{id}/retry).
+// Retry is the ONLY mutation on this resource — it never picks an outcome
+// (juicedocs §13): success settles, failure refunds, no receipt stays pending,
+// an invalid receipt stays quarantined.
+func (c *Client) AdminRetryTransfer(ctx context.Context, token, id string) (PendingTransfer, error) {
+	var t PendingTransfer
+	err := c.do(ctx, http.MethodPost, "/control/transfers/"+url.PathEscape(id)+"/retry", token, nil, &t)
+	return t, err
+}
+
+// SettleResult is the kernel's settlement outcome (shapes verified live
+// 2026-08-03). status "creditor": the peer owes us — its operator initiates;
+// status/mode "exact": pay Amount on the rail and record it with the named
+// settlement id; the probabilistic path reports its clear/pay outcome the same
+// way. Message is the kernel's own operator instruction, shown verbatim
+// (requirements.md §6.6 — the UI never computes or predicts an outcome).
+type SettleResult struct {
+	Handle       string `json:"handle,omitempty"`
+	SettlementID string `json:"settlement_id,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Amount       int64  `json:"amount,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+// AdminSettle settles the bilateral position with a peer (POST
+// /control/peers/settle, body {"handle": ...} — route and body verified live
+// 2026-08-03). With a settlementID it records the external rail payment for a
+// paid probabilistic outcome (the CLI --cash leg, body field "settlement_id").
+// Both move or record REAL external money; the UI routes each through a modal
+// confirm naming the peer and amounts (requirements.md §6.6).
+func (c *Client) AdminSettle(ctx context.Context, token, handleOrKey, settlementID string) (SettleResult, error) {
+	body := map[string]string{"handle": handleOrKey}
+	if settlementID != "" {
+		body["settlement_id"] = settlementID
+	}
+	var r SettleResult
+	err := c.do(ctx, http.MethodPost, "/control/peers/settle", token, body, &r)
+	return r, err
 }

@@ -8,7 +8,7 @@ import (
 
 func TestCallerIdentityRoundTrips(t *testing.T) {
 	id := NewCallerIdentity("s3cret-signing-key")
-	for _, h := range []string{"@alice", "@sys", "@a/weird.handle", "@bob"} {
+	for _, h := range []string{"alice", "sys", "@a/weird.handle", "bob"} {
 		tok := id.Token(h)
 		if tok == "" {
 			t.Fatalf("empty token for %q", h)
@@ -27,7 +27,7 @@ func TestCallerIdentityRoundTrips(t *testing.T) {
 func TestCallerIdentityRejectsForgeryAndTamper(t *testing.T) {
 	id := NewCallerIdentity("key-A")
 	other := NewCallerIdentity("key-B")
-	tok := id.Token("@alice")
+	tok := id.Token("alice")
 
 	// A token minted under a different key must not verify.
 	if _, ok := other.Verify(tok); ok {
@@ -35,12 +35,12 @@ func TestCallerIdentityRejectsForgeryAndTamper(t *testing.T) {
 	}
 	// A token whose handle is swapped but signature kept must not verify.
 	forged := NewCallerIdentity("key-A")
-	tampered := enc.EncodeToString([]byte("@mallory")) + "." + tok[len(enc.EncodeToString([]byte("@alice")))+1:]
+	tampered := enc.EncodeToString([]byte("@mallory")) + "." + tok[len(enc.EncodeToString([]byte("alice")))+1:]
 	if _, ok := forged.Verify(tampered); ok {
 		t.Error("tampered handle verified")
 	}
 	// Malformed tokens.
-	for _, bad := range []string{"", "nodot", "not-base64.also-not", "@alice.sig"} {
+	for _, bad := range []string{"", "nodot", "not-base64.also-not", "alice.sig"} {
 		if _, ok := id.Verify(bad); ok {
 			t.Errorf("malformed token %q verified", bad)
 		}
@@ -50,9 +50,9 @@ func TestCallerIdentityRejectsForgeryAndTamper(t *testing.T) {
 func TestCallerIdentityAuthenticateReadsHeader(t *testing.T) {
 	id := NewCallerIdentity("k")
 	r := httptest.NewRequest(http.MethodPost, "/x", nil)
-	r.Header.Set(CallerKeyHeader, id.Token("@carol"))
-	if h, ok := id.Authenticate(r); !ok || h != "@carol" {
-		t.Errorf("Authenticate = %q, %v; want @carol, true", h, ok)
+	r.Header.Set(CallerKeyHeader, id.Token("carol"))
+	if h, ok := id.Authenticate(r); !ok || h != "carol" {
+		t.Errorf("Authenticate = %q, %v; want carol, true", h, ok)
 	}
 	// No header -> not authenticated.
 	if _, ok := id.Authenticate(httptest.NewRequest(http.MethodPost, "/x", nil)); ok {

@@ -4,7 +4,7 @@
   showModal(), without JS by the server rendering it [open] (dialog[open]:not(:modal)
   falls back to an in-flow card). Partials receive the Page (.), so .CSRFField and
   .Data.OpenForm are both in scope. The only accent (spend) button in this file is
-  the @sys/make synthesize button, which names the amount.
+  the sys/make synthesize button, which names the amount.
 */}}
 
 {{define "_form_action_create"}}
@@ -26,7 +26,7 @@
       </div>
       <div class="field">
         <label for="c-source">Source</label>
-        <p class="help">For http: the endpoint URL. For wasm: a base64 artifact from @sys/tinygo/compile.</p>
+        <p class="help">For http: the endpoint URL. For wasm: a base64 artifact from sys/tinygo/compile.</p>
         <input id="c-source" name="source" type="text" placeholder="https://api.example.com/v1/thing">
       </div>
       <div data-http-only>
@@ -179,7 +179,7 @@
       {{.CSRFField}}
       <div class="field"><label for="s-trace">Funding trace ID</label><input id="s-trace" name="trace_id" type="text" required></div>
       <div class="field"><label for="s-action">Next action ID</label><input id="s-action" name="action_id" type="text" required></div>
-      <div class="field"><label for="s-caller">Required caller (@handle)</label><input id="s-caller" name="required_caller" type="text" placeholder="@handle" required></div>
+      <div class="field"><label for="s-caller">Required caller (handle)</label><input id="s-caller" name="required_caller" type="text" placeholder="handle" required></div>
       <div class="field"><label for="s-partial">Partial args (JSON)</label><textarea id="s-partial" name="partial_args" placeholder="{}" rows="1"></textarea></div>
       <div class="cluster">
         <button class="btn" type="submit">Create step</button>
@@ -214,6 +214,9 @@
 </dialog>
 {{end}}
 
+{{/* The wallet's one send-money surface: runs the kernel's sys/transfer action
+     (a receipted spend, §6.5) — not the bare /v1/transfers endpoint. Money
+     button with the amount typed adjacent (wallet-send pattern, §6.3). */}}
 {{define "_form_transfer"}}
 <dialog id="form-transfer" class="modal-form"{{if eq .Data.OpenForm "transfer"}} open{{end}} aria-label="Send credits">
   <div class="modal-head"><h2>Send credits</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
@@ -222,16 +225,12 @@
       {{.CSRFField}}
       <div class="field">
         <label for="tr-to">Recipient</label>
-        <input id="tr-to" name="recipient" type="text" class="mono" placeholder="@handle" required>
+        <input id="tr-to" name="recipient" type="text" class="mono" placeholder="handle" required>
         <p class="help">A local user on this kernel.</p>
       </div>
       <div class="field">
         <label for="tr-amt">Amount</label>
         <input id="tr-amt" name="amount" type="number" min="0.001" step="0.001" class="mono" required>
-      </div>
-      <div class="field">
-        <label for="tr-why">Reason</label>
-        <input id="tr-why" name="reason" type="text" placeholder="optional">
       </div>
       <div class="cluster">
         <button class="btn-money" type="submit">Send</button>

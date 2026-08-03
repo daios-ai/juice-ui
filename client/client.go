@@ -67,7 +67,7 @@ type Connector struct {
 // a consent record only — never any token material. ProviderKey is the opaque key
 // of the backing Connection (omitted on an unbackfilled legacy grant).
 type Grant struct {
-	Action      string   `json:"action"` // @owner/name of the granted action
+	Action      string   `json:"action"` // owner/name of the granted action
 	Scopes      []string `json:"scopes"`
 	ProviderKey string   `json:"provider_key,omitempty"`
 	CreatedAt   string   `json:"created_at"`
@@ -106,7 +106,7 @@ type HTTPSpec struct {
 	Params []HTTPParam `json:"params,omitempty"`
 }
 
-// Action carries both id (for management) and action ("@owner/name", for
+// Action carries both id (for management) and action ("owner/name", for
 // calling) per R8. For kind=http, Source is a JSON-encoded descriptor string
 // (present on single reads, omitted on list reads); do not interpret it for
 // display. Instead, kind=http reads carry a decomposed HTTP object (absent for
@@ -137,15 +137,26 @@ type Action struct {
 	AuthScheme    string `json:"auth_scheme,omitempty"`
 	RequiresGrant bool   `json:"requires_grant,omitempty"`
 	// PeerState is a display-only health hint on a kind=remote_proxy action: "offline"
-	// (the owner peer's friend-sync is stale) or "unfunded" (our prepaid credit on the
-	// peer is below the price). Empty when healthy or not remote. The kernel never
-	// gates a call on it; the UI does (a doomed remote call is not offered).
+	// (the owner peer's peer-sync is stale) or "unfunded" (this kernel's cached credit
+	// on the peer is below the price). Empty when healthy or not remote. The kernel
+	// never gates a call on it; the UI does (a doomed remote call is not offered).
 	PeerState string `json:"peer_state,omitempty"`
+	// Effect names a privileged execution effect from the action's signed
+	// contract — "transfer" on a value-bearing action (verified live 2026-08-03
+	// on sys/transfer), empty on every ordinary action. It is the ONLY signal
+	// that completing a step on this action spends the completer's own money
+	// (requirements.md §6.3): never key on the action's name.
+	Effect    string `json:"effect,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
 
-// Ref returns "@owner/name" for this action. The kernel now populates the
+// IsTransfer reports whether this action bears the value-transfer effect —
+// the payment-step and wallet-send signal (requirements.md §6.3, §6.5).
+func (a Action) IsTransfer() bool { return a.Effect == "transfer" }
+
+// Ref returns "owner/name" for this action (a remote proxy resolves as
+// "owner@kernel/name" in the kernel-computed field). The kernel populates the
 // computed Action field, but we derive from OwnerHandle + Name so a partial
 // record (e.g. a lookup result without the computed field) still resolves.
 func (a Action) Ref() string {
@@ -293,7 +304,7 @@ type Rating struct {
 
 // Step is a suspended computation boundary: a pre-baked future Call that a
 // designated caller completes by supplying the remaining input. The required
-// caller is identified by handle; the computed action ("@owner/name") is present
+// caller is identified by handle; the computed action ("owner/name") is present
 // on both list and single reads. WaitingOnPeer flags a waiting step whose caller
 // is a federation peer (work parked on a possibly-offline kernel).
 type Step struct {
@@ -309,10 +320,16 @@ type Step struct {
 	WaitingOnPeer        bool            `json:"waiting_on_peer"`
 	TxID                 string          `json:"tx_id"`
 	CreatedAt            string          `json:"created_at"`
-	CreatedBy            string          `json:"created_by"` // creating action @owner/name (from the parent trace)
+	CreatedBy            string          `json:"created_by"` // creating action owner/name (from the parent trace)
+	// AllowedInput is the kernel-derived completion schema on a waiting step
+	// (action.input_schema minus the keys sealed in partial_args), served so the
+	// completer never needs to read the target action — which may be private and
+	// 403 (verified live 2026-08-03; an approval-only step serves an empty
+	// object schema). Absent on non-waiting steps.
+	AllowedInput json.RawMessage `json:"allowed_input,omitempty"`
 }
 
-// Ref returns "@owner/name" for this step's next action.
+// Ref returns "owner/name" for this step's next action.
 func (s Step) Ref() string { return s.Action }
 
 // StepCompleteReply is the response of POST /v1/steps/{id}/complete.
@@ -536,8 +553,8 @@ type GrantPlanAction struct {
 	Granted  bool   `json:"granted"`
 }
 
-// PlanGrants returns the consent plan for a selector (@owner, @owner/path, or a
-// full @owner/name). Authenticated as the caller whose coverage is planned.
+// PlanGrants returns the consent plan for a selector (owner, owner/path, or a
+// full owner/name). Authenticated as the caller whose coverage is planned.
 func (c *Client) PlanGrants(ctx context.Context, token, selector string) (GrantPlan, error) {
 	q := url.Values{"selector": {selector}}
 	var p GrantPlan
@@ -647,7 +664,7 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 
 // LedgerEntry is one direct balance movement (deposit, withdrawal, or transfer)
 // from GET /v1/ledger. from_handle is absent on a deposit, to_handle on a
-// withdrawal; operator_handle is @sys for admin ops and the sender for a transfer.
+// withdrawal; operator_handle is sys for admin ops and the sender for a transfer.
 type LedgerEntry struct {
 	ID             string `json:"id"`
 	Amount         int64  `json:"amount"`
@@ -677,20 +694,10 @@ func (c *Client) Ledger(ctx context.Context, token string, limit, offset int) ([
 	return out, err
 }
 
-// Transfer moves the caller's own credits to a local recipient (§12), returning
-// the ledger entry. The recipient is a @handle, public key, or id; the kernel
-// rejects a non-positive amount, a self-transfer, and a suspended/peer recipient.
-func (c *Client) Transfer(ctx context.Context, token, recipient string, amount int64, reason, externalKey string) (LedgerEntry, error) {
-	body := struct {
-		Recipient   string `json:"recipient"`
-		Amount      int64  `json:"amount"`
-		Reason      string `json:"reason,omitempty"`
-		ExternalKey string `json:"external_key,omitempty"`
-	}{recipient, amount, reason, externalKey}
-	var e LedgerEntry
-	err := c.do(ctx, http.MethodPost, "/v1/transfers", token, body, &e)
-	return e, err
-}
+// The bare POST /v1/transfers endpoint is deliberately not wrapped here: the
+// UI's one send-money surface runs the kernel's sys/transfer action through
+// Run, so every user-facing money movement flows through the same receipted
+// call machinery (requirements.md §6.5).
 
 // ---- actions ----
 

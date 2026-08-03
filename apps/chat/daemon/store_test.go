@@ -18,55 +18,55 @@ func newStore(t *testing.T) *Store {
 
 func TestCreateRoomMembersAndReadGate(t *testing.T) {
 	s := newStore(t)
-	r, err := s.CreateRoom("@alice", "general", []string{"@bob", "@bob", "", "@alice"})
+	r, err := s.CreateRoom("alice", "general", []string{"bob", "bob", "", "alice"})
 	if err != nil {
 		t.Fatalf("CreateRoom: %v", err)
 	}
-	if r.Creator != "@alice" || r.Name != "general" {
+	if r.Creator != "alice" || r.Name != "general" {
 		t.Fatalf("room = %+v", r)
 	}
 	// creator + bob, deduped, creator first, no blanks/dupes.
-	if len(r.Members) != 2 || r.Members[0] != "@alice" || r.Members[1] != "@bob" {
+	if len(r.Members) != 2 || r.Members[0] != "alice" || r.Members[1] != "bob" {
 		t.Fatalf("members = %v", r.Members)
 	}
-	if _, _, err := s.Room("@carol", r.ID); !errors.Is(err, ErrNotMember) {
+	if _, _, err := s.Room("carol", r.ID); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member read err = %v, want ErrNotMember", err)
 	}
-	if rooms, _ := s.RoomsFor("@carol"); len(rooms) != 0 {
+	if rooms, _ := s.RoomsFor("carol"); len(rooms) != 0 {
 		t.Errorf("non-member sees room in list: %v", rooms)
 	}
-	if _, err := s.CreateRoom("@alice", "", nil); !errors.Is(err, ErrBadInput) {
+	if _, err := s.CreateRoom("alice", "", nil); !errors.Is(err, ErrBadInput) {
 		t.Errorf("blank name err = %v, want ErrBadInput", err)
 	}
 }
 
 func TestAdminOpsAreCreatorOnly(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
+	r, _ := s.CreateRoom("alice", "n", []string{"bob"})
 	// non-creator attempts
 	for _, tc := range []struct {
 		name string
 		fn   func() error
 	}{
-		{"delete", func() error { return s.DeleteRoom("@bob", r.ID) }},
-		{"add", func() error { return s.AddMember("@bob", r.ID, "@dave") }},
-		{"remove", func() error { return s.RemoveMember("@bob", r.ID, "@alice") }},
+		{"delete", func() error { return s.DeleteRoom("bob", r.ID) }},
+		{"add", func() error { return s.AddMember("bob", r.ID, "dave") }},
+		{"remove", func() error { return s.RemoveMember("bob", r.ID, "alice") }},
 	} {
 		if err := tc.fn(); !errors.Is(err, ErrForbidden) {
 			t.Errorf("%s by non-creator err = %v, want ErrForbidden", tc.name, err)
 		}
 	}
 	// creator succeeds
-	if err := s.AddMember("@alice", r.ID, "@dave"); err != nil {
+	if err := s.AddMember("alice", r.ID, "dave"); err != nil {
 		t.Fatalf("creator add: %v", err)
 	}
-	if err := s.RemoveMember("@alice", r.ID, "@dave"); err != nil {
+	if err := s.RemoveMember("alice", r.ID, "dave"); err != nil {
 		t.Fatalf("creator remove: %v", err)
 	}
-	if err := s.RemoveMember("@alice", r.ID, "@alice"); !errors.Is(err, ErrBadInput) {
+	if err := s.RemoveMember("alice", r.ID, "alice"); !errors.Is(err, ErrBadInput) {
 		t.Errorf("removing creator err = %v, want ErrBadInput", err)
 	}
-	got, _, _ := s.Room("@alice", r.ID)
+	got, _, _ := s.Room("alice", r.ID)
 	if got.Name != "n" || len(got.Members) != 2 {
 		t.Fatalf("after ops room = %+v", got)
 	}
@@ -74,54 +74,54 @@ func TestAdminOpsAreCreatorOnly(t *testing.T) {
 
 func TestLeaveRoomRules(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	if err := s.LeaveRoom("@alice", r.ID); !errors.Is(err, ErrForbidden) {
+	r, _ := s.CreateRoom("alice", "n", []string{"bob"})
+	if err := s.LeaveRoom("alice", r.ID); !errors.Is(err, ErrForbidden) {
 		t.Errorf("creator leave err = %v, want ErrForbidden", err)
 	}
-	if err := s.LeaveRoom("@carol", r.ID); !errors.Is(err, ErrNotMember) {
+	if err := s.LeaveRoom("carol", r.ID); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member leave err = %v, want ErrNotMember", err)
 	}
-	if err := s.LeaveRoom("@bob", r.ID); err != nil {
+	if err := s.LeaveRoom("bob", r.ID); err != nil {
 		t.Fatalf("member leave: %v", err)
 	}
-	if rooms, _ := s.RoomsFor("@bob"); len(rooms) != 0 {
+	if rooms, _ := s.RoomsFor("bob"); len(rooms) != 0 {
 		t.Errorf("left member still lists room: %v", rooms)
 	}
 }
 
 func TestPostMessageMemberGatedAndAttributed(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	if _, err := s.PostMessage("@carol", r.ID, "hi"); !errors.Is(err, ErrNotMember) {
+	r, _ := s.CreateRoom("alice", "n", []string{"bob"})
+	if _, err := s.PostMessage("carol", r.ID, "hi"); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member post err = %v, want ErrNotMember", err)
 	}
-	if _, err := s.PostMessage("@alice", r.ID, ""); !errors.Is(err, ErrBadInput) {
+	if _, err := s.PostMessage("alice", r.ID, ""); !errors.Is(err, ErrBadInput) {
 		t.Errorf("empty text err = %v, want ErrBadInput", err)
 	}
-	m1, err := s.PostMessage("@alice", r.ID, "first")
-	if err != nil || m1.Seq != 1 || m1.From != "@alice" {
+	m1, err := s.PostMessage("alice", r.ID, "first")
+	if err != nil || m1.Seq != 1 || m1.From != "alice" {
 		t.Fatalf("m1 = %+v err=%v", m1, err)
 	}
-	m2, _ := s.PostMessage("@bob", r.ID, "second")
+	m2, _ := s.PostMessage("bob", r.ID, "second")
 	if m2.Seq != 2 {
 		t.Errorf("seq not monotonic: %d", m2.Seq)
 	}
-	_, msgs, _ := s.Room("@bob", r.ID)
-	if len(msgs) != 2 || msgs[0].Text != "first" || msgs[1].From != "@bob" {
+	_, msgs, _ := s.Room("bob", r.ID)
+	if len(msgs) != 2 || msgs[0].Text != "first" || msgs[1].From != "bob" {
 		t.Fatalf("messages = %+v", msgs)
 	}
 }
 
 func TestPollAppendsNewAndPropagatesDeletes(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	s.PostMessage("@alice", r.ID, "one")            // seq 1
-	m2, _ := s.PostMessage("@alice", r.ID, "two")   // seq 2
-	m3, _ := s.PostMessage("@alice", r.ID, "three") // seq 3
+	r, _ := s.CreateRoom("alice", "n", []string{"bob"})
+	s.PostMessage("alice", r.ID, "one")            // seq 1
+	m2, _ := s.PostMessage("alice", r.ID, "two")   // seq 2
+	m3, _ := s.PostMessage("alice", r.ID, "three") // seq 3
 
 	// A viewer holding through seq 1 gets only the newer two, oldest-first; nothing
 	// is deleted yet.
-	added, deleted, err := s.Poll("@bob", r.ID, 1)
+	added, deleted, err := s.Poll("bob", r.ID, 1)
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -135,10 +135,10 @@ func TestPollAppendsNewAndPropagatesDeletes(t *testing.T) {
 	// Sender deletes an already-shown message (seq 2). A caught-up viewer (after=3)
 	// gets no appends but still learns of the deletion, so an append-only view
 	// removes it.
-	if err := s.DeleteMessage("@alice", r.ID, m2.ID); err != nil {
+	if err := s.DeleteMessage("alice", r.ID, m2.ID); err != nil {
 		t.Fatalf("DeleteMessage: %v", err)
 	}
-	added, deleted, err = s.Poll("@bob", r.ID, 3)
+	added, deleted, err = s.Poll("bob", r.ID, 3)
 	if err != nil {
 		t.Fatalf("Poll after delete: %v", err)
 	}
@@ -150,22 +150,22 @@ func TestPollAppendsNewAndPropagatesDeletes(t *testing.T) {
 	}
 
 	// Non-members are refused, like every other read.
-	if _, _, err := s.Poll("@carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
+	if _, _, err := s.Poll("carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member Poll err = %v, want ErrNotMember", err)
 	}
 }
 
 func TestDeleteMessageIsSenderOnly(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	m, _ := s.PostMessage("@bob", r.ID, "bob's")
-	if err := s.DeleteMessage("@alice", r.ID, m.ID); !errors.Is(err, ErrForbidden) {
+	r, _ := s.CreateRoom("alice", "n", []string{"bob"})
+	m, _ := s.PostMessage("bob", r.ID, "bob's")
+	if err := s.DeleteMessage("alice", r.ID, m.ID); !errors.Is(err, ErrForbidden) {
 		t.Errorf("non-sender delete err = %v, want ErrForbidden", err)
 	}
-	if err := s.DeleteMessage("@bob", r.ID, m.ID); err != nil {
+	if err := s.DeleteMessage("bob", r.ID, m.ID); err != nil {
 		t.Fatalf("sender delete: %v", err)
 	}
-	_, msgs, _ := s.Room("@bob", r.ID)
+	_, msgs, _ := s.Room("bob", r.ID)
 	if len(msgs) != 0 {
 		t.Errorf("deleted message still visible: %+v", msgs)
 	}
@@ -173,17 +173,17 @@ func TestDeleteMessageIsSenderOnly(t *testing.T) {
 
 func TestDeleteRoomHidesAndGates(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", []string{"@bob"})
-	if err := s.DeleteRoom("@alice", r.ID); err != nil {
+	r, _ := s.CreateRoom("alice", "n", []string{"bob"})
+	if err := s.DeleteRoom("alice", r.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if rooms, _ := s.RoomsFor("@alice"); len(rooms) != 0 {
+	if rooms, _ := s.RoomsFor("alice"); len(rooms) != 0 {
 		t.Errorf("deleted room still listed: %v", rooms)
 	}
-	if _, _, err := s.Room("@alice", r.ID); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Room("alice", r.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted room read err = %v, want ErrNotFound", err)
 	}
-	if err := s.AddMember("@alice", r.ID, "@dave"); !errors.Is(err, ErrNotFound) {
+	if err := s.AddMember("alice", r.ID, "dave"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("op on deleted room err = %v, want ErrNotFound", err)
 	}
 }
@@ -195,15 +195,15 @@ func TestDeleteRoomHidesAndGates(t *testing.T) {
 func TestRoomsForOrdering(t *testing.T) {
 	s := newStore(t)
 	// A: oldest activity.
-	a, _ := s.CreateRoom("@alice", "A", []string{"@bob"})
-	s.PostMessage("@alice", a.ID, "hi-a")
+	a, _ := s.CreateRoom("alice", "A", []string{"bob"})
+	s.PostMessage("alice", a.ID, "hi-a")
 	// B: newer activity than A.
-	b, _ := s.CreateRoom("@alice", "B", []string{"@bob"})
-	s.PostMessage("@alice", b.ID, "hi-b")
+	b, _ := s.CreateRoom("alice", "B", []string{"bob"})
+	s.PostMessage("alice", b.ID, "hi-b")
 	// C: empty room, created last → newest last_at (falls back to created_at).
-	c, _ := s.CreateRoom("@alice", "C", []string{"@bob"})
+	c, _ := s.CreateRoom("alice", "C", []string{"bob"})
 
-	rooms, err := s.RoomsFor("@bob")
+	rooms, err := s.RoomsFor("bob")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,16 +230,16 @@ func TestRoomsForOrdering(t *testing.T) {
 
 func TestRecentWindowAndHistory(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "n", nil)
+	r, _ := s.CreateRoom("alice", "n", nil)
 	total := recentWindow + 25
 	var midSeq int64
 	for i := 0; i < total; i++ {
-		m, _ := s.PostMessage("@alice", r.ID, "m")
+		m, _ := s.PostMessage("alice", r.ID, "m")
 		if i == 10 {
 			midSeq = m.Seq
 		}
 	}
-	_, msgs, _ := s.Room("@alice", r.ID)
+	_, msgs, _ := s.Room("alice", r.ID)
 	if len(msgs) != recentWindow {
 		t.Fatalf("recent window = %d, want %d", len(msgs), recentWindow)
 	}
@@ -251,21 +251,21 @@ func TestRecentWindowAndHistory(t *testing.T) {
 		t.Error("messages not oldest-first")
 	}
 	// history before the window start returns older messages, oldest-first.
-	older, err := s.History("@alice", r.ID, midSeq, 5)
+	older, err := s.History("alice", r.ID, midSeq, 5)
 	if err != nil || len(older) != 5 {
 		t.Fatalf("History: %d msgs err=%v", len(older), err)
 	}
 	if older[len(older)-1].Seq != midSeq-1 {
 		t.Errorf("history newest = %d, want %d", older[len(older)-1].Seq, midSeq-1)
 	}
-	if _, err := s.History("@carol", r.ID, midSeq, 5); !errors.Is(err, ErrNotMember) {
+	if _, err := s.History("carol", r.ID, midSeq, 5); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member history err = %v, want ErrNotMember", err)
 	}
 }
 
 func TestRecipientsListsLiveMembers(t *testing.T) {
 	s := newStore(t)
-	r, err := s.CreateRoom("@alice", "general", []string{"@bob"})
+	r, err := s.CreateRoom("alice", "general", []string{"bob"})
 	if err != nil {
 		t.Fatalf("CreateRoom: %v", err)
 	}
@@ -283,13 +283,13 @@ func TestRecipientsListsLiveMembers(t *testing.T) {
 
 func TestMessagesReadPath(t *testing.T) {
 	s := newStore(t)
-	r, _ := s.CreateRoom("@alice", "general", []string{"@bob"})
-	s.PostMessage("@alice", r.ID, "one")
-	s.PostMessage("@bob", r.ID, "two")
-	m3, _ := s.PostMessage("@alice", r.ID, "three")
+	r, _ := s.CreateRoom("alice", "general", []string{"bob"})
+	s.PostMessage("alice", r.ID, "one")
+	s.PostMessage("bob", r.ID, "two")
+	m3, _ := s.PostMessage("alice", r.ID, "three")
 
 	// after=0 → the recent window, oldest-first, all senders (not consume-on-read).
-	msgs, err := s.Messages("@bob", r.ID, 0)
+	msgs, err := s.Messages("bob", r.ID, 0)
 	if err != nil {
 		t.Fatalf("Messages: %v", err)
 	}
@@ -297,17 +297,17 @@ func TestMessagesReadPath(t *testing.T) {
 		t.Fatalf("recent read = %+v", msgs)
 	}
 	// A second read returns the same (stateless — reading marks nothing).
-	if again, _ := s.Messages("@bob", r.ID, 0); len(again) != 3 {
+	if again, _ := s.Messages("bob", r.ID, 0); len(again) != 3 {
 		t.Errorf("read is not stateless: got %d, want 3", len(again))
 	}
 	// after=<2nd seq> → only newer, oldest-first.
 	after := msgs[1].Seq
-	newer, _ := s.Messages("@bob", r.ID, after)
+	newer, _ := s.Messages("bob", r.ID, after)
 	if len(newer) != 1 || newer[0].ID != m3.ID {
 		t.Errorf("after-filter = %+v, want just the third message", newer)
 	}
 	// Non-members cannot read.
-	if _, err := s.Messages("@carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
+	if _, err := s.Messages("carol", r.ID, 0); !errors.Is(err, ErrNotMember) {
 		t.Errorf("non-member read err = %v, want ErrNotMember", err)
 	}
 }
@@ -315,7 +315,7 @@ func TestMessagesReadPath(t *testing.T) {
 func TestTokenRegisterActivateLookup(t *testing.T) {
 	s := newStore(t)
 
-	rawKey, regID, err := s.RegisterToken("@agent")
+	rawKey, regID, err := s.RegisterToken("agent")
 	if err != nil {
 		t.Fatalf("RegisterToken: %v", err)
 	}
@@ -325,16 +325,16 @@ func TestTokenRegisterActivateLookup(t *testing.T) {
 
 	// A freshly registered key resolves to its handle but is NOT yet active.
 	u, active, err := s.LookupToken(hashToken(rawKey))
-	if err != nil || u != "@agent" || active {
-		t.Fatalf("pending lookup = (%q, %v, %v), want (@agent, false, nil)", u, active, err)
+	if err != nil || u != "agent" || active {
+		t.Fatalf("pending lookup = (%q, %v, %v), want (agent, false, nil)", u, active, err)
 	}
 
 	// Activation flips it live.
 	if err := s.ActivateToken(regID); err != nil {
 		t.Fatalf("ActivateToken: %v", err)
 	}
-	if u, active, _ := s.LookupToken(hashToken(rawKey)); u != "@agent" || !active {
-		t.Errorf("active lookup = (%q, %v), want (@agent, true)", u, active)
+	if u, active, _ := s.LookupToken(hashToken(rawKey)); u != "agent" || !active {
+		t.Errorf("active lookup = (%q, %v), want (agent, true)", u, active)
 	}
 
 	// An unknown key is an unauthenticated caller, not an error.

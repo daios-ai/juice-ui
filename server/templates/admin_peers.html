@@ -9,8 +9,12 @@
 <div class="kernel-card">
   <span class="media wide">{{cardArt $d.Identity.PublicKey $d.Identity.Handle "" "kernel"}}</span>
   <div class="kernel-body">
-    <div class="mono"><b>{{$d.Identity.Handle}}</b></div>
+    <div class="mono"><b>{{$d.Identity.Handle}}</b>{{if $d.Identity.SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger">settlement due</span>{{end}}</div>
     <div class="fingerprint">{{$d.Identity.PublicKey}}</div>
+    {{/* Global exposure evidence (§6.6): current gross receivables against the
+         cap X, the settlement trigger Y, and the residual quantum Q. Information
+         only — admission control lives in the kernel. */}}
+    <div class="small muted">exposure <span class="mono">{{money $d.Identity.GrossReceivables}}</span> of <span class="mono">{{money $d.Identity.ExposureMax}}</span> cap · trigger <span class="mono">{{money $d.Identity.SettlementTrigger}}</span>{{if $d.Identity.SettlementQuantum}} · quantum <span class="mono">{{money $d.Identity.SettlementQuantum}}</span>{{end}}</div>
     {{if $d.Identity.Addrs}}
     <details class="details-panel">
       <summary>Listen addresses</summary>
@@ -20,9 +24,11 @@
   </div>
 </div>
 
-<h2>Subscriptions</h2>
+<h2>Peers</h2>
 <div class="row control-row">
   <a class="btn-quiet" href="/admin/peers?form=admin-subscribe" data-modal="form-admin-subscribe">+ subscribe to a kernel</a>
+  <a class="btn-quiet" href="/admin/peers?form=settle-cash" data-modal="form-settle-cash">+ record a rail payment</a>
+  <a class="btn-quiet" href="/admin/transfers">transfer queue</a>
   {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
 </div>
 <div id="peers-subscribed" hx-get="/admin/peers{{if $d.ShowSuspended}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
@@ -42,7 +48,7 @@
       <span class="cluster roster-actions">
         <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{if not $isSub}}
-        <form method="post" action="/admin/peers/subscribe" data-confirm="Subscribe to {{.Handle}}? Their active public actions import immediately.">
+        <form method="post" action="/admin/peers/subscribe" data-confirm="Subscribe to {{.Handle}}? Bulk-caches their active public catalog — a call already resolves single actions on demand.">
           {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn small" type="submit">Subscribe</button>
         </form>
         {{end}}
@@ -76,11 +82,36 @@
       {{.CSRFField}}
       <div class="field">
         <label for="sub-key">Peer public key</label>
-        <p class="help">The peer's base64url Ed25519 key — its global name. Calls stay rejected until the peer holds credit here.</p>
+        <p class="help">The peer's base64url Ed25519 key — its global name. Optional bulk cache warm: a call resolves single actions on demand.</p>
         <input id="sub-key" name="key" type="text" required>
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Subscribe</button>
+        <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+{{/* Record-cash: the only settlement step where external money is recorded
+     (§6.6) — after paying the kernel-named amount on the rail, key the record
+     by the settlement id the settle outcome printed. */}}
+<dialog id="form-settle-cash" class="modal-form"{{if eq $d.OpenForm "settle-cash"}} open{{end}} aria-label="Record a rail payment">
+  <div class="modal-head"><h2>Record a rail payment</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/admin/peers/settle" data-confirm="Record this rail payment? The kernel books the settlement against the named id.">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="sc-peer">Peer</label>
+        <input id="sc-peer" name="peer" type="text" class="mono" placeholder="handle or key" required>
+      </div>
+      <div class="field">
+        <label for="sc-sid">Settlement id</label>
+        <p class="help">From the settle outcome. The rail payment must already have been made.</p>
+        <input id="sc-sid" name="settlement_id" type="text" class="mono" required>
+      </div>
+      <div class="cluster">
+        <button class="btn" type="submit">Record</button>
         <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
       </div>
     </form>

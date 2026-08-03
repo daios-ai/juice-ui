@@ -58,8 +58,10 @@ import (
 //go:embed templates/*.html
 var tmplFS embed.FS
 
-// chatHandle is the application's service-account handle.
-const chatHandle = "@chat"
+// chatHandle is the application's service-account handle — bare, like every
+// v0.12 handle; the kernel canonicalizes a pre-0.4 "@chat" user to the same
+// account, so existing state carries over.
+const chatHandle = "chat"
 
 // outboxName is @chat's private, price-0, owner-only action that opens the outbox
 // seed. @chat runs it (paying itself 0), and its dispatch handler creates the
@@ -502,13 +504,13 @@ const outboxDesc = "Opens the chat outbox seed by creating a sentinel step via t
 // the kernel is the caller.
 var (
 	registerInSchema  = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string","description":"The @handle to issue a chat key for, for example @agent. A verification step is sent to this handle."}}}`)
-	registerOutSchema = json.RawMessage(`{"type":"object","properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect @chat/msg --token <api_key>. It activates once the handle's owner accepts the verification step."},"step_id":{"type":"string","description":"Id of the verification step sent to the handle; complete it (as that handle) to activate the key."}}}`)
+	registerOutSchema = json.RawMessage(`{"type":"object","properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect chat/msg --token <api_key>. It activates once the handle's owner accepts the verification step."},"step_id":{"type":"string","description":"Id of the verification step sent to the handle; complete it (as that handle) to activate the key."}}}`)
 	validateInSchema  = json.RawMessage(`{"type":"object","properties":{"reg_id":{"type":"string","description":"Registration id carried by the verification step; names which pending key to activate."}}}`)
 	validateOutSchema = json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the key was activated."}}}`)
 )
 
 const (
-	registerDesc = "Request a chat API key for a @handle. Returns a pending key and sends a verification step to that handle; the key activates when the handle's owner accepts. Then connect the key to @chat/msg to use chat."
+	registerDesc = "Request a chat API key for a handle. Returns a pending key and sends a verification step to that handle; the key activates when the handle's owner accepts. Then connect the key to chat/msg to use chat."
 	validateDesc = "Activate the chat key for a completed registration. Invoked only as the verification step's onward, when the handle's owner accepts."
 )
 
@@ -1241,12 +1243,13 @@ func roomURL(r *http.Request) string { return "/chat/room/" + url.PathEscape(r.P
 // roomName sanitizes a display room name (trimmed; empty rejected).
 func roomName(s string) string { return strings.TrimSpace(s) }
 
-// parseHandles splits a free-form member list into @handles.
+// parseHandles splits a free-form member list into bare handles. Handles are
+// bare in v0.12; a migration-period "@" is tolerated and stripped.
 func parseHandles(s string) []string {
 	var out []string
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == ',' || r == '\n' || r == '\t' || r == '\r' }) {
-		if strings.HasPrefix(f, "@") {
-			out = append(out, f)
+		if h := strings.TrimPrefix(f, "@"); h != "" {
+			out = append(out, h)
 		}
 	}
 	return out

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -63,7 +64,7 @@ type userView struct {
 
 // studioEarnings is money that came to the user, folded from their transactions:
 // their net as a seller, plus the platform fee on every settled call when they are
-// the superuser (@sys's tax). Mirrors the ledger's per-viewer amounts (txAmount).
+// the superuser (sys's tax). Mirrors the ledger's per-viewer amounts (txAmount).
 type studioEarnings struct {
 	Earned int64
 	Count  int
@@ -182,6 +183,14 @@ type txView struct {
 type stepEntry struct {
 	Step client.Step
 	Form StepFormModel
+	// IsPayment marks a payment step: the target action bears the signed
+	// effect="transfer", so completing spends the COMPLETER's own money
+	// (requirements.md §6.3). Payment is the sealed amount (0 when the amount
+	// is left to the completer); PayTo the sealed recipient, both from
+	// partial_args. The two-branch button rule keys on these.
+	IsPayment bool
+	Payment   int64
+	PayTo     string
 }
 
 // stepGroup buckets waiting inbox steps by their creating action (created_by).
@@ -207,6 +216,9 @@ type stepView struct {
 	Action      *client.Action
 	Form        StepFormModel
 	CanComplete bool
+	IsPayment   bool  // see stepEntry
+	Payment     int64 // sealed amount (0 = completer types it)
+	PayTo       string
 }
 
 type errorView struct{ Message string }
@@ -350,13 +362,11 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/login", "success", "Password reset — sign in with your new password.")
 }
 
-// atHandle ensures a leading @ on a non-empty handle, so a path segment or a
-// stored handle compares and resolves consistently.
-func atHandle(h string) string {
-	if h == "" || strings.HasPrefix(h, "@") {
-		return h
-	}
-	return "@" + h
+// bareHandle canonicalizes a handle to the bare v0.12 form, so a path segment,
+// a form value, and a stored (possibly pre-0.4, "@"-prefixed) session handle
+// compare and resolve consistently (requirements.md §4).
+func bareHandle(h string) string {
+	return strings.TrimPrefix(h, "@")
 }
 
 // ownerView is a handle's action catalogue, shown as the same cards the
@@ -371,13 +381,13 @@ type ownerView struct {
 
 func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	handle := atHandle(r.PathValue("handle"))
+	handle := bareHandle(r.PathValue("handle"))
 	// Show what the viewer may see across all three visibility levels. For anyone
 	// else's page that is the caller-visible active set (public + local); on your
 	// own page it is everything you own — private and inactive included — so all=1
 	// is passed exactly when the viewer is the owner (the kernel widens ?all only
 	// within the caller's own scope, §14).
-	isOwner := handle == atHandle(s.sessions.Handle(ctx))
+	isOwner := handle == bareHandle(s.sessions.Handle(ctx))
 	view := ownerView{Handle: handle}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		acts, e := s.client.ListActions(ctx, tok, handle, "", isOwner, 0, 0)
@@ -443,7 +453,7 @@ func (s *Server) doLogin(ctx context.Context, handle, password string) error {
 	if err != nil {
 		return err
 	}
-	return s.sessions.Login(ctx, tokens, "@"+strings.TrimPrefix(handle, "@"))
+	return s.sessions.Login(ctx, tokens, bareHandle(handle))
 }
 
 func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
@@ -720,8 +730,8 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			view.Catalog = cards
 			return nil
 		}
-		// Semantic search via @sys/lookup (price 0; run creates and closes process).
-		out, e := s.caller.Run(ctx, tok, "@sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}))
+		// Semantic search via sys/lookup (price 0; run creates and closes process).
+		out, e := s.caller.Run(ctx, tok, "sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}))
 		if e != nil {
 			return e
 		}
@@ -730,7 +740,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Degrade honestly to catalog search (R6.2.4). Surface the kernel's own
 			// reason rather than guessing the cause (it may be a missing embedder,
-			// or @sys/lookup failing for another reason).
+			// or sys/lookup failing for another reason).
 			view.LookupAvailable = false
 			view.Reason = out.Detail
 			if view.Reason == "" {
@@ -917,15 +927,24 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 		for _, step := range steps {
 			if step.ActionID != "" {
 				if _, ok := view.Actions[step.ActionID]; !ok {
+					// Best-effort decoration: a step may be parked on a private
+					// action the completer cannot read (v0.12 binding rule), so a
+					// 403 here is a NORMAL state — the form derives from the
+					// step's own allowed_input, never from this read.
 					if a, ae := s.client.GetAction(ctx, tok, step.ActionID); ae == nil {
 						view.Actions[step.ActionID] = a
 					}
 				}
 			}
 			if step.Status == "waiting" && step.RequiredCallerHandle == me.Handle {
+				a := view.Actions[step.ActionID]
 				entry := stepEntry{
 					Step: step,
-					Form: BuildStepForm(view.Actions[step.ActionID].InputSchema, step.PartialArgs),
+					Form: BuildStepForm(stepFormSchema(step, a), step.PartialArgs),
+				}
+				if a.IsTransfer() {
+					entry.IsPayment = true
+					entry.Payment, entry.PayTo = paymentFromArgs(step.PartialArgs)
 				}
 				i, ok := groupIdx[step.CreatedBy]
 				if !ok {
@@ -961,9 +980,18 @@ func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Step = st
 		view.CanComplete = st.Status == "waiting" && st.RequiredCallerHandle == me.Handle
+		// The action read is best-effort decoration (a private target 403s
+		// normally under the v0.12 binding rule); the completion form derives
+		// from the step's own allowed_input.
+		var action client.Action
 		if a, ae := s.client.GetAction(ctx, tok, st.ActionID); ae == nil {
 			view.Action = &a
-			view.Form = BuildStepForm(a.InputSchema, st.PartialArgs)
+			action = a
+		}
+		view.Form = BuildStepForm(stepFormSchema(st, action), st.PartialArgs)
+		if action.IsTransfer() {
+			view.IsPayment = true
+			view.Payment, view.PayTo = paymentFromArgs(st.PartialArgs)
 		}
 		return nil
 	})
@@ -971,6 +999,29 @@ func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "inbox_detail", "Step", view)
+}
+
+// stepFormSchema picks the schema the completion form derives from: the step's
+// own allowed_input (v0.12 — already minus the sealed keys, served precisely so
+// the completer needn't read a possibly-private target), falling back to the
+// action's input_schema on an older kernel that doesn't serve it.
+func stepFormSchema(st client.Step, a client.Action) json.RawMessage {
+	if len(bytes.TrimSpace(st.AllowedInput)) > 0 {
+		return st.AllowedInput
+	}
+	return a.InputSchema
+}
+
+// paymentFromArgs extracts the sealed amount and recipient of a payment step
+// from its partial_args. A missing amount returns 0 — the completer types it,
+// and the money button stays unnumbered like the wallet send (§6.3, §6.5).
+func paymentFromArgs(partial json.RawMessage) (amount int64, target string) {
+	var p struct {
+		Amount int64  `json:"amount"`
+		Target string `json:"target"`
+	}
+	_ = json.Unmarshal(partial, &p)
+	return p.Amount, p.Target
 }
 
 // postCreateStep creates a waiting step (a developer affordance): it needs the
@@ -1242,7 +1293,7 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 			perActionEarned[tx.ActionID] += tx.Net
 		}
 		if super {
-			inflow += tx.Fee // @sys earns the platform fee on every settled call
+			inflow += tx.Fee // sys earns the platform fee on every settled call
 		}
 		if inflow > 0 {
 			view.Earnings.Earned += inflow
@@ -1367,9 +1418,9 @@ func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
 }
 
-// postMakeAction calls @sys/make to synthesize a WASM action from a
+// postMakeAction calls sys/make to synthesize a WASM action from a
 // natural-language description (R6.3.6). It provisions an ephemeral 20-credit
-// process, calls @sys/make, ends the process, then returns an htmx fragment
+// process, calls sys/make, ends the process, then returns an htmx fragment
 // (_make_result) or, for no-JS clients, a flash-redirect.
 func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -1389,7 +1440,7 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 			view = makeResultView{Error: fmt.Sprintf("You need at least $0.020 to synthesize an action. Your balance is %s.", money(me.Available))}
 			return nil
 		}
-		out, e := s.caller.Run(ctx, tok, "@sys/make", mustArgs(map[string]any{"description": desc}))
+		out, e := s.caller.Run(ctx, tok, "sys/make", mustArgs(map[string]any{"description": desc}))
 		if e != nil {
 			return e
 		}
@@ -1404,14 +1455,15 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 			Diagnostics []string `json:"diagnostics"`
 		}
 		if e := json.Unmarshal(out.Result, &res); e != nil {
-			return fmt.Errorf("parse @sys/make result: %w", e)
+			return fmt.Errorf("parse sys/make result: %w", e)
 		}
 		if res.Status == "success" {
 			// action_name is the bare name ("echo-test"), not a full ref; prefix
-			// the signed-in owner's handle to form the callable "@owner/name".
+			// the signed-in owner's handle to form the callable "owner/name"
+			// (bareHandle: a pre-0.4 session may have stored a sigiled handle).
 			view = makeResultView{
 				Success:   true,
-				ActionRef: s.sessions.Handle(ctx) + "/" + res.ActionName,
+				ActionRef: bareHandle(s.sessions.Handle(ctx)) + "/" + res.ActionName,
 				ActionID:  res.ActionID,
 			}
 		} else {
@@ -1638,23 +1690,35 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
 }
 
-// postTransfer moves the caller's own credits to a local recipient (§12). The
-// confirm button names the amount (money movement), and the kernel enforces the
-// balance, self-transfer, and peer-recipient rules — the BFF only surfaces them.
+// postTransfer sends the caller's own credits to a local recipient by running
+// the kernel's sys/transfer action — the UI's one send-money surface, a real
+// receipted spend through the run machinery (requirements.md §6.5). The money
+// button on the form is the confirm; the kernel enforces the balance,
+// self-transfer, and peer-recipient rules — the BFF only surfaces them.
 func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	recipient := strings.TrimSpace(r.FormValue("recipient"))
+	recipient := bareHandle(strings.TrimSpace(r.FormValue("recipient")))
 	amount := parseDollars(r.FormValue("amount"))
-	reason := strings.TrimSpace(r.FormValue("reason"))
 	if recipient == "" || amount <= 0 {
 		s.flashRedirect(w, r, "/wallet", "error", "Enter a recipient and a positive amount.")
 		return
 	}
+	var out Outcome
 	err := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.Transfer(ctx, tok, recipient, amount, reason, "")
+		o, e := s.caller.Run(ctx, tok, "sys/transfer",
+			mustArgs(map[string]any{"target": recipient, "amount": amount}))
+		out = o
 		return e
 	})
-	s.flashResult(w, r, err, "/wallet", "Sent "+money(amount)+" to "+recipient+".")
+	if err != nil {
+		s.flashResult(w, r, err, "/wallet", "")
+		return
+	}
+	if !out.IsSuccess() {
+		s.flashRedirect(w, r, "/wallet", "error", out.Message)
+		return
+	}
+	s.flashResult(w, r, nil, "/wallet", "Sent "+money(amount)+" to "+recipient+".")
 }
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
@@ -1910,7 +1974,7 @@ var formWhitelist = map[string]map[string]bool{
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},
 	"step":          {"step-create": true},
-	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-subscribe": true},
+	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-subscribe": true, "settle-cash": true},
 }
 
 // openForm returns the requested ?form value if it is whitelisted for the page
@@ -2049,7 +2113,7 @@ func coerce(typ, val string) (json.RawMessage, error) {
 	}
 }
 
-// parseLookup converts a @sys/lookup result into partial actionCardViews.
+// parseLookup converts a sys/lookup result into partial actionCardViews.
 // Kind is left empty; the goroutine in getBrowse fills it via GetAction.
 func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {

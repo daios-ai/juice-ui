@@ -72,9 +72,9 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	p := Page{
 		Title:     "Account",
 		Theme:     "dracula",
-		Handle:    "@alice",
+		Handle:    "alice",
 		Available: 1000,
-		Data:      userView{User: client.User{Handle: "@alice", Available: 1000, Locked: 250}},
+		Data:      userView{User: client.User{Handle: "alice", Available: 1000, Locked: 250}},
 	}
 	if err := r.Render(rec, 200, "settings", p); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -86,7 +86,7 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	if !strings.Contains(body, "$1.000") {
 		t.Error("available balance not rendered with money formatting")
 	}
-	if !strings.Contains(body, "@alice") {
+	if !strings.Contains(body, "alice") {
 		t.Error("handle not rendered in nav")
 	}
 }
@@ -136,7 +136,7 @@ func TestRefFolder(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"@service/a", "@service"},
 		{"@service/msg/message", "@service/msg"},
-		{"@sys/llm/chat", "@sys/llm"},
+		{"sys/llm/chat", "sys/llm"},
 		{"@service", "@service"}, // no slash — returned unchanged
 		{"", ""},
 	}
@@ -173,7 +173,7 @@ func TestRatingPct(t *testing.T) {
 }
 
 func TestTxAmount(t *testing.T) {
-	// @buyer pays gross, @seller earns net, @sys (platform) earns fee; a viewer
+	// @buyer pays gross, @seller earns net, sys (platform) earns fee; a viewer
 	// occupying several roles sees the sum. gross = net + fee, so the three
 	// viewpoints of a settled call sum to zero.
 	mk := func(status string, gross, net, fee int64) client.Transaction {
@@ -206,10 +206,10 @@ func TestTxAmount(t *testing.T) {
 	if got := string(txAmount(self, "@a")); !strings.Contains(got, "-$0.010") {
 		t.Errorf("self-call = %q, want -$0.010 (the fee)", got)
 	}
-	// @sys as the seller collects net + fee = gross.
+	// sys as the seller collects net + fee = gross.
 	sysSell := client.Transaction{OwnerHandle: "@a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
 	if got := string(txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+$0.100") {
-		t.Errorf("@sys-as-seller = %q, want +$0.100 (net+fee)", got)
+		t.Errorf("sys-as-seller = %q, want +$0.100 (net+fee)", got)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestAccountMenuHasNoNav(t *testing.T) {
 	}
 	// The drawer renders whatever the nav model holds — it no longer hard-codes
 	// its own links — so the fixture supplies the nav the sidebar would get.
-	data := Page{Handle: "@sys", IsSuperuser: true, Themes: ThemeList(), Nav: []NavItem{
+	data := Page{Handle: "sys", IsSuperuser: true, Themes: ThemeList(), Nav: []NavItem{
 		{Slug: "browse", Label: "browse", Href: "/browse"},
 		{Slug: "settings", Label: "settings", Href: "/settings"},
 		{Slug: "network", Label: "network", Href: "/admin/peers"},
@@ -323,16 +323,16 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	out := Outcome{Class: GrantRequired, ActionRef: "@sys/gmail-send", Message: "needs a connected account"}
+	out := Outcome{Class: GrantRequired, ActionRef: "sys/gmail-send", Message: "needs a connected account"}
 	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
 	// The affordance links to the consent-plan page for the action's FOLDER
-	// selector (@sys, not the bare @sys/gmail-send) — one gesture connects the
+	// selector (sys, not the bare sys/gmail-send) — one gesture connects the
 	// whole provider group; the per-scheme consent forms live on that page
 	// (v0.7 §14 delta display).
-	if !strings.Contains(body, `href="/grants/connect?selector=%40sys"`) {
+	if !strings.Contains(body, `href="/grants/connect?selector=sys"`) {
 		t.Errorf("grant_required outcome must link to the folder connect plan: %s", body)
 	}
 	if strings.Contains(body, "gmail-send") {
@@ -358,7 +358,7 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 		},
 		SkippedUncallable: 2,
 	}
-	p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "@acme", Plan: plan}}
+	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "@acme", Plan: plan}}
 	if err := r.Render(rec, 200, "grant_connect", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -396,12 +396,12 @@ func TestUserPageShowsConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: userView{
-		User: client.User{Handle: "@me",
+	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: userView{
+		User: client.User{Handle: "me",
 			Connectors: []client.Connector{{
-				Directory:   "@chat",
+				Directory:   "chat",
 				Connections: []client.Connection{{Provider: "127.0.0.1:8080", ProviderKey: "bearer:h"}},
-				Actions:     []client.Grant{{Action: "@chat/pay", Scopes: []string{"pay.write"}, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"}},
+				Actions:     []client.Grant{{Action: "chat/pay", Scopes: []string{"pay.write"}, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"}},
 			}},
 			Connections: []client.Connection{
 				{Provider: "127.0.0.1:8080", Actions: 8, Unused: false, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"},
@@ -412,8 +412,8 @@ func TestUserPageShowsConnections(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	// The grant tree: a folder per directory (@chat), expandable to its actions.
-	if !strings.Contains(body, "<details") || !strings.Contains(body, "@chat") {
+	// The grant tree: a folder per directory (chat), expandable to its actions.
+	if !strings.Contains(body, "<details") || !strings.Contains(body, "chat") {
 		t.Errorf("grant folder (details tree) not rendered: %s", body)
 	}
 	// The folder summary disconnects the whole account (provider_key)…
@@ -421,7 +421,7 @@ func TestUserPageShowsConnections(t *testing.T) {
 		t.Errorf("account-level disconnect-all (provider_key) missing: %s", body)
 	}
 	// …and each contained action has its own per-grant disconnect (by selector).
-	if !strings.Contains(body, `name="action" value="@chat/pay"`) {
+	if !strings.Contains(body, `name="action" value="chat/pay"`) {
 		t.Errorf("per-action disconnect missing: %s", body)
 	}
 	// The unused account folds in as its own folder with account-level disconnect.
@@ -442,7 +442,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
+	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
 		Users: []client.AdminUser{{Handle: "@victim", SuspendedAt: "0001-01-01T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin", p); err != nil {
@@ -506,7 +506,7 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, true, "@alice")
+	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, true, "alice")
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestCallFormRun(t *testing.T) {
 		t.Error("money button must not render the ¤ glyph")
 	}
 	// The first-payment hint rides inline (no payment sheet).
-	if !strings.Contains(body, "First payment to") || !strings.Contains(body, "@alice") {
+	if !strings.Contains(body, "First payment to") || !strings.Contains(body, "alice") {
 		t.Errorf("paid run with FirstPayee must show the first-payment hint inline: %s", body)
 	}
 	if strings.Contains(body, `data-oneshot="true"`) {
@@ -545,8 +545,8 @@ func TestCallFormComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	locked := []LockedField{{Name: "to", Value: `"@bob"`}}
-	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil, nil)
+	locked := []LockedField{{Name: "to", Value: `"bob"`}}
+	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil, nil, false, 0, "")
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -563,7 +563,7 @@ func TestCallFormComplete(t *testing.T) {
 	}
 	// Sealed args render as a read-only dl (the completed part), separated from the
 	// editable part — same anatomy as the run form.
-	if !strings.Contains(body, `class="locked-args`) || !strings.Contains(body, "<dt>to</dt>") || !strings.Contains(body, "@bob") {
+	if !strings.Contains(body, `class="locked-args`) || !strings.Contains(body, "<dt>to</dt>") || !strings.Contains(body, "bob") {
 		t.Errorf("locked args must render as a read-only dl: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
@@ -614,7 +614,7 @@ func TestCallFormApproval(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	locked := []LockedField{{Name: "message", Value: `"hi"`}}
-	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil, nil)
+	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil, nil, false, 0, "")
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -752,7 +752,7 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{
-		Handle:    "@me",
+		Handle:    "me",
 		BadgeSecs: 15,
 		Nav: []NavItem{
 			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), BadgeURL: "/inbox/badge"},
@@ -788,7 +788,7 @@ func TestConfirmModalIsNativeDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Render(rec, 200, "error", Page{Handle: "@me", Data: struct{ Message string }{"x"}}); err != nil {
+	if err := r.Render(rec, 200, "error", Page{Handle: "me", Data: struct{ Message string }{"x"}}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
@@ -809,7 +809,7 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 	}
 	// List → a single amount column showing the total.
 	rec := httptest.NewRecorder()
-	list := Page{Handle: "@me", Data: processesView{Open: []client.Process{{ID: "p1", Status: "open", Available: 30, Locked: 70}}}}
+	list := Page{Handle: "me", Data: processesView{Open: []client.Process{{ID: "p1", Status: "open", Available: 30, Locked: 70}}}}
 	if err := r.Render(rec, 200, "processes", list); err != nil {
 		t.Fatalf("render processes: %v", err)
 	}
@@ -826,7 +826,7 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 
 	// Detail → the available + parked split is kept.
 	rec = httptest.NewRecorder()
-	detail := Page{Handle: "@me", CSRFField: template.HTML("<input>"),
+	detail := Page{Handle: "me", CSRFField: template.HTML("<input>"),
 		Data: processView{Process: client.Process{ID: "p1", Status: "open", Available: 30, Locked: 70}}}
 	if err := r.Render(rec, 200, "process", detail); err != nil {
 		t.Fatalf("render process: %v", err)
@@ -846,13 +846,13 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 	}
 	view := func(ps string) actionView {
 		return actionView{
-			Action: client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
+			Action: client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
 			Form:   BuildForm(nil),
 		}
 	}
 	render := func(ps string) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: view(ps)}
+		p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: view(ps)}
 		if err := r.Render(rec, 200, "action_detail", p); err != nil {
 			t.Fatalf("render %q: %v", ps, err)
 		}
@@ -871,12 +871,17 @@ func TestActionDetailGatesRunOnPeerState(t *testing.T) {
 		t.Error("offline head chip missing")
 	}
 
+	// v0.12: "unfunded" is the stale peer-credit cache — under global exposure
+	// the serving kernel alone decides admission, so the form STAYS offered
+	// (verified live: an "unfunded" proxy call succeeds); the chip remains a
+	// quiet hint and a refusal surfaces as the typed peer_unfunded outcome
+	// (requirements.md §6.6).
 	unf := render("unfunded")
-	if !strings.Contains(unf, "Peer unfunded.") {
-		t.Errorf("unfunded notice missing: %s", unf)
+	if !strings.Contains(unf, "data-run-panel") {
+		t.Error("unfunded peer MUST still render the run form (kernel decides admission)")
 	}
-	if strings.Contains(unf, "data-run-panel") {
-		t.Error("unfunded peer must NOT render the run form")
+	if !strings.Contains(unf, "peer unfunded") {
+		t.Error("unfunded head chip missing")
 	}
 
 	ok := render("")
@@ -898,7 +903,7 @@ func TestActionRunPollsWhilePeerBlocked(t *testing.T) {
 	}
 	render := func(ps string) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: actionView{
+		p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: actionView{
 			Action:    client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
 			Form:      BuildForm(nil),
 			BadgeSecs: 15,
@@ -927,7 +932,7 @@ func TestProcessAwaitingReceiptPolls(t *testing.T) {
 	}
 	render := func(awaiting bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "@me", CSRFField: template.HTML("<input>"), Data: processView{
+		p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: processView{
 			Process:   client.Process{ID: "p1", Status: "open", AwaitingReceipt: awaiting, AwaitingReceiptSince: "2026-07-12T00:00:00Z"},
 			BadgeSecs: 15,
 		}}
@@ -984,9 +989,9 @@ func TestPeersPollerAndSuspendedToggle(t *testing.T) {
 	}
 	renderPeers := func(showSuspended bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
-			Identity:      client.Identity{Handle: "@me", PublicKey: "PK"},
-			Peers:         []client.Peer{{Handle: "@peerb", PublicKey: "KEY", PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+		p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+			Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
+			Peers:         []client.Peer{{Handle: "peerb", PublicKey: "KEY", PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
 			ShowSuspended: showSuspended,
 		}}
 		if err := r.Render(rec, 200, "admin_peers", p); err != nil {
@@ -1015,8 +1020,8 @@ func TestPeerRowOffersUnsubscribeAndSuspend(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
-		Identity:      client.Identity{Handle: "@me", PublicKey: "PK"},
+	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
 		ShowSuspended: true,
 		Peers: []client.Peer{
 			{Handle: "@active", PublicKey: "KF"},
@@ -1050,9 +1055,9 @@ func TestInspectStatusPolls(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key:        "KEYC",
-		Inspection: client.Inspection{Handle: "@kernelc", Online: true, Source: "live", Reachability: client.Reachability{Path: "direct"}},
+		Inspection: client.Inspection{Handle: "kernelc", Online: true, Source: "live", Reachability: client.Reachability{Path: "direct"}},
 	}}
 	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -1072,7 +1077,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key: "KDOWN", IsSubscribed: false,
 		Inspection: client.Inspection{Handle: "", Online: false, Source: "none",
 			Reachability: client.Reachability{Path: "unreachable", Error: "fed: cannot resolve peer 12D3KooW…: routing: not found"}},
@@ -1104,9 +1109,9 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
-		Identity: client.Identity{Handle: "@me", PublicKey: "PK"},
-		Peers:    []client.Peer{{Handle: "@peerb", PublicKey: "KEY", Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
+		Peers:    []client.Peer{{Handle: "peerb", PublicKey: "KEY", Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -1160,7 +1165,7 @@ func TestNavDrawerWorksWithoutJS(t *testing.T) {
 	nav := []NavItem{{Slug: "browse", Label: "browse", Href: "/browse"}}
 	render := func(open bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "@me", Nav: nav, MenuOpen: open, Path: "/browse",
+		p := Page{Handle: "me", Nav: nav, MenuOpen: open, Path: "/browse",
 			Data: struct{ Message string }{"x"}}
 		if err := r.Render(rec, 200, "error", p); err != nil {
 			t.Fatalf("render: %v", err)
@@ -1194,12 +1199,106 @@ func TestThemePickerOnlyInSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "@me", Themes: ThemeList(), Nav: []NavItem{{Slug: "browse", Href: "/browse"}},
+	p := Page{Handle: "me", Themes: ThemeList(), Nav: []NavItem{{Slug: "browse", Href: "/browse"}},
 		Data: struct{ Message string }{"x"}}
 	if err := r.Render(rec, 200, "error", p); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(rec.Body.String(), "data-theme-select"); n != 0 {
 		t.Errorf("chrome carries %d theme pickers, want 0 (settings owns it)", n)
+	}
+}
+
+// v0.12 refs: bare owner/name splits on the first slash; a remote ref's owner
+// segment carries the kernel alias after "@"; a migration-period leading "@"
+// is tolerated (requirements.md §4).
+func TestRefHelpersRemote(t *testing.T) {
+	cases := []struct {
+		ref, owner, kernel, name string
+		remote                   bool
+	}{
+		{"sys/llm/chat", "sys", "", "llm/chat", false},
+		{"lena/ocr-translate", "lena", "", "ocr-translate", false},
+		{"alice@B/greet", "alice@B", "B", "greet", true},
+		{"tom@acme2/brief/daily", "tom@acme2", "acme2", "brief/daily", true},
+		{"@sys/llm/chat", "sys", "", "llm/chat", false}, // migration tolerance
+	}
+	for _, c := range cases {
+		if got := refOwner(c.ref); got != c.owner {
+			t.Errorf("refOwner(%q)=%q want %q", c.ref, got, c.owner)
+		}
+		if got := refKernel(c.ref); got != c.kernel {
+			t.Errorf("refKernel(%q)=%q want %q", c.ref, got, c.kernel)
+		}
+		if got := refName(c.ref); got != c.name {
+			t.Errorf("refName(%q)=%q want %q", c.ref, got, c.name)
+		}
+		if got := refIsRemote(c.ref); got != c.remote {
+			t.Errorf("refIsRemote(%q)=%v want %v", c.ref, got, c.remote)
+		}
+	}
+}
+
+// A remote owner segment renders emphasized but UNLINKED: the kernel alias is
+// presentation-only and there is no local profile behind a remote owner
+// (requirements.md §6.2; extends the inert-counterparty rule).
+func TestRefRemoteUnlinked(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_ref", "alice@B/greet"); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "alice@B") || !strings.Contains(body, `class="owner"`) {
+		t.Errorf("remote owner segment must render emphasized: %s", body)
+	}
+	if strings.Contains(body, "/users/") || strings.Contains(body, "<a ") {
+		t.Errorf("remote owner must not link anywhere: %s", body)
+	}
+	// A local ref keeps its owner-page link.
+	rec2 := httptest.NewRecorder()
+	if err := r.Fragment(rec2, 200, "_ref", "lena/greet"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec2.Body.String(), `href="/users/lena"`) {
+		t.Errorf("local owner must link to its owner page: %s", rec2.Body.String())
+	}
+}
+
+// A payment-step completion is a spend of the completer's own money: money
+// button naming the sealed amount, unnumbered money button when the completer
+// types it (§6.3 two-branch rule).
+func TestCallFormPayment(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	cf := completeForm(template.HTML(`<input>`), "SP", 0, FormModel{}, true,
+		[]LockedField{{Name: "target", Value: `"alice"`}, {Name: "amount", Value: "300"}}, nil, nil,
+		true, 300, "alice")
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "btn-money") || !strings.Contains(body, "Complete ($0.300)") {
+		t.Errorf("sealed payment must use the money button naming the amount: %s", body)
+	}
+	if !strings.Contains(body, "Paid from your balance") || !strings.Contains(body, "alice") {
+		t.Errorf("payment form must disclose whose funds move and to whom: %s", body)
+	}
+	// Typed amount: money button, no parenthesized figure (wallet-send pattern).
+	rec2 := httptest.NewRecorder()
+	cf2 := completeForm(template.HTML(`<input>`), "SP2", 0, FormModel{UseRawFallback: true}, false, nil, nil, nil,
+		true, 0, "")
+	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
+		t.Fatal(err)
+	}
+	b2 := rec2.Body.String()
+	if !strings.Contains(b2, "btn-money") || strings.Contains(b2, "Complete ($") {
+		t.Errorf("typed-amount payment must be an unnumbered money button: %s", b2)
 	}
 }

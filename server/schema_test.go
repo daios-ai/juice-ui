@@ -196,7 +196,7 @@ func TestBuildStepFormInvalidPartial(t *testing.T) {
 	}
 }
 
-// A free-form schema (no named fields, e.g. @sys/sink) whose payload is already
+// A free-form schema (no named fields, e.g. sys/sink) whose payload is already
 // pre-bound leaves nothing for the completer to fill → approval, no raw box.
 func TestBuildStepFormFreeFormLockedIsApproval(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`) // free-form → UseRawFallback

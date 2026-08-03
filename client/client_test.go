@@ -47,9 +47,9 @@ func TestHealthAndWellKnown(t *testing.T) {
 	if err != nil || h.Status != "ok" {
 		t.Fatalf("Health = %+v, %v", h, err)
 	}
-	f.reply = `{"base_url":"","handle":"@sys","public_key":"abc"}`
+	f.reply = `{"base_url":"","handle":"sys","public_key":"abc"}`
 	w, err := f.client().WellKnown(context.Background())
-	if err != nil || w.Handle != "@sys" || w.PublicKey != "abc" {
+	if err != nil || w.Handle != "sys" || w.PublicKey != "abc" {
 		t.Fatalf("WellKnown = %+v, %v", w, err)
 	}
 }
@@ -68,8 +68,8 @@ func TestAuthorizeParsesCode(t *testing.T) {
 	if f.lastPath != "/v1/auth/authorize" || f.lastMethod != http.MethodPost {
 		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
 	}
-	// handle normalized to @alice; redirect_uri not sent.
-	if !strings.Contains(string(f.lastBody), `"@alice"`) {
+	// handle normalized to alice; redirect_uri not sent.
+	if !strings.Contains(string(f.lastBody), `"alice"`) {
 		t.Errorf("handle not normalized: %s", f.lastBody)
 	}
 	if strings.Contains(string(f.lastBody), "redirect_uri") {
@@ -81,7 +81,7 @@ func TestAuthorizeFullURLRedirect(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"redirect":"http://localhost:8080/cb?code=XYZ&state=1"}`
-	code, err := f.client().Authorize(context.Background(), "@bob", "pw", "ch")
+	code, err := f.client().Authorize(context.Background(), "bob", "pw", "ch")
 	if err != nil || code != "XYZ" {
 		t.Fatalf("code=%q err=%v", code, err)
 	}
@@ -90,7 +90,7 @@ func TestAuthorizeFullURLRedirect(t *testing.T) {
 func TestBearerAndRequestID(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"u1","handle":"@alice"}`
+	f.reply = `{"id":"u1","handle":"alice"}`
 	ctx := WithRequestID(context.Background(), "req-123")
 	if _, err := f.client().Me(ctx, "tok-abc"); err != nil {
 		t.Fatal(err)
@@ -137,15 +137,15 @@ func TestListTransactionsPagination(t *testing.T) {
 func TestListActionsEncodesFilters(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `[{"id":"a1","action":"@alice/greet","name":"greet"}]`
+	f.reply = `[{"id":"a1","action":"alice/greet","name":"greet"}]`
 	acts, err := f.client().ListActions(context.Background(), "tok", "alice", "greet", true, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(acts) != 1 || acts[0].Action != "@alice/greet" {
+	if len(acts) != 1 || acts[0].Action != "alice/greet" {
 		t.Fatalf("acts = %+v", acts)
 	}
-	if !strings.Contains(f.lastPath, "owner=%40alice") || !strings.Contains(f.lastPath, "name=greet") {
+	if !strings.Contains(f.lastPath, "owner=alice") || !strings.Contains(f.lastPath, "name=greet") {
 		t.Errorf("filters not encoded: %s", f.lastPath)
 	}
 	// all=true includes the caller's own inactive/private rows.
@@ -160,20 +160,20 @@ func TestMeDecodesConnectors(t *testing.T) {
 	// New /v1/me: a directory-grouped `connectors` tree (each node carries backing
 	// connections + per-action grants with provider_key) plus a `connections`
 	// inventory that carries provider_key and surfaces unused accounts.
-	f.reply = `{"handle":"@alice",
-	 "connectors":[{"directory":"@chat","connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}],
-	   "actions":[{"action":"@chat/pay","scopes":["pay.write"],"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}]}],
+	f.reply = `{"handle":"alice",
+	 "connectors":[{"directory":"chat","connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}],
+	   "actions":[{"action":"chat/pay","scopes":["pay.write"],"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}]}],
 	 "connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"},
 	   {"provider":"mail.host","actions":0,"unused":true,"provider_key":"bearer:mail.host","created_at":"2026-07-07T00:00:00Z"}]}`
 	u, err := f.client().Me(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(u.Connectors) != 1 || u.Connectors[0].Directory != "@chat" {
+	if len(u.Connectors) != 1 || u.Connectors[0].Directory != "chat" {
 		t.Fatalf("connectors = %+v", u.Connectors)
 	}
 	c := u.Connectors[0]
-	if len(c.Actions) != 1 || c.Actions[0].Action != "@chat/pay" || c.Actions[0].ProviderKey != "oauth:PK" {
+	if len(c.Actions) != 1 || c.Actions[0].Action != "chat/pay" || c.Actions[0].ProviderKey != "oauth:PK" {
 		t.Fatalf("connector actions = %+v", c.Actions)
 	}
 	if len(c.Connections) != 1 || c.Connections[0].Provider != "api.stripe.com" {
@@ -195,7 +195,7 @@ func TestGrantMethods(t *testing.T) {
 	// StartGrant posts a selector (+provider) and returns the authorize URL when a
 	// browser round-trip is needed (status != granted).
 	f.reply = `{"state":"S1","authorize_url":"https://prov/auth?x=1"}`
-	url, state, granted, err := f.client().StartGrant(context.Background(), "tok", "@sys/gmail", "oauth:x", "http://ui/grants/callback")
+	url, state, granted, err := f.client().StartGrant(context.Background(), "tok", "sys/gmail", "oauth:x", "http://ui/grants/callback")
 	if err != nil || url != "https://prov/auth?x=1" || state != "S1" || granted {
 		t.Fatalf("start = %q %q granted=%v %v", url, state, granted, err)
 	}
@@ -205,19 +205,19 @@ func TestGrantMethods(t *testing.T) {
 	if f.lastPath != "/v1/grants/start" {
 		t.Errorf("start path = %q", f.lastPath)
 	}
-	if !strings.Contains(string(f.lastBody), `"selector":"@sys/gmail"`) || !strings.Contains(string(f.lastBody), `"provider":"oauth:x"`) {
+	if !strings.Contains(string(f.lastBody), `"selector":"sys/gmail"`) || !strings.Contains(string(f.lastBody), `"provider":"oauth:x"`) {
 		t.Errorf("start body = %s", f.lastBody)
 	}
 	// An already-covered account grants instantly with no authorize URL.
-	f.reply = `{"status":"granted","actions":["@sys/gmail"]}`
-	_, _, granted, err = f.client().StartGrant(context.Background(), "tok", "@sys/gmail", "", "http://ui/grants/callback")
+	f.reply = `{"status":"granted","actions":["sys/gmail"]}`
+	_, _, granted, err = f.client().StartGrant(context.Background(), "tok", "sys/gmail", "", "http://ui/grants/callback")
 	if err != nil || !granted {
 		t.Fatalf("instant-granted start: granted=%v err=%v", granted, err)
 	}
 
-	f.reply = `{"actions":["@sys/gmail"]}`
+	f.reply = `{"actions":["sys/gmail"]}`
 	acts, err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE")
-	if err != nil || len(acts) != 1 || acts[0] != "@sys/gmail" {
+	if err != nil || len(acts) != 1 || acts[0] != "sys/gmail" {
 		t.Fatalf("complete = %v %v", acts, err)
 	}
 	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) {
@@ -225,10 +225,10 @@ func TestGrantMethods(t *testing.T) {
 	}
 
 	// DeleteGrant revokes by selector; DeleteConnection deletes by provider_key.
-	if err := f.client().DeleteGrant(context.Background(), "tok", "@sys/gmail-send"); err != nil {
+	if err := f.client().DeleteGrant(context.Background(), "tok", "sys/gmail-send"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "selector=%40sys%2Fgmail-send") {
+	if f.lastMethod != "DELETE" || !strings.Contains(f.lastPath, "selector=sys%2Fgmail-send") {
 		t.Errorf("delete = %s %s", f.lastMethod, f.lastPath)
 	}
 	if err := f.client().DeleteConnection(context.Background(), "tok", "bearer:127.0.0.1:8080"); err != nil {
@@ -240,15 +240,15 @@ func TestGrantMethods(t *testing.T) {
 
 	// ConnectGrant posts a static token for a selector's group and returns the
 	// actions granted.
-	f.reply = `{"status":"connected","actions":["@chat/message","@chat/inbox"]}`
-	acts, err = f.client().ConnectGrant(context.Background(), "tok", "@chat", "", "KEY123")
+	f.reply = `{"status":"connected","actions":["chat/message","chat/inbox"]}`
+	acts, err = f.client().ConnectGrant(context.Background(), "tok", "chat", "", "KEY123")
 	if err != nil || len(acts) != 2 {
 		t.Fatalf("connect = %v %v", acts, err)
 	}
 	if f.lastMethod != "POST" || f.lastPath != "/v1/grants" {
 		t.Errorf("connect = %s %s", f.lastMethod, f.lastPath)
 	}
-	if !strings.Contains(string(f.lastBody), `"selector":"@chat"`) || !strings.Contains(string(f.lastBody), `"token":"KEY123"`) {
+	if !strings.Contains(string(f.lastBody), `"selector":"chat"`) || !strings.Contains(string(f.lastBody), `"token":"KEY123"`) {
 		t.Errorf("connect body = %s", f.lastBody)
 	}
 	if strings.Contains(string(f.lastBody), `"provider"`) {
@@ -256,12 +256,12 @@ func TestGrantMethods(t *testing.T) {
 	}
 
 	// PlanGrants fetches the consent plan for a selector.
-	f.reply = `{"groups":[{"provider_key":"bearer:h","provider":"h","scheme":"delegated_bearer","actions":[{"action":"@chat/message","granted":false}]}],"skipped_uncallable":1}`
-	plan, err := f.client().PlanGrants(context.Background(), "tok", "@chat")
+	f.reply = `{"groups":[{"provider_key":"bearer:h","provider":"h","scheme":"delegated_bearer","actions":[{"action":"chat/message","granted":false}]}],"skipped_uncallable":1}`
+	plan, err := f.client().PlanGrants(context.Background(), "tok", "chat")
 	if err != nil || len(plan.Groups) != 1 || plan.Groups[0].ProviderKey != "bearer:h" || plan.SkippedUncallable != 1 {
 		t.Fatalf("plan = %+v %v", plan, err)
 	}
-	if f.lastMethod != "GET" || !strings.Contains(f.lastPath, "/v1/grants/plan?selector=%40chat") {
+	if f.lastMethod != "GET" || !strings.Contains(f.lastPath, "/v1/grants/plan?selector=chat") {
 		t.Errorf("plan path = %s %s", f.lastMethod, f.lastPath)
 	}
 }
@@ -269,12 +269,12 @@ func TestGrantMethods(t *testing.T) {
 func TestStepDecodesCreatedBy(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"S1","action":"@a/target","created_by":"@a/maker","status":"waiting"}`
+	f.reply = `{"id":"S1","action":"a/target","created_by":"a/maker","status":"waiting"}`
 	st, err := f.client().GetStep(context.Background(), "tok", "S1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.CreatedBy != "@a/maker" {
+	if st.CreatedBy != "a/maker" {
 		t.Errorf("CreatedBy = %q", st.CreatedBy)
 	}
 }
@@ -322,7 +322,7 @@ func TestRunSendsActionAndArgs(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"result":{"ok":true},"tx_id":"t1","trace_id":"tr1","receipt_id":"r1"}`
-	rep, err := f.client().Run(context.Background(), "tok", "@sys/llm/chat", nil)
+	rep, err := f.client().Run(context.Background(), "tok", "sys/llm/chat", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestRunSendsActionAndArgs(t *testing.T) {
 	if !strings.Contains(string(f.lastBody), `"args":{}`) {
 		t.Errorf("args not defaulted: %s", f.lastBody)
 	}
-	if !strings.Contains(string(f.lastBody), `"@sys/llm/chat"`) {
+	if !strings.Contains(string(f.lastBody), `"sys/llm/chat"`) {
 		t.Errorf("action ref mangled: %s", f.lastBody)
 	}
 	if f.lastPath != "/v1/run" || f.lastMethod != http.MethodPost {
@@ -359,7 +359,7 @@ func TestErrorResponseClassified(t *testing.T) {
 	defer f.close()
 	f.status = 402
 	f.reply = `{"error":"insufficient user balance"}`
-	_, err := f.client().Run(context.Background(), "tok", "@sys/lookup", nil)
+	_, err := f.client().Run(context.Background(), "tok", "sys/lookup", nil)
 	ke, ok := AsKernelError(err)
 	if !ok || ke.Kind != KindInsufficientFunds {
 		t.Fatalf("expected insufficient funds, got %v", err)
@@ -387,11 +387,11 @@ func TestCompleteStepAlwaysSendsArgs(t *testing.T) {
 }
 
 func TestStepRef(t *testing.T) {
-	// The kernel now returns a clean single-@ computed action on list and single
-	// reads (the old @@ double-prefix quirk is fixed), so Ref() is the field itself.
-	s := Step{Action: "@sys/lookup"}
-	if got := s.Ref(); got != "@sys/lookup" {
-		t.Errorf("Ref() = %q want @sys/lookup", got)
+	// The kernel returns the bare computed action on list and single reads
+	// (v0.12 de-sigiling), so Ref() is the field itself.
+	s := Step{Action: "sys/lookup"}
+	if got := s.Ref(); got != "sys/lookup" {
+		t.Errorf("Ref() = %q want sys/lookup", got)
 	}
 	// Empty action.
 	if got := (Step{}).Ref(); got != "" {
@@ -432,7 +432,7 @@ func TestReceiptVerification(t *testing.T) {
 func TestUpdateMeSendsFields(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","handle":"@alice","description":"hi there"}`
+	f.reply = `{"id":"U1","handle":"alice","description":"hi there"}`
 	desc := "hi there"
 	inp := UpdateMeInput{Description: &desc}
 	u, err := f.client().UpdateMe(context.Background(), "tok", inp)
@@ -613,7 +613,7 @@ func TestCallbackCreateStep(t *testing.T) {
 	// baseURL is deliberately bogus — the callback must target the passed URL, not baseURL.
 	c := New("http://127.0.0.1:1", nil)
 	st, err := c.CallbackCreateStep(context.Background(), srv.URL, "trace-1.sig",
-		CreateStepInput{ActionID: "sink", RequiredCaller: "@chat"})
+		CreateStepInput{ActionID: "sink", RequiredCaller: "chat"})
 	if err != nil {
 		t.Fatalf("CallbackCreateStep: %v", err)
 	}
@@ -632,35 +632,15 @@ func TestCallbackCreateStep(t *testing.T) {
 	if strings.Contains(gotBody, "trace_id") {
 		t.Errorf("body must NOT carry trace_id (capability IS the trace): %s", gotBody)
 	}
-	if !strings.Contains(gotBody, `"action_id":"sink"`) || !strings.Contains(gotBody, `"required_caller":"@chat"`) {
+	if !strings.Contains(gotBody, `"action_id":"sink"`) || !strings.Contains(gotBody, `"required_caller":"chat"`) {
 		t.Errorf("body = %s", gotBody)
-	}
-}
-
-func TestTransfer(t *testing.T) {
-	f := newFake()
-	defer f.srv.Close()
-	f.reply = `{"id":"L1","amount":10,"from_handle":"@me","to_handle":"@ana","operator_handle":"@me","created_at":"2024-01-01T00:00:00Z"}`
-	e, err := f.client().Transfer(context.Background(), "tok", "@ana", 10, "lunch", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.lastMethod != "POST" || f.lastPath != "/v1/transfers" {
-		t.Errorf("transfer hit %s %s", f.lastMethod, f.lastPath)
-	}
-	body := string(f.lastBody)
-	if !strings.Contains(body, `"recipient":"@ana"`) || !strings.Contains(body, `"amount":10`) || !strings.Contains(body, `"reason":"lunch"`) {
-		t.Errorf("transfer body = %s", body)
-	}
-	if e.ToHandle != "@ana" || e.Amount != 10 {
-		t.Errorf("transfer entry = %+v", e)
 	}
 }
 
 func TestLedger(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	f.reply = `[{"id":"L1","amount":100,"to_handle":"@me","operator_handle":"@sys","created_at":"2024-01-01T00:00:00Z"}]`
+	f.reply = `[{"id":"L1","amount":100,"to_handle":"me","operator_handle":"sys","created_at":"2024-01-01T00:00:00Z"}]`
 	out, err := f.client().Ledger(context.Background(), "tok", 20, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -668,7 +648,7 @@ func TestLedger(t *testing.T) {
 	if f.lastMethod != "GET" || f.lastPath != "/v1/ledger?limit=20" {
 		t.Errorf("ledger hit %s %s", f.lastMethod, f.lastPath)
 	}
-	if len(out) != 1 || out[0].Amount != 100 || out[0].ToHandle != "@me" {
+	if len(out) != 1 || out[0].Amount != 100 || out[0].ToHandle != "me" {
 		t.Errorf("ledger = %+v", out)
 	}
 }
@@ -676,13 +656,44 @@ func TestLedger(t *testing.T) {
 func TestAdminRename(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	if err := f.client().AdminRename(context.Background(), "tok", "@old", "new"); err != nil {
+	if err := f.client().AdminRename(context.Background(), "tok", "@old", "@new"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "POST" || f.lastPath != "/control/users/@old/rename" {
+	if f.lastMethod != "POST" || f.lastPath != "/control/users/old/rename" {
 		t.Errorf("rename hit %s %s", f.lastMethod, f.lastPath)
 	}
-	if !strings.Contains(string(f.lastBody), `"new_handle":"@new"`) {
-		t.Errorf("rename body = %s (want normalized @new)", string(f.lastBody))
+	if !strings.Contains(string(f.lastBody), `"new_handle":"new"`) {
+		t.Errorf("rename body = %s (want normalized bare new)", string(f.lastBody))
+	}
+}
+
+// v0.12: a waiting step carries the kernel-derived completion schema
+// (allowed_input), and an action carries its signed effect field — the only
+// payment-step signal (requirements.md §6.3; verified live 2026-08-03).
+func TestStepAllowedInputAndActionEffect(t *testing.T) {
+	f := newFake()
+	defer f.srv.Close()
+	f.reply = `{"id":"S1","action":"sys/transfer","status":"waiting",
+	 "partial_args":{"target":"alice","amount":300},
+	 "allowed_input":{"type":"object","properties":{}}}`
+	st, err := f.client().GetStep(context.Background(), "tok", "S1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.AllowedInput) == 0 {
+		t.Errorf("allowed_input not decoded: %+v", st)
+	}
+	f.reply = `{"id":"a1","action":"sys/transfer","name":"transfer","effect":"transfer"}`
+	a, err := f.client().GetAction(context.Background(), "tok", "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.IsTransfer() {
+		t.Errorf("effect not decoded: %+v", a)
+	}
+	f.reply = `{"id":"a2","action":"tom/greet","name":"greet"}`
+	b, _ := f.client().GetAction(context.Background(), "tok", "a2")
+	if b.IsTransfer() {
+		t.Errorf("ordinary action must not read as transfer: %+v", b)
 	}
 }

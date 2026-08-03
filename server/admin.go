@@ -247,3 +247,115 @@ func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 	}
 	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
 }
+
+// positionText renders a peer's bilateral position with its reading — never a
+// bare negative number (requirements.md §6.6): positive = we owe the peer (it
+// prepaid or earned here — verified live: earnings accrue on the same row, so
+// "prepaid" would misread it), negative = the peer owes this kernel.
+func positionText(available int64) string {
+	switch {
+	case available > 0:
+		return "we owe them " + money(available)
+	case available < 0:
+		return "owes us " + money(-available)
+	default:
+		return "settled"
+	}
+}
+
+// postAdminSettle initiates settlement of the bilateral position with a peer,
+// or — with a settlement_id — records the external rail payment for a prior
+// outcome (the CLI --cash leg). Both concern REAL external money, so the forms
+// route through confirms naming the peer (§6.6); the kernel's own outcome
+// message is flashed verbatim (the UI never computes or predicts one).
+func (s *Server) postAdminSettle(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	peer := strings.TrimSpace(r.FormValue("peer"))
+	settlementID := strings.TrimSpace(r.FormValue("settlement_id"))
+	if peer == "" {
+		s.flashRedirect(w, r, "/admin/peers", "error", "A peer handle or key is required.")
+		return
+	}
+	var res client.SettleResult
+	err := s.sessions.Do(ctx, func(tok string) error {
+		out, e := s.client.AdminSettle(ctx, tok, peer, settlementID)
+		res = out
+		return e
+	})
+	msg := res.Message
+	if msg == "" {
+		msg = "Settlement " + res.Status + "."
+	}
+	s.flashResult(w, r, err, "/admin/peers", msg)
+}
+
+// adminTransfersView drives the value-transfer queue page (§6.6): the kernel's
+// buyer-side pending/quarantined records. Retry is the ONLY mutation — the
+// template offers no refund/force-settle/edit affordance, because quarantine
+// means "evidence insufficient", never an operator-chosen outcome.
+type adminTransfersView struct {
+	Transfers []client.PendingTransfer
+	Status    string // "" = the kernel's default unresolved set (pending + quarantined)
+	Detail    *client.PendingTransfer
+	Pager     Pager
+	CSRFField template.HTML
+}
+
+func (s *Server) getAdminTransfers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	status := r.URL.Query().Get("status")
+	offset := queryOffset(r)
+	view := adminTransfersView{Status: status, CSRFField: csrf.TemplateField(r)}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		// One page plus a lookahead row so the pager knows there is a next.
+		ts, e := s.client.AdminListTransfers(ctx, tok, status, pageSize+1, offset)
+		if e != nil {
+			return e
+		}
+		if len(ts) > pageSize {
+			ts = ts[:pageSize]
+			view.Pager = pageNav(r, offset, pageSize, true)
+		} else {
+			view.Pager = pageNav(r, offset, pageSize, false)
+		}
+		view.Transfers = ts
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "admin_transfers", "Transfers", view)
+}
+
+func (s *Server) getAdminTransfer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	view := adminTransfersView{CSRFField: csrf.TemplateField(r)}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		t, e := s.client.AdminGetTransfer(ctx, tok, id)
+		if e != nil {
+			return e
+		}
+		view.Detail = &t
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "admin_transfers", "Transfer", view)
+}
+
+// postAdminTransferRetry re-presents the transfer's stored signed completion;
+// the kernel settles strictly on receipt evidence. The sole mutation (§6.6).
+func (s *Server) postAdminTransferRetry(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	var res client.PendingTransfer
+	err := s.sessions.Do(ctx, func(tok string) error {
+		t, e := s.client.AdminRetryTransfer(ctx, tok, id)
+		res = t
+		return e
+	})
+	msg := "Retried — status: " + res.Status + "."
+	s.flashResult(w, r, err, "/admin/transfers", msg)
+}

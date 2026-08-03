@@ -103,14 +103,16 @@ func TestDeterministic(t *testing.T) {
 // operation word must resolve to the icon of that name.
 func TestObviousMatches(t *testing.T) {
 	cases := map[string]string{
-		"@chat/inbox":         "inbox",
+		"chat/inbox":         "inbox",
+		"lena/ocr-translate": "translate",
+		"sys/llm/chat":       "chat",
+		"mail/send":          "send",
+		"sol/calendar-sync":  "sync",
+		"x/print":            "print",
+		"x/download":         "download",
+		"x/search":           "search",
+		// migration-period sigiled refs still resolve
 		"@lena/ocr-translate": "translate",
-		"@sys/llm/chat":       "chat",
-		"@mail/send":          "send",
-		"@sol/calendar-sync":  "sync",
-		"@x/print":            "print",
-		"@x/download":         "download",
-		"@x/search":           "search",
 	}
 	for ref, want := range cases {
 		got, ok := Pick(ref)
@@ -126,11 +128,19 @@ func TestObviousMatches(t *testing.T) {
 
 func TestOwnerIsIgnored(t *testing.T) {
 	// The owner names the provider, not the operation. Two providers offering
-	// the same operation must pick the same icon.
-	a, okA := Pick("@lena/translate")
-	b, okB := Pick("@miro/translate")
+	// the same operation must pick the same icon — including with the bare
+	// v0.12 refs, where the owner is no longer marked by a sigil (the silent
+	// regression this test pins: an unstripped owner would skew every query).
+	a, okA := Pick("lena/translate")
+	b, okB := Pick("miro/translate")
 	if !okA || !okB || a.Name != b.Name {
 		t.Fatalf("owner leaked into the match: %v/%v vs %v/%v", a, okA, b, okB)
+	}
+	// An owner whose handle collides with a corpus term must not bias the pick:
+	// chat/translate is a TRANSLATE operation owned by "chat", not a chat icon.
+	c, okC := Pick("chat/translate")
+	if !okC || c.Name != a.Name {
+		t.Fatalf("owner token leaked into the query: %v/%v want %v", c, okC, a)
 	}
 	// A bare handle names no operation.
 	if _, ok := Pick("@lena"); ok {

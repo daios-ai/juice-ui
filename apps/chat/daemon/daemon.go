@@ -1,4 +1,4 @@
-// Package daemon is the @chat chat server: a self-contained, Juice-agnostic REST
+// Package daemon is the chat app's chat server: a self-contained, Juice-agnostic REST
 // service over a durable store (rooms, membership, an append-only message log,
 // per-user read watermarks). It knows nothing of the kernel, tokens, or grants —
 // caller authentication is *injected* (an auth hook handed to New), so the same
@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // adminHeader carries the admin secret on the provisioning/read routes.
@@ -28,9 +29,9 @@ const adminHeader = "X-Chat-Admin"
 
 // Op is one chat operation exposed as a kernel-facing write route at "/<Name>"
 // and, correspondingly, registered by the plugin as the Juice action
-// "@chat/<Name>". Member operations live in the "msg/" folder (e.g. "msg/message"
-// → @chat/msg/message), so a single grant selector (@chat/msg) covers them all and
-// leaves the open @chat/register outside that folder. It is the action's full public
+// "chat/<Name>". Member operations live in the "msg/" folder (e.g. "msg/message"
+// → chat/msg/message), so a single grant selector (chat/msg) covers them all and
+// leaves the open chat/register outside that folder. It is the action's full public
 // contract: a natural-language Description plus JSON-Schema args and success response
 // — written to be sufficient for @sys/lookup and LLM function calling (kernel
 // requirements §3).
@@ -245,6 +246,22 @@ func (d *Daemon) fireNotify(sender, roomID string) {
 
 // ---- kernel-facing writes ----
 
+// canonHandle canonicalizes a handle to the bare v0.12 form (no "@" sigil).
+// Handles reach the daemon from three eras — pre-0.4 identity tokens, sigiled
+// member input, and bare v0.12 forms — so every handle is canonicalized at this
+// boundary before it touches the store (whose rows are migrated bare at Open).
+func canonHandle(h string) string { return strings.TrimPrefix(h, "@") }
+
+func canonHandles(hs []string) []string {
+	out := make([]string, 0, len(hs))
+	for _, h := range hs {
+		if b := canonHandle(strings.TrimSpace(h)); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // write adapts a store operation into an authenticated handler: identify the
 // caller via the injected auth hook, decode args, apply, and render a real success
 // or typed failure.
@@ -255,11 +272,14 @@ func (d *Daemon) write(op func(caller string, a kargs) (map[string]any, error)) 
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthenticated caller"})
 			return
 		}
+		caller = canonHandle(caller)
 		var a kargs
 		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad request body"})
 			return
 		}
+		a.Members = canonHandles(a.Members)
+		a.Member = canonHandle(a.Member)
 		body, err := op(caller, a)
 		if err != nil {
 			writeJSON(w, statusFor(err), map[string]any{"ok": false, "error": err.Error()})
@@ -307,7 +327,7 @@ func (d *Daemon) admin(h http.HandlerFunc) http.HandlerFunc {
 }
 
 func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
-	rooms, err := d.store.RoomsFor(r.URL.Query().Get("handle"))
+	rooms, err := d.store.RoomsFor(canonHandle(r.URL.Query().Get("handle")))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -319,7 +339,7 @@ func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) getRoom(w http.ResponseWriter, r *http.Request) {
-	room, msgs, err := d.store.Room(r.URL.Query().Get("handle"), r.PathValue("id"))
+	room, msgs, err := d.store.Room(canonHandle(r.URL.Query().Get("handle")), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -333,7 +353,7 @@ func (d *Daemon) getRoom(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	msgs, err := d.store.History(r.URL.Query().Get("handle"), r.PathValue("id"), before, limit)
+	msgs, err := d.store.History(canonHandle(r.URL.Query().Get("handle")), r.PathValue("id"), before, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -348,7 +368,7 @@ func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 // to remove (see Store.Poll).
 func (d *Daemon) pollRoom(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	added, deleted, err := d.store.Poll(r.URL.Query().Get("handle"), r.PathValue("id"), after)
+	added, deleted, err := d.store.Poll(canonHandle(r.URL.Query().Get("handle")), r.PathValue("id"), after)
 	if err != nil {
 		writeErr(w, err)
 		return

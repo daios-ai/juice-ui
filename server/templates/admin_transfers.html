@@ -1,0 +1,74 @@
+{{define "content"}}
+{{$d := .Data}}
+{{if $d.Detail}}
+{{$t := $d.Detail}}
+<nav class="crumb"><a href="/admin/transfers">← transfers</a></nav>
+<h1>transfer</h1>
+<p class="subtitle id mono">{{$t.ID}}</p>
+
+<div class="card stack">
+  <div class="row">
+    <span class="pill {{if eq $t.Status "settled"}}status-credited{{else if eq $t.Status "refunded"}}status-refunded{{else if eq $t.Status "quarantined"}}status-danger{{else}}status-escrow{{end}}">{{$t.Status}}</span>
+    {{if $t.Amount}}<span class="money">{{money $t.Amount}}</span>{{end}}
+  </div>
+  <dl class="locked-args flush">
+    {{if $t.Peer}}<dt>peer</dt><dd class="mono">{{$t.Peer}}</dd>{{end}}
+    {{if $t.StepID}}<dt>step</dt><dd class="mono">{{$t.StepID}}</dd>{{end}}
+    {{if $t.Reserve}}<dt>reserve</dt><dd class="mono">{{money $t.Reserve}}</dd>{{end}}
+    {{if $t.Reason}}<dt>reason</dt><dd class="mono">{{$t.Reason}}</dd>{{end}}
+    <dt>created</dt><dd class="mono">{{shortTime $t.CreatedAt}}</dd>
+  </dl>
+  {{/* Retry is the ONLY mutation: it re-presents the same signed completion and
+       settles strictly on receipt evidence — no refund/force-settle/edit exists,
+       because quarantine means "evidence insufficient", never an operator-chosen
+       outcome (requirements.md §6.6). */}}
+  {{if or (eq $t.Status "pending") (eq $t.Status "quarantined")}}
+  <form method="post" action="/admin/transfers/{{$t.ID}}/retry" data-confirm="Retry this transfer? The same signed completion is re-presented; the receipt decides.">
+    {{$d.CSRFField}}<button class="btn" type="submit">Retry</button>
+  </form>
+  {{end}}
+</div>
+{{else}}
+<div class="page-head">
+  <h1>transfers</h1>
+  <p class="subtitle">Value transfers awaiting resolution — the receipt decides. <span class="scope-note">superuser only</span></p>
+</div>
+
+<nav class="tabs control-tabs" aria-label="Transfer status">
+  {{template "_tab" (tab "unresolved" "/admin/transfers" (eq $d.Status ""))}}
+  {{template "_tab" (tab "pending" "/admin/transfers?status=pending" (eq $d.Status "pending"))}}
+  {{template "_tab" (tab "quarantined" "/admin/transfers?status=quarantined" (eq $d.Status "quarantined"))}}
+  {{template "_tab" (tab "settled" "/admin/transfers?status=settled" (eq $d.Status "settled"))}}
+  {{template "_tab" (tab "refunded" "/admin/transfers?status=refunded" (eq $d.Status "refunded"))}}
+</nav>
+
+{{if $d.Transfers}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>ID</th><th>Status</th><th class="money">Amount</th><th>Peer</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Transfers}}
+  <tr class="rowable" tabindex="-1" data-href="/admin/transfers/{{.ID}}">
+    <td class="id mono"><a href="/admin/transfers/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+    <td><span class="pill {{if eq .Status "settled"}}status-credited{{else if eq .Status "refunded"}}status-refunded{{else if eq .Status "quarantined"}}status-danger{{else}}status-escrow{{end}}">{{.Status}}</span></td>
+    <td class="money">{{if .Amount}}{{money .Amount}}{{end}}</td>
+    <td class="mono muted">{{.Peer}}</td>
+    <td class="muted">{{shortTime .CreatedAt}}</td>
+    <td>
+      {{if or (eq .Status "pending") (eq .Status "quarantined")}}
+      <form method="post" action="/admin/transfers/{{.ID}}/retry" data-confirm="Retry this transfer? The same signed completion is re-presented; the receipt decides.">
+        {{$d.CSRFField}}<button class="btn-quiet" type="submit">Retry</button>
+      </form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{template "_pager" $d.Pager}}
+{{else}}
+<p class="muted">Nothing unresolved.</p>
+{{end}}
+{{end}}
+{{end}}

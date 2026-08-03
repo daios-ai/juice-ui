@@ -59,13 +59,13 @@ func TestClassifyByStatus(t *testing.T) {
 func TestClassifyGrantRequired(t *testing.T) {
 	// A 403 with code=grant_required is a distinct kind carrying the action ref;
 	// a plain 403 stays Unauthorized.
-	err := classify(403, []byte(`{"error":"grant required","code":"grant_required","meta":{"action":"@sys/gmail-send"}}`))
+	err := classify(403, []byte(`{"error":"grant required","code":"grant_required","meta":{"action":"sys/gmail-send"}}`))
 	ke, _ := AsKernelError(err)
 	if ke.Kind != KindGrantRequired {
 		t.Errorf("kind = %v want KindGrantRequired", ke.Kind)
 	}
-	if ke.GrantAction != "@sys/gmail-send" {
-		t.Errorf("GrantAction = %q want @sys/gmail-send", ke.GrantAction)
+	if ke.GrantAction != "sys/gmail-send" {
+		t.Errorf("GrantAction = %q want sys/gmail-send", ke.GrantAction)
 	}
 	if plain, _ := AsKernelError(classify(403, []byte(`{"error":"nope"}`))); plain.Kind != KindUnauthorized {
 		t.Errorf("plain 403 kind = %v want KindUnauthorized", plain.Kind)
@@ -75,7 +75,7 @@ func TestClassifyGrantRequired(t *testing.T) {
 // TestClassifyPeerErrors checks the remote-proxy run failures get their own kinds
 // (so 402 peer_unfunded doesn't read as the caller's "insufficient funds").
 func TestClassifyPeerErrors(t *testing.T) {
-	unf, _ := AsKernelError(classify(402, []byte(`{"error":"peer unfunded","code":"peer_unfunded","meta":{"peer":"@kernelb"}}`)))
+	unf, _ := AsKernelError(classify(402, []byte(`{"error":"peer unfunded","code":"peer_unfunded","meta":{"peer":"kernelb"}}`)))
 	if unf.Kind != KindPeerUnfunded {
 		t.Errorf("kind = %v, want KindPeerUnfunded (not InsufficientFunds)", unf.Kind)
 	}

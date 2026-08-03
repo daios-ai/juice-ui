@@ -125,16 +125,19 @@
 </tr>
 {{end}}
 
-{{/* _ref renders @owner/name with the owner segment weight-emphasized and
-     confusable-distinct (mono). The owner links to its owner page (a handle's
-     public actions), like a channel; the name is plain here. Use _reflink where
-     the name should also link to the action. */}}
-{{define "_ref"}}<span class="ref mono"><span class="owner"><a href="/users/{{refOwner .}}">{{refOwner .}}</a></span>/{{refName .}}</span>{{end}}
+{{/* _ref renders owner/name with the owner segment weight-emphasized and
+     confusable-distinct (mono). A LOCAL owner links to its owner page (a
+     handle's public actions), like a channel; a REMOTE owner (owner@kernel —
+     the alias is presentation-only, requirements.md §4) renders the same but
+     UNLINKED, since no local profile exists behind it. The name is plain here.
+     Use _reflink where the name should also link to the action. */}}
+{{define "_ref"}}<span class="ref mono"><span class="owner">{{if refIsRemote .}}{{refOwner .}}{{else}}<a href="/users/{{refOwner .}}">{{refOwner .}}</a>{{end}}</span>/{{refName .}}</span>{{end}}
 
-{{/* _reflink is _ref for a marketplace action link: owner → owner page, name →
-     the action. Input: refLinkArgs {Ref, ID}. Avoids nesting the owner <a> inside
-     an action <a> at sites that would otherwise wrap the whole ref in one link. */}}
-{{define "_reflink"}}<span class="ref mono"><span class="owner"><a href="/users/{{refOwner .Ref}}">{{refOwner .Ref}}</a></span>/<a href="/actions/{{.ID}}">{{refName .Ref}}</a></span>{{end}}
+{{/* _reflink is _ref for a marketplace action link: local owner → owner page,
+     name → the action; a remote owner stays unlinked (see _ref). Input:
+     refLinkArgs {Ref, ID}. Avoids nesting the owner <a> inside an action <a>
+     at sites that would otherwise wrap the whole ref in one link. */}}
+{{define "_reflink"}}<span class="ref mono"><span class="owner">{{if refIsRemote .Ref}}{{refOwner .Ref}}{{else}}<a href="/users/{{refOwner .Ref}}">{{refOwner .Ref}}</a>{{end}}</span>/<a href="/actions/{{.ID}}">{{refName .Ref}}</a></span>{{end}}
 
 {{/* _call_form — THE run/complete form. Running an action and completing a step
      are the same act, so both render here: locked args (a step's pre-bound input)
@@ -151,15 +154,22 @@
   {{if .Locked}}<dl class="locked-args flush">{{range .Locked}}<dt>{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{else if .LockedRaw}}<pre class="json">{{json .LockedRaw}}</pre>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="row">
-    {{/* A step completion (OneShot) is NEUTRAL and names NO amount: the completer
-         is doing requested work, not paying — the funds were reserved by whoever
-         created the step. Only a paid *run* names the amount. */}}
-    <button class="{{if and (gt .Price 0) (not .OneShot)}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if and (gt .Price 0) (not .OneShot)}} ({{money .Price}}){{end}}</button>
+    {{/* Two-branch completion rule (requirements.md §6.3, the single statement):
+         an ORDINARY step completion (OneShot) is NEUTRAL and names NO amount —
+         the completer is doing requested work; the funds were reserved by
+         whoever created the step. A PAYMENT step (IsPayment: the target action
+         bears effect="transfer") IS a spend of the completer's own balance, so
+         it gets the money button — "Complete ($N)" for a sealed amount, bare
+         money "Complete" when the completer types the amount (wallet-send
+         pattern). A paid *run* names its price as before. */}}
+    {{$spend := or (and (gt .Price 0) (not .OneShot)) .IsPayment}}
+    <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if and (gt .Price 0) (not .OneShot)}} ({{money .Price}}){{else if and .IsPayment (gt .Payment 0)}} ({{money .Payment}}){{end}}</button>
     <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running…</span>
     </div>
   </div>
   {{if and (gt .Price 0) (not .OneShot)}}<p class="help muted flush">Maximum, all-in. Refunded in full if it fails.</p>{{end}}
+  {{if .IsPayment}}<p class="help muted flush">Paid from your balance{{if .PayTo}} to <span class="mono">{{.PayTo}}</span>{{end}}.</p>{{end}}
   {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
 <div id="{{.ResultID}}">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
@@ -336,10 +346,18 @@
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
-      <div class="small muted">their credit here <span class="mono">{{money (sum .Available .Locked)}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}}</span></div>
+      {{/* The bilateral position, signed WITH its reading — "prepaid" (they paid
+           ahead) / "owes us" — never a bare negative number (§6.6). PeerCredit is
+           the peer-sync cache: what this kernel can spend calling them. */}}
+      <div class="small muted">position <span class="mono">{{positionText .Available}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}}</span>{{if .SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger — settle out of band">settlement due</span>{{end}}</div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        <form method="post" action="/admin/peers/unsubscribe" data-confirm="Unsubscribe {{.Handle}}? Their proxies deactivate here; balance and history are preserved.">
+        {{/* Settle moves REAL external money: confirm names the peer; the
+             kernel's own outcome message is flashed verbatim (§6.6). */}}
+        <form method="post" action="/admin/peers/settle" data-confirm="Settle with {{.Handle}}? The kernel reports what must be paid; money moves on your rail, not here.">
+          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet" type="submit">Settle</button>
+        </form>
+        <form method="post" action="/admin/peers/unsubscribe" data-confirm="Unsubscribe {{.Handle}}? Their cached proxies deactivate here; a call or re-subscribe restores them. Balance and history are preserved.">
           {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet" type="submit">Unsubscribe</button>
         </form>
         {{if .Suspended}}
@@ -386,7 +404,12 @@
      swapping it (outerHTML) stops the polling and re-enables the form. Root is
      the actionView (so .CSRFField/.BadgeSecs resolve when served standalone). */}}
 {{define "_action_run"}}
-{{if .Action.PeerState}}
+{{if eq .Action.PeerState "offline"}}
+{{/* Only OFFLINE blocks: the call provably cannot leave this kernel. An
+     "unfunded" hint is the stale peer-credit cache — under v0.12 global
+     exposure the serving kernel alone decides admission, so the form stays
+     offered and a refusal surfaces as the typed peer_unfunded outcome
+     (requirements.md §6.6). */}}
 <div id="action-run" hx-get="/actions/{{.Action.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
   <div class="banner banner-info">Peer {{.Action.PeerState}}.</div>
 </div>

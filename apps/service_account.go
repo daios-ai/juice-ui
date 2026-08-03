@@ -23,7 +23,7 @@ import (
 // The app supplies the handle and the password it persists (in the app config
 // store); the ServiceAccount owns everything else. Typical use in an app's Start:
 //
-//	a.svc = apps.NewServiceAccount(deps, "@chat", password)
+//	a.svc = apps.NewServiceAccount(deps, "chat", password)
 //	a.svc.Start(ctx, a.registerActions) // registerActions uses a.svc.Do(...)
 //
 // The loop backs off exponentially, so a persistent failure never hammers auth;

@@ -30,7 +30,7 @@ func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 	a := &Agents{root: t.TempDir(), sup: newSupervisor(fl)}
 	cap := &capture{}
 	a.deps = apps.Deps{
-		Handle:    func(r *http.Request) string { return "@alice" },
+		Handle:    func(r *http.Request) string { return "alice" },
 		CSRFField: func(r *http.Request) template.HTML { return template.HTML("<input name=csrf>") },
 		RenderPage: func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
 			cap.page, cap.title, cap.status, cap.data = page, title, status, data
@@ -399,7 +399,7 @@ func TestNavGatedOnAuth(t *testing.T) {
 	if a.Nav("", false) != nil {
 		t.Fatal("anonymous nav must be nil")
 	}
-	entries := a.Nav("@alice", false)
+	entries := a.Nav("alice", false)
 	if len(entries) != 1 || entries[0].Href != "/agents" || entries[0].BadgeURL != "" {
 		t.Fatalf("nav = %+v", entries)
 	}

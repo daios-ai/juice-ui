@@ -47,7 +47,7 @@
   <div class="modal-body">
     <form class="stack" method="post" action="/admin/deposit" data-confirm="Deposit credits? This grants credits after out-of-band payment.">
       {{.CSRFField}}
-      <div class="field"><label for="dep-handle">User (@handle)</label><input id="dep-handle" name="handle" type="text" placeholder="@handle" required></div>
+      <div class="field"><label for="dep-handle">User (handle)</label><input id="dep-handle" name="handle" type="text" placeholder="handle" required></div>
       <div class="field"><label for="dep-amount">Amount</label><input id="dep-amount" name="amount" type="number" min="0.001" step="0.001" required class="input-sm"></div>
       <div class="field"><label for="dep-reason">Reason (optional)</label><input id="dep-reason" name="reason" type="text"></div>
       <div class="field"><label for="dep-key">External key (optional, idempotency)</label><input id="dep-key" name="external_key" type="text"></div>
@@ -66,7 +66,7 @@
   <div class="modal-body">
     <form class="stack" method="post" action="/admin/withdraw" data-confirm="Withdraw credits? This redeems the user's credits and obliges an out-of-band payout.">
       {{.CSRFField}}
-      <div class="field"><label for="wd-handle">User (@handle)</label><input id="wd-handle" name="handle" type="text" placeholder="@handle" required></div>
+      <div class="field"><label for="wd-handle">User (handle)</label><input id="wd-handle" name="handle" type="text" placeholder="handle" required></div>
       <div class="field"><label for="wd-amount">Amount</label><input id="wd-amount" name="amount" type="number" min="0.001" step="0.001" required class="input-sm"></div>
       <div class="field"><label for="wd-reason">Reason (optional)</label><input id="wd-reason" name="reason" type="text"></div>
       <div class="field"><label for="wd-key">External key (optional, idempotency)</label><input id="wd-key" name="external_key" type="text"></div>

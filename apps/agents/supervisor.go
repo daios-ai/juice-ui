@@ -40,6 +40,9 @@ func (l osLauncher) start(handle, password string) (managed, error) {
 	if l.bin == "" {
 		return nil, fmt.Errorf("juice-agent binary not found (install it or set %s)", binEnv)
 	}
+	// The "@handle" arg is juice-agent's OWN CLI convention (verified 2026-08-03:
+	// its usage reads `juice-agent @handle serve`), not a kernel wire handle —
+	// the kernel's v0.12 de-sigiling does not apply here.
 	cmd := exec.Command(l.bin, "@"+handle, "serve", "--password-stdin")
 	cmd.Env = append(os.Environ(), "JUICE_HOME="+l.home)
 	// The child logs JSON to stderr and never prints the password; we drop both

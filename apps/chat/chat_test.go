@@ -23,9 +23,11 @@ import (
 	"github.com/daios-ai/juice-ui/session"
 )
 
+// v0.12: handles are bare; sigiled input is tolerated and canonicalized, and
+// every non-empty token is a handle (there is no sigil to filter on).
 func TestParseHandles(t *testing.T) {
-	got := parseHandles("@bob, @carol\n@dave  plainword @eve")
-	want := []string{"@bob", "@carol", "@dave", "@eve"}
+	got := parseHandles("bob, carol\n@dave  plainword @eve")
+	want := []string{"bob", "carol", "dave", "plainword", "eve"}
 	if len(got) != len(want) {
 		t.Fatalf("parseHandles = %v, want %v", got, want)
 	}
@@ -85,9 +87,9 @@ func TestNavGatedOnAuthAndBadge(t *testing.T) {
 		t.Fatalf("anonymous Nav = %v, want nil", n)
 	}
 	// The entry advertises the poll endpoint; the badge itself is filled by the
-	// /chat/badge poll (which counts the user's @chat doorbell steps), not computed
+	// /chat/badge poll (which counts the user's chat doorbell steps), not computed
 	// at render time — so the initial Badge is 0 regardless of unread.
-	n := c.Nav("@alice", false)
+	n := c.Nav("alice", false)
 	if len(n) != 1 || n[0].Href != "/chat" || n[0].Match != "/chat" || n[0].Icon == "" || n[0].Badge != 0 {
 		t.Fatalf("Nav = %+v", n)
 	}
@@ -107,7 +109,7 @@ func TestSlugAndTemplates(t *testing.T) {
 }
 
 // TestStartProvisionsCredentialsAndReuses checks first-run provisioning persists a
-// generated @chat password AND daemon admin secret, and a later start reuses them
+// generated chat password AND daemon admin secret, and a later start reuses them
 // (so login and admin auth stay valid across restarts). The kernel is unreachable
 // here — the background login just retries; we assert only the local provisioning.
 func TestStartProvisionsCredentialsAndReuses(t *testing.T) {
@@ -157,7 +159,7 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 	c.daemon = daemon.New(mustStore(t), "s", "vs", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
 	c.deps = apps.Deps{
-		Handle:    func(r *http.Request) string { return "@alice" },
+		Handle:    func(r *http.Request) string { return "alice" },
 		CSRFField: func(r *http.Request) template.HTML { return template.HTML("<input>") },
 		RenderFragment: func(w http.ResponseWriter, status int, name string, data any) error {
 			gotName, gotData = name, data
@@ -172,7 +174,7 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 		t.Fatalf("fragment name = %q, want _chat_poll", gotName)
 	}
 	mv, ok := gotData.(msgsView)
-	if !ok || mv.RoomID != "r1" || mv.Me != "@alice" {
+	if !ok || mv.RoomID != "r1" || mv.Me != "alice" {
 		t.Fatalf("fragment data = %+v (ok=%v)", gotData, ok)
 	}
 }
@@ -184,7 +186,7 @@ func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	st := mustStore(t)
-	r, _ := st.CreateRoom("@alice", "n", []string{"@bob"})
+	r, _ := st.CreateRoom("alice", "n", []string{"bob"})
 	c := New()
 	c.daemon = daemon.New(st, "s", "vs", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
@@ -192,7 +194,7 @@ func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
 	sm := scs.New()
 	var fragment string
 	c.deps = apps.Deps{
-		Handle:         func(*http.Request) string { return "@alice" },
+		Handle:         func(*http.Request) string { return "alice" },
 		CSRFField:      func(*http.Request) template.HTML { return "" },
 		RenderFragment: func(_ http.ResponseWriter, _ int, name string, _ any) error { fragment = name; return nil },
 		HandleErr:      func(http.ResponseWriter, *http.Request, error) bool { return false },
@@ -208,7 +210,7 @@ func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
 			c.postMessage(w, req)
 		})).ServeHTTP(rec, req)
 		return rec
@@ -234,7 +236,7 @@ func TestPostDeleteMessageHTMX(t *testing.T) {
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{
-		Handle:    func(*http.Request) string { return "@alice" },
+		Handle:    func(*http.Request) string { return "alice" },
 		HandleErr: func(http.ResponseWriter, *http.Request, error) bool { return false },
 		Client:    cl,
 		Sessions:  session.NewManager(sm, cl),
@@ -248,7 +250,7 @@ func TestPostDeleteMessageHTMX(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
 			c.postDeleteMessage(w, req)
 		})).ServeHTTP(rec, req)
 		return rec
@@ -409,7 +411,7 @@ func TestEnsureActionsReconcilesStaleSchema(t *testing.T) {
 	}
 }
 
-// TestEnsureActionsRetiresOrphans checks that an active @chat action no longer in
+// TestEnsureActionsRetiresOrphans checks that an active chat action no longer in
 // Ops (e.g. the removed rename-room) is disabled — so the catalog never advertises
 // an action whose daemon route is gone.
 func TestEnsureActionsRetiresOrphans(t *testing.T) {
@@ -490,7 +492,7 @@ func (a *fakeAction) wire() string {
 	if out == "" {
 		out = "{}"
 	}
-	// Every @chat action carries delegated_bearer auth; the kernel reports the
+	// Every chat action carries delegated_bearer auth; the kernel reports the
 	// scheme + grant requirement (but not the write-only config).
 	vis := "private"
 	if a.Public {
@@ -511,14 +513,14 @@ type fakeKernel struct {
 	disables  map[string]bool
 	seq       int
 	failName  string           // if set, enabling the action of this name returns 500
-	runs      int              // count of POST /v1/run (seed opens via @sys/message)
+	runs      int              // count of POST /v1/run (seed opens via sys/message)
 	mints     []string         // POST /v1/steps bodies (doorbell + verification mints)
 	completes []string         // POST /v1/steps/{id}/complete step ids (doorbell dismissals)
 	grants    []string         // POST /v1/grants selectors (connect)
 	doorbells []map[string]any // minted steps, surfaced by GET /v1/steps (coalescing reads them)
 	done      map[string]bool  // completed step ids (dropped from the waiting listing)
 	stepsJSON string           // extra steps GET /v1/steps returns (default: the outbox sentinel)
-	meJSON    string           // body returned by GET /v1/me (default: no @chat/msg connector)
+	meJSON    string           // body returned by GET /v1/me (default: no chat/msg connector)
 }
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
@@ -534,9 +536,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.Write([]byte(`{"access_token":"t","refresh_token":"r"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		// @sys's catalog carries @sys/sink (resolveSink finds the doorbell/sentinel onward).
-		if r.URL.Query().Get("owner") == "@sys" {
-			w.Write([]byte(`[{"id":"sink","action":"@sys/sink","name":"sink","active":true,"public":true}]`))
+		// sys's catalog carries sys/sink (resolveSink finds the doorbell/sentinel onward).
+		if r.URL.Query().Get("owner") == "sys" {
+			w.Write([]byte(`[{"id":"sink","action":"sys/sink","name":"sink","active":true,"public":true}]`))
 			return
 		}
 		f.mu.Lock()
@@ -622,18 +624,18 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		w.Write([]byte(`{"active":false}`))
 	})
-	// Seed/outbox stubs: ensureSeed resolves @sys/sink and opens an outbox trace via
-	// a self @sys/message; some tests may re-check the sentinel via ListSteps.
+	// Seed/outbox stubs: ensureSeed resolves sys/sink and opens an outbox trace via
+	// a self sys/message; some tests may re-check the sentinel via ListSteps.
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"sink","action":"@sys/sink","active":true}`))
+		w.Write([]byte(`{"id":"sink","action":"sys/sink","active":true}`))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		body := string(mustRead(r))
 		f.mu.Lock()
 		f.runs++
 		f.mu.Unlock()
-		// @chat/register returns a pending key + verification step; the seed run (the
-		// private @chat/outbox) returns the sentinel step id.
+		// chat/register returns a pending key + verification step; the seed run (the
+		// private chat/outbox) returns the sentinel step id.
 		if strings.Contains(body, chatHandle+"/"+registerName) {
 			w.Write([]byte(`{"trace_id":"t","result":{"ok":true,"api_key":"KEY-abc","step_id":"vstep-1"}}`))
 			return
@@ -641,7 +643,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.Write([]byte(`{"trace_id":"seed-trace-1","result":{"step_id":"sentinel-1"}}`))
 	})
 	// /v1/me for the connector gate; /v1/grants for connect.
-	f.meJSON = `{"handle":"@alice","connectors":[]}`
+	f.meJSON = `{"handle":"alice","connectors":[]}`
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		body := f.meJSON
@@ -656,12 +658,12 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Lock()
 		f.grants = append(f.grants, in.Selector)
 		f.mu.Unlock()
-		w.Write([]byte(`{"actions":["@chat/msg/message"],"status":"connected"}`))
+		w.Write([]byte(`{"actions":["chat/msg/message"],"status":"connected"}`))
 	})
-	// Default: the seed's sentinel step (action_id @sys/sink, which ensureSeed reads
+	// Default: the seed's sentinel step (action_id sys/sink, which ensureSeed reads
 	// as the doorbells' onward id). Tests that exercise the doorbell badge/room-list
-	// override f.stepsJSON with @chat-owned doorbell steps.
-	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"ack","action":"@chat/ack"}]`
+	// override f.stepsJSON with chat-owned doorbell steps.
+	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"ack","action":"chat/ack"}]`
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		var out []map[string]any
@@ -693,10 +695,10 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.seq++
 		id := "step" + strconv.Itoa(f.seq)
 		f.mints = append(f.mints, string(raw))
-		// Surface the minted step as an @chat-owned waiting doorbell so ListSteps-based
+		// Surface the minted step as an chat-owned waiting doorbell so ListSteps-based
 		// coalescing/dismiss see it (mirrors the real kernel).
 		f.doorbells = append(f.doorbells, map[string]any{
-			"id": id, "status": "waiting", "owner_handle": "@chat",
+			"id": id, "status": "waiting", "owner_handle": "chat",
 			"required_caller_handle": in.RequiredCaller,
 			"partial_args":           map[string]any{"room": pa.Room},
 		})
@@ -753,14 +755,14 @@ func (f *fakeKernel) updateCount() int  { f.mu.Lock(); defer f.mu.Unlock(); retu
 func (f *fakeKernel) enableCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return len(f.enables) }
 
 // TestGetBadge checks the nav badge fragment: the count of the user's outstanding
-// @chat doorbell steps (bare number; empty when zero). It reads the kernel steps —
-// the single source of truth — filtered to @chat, ignoring other steps.
+// chat doorbell steps (bare number; empty when zero). It reads the kernel steps —
+// the single source of truth — filtered to chat, ignoring other steps.
 func TestGetBadge(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	f.stepsJSON = `[
-	  {"id":"d1","status":"waiting","owner_handle":"@chat","partial_args":{"room":"r1"}},
-	  {"id":"d2","status":"waiting","owner_handle":"@chat","partial_args":{"room":"r2"}},
+	  {"id":"d1","status":"waiting","owner_handle":"chat","partial_args":{"room":"r1"}},
+	  {"id":"d2","status":"waiting","owner_handle":"chat","partial_args":{"room":"r2"}},
 	  {"id":"x","status":"waiting","owner_handle":"@someone","partial_args":{}}]`
 	c := New()
 	cl := client.New(f.url, nil)
@@ -770,14 +772,14 @@ func TestGetBadge(t *testing.T) {
 	body := func() string {
 		rec := httptest.NewRecorder()
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
 			c.getBadge(w, r)
 		}))
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
 		return strings.TrimSpace(rec.Body.String())
 	}
 	if got := body(); got != "2" {
-		t.Errorf("badge = %q, want 2 (two @chat doorbell rooms; the @someone step ignored)", got)
+		t.Errorf("badge = %q, want 2 (two chat doorbell rooms; the @someone step ignored)", got)
 	}
 	f.stepsJSON = `[]` // no doorbells → empty body (hidden by .badge:empty)
 	if got := body(); got != "" {
@@ -793,23 +795,23 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	st := mustStore(t)
-	r, _ := st.CreateRoom("@bob", "n", []string{"@alice"})
-	st.PostMessage("@bob", r.ID, "hi")
+	r, _ := st.CreateRoom("bob", "n", []string{"alice"})
+	st.PostMessage("bob", r.ID, "hi")
 	c := New()
 	c.daemon = daemon.New(st, "s", "vs", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{
-		Handle:         func(*http.Request) string { return "@alice" },
+		Handle:         func(*http.Request) string { return "alice" },
 		CSRFField:      func(*http.Request) template.HTML { return "" },
 		RenderFragment: func(http.ResponseWriter, int, string, any) error { return nil },
 		Client:         cl,
 		Sessions:       session.NewManager(sm, cl),
 	}
-	// @alice holds an outstanding @chat doorbell for the room (a waiting kernel step).
+	// alice holds an outstanding chat doorbell for the room (a waiting kernel step).
 	f.mu.Lock()
-	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"@chat","required_caller_handle":"@alice","partial_args":{"room":"` + r.ID + `"}}]`
+	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"chat","required_caller_handle":"alice","partial_args":{"room":"` + r.ID + `"}}]`
 	f.mu.Unlock()
 	poll := func(visible string) {
 		outer := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
@@ -818,7 +820,7 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 			outer.Header.Set("X-Visible", visible)
 		}
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
 			c.getMessages(w, req)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), outer)
@@ -835,7 +837,7 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 
 // TestDBPathCanonicalOnly checks store-path resolution: always the component home
 // ($JUICE_HOME/ui/chat.db); legacy stores (config-dir or XDG-data) are IGNORED — the
-// legacy fallback is what let @chat credentials drift; no persistent state ⇒ in-memory.
+// legacy fallback is what let chat credentials drift; no persistent state ⇒ in-memory.
 func TestDBPathCanonicalOnly(t *testing.T) {
 	tmp := t.TempDir()
 	cfgHome := filepath.Join(tmp, "cfg")   // → os.UserConfigDir()
@@ -890,28 +892,28 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 	c := New()
 	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
-	c.seedTrace, c.ackID = "seed-1", "ack" // seed already established; onward = @chat/ack
+	c.seedTrace, c.ackID = "seed-1", "ack" // seed already established; onward = chat/ack
 
-	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "@alice",
-		Members: []string{"@alice", "@bob", "@carol"}}
+	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "alice",
+		Members: []string{"alice", "bob", "carol"}}
 	c.notify(ev)
 	// One doorbell per member EXCEPT the sender.
 	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 2 })
 	f.mu.Lock()
 	bodies := strings.Join(f.mints, "|")
 	f.mu.Unlock()
-	if strings.Contains(bodies, `"required_caller":"@alice"`) {
+	if strings.Contains(bodies, `"required_caller":"alice"`) {
 		t.Error("minted a doorbell for the sender")
 	}
-	if !strings.Contains(bodies, `"required_caller":"@bob"`) || !strings.Contains(bodies, `"required_caller":"@carol"`) {
+	if !strings.Contains(bodies, `"required_caller":"bob"`) || !strings.Contains(bodies, `"required_caller":"carol"`) {
 		t.Errorf("missing per-member doorbells: %s", bodies)
 	}
 	if !strings.Contains(bodies, `"room":"r1"`) {
 		t.Errorf("doorbell partial_args missing room: %s", bodies)
 	}
-	// The onward is @chat's own price-0 ack, never @sys/sink (which @chat can't price).
+	// The onward is chat's own price-0 ack, never sys/sink (which chat can't price).
 	if !strings.Contains(bodies, `"action_id":"ack"`) {
-		t.Errorf("doorbell onward is not @chat/ack: %s", bodies)
+		t.Errorf("doorbell onward is not chat/ack: %s", bodies)
 	}
 
 	// Coalescing off the steps: a second message, while those doorbells are still
@@ -937,17 +939,17 @@ func TestNotifyReRingsAfterCompletion(t *testing.T) {
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
 	c.seedTrace, c.ackID = "seed-1", "ack"
 
-	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "@alice", Members: []string{"@alice", "@bob"}}
+	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "alice", Members: []string{"alice", "bob"}}
 	c.notify(ev)
 	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 1 })
 
-	// @bob completes the doorbell over the kernel (no dismiss/browser path).
+	// bob completes the doorbell over the kernel (no dismiss/browser path).
 	f.mu.Lock()
 	id := f.doorbells[0]["id"].(string)
 	f.mu.Unlock()
 	c.deps.Client.CompleteStep(context.Background(), "t", id, nil)
 
-	// The next message re-rings: @bob no longer holds a waiting @chat doorbell for r1.
+	// The next message re-rings: bob no longer holds a waiting chat doorbell for r1.
 	c.notify(ev)
 	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 2 })
 }
@@ -955,20 +957,20 @@ func TestNotifyReRingsAfterCompletion(t *testing.T) {
 func TestDismissCompletesDoorbellFromSteps(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
-	// A doorbell is outstanding for (@bob, r1): a waiting @chat step @bob must complete.
-	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"@chat","required_caller_handle":"@bob","partial_args":{"room":"r1"}}]`
+	// A doorbell is outstanding for (bob, r1): a waiting chat step bob must complete.
+	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"chat","required_caller_handle":"bob","partial_args":{"room":"r1"}}]`
 	c := New()
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{Client: cl, Sessions: session.NewManager(sm, cl)}
 
-	// Drive dismiss inside a loaded, logged-in (@bob) session, so completion runs
-	// under @bob's own token (only the required_caller may complete).
+	// Drive dismiss inside a loaded, logged-in (bob) session, so completion runs
+	// under bob's own token (only the required_caller may complete).
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@bob"); err != nil {
+		if err := c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "bob"); err != nil {
 			t.Fatal(err)
 		}
-		c.dismiss(r, "@bob", "r1")
+		c.dismiss(r, "bob", "r1")
 	}))
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 
@@ -993,7 +995,7 @@ func TestEnsureActionsEstablishesSeed(t *testing.T) {
 	if f.runs != 1 {
 		t.Errorf("outbox seed opened %d times, want 1", f.runs)
 	}
-	// The doorbell/sentinel onward is @chat's OWN price-0 ack (not @sys/sink) — it must
+	// The doorbell/sentinel onward is chat's OWN price-0 ack (not sys/sink) — it must
 	// exist, be active, and NOT be public.
 	var ack *fakeAction
 	f.mu.Lock()
@@ -1004,12 +1006,12 @@ func TestEnsureActionsEstablishesSeed(t *testing.T) {
 	}
 	f.mu.Unlock()
 	if ack == nil {
-		t.Fatal("@chat/ack action not created")
+		t.Fatal("chat/ack action not created")
 	}
 	if !ack.Active || ack.Public {
 		t.Errorf("ack active=%v public=%v, want active + private", ack.Active, ack.Public)
 	}
-	// The seed is opened by running @chat's OWN private outbox action (price 0, no @sys
+	// The seed is opened by running chat's OWN private outbox action (price 0, no sys
 	// toll) — it must exist, be active, and NOT be public.
 	var ob *fakeAction
 	f.mu.Lock()
@@ -1020,7 +1022,7 @@ func TestEnsureActionsEstablishesSeed(t *testing.T) {
 	}
 	f.mu.Unlock()
 	if ob == nil {
-		t.Fatal("@chat/outbox action not created")
+		t.Fatal("chat/outbox action not created")
 	}
 	if !ob.Active || ob.Public {
 		t.Errorf("outbox active=%v public=%v, want active + private", ob.Active, ob.Public)
@@ -1069,10 +1071,10 @@ func TestServeOutboxCreatesSentinelViaCapability(t *testing.T) {
 	}
 }
 
-// TestServeRegisterMintsPendingKeyAndVerificationStep covers the open @chat/register
+// TestServeRegisterMintsPendingKeyAndVerificationStep covers the open chat/register
 // handler (reached via kernelDispatch): the register secret gates it; on success it
 // mints a PENDING key and a verification step (onward validate-user, addressed to the
-// requested handle, carrying reg_id), minted off the seed so @chat owns it.
+// requested handle, carrying reg_id), minted off the seed so chat owns it.
 func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1084,7 +1086,7 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	c.st.RegisterSecret = "regsec"
 
 	call := func(auth string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/"+registerName, strings.NewReader(`{"username":"@agent"}`))
+		req := httptest.NewRequest(http.MethodPost, "/"+registerName, strings.NewReader(`{"username":"agent"}`))
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
@@ -1108,15 +1110,15 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 		t.Fatalf("register result = %s", rec.Body.String())
 	}
 	// The key resolves to the handle but is inactive until the step is completed.
-	if u, active, _ := c.store.ResolveToken(res.APIKey); u != "@agent" || active {
-		t.Errorf("token = (%q,%v), want (@agent,false)", u, active)
+	if u, active, _ := c.store.ResolveToken(res.APIKey); u != "agent" || active {
+		t.Errorf("token = (%q,%v), want (agent,false)", u, active)
 	}
-	// Exactly one verification step, to @agent, onward validate-user, carrying reg_id.
+	// Exactly one verification step, to agent, onward validate-user, carrying reg_id.
 	if len(f.mints) != 1 {
 		t.Fatalf("mints = %d, want 1 verification step", len(f.mints))
 	}
 	body := f.mints[0]
-	if !strings.Contains(body, `"required_caller":"@agent"`) ||
+	if !strings.Contains(body, `"required_caller":"agent"`) ||
 		!strings.Contains(body, `"action_id":"validate-act-id"`) ||
 		!strings.Contains(body, "reg_id") {
 		t.Errorf("verification step = %s", body)
@@ -1124,8 +1126,8 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 }
 
 // TestConnectRouteRegistersCompletesConnects covers the browser Connect button: as the
-// signed-in user it runs @chat/register, completes the returned verification step, and
-// connects the key to @chat/msg — the identical path a headless agent uses.
+// signed-in user it runs chat/register, completes the returned verification step, and
+// connects the key to chat/msg — the identical path a headless agent uses.
 func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1135,14 +1137,14 @@ func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	c.deps = apps.Deps{
 		Client:   cl,
 		Sessions: session.NewManager(sm, cl),
-		Handle:   func(*http.Request) string { return "@alice" },
+		Handle:   func(*http.Request) string { return "alice" },
 		FlashRedirect: func(w http.ResponseWriter, r *http.Request, to, kind, msg string) {
 			http.Redirect(w, r, to, http.StatusSeeOther)
 		},
 	}
 	rec := httptest.NewRecorder()
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
 		c.postConnect(w, r)
 	}))
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/chat/connect", nil))
@@ -1158,7 +1160,7 @@ func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	}
 }
 
-// TestIndexGateOnConnector proves the rooms page is gated on the @chat/msg connector:
+// TestIndexGateOnConnector proves the rooms page is gated on the chat/msg connector:
 // absent → the Connect gate (Connected=false); present → the rooms view.
 func TestIndexGateOnConnector(t *testing.T) {
 	f := newFakeKernel()
@@ -1172,7 +1174,7 @@ func TestIndexGateOnConnector(t *testing.T) {
 	c.deps = apps.Deps{
 		Client:    cl,
 		Sessions:  session.NewManager(sm, cl),
-		Handle:    func(*http.Request) string { return "@alice" },
+		Handle:    func(*http.Request) string { return "alice" },
 		CSRFField: func(*http.Request) template.HTML { return "" },
 		HandleErr: func(http.ResponseWriter, *http.Request, error) bool { return false },
 		RenderPage: func(_ http.ResponseWriter, _ *http.Request, _ int, _, _ string, data any) {
@@ -1182,20 +1184,20 @@ func TestIndexGateOnConnector(t *testing.T) {
 	render := func() indexView {
 		got = indexView{}
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "@alice")
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
 			c.getIndex(w, r)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/chat", nil))
 		return got
 	}
 	if v := render(); v.Connected {
-		t.Error("no @chat/msg connector, but Connected=true (gate not shown)")
+		t.Error("no chat/msg connector, but Connected=true (gate not shown)")
 	}
 	f.mu.Lock()
-	f.meJSON = `{"handle":"@alice","connectors":[{"directory":"@chat/msg","connections":[],"actions":[{"action":"@chat/msg/message"}]}]}`
+	f.meJSON = `{"handle":"alice","connectors":[{"directory":"chat/msg","connections":[],"actions":[{"action":"chat/msg/message"}]}]}`
 	f.mu.Unlock()
 	if v := render(); !v.Connected {
-		t.Error("@chat/msg connector present, but Connected=false (rooms not shown)")
+		t.Error("chat/msg connector present, but Connected=false (rooms not shown)")
 	}
 }
 

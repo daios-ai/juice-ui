@@ -58,7 +58,7 @@ type Page struct {
 	Handle       string          // signed-in handle for the nav, or "" when anonymous
 	KernelHandle string          // this kernel's own handle (from /health), or "" if unknown
 	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
-	IsSuperuser  bool            // handle == "@sys": show the admin group and admin scope
+	IsSuperuser  bool            // handle == "sys": show the admin group and admin scope
 	Available    int64           // signed-in user's available balance; 0 when unknown
 	Themes       []ANSIPalette   // selectable terminal themes for the picker
 	CSRFField    template.HTML   // hidden CSRF input for no-JS forms
@@ -88,6 +88,7 @@ type Renderer struct {
 func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	funcs := template.FuncMap{
 		"money":        money,
+		"positionText": positionText,
 		"dollarsInput": dollarsInput,
 		"sum":          func(a, b int64) int64 { return a + b },
 		"sub":          func(a, b int64) int64 { return a - b },
@@ -101,6 +102,8 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"ratingPct":    ratingPct,
 		"refOwner":     refOwner,
 		"refName":      refName,
+		"refKernel":    refKernel,
+		"refIsRemote":  refIsRemote,
 		"refFolder":    refFolder,
 		"reflink":      func(ref, id string) refLinkArgs { return refLinkArgs{Ref: ref, ID: id} },
 		"shortTime":    shortTime,
@@ -301,16 +304,37 @@ func ratingPct(estimate float64, count int64) string {
 	return fmt.Sprintf("%.0f", estimate*100)
 }
 
-// refOwner returns the owner segment of "@owner/name" (including the leading @),
-// split on the first slash — names may contain slashes (e.g. @sys/llm/chat), but
-// handles never do, so the first slash is unambiguous. The owner segment is
-// emphasized in the UI and links to the owner's actions.
+// refOwner returns the owner segment of "owner/name", split on the first
+// slash — names may contain slashes (e.g. sys/llm/chat), but handles never do,
+// so the first slash is unambiguous (requirements.md §4). For a remote ref
+// (owner@kernel/name) the whole "owner@kernel" segment is returned. The owner
+// segment is emphasized in the UI; a LOCAL owner links to its owner page, a
+// remote one renders unlinked (the kernel alias is presentation-only). A
+// migration-period leading "@" is tolerated and stripped.
 func refOwner(ref string) string {
+	ref = strings.TrimPrefix(ref, "@")
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[:i]
 	}
 	return ref
 }
+
+// refKernel returns the kernel-alias half of a remote owner segment
+// ("alice@B/greet" → "B"), or "" for a local ref. The alias is presentation
+// only — renamable and collision-suffixed on this kernel — so nothing may key
+// or link on it (requirements.md §4).
+func refKernel(ref string) string {
+	owner := refOwner(ref)
+	if i := strings.IndexByte(owner, '@'); i >= 0 {
+		return owner[i+1:]
+	}
+	return ""
+}
+
+// refIsRemote reports whether ref names an action on a peer kernel
+// (owner@kernel/name). Remote owners have no local owner page: the _ref
+// partials render them unlinked.
+func refIsRemote(ref string) bool { return refKernel(ref) != "" }
 
 // refLinkArgs feeds the _reflink partial: the ref (for owner/name split) plus the
 // action id the name links to. Used where a ref appears as a marketplace action
@@ -320,9 +344,10 @@ type refLinkArgs struct {
 	ID  string
 }
 
-// refName returns the name segment of "@owner/name" (everything after the first
+// refName returns the name segment of "owner/name" (everything after the first
 // slash), or "" if there is no slash.
 func refName(ref string) string {
+	ref = strings.TrimPrefix(ref, "@")
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[i+1:]
 	}
@@ -330,12 +355,12 @@ func refName(ref string) string {
 }
 
 // refFolder returns the folder of a ref: everything up to the LAST '/'
-// (@service/a → @service, @chat/msg/message → @chat/msg). This is the kernel's
+// (service/a → service, chat/msg/message → chat/msg). This is the kernel's
 // `directory` grouping — the grant selector that connects a delegated action's
 // whole provider group in one gesture, not the degenerate single-action
 // selector that would connect only the one failing action. Distinct from
 // refOwner, which splits on the FIRST slash (and would wrongly collapse
-// @chat/msg/message to @chat, sweeping in @chat/register). A ref with no slash
+// chat/msg/message to chat, sweeping in chat/register). A ref with no slash
 // is returned unchanged.
 func refFolder(ref string) string {
 	if i := strings.LastIndexByte(ref, '/'); i >= 0 {
@@ -380,8 +405,8 @@ func paneltab(label, key string, active bool) Tab {
 	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
 }
 
-// initial returns the first letter of a handle (skipping a leading @), uppercased,
-// for an avatar monogram. "" → "?".
+// initial returns the first letter of a handle (tolerating a migration-period
+// leading @), uppercased, for an avatar monogram. "" → "?".
 func initial(handle string) string {
 	for _, r := range strings.TrimPrefix(handle, "@") {
 		return strings.ToUpper(string(r))
@@ -581,7 +606,7 @@ func agoUnit(n int, unit string) string {
 type txRow struct {
 	Tx     client.Transaction
 	Viewer string
-	Ref    string // full "@owner/name" when the action is known, else ""
+	Ref    string // full "owner/name" when the action is known, else ""
 }
 
 // txRowOf resolves the action ref (via the actions map, keyed by action id) and
@@ -599,8 +624,8 @@ const amountDash = template.HTML(`<span class="muted">—</span>`)
 
 // txAmount renders a transaction's signed, perspective-relative amount as seen
 // by `viewer` — "what did this call do to my balance". On a settled call the
-// seller sees +net, the buyer −gross, and the platform (@sys) +fee; a viewer
-// occupying several roles sees the sum (a self-call nets to −fee; @sys's own fee
+// seller sees +net, the buyer −gross, and the platform (sys) +fee; a viewer
+// occupying several roles sees the sum (a self-call nets to −fee; sys's own fee
 // returns to it). A failed call shows the buyer the ↩ refund; an open call shows
 // the buyer the ◷ parked gross. A viewer with no stake sees an em dash. Gross,
 // fee and the full party list live on the transaction detail page.

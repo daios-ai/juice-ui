@@ -241,6 +241,10 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/peers/unsubscribe", s.requireSuperuser(s.postAdminUnsubscribe))
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
+	mux.HandleFunc("POST /admin/peers/settle", s.requireSuperuser(s.postAdminSettle))
+	mux.HandleFunc("GET /admin/transfers", s.requireSuperuser(s.getAdminTransfers))
+	mux.HandleFunc("GET /admin/transfers/{id}", s.requireSuperuser(s.getAdminTransfer))
+	mux.HandleFunc("POST /admin/transfers/{id}/retry", s.requireSuperuser(s.postAdminTransferRetry))
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only
@@ -405,17 +409,20 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 // superuserHandle is the fixed superuser identity (kernel requirements §12); the
 // UI shows the admin group and superuser scope to this handle only. The kernel
 // remains authoritative — an admin call always re-checks the bearer.
-const superuserHandle = "@sys"
+const superuserHandle = "sys"
 
-// isSuperuser reports whether the session belongs to the superuser.
+// isSuperuser reports whether the session belongs to the superuser. The stored
+// handle is compared bare: a pre-0.4 session persisted "@sys", so the
+// migration-period sigil is stripped before comparing — this gate fails CLOSED
+// (the admin nav silently disappears) if the comparison drifts.
 func (s *Server) isSuperuser(r *http.Request) bool {
-	return s.sessions.Handle(r.Context()) == superuserHandle
+	return strings.TrimPrefix(s.sessions.Handle(r.Context()), "@") == superuserHandle
 }
 
 // requireSuperuser gates admin routes. A non-superuser (or anonymous) request
 // gets a 404 error page rather than a 403 — the admin surface is not advertised
 // to those who may not use it. The kernel independently rejects any admin call
-// from a non-@sys bearer.
+// from a non-sys bearer.
 func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.sessions.IsAuthenticated(r.Context()) {
@@ -628,7 +635,8 @@ func activeGroup(path string) string {
 		return "wallet"
 	case strings.HasPrefix(path, "/settings"), strings.HasPrefix(path, "/grants"):
 		return "settings"
-	case strings.HasPrefix(path, "/admin/peers"):
+	case strings.HasPrefix(path, "/admin/peers"), strings.HasPrefix(path, "/admin/transfers"):
+		// Federation is the network group: peers and the value-transfer queue.
 		return "network"
 	case strings.HasPrefix(path, "/admin"):
 		return "admin"

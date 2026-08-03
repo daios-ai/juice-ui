@@ -25,6 +25,6 @@
 
 {{if $d.CanComplete}}
 <h2>Complete</h2>
-{{template "_call_form" (completeForm $.CSRFField $d.Step.ID $d.Step.Price $d.Form.Editable $d.Form.IsApproval $d.Form.Locked $d.Step.PartialArgs nil)}}
+{{template "_call_form" (completeForm $.CSRFField $d.Step.ID $d.Step.Price $d.Form.Editable $d.Form.IsApproval $d.Form.Locked $d.Step.PartialArgs nil $d.IsPayment $d.Payment $d.PayTo)}}
 {{end}}
 {{end}}

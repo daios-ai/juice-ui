@@ -28,7 +28,7 @@ const (
 	KindInternal               // 500 (kernel bug / unrecoverable)
 	KindGrantRequired          // 403 code="grant_required": needs a delegated OAuth grant
 	KindPeerUnreachable        // 502 code="peer_unreachable": remote peer offline; call refunded
-	KindPeerUnfunded           // 402 code="peer_unfunded": our prepaid credit on the peer exhausted
+	KindPeerUnfunded           // 402 code="peer_unfunded": the serving kernel's exposure cap is exhausted (v0.12 §13)
 	KindUnavailable            // transport failure: the kernel gave no HTTP response (down/restarting)
 )
 
@@ -166,8 +166,8 @@ func classify(status int, body []byte) error {
 		e.Kind = KindInternal
 	}
 	// A remote-proxy call carries a machine code that overrides the status-derived
-	// kind, so the outcome names the real cause (an unreachable peer, or this
-	// kernel's exhausted prepaid credit — not the caller's own balance).
+	// kind, so the outcome names the real cause (an unreachable peer, or the
+	// serving kernel's exhausted exposure cap — not the caller's own balance).
 	switch wire.Code {
 	case "peer_unreachable":
 		e.Kind = KindPeerUnreachable
@@ -213,7 +213,7 @@ func (e *KernelError) UserMessage() string {
 	case KindPeerUnreachable:
 		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
 	case KindPeerUnfunded:
-		return "This kernel's prepaid credit on the peer is exhausted — not your balance. An operator needs to top it up before this action can run."
+		return "The kernel serving this action has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."
 	case KindUnavailable:
 		return "The Juice kernel is unreachable — it may be down or restarting. Please try again shortly."
 	default:

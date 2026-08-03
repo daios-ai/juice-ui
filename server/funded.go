@@ -25,8 +25,8 @@ const (
 	// PeerUnreachable: a remote-proxy call whose first dispatch provably never
 	// reached the peer — settled locally as a full refund (retry when it is back).
 	PeerUnreachable
-	// PeerUnfunded: this kernel's prepaid credit on the peer is exhausted — an
-	// operator top-up condition, never the caller's own balance; not charged.
+	// PeerUnfunded: the serving kernel's global exposure cap is exhausted — an
+	// operator settlement condition, never the caller's own balance; not charged.
 	PeerUnfunded
 )
 
@@ -67,9 +67,9 @@ func (o Outcome) IsGrantRequired() bool { return o.Class == GrantRequired }
 // fully refunded, retry when the peer is back (template helper).
 func (o Outcome) IsPeerUnreachable() bool { return o.Class == PeerUnreachable }
 
-// IsPeerUnfunded reports a remote-proxy call blocked because this kernel's
-// prepaid credit on the peer is exhausted — not the caller's balance, not
-// charged (template helper).
+// IsPeerUnfunded reports a remote-proxy call refused because the serving
+// kernel's global exposure cap is exhausted — an operator settlement matter,
+// not the caller's balance, not charged (template helper).
 func (o Outcome) IsPeerUnfunded() bool { return o.Class == PeerUnfunded }
 
 // CallForm drives the shared _call_form partial for both running an action and
@@ -89,7 +89,16 @@ type CallForm struct {
 	Outcome    *Outcome
 	OneShot    bool   // completion is spent once (steps); a run repeats (actions)
 	FirstPayee bool   // paid run: the viewer has never paid this owner (anti-phishing hint)
-	PayeeOwner string // "@owner" named in the first-payment hint
+	PayeeOwner string // owner named in the first-payment hint
+	// IsPayment marks a payment-step completion — a spend of the COMPLETER's
+	// own balance (the target action bears effect="transfer", §6.3). It flips
+	// the button to money: "Complete ($N)" when Payment names the sealed
+	// amount, bare "Complete" (money, wallet-send pattern) when the completer
+	// types the amount. PayTo is the sealed recipient for the provenance line.
+	// An ordinary step stays the neutral Complete naming no amount.
+	IsPayment bool
+	Payment   int64
+	PayTo     string
 }
 
 // runForm builds a CallForm for running an action (repeatable, no locked args).
@@ -106,11 +115,12 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 // render read-only above the editable fields). ResultID is per-step so many
 // inbox forms don't collide. locked is the structured split; lockedRaw is the
 // raw fallback when the schema produced no structured fields.
-func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome) CallForm {
+func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string) CallForm {
 	return CallForm{
 		CSRFField: csrf, PostURL: "/inbox/" + stepID + "/complete", Verb: "Complete",
 		Price: price, Locked: locked, LockedRaw: lockedRaw, Editable: editable, IsApproval: isApproval,
 		ResultID: "step-result-" + stepID, Outcome: outcome, OneShot: true,
+		IsPayment: isPayment, Payment: payment, PayTo: payTo,
 	}
 }
 

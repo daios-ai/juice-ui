@@ -3,16 +3,19 @@
 // only through this package, never by shelling out, reading the kernel DB, or
 // importing kernel packages.
 //
-// Verified against the running kernel on 2026-06-03 (see comments throughout
-// and in errors.go). docs/API.md is the design contract; where the live kernel
-// diverges, the verified behavior is recorded here and is authoritative.
+// Verified against the running kernel on 2026-06-03 and re-gated against the
+// v0.12 kernel on 2026-08-03 (see comments throughout and in errors.go).
+// docs/API.md is the design contract; where the live kernel diverges, the
+// verified behavior is recorded here and is authoritative.
 package client
 
 import "strings"
 
-// normalizeHandle returns a handle with exactly one leading "@". The kernel's
-// owner filter accepts both "@alice" and "alice" (verified live), but we
-// normalize so callers can pass either form.
+// normalizeHandle returns a bare handle (no leading "@"). Handles are bare on
+// the v0.12 kernel; a "@"-prefixed handle is accepted on input for one
+// migration period (verified live 2026-08-03: ?owner=sys and ?owner=@sys both
+// resolve), so we canonicalize to bare and tolerate sigiled input from forms
+// and pre-0.4 sessions.
 func normalizeHandle(handle string) string {
-	return "@" + strings.TrimPrefix(handle, "@")
+	return strings.TrimPrefix(handle, "@")
 }

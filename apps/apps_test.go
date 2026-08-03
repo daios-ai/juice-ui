@@ -38,10 +38,10 @@ func TestAppInterface(t *testing.T) {
 		t.Fatalf("Slug = %q, want fake", got)
 	}
 	// Self-gating: superuser sees the entry, others don't.
-	if n := feat.Nav("@sys", true); len(n) != 1 {
+	if n := feat.Nav("sys", true); len(n) != 1 {
 		t.Fatalf("superuser Nav = %d entries, want 1", len(n))
 	}
-	if n := feat.Nav("@alice", false); n != nil {
+	if n := feat.Nav("alice", false); n != nil {
 		t.Fatalf("non-superuser Nav = %v, want nil", n)
 	}
 	// Templates are reachable and glob-able the way the renderer expects.

@@ -144,14 +144,14 @@ func TestFormQueryOpensDialogNoJS(t *testing.T) {
 }
 
 // TestPaletteRegistryInPage verifies the command registry is embedded as inert
-// JSON and gated: admin commands appear only for @sys.
+// JSON and gated: admin commands appear only for sys.
 func TestPaletteRegistryInPage(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 
-	alice := getBody(t, loginClientAs(t, srv.URL, "@alice"), srv.URL+"/browse")
+	alice := getBody(t, loginClientAs(t, srv.URL, "alice"), srv.URL+"/browse")
 	if !strings.Contains(alice, `id="command-registry"`) {
 		t.Error("page must embed the command registry")
 	}
@@ -162,7 +162,7 @@ func TestPaletteRegistryInPage(t *testing.T) {
 		t.Error("non-superuser registry must not include admin commands")
 	}
 
-	sys := getBody(t, loginClientAs(t, srv.URL, "@sys"), srv.URL+"/browse")
+	sys := getBody(t, loginClientAs(t, srv.URL, "sys"), srv.URL+"/browse")
 	if !strings.Contains(sys, `admin users`) {
 		t.Error("superuser registry must include admin commands")
 	}

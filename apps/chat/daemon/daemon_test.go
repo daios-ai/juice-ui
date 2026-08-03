@@ -45,7 +45,7 @@ func postKernel(t *testing.T, d *Daemon, path, caller, body string) (int, map[st
 
 func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	d := newDaemon(t)
-	alice, bob, carol := "@alice", "@bob", "@carol"
+	alice, bob, carol := "alice", "bob", "carol"
 
 	// unauthenticated caller → 401, no state change.
 	if code, _ := postKernel(t, d, "/msg/create-room", "", `{"name":"x"}`); code != http.StatusUnauthorized {
@@ -53,7 +53,7 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	}
 
 	// alice creates a room with bob → 200 + room_id.
-	code, body := postKernel(t, d, "/msg/create-room", alice, `{"name":"general","members":["@bob"]}`)
+	code, body := postKernel(t, d, "/msg/create-room", alice, `{"name":"general","members":["bob"]}`)
 	if code != http.StatusOK || body["ok"] != true {
 		t.Fatalf("create-room status=%d body=%v", code, body)
 	}
@@ -66,8 +66,8 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	if code, body := postKernel(t, d, "/msg/message", bob, `{"room":"`+room+`","text":"hi"}`); code != http.StatusOK || body["message_id"] == "" {
 		t.Fatalf("member post status=%d body=%v", code, body)
 	}
-	if _, msgs, _ := d.store.Room("@bob", room); len(msgs) != 1 || msgs[0].From != "@bob" {
-		t.Fatalf("message not attributed to @bob: %+v", msgs)
+	if _, msgs, _ := d.store.Room("bob", room); len(msgs) != 1 || msgs[0].From != "bob" {
+		t.Fatalf("message not attributed to bob: %+v", msgs)
 	}
 
 	// carol (not a member) posts → 403.
@@ -79,14 +79,14 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 		t.Fatalf("post to missing room status=%d, want 404", code)
 	}
 	// bob (non-creator) adds a member → 403 (creator-only, enforced on the kernel surface).
-	if code, _ := postKernel(t, d, "/msg/add-member", bob, `{"room":"`+room+`","member":"@dave"}`); code != http.StatusForbidden {
+	if code, _ := postKernel(t, d, "/msg/add-member", bob, `{"room":"`+room+`","member":"dave"}`); code != http.StatusForbidden {
 		t.Fatalf("non-creator add-member status=%d, want 403", code)
 	}
 }
 
 func TestAdminRoutesRequireSecret(t *testing.T) {
 	d := newDaemon(t)
-	req := httptest.NewRequest(http.MethodGet, "/admin/rooms?handle=@alice", nil) // no secret
+	req := httptest.NewRequest(http.MethodGet, "/admin/rooms?handle=alice", nil) // no secret
 	rec := httptest.NewRecorder()
 	d.adminMux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -147,17 +147,17 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 	d := New(s, "s3cret", "vs3cret", testAuth, func(ev NotifyEvent) { got = append(got, ev) })
 	t.Cleanup(func() { _ = d.Close() })
 
-	_, body := postKernel(t, d, "/msg/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
+	_, body := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["bob"]}`)
 	room := body["room_id"].(string)
 
 	// A successful post fires exactly one event with the room, sender, and members
 	// (sender included — the plugin excludes it).
-	postKernel(t, d, "/msg/message", "@alice", `{"room":"`+room+`","text":"hi"}`)
+	postKernel(t, d, "/msg/message", "alice", `{"room":"`+room+`","text":"hi"}`)
 	if len(got) != 1 {
 		t.Fatalf("events after post = %d, want 1", len(got))
 	}
 	ev := got[0]
-	if ev.RoomID != room || ev.Sender != "@alice" || ev.RoomName != "general" {
+	if ev.RoomID != room || ev.Sender != "alice" || ev.RoomName != "general" {
 		t.Errorf("event = %+v", ev)
 	}
 	if len(ev.Members) != 2 {
@@ -165,7 +165,7 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 	}
 
 	// A rejected post (non-member) fires no event.
-	postKernel(t, d, "/msg/message", "@carol", `{"room":"`+room+`","text":"nope"}`)
+	postKernel(t, d, "/msg/message", "carol", `{"room":"`+room+`","text":"nope"}`)
 	if len(got) != 1 {
 		t.Errorf("events after rejected post = %d, want still 1", len(got))
 	}
@@ -173,16 +173,16 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 
 func TestReadRoute(t *testing.T) {
 	d := newDaemon(t)
-	_, body := postKernel(t, d, "/msg/create-room", "@alice", `{"name":"general","members":["@bob"]}`)
+	_, body := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["bob"]}`)
 	room := body["room_id"].(string)
-	postKernel(t, d, "/msg/message", "@alice", `{"room":"`+room+`","text":"hi bob"}`)
+	postKernel(t, d, "/msg/message", "alice", `{"room":"`+room+`","text":"hi bob"}`)
 
 	// unauthenticated → 401
 	if code, _ := postKernel(t, d, "/msg/read", "", `{"room":"`+room+`"}`); code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated read status=%d, want 401", code)
 	}
 	// member reads the message
-	code, in := postKernel(t, d, "/msg/read", "@bob", `{"room":"`+room+`"}`)
+	code, in := postKernel(t, d, "/msg/read", "bob", `{"room":"`+room+`"}`)
 	if code != http.StatusOK || in["ok"] != true {
 		t.Fatalf("read status=%d body=%v", code, in)
 	}
@@ -190,18 +190,18 @@ func TestReadRoute(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("read messages = %d, want 1: %v", len(msgs), in["messages"])
 	}
-	if m0, _ := msgs[0].(map[string]any); m0["from"] != "@alice" || m0["text"] != "hi bob" {
+	if m0, _ := msgs[0].(map[string]any); m0["from"] != "alice" || m0["text"] != "hi bob" {
 		t.Errorf("read message = %v", msgs[0])
 	}
 	// non-member → 403
-	if code, _ := postKernel(t, d, "/msg/read", "@carol", `{"room":"`+room+`"}`); code != http.StatusForbidden {
+	if code, _ := postKernel(t, d, "/msg/read", "carol", `{"room":"`+room+`"}`); code != http.StatusForbidden {
 		t.Errorf("non-member read status=%d, want 403", code)
 	}
 }
 
 func TestValidateUserActivatesToken(t *testing.T) {
 	d := newDaemon(t) // validateSecret = "vs3cret"
-	rawKey, regID, err := d.store.RegisterToken("@agent")
+	rawKey, regID, err := d.store.RegisterToken("agent")
 	if err != nil {
 		t.Fatalf("RegisterToken: %v", err)
 	}
