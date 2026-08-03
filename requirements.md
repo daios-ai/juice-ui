@@ -397,14 +397,22 @@ open (parked steps), the result MUST say so and link to the Wallet.
     here actively misleads. The card names only *who asks* and *what* (the
     creating action, quietly) and shows the sealed `partial_args` as an inert
     read-only detail.
-  * A **payment step** — one whose listing carries the kernel's `payment`
-    descriptor `{beneficiary, amount, remote_bps, remote_max}` — IS a spend of
-    the completer's own balance. Its confirm MUST be the money button naming the
-    all-in amount (the descriptor's ceiling), and the card MUST name the
-    beneficiary in the provenance face — the §8 rule (whose funds move, how
-    much) applies in full, exactly as on a paid run. The two branches MUST NOT
-    blend: a card is one or the other, decided solely by the presence of the
-    kernel's descriptor, never by action name or heuristics.
+  * A **payment step** IS a spend of the completer's own balance. Verified on
+    the running kernel: a step on an `effect="transfer"` action draws the sealed
+    `amount` from the completer at completion; the federation `payment`
+    descriptor exists only on the peer wire, so on `/v1` the signal is the
+    target action's **signed contract field `effect`** (from
+    `GET /v1/actions/{action_id}`), never the action's name. Its confirm MUST
+    be the money button naming the amount — the sealed `partial_args.amount`
+    when bound, else the completer's own typed amount — and the card MUST name
+    the recipient (`partial_args.target`) in the provenance face; the §8 rule
+    (whose funds move, how much) applies in full, exactly as on a paid run.
+    The two branches MUST NOT blend: a card is one or the other, decided solely
+    by the kernel's `effect` field, never by name or heuristics. (Effect-bearing
+    actions are public natives or `local` proxies by construction, so the
+    completer can always read the field; if a future kernel makes one
+    unreadable, the card falls back to ordinary rendering and the kernel remains
+    the sole funds enforcer.)
 * Completion MUST POST to `/v1/steps/{id}/complete` with `args` (default `{}`)
   and MUST render `{result, tx_id, trace_id, step_id}` through the run outcome
   display (§6.2). Completion MUST be offered only to the `required_caller`;
@@ -520,12 +528,13 @@ queue.
 **Peers.**
 
 * A peer row's balance is the **bilateral position** and MUST render signed and
-  labeled by direction: a positive position reads **"prepaid"** (the peer paid
-  ahead), a negative one **"owes us"** — the raw sign convention is never shown
-  as a bare negative number without its reading. The old "their credit here /
-  calls rejected until the peer holds credit" framing is retired: calling is
-  permissionless and admission is governed by the kernel's global exposure cap,
-  which the UI reports, never enforces.
+  labeled by direction: a positive position reads **"we owe them"** (the peer
+  prepaid or earned here — verified live: a peer's earnings accrue on the same
+  row, so "prepaid" would misread it), a negative one **"owes us"** — the raw
+  sign convention is never shown as a bare negative number without its reading.
+  The old "their credit here / calls rejected until the peer holds credit"
+  framing is retired: calling is permissionless and admission is governed by
+  the kernel's global exposure cap, which the UI reports, never enforces.
 * A peer flagged `settlement_due` MUST carry a quiet status pill (information,
   never authority — crossing the trigger stops nothing). *Conditional:* where
   the kernel serves its global exposure figures (cap and current gross
@@ -536,15 +545,24 @@ queue.
 * `peer_unfunded` on a run means **the serving kernel's global exposure cap is
   exhausted — an operator settlement matter** — and MUST NOT be rendered as the
   caller's own insufficient funds (§10 error mapping).
+* The `peer_state` display hint on a remote action changes force in v0.12:
+  `offline` still blocks the run form (the call provably cannot leave), but
+  `unfunded` (the stale peer-credit cache) MUST NOT suppress the form — under
+  global exposure the serving kernel alone decides admission (verified live: an
+  "unfunded" proxy call succeeds), so the chip stays as a quiet hint and a
+  refusal surfaces as the typed `peer_unfunded` outcome.
 
-**Settlement.** *Conditional on the kernel serving settlement over HTTP.*
+**Settlement.** Confirmed on the running kernel: `POST /control/peers/settle`
+`{handle}`, and `{handle, settlement_id}` for the record-cash leg (§10).
 
 * Settling moves real external money, so both verbs are modal confirms naming
   the peer and the amounts, on the peer row: **Settle** (initiates the kernel's
-  settlement of the bilateral position) and **Record cash** (records that the
-  external rail payment happened, keyed by the settlement id). Neither is ever
-  reachable by GET. Until the HTTP route is confirmed, the page instead points
-  the operator at `juice admin settle` (CLI) beside the `settlement_due` pill.
+  settlement of the bilateral position — exact when the debt covers the
+  quantum, else the kernel's probabilistic residual protocol) and **Record
+  cash** (records that the external rail payment happened, keyed by the
+  settlement id the settle outcome names). Neither is ever reachable by GET.
+  The UI presents the kernel's settlement outcome verbatim and never computes
+  or predicts one.
 
 **The value-transfer queue** (`GET /control/transfers`).
 
@@ -749,19 +767,25 @@ once its prerequisite is confirmed on the running kernel.
   (mandatory); selects semantic ranking versus catalog fallback.
 * **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
   spec; conditional, not assumed. No current UI feature depends on them.
-* **Settlement over HTTP (§6.6).** Confirm whether the kernel serves settle /
-  record-cash on `/control/*`; until then the peers page points at the CLI and
-  the settle confirms stay conditional.
-* **Global exposure figures (§6.6).** Confirm whether `/control/identity` (or
-  the peers response) serves the exposure cap and current gross receivables;
-  until then the kernel card omits them.
-* **Receipt value fields (§6.5).** Confirm `premium`/`value`/`value_premium`/
-  `value_to` on transaction reads; the breakdown rows render only what the
-  kernel serves, zero-suppressed.
-* **Payment descriptor and `allowed_input` on `/v1/steps` (§6.3).** Confirm
-  their presence and shape on the running kernel; the completion form falls back
-  to the target action's `input_schema` where `allowed_input` is absent (older
-  kernels), and no step is treated as a payment step without the descriptor.
+* **Settlement over HTTP (§6.6).** Confirmed on the running kernel:
+  `POST /control/peers/settle` `{handle}` initiates settlement and
+  `{handle, settlement_id}` records the rail payment (the CLI `--cash` leg).
+  The settle confirms are therefore mandatory (§6.6).
+* **Global exposure figures (§6.6).** Confirmed: `/control/identity` serves
+  `exposure_max`, `gross_receivables`, `settlement_due`, `settlement_trigger`,
+  and `settlement_quantum`; the kernel card states them as evidence.
+* **Receipt value fields (§6.5).** NOT served on local transaction reads
+  (confirmed: a local `sys/transfer` tx carries only the ordinary
+  gross/fee/net, all zero at price 0, with the moved amount visible in `args`
+  and `result`). The breakdown rows render only what the kernel serves,
+  zero-suppressed — currently nothing extra on local calls; remote-proxy
+  transactions may carry them in the remote receipt JSON.
+* **`allowed_input` on `/v1/steps` (§6.3).** Confirmed on the running kernel
+  (waiting steps carry it; an approval-only step serves an empty object). The
+  completion form falls back to the target action's `input_schema` where
+  `allowed_input` is absent (older kernels). The federation `payment` descriptor
+  does NOT appear on `/v1` step listings (confirmed); payment steps are detected
+  by the target action's `effect` field (§6.3).
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;
