@@ -42,7 +42,7 @@ Three laws underpin everything:
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
-| Ref | `_ref` partial | `@owner/name` |
+| Ref | `_ref` partial | `owner/name` (remote: `owner@kernel/name`, unlinked) |
 
 ---
 
@@ -62,17 +62,17 @@ The frame every page renders into. Defined in `layout.html`.
 │ ▸ wallet │                                         │
 │ ▸ you    │  (• = badge)                            │
 │ ─ chat•  │  (apps, after a divider)                │
-│ ▸ network│  (network/admin: @sys only)             │
+│ ▸ network│  (network/admin: sys only)              │
 │ ▸ admin  │                                         │
 │          │                                         │
-│ ⌂ @you   │  ← identity summary → the `you` hub     │
+│ ⌂ you    │  ← identity summary → the `you` hub     │
 └────────┴─────────────────────────────────────────┘
 ```
 
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `@sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the step badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
+| **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the step badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
 | **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
@@ -81,11 +81,11 @@ The frame every page renders into. Defined in `layout.html`.
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
-`@handle`") with a short **key fingerprint** for pre-auth verification, then the
+`handle`") with a short **key fingerprint** for pre-auth verification, then the
 **Sign in / Create account** toggle (the `.tabs` component, §5.2, its one
 retained use), one action per tab. The kernel handle + key come from the open
 `GET /health`; the sidebar brand shows the same handle once signed in (kernel at
-the top, your own `@handle` at the profile foot). Tabs are real `/login?tab=`
+the top, your own `handle` at the profile foot). Tabs are real `/login?tab=`
 links (server renders the active tab with JS off); app.js swaps panels
 client-side.
 
@@ -127,7 +127,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 
 - **Face:** the **proportional system sans stack** (`--font-ui`) for chrome and
   prose — the storefront register. **Monospace (`--font-mono`) is reserved** for
-  the *provenance* set: money, IDs, hashes, `@owner/name`, and sealed
+  the *provenance* set: money, IDs, hashes, `owner/name`, and sealed
   `partial_args`. The typeface itself marks kernel-vouched facts apart from
   chrome and from counterparty prose. (The `terminal` theme overrides `--font-ui`
   back to mono; components never assume one or the other — they use the token.)
@@ -137,7 +137,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   `browse · inbox · workshop · wallet · you · network · admin`. A **detail** page
   opens with the sticky **crumb** (`← group` back-link + record identity) above
   the title and shows the resource id/name.
-- **Money, IDs, hashes, `@owner/name`:** mono + `tabular-nums`. The **owner
+- **Money, IDs, hashes, `owner/name`:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**
   - *Index* = `page-head` (title + subtitle) → section `<h2>` → a `.tabs` filter
@@ -206,7 +206,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, befriend, inspect, navigate, add-row |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. A **step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N" |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N". A **payment step** (kernel `payment` descriptor, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, unfriend, force-end |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
@@ -243,7 +243,7 @@ hand-writes `class="tab{{if …`; a drift guard enforces it.
 | **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive`, step `all/done/cancelled` (real query-string links, reload) | selected filter |
 
 **Distinct axes get distinct rows, never mixed.** The actions page's *ownership
-scope* (`yours | everyone`, `@sys`) is its **own** switch on the heading, not a
+scope* (`yours | everyone`, `sys`) is its **own** switch on the heading, not a
 peer of the state filters — mixing them let two tabs on different variables both
 light up. Each axis preserves the other's value (`actionsHref`).
 
@@ -282,7 +282,7 @@ none float, none are colored.
   (action run **and** step completion), always inline (never a modal): optional
   **locked block** (a step's pre-bound args as a read-only `.locked-args` dl, no
   verbal label — the sealed half of the form), the **editable input**, **one
-  button** (a paid run's `Run (N)` money button, §5.1; a step's neutral `Complete`)
+  button** (a paid run's `Run (N)` money button, §5.1; an ordinary step's neutral `Complete`; a payment step's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Steps are **one-shot** (`data-oneshot`); actions repeat.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
@@ -343,7 +343,7 @@ none float, none are colored.
     stay plain text (don't invent routes).
   - **Money is the signed, perspective amount** (§5.6): what the call did to the
     viewer's balance — `+`earned / `−`paid / `↩`refunded / `◷`parked — not raw
-    gross/net/fee. `@sys` sees `+fee` (its tax). Gross, fee and the full party
+    gross/net/fee. `sys` sees `+fee` (its tax). Gross, fee and the full party
     list belong to the **detail** page, not the list.
 
 ### 5.6 Status, pills, money
@@ -362,9 +362,12 @@ none float, none are colored.
 
 ### 5.7 Refs
 
-`@owner/name` renders via the `_ref` partial: `<span class="ref mono">` with the
+`owner/name` renders via the `_ref` partial: `<span class="ref mono">` with the
 owner in `.owner` (weight-emphasized, confusable-distinct, **not** accent),
-split on the first `/`.
+split on the first `/`. A **remote** ref (`owner@kernel/name`) renders the whole
+owner segment (`owner@kernel`) in `.owner` the same way but **unlinked**: the
+kernel alias is presentation-only (requirements.md §4) and no local route exists
+behind a remote owner — don't invent one.
 
 ### 5.8 Modals & floating forms
 
@@ -382,7 +385,7 @@ split on the first `/`.
 
 - **Ctrl/Cmd+K** opens the palette (`<dialog class="palette">`). Its registry is
   **inert JSON** (`<script type="application/json">`, CSP-safe), built
-  server-side and **admin-gated** (admin commands only for `@sys`).
+  server-side and **admin-gated** (admin commands only for `sys`).
 - Shortcuts: `g`+letter (section nav) · `/` (focus search) · `?` (help overlay) ·
   `j/k/Enter` (rows) · `Esc` (close topmost). Every command targets a real
   link/form — the keyboard layer adds no capability unreachable without it.
@@ -402,17 +405,26 @@ split on the first `/`.
 ### 5.11 Federation (network)
 
 `admin` (users, money, access) and `network` (federation) are **two separate
-top-level nav entries** (`@sys` only), not one page with a sub-nav — federation
+top-level nav entries** (`sys` only), not one page with a sub-nav — federation
 is a distinct concern. `network` owns the **this kernel** identity card. The
 `network` page is a discovery → inspect → trust journey, in card + table grammar:
 **this kernel** (identity to share) ·
-**friends** (direct peers, each
-with Inspect + Unfriend) · **known network** (the gossip roster: one block per
+**peers** (each with Inspect + Unsubscribe/Suspend) · **known network** (the
+gossip roster: one block per
 discovered kernel showing *your* earned stats — labeled `you` — distinct from the
 kernel's `self-reported` manifest and hearsay grouped `via <introducer>`; each has
-Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
-(direct/relayed + rtt), public actions, and transacted friends. Roster requires
-`?gossip=1` from the kernel (not `true`).
+Inspect + Subscribe — subscribe is an **optional bulk cache warm**; a remote
+action resolves on first call). **Inspect** (`/admin/peers/{key}`) shows
+reachability (direct/relayed + rtt), public actions, and transacted peers.
+Roster requires `?gossip=1` from the kernel (not `true`).
+
+A peer's balance is the **bilateral position**, rendered signed with its
+reading — "prepaid" (positive) / "owes us" (negative) — never a bare negative
+number; a `settlement_due` peer carries a quiet `.pill`. Settle / Record-cash
+confirms (requirements.md §6.6, Conditional) are `data-confirm` modals naming
+the peer and the amounts. The superuser **transfer queue** (`/admin/transfers`)
+lists unresolved value transfers (`pending` + `quarantined`) with **Retry as the
+only mutation** — no refund/force-settle affordance exists in the grammar.
 
 ### 5.12 Menus & icons
 
@@ -446,8 +458,10 @@ Inspect + Befriend). **Inspect** (`/admin/peers/{key}`) shows reachability
   never on links, tab underlines, active nav, or the active mobile tab (those key
   on text weight + surface). Money buttons name the amount as `verb (N)` and carry
   **no credit glyph**; money *display* uses `N ◆` (the gem mark) in the mono
-  provenance face (§5.6). **Danger beats money.** A **step completion is neutral**
-  (`Complete`, no amount, no accent): the completer is not the payer (§5.1).
+  provenance face (§5.6). **Danger beats money.** An **ordinary step completion is
+  neutral** (`Complete`, no amount, no accent): the completer is not the payer;
+  a **payment step** completion is a genuine spend and uses the money button
+  naming the amount (§5.1, requirements.md §6.3).
 - Counterparty content (names, descriptions, args, results, reasons) renders
   **inert**: escaped, no chrome, no accent, JSON in a code block. Trust
   affordances key on kernel-captured fields, never payload shape.

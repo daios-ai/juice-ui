@@ -1,39 +1,41 @@
 # Juice Web UI Requirements
 
-Version: 0.3.0
+Version: 0.4.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.3.0.** The visual language turns from a *terminal* into a
-> **minimal marketplace storefront**. Two axes change; everything else that moves
-> money is preserved verbatim.
+> **What changed in 0.4.0.** The kernel's v0.12 contract lands: the network
+> becomes first-class — bare names, bilateral money, spendable steps. Three axes
+> change; the visual language of 0.3.0 is preserved verbatim.
 >
-> 1. **Typography becomes provenance.** The UI face is no longer monospace
->    everywhere. The default UI face is now the **proportional system stack** (the
->    storefront register); **monospace is *reserved*** for kernel-vouched facts —
->    money, `@owner/name`, ids, hashes, and sealed `partial_args`. The rendered
->    typeface thus marks the trust boundary: proportional chrome, monospace truth.
->    Corners soften (a card radius plus a tighter control radius, both tokens).
-> 2. **Navigation reads as a marketplace, not a command dump.** The primary
->    groups are relabelled **browse** (discovery + run), **inbox** (steps),
->    **workshop** (the provider surface: earnings + own actions + creation),
->    **wallet** (balances, open processes, ledger), and **settings** (account +
->    preferences), with **network** (federation) and **admin** kept `@sys`-only. This is a
->    relabelling of the same CLI-mirrored concepts, not new authority.
+> 1. **Names lose the sigil; `@` now names a kernel.** The canonical action
+>    identity is bare `owner/name` and a handle is bare `sys`, `alice` (§4). A
+>    remote action is `owner@kernel/name`, where `kernel` is a presentation-only
+>    local alias for a peer kernel — never an identity, never a link target, and
+>    never a key (§4, §6.2 owner pages). The UI *emits* bare names everywhere and
+>    *tolerates* `@`-prefixed input for the kernel's one migration period.
+> 2. **Step completion becomes two-branch.** An ordinary completion stays the
+>    neutral `Complete` naming no amount; a **payment step** — one whose listing
+>    carries the kernel's `payment` descriptor — is a spend of the completer's
+>    own balance and MUST use the money button and spend confirm (§6.3, §7, §8).
+>    The completion form derives from the step's `allowed_input`, never from
+>    reading the target action, whose read may now legitimately fail (§6.3).
+> 3. **Peer money reads as a signed bilateral position.** A peer's balance may
+>    be negative (they owe this kernel); prepaid-credit copy is retired. Peers
+>    surface `settlement_due`, and settlement verbs plus the superuser
+>    value-transfer queue get a home in the new §6.6 (network & admin).
 >
-> A **media slot** is added to the action card and page (§6.2): a 16:9 image with
-> a deterministic generated fallback until the kernel serves images (Conditional,
-> §10, tracked in `ROADMAP.md`).
+> The wallet's send affordance now runs the kernel's `sys/transfer` action (a
+> receipt-backed spend) instead of the bare `/v1/transfers` endpoint (§6.5).
+> Because the card-art hue is hashed from the owner segment, de-sigiling
+> reshuffles provider colors once; this is accepted, not worked around (§6.2).
 >
-> The old terminal identity is **not deleted** — it survives losslessly as a
-> selectable `terminal` theme (monospace UI face, square corners), because the
-> whole surface already renders through semantic tokens. The set of shipped
-> palettes is curated down, with new default **paper** (light) and **ink** (dark).
->
-> Invariants that predate 0.3.0 are unchanged: the BFF architecture, session/token
-> rules, **the accent's spend-only discipline and the closed button vocabulary**,
-> inert counterparty rendering, the single aria-live region, **monospace tabular
-> money**, floating modal forms with the `?form=` fallback, keyboard navigation,
-> admin/supervision gating, the CSP, and the test discipline.
+> Invariants that predate 0.4.0 are unchanged: the BFF architecture, session/token
+> rules, **the accent's spend-only discipline and the closed button vocabulary**
+> (a payment step is a genuine spend, so the discipline gains a site, not an
+> exception), inert counterparty rendering, the single aria-live region,
+> **monospace tabular money**, the provenance typography, floating modal forms
+> with the `?form=` fallback, keyboard navigation, admin/supervision gating, the
+> CSP, and the test discipline.
 Codename: `juice-ui`
 
 > **Gating condition.** A UI feature is mandatory only if it maps to an HTTP
@@ -70,7 +72,7 @@ server-side.
 **Navigation model.** The UI's navigation MUST present the juice CLI concepts as
 a marketplace, not a raw command dump. The primary groups are **browse**,
 **inbox**, **workshop**, **wallet**, and **settings**, plus **network** (federation)
-and **admin**, both shown **only to the `@sys` superuser**. Each maps to the same
+and **admin**, both shown **only to the `sys` superuser**. Each maps to the same
 CLI concepts as before: `browse` is discovery + execution (`run` + the catalog);
 `inbox` is `step` — work addressed to the user, carrying the sole attention badge;
 `workshop` is the provider surface (`action` management + earnings + creation);
@@ -145,12 +147,12 @@ detectable.
 ### 3.1 In scope (HTTP-reachable), organized by CLI group
 
 * **run** — server status (`GET /health`), read-only; natural-language discovery
-  via `@sys/lookup`; catalog browse (`GET /v1/actions`); action detail; call
+  via `sys/lookup`; catalog browse (`GET /v1/actions`); action detail; call
   execution (`POST /v1/run`), including run-by-ref from the palette.
 * **browse / workshop** — catalog browse plus owner action management: create,
-  list/show (including inactive, via `GET /v1/actions?owner=@self`), update,
+  list/show (including inactive, via `GET /v1/actions?owner=<self>`), update,
   enable, disable, delete; three-way `visibility` (private/local/public); AI
-  synthesis via `@sys/make`; OpenAPI import/unimport; stats; ratings list;
+  synthesis via `sys/make`; OpenAPI import/unimport; stats; ratings list;
   earnings folded from the owner's transactions.
 * **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
   surfacing parked funds and awaiting-receipt state.
@@ -163,13 +165,16 @@ detectable.
 *Conditional:* the trace tree on the receipt page.
 
 * **Admin / supervision (superuser only):** the `admin` group, visible only to
-  `@sys`, covers user list/show, suspend/unsuspend, credit deposits and
-  withdrawals, and federation trust (friend/unfriend, peers, this kernel's
-  identity). The kernel serves these over HTTP on `/control/*`, gated by an
-  `IsSuperuser` check on the `@sys` bearer (API.md C13); the UI is an ordinary
-  client of that surface. Superuser **scope** on the normal list pages (a `@sys`
-  session sees all actions/processes/tx/steps) is indicated quietly on those
-  pages, not duplicated as separate admin listings.
+  `sys`, covers user list/show, suspend/unsuspend, credit deposits and
+  withdrawals, federation trust (peers, subscribe as bulk cache warm,
+  suspend/unsuspend, this kernel's identity), operator settlement (§6.6,
+  Conditional on the HTTP route), and the value-transfer queue
+  (`GET /control/transfers`, §6.6). The kernel serves these over HTTP on
+  `/control/*`, gated by an `IsSuperuser` check on the `sys` bearer (API.md
+  C13); the UI is an ordinary client of that surface. Superuser **scope** on
+  the normal list pages (a `sys` session sees all actions/processes/tx/steps)
+  is indicated quietly on those pages, not duplicated as separate admin
+  listings.
 
 ### 3.2 Out of scope (no user-facing flow)
 
@@ -181,7 +186,9 @@ detectable.
 * Because deposits are admin-only, a UI user cannot top up their own balance.
   Balance views MUST state plainly that credit top-ups happen out-of-band
   (operator/CLI). The UI still shows balances and funds processes from existing
-  credits.
+  credits. Peer accounts differ: a peer's balance is a bilateral position that
+  may go negative under the kernel's global exposure cap, and settling it is an
+  operator act (§6.6) — never a user-facing top-up.
 
 ## 4. API contract the UI must honor
 
@@ -189,12 +196,18 @@ detectable.
   fields.
 * Structured fields (`args`, `result`) are inline JSON objects, not
   double-encoded strings.
-* Action identity is `@owner/name`, parsed by a **single split on the first `/`
-  after `@`** — owner before, name (the remainder) after. Never split on every
-  `/`: names may contain `/` (e.g. `@sys/llm/chat`), and the rule is unambiguous
-  because handles cannot contain `/`. In a URL, `@owner/name` is percent-encoded.
+* Action identity is bare `owner/name`, parsed by a **single split on the first
+  `/`** — owner segment before, name (the remainder) after. Never split on every
+  `/`: names may contain `/` (e.g. `sys/llm/chat`), and the rule is unambiguous
+  because handles cannot contain `/`. If the owner segment contains `@`, the
+  part after it names a **kernel**: `owner@kernel/name` is a remote action,
+  `kernel` a presentation-only local alias for a peer key — never an identity
+  and never a key for anything in the UI. Handles are bare (`sys`, `alice`); the
+  UI **emits** bare names everywhere and **tolerates** a leading `@` on input
+  (form fields, stored sessions) for the kernel's migration period,
+  canonicalizing to bare. In a URL, `owner/name` is percent-encoded.
 * Action read/list responses carry both `id` (UUID, for management) and a
-  computed `action` (`@owner/name`, for calling). The UI uses `action` directly
+  computed `action` (`owner/name`, for calling). The UI uses `action` directly
   in call requests and never asks the user to type a UUID.
 * State-mutating responses return the updated resource; the UI re-renders from
   that response. Destructive operations and `end` return 204.
@@ -228,7 +241,7 @@ detectable.
 
 * The UI MUST present a left sidebar whose entries are the primary groups
   (`browse`, `inbox`, `workshop`, `wallet`, `settings`, then `network` and `admin` for
-  `@sys`), default-expanded with labels, collapsible, with collapse state
+  `sys`), default-expanded with labels, collapsible, with collapse state
   persisted server-side. The active group MUST carry `aria-current`. The `inbox`
   entry MUST carry its waiting-count step badge in every state — a constraint on
   the entry wherever it renders, not on any one surface. A single nav model, built
@@ -262,7 +275,7 @@ detectable.
   per-page whitelist before rendering.
 * The UI MUST be keyboard-navigable as a first-class affordance: a Ctrl/Cmd+K
   command palette whose entries mirror the CLI (and are gated — admin commands
-  appear only for `@sys`), `g`+letter section navigation, `/` to focus search,
+  appear only for `sys`), `g`+letter section navigation, `/` to focus search,
   `?` for a shortcuts overlay, `j`/`k`/`Enter` to move through and open table
   rows, and `Esc` to close the top layer. The command registry MUST be delivered
   as inert JSON data (a `type="application/json"` block), never executable inline
@@ -276,7 +289,7 @@ detectable.
 * The omnibox MUST be present on every page — it lives in a **persistent
   topbar** at the top of the content area (a compact search input reflows onto the
   browse page itself on mobile, where the topbar is hidden) — and MUST issue
-  `@sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
+  `sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
   MUST render as ranked cards, each with a **media slot** (§6.2 media), the ref
   (owner-emphasized) with **price right-aligned** in the title row, a one-line
   description, and the **same reputation strip the action page uses** (icon +
@@ -295,7 +308,7 @@ detectable.
 * Price MUST appear on each card. Sort and filter by price MUST be available.
 * Catalog browse (`GET /v1/actions`, owner/name filters) MUST be available as the
   secondary path and the per-owner listing.
-* On `ErrInvalidState` from `@sys/lookup`, the omnibox MUST fall back to catalog
+* On `ErrInvalidState` from `sys/lookup`, the omnibox MUST fall back to catalog
   search and MUST show a notice that semantic search is unavailable; it MUST NOT
   present a dead control. Discovery is mandatory regardless of embedder status.
 
@@ -310,8 +323,13 @@ detectable.
   `aria-label`. The rating MUST show mean and count.
 * Ratings MUST render as reviews (0/1 value, `note`, newest first, paginated),
   labeled as ratings from paid calls.
-* The owner segment of `@owner/name` MUST be visually emphasized and link to an
-  owner profile (public actions, aggregate stats, account age).
+* The owner segment of `owner/name` MUST be visually emphasized and link to an
+  owner profile (public actions, aggregate stats, account age). A **remote** ref
+  (`owner@kernel/name`) renders the whole owner segment in the same emphasized
+  monospace but MUST NOT link it anywhere: the kernel alias is presentation-only
+  and there is no local profile behind a remote owner (§4; extends §8's inert
+  counterparty rule). Card-art hue keys off the owner segment string; the 0.4.0
+  de-sigiling reshuffles it once, and no compatibility shim is permitted.
 
 **Run form.**
 
@@ -331,7 +349,7 @@ detectable.
 * The receipt MUST offer one-click re-run with the same args.
 
 ```text
-  @lena/ocr-translate                    $0.012
+  lena/ocr-translate                     $0.012
   ─────────────────────────────────────────────
   document_url   [https://…            ]
   target_lang    [German             ▾ ]
@@ -362,27 +380,38 @@ open (parked steps), the result MUST say so and link to the Wallet.
   completable card; all other steps MUST go to a history table. Filters by
   `process_id` and `status` MUST be available (`GET /v1/steps`); a single step is
   `GET /v1/steps/{id}`, including the computed `action`.
-* `partial_args` MUST render read-only; only schema fields absent from
-  `partial_args` MUST be editable. When none are editable, the card MUST collapse
-  to a single confirm.
-* The step card MUST stay **calm and free of funds-mechanics narration** — no
-  "parked," no "you pay N but it's reserved," no "the funds don't come from your
-  wallet." The completer is doing requested work, not authorizing a spend from
-  their own wallet (the money was reserved by whoever created the step), so the
-  completion control is a **neutral `Complete`** that names **no** amount — a
-  `verb (N)` money button here actively misleads ("you pay N"). The card names
-  only *who asks* and *what* (the creating action, quietly) and shows the sealed
-  `partial_args` as an inert read-only detail. This reinterprets the older
-  "attribute the parked price"/§8.4 disclosure: for a step the anti-phishing
-  signal that matters is *who requested it* and *what inputs are sealed*, not a
-  funds-movement paragraph.
+* The completion form MUST be built from the step's own `allowed_input` (the
+  kernel-derived completion schema on a waiting step), never by reading the
+  target action: a step may be parked on a `private`/`local` action the
+  completer can never read, so a 403 on the target action is a normal state and
+  MUST degrade silently (the action read is decoration, not a dependency).
+* `partial_args` MUST render read-only; only `allowed_input` fields MUST be
+  editable. When none are editable, the card MUST collapse to a single confirm.
+* **Completion is two-branch — this is the single statement of the rule; §7 and
+  §8 defer here.**
+  * An **ordinary step** stays **calm and free of funds-mechanics narration** —
+    no "parked," no "you pay N but it's reserved." The completer is doing
+    requested work, not authorizing a spend from their own wallet (the money was
+    reserved by whoever created the step), so the completion control is a
+    **neutral `Complete`** that names **no** amount — a `verb (N)` money button
+    here actively misleads. The card names only *who asks* and *what* (the
+    creating action, quietly) and shows the sealed `partial_args` as an inert
+    read-only detail.
+  * A **payment step** — one whose listing carries the kernel's `payment`
+    descriptor `{beneficiary, amount, remote_bps, remote_max}` — IS a spend of
+    the completer's own balance. Its confirm MUST be the money button naming the
+    all-in amount (the descriptor's ceiling), and the card MUST name the
+    beneficiary in the provenance face — the §8 rule (whose funds move, how
+    much) applies in full, exactly as on a paid run. The two branches MUST NOT
+    blend: a card is one or the other, decided solely by the presence of the
+    kernel's descriptor, never by action name or heuristics.
 * Completion MUST POST to `/v1/steps/{id}/complete` with `args` (default `{}`)
   and MUST render `{result, tx_id, trace_id, step_id}` through the run outcome
   display (§6.2). Completion MUST be offered only to the `required_caller`;
   duplicate and non-caller attempts MUST map to typed-error messages.
 * Completed and cancelled steps MUST appear in history; cancelled cards MUST
   state the reason.
-* `@sys/message` steps MUST render as a message (sender, text, acknowledge
+* `sys/message` steps MUST render as a message (sender, text, acknowledge
   button).
 * Step creation (`POST /v1/steps`: `action`, `process_id`, `parent_trace_id`,
   `partial_args`, `input_schema`, `required_caller`) MUST be present but collapsed
@@ -394,7 +423,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * Earnings MUST be computed in the BFF by folding the user's own transactions;
   each figure MUST link to its underlying transactions. The BFF MUST NOT
   reproduce kernel settlement.
-* The action list MUST use `GET /v1/actions?owner=@self`, include inactive
+* The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
   actions, filter by state, and show kind, price, success rate, rating trend, a
   last-failure peek, an inline active/inactive toggle, and a **visibility**
   control (below).
@@ -416,7 +445,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
   policy.
 * The creation zone MUST offer two paths, each with a the accent spend button stating
   the price:
-  * `@sys/make`: `POST /v1/run {action: "@sys/make", args: {description}}`,
+  * `sys/make`: `POST /v1/run {action: "sys/make", args: {description}}`,
     button `[ Synthesize ($0.020) ]` (price from `native.make.price`). The call is
     synchronous: the UI MUST show progress against elapsed time and render
     `{status, action_id, action_name, diagnostics, tests}`. On `status="success"`
@@ -452,14 +481,25 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * The ledger MUST list every credit and debit, newest first, each row linking to
   its receipt. Closed processes (including `run`-created ephemerals) MUST appear
   here.
+* **Send.** The wallet MUST offer a send-money form that runs the kernel's
+  `sys/transfer` action (`POST /v1/run {action: "sys/transfer", args: {target,
+  amount}}`) — a real spend through the run machinery, with the money button
+  naming the amount and the recipient rendered in the provenance face. The bare
+  `POST /v1/transfers` endpoint is NOT a UI surface (it is fee-less plumbing the
+  kernel keeps for other clients); the UI has exactly one way to move money, and
+  it produces a receipt like every other spend. Recipient errors (unknown,
+  suspended, peer) surface as the kernel's typed rejections.
 * The transaction list (`GET /v1/transactions`) MUST return rows where the user
   is buyer (`owner_user_id`), caller (`caller_user_id`), or seller (the called
   action's owner). Each row MUST show the user's role, the action
-  (`@owner/name`, linked via `GET /v1/actions/{action_id}`; a truncated ID if the
+  (`owner/name`, linked via `GET /v1/actions/{action_id}`; a truncated ID if the
   action was since deleted), status, and cost breakdown.
 * The receipt page MUST show parties (buyer/seller, viewer's role highlighted),
   action ref, inline args and result, gross/fee/net (fee captioned "on value
   added"), failure `reason` when present, and the buyer's rating block.
+  *Conditional:* where the kernel serves them, the value-transfer and federation
+  economics fields (`premium`, `value`, `value_premium`, `value_to`) render as
+  additional breakdown rows, zero-suppressed — absent fields render nothing.
 * A Verify control MUST call `GET /v1/transactions/{id}/receipt-verification` and
   render per-check results as a checklist (signature, hash, settlement
   arithmetic) plus the top-level `valid` flag, for both success and failure.
@@ -470,6 +510,53 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * Balance views MUST state that top-ups are out-of-band.
 * *Conditional:* an Engine-room disclosure below the receipt showing the trace
   tree with per-call cost and `latency_ms`.
+
+### 6.6 network & admin — federation money and the transfer queue
+
+Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
+(§3.1). Three concerns live here: peers, settlement, and the value-transfer
+queue.
+
+**Peers.**
+
+* A peer row's balance is the **bilateral position** and MUST render signed and
+  labeled by direction: a positive position reads **"prepaid"** (the peer paid
+  ahead), a negative one **"owes us"** — the raw sign convention is never shown
+  as a bare negative number without its reading. The old "their credit here /
+  calls rejected until the peer holds credit" framing is retired: calling is
+  permissionless and admission is governed by the kernel's global exposure cap,
+  which the UI reports, never enforces.
+* A peer flagged `settlement_due` MUST carry a quiet status pill (information,
+  never authority — crossing the trigger stops nothing). *Conditional:* where
+  the kernel serves its global exposure figures (cap and current gross
+  receivables), the kernel card states them as evidence.
+* **Subscribe is an optional bulk cache warm**, not a prerequisite: a remote
+  action resolves on first call. The subscribe affordance and its copy MUST say
+  so; unsubscribe deactivates the cached proxies and preserves history.
+* `peer_unfunded` on a run means **the serving kernel's global exposure cap is
+  exhausted — an operator settlement matter** — and MUST NOT be rendered as the
+  caller's own insufficient funds (§10 error mapping).
+
+**Settlement.** *Conditional on the kernel serving settlement over HTTP.*
+
+* Settling moves real external money, so both verbs are modal confirms naming
+  the peer and the amounts, on the peer row: **Settle** (initiates the kernel's
+  settlement of the bilateral position) and **Record cash** (records that the
+  external rail payment happened, keyed by the settlement id). Neither is ever
+  reachable by GET. Until the HTTP route is confirmed, the page instead points
+  the operator at `juice admin settle` (CLI) beside the `settlement_due` pill.
+
+**The value-transfer queue** (`GET /control/transfers`).
+
+* A page listing the kernel's buyer-side value transfers: default view is the
+  unresolved set (`pending` + `quarantined`), a `status` filter also exposes
+  terminal `settled`/`refunded`; each row opens a detail view. Paged (§7).
+* **Retry is the only mutation.** `POST /control/transfers/{id}/retry`
+  re-presents the same signed completion and settles strictly on receipt
+  evidence. The UI MUST NOT offer refund, force-settle, edit, or delete — no
+  such affordance may exist, because quarantine means "evidence insufficient,
+  reconciled out of band", never an operator-chosen outcome. The page states
+  this as one orienting phrase, not narration (§7 feedback rules).
 
 ## 7. Visual language and non-functional requirements
 
@@ -482,10 +569,10 @@ open (parked steps), the result MUST say so and link to the Wallet.
   dollar amount is the same one the money helper renders everywhere. Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
-  price. No other button styles exist. (A **step completion** is NOT a spend
-  button — it is the neutral `Complete` naming no amount; the completer does the
-  work but the money was reserved by the step's creator.)
-* **Money and identity typography.** Money, IDs, hashes, and `@owner/name` MUST
+  price. No other button styles exist. (A step completion is two-branch per
+  §6.3: an ordinary completion is the neutral `Complete` naming no amount; a
+  **payment step** completion is a genuine spend and uses the money button.)
+* **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome. Money MUST render in **dollars**,
   `$`-prefixed, **always three decimals**, thousands-grouped (`$1,234.567`), with
@@ -496,15 +583,17 @@ open (parked steps), the result MUST say so and link to the Wallet.
   the `¤` character. Ledger rows MUST carry explicit `−`/`+`; spend buttons state
   the unsigned gross as `verb ($N.NNN)` (above). Editable amount inputs are typed
   in dollars and parsed server-side back to credits. The owner segment of
-  `@owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
-  and MUST NOT use the accent.
+  `owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
+  and MUST NOT use the accent; a remote owner segment (`owner@kernel`) renders
+  the same way, unlinked (§6.2).
 * **Status signals.** The credited, refunded, and escrow-pending states MUST be
   mutually distinct and distinct from the accent in both themes, each pairing a color
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
 * **Pagination.** No list renders unbounded. Every long list — browse, the
-  transaction ledger, the workshop management table, the admin roster, an action's
+  transaction ledger, the workshop management table, the admin roster, the
+  value-transfer queue (§6.6), an action's
   ratings, and open/closed sessions — MUST page with `limit`/`offset` at **20 per
   page** through **one shared, quiet pager** (`← previous · page N · next →`; a
   boundary renders a dimmed non-link). The pager carries no accent (money-reserved).
@@ -532,7 +621,7 @@ open (parked steps), the result MUST say so and link to the Wallet.
   be respected.
 * **Typography.** The UI face is the **proportional system sans stack** (the
   storefront register). **Monospace with tabular figures is reserved** for the
-  provenance set — money, IDs, hashes, `@owner/name`, and sealed `partial_args` —
+  provenance set — money, IDs, hashes, `owner/name`, and sealed `partial_args` —
   so the typeface itself marks kernel-vouched facts apart from proportional chrome
   and from counterparty prose. Corners are softly rounded (a card radius and a
   tighter control radius, both tokens); no drop shadows. The `terminal` theme
@@ -582,14 +671,19 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
    step's `required_caller` and `next_action`), never on payload shape.
-2. Route every credit-moving act — run, step completion, force-end — through a
-   confirm whose button names the amount or refund. No spend MUST be reachable
-   from a list view or by a GET.
-3. Parse `@owner/name` by the first-slash rule everywhere; render the owner
-   segment distinguished, in a confusable-distinct monospace face, with the owner
-   profile one click away; show a first-time-payee hint on the run form.
-4. Show, on a step card before the confirm, whose funds move, how much, and the
-   sealed `partial_args`.
+2. Route every act that moves the user's own money — run, payment-step
+   completion (§6.3), the wallet send, force-end — through a confirm whose
+   button names the amount or refund. An ordinary step completion moves none of
+   the completer's money and stays neutral (§6.3, the single statement). No
+   spend MUST be reachable from a list view or by a GET.
+3. Parse `owner/name` by the first-slash rule everywhere (§4, including the
+   remote `owner@kernel/name` form); render the owner segment distinguished, in
+   a confusable-distinct monospace face, with the owner profile one click away
+   for a local owner and no link for a remote one; show a first-time-payee hint
+   on the run form.
+4. Show, on a payment-step card before the confirm, whose funds move, how much,
+   and the sealed `partial_args`; an ordinary step card shows the sealed
+   `partial_args` and who asks (§6.3).
 5. Render receipt-verification failures with the failed check named, and MUST NOT
    display `valid` except from the kernel's own per-check response.
 6. Hold no durable state but sessions, compose only documented HTTP calls, never
@@ -605,12 +699,23 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * session lifecycle: PKCE handshake, single-flight refresh rotation, logout
   revocation, suspension → clean logout;
 * CSRF protection on every state-changing route;
-* JSON-Schema-to-form rendering, including `partial_args` lock-out on step cards;
+* JSON-Schema-to-form rendering, including `partial_args` lock-out on step cards
+  and the `allowed_input`-sourced completion form (target action unreadable →
+  form still renders);
+* the two completion branches: ordinary steps neutral (no amount anywhere);
+  payment steps render the money button naming the amount and the beneficiary
+  (§6.3), decided solely by the kernel's `payment` descriptor;
 * the run primitive: cost preview, the priced confirm, process auto-closure, and
   force-end;
+* the wallet send runs `sys/transfer` through the run machinery (§6.5);
+* bare-handle auth (login, register, recover) with sigiled input tolerated;
+* signed bilateral-position rendering on the peers page (negative positions read
+  "owes us", never a bare negative);
+* the value-transfer queue: unresolved default, status filter, retry as the only
+  mutation, no refund/force-settle affordance anywhere in the DOM;
 * the three call-outcome classes, rendered distinctly;
 * discovery: lookup path and catalog fallback on `ErrInvalidState`;
-* synchronous `@sys/make`: success links to an active owned action; failure
+* synchronous `sys/make`: success links to an active owned action; failure
   renders `diagnostics`; sub-20-credit block;
 * access control of owner-only UI affordances (Studio surfaces shown only to the
   owner);
@@ -629,9 +734,9 @@ once its prerequisite is confirmed on the running kernel.
   shows a friendly "already registered" line; if the kernel later returns a typed
   conflict, simplify the detection. The kernel also does not enforce a minimum
   password length, so the BFF requires ≥8 characters on new passwords.
-* **`@sys/register-action` — dropped.** Not in the final kernel spec. The
+* **`sys/register-action` — dropped.** Not in the final kernel spec. The
   registration-approval Inbox card and the asynchronous "draft reviewed before
-  going live" synthesis flow are removed; `@sys/make` is synchronous and
+  going live" synthesis flow are removed; `sys/make` is synchronous and
   self-activating.
 * **Trace tree (Wallet receipt page).** No trace-read HTTP route is confirmed.
   Until one is, the Engine-room trace tree stays conditional; receipt
@@ -639,16 +744,32 @@ once its prerequisite is confirmed on the running kernel.
 * **OpenAPI ownership proof (Studio).** Confirm whether the kernel exposes an
   HTTP protocol for challenge creation, credential submission, and proof status.
   Until then the UI surfaces the kernel's rejection on public activation.
-* **Lookup operational status (Run).** Confirm whether `@sys/lookup` has a
+* **Lookup operational status (Run).** Confirm whether `sys/lookup` has a
   configured embedder or returns `ErrInvalidState`. Does not gate discovery
   (mandatory); selects semantic ranking versus catalog fallback.
-* **Native additions (`@sys/random`, `@sys/llm/embed`).** Not in the final kernel
+* **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
   spec; conditional, not assumed. No current UI feature depends on them.
+* **Settlement over HTTP (§6.6).** Confirm whether the kernel serves settle /
+  record-cash on `/control/*`; until then the peers page points at the CLI and
+  the settle confirms stay conditional.
+* **Global exposure figures (§6.6).** Confirm whether `/control/identity` (or
+  the peers response) serves the exposure cap and current gross receivables;
+  until then the kernel card omits them.
+* **Receipt value fields (§6.5).** Confirm `premium`/`value`/`value_premium`/
+  `value_to` on transaction reads; the breakdown rows render only what the
+  kernel serves, zero-suppressed.
+* **Payment descriptor and `allowed_input` on `/v1/steps` (§6.3).** Confirm
+  their presence and shape on the running kernel; the completion form falls back
+  to the target action's `input_schema` where `allowed_input` is absent (older
+  kernels), and no step is treated as a payment step without the descriptor.
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;
 `ErrInvalidInput`/`ErrSchemaViolation` → field-level form errors; `ErrInvalidState`;
 `ErrInsufficientFunds` → clear message noting top-ups are out-of-band;
+`peer_unreachable` → the peer was offline, the call refunded, retry later;
+`peer_unfunded` → the serving kernel's exposure cap is exhausted — an operator
+settlement matter, never rendered as the caller's own insufficient funds (§6.6);
 `ErrExecutionFailed`/`ErrTimeout` → "the action failed and your funds were fully
 refunded," with the failure transaction linked when the kernel records one;
 `ErrInternal`. Raw status codes are never shown; diagnostic detail goes to logs
