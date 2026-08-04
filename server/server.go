@@ -236,9 +236,10 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/deposit", s.requireSuperuser(s.postAdminAdjust))
 	mux.HandleFunc("POST /admin/withdraw", s.requireSuperuser(s.postAdminAdjust))
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
+	// The literal /inspect pattern is more specific than /{key}, so it wins; a
+	// peer key is 43 base64url chars and can never collide with it.
+	mux.HandleFunc("GET /admin/peers/inspect", s.requireSuperuser(s.getAdminInspectByKey))
 	mux.HandleFunc("GET /admin/peers/{key}", s.requireSuperuser(s.getAdminInspect))
-	mux.HandleFunc("POST /admin/peers/subscribe", s.requireSuperuser(s.postAdminSubscribe))
-	mux.HandleFunc("POST /admin/peers/unsubscribe", s.requireSuperuser(s.postAdminUnsubscribe))
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/settle", s.requireSuperuser(s.postAdminSettle))

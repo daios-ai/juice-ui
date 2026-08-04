@@ -79,3 +79,26 @@ func TestCommandsJSONValid(t *testing.T) {
 		t.Error("commandsJSON produced an empty registry")
 	}
 }
+
+// The palette follows the surface: there is no subscribe verb to invoke, and the
+// entry that replaces it opens the inspect-by-key form (a whitelisted ?form
+// value, or the anchor would render a dialog that never opens).
+func TestBuildCommandsNoSubscription(t *testing.T) {
+	for _, c := range BuildCommands(true, ThemeList()) {
+		if strings.Contains(strings.ToLower(c.Name), "subscribe") {
+			t.Errorf("palette still offers a subscription verb: %q", c.Name)
+		}
+	}
+	var inspect *Command
+	for i, c := range BuildCommands(true, ThemeList()) {
+		if c.Name == "network inspect" {
+			inspect = &BuildCommands(true, ThemeList())[i]
+		}
+	}
+	if inspect == nil {
+		t.Fatal("superuser palette must offer network inspect")
+	}
+	if !formWhitelist["admin"]["admin-inspect"] {
+		t.Error("the inspect form must be whitelisted, or its ?form anchor opens nothing")
+	}
+}

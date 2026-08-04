@@ -7,7 +7,26 @@
      the deterministic cardArt fallback until then. Takes an Action. */}}
 {{define "_media"}}<span class="media">{{cardArt .ID .OwnerHandle .Name .Kind}}</span>{{end}}
 
+{{/* A DISCOVERED card is the unresolved counterpart of an ordinary one: the
+     kernel has only heard of the action through gossip, so nothing local backs
+     it. It states what is known — the kernel-qualified ref and the description —
+     and nothing more: no price and no reputation (the discovery cache stores
+     neither), no link (the id belongs to the remote kernel), and no run (a spend
+     may never be offered that cannot name its amount). Resolution happens on the
+     first call, after which the kernel shadows this row with the cached proxy. */}}
 {{define "_action_card"}}
+{{if .Discovered}}
+<article class="action-card">
+  <span class="media-link">{{template "_media" .Action}}</span>
+  <div class="card-top">
+    <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</span>
+  </div>
+  <p class="card-desc">
+    <span class="chip tag" title="Discovered through gossip — not resolved on this kernel">known network</span>
+    {{.Action.Description}}
+  </p>
+</article>
+{{else}}
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
@@ -24,6 +43,7 @@
   </p>
   {{template "_stat_strip" (statStrip .Action.Price .Stats false false)}}
 </article>
+{{end}}
 {{end}}
 
 {{/* _stat_strip — THE action stats line (price · success · rating · latency),
@@ -199,19 +219,46 @@
 {{end}}
 
 {{/* _action_stats renders a compact table of a federation kernel's actions
-     (name + description/price/uses/rating). Input: []client.ActionStat. The refs
-     are remote-owned, so they stay plain (no local owner link). */}}
+     (ref + description/price/uses/rating). Input: []client.PeerAction — the
+     signed manifest fields plus that kernel's own earned stats. The refs are
+     remote-owned, so they stay plain (no local owner link): reaching one takes
+     a resolve from its home kernel, never this string. */}}
 {{define "_action_stats"}}
 <div class="table-scroll">
 <table class="stats-table">
   <thead><tr><th>action</th><th class="money">price</th><th class="money">uses</th><th class="money">rating</th></tr></thead>
   <tbody>
   {{range .}}
+  {{$s := .Stats}}
   <tr>
-    <td><span class="ref mono"><span class="owner">{{refOwner .Name}}</span>/{{refName .Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
+    <td><span class="ref mono"><span class="owner">{{.OwnerHandle}}</span>/{{.Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
     <td class="money">{{money .Price}}</td>
+    <td class="money">{{$s.Uses}}</td>
+    <td class="money">{{if gt $s.RatingCount 0}}{{ratingPct $s.RatingEstimate $s.RatingCount}}%{{else}}—{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+{{/* _evidence renders one issuer's block of retained evidence about the
+     inspected kernel. Input: client.IssuerEvidence. Ratings are stated in two
+     counts, never averaged together: trade-backed (the two-kernel receipt link
+     holds) and unverified. Evidence proves attribution, not honesty, so it
+     carries no status colour and never joins an action's own reputation strip. */}}
+{{define "_evidence"}}
+<h3 class="flush">issued by <span class="mono hash">{{truncate 12 .Issuer}}…</span></h3>
+<div class="table-scroll">
+<table class="stats-table">
+  <thead><tr><th>action</th><th class="money">uses</th><th class="money">failures</th><th>ratings</th></tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr>
+    <td><span class="ref mono">{{.Subject}}</span></td>
     <td class="money">{{.Uses}}</td>
-    <td class="money">{{if gt .Uses 0}}{{ratingPct .Rating .Uses}}%{{else}}—{{end}}</td>
+    <td class="money">{{.Failures}}</td>
+    <td class="muted small">{{.RatingCount}} trade-backed{{if gt .RatingCount 0}} · {{ratingPct .RatingMean .RatingCount}}%{{end}} · {{.UnverifiedRating}} unverified</td>
   </tr>
   {{end}}
   </tbody>
@@ -327,14 +374,14 @@
 {{end}}
 {{end}}
 
-{{/* _peers_subscribed — the known-peers table, extracted so an htmx poll on the
-     peers page can refresh last_seen/peer_credit without a reload. Root is the
+{{/* _peers — the known-peers grid, extracted so an htmx poll on the peers page
+     can refresh last_seen/peer_credit without a reload. Root is the
      adminPeersView (so $.CSRFField resolves whether embedded or served standalone
-     via render.Fragment). Each row carries the two orthogonal levers: Unsubscribe
-     (stop consuming the peer's actions) and Suspend (freeze the peer's inbound
-     calls). The Known-network roster is deliberately NOT polled — swapping it
-     would reset its <details> state. */}}
-{{define "_peers_subscribed"}}
+     via render.Fragment). A peer is not something one joins or leaves: the row
+     appears when the kernel first transacts with that key or an operator funds
+     it, so the levers are Settle (the money) and Suspend (the access), never a
+     subscription. */}}
+{{define "_peers"}}
 {{if .Peers}}
 <div class="net-grid">
   {{range .Peers}}
@@ -357,9 +404,6 @@
         <form method="post" action="/admin/peers/settle" data-confirm="Settle with {{.Handle}}? The kernel reports what must be paid; money moves on your rail, not here.">
           {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet" type="submit">Settle</button>
         </form>
-        <form method="post" action="/admin/peers/unsubscribe" data-confirm="Unsubscribe {{.Handle}}? Their cached proxies deactivate here; a call or re-subscribe restores them. Balance and history are preserved.">
-          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet" type="submit">Unsubscribe</button>
-        </form>
         {{if .Suspended}}
         <form method="post" action="/admin/peers/unsuspend">
           {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Unsuspend</button>
@@ -374,7 +418,7 @@
   </div>
   {{end}}
 </div>
-{{else}}<p class="muted">No subscriptions yet. Subscribe to a kernel by its public key, or from the known network below.</p>{{end}}
+{{else}}<p class="muted">No peers yet. Fund one by key, or a first call creates one.</p>{{end}}
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect

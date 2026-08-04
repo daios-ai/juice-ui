@@ -1000,8 +1000,8 @@ func TestPeersPollerAndSuspendedToggle(t *testing.T) {
 		return rec.Body.String()
 	}
 	body := renderPeers(false)
-	if !strings.Contains(body, `id="peers-subscribed"`) || !strings.Contains(body, `hx-get="/admin/peers"`) || !strings.Contains(body, "every 15s") {
-		t.Errorf("peers table must be an htmx-polled fragment: %s", body)
+	if !strings.Contains(body, `id="peers"`) || !strings.Contains(body, `hx-get="/admin/peers"`) || !strings.Contains(body, "every 15s") {
+		t.Errorf("peers grid must be an htmx-polled fragment: %s", body)
 	}
 	if !strings.Contains(body, `href="/admin/peers?all=1"`) || !strings.Contains(body, "Show suspended") {
 		t.Errorf("peers page must offer a Show-suspended toggle: %s", body)
@@ -1012,9 +1012,10 @@ func TestPeersPollerAndSuspendedToggle(t *testing.T) {
 	}
 }
 
-// TestPeerRowOffersUnsubscribeAndSuspend: an active peer offers both Unsubscribe
-// (by handle) and Suspend (by key); a suspended peer is marked and offers Unsuspend.
-func TestPeerRowOffersUnsubscribeAndSuspend(t *testing.T) {
+// TestPeerRowOffersSettleAndSuspend: the two levers that remain on a peer row —
+// Settle (by handle) and Suspend (by key); a suspended peer is marked and offers
+// Unsuspend. There is no unsubscribe: a peer is not something one leaves.
+func TestPeerRowOffersSettleAndSuspend(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
@@ -1035,9 +1036,12 @@ func TestPeerRowOffersUnsubscribeAndSuspend(t *testing.T) {
 	if !strings.Contains(body, ">suspended<") {
 		t.Errorf("suspended peer must be marked: %s", body)
 	}
-	// Unsubscribe posts by handle; suspend/unsuspend post by key.
-	if !strings.Contains(body, `action="/admin/peers/unsubscribe"`) || !strings.Contains(body, `value="@active"`) {
-		t.Errorf("active row must offer Unsubscribe by handle: %s", body)
+	// Settle posts by handle; suspend/unsuspend post by key.
+	if !strings.Contains(body, `action="/admin/peers/settle"`) || !strings.Contains(body, `value="@active"`) {
+		t.Errorf("active row must offer Settle by handle: %s", body)
+	}
+	if strings.Contains(body, "unsubscribe") || strings.Contains(body, "Unsubscribe") {
+		t.Errorf("no peer row may offer an unsubscribe verb: %s", body)
 	}
 	if !strings.Contains(body, `action="/admin/peers/suspend"`) || !strings.Contains(body, `value="KF"`) {
 		t.Errorf("active row must offer Suspend by key: %s", body)
@@ -1068,9 +1072,9 @@ func TestInspectStatusPolls(t *testing.T) {
 	}
 }
 
-// TestInspectOfflineStranger checks two UX fixes: an unreachable non-friend must NOT
-// offer Befriend (the handshake needs to reach the peer), and the offline reason is a
-// short standardized phrase with the raw fed error tucked into a title tooltip.
+// TestInspectOfflineStranger: the offline reason is a short standardized phrase
+// with the raw fed error tucked into a title tooltip, and a kernel we hold no
+// billing row for states no position.
 func TestInspectOfflineStranger(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
@@ -1078,7 +1082,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-		Key: "KDOWN", IsSubscribed: false,
+		Key: "KDOWN",
 		Inspection: client.Inspection{Handle: "", Online: false, Source: "none",
 			Reachability: client.Reachability{Path: "unreachable", Error: "fed: cannot resolve peer 12D3KooW…: routing: not found"}},
 	}}
@@ -1086,8 +1090,8 @@ func TestInspectOfflineStranger(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, ">Subscribe<") {
-		t.Error("an unreachable kernel must not offer Subscribe")
+	if strings.Contains(body, "we owe them") || strings.Contains(body, "owes us") {
+		t.Error("a kernel with no billing row must state no position")
 	}
 	// Standardized short reason; the raw fed error is only in a title tooltip.
 	if !strings.Contains(body, ">unreachable</span>") {
@@ -1300,5 +1304,103 @@ func TestCallFormPayment(t *testing.T) {
 	b2 := rec2.Body.String()
 	if !strings.Contains(b2, "btn-money") || strings.Contains(b2, "Complete ($") {
 		t.Errorf("typed-amount payment must be an unnumbered money button: %s", b2)
+	}
+}
+
+// A DISCOVERED lookup hit is rendered from the lookup row alone: nothing local
+// backs it, so the card states the kernel-qualified ref and the description and
+// stops there — no price, no reputation strip, no link to a local action page,
+// and no run affordance (the local price does not exist until resolution).
+func TestActionCardDiscovered(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := func(v actionCardView) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_action_card", v); err != nil {
+			t.Fatalf("Fragment: %v", err)
+		}
+		return rec.Body.String()
+	}
+	body := card(actionCardView{
+		Discovered: true,
+		Action: client.Action{
+			ID: "REMOTE-ID", Action: "tom@KERNELKEY/greet",
+			Description: "Greets a person by name.",
+		},
+	})
+	if !strings.Contains(body, "known network") {
+		t.Errorf("a discovered card must carry the known-network chip: %s", body)
+	}
+	if !strings.Contains(body, "Greets a person by name.") {
+		t.Errorf("a discovered card must show the description: %s", body)
+	}
+	// The remote id names nothing here, so it must not become a local link.
+	if strings.Contains(body, "/actions/REMOTE-ID") {
+		t.Errorf("a discovered card must not link to a local action page: %s", body)
+	}
+	// No price at all — not even the "free" fallback, which would be a claim.
+	if strings.Contains(body, "free") || strings.Contains(body, `class="price"`) {
+		t.Errorf("a discovered card must state no price: %s", body)
+	}
+	if strings.Contains(body, "stat-strip") {
+		t.Errorf("a discovered card must carry no reputation strip: %s", body)
+	}
+	// The remote owner segment renders unlinked, like every remote ref.
+	if strings.Contains(body, `href="/users/tom@KERNELKEY"`) {
+		t.Errorf("a remote owner must not link to a local owner page: %s", body)
+	}
+	// A resolved proxy is the ordinary case and keeps price, strip, and link —
+	// the two states never coincide, because the kernel shadows the discovery row.
+	proxy := card(actionCardView{Action: client.Action{
+		ID: "LOCAL-ID", Action: "k-abc/tom/greet", Kind: "remote_proxy", Price: 14, Active: true,
+	}})
+	if !strings.Contains(proxy, "/actions/LOCAL-ID") || !strings.Contains(proxy, "stat-strip") {
+		t.Errorf("a resolved proxy card must stay an ordinary card: %s", proxy)
+	}
+	if strings.Contains(proxy, "known network") {
+		t.Errorf("a resolved proxy must not read as discovered: %s", proxy)
+	}
+}
+
+// A cached remote proxy is kernel-managed state: the kernel refuses enable and
+// disable on it, so neither the workshop row nor the action page may offer a
+// lifecycle verb for one. The peer-level lever is suspend, on network.
+func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := client.Action{ID: "P1", Action: "k-abc/tom/greet", Kind: "remote_proxy", Active: true, Price: 14}
+	own := client.Action{ID: "A1", Action: "me/thing", Kind: "wasm", Active: true, Price: 3}
+
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: actionsView{
+		Mine: []actionCardView{{Action: proxy}, {Action: own}}, Superuser: true, Scope: "all",
+	}}
+	if err := r.Render(rec, 200, "workshop", p); err != nil {
+		t.Fatalf("render workshop: %v", err)
+	}
+	body := rec.Body.String()
+	for _, gone := range []string{"/actions/P1/disable", "/actions/P1/enable", "/actions/P1/visibility", "/actions/P1/delete"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("workshop must offer no lifecycle verb on a proxy row: %q in %s", gone, body)
+		}
+	}
+	// The operator's own action keeps its full menu — the rule is about proxies.
+	if !strings.Contains(body, "/actions/A1/disable") {
+		t.Errorf("an ordinary owned action must keep its lifecycle menu: %s", body)
+	}
+
+	rec2 := httptest.NewRecorder()
+	p2 := Page{Handle: "sys", CSRFField: template.HTML("<input>"), Data: actionView{
+		Action: proxy, IsOwner: true, Form: BuildForm(nil),
+	}}
+	if err := r.Render(rec2, 200, "action_detail", p2); err != nil {
+		t.Fatalf("render action_detail: %v", err)
+	}
+	if d := rec2.Body.String(); strings.Contains(d, "/actions/P1/disable") || strings.Contains(d, ">Manage<") {
+		t.Errorf("the action page must withhold Manage for a proxy: %s", d)
 	}
 }

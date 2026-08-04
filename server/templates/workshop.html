@@ -68,7 +68,12 @@
     <td>{{if and .Stats (gt .Stats.Uses 0)}}{{pct .Stats.Successes .Stats.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
     <td>{{if and .Stats (gt .Stats.RatingCount 0)}}{{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}% <span class="muted mono">({{.Stats.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>
     <td class="money">{{if gt .Earned 0}}<span class="sig-credited">+{{money .Earned}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+    {{/* A cached remote proxy has no lifecycle here: the kernel owns its active
+         bit (enable/disable is refused), and the lever over a peer's actions is
+         suspend, on network. The cell stays empty rather than offering verbs the
+         kernel rejects. */}}
     <td>
+      {{if ne $a.Kind "remote_proxy"}}
       <button class="btn-quiet" data-menu="row-{{$a.ID}}" aria-haspopup="menu" aria-label="Manage">⋯</button>
       <div class="menu" id="row-{{$a.ID}}" role="menu" hidden>
         <a class="menu-item" role="menuitem" href="/actions/{{$a.ID}}?form=action-edit">Edit…</a>
@@ -85,6 +90,7 @@
         <div class="menu-divider"></div>
         <form method="post" action="/actions/{{$a.ID}}/delete" data-confirm="Delete {{$a.Ref}}? History is preserved.">{{$.CSRFField}}<button class="menu-item danger" type="submit">Delete…</button></form>
       </div>
+      {{end}}
     </td>
   </tr>
   {{end}}

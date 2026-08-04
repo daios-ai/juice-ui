@@ -2,7 +2,7 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>network</h1>
-  <p class="subtitle">Discover, inspect, and trust kernels. <span class="scope-note">superuser only</span></p>
+  <p class="subtitle">Inspect, fund, and settle kernels. <span class="scope-note">superuser only</span></p>
 </div>
 
 <h2>This kernel</h2>
@@ -26,67 +26,32 @@
 
 <h2>Peers</h2>
 <div class="row control-row">
-  <a class="btn-quiet" href="/admin/peers?form=admin-subscribe" data-modal="form-admin-subscribe">+ subscribe to a kernel</a>
+  <a class="btn-quiet" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
+  <a class="btn-quiet" href="/admin?form=admin-deposit">+ fund a peer by key</a>
   <a class="btn-quiet" href="/admin/peers?form=settle-cash" data-modal="form-settle-cash">+ record a rail payment</a>
   <a class="btn-quiet" href="/admin/transfers">transfer queue</a>
   {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
 </div>
-<div id="peers-subscribed" hx-get="/admin/peers{{if $d.ShowSuspended}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
-{{template "_peers_subscribed" $d}}
+<div id="peers" hx-get="/admin/peers{{if $d.ShowSuspended}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
+{{template "_peers" $d}}
 </div>
 
-<h2>Known network</h2>
-<p class="subtitle">Discovered through gossip — not yet subscribed.</p>
-{{if $d.Roster}}
-<div class="card-list">
-  {{range $d.Roster}}
-  {{$isSub := index $d.SubscribedKeys .PublicKey}}
-  <details class="card roster-kernel">
-    <summary>
-      <span class="mono"><b>{{.Handle}}</b> <span class="hash muted">{{truncate 16 .PublicKey}}…</span></span>
-      {{if $isSub}}<span class="pill status-credited">subscribed</span>{{end}}
-      <span class="cluster roster-actions">
-        <a class="btn small" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{if not $isSub}}
-        <form method="post" action="/admin/peers/subscribe" data-confirm="Subscribe to {{.Handle}}? Bulk-caches their active public catalog — a call already resolves single actions on demand.">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn small" type="submit">Subscribe</button>
-        </form>
-        {{end}}
-      </span>
-    </summary>
-    <div class="stack roster-stats">
-      {{if .Own}}
-      <div>
-        <h3 class="flush">you <span class="muted small">— your earned stats</span></h3>
-        {{template "_action_stats" .Own}}
-      </div>
-      {{end}}
-      {{range .Sources}}
-      <div>
-        <h3 class="flush">{{if .SelfReported}}self-reported <span class="muted small">— the kernel's own manifest</span>{{else}}via <span class="mono hash">{{truncate 12 .IntroducedBy}}…</span> <span class="muted small">— gossiped</span>{{end}}</h3>
-        {{template "_action_stats" .Actions}}
-      </div>
-      {{end}}
-    </div>
-  </details>
-  {{end}}
-</div>
-{{else}}
-<p class="muted">No kernels discovered yet.</p>
-{{end}}
-
-<dialog id="form-admin-subscribe" class="modal-form"{{if eq $d.OpenForm "admin-subscribe"}} open{{end}} aria-label="Subscribe to a kernel">
-  <div class="modal-head"><h2>Subscribe to a kernel</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
+{{/* Inspecting is a pure read of a kernel named by key, so the form is a GET
+     that lands on the canonical inspect URL. It is the successor to the retired
+     subscribe opener: the kernel serves no directory of discovered kernels, so a
+     key learned elsewhere (a discovered lookup result, an operator) needs a way
+     in. */}}
+<dialog id="form-admin-inspect" class="modal-form"{{if eq $d.OpenForm "admin-inspect"}} open{{end}} aria-label="Inspect a kernel by key">
+  <div class="modal-head"><h2>Inspect a kernel by key</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/admin/peers/subscribe">
-      {{.CSRFField}}
+    <form class="stack" method="get" action="/admin/peers/inspect">
       <div class="field">
-        <label for="sub-key">Peer public key</label>
-        <p class="help">The peer's base64url Ed25519 key — its global name. Optional bulk cache warm: a call resolves single actions on demand.</p>
-        <input id="sub-key" name="key" type="text" required>
+        <label for="insp-key">Kernel public key</label>
+        <p class="help">The kernel's base64url Ed25519 key — its global name.</p>
+        <input id="insp-key" name="key" type="text" class="mono" required>
       </div>
       <div class="cluster">
-        <button class="btn" type="submit">Subscribe</button>
+        <button class="btn" type="submit">Inspect</button>
         <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
       </div>
     </form>

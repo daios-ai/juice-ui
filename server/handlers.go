@@ -76,6 +76,11 @@ type actionCardView struct {
 	NeedsConnect bool   // demands a per-caller grant the viewer hasn't connected
 	Earned       int64  // net earned by this action (folded from transactions), workshop table
 	LastFailure  string // reason of the latest failed call, a quiet peek
+	// Discovered marks a lookup hit this kernel has only learned of through
+	// gossip: nothing local backs it, so it carries no price, no stats, and no
+	// run affordance (requirements.md §6.2). Resolution happens on first call,
+	// after which the kernel shadows the discovery row with the cached proxy.
+	Discovered bool
 }
 
 type discoverView struct {
@@ -752,9 +757,15 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Results = catalogAsResults(cat, q)
 		}
-		// Fetch stats (and full action data for partial lookup entries) concurrently.
+		// Fetch stats (and full action data for partial lookup entries)
+		// concurrently. A discovered hit is skipped entirely: its id belongs to
+		// the remote kernel, so both reads would 404, and the card is rendered
+		// from the lookup row alone (requirements.md §6.2).
 		var wg sync.WaitGroup
 		for i := range view.Results {
+			if view.Results[i].Discovered {
+				continue
+			}
 			wg.Add(1)
 			go func(i int, id string) {
 				defer wg.Done()
@@ -770,8 +781,12 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		}
 		wg.Wait()
 		// Flag after the fetches: a partial lookup entry only carries
-		// requires_grant once its full record is in.
+		// requires_grant once its full record is in. A discovered hit has no
+		// local record and no local grant to want.
 		for i := range view.Results {
+			if view.Results[i].Discovered {
+				continue
+			}
 			view.Results[i].NeedsConnect = needsConnect(view.Results[i].Action, granted)
 		}
 		return nil
@@ -1974,7 +1989,7 @@ var formWhitelist = map[string]map[string]bool{
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},
 	"step":          {"step-create": true},
-	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-subscribe": true, "settle-cash": true},
+	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-inspect": true, "settle-cash": true},
 }
 
 // openForm returns the requested ?form value if it is whitelisted for the page
@@ -2114,11 +2129,19 @@ func coerce(typ, val string) (json.RawMessage, error) {
 }
 
 // parseLookup converts a sys/lookup result into partial actionCardViews.
-// Kind is left empty; the goroutine in getBrowse fills it via GetAction.
+// Kind is left empty; the goroutine in getBrowse fills it via GetAction — except
+// for a DISCOVERED hit, which nothing local backs.
+//
+// A discovered hit is a remote action this kernel has only heard of through
+// gossip: the ref is kernel-qualified ("owner@<kernel-key>/name") and ActionID is
+// the id on THAT kernel, so every local read of it would 404. The kernel-computed
+// `action` field is the only reliable ref here — a discovery row carries no
+// owner_handle/name pair — and its shape is what marks the hit as discovered.
 func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {
 		Results []struct {
 			ActionID    string  `json:"action_id"`
+			Action      string  `json:"action"`
 			Name        string  `json:"name"`
 			OwnerHandle string  `json:"owner_handle"`
 			Description string  `json:"description"`
@@ -2128,12 +2151,16 @@ func parseLookup(result json.RawMessage) []actionCardView {
 	_ = json.Unmarshal(result, &lr)
 	out := make([]actionCardView, 0, len(lr.Results))
 	for _, r := range lr.Results {
-		out = append(out, actionCardView{Action: client.Action{
-			ID:          r.ActionID,
-			Name:        r.Name,
-			OwnerHandle: r.OwnerHandle,
-			Description: r.Description,
-		}})
+		out = append(out, actionCardView{
+			Action: client.Action{
+				ID:          r.ActionID,
+				Action:      r.Action,
+				Name:        r.Name,
+				OwnerHandle: r.OwnerHandle,
+				Description: r.Description,
+			},
+			Discovered: refIsRemote(r.Action),
+		})
 	}
 	return out
 }

@@ -42,5 +42,20 @@ each carry an image, as first-class metadata analogous to `description`
   outside it; the payment sheet keys on kernel fields and never places the
   image near the confirm.
 * Operational note: images raise federation moderation stakes (an operator
-  imports pictures, not just strings); suspension and unfriending remain the
-  enforcement tools.
+  imports pictures, not just strings); suspension remains the enforcement tool.
+
+## Unsurfaced inspection fields (peer users, peer-held steps)
+
+`GET /control/peers/inspect?key=` carries two lists the UI decodes past but does
+not yet render (verified live 2026-08-04):
+
+* `users` — the kernel's first-party principals (`{user_id, handle}`), the same
+  set `sys/user-lookup` ranks. A people-search leg in browse, or a recipient
+  picker for a cross-kernel transfer, would consume this; neither exists yet, and
+  neither is required by `requirements.md`.
+* `steps` — the steps that peer holds whose required caller is *this* kernel.
+  Completing one is `step complete <id> --peer <key>`: a superuser act, because
+  the request is signed with this kernel's own federation identity and so acts as
+  the whole kernel. That makes it a distinct feature from the ordinary inbox (the
+  completer is the operator, not a user), so it wants its own surface and its own
+  §6.6 clause before anything is built.

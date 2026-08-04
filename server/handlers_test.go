@@ -164,30 +164,32 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"direction":"debit","amount":10,"operator_handle":"sys","target_handle":"alice"}`))
 	})
 	mux.HandleFunc("GET /control/peers", func(w http.ResponseWriter, r *http.Request) {
-		// With gossip=1, return a friend plus a known-network roster (verified shape).
-		if r.URL.Query().Get("gossip") == "1" {
-			// Roster carries kernelc (not a friend) and peerb (already a friend).
-			w.Write([]byte(`{"peers":[{"handle":"peerb","public_key":"KEYB","available":50,"locked":0},
-			  {"handle":"debtor","public_key":"KEYD","available":-320,"locked":0,"settlement_due":true}],
-			 "roster":[{"public_key":"KEYC","handle":"kernelc","own":[{"action_id":"a1","name":"sys/time","description":"","price":0,"uses":3,"rating":0.8333333333333334}],
-			  "sources":[{"introduced_by":"KEYC","self_reported":true,"actions":[{"action_id":"a2","name":"sys/make","description":"synth","price":20,"uses":0,"rating":0}]},
-			             {"introduced_by":"KEYB","self_reported":false,"actions":[{"action_id":"a1","name":"sys/time","description":"","price":0,"uses":1,"rating":0}]}]},
-			           {"public_key":"KEYB","handle":"peerb","sources":[{"introduced_by":"KEYB","self_reported":true,"actions":[]}]}]}`))
-			return
+		// No roster: the kernel serves no directory of discovered kernels (verified
+		// live 2026-08-04 — it went with subscription). Peers only, and a peer's
+		// sync-cache fields are omitted until the first successful pull. A suspended
+		// peer appears only under ?all=1.
+		rows := `{"handle":"peerb","public_key":"KEYB","available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z"},
+		  {"handle":"debtor","public_key":"KEYD","available":-320,"locked":0,"settlement_due":true}`
+		if r.URL.Query().Get("all") == "1" {
+			rows += `,{"handle":"frozen","public_key":"KEYS","available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
-		w.Write([]byte(`{"peers":[{"handle":"peerb","public_key":"KEYB","available":50,"locked":0}]}`))
+		w.Write([]byte(`{"peers":[` + rows + `]}`))
 	})
 	mux.HandleFunc("GET /control/peers/inspect", func(w http.ResponseWriter, r *http.Request) {
 		// online/source are TOP-LEVEL in the real response; reachability holds only
-		// the transport diagnostics (path/rtt/protocols/error). Verified live.
+		// the transport diagnostics (path/rtt/protocols/error). `actions` are signed
+		// manifests and `evidence` replaced the old transacted-peers ("friends")
+		// list. Shapes captured live 2026-08-04.
 		w.Write([]byte(`{"handle":"kernelc","public_key":"` + r.URL.Query().Get("key") + `",
-		 "actions":[{"action_id":"a2","name":"sys/make","description":"synth","price":20,"uses":0,"rating":0}],
-		 "friends":[{"handle":"peerb","public_key":"KEYB"}],
+		 "actions":[{"action_id":"a2","owner_id":"u1","owner_handle":"maker","name":"synth/make","description":"synth","price":20,"kind":"wasm",
+		   "stats":{"uses":6,"successes":6,"failures":0,"rating_count":2,"rating_estimate":1,"latency_estimate":0.5}}],
+		 "evidence":[{"issuer_public_key":"KEYC","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
+		    "avg_latency_ms":500,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
+		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
+		    "avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 		 "online":true,"source":"live",
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
-	mux.HandleFunc("POST /control/peers/friend", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("POST /control/peers/unfriend", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /control/identity", func(w http.ResponseWriter, r *http.Request) {
 		// v0.12: identity carries the global exposure figures (verified live).
 		w.Write([]byte(`{"handle":"kernel","public_key":"KEY","addrs":[],

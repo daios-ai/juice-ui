@@ -76,41 +76,49 @@ func (p Peer) Position() int64 { return p.Available }
 // (verified live 2026-07-19), so a non-empty string means suspended.
 func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
 
-// Peers is the /control/peers response: known peers plus (with gossip) the
-// known-network roster.
+// Peers is the /control/peers response. There is no known-network roster: the
+// kernel serves no directory of discovered kernels (verified live 2026-08-04 —
+// the roster, its introducer attribution, and the --gossip flag were removed
+// with subscription). Discovered kernels surface only through sys/lookup.
 type Peers struct {
-	Peers  []Peer             `json:"peers"`
-	Roster []DiscoveredKernel `json:"roster,omitempty"`
+	Peers []Peer `json:"peers"`
 }
 
-// ActionStat is one action's advertised/earned figures inside a roster or
-// inspection (verified live: action_id/name/description/price/uses/rating).
-type ActionStat struct {
-	ActionID    string  `json:"action_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Price       int64   `json:"price"`
-	Uses        int64   `json:"uses"`
-	Rating      float64 `json:"rating"` // 0–1 mean rating estimate (rendered as a percentage)
+// PeerAction is one action a peer serves, as carried by an inspection: the
+// signed manifest fields plus the peer's own earned Stats for it. Descriptions
+// and schemas are the canonical interface an importing kernel would cache.
+type PeerAction struct {
+	ActionID    string `json:"action_id"`
+	OwnerHandle string `json:"owner_handle"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Price       int64  `json:"price"`
+	Kind        string `json:"kind"`
+	Stats       Stats  `json:"stats"`
 }
 
-// RosterSource is one attribution for a discovered kernel: the introducer's key,
-// whether it is the kernel's own manifest claim (self_reported) or hearsay via
-// the introducer, and the actions seen from that source.
-type RosterSource struct {
-	IntroducedBy string       `json:"introduced_by"`
-	SelfReported bool         `json:"self_reported"`
-	Actions      []ActionStat `json:"actions"`
-}
+// Ref is the action's reference as this kernel would address it: owner/name in
+// the serving kernel's own namespace. It is display-only — reaching the action
+// requires resolving it from that kernel (§13), never this string alone.
+func (a PeerAction) Ref() string { return a.OwnerHandle + "/" + a.Name }
 
-// DiscoveredKernel is one entry in the gossip roster: a kernel learned about via
-// the DHT directory or a friend's gossip. Own is this operator's first-party
-// earned stats for it (the "you" group), distinct from gossiped opinion.
-type DiscoveredKernel struct {
-	PublicKey string         `json:"public_key"`
-	Handle    string         `json:"handle"`
-	Own       []ActionStat   `json:"own,omitempty"`
-	Sources   []RosterSource `json:"sources"`
+// Evidence is one derived metric row from the local evidence cache: what a
+// single issuer's signed receipts say about one action of the inspected kernel
+// (juicedocs §13). RatingCount/RatingMean count only TRADE-BACKED ratings — the
+// two-kernel receipt link holds — while UnverifiedRatings counts those retained
+// without that link. Equivocating ratings are excluded by the kernel. This
+// proves attribution, never honesty, so it is displayed as evidence beside its
+// issuer and never folded into an action's first-party Stats.
+type Evidence struct {
+	IssuerPublicKey  string  `json:"issuer_public_key"`
+	SubjectActionID  string  `json:"subject_action_id"`
+	Uses             int64   `json:"uses"`
+	Successes        int64   `json:"successes"`
+	Failures         int64   `json:"failures"`
+	AvgLatencyMillis int64   `json:"avg_latency_ms"`
+	RatingCount      int64   `json:"rating_count"`
+	RatingMean       float64 `json:"rating_mean"`
+	UnverifiedRating int64   `json:"unverified_ratings"`
 }
 
 // Reachability holds the transport diagnostics only. Online/Source are NOT here —
@@ -123,21 +131,64 @@ type Reachability struct {
 }
 
 // Inspection is GET /control/peers/inspect?key= — a remote kernel's identity, its
-// About (the peer's sys description), public actions (each with a Description),
-// transacted peers, and reachability. Online and Source are top-level fields
-// (verified live): Online is true only when the live probe reached the peer; Source
-// is "live" | "local" (last-known, online=false) | "none". The transacted-peers
-// field is still wire-named "friends" (verified live 2026-07-19) despite the v0.9
-// "peers" terminology.
+// About (the peer's sys description), the public actions it serves, and the
+// evidence this kernel retains about it, plus reachability. Online and Source are
+// top-level fields (verified live): Online is true only when the live probe reached
+// the peer; Source is "live" | "local" (last-known, online=false) | "none". The
+// transacted-peers list ("friends") is GONE as of v0.12 — endorsement by
+// association is replaced by signed, per-issuer Evidence (verified live
+// 2026-08-04). The wire also carries first-party `users` and the `steps` this peer
+// holds for us; neither has a UI surface yet (ROADMAP).
 type Inspection struct {
 	Handle       string       `json:"handle"`
 	PublicKey    string       `json:"public_key"`
 	About        string       `json:"about"`
-	Actions      []ActionStat `json:"actions"`
-	Peers        []Peer       `json:"friends"`
+	Actions      []PeerAction `json:"actions"`
+	Evidence     []Evidence   `json:"evidence"`
 	Online       bool         `json:"online"`
 	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
 	Reachability Reachability `json:"reachability"`
+}
+
+// EvidenceByIssuer groups the inspection's evidence by issuing kernel, in wire
+// order, and resolves each row's subject action to a display name from the
+// inspection's own manifest list (evidence carries only the action id). A
+// subject absent from that list — retained evidence about an action the kernel
+// no longer serves — keeps its raw id, which is still a truthful label.
+func (i Inspection) EvidenceByIssuer() []IssuerEvidence {
+	names := make(map[string]string, len(i.Actions))
+	for _, a := range i.Actions {
+		names[a.ActionID] = a.Ref()
+	}
+	var out []IssuerEvidence
+	at := map[string]int{}
+	for _, e := range i.Evidence {
+		idx, seen := at[e.IssuerPublicKey]
+		if !seen {
+			out = append(out, IssuerEvidence{Issuer: e.IssuerPublicKey})
+			idx = len(out) - 1
+			at[e.IssuerPublicKey] = idx
+		}
+		subject := names[e.SubjectActionID]
+		if subject == "" {
+			subject = e.SubjectActionID
+		}
+		out[idx].Rows = append(out[idx].Rows, EvidenceRow{Subject: subject, Evidence: e})
+	}
+	return out
+}
+
+// IssuerEvidence is one issuer's block of evidence rows about the inspected
+// kernel; EvidenceRow pairs a row with its resolved subject-action label.
+type IssuerEvidence struct {
+	Issuer string
+	Rows   []EvidenceRow
+}
+
+// EvidenceRow is one evidence record with its subject named for display.
+type EvidenceRow struct {
+	Subject string
+	Evidence
 }
 
 // Identity is this kernel's own federation identity plus its global exposure
@@ -207,7 +258,11 @@ func (c *Client) AdminRename(ctx context.Context, token, handle, newHandle strin
 	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/rename", token, body, nil)
 }
 
-// AdminDeposit credits a user's balance (POST /control/deposit).
+// AdminDeposit credits a user's balance (POST /control/deposit). The handle may
+// be a peer's base64url public key: on a kernel that does not yet know that key,
+// the deposit provisions the peer's billing account and funds it in one gesture
+// (verified live 2026-08-04) — this is how a peer is brought into being now that
+// there is no subscription.
 func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
 	return c.adjust(ctx, token, "/control/deposit", handle, amount, reason, externalKey)
 }
@@ -230,21 +285,13 @@ func (c *Client) adjust(ctx context.Context, token, path, handle string, amount 
 	return a, err
 }
 
-// AdminListPeers returns known peers, optionally with the gossip roster (gossip)
-// and optionally including suspended peers (all) — GET
-// /control/peers[?gossip=1][&all=1]. The kernel requires the literal value "1"
-// ("true" is read as false), so each flag is emitted as "1" or omitted.
-func (c *Client) AdminListPeers(ctx context.Context, token string, gossip, all bool) (Peers, error) {
-	q := url.Values{}
-	if gossip {
-		q.Set("gossip", "1")
-	}
-	if all {
-		q.Set("all", "1")
-	}
+// AdminListPeers returns known peers, optionally including suspended ones —
+// GET /control/peers[?all=1]. The kernel requires the literal value "1" ("true"
+// is read as false), so the flag is emitted as "1" or omitted.
+func (c *Client) AdminListPeers(ctx context.Context, token string, all bool) (Peers, error) {
 	path := "/control/peers"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
+	if all {
+		path += "?all=1"
 	}
 	var p Peers
 	err := c.do(ctx, http.MethodGet, path, token, nil, &p)
@@ -258,19 +305,11 @@ func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, err
 	return id, err
 }
 
-// AdminSubscribe bulk-caches a kernel's active public actions as local proxy
-// rows (POST /control/peers/subscribe). Under v0.12 this is an OPTIONAL warm:
-// a remote action also resolves and caches on first call (juicedocs §13
-// "resolve, don't subscribe").
-func (c *Client) AdminSubscribe(ctx context.Context, token, key string) error {
-	return c.do(ctx, http.MethodPost, "/control/peers/subscribe", token, map[string]string{"key": key}, nil)
-}
-
-// AdminUnsubscribe stops consuming a peer by handle or key (POST
-// /control/peers/unsubscribe), deactivating its imported proxies here.
-func (c *Client) AdminUnsubscribe(ctx context.Context, token, handleOrKey string) error {
-	return c.do(ctx, http.MethodPost, "/control/peers/unsubscribe", token, map[string]string{"handle": handleOrKey}, nil)
-}
+// There is no subscribe/unsubscribe: consuming a peer's actions needs no
+// relationship, and a proxy row is filled by resolve-on-use alone (juicedocs
+// §13). A peer account is provisioned by its first signed call or by
+// AdminDeposit addressed to its public key; the durable lever is suspend, and
+// an uncalled peer lapses through the kernel's retention.
 
 // AdminSuspendPeer freezes a peer's inbound calls (POST /control/users/{key}/suspend).
 // The moderation route is unified with users (v0.9): the three account forms are

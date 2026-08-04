@@ -120,7 +120,11 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	}
 }
 
-func TestAdminPeersRendersGossipRoster(t *testing.T) {
+// The network page is peers plus the two by-key entries. There is no
+// subscription and no known-network roster: a peer arises from use or from a
+// deposit addressed to its key, and discovered kernels reach the operator only
+// through lookup results.
+func TestAdminPeersHasNoSubscriptionOrRoster(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -128,42 +132,58 @@ func TestAdminPeersRendersGossipRoster(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	// Friend section.
 	if !strings.Contains(body, "peerb") {
-		t.Error("peers page must list the friend peerb")
+		t.Error("peers page must list the peer peerb")
 	}
-	// Known-network roster: the discovered kernel, the "you" (own) group, the
-	// self-reported group, and the via-introducer group.
-	for _, want := range []string{"kernelc", "Known network", "you", "self-reported", "via"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("roster missing %q", want)
+	for _, gone := range []string{"Subscribe", "Unsubscribe", "subscribed", "Known network", "self-reported"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("retired subscription/roster vocabulary still rendered: %q", gone)
 		}
 	}
-	// A non-subscribed roster kernel offers Inspect + Subscribe (prefilled with its key).
-	if !strings.Contains(body, "/admin/peers/KEYC") {
-		t.Error("roster kernel must link to its inspect page")
+	if strings.Contains(body, "/admin/peers/subscribe") || strings.Contains(body, "/admin/peers/unsubscribe") {
+		t.Error("subscription routes must not be referenced")
 	}
-	if !strings.Contains(body, `value="KEYC"`) {
-		t.Error("non-subscribed roster kernel must offer Subscribe prefilled with its key")
+	// The two by-key entries that replace it: inspect (a pure read, so a GET) and
+	// funding, which reuses the admin deposit form because a key is a valid handle.
+	if !strings.Contains(body, `action="/admin/peers/inspect"`) || !strings.Contains(body, `method="get"`) {
+		t.Error("peers page must offer inspect-a-kernel-by-key as a GET form")
 	}
-	// An already-subscribed roster kernel (peerb/KEYB) must NOT offer Subscribe in
-	// the known-network roster (its Subscribe-confirm must be absent), and should be
-	// marked as subscribed instead. (KEYB still appears in the subscriptions table's
-	// own unsubscribe/suspend forms, so we key off the roster's confirm text.)
-	if strings.Contains(body, "Subscribe to peerb") {
-		t.Error("a roster kernel we already subscribe to must not offer Subscribe")
+	if !strings.Contains(body, "/admin?form=admin-deposit") {
+		t.Error("peers page must link the deposit form as the fund-a-peer entry")
 	}
-	if !strings.Contains(body, ">subscribed</span>") {
-		t.Error("an already-subscribed roster kernel must be marked subscribed")
+	// A peer row keeps exactly the two levers that remain.
+	for _, want := range []string{"/admin/peers/settle", "/admin/peers/suspend"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("peer row missing %q", want)
+		}
 	}
-	// Stats are collapsed into <details> (name-only by default).
-	if !strings.Contains(body, `class="card roster-kernel"`) || !strings.Contains(body, "<summary>") {
-		t.Error("roster kernels must be collapsible <details> rows")
+}
+
+// Inspecting by key redirects to the canonical inspect URL; an empty key is a
+// flash, not a 404 page.
+func TestAdminInspectByKeyRedirects(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	resp, err := cl.Get(srv.URL + "/admin/peers/inspect?key=KEYC")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The kernel sends `rating` as a 0–1 float; it must decode and render as a
-	// rounded percentage (regression: it was int64 and 400'd the whole page).
-	if !strings.Contains(body, "83%") {
-		t.Errorf("fractional roster rating must render as a percentage: %s", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/peers/KEYC" {
+		t.Errorf("inspect-by-key = %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp2, err := cl.Get(srv.URL + "/admin/peers/inspect?key=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if loc := resp2.Header.Get("Location"); loc != "/admin/peers" {
+		t.Errorf("empty key must return to the peers page, got %q", loc)
 	}
 }
 
@@ -255,9 +275,9 @@ func TestAdminInspectRenders(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
-	// action ref renders through _ref (owner segment in its own span); the transport
-	// path (direct) is folded into the single online status line.
-	for _, want := range []string{"kernelc", "direct", `class="owner">sys`} {
+	// The manifest's owner segment renders emphasized, as a ref does everywhere;
+	// the transport path (direct) is folded into the single online status line.
+	for _, want := range []string{"kernelc", "direct", `class="owner">maker`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inspect page missing %q", want)
 		}
@@ -274,35 +294,60 @@ func TestAdminInspectRenders(t *testing.T) {
 	if strings.Contains(body, "Reachability</dt>") {
 		t.Error("the separate Reachability row should be folded into Status")
 	}
-	// A stranger (KEYC is not subscribed) offers Subscribe and carries no subscribed badge.
-	if !strings.Contains(body, `action="/admin/peers/subscribe"`) || !strings.Contains(body, ">Subscribe<") {
-		t.Error("a non-subscribed inspect must offer Subscribe")
+	// Evidence replaces the old transacted-peers list: grouped by issuer, with the
+	// subject named from the manifest list and the two rating counts stated apart.
+	if !strings.Contains(body, "Evidence") || strings.Contains(body, "Transacted peers") {
+		t.Error("inspect must render Evidence, not the retired transacted-peers list")
 	}
-	if strings.Contains(body, ">subscribed</span>") {
-		t.Error("a non-subscribed peer must not show the subscribed badge")
+	for _, want := range []string{"issued by", "maker/synth/make", "trade-backed", "unverified"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("evidence block missing %q", want)
+		}
+	}
+	// Two issuers about the same action are two blocks, never one merged score.
+	if n := strings.Count(body, "issued by"); n != 2 {
+		t.Errorf("evidence must group per issuer, got %d blocks", n)
+	}
+	// KEYC is not a peer of ours, so there is no position to state.
+	if strings.Contains(body, "owes us") || strings.Contains(body, "we owe them") {
+		t.Error("a kernel we hold no billing row for must show no position")
 	}
 }
 
-// TestAdminInspectSubscribedShowsBadgeAndUnsubscribe checks the relationship UI: an
-// already-subscribed kernel shows the subscribed badge in the header and offers the
-// symmetric Unsubscribe action (not Subscribe).
-func TestAdminInspectSubscribedShowsBadgeAndUnsubscribe(t *testing.T) {
+// A kernel we have transacted with shows the bilateral position in place of the
+// retired membership badge — the honest fact, since there is nothing to join.
+func TestAdminInspectShowsPosition(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	// KEYB is a peer in the fake /control/peers, so IsSubscribed is true.
+	// KEYB is a peer with available=50 in the fake /control/peers.
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
-	if !strings.Contains(body, ">subscribed</span>") {
-		t.Error("a subscribed kernel must show the subscribed badge (in the header)")
+	if !strings.Contains(body, "we owe them") {
+		t.Errorf("a peer's inspect must state the bilateral position: %s", body)
 	}
-	if !strings.Contains(body, `action="/admin/peers/unsubscribe"`) || !strings.Contains(body, ">Unsubscribe<") {
-		t.Error("a subscribed kernel must offer the symmetric Unsubscribe action")
+	for _, gone := range []string{">Subscribe<", ">Unsubscribe<", ">subscribed</span>"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("retired affordance still rendered: %q", gone)
+		}
 	}
-	if strings.Contains(body, ">Subscribe<") {
-		t.Error("a subscribed peer must not offer Subscribe")
+}
+
+// A suspended peer still holds a position, and this is the page an operator reads
+// before unsuspending — so the peer lookup behind it must include suspended rows.
+func TestAdminInspectSuspendedPeerShowsPosition(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	// KEYS appears only under ?all=1 in the fake kernel.
+	body := getBody(t, cl, srv.URL+"/admin/peers/KEYS")
+	if !strings.Contains(body, "owes us") {
+		t.Errorf("a suspended peer's position must still show: %s", body)
 	}
 }
 
@@ -470,5 +515,21 @@ func TestAdminTransfersHiddenFromNonSuperuser(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("non-superuser must get 404, got %d", resp.StatusCode)
+	}
+}
+
+// The peers page sends the operator to the deposit form to fund a peer, so that
+// form must accept a key — the kernel disambiguates handle / key / id by shape,
+// and a deposit to an unknown key provisions the peer account.
+func TestDepositFormAcceptsPeerKey(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	body := getBody(t, cl, srv.URL+"/admin")
+	if !strings.Contains(body, "handle or peer key") {
+		t.Errorf("the deposit form must say it takes a key: %s", body)
 	}
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"html/template"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 // requireSuperuser (@sys), and the kernel independently rejects a non-superuser
 // bearer with 403 — so a stale UI check can never authorize a real admin action.
 // The admin surface covers the operator verbs no ordinary user performs: money
-// (deposit/withdraw), access (suspend), and federation trust (friend/peers).
+// (deposit/withdraw), access (suspend), and federation trust (peers, settlement).
 
 type adminView struct {
 	Users    []client.AdminUser
@@ -27,19 +28,21 @@ type adminUserView struct {
 }
 
 type adminPeersView struct {
-	Identity       client.Identity
-	Peers          []client.Peer
-	Roster         []client.DiscoveredKernel
-	SubscribedKeys map[string]bool // public keys we already subscribe to (hide Subscribe for these)
-	ShowSuspended  bool            // ?all=1 — peers list includes suspended peers
-	CSRFField      template.HTML   // carried on the view so the polled fragment's forms keep their token
-	OpenForm       string
+	Identity      client.Identity
+	Peers         []client.Peer
+	ShowSuspended bool          // ?all=1 — peers list includes suspended peers
+	CSRFField     template.HTML // carried on the view so the polled fragment's forms keep their token
+	OpenForm      string
 }
 
+// adminInspectView carries the inspected kernel plus PeerRow — this kernel's own
+// billing row for it, when one exists. A peer we have transacted with is not a
+// membership state (there is no subscription); the honest thing to show is the
+// bilateral position, so the row itself is carried rather than a boolean.
 type adminInspectView struct {
-	Key          string
-	Inspection   client.Inspection
-	IsSubscribed bool
+	Key        string
+	Inspection client.Inspection
+	PeerRow    *client.Peer
 }
 
 func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
@@ -143,33 +146,29 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
 			view.Identity = id
 		}
-		// gossip roster included; all=showSuspended also lists suspended peers.
-		p, e := s.client.AdminListPeers(ctx, tok, true, showSuspended)
+		// all=showSuspended also lists suspended peers.
+		p, e := s.client.AdminListPeers(ctx, tok, showSuspended)
 		if e != nil {
 			return e
 		}
 		view.Peers = p.Peers
-		view.Roster = p.Roster
-		view.SubscribedKeys = make(map[string]bool, len(p.Peers))
-		for _, peer := range p.Peers {
-			view.SubscribedKeys[peer.PublicKey] = true
-		}
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
 		return
 	}
-	// An htmx poll refreshes just the peers table (last_seen/peer_credit move);
-	// the roster is left static so its <details> state survives.
+	// An htmx poll refreshes just the peers grid (last_seen/peer_credit move).
 	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_peers_subscribed", view)
+		_ = s.render.Fragment(w, http.StatusOK, "_peers", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "admin_peers", "Peers", view)
 }
 
-// getAdminInspect renders a remote kernel's identity, reachability, public
-// actions (with descriptions), and transacted peers (admin inspect <key>).
+// getAdminInspect renders a remote kernel's identity, reachability, the public
+// actions it serves, and the evidence retained about it (admin inspect <key>).
+// It is the only window onto a kernel this one has not transacted with, since
+// the kernel serves no known-network roster.
 func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx := r.Context()
@@ -180,11 +179,14 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Inspection = insp
-		// A peer we already subscribe to shows differently (no Subscribe prompt).
-		if peers, e := s.client.AdminListPeers(ctx, tok, false, false); e == nil {
-			for _, p := range peers.Peers {
+		// Carry our billing row for this kernel, when there is one, so the page
+		// can state the bilateral position. Suspended peers are included: a
+		// frozen peer still holds a position, and this is the page an operator
+		// reads before unsuspending.
+		if peers, e := s.client.AdminListPeers(ctx, tok, true); e == nil {
+			for i, p := range peers.Peers {
 				if p.PublicKey == key {
-					view.IsSubscribed = true
+					view.PeerRow = &peers.Peers[i]
 				}
 			}
 		}
@@ -203,26 +205,18 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "admin_inspect", "Inspect", view)
 }
 
-func (s *Server) postAdminSubscribe(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	key := strings.TrimSpace(r.FormValue("key"))
+// getAdminInspectByKey turns a typed public key into the canonical inspect URL.
+// Inspecting is a pure read, so this stays a GET: the form names the key, and
+// the redirect gives the page one address to bookmark and poll. It is the
+// successor entry to the retired subscribe opener — a key learned anywhere (a
+// discovered lookup result, an operator) still reaches the inspect view.
+func (s *Server) getAdminInspectByKey(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
-		s.flashRedirect(w, r, "/admin/peers", "error", "A peer public key is required.")
+		s.flashRedirect(w, r, "/admin/peers", "error", "A kernel public key is required.")
 		return
 	}
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminSubscribe(ctx, tok, key) })
-	s.flashResult(w, r, err, "/admin/peers", "Subscribed — actions imported.")
-}
-
-func (s *Server) postAdminUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	peer := strings.TrimSpace(r.FormValue("peer"))
-	if peer == "" {
-		s.flashRedirect(w, r, "/admin/peers", "error", "A peer handle or key is required.")
-		return
-	}
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnsubscribe(ctx, tok, peer) })
-	s.flashResult(w, r, err, "/admin/peers", "Unsubscribed "+peer+" — proxies deactivated; history preserved.")
+	http.Redirect(w, r, "/admin/peers/"+url.PathEscape(key), http.StatusSeeOther)
 }
 
 // postAdminPeerSuspend freezes or unfreezes a peer by key. The path's last

@@ -49,7 +49,7 @@ func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 			Command{Name: "admin deposit", Hint: "Credit a user's balance", Kind: "form", Href: "/admin?form=admin-deposit"},
 			Command{Name: "admin withdraw", Hint: "Debit a user's balance", Kind: "form", Href: "/admin?form=admin-withdraw"},
 			Command{Name: "network", Hint: "Federation peers and this kernel's identity", Kind: "nav", Href: "/admin/peers"},
-			Command{Name: "network subscribe", Hint: "Subscribe to a kernel by key", Kind: "form", Href: "/admin/peers?form=admin-subscribe"},
+			Command{Name: "network inspect", Hint: "Inspect a kernel by key", Kind: "form", Href: "/admin/peers?form=admin-inspect"},
 		)
 	}
 	for _, t := range themes {

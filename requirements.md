@@ -166,8 +166,8 @@ detectable.
 
 * **Admin / supervision (superuser only):** the `admin` group, visible only to
   `sys`, covers user list/show, suspend/unsuspend, credit deposits and
-  withdrawals, federation trust (peers, subscribe as bulk cache warm,
-  suspend/unsuspend, this kernel's identity), operator settlement (§6.6,
+  withdrawals, federation trust (peers — provisioned by use or by deposit-by-key,
+  inspect, suspend/unsuspend, this kernel's identity), operator settlement (§6.6,
   Conditional on the HTTP route), and the value-transfer queue
   (`GET /control/transfers`, §6.6). The kernel serves these over HTTP on
   `/control/*`, gated by an `IsSuperuser` check on the `sys` bearer (API.md
@@ -189,6 +189,11 @@ detectable.
   credits. Peer accounts differ: a peer's balance is a bilateral position that
   may go negative under the kernel's global exposure cap, and settling it is an
   operator act (§6.6) — never a user-facing top-up.
+* A **discovered** remote action (§6.2) cannot be run from the UI. Resolution —
+  which is what fixes the local price — happens only as a side effect of the
+  first call, so the first call must be made where a price need not be stated in
+  advance (CLI or an agent). Thereafter the cached proxy is an ordinary priced
+  card. This lifts if the kernel ever serves a resolving read.
 
 ## 4. API contract the UI must honor
 
@@ -306,6 +311,21 @@ detectable.
   counterparty content: kernel-captured chrome (ref, price, reputation) MUST
   render **outside** the media box (§8).
 * Price MUST appear on each card. Sort and filter by price MUST be available.
+* **Discovered results.** `sys/lookup` fuses the gossip discovery cache for an
+  authenticated local caller, so results MAY name a remote action this kernel has
+  not resolved: the ref is kernel-qualified (`owner@<kernel-key>/name`) and the
+  `action_id` is the **remote** id, which resolves to nothing locally. Such a card
+  MUST be rendered from the lookup row alone — the UI MUST NOT attempt the local
+  action or stats reads that back an ordinary card — and MUST show the
+  kernel-qualified ref (owner segment unlinked, §6.2 refs), the description, and a
+  quiet chip marking it as discovered, distinct from the remote-proxy chip. It MUST
+  NOT show a price or a reputation strip (the discovery cache stores neither) and
+  MUST NOT offer a run affordance: the local price exists only after resolution, and
+  no spend may be offered that cannot name its amount (§8). Resolution is a side
+  effect of the first call, so a discovered card is a transient state — once a proxy
+  is cached the kernel shadows the discovery row and the action appears as an
+  ordinary priced card. *Known limitation (§3.3):* first contact therefore happens
+  outside the UI (CLI or an agent) until the kernel serves a resolving read.
 * Catalog browse (`GET /v1/actions`, owner/name filters) MUST be available as the
   secondary path and the per-owner listing.
 * On `ErrInvalidState` from `sys/lookup`, the omnibox MUST fall back to catalog
@@ -539,9 +559,35 @@ queue.
   never authority — crossing the trigger stops nothing). *Conditional:* where
   the kernel serves its global exposure figures (cap and current gross
   receivables), the kernel card states them as evidence.
-* **Subscribe is an optional bulk cache warm**, not a prerequisite: a remote
-  action resolves on first call. The subscribe affordance and its copy MUST say
-  so; unsubscribe deactivates the cached proxies and preserves history.
+* **There is no subscription.** A peer row comes into being by use — a first
+  inbound call, or an outbound call that resolves and caches a proxy — or by
+  `deposit` addressed to a peer's public key, which provisions and funds the
+  account in one gesture (peering is handshake-free). The page therefore offers
+  **no subscribe or unsubscribe affordance**: the durable lever is suspend, and a
+  peer no longer called lapses through the kernel's retention. The deposit form
+  MUST accept a public key wherever it accepts a handle (the three account forms
+  are disjoint, §5), and the peers page MUST link it as the funding entry.
+* **Discovery is not a roster.** The kernel serves no known-network directory
+  (verified live: `/control/peers` returns peers only, and the gossip roster,
+  its introducer attribution, and the `--gossip` flag are gone). Discovered
+  kernels surface only through `sys/lookup` results (§6.2). The page MUST keep an
+  **inspect a kernel by key** entry so a key learned anywhere still reaches the
+  inspect view, which is now the sole window onto a kernel this one has not
+  transacted with.
+* **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
+  **grouped by issuer**, each row naming the subject action (joined from the
+  inspection's own manifest list) and stating uses, successes, failures, and the
+  two rating counts distinctly: **trade-backed** (the two-kernel receipt link
+  holds) and **unverified**. Counts are text; no new colour, no status fill —
+  evidence is a trust fact, not a state. Attribution is provable and honesty is
+  not, so the UI MUST NOT present evidence as a verdict or fold it into the
+  first-party reputation strip.
+* **A cached proxy is kernel-managed state.** Activation is set by resolve and
+  cleared by the kernel (verified live: `enable`/`disable` on a `kind=remote_proxy`
+  action returns `ErrInvalidState`, "use admin suspend to block a peer"), so the
+  UI MUST NOT offer lifecycle verbs — enable/disable, visibility, delete — on a
+  proxy row anywhere it lists actions, including the superuser-scoped workshop.
+  The peer-level lever is suspend, on this page.
 * `peer_unfunded` on a run means **the serving kernel's global exposure cap is
   exhausted — an operator settlement matter** — and MUST NOT be rendered as the
   caller's own insufficient funds (§10 error mapping).
@@ -789,7 +835,9 @@ once its prerequisite is confirmed on the running kernel.
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;
-`ErrInvalidInput`/`ErrSchemaViolation` → field-level form errors; `ErrInvalidState`;
+`ErrInvalidInput`/`ErrSchemaViolation` → field-level form errors; `ErrInvalidState`
+(also the kernel's refusal of a lifecycle verb on a remote proxy, §6.6 — which the
+UI does not offer, so this is a defence, not a flow);
 `ErrInsufficientFunds` → clear message noting top-ups are out-of-band;
 `peer_unreachable` → the peer was offline, the call refunded, retry later;
 `peer_unfunded` → the serving kernel's exposure cap is exhausted — an operator

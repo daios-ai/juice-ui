@@ -102,37 +102,30 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"peers":[{"handle":"peerb","public_key":"KEY","available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"}]}`
-	p, err := f.client().AdminListPeers(context.Background(), "tok", true, false)
+	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/peers?gossip=1" {
+	if f.lastPath != "/control/peers" {
 		t.Errorf("peers path = %q", f.lastPath)
 	}
 	if len(p.Peers) != 1 || p.Peers[0].Handle != "peerb" {
 		t.Errorf("peers decode wrong: %+v", p)
 	}
-	// The §13 friend-sync cache — our credit on the peer and when last seen.
+	// The §13 peer-sync cache — our credit on the peer and when last seen.
 	if p.Peers[0].PeerCredit != 250 || p.Peers[0].LastSeen != "2026-07-12T00:00:00Z" {
 		t.Errorf("peer sync-cache decode wrong: credit=%d last_seen=%q", p.Peers[0].PeerCredit, p.Peers[0].LastSeen)
 	}
-	// gossip+all → both flags emitted as literal "1" (kernel reads "true" as false).
-	if _, err := f.client().AdminListPeers(context.Background(), "tok", true, true); err != nil {
+	// all → the flag is emitted as literal "1" (the kernel reads "true" as false).
+	if _, err := f.client().AdminListPeers(context.Background(), "tok", true); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/peers?all=1&gossip=1" {
+	if f.lastPath != "/control/peers?all=1" {
 		t.Errorf("peers all path = %q", f.lastPath)
-	}
-	// Neither flag → bare path, no query.
-	if _, err := f.client().AdminListPeers(context.Background(), "tok", false, false); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastPath != "/control/peers" {
-		t.Errorf("peers bare path = %q", f.lastPath)
 	}
 	// ?all=1 surfaces suspended peers, marked by presence of suspended_at (verified live).
 	f.reply = `{"peers":[{"handle":"peerb","public_key":"KEY","available":0,"locked":0,"suspended_at":"2026-07-19T17:50:24Z"}]}`
-	dp, err := f.client().AdminListPeers(context.Background(), "tok", false, true)
+	dp, err := f.client().AdminListPeers(context.Background(), "tok", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,21 +146,9 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	}
 }
 
-func TestAdminSubscribeUnsubscribeInspect(t *testing.T) {
+func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	if err := f.client().AdminSubscribe(context.Background(), "tok", "PKEY"); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastPath != "/control/peers/subscribe" || !strings.Contains(string(f.lastBody), `"key":"PKEY"`) {
-		t.Errorf("subscribe request = %s body=%s", f.lastPath, f.lastBody)
-	}
-	if err := f.client().AdminUnsubscribe(context.Background(), "tok", "peerb"); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastPath != "/control/peers/unsubscribe" || !strings.Contains(string(f.lastBody), `"handle":"peerb"`) {
-		t.Errorf("unsubscribe request = %s body=%s", f.lastPath, f.lastBody)
-	}
 	// Peer suspend uses the unified user route with the RAW key (no @ prefix).
 	if err := f.client().AdminSuspendPeer(context.Background(), "tok", "PKEY"); err != nil {
 		t.Fatal(err)
@@ -177,8 +158,15 @@ func TestAdminSubscribeUnsubscribeInspect(t *testing.T) {
 	}
 	// online/source are TOP-LEVEL fields of the inspection; reachability holds the
 	// transport diagnostics (path/rtt/protocols/error). Decoding online from inside
-	// reachability is the always-offline bug this guards against.
-	f.reply = `{"handle":"k","public_key":"PKEY","online":true,"source":"live",
+	// reachability is the always-offline bug this guards against. The action rows
+	// are signed manifests (price/kind + the peer's own stats) and evidence is a
+	// separate top-level list — shapes captured live 2026-08-04.
+	f.reply = `{"handle":"k","public_key":"PKEY","about":"a test kernel","online":true,"source":"live",
+	 "actions":[{"action_id":"A1","owner_id":"U1","owner_handle":"tom","name":"greet","price":12,"kind":"http",
+	   "description":"Greets a person.","remote_bps":500,
+	   "stats":{"uses":4,"successes":3,"failures":1,"rating_count":2,"rating_estimate":0.5,"latency_estimate":1.25}}],
+	 "evidence":[{"issuer_public_key":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
+	   "avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"error":""}}`
 	insp, err := f.client().AdminInspect(context.Background(), "tok", "PKEY")
 	if err != nil {
@@ -193,6 +181,13 @@ func TestAdminSubscribeUnsubscribeInspect(t *testing.T) {
 	if insp.Reachability.Path != "direct" || insp.Reachability.RTTMillis != 7 {
 		t.Errorf("reachability diagnostics not decoded: %+v", insp.Reachability)
 	}
+	if len(insp.Actions) != 1 || insp.Actions[0].Ref() != "tom/greet" || insp.Actions[0].Price != 12 ||
+		insp.Actions[0].Stats.Uses != 4 || insp.Actions[0].Stats.RatingCount != 2 {
+		t.Errorf("manifest action not decoded: %+v", insp.Actions)
+	}
+	if len(insp.Evidence) != 1 || insp.Evidence[0].IssuerPublicKey != "ISS1" || insp.Evidence[0].Failures != 2 {
+		t.Errorf("evidence not decoded: %+v", insp.Evidence)
+	}
 	// An unreachable peer carries a reason in reachability.error.
 	f.reply = `{"handle":"k","public_key":"PKEY","online":false,"source":"none",
 	 "reachability":{"path":"unreachable","error":"routing: not found"}}`
@@ -202,13 +197,45 @@ func TestAdminSubscribeUnsubscribeInspect(t *testing.T) {
 	}
 }
 
+// Evidence groups by issuing kernel, in wire order, and names each subject from
+// the inspection's own manifest list — evidence carries only the action id.
+func TestEvidenceByIssuer(t *testing.T) {
+	insp := Inspection{
+		Actions: []PeerAction{{ActionID: "A1", OwnerHandle: "tom", Name: "greet"}},
+		Evidence: []Evidence{
+			{IssuerPublicKey: "ISS1", SubjectActionID: "A1", Uses: 2, RatingCount: 1, RatingMean: 1},
+			{IssuerPublicKey: "ISS2", SubjectActionID: "A1", Uses: 5, UnverifiedRating: 3},
+			{IssuerPublicKey: "ISS1", SubjectActionID: "GONE", Uses: 1},
+		},
+	}
+	got := insp.EvidenceByIssuer()
+	if len(got) != 2 || got[0].Issuer != "ISS1" || got[1].Issuer != "ISS2" {
+		t.Fatalf("grouping wrong: %+v", got)
+	}
+	if len(got[0].Rows) != 2 || got[0].Rows[0].Subject != "tom/greet" {
+		t.Errorf("subject must resolve to the manifest ref: %+v", got[0].Rows)
+	}
+	// Evidence about an action the kernel no longer serves keeps its raw id —
+	// still a truthful label, never a blank cell.
+	if got[0].Rows[1].Subject != "GONE" {
+		t.Errorf("unknown subject must fall back to the id, got %q", got[0].Rows[1].Subject)
+	}
+	if got[1].Rows[0].UnverifiedRating != 3 {
+		t.Errorf("unverified count lost: %+v", got[1].Rows[0])
+	}
+	// No evidence → no groups (the template shows its own empty state).
+	if g := (Inspection{}).EvidenceByIssuer(); g != nil {
+		t.Errorf("empty evidence must group to nil, got %+v", g)
+	}
+}
+
 // v0.12: the bilateral position may be negative and carries the Y-trigger flag;
 // /control/identity carries the global exposure figures (verified live 2026-08-03).
 func TestAdminPeersBilateralAndExposure(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"peers":[{"handle":"peerb","public_key":"KEY","available":-320,"locked":0,"settlement_due":true}]}`
-	p, err := f.client().AdminListPeers(context.Background(), "tok", false, false)
+	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,5 +330,21 @@ func TestAdminHandleSigilTolerated(t *testing.T) {
 	}
 	if f.lastPath != "/control/users/alice" {
 		t.Errorf("sigiled input must canonicalize bare: %q", f.lastPath)
+	}
+}
+
+// A peer is provisioned by funding its key: the deposit body must carry the raw
+// base64url key untouched, since the kernel disambiguates handle / key / id by
+// shape and an @-normalized key would name nothing.
+func TestAdminDepositByPeerKey(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	const key = "tETeglMY_o_yysBZ7oa2wc4-yHDRKw5uHruHcQZT2cA"
+	f.reply = `{"direction":"credit","amount":100,"operator_handle":"sys","target_handle":"k-tETeglMY"}`
+	if _, err := f.client().AdminDeposit(context.Background(), "tok", key, 100, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(f.lastBody), `"handle":"`+key+`"`) {
+		t.Errorf("peer key must reach the kernel unchanged: %s", f.lastBody)
 	}
 }

@@ -205,9 +205,9 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 
 | Class | Tier | Fill | Use |
 |---|---|---|---|
-| `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, befriend, inspect, navigate, add-row |
+| `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N". A **payment step** (kernel `payment` descriptor, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
-| `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, unfriend, force-end |
+| `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 
@@ -316,6 +316,11 @@ none float, none are colored.
     On the action page the run form is replaced by the connect gesture
     (banner + `Connect account`) — **a doomed run is never offered**, the
     same rule as peer-blocked runs.
+  - **Discovered** → a plain `known network` chip (`.chip.tag`) on a lookup
+    result this kernel has not resolved: the ref is kernel-qualified, the card
+    carries no price, no reputation strip, and no link or run affordance,
+    because nothing local backs it yet (requirements.md §6.2). It is the
+    unresolved counterpart of `R`, so the two never appear together.
   - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
     is spent on them (every hue is a reserved money/trust signal); emphasis is
     by weight (`.chip.filled`), never by hue.
@@ -407,16 +412,20 @@ behind a remote owner — don't invent one.
 `admin` (users, money, access) and `network` (federation) are **two separate
 top-level nav entries** (`sys` only), not one page with a sub-nav — federation
 is a distinct concern. `network` owns the **this kernel** identity card. The
-`network` page is a discovery → inspect → trust journey, in card + table grammar:
-**this kernel** (identity to share) ·
-**peers** (each with Inspect + Unsubscribe/Suspend) · **known network** (the
-gossip roster: one block per
-discovered kernel showing *your* earned stats — labeled `you` — distinct from the
-kernel's `self-reported` manifest and hearsay grouped `via <introducer>`; each has
-Inspect + Subscribe — subscribe is an **optional bulk cache warm**; a remote
-action resolves on first call). **Inspect** (`/admin/peers/{key}`) shows
-reachability (direct/relayed + rtt), public actions, and transacted peers.
-Roster requires `?gossip=1` from the kernel (not `true`).
+`network` page is an inspect → fund → settle journey, in card + table grammar:
+**this kernel** (identity to share) · **peers** (each with Inspect + Settle +
+Suspend/Unsuspend). There is **no subscribe/unsubscribe verb and no known-network
+roster** — a peer arises from use or from a deposit addressed to its key, so the
+page's two openers are **inspect a kernel by key** and **fund a peer by key** (the
+latter reuses the `admin` deposit form, which takes a handle or a key). Discovered
+kernels reach the operator only through `sys/lookup` results (§5.13 card chips).
+
+**Inspect** (`/admin/peers/{key}`) shows reachability (direct/relayed + rtt), the
+kernel's public actions, and **evidence**: one block per issuer, in the same
+grouped-block grammar as the action stats table, each row naming the subject
+action with uses/successes/failures and the two rating counts stated as text —
+`N trade-backed · M unverified`. Evidence carries **no colour and no fill**: it is
+a trust fact, not a status, and never joins the first-party reputation strip.
 
 A peer's balance is the **bilateral position**, rendered signed with its
 reading — "prepaid" (positive) / "owes us" (negative) — never a bare negative
