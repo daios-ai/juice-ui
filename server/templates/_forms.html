@@ -171,25 +171,6 @@
 </dialog>
 {{end}}
 
-{{define "_form_step_create"}}
-<dialog id="form-step-create" class="modal-form"{{if eq .Data.OpenForm "step-create"}} open{{end}} aria-label="Create step">
-  <div class="modal-head"><h2>Create step</h2><a class="modal-close" href="/inbox" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/inbox">
-      {{.CSRFField}}
-      <div class="field"><label for="s-trace">Funding trace ID</label><input id="s-trace" name="trace_id" type="text" required></div>
-      <div class="field"><label for="s-action">Next action ID</label><input id="s-action" name="action_id" type="text" required></div>
-      <div class="field"><label for="s-caller">Required caller (handle)</label><input id="s-caller" name="required_caller" type="text" placeholder="handle" required></div>
-      <div class="field"><label for="s-partial">Partial args (JSON)</label><textarea id="s-partial" name="partial_args" placeholder="{}" rows="1"></textarea></div>
-      <div class="cluster">
-        <button class="btn" type="submit">Create step</button>
-        <a class="btn" href="/inbox" data-modal-close>Cancel</a>
-      </div>
-    </form>
-  </div>
-</dialog>
-{{end}}
-
 {{define "_form_user_update"}}
 <dialog id="form-user-update" class="modal-form"{{if eq .Data.OpenForm "user-update"}} open{{end}} aria-label="Update account">
   <div class="modal-head"><h2>Update account</h2><a class="modal-close" href="/settings" data-modal-close aria-label="Close">×</a></div>

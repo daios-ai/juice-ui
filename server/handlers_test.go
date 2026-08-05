@@ -18,7 +18,13 @@ import (
 
 // authKernel is a fake kernel sufficient to drive the PKCE login flow and a few
 // authenticated reads. The signed-in user is "U1" / "alice".
+// lastRename records the rename the fake kernel last served ("<handle> <body>"),
+// so a test can assert what the BFF actually sent. Tests in this package are
+// sequential (no t.Parallel), so one recorder is enough.
+var lastRename string
+
 func authKernel() *httptest.Server {
+	lastRename = ""
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
@@ -72,6 +78,11 @@ func authKernel() *httptest.Server {
 	})
 	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"action_id":"x"}`))
+	})
+	// The kernel's public ratings projection: value/note/time and nothing else
+	// (verified live 2026-08-05) — no rater, transaction, or receipt identity.
+	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"value":1,"note":"worked well","created_at":"2024-01-03T00:00:00Z"}]`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		// The kernel returns active rows by default; the inactive/private draft
@@ -157,6 +168,16 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /control/users/{handle}/unsuspend", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("POST /control/users/{handle}/rename", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		lastRename = r.PathValue("handle") + " " + string(b)
+		if strings.Contains(string(b), `"new_handle":"sys"`) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(`{"code":"invalid_input","error":"the superuser handle cannot be renamed"}`))
+			return
+		}
+		w.Write([]byte(`{"handle":"renamed"}`))
+	})
 	mux.HandleFunc("POST /control/deposit", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"direction":"credit","amount":100,"operator_handle":"sys","target_handle":"alice"}`))
 	})
@@ -173,7 +194,9 @@ func authKernel() *httptest.Server {
 		if r.URL.Query().Get("all") == "1" {
 			rows += `,{"handle":"frozen","public_key":"KEYS","available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
-		w.Write([]byte(`{"peers":[` + rows + `]}`))
+		// A bare array: the kernel envelopes no list (API.md R6; verified live
+		// 2026-08-05 — an envelope here would silently render zero peers).
+		w.Write([]byte(`[` + rows + `]`))
 	})
 	mux.HandleFunc("GET /control/peers/inspect", func(w http.ResponseWriter, r *http.Request) {
 		// online/source are TOP-LEVEL in the real response; reachability holds only
@@ -1483,9 +1506,12 @@ func TestInboxPageRendersSteps(t *testing.T) {
 	if strings.Contains(body, "Complete (5)") {
 		t.Error("inbox Complete button must NOT name an amount (the completer is not the payer)")
 	}
-	// Old inline step-create endpoint must be absent (creation is a modal to POST /steps).
-	if strings.Contains(body, "/steps/create") {
-		t.Error("inbox page must not use the old step-create endpoint")
+	// The inbox is work addressed to you, nothing else: step creation is API and
+	// app-module surface (it needs a live funding trace), never a browser form.
+	for _, gone := range []string{"step-create", "new step", "Funding trace"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("inbox must not offer step creation (found %q)", gone)
+		}
 	}
 }
 
@@ -2229,18 +2255,11 @@ func TestStepDetailPrivateTargetStillCompletable(t *testing.T) {
 
 // postForm posts an authenticated form with a fresh CSRF token scraped from the
 // wallet page.
+// postForm posts a wallet form, taking its CSRF token from the wallet page.
 func postForm(t *testing.T, cl *http.Client, urlStr string, form url.Values) *http.Response {
 	t.Helper()
 	base := urlStr[:strings.LastIndex(urlStr, "/")]
-	page := getBody(t, cl, base+"/wallet")
-	form.Set("gorilla.csrf.Token", csrfTokenFrom(t, page))
-	req, _ := http.NewRequest(http.MethodPost, urlStr, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := cl.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resp
+	return postTo(t, cl, urlStr, getBody(t, cl, base+"/wallet"), form)
 }
 
 // The wallet's send runs sys/transfer through POST /v1/run — the one send-money
@@ -2282,13 +2301,57 @@ func TestWalletSendRunsSysTransfer(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	// Sigiled recipient tolerated, canonicalized bare; dollars parsed to credits.
-	resp := postForm(t, cl, srv.URL+"/transfers", url.Values{"recipient": {"@bob"}, "amount": {"0.300"}})
+	// The recipient reaches the kernel as typed (a sigiled one is the kernel's to
+	// reject, §4); dollars are parsed to credits.
+	resp := postForm(t, cl, srv.URL+"/transfers", url.Values{"recipient": {"bob"}, "amount": {"0.300"}})
 	resp.Body.Close()
 	if !strings.Contains(runBody, `"action":"sys/transfer"`) {
 		t.Errorf("wallet send must run sys/transfer: %s", runBody)
 	}
 	if !strings.Contains(runBody, `"target":"bob"`) || !strings.Contains(runBody, `"amount":300`) {
-		t.Errorf("run args must carry bare target and credit amount: %s", runBody)
+		t.Errorf("run args must carry the target and credit amount: %s", runBody)
+	}
+}
+
+// Ratings render from the kernel's public projection: the value decides the
+// verdict pill, and the note reads as the review (requirements.md §6.2). A
+// mis-decoded value would silently render every rating "poor".
+func TestActionRatingsRenderFromProjection(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/actions/A1")
+	if !strings.Contains(body, ">good<") || strings.Contains(body, ">poor<") {
+		t.Error("a value=1 rating must render good")
+	}
+	if !strings.Contains(body, "worked well") {
+		t.Error("the rating note must render")
+	}
+}
+
+// Step creation has no browser route: it needs a live funding trace, which is
+// bookkeeping the UI keeps hidden. The kernel API and app modules still compose
+// steps; the browser does not.
+func TestNoBrowserStepCreation(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	page := getBody(t, cl, srv.URL+"/inbox")
+	// A well-formed post (real CSRF token) still finds no route: 405, because only
+	// GET /inbox is registered.
+	resp := postTo(t, cl, srv.URL+"/inbox", page, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST /inbox = %d, want no such route", resp.StatusCode)
+	}
+	// Nor may the palette still offer it.
+	if strings.Contains(page, `"step create"`) {
+		t.Error("the palette must not carry a step-create command")
 	}
 }

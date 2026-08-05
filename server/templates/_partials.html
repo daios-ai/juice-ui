@@ -389,7 +389,10 @@
     <span class="media wide">{{cardArt .PublicKey .Handle "" "kernel"}}</span>
     <div class="kernel-body">
       <div class="row">
-        <b class="ref mono grow"><span class="owner">{{.Handle}}</span></b>
+        {{/* The alias is a local name for a peer key, so it is renamable like any
+             handle — the alias itself is the way in, rather than a fourth command
+             in the foot below (§6.6). */}}
+        <b class="ref mono grow"><a class="owner" href="/admin/users/{{.Handle}}?form=admin-rename" title="Rename local alias">{{.Handle}}</a></b>
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>

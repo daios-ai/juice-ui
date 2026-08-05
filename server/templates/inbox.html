@@ -30,7 +30,6 @@
   {{template "_tab" (tab "all" "/inbox" (eq $d.Filter ""))}}
   {{template "_tab" (tab "done" "/inbox?status=done" (eq $d.Filter "done"))}}
   {{template "_tab" (tab "cancelled" "/inbox?status=cancelled" (eq $d.Filter "cancelled"))}}
-  <a class="btn-quiet tabs-action" href="/inbox?form=step-create" data-modal="form-step-create">+ new step</a>
 </nav>
 {{if $d.History}}
 <div class="table-scroll">
@@ -50,6 +49,4 @@
 </table>
 </div>
 {{else}}<p class="muted">No step history yet.</p>{{end}}
-
-{{template "_form_step_create" .}}
 {{end}}

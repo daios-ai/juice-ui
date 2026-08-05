@@ -613,7 +613,7 @@ func TestCallbackCreateStep(t *testing.T) {
 	// baseURL is deliberately bogus — the callback must target the passed URL, not baseURL.
 	c := New("http://127.0.0.1:1", nil)
 	st, err := c.CallbackCreateStep(context.Background(), srv.URL, "trace-1.sig",
-		CreateStepInput{ActionID: "sink", RequiredCaller: "chat"})
+		CreateStepInput{Action: "chat/sink", RequiredCaller: "chat"})
 	if err != nil {
 		t.Fatalf("CallbackCreateStep: %v", err)
 	}
@@ -632,7 +632,9 @@ func TestCallbackCreateStep(t *testing.T) {
 	if strings.Contains(gotBody, "trace_id") {
 		t.Errorf("body must NOT carry trace_id (capability IS the trace): %s", gotBody)
 	}
-	if !strings.Contains(gotBody, `"action_id":"sink"`) || !strings.Contains(gotBody, `"required_caller":"chat"`) {
+	// The kernel takes `action` (owner/name or id) and rejects the older
+	// action_id outright (verified live 2026-08-05: "action is required").
+	if !strings.Contains(gotBody, `"action":"chat/sink"`) || !strings.Contains(gotBody, `"required_caller":"chat"`) {
 		t.Errorf("body = %s", gotBody)
 	}
 }
@@ -656,14 +658,14 @@ func TestLedger(t *testing.T) {
 func TestAdminRename(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	if err := f.client().AdminRename(context.Background(), "tok", "@old", "@new"); err != nil {
+	if err := f.client().AdminRename(context.Background(), "tok", "old", "new"); err != nil {
 		t.Fatal(err)
 	}
 	if f.lastMethod != "POST" || f.lastPath != "/control/users/old/rename" {
 		t.Errorf("rename hit %s %s", f.lastMethod, f.lastPath)
 	}
 	if !strings.Contains(string(f.lastBody), `"new_handle":"new"`) {
-		t.Errorf("rename body = %s (want normalized bare new)", string(f.lastBody))
+		t.Errorf("rename body = %s", string(f.lastBody))
 	}
 }
 

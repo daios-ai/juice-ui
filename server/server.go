@@ -210,7 +210,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /inbox", s.requireAuth(s.getSteps))
 	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getStepsBadge))
 	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getStep))
-	mux.HandleFunc("POST /inbox", s.requireAuth(s.postCreateStep))
 	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteStep))
 
 	// Settings — account, preferences, connected accounts.
@@ -233,6 +232,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /admin/users/{handle}", s.requireSuperuser(s.getAdminUser))
 	mux.HandleFunc("POST /admin/users/{handle}/suspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{handle}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
+	mux.HandleFunc("POST /admin/users/{handle}/rename", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/deposit", s.requireSuperuser(s.postAdminAdjust))
 	mux.HandleFunc("POST /admin/withdraw", s.requireSuperuser(s.postAdminAdjust))
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
@@ -412,12 +412,12 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 // remains authoritative — an admin call always re-checks the bearer.
 const superuserHandle = "sys"
 
-// isSuperuser reports whether the session belongs to the superuser. The stored
-// handle is compared bare: a pre-0.4 session persisted "@sys", so the
-// migration-period sigil is stripped before comparing — this gate fails CLOSED
-// (the admin nav silently disappears) if the comparison drifts.
+// isSuperuser reports whether the session belongs to the superuser. Handles are
+// bare (requirements.md §4), so this is a plain comparison — the gate fails
+// CLOSED (the admin nav silently disappears) if a session ever holds anything
+// else, which is the safe direction.
 func (s *Server) isSuperuser(r *http.Request) bool {
-	return strings.TrimPrefix(s.sessions.Handle(r.Context()), "@") == superuserHandle
+	return s.sessions.Handle(r.Context()) == superuserHandle
 }
 
 // requireSuperuser gates admin routes. A non-superuser (or anonymous) request

@@ -263,11 +263,9 @@ func Glyph(name string) (string, bool) {
 // trying a naive singular form for unknown plurals.
 func queryTerms(c *corpus, ref string) []string {
 	ref = strings.TrimSpace(ref)
-	ref = strings.TrimPrefix(ref, "@") // migration-period sigil tolerated
 	// A full ref is owner/name: strip the owner segment (through the first
-	// slash) so provider handles never leak into the icon query — with bare
-	// v0.12 refs the owner is no longer marked by a sigil, so any ref that
-	// contains a slash is treated as owner-qualified. Callers passing a bare
+	// slash) so provider handles never leak into the icon query — refs are bare,
+	// so any ref that contains a slash is owner-qualified. Callers passing a bare
 	// action NAME containing slashes do not exist (names reach here as full
 	// refs); a bare handle names no operation.
 	if i := strings.Index(ref, "/"); i >= 0 {

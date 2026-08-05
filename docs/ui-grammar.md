@@ -427,6 +427,13 @@ action with uses/successes/failures and the two rating counts stated as text —
 `N trade-backed · M unverified`. Evidence carries **no colour and no fill**: it is
 a trust fact, not a status, and never joins the first-party reputation strip.
 
+**Rename** is one modal on the admin user detail (`?form=admin-rename`): a
+`.btn-quiet` opener beside Suspend, one field, a neutral `.btn` submit. A peer's
+alias is an ordinary handle here, so the **alias itself links into that same
+modal** (`/admin/users/{alias}?form=admin-rename`) — the peer card's verbs stay
+Inspect · Settle · Suspend, and the rename lives where every other per-user edit
+does. One form, one handler, one validation path.
+
 A peer's balance is the **bilateral position**, rendered signed with its
 reading — "prepaid" (positive) / "owes us" (negative) — never a bare negative
 number; a `settlement_due` peer carries a quiet `.pill`. Settle / Record-cash

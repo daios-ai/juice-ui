@@ -212,7 +212,7 @@ func (c *Chat) serveRegister(w http.ResponseWriter, r *http.Request) {
 	err = c.sa.Do(r.Context(), func(tok string) error {
 		st, e := c.deps.Client.CreateStep(r.Context(), tok, client.CreateStepInput{
 			TraceID:        c.seedTrace,
-			ActionID:       c.validateID,
+			Action:         c.validateID,
 			RequiredCaller: in.Username,
 			PartialArgs:    mustJSON(map[string]any{"reg_id": regID}),
 		})
@@ -243,7 +243,7 @@ func (c *Chat) serveOutbox(w http.ResponseWriter, r *http.Request) {
 	stepID := ""
 	if cap != "" && cb != "" && c.ackID != "" {
 		st, err := c.deps.Client.CallbackCreateStep(r.Context(), cb, cap, client.CreateStepInput{
-			ActionID:       c.ackID,
+			Action:         c.ackID,
 			RequiredCaller: chatHandle,
 		})
 		if err != nil {
@@ -503,7 +503,7 @@ const outboxDesc = "Opens the chat outbox seed by creating a sentinel step via t
 // step's onward). Both carry a bearer upstream secret so the daemon/plugin trusts that
 // the kernel is the caller.
 var (
-	registerInSchema  = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string","description":"The @handle to issue a chat key for, for example @agent. A verification step is sent to this handle."}}}`)
+	registerInSchema  = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string","description":"The handle to issue a chat key for, for example agent. Handles are bare — no @ prefix. A verification step is sent to this handle."}}}`)
 	registerOutSchema = json.RawMessage(`{"type":"object","properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect chat/msg --token <api_key>. It activates once the handle's owner accepts the verification step."},"step_id":{"type":"string","description":"Id of the verification step sent to the handle; complete it (as that handle) to activate the key."}}}`)
 	validateInSchema  = json.RawMessage(`{"type":"object","properties":{"reg_id":{"type":"string","description":"Registration id carried by the verification step; names which pending key to activate."}}}`)
 	validateOutSchema = json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the key was activated."}}}`)
@@ -1076,7 +1076,7 @@ func (c *Chat) notify(ev daemon.NotifyEvent) {
 			_ = c.sa.Do(ctx, func(tok string) error {
 				_, e := c.deps.Client.CreateStep(ctx, tok, client.CreateStepInput{
 					TraceID:        c.seedTrace,
-					ActionID:       c.ackID,
+					Action:         c.ackID,
 					RequiredCaller: member,
 					PartialArgs:    partial,
 				})
@@ -1152,7 +1152,7 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply, err := c.run(r, "create-room", map[string]any{"name": name, "members": parseHandles(r.FormValue("members"))})
-	if c.deps.HandleErr(w, r, err) {
+	if c.failed(w, r, err, "/chat") {
 		return
 	}
 	var res struct {
@@ -1231,10 +1231,40 @@ func (c *Chat) run(r *http.Request, action string, args map[string]any) (client.
 // opRedirect runs an action as the signed-in user and, on success, redirects to
 // `to` (the room URL for in-room ops, "/chat" for room removal/leaving).
 func (c *Chat) opRedirect(w http.ResponseWriter, r *http.Request, action string, args map[string]any, to string) {
-	if _, err := c.run(r, action, args); c.deps.HandleErr(w, r, err) {
+	if _, err := c.run(r, action, args); c.failed(w, r, err, to) {
 		return
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// failed reports a run failure and returns true when it handled one. A business
+// rejection is the user's own input coming back, so it belongs beside the form
+// as a flash; only a genuine fault falls through to the error page, since
+// answering a typo with "Something went wrong" says nothing actionable.
+func (c *Chat) failed(w http.ResponseWriter, r *http.Request, err error, to string) bool {
+	if err == nil {
+		return false
+	}
+	if reason := daemonReason(err); reason != "" {
+		c.deps.FlashRedirect(w, r, to, "error", reason)
+		return true
+	}
+	return c.deps.HandleErr(w, r, err)
+}
+
+// daemonReason is the daemon's own rejection sentence, or "" for anything else.
+// The daemon answers a rejection with a non-2xx {"ok":false,"error":"…"} body,
+// which the kernel reports as an execution failure carrying that body.
+func daemonReason(err error) string {
+	ke, ok := client.AsKernelError(err)
+	if !ok || ke.Kind != client.KindExecutionFailed {
+		return ""
+	}
+	var body struct{ Error string }
+	if i := strings.Index(ke.KernelMessage, "{"); i < 0 || json.Unmarshal([]byte(ke.KernelMessage[i:]), &body) != nil {
+		return ""
+	}
+	return strings.TrimPrefix(body.Error, "bad input: ")
 }
 
 // roomURL is the browser path for the current room.
@@ -1243,13 +1273,14 @@ func roomURL(r *http.Request) string { return "/chat/room/" + url.PathEscape(r.P
 // roomName sanitizes a display room name (trimmed; empty rejected).
 func roomName(s string) string { return strings.TrimSpace(s) }
 
-// parseHandles splits a free-form member list into bare handles. Handles are
-// bare in v0.12; a migration-period "@" is tolerated and stripped.
+// parseHandles splits a free-form member list into handles. Handles are bare
+// (requirements.md §4) and are never rewritten here: a sigiled one is passed
+// through so the daemon rejects it, exactly as it would a headless action call.
 func parseHandles(s string) []string {
 	var out []string
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == ',' || r == '\n' || r == '\t' || r == '\r' }) {
-		if h := strings.TrimPrefix(f, "@"); h != "" {
-			out = append(out, h)
+		if f != "" {
+			out = append(out, f)
 		}
 	}
 	return out

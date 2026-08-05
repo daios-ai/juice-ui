@@ -16,6 +16,25 @@
     {{else}}
     <form method="post" action="/admin/users/{{$u.Handle}}/suspend" data-confirm="Suspend {{$u.Handle}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
     {{end}}
+    <a class="btn-quiet" href="/admin/users/{{$u.Handle}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
   </div>
 </div>
+
+<dialog id="form-admin-rename" class="modal-form"{{if eq .Data.OpenForm "admin-rename"}} open{{end}} aria-label="Rename handle">
+  <div class="modal-head"><h2>Rename {{$u.Handle}}</h2><a class="modal-close" href="/admin/users/{{$u.Handle}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/admin/users/{{$u.Handle}}/rename">
+      {{$.CSRFField}}
+      <div class="field">
+        <label for="ar-handle">New handle<span class="req">*</span></label>
+        <p class="help">Frees the old handle; references use the new one.</p>
+        <input id="ar-handle" name="new_handle" type="text" required>
+      </div>
+      <div class="cluster">
+        <button class="btn" type="submit">Rename</button>
+        <a class="btn-quiet" href="/admin/users/{{$u.Handle}}" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
 {{end}}

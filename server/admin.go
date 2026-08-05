@@ -24,7 +24,8 @@ type adminView struct {
 }
 
 type adminUserView struct {
-	User client.AdminUser
+	User     client.AdminUser
+	OpenForm string
 }
 
 type adminPeersView struct {
@@ -90,25 +91,46 @@ func (s *Server) getAdminUser(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
+	view.OpenForm = openForm(r, "admin-user")
 	s.renderPage(w, r, http.StatusOK, "admin_user", "User "+handle, view)
 }
 
-// postAdminUserOp handles suspend/unsuspend, dispatched on the path's last segment.
+// postAdminUserOp handles the per-user operator verbs, dispatched on the path's
+// last segment. The switch is exhaustive on purpose: an unrecognised segment is
+// a 404, never a fallthrough into a destructive verb.
 func (s *Server) postAdminUserOp(w http.ResponseWriter, r *http.Request) {
 	handle := r.PathValue("handle")
-	op := lastSegment(r.URL.Path)
 	ctx := r.Context()
-	err := s.sessions.Do(ctx, func(tok string) error {
-		if op == "unsuspend" {
-			return s.client.AdminUnsuspendUser(ctx, tok, handle)
-		}
-		return s.client.AdminSuspendUser(ctx, tok, handle)
-	})
-	verb := "suspended"
-	if op == "unsuspend" {
-		verb = "unsuspended"
+	switch lastSegment(r.URL.Path) {
+	case "suspend":
+		err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminSuspendUser(ctx, tok, handle) })
+		s.flashResult(w, r, err, "/admin", "User "+handle+" suspended.")
+	case "unsuspend":
+		err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnsuspendUser(ctx, tok, handle) })
+		s.flashResult(w, r, err, "/admin", "User "+handle+" unsuspended.")
+	case "rename":
+		s.renameUser(w, r, handle)
+	default:
+		s.renderPage(w, r, http.StatusNotFound, "error", "Not found", errorView{Message: "Page not found."})
 	}
-	s.flashResult(w, r, err, "/admin", "User "+handle+" "+verb+".")
+}
+
+// renameUser rebinds a handle: the old one is freed and every reference follows
+// the account. A peer's local alias is an ordinary handle here, so the same verb
+// rebinds it. The new handle is taken verbatim — a sigiled one is the kernel's
+// to reject, not ours to rewrite (requirements.md §4).
+func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, handle string) {
+	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(handle)
+	newHandle := strings.TrimSpace(r.FormValue("new_handle"))
+	if newHandle == "" {
+		s.flashRedirect(w, r, back, "error", "Enter a new handle.")
+		return
+	}
+	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRename(ctx, tok, handle, newHandle) }); err != nil {
+		s.flashRedirect(w, r, back, "error", userMessage(err))
+		return
+	}
+	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newHandle), "success", handle+" is now "+newHandle+".")
 }
 
 // postAdminAdjust handles deposit/withdraw, dispatched on the path's last segment.
@@ -151,7 +173,7 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view.Peers = p.Peers
+		view.Peers = p
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
@@ -184,9 +206,9 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		// frozen peer still holds a position, and this is the page an operator
 		// reads before unsuspending.
 		if peers, e := s.client.AdminListPeers(ctx, tok, true); e == nil {
-			for i, p := range peers.Peers {
+			for i, p := range peers {
 				if p.PublicKey == key {
-					view.PeerRow = &peers.Peers[i]
+					view.PeerRow = &peers[i]
 				}
 			}
 		}

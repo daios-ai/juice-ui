@@ -15,7 +15,7 @@ responses rather than reproducing kernel logic.
 ## Highlights
 
 - **CLI-mirroring navigation** — `run · action · process · tx · step · user`, plus
-  `admin · peers` for the `@sys` superuser. Each group presents a concept, not a
+  `admin · peers` for the `sys` superuser. Each group presents a concept, not a
   command dump.
 - **Terminal aesthetic** — a monospace face and selectable **Ghostty 16-colour ANSI
   themes**, every theme derived from one set of design tokens and held to WCAG AA by

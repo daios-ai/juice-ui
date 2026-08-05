@@ -309,10 +309,8 @@ func ratingPct(estimate float64, count int64) string {
 // so the first slash is unambiguous (requirements.md §4). For a remote ref
 // (owner@kernel/name) the whole "owner@kernel" segment is returned. The owner
 // segment is emphasized in the UI; a LOCAL owner links to its owner page, a
-// remote one renders unlinked (the kernel alias is presentation-only). A
-// migration-period leading "@" is tolerated and stripped.
+// remote one renders unlinked (the kernel alias is presentation-only).
 func refOwner(ref string) string {
-	ref = strings.TrimPrefix(ref, "@")
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[:i]
 	}
@@ -347,7 +345,6 @@ type refLinkArgs struct {
 // refName returns the name segment of "owner/name" (everything after the first
 // slash), or "" if there is no slash.
 func refName(ref string) string {
-	ref = strings.TrimPrefix(ref, "@")
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[i+1:]
 	}
@@ -405,10 +402,10 @@ func paneltab(label, key string, active bool) Tab {
 	return Tab{Label: label, Href: "/login?tab=" + key, Data: key, Active: active}
 }
 
-// initial returns the first letter of a handle (tolerating a migration-period
-// leading @), uppercased, for an avatar monogram. "" → "?".
+// initial returns the first letter of a handle, uppercased, for an avatar
+// monogram. "" → "?".
 func initial(handle string) string {
-	for _, r := range strings.TrimPrefix(handle, "@") {
+	for _, r := range handle {
 		return strings.ToUpper(string(r))
 	}
 	return "?"

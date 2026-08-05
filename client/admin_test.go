@@ -101,7 +101,7 @@ func TestAdminDepositWithdraw(t *testing.T) {
 func TestAdminPeersAndIdentity(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"peers":[{"handle":"peerb","public_key":"KEY","available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"}]}`
+	f.reply = `[{"handle":"peerb","public_key":"KEY","available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"}]`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
@@ -109,12 +109,12 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if f.lastPath != "/control/peers" {
 		t.Errorf("peers path = %q", f.lastPath)
 	}
-	if len(p.Peers) != 1 || p.Peers[0].Handle != "peerb" {
+	if len(p) != 1 || p[0].Handle != "peerb" {
 		t.Errorf("peers decode wrong: %+v", p)
 	}
 	// The §13 peer-sync cache — our credit on the peer and when last seen.
-	if p.Peers[0].PeerCredit != 250 || p.Peers[0].LastSeen != "2026-07-12T00:00:00Z" {
-		t.Errorf("peer sync-cache decode wrong: credit=%d last_seen=%q", p.Peers[0].PeerCredit, p.Peers[0].LastSeen)
+	if p[0].PeerCredit != 250 || p[0].LastSeen != "2026-07-12T00:00:00Z" {
+		t.Errorf("peer sync-cache decode wrong: credit=%d last_seen=%q", p[0].PeerCredit, p[0].LastSeen)
 	}
 	// all → the flag is emitted as literal "1" (the kernel reads "true" as false).
 	if _, err := f.client().AdminListPeers(context.Background(), "tok", true); err != nil {
@@ -124,13 +124,13 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 		t.Errorf("peers all path = %q", f.lastPath)
 	}
 	// ?all=1 surfaces suspended peers, marked by presence of suspended_at (verified live).
-	f.reply = `{"peers":[{"handle":"peerb","public_key":"KEY","available":0,"locked":0,"suspended_at":"2026-07-19T17:50:24Z"}]}`
+	f.reply = `[{"handle":"peerb","public_key":"KEY","available":0,"locked":0,"suspended_at":"2026-07-19T17:50:24Z"}]`
 	dp, err := f.client().AdminListPeers(context.Background(), "tok", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dp.Peers) != 1 || !dp.Peers[0].Suspended() {
-		t.Errorf("suspended peer must decode suspended_at and report Suspended(): %+v", dp.Peers)
+	if len(dp) != 1 || !dp[0].Suspended() {
+		t.Errorf("suspended peer must decode suspended_at and report Suspended(): %+v", dp)
 	}
 	// An active row (no suspended_at) is not suspended.
 	if (Peer{Handle: "x"}).Suspended() {
@@ -234,13 +234,13 @@ func TestEvidenceByIssuer(t *testing.T) {
 func TestAdminPeersBilateralAndExposure(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"peers":[{"handle":"peerb","public_key":"KEY","available":-320,"locked":0,"settlement_due":true}]}`
+	f.reply = `[{"handle":"peerb","public_key":"KEY","available":-320,"locked":0,"settlement_due":true}]`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Peers[0].Position() != -320 || !p.Peers[0].SettlementDue {
-		t.Errorf("bilateral decode wrong: %+v", p.Peers[0])
+	if p[0].Available != -320 || !p[0].SettlementDue {
+		t.Errorf("bilateral decode wrong: %+v", p[0])
 	}
 	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"exposure_max":1000,"gross_receivables":620,
 	 "settlement_trigger":500,"settlement_quantum":3000,"settlement_due":true}`
@@ -319,17 +319,19 @@ func TestAdminSettle(t *testing.T) {
 	}
 }
 
-// Migration tolerance: a sigiled handle from a form or a pre-0.4 session still
-// reaches the kernel bare (requirements.md §4).
-func TestAdminHandleSigilTolerated(t *testing.T) {
+// The client never rewrites a handle: "@" now separates a kernel, so a sigiled
+// handle is ill-formed input the kernel rejects (verified live 2026-08-05), not
+// a spelling of the bare one. Passing it through verbatim is what makes the
+// browser and a headless call answer alike (requirements.md §4).
+func TestHandleIsSentVerbatim(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"id":"U1","handle":"alice"}`
 	if _, err := f.client().AdminGetUser(context.Background(), "tok", "@alice"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/users/alice" {
-		t.Errorf("sigiled input must canonicalize bare: %q", f.lastPath)
+	if f.lastPath != "/control/users/@alice" {
+		t.Errorf("handle must reach the kernel verbatim: %q", f.lastPath)
 	}
 }
 

@@ -1,3 +1,16 @@
+// Package client is the typed HTTP client for the Juice kernel API. It is the
+// sole client of the kernel (R1.1): the rest of the BFF talks to the kernel
+// only through this package, never by shelling out, reading the kernel DB, or
+// importing kernel packages.
+//
+// Verified against the running kernel on 2026-06-03 and re-gated against the
+// v0.12 kernel on 2026-08-03 and 2026-08-05 (see comments throughout and in
+// errors.go). docs/API.md is the design contract; where the live kernel
+// diverges, the verified behavior is recorded here and is authoritative.
+//
+// Names are bare (requirements.md §4) and this client never rewrites one: "@"
+// separates a kernel, so a sigiled handle, ref, or selector is input the kernel
+// rejects (verified live 2026-08-05) and that typed error is the validation.
 package client
 
 import (
@@ -292,14 +305,14 @@ type Stats struct {
 	LastUsedAt      string  `json:"last_used_at"`
 }
 
-// Rating is one entry of GET /v1/actions/{id}/ratings (list may be null).
+// Rating is one entry of GET /v1/actions/{id}/ratings (list may be null): the
+// kernel's public projection — value, note, time and nothing else. The rater,
+// transaction, and receipt are withheld (verified live 2026-08-05), so a rating
+// is readable wherever the action is, anonymously for a public one.
 type Rating struct {
-	ID          string `json:"id"`
-	RatedTxID   string `json:"rated_tx_id"`
-	RaterUserID string `json:"rater_user_id"`
-	Rating      int    `json:"rating"`
-	Note        string `json:"note,omitempty"`
-	CreatedAt   string `json:"created_at"`
+	Value     int    `json:"value"`
+	Note      string `json:"note,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 // Step is a suspended computation boundary: a pre-baked future Call that a
@@ -444,7 +457,7 @@ func (c *Client) WellKnown(ctx context.Context) (WellKnown, error) {
 // out of that query. password and code_challenge (S256) are passed through.
 func (c *Client) Authorize(ctx context.Context, handle, password, codeChallenge string) (string, error) {
 	body := map[string]string{
-		"handle":         normalizeHandle(handle),
+		"handle":         handle,
 		"password":       password,
 		"code_challenge": codeChallenge,
 	}
@@ -503,7 +516,7 @@ func (c *Client) RecoverStart(ctx context.Context, handle string) (string, error
 	var resp struct {
 		Nonce string `json:"nonce"`
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/auth/recover/start", "", map[string]string{"handle": normalizeHandle(handle)}, &resp)
+	err := c.do(ctx, http.MethodPost, "/v1/auth/recover/start", "", map[string]string{"handle": handle}, &resp)
 	return resp.Nonce, err
 }
 
@@ -512,7 +525,7 @@ func (c *Client) RecoverStart(ctx context.Context, handle string) (string, error
 // Unauthenticated; a bad signature or expired nonce is ErrUnauthorized.
 func (c *Client) RecoverComplete(ctx context.Context, handle, nonce, signature, password string) error {
 	body := map[string]string{
-		"handle":    normalizeHandle(handle),
+		"handle":    handle,
 		"nonce":     nonce,
 		"signature": signature,
 		"password":  password,
@@ -633,7 +646,7 @@ func (c *Client) DeleteConnection(ctx context.Context, token, account string) er
 // Ed25519 recovery key derived client-side from the seed phrase (§12); pass ""
 // to enroll no recovery key (headless service accounts).
 func (c *Client) CreateUser(ctx context.Context, handle, password, recoveryPubKey string) (User, error) {
-	body := map[string]string{"handle": normalizeHandle(handle), "password": password}
+	body := map[string]string{"handle": handle, "password": password}
 	if recoveryPubKey != "" {
 		body["recovery_public_key"] = recoveryPubKey
 	}
@@ -734,7 +747,7 @@ func (c *Client) ListActions(ctx context.Context, token, owner, name string, all
 func (c *Client) actionsPage(ctx context.Context, token, owner, name string, all bool, limit, offset int) ([]Action, error) {
 	q := url.Values{}
 	if owner != "" {
-		q.Set("owner", normalizeHandle(owner))
+		q.Set("owner", owner)
 	}
 	if name != "" {
 		q.Set("name", name)
@@ -973,9 +986,12 @@ func (c *Client) GetStep(ctx context.Context, token, id string) (Step, error) {
 
 // CreateStepInput is the body for POST /v1/steps: a waiting step is a funded
 // continuation bound to the funding trace, addressed to a required caller.
+// Action is the completion target as "owner/name" or a raw id, exactly as
+// /v1/run takes it — the kernel rejects the older action_id field outright
+// (verified live 2026-08-05: "action is required").
 type CreateStepInput struct {
 	TraceID        string          `json:"trace_id"`
-	ActionID       string          `json:"action_id"`
+	Action         string          `json:"action"`
 	RequiredCaller string          `json:"required_caller"`
 	PartialArgs    json.RawMessage `json:"partial_args"`
 }
@@ -1009,7 +1025,7 @@ func (c *Client) CallbackCreateStep(ctx context.Context, callbackBase, capabilit
 		in.PartialArgs = json.RawMessage(`{}`)
 	}
 	body, err := json.Marshal(map[string]any{
-		"action_id":       in.ActionID,
+		"action":          in.Action,
 		"required_caller": in.RequiredCaller,
 		"partial_args":    in.PartialArgs,
 	})

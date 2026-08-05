@@ -240,3 +240,49 @@ func TestValidateUserActivatesToken(t *testing.T) {
 		t.Errorf("unknown reg_id validate status=%d, want 404", code)
 	}
 }
+
+// Handles are bare and the daemon never rewrites one, so a sigiled handle is bad
+// input wherever it arrives — the browser form and a headless action call get the
+// same answer. Rewriting it would make "@bob" silently mean "bob" here while "@"
+// separates a kernel everywhere else (requirements.md §4).
+func TestSigiledHandleRejectedAtWriteBoundary(t *testing.T) {
+	d := newDaemon(t)
+
+	// A member list carrying a sigil (the create-room path).
+	status, body := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["@bob"]}`)
+	if status != http.StatusBadRequest {
+		t.Errorf("create-room with @bob = %d, want 400", status)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "must be bare") {
+		t.Errorf("error = %v, want a bare-handle rejection", body["error"])
+	}
+
+	// The same on the single-member path (add-member), which is what a headless
+	// chat/msg/add-member call reaches.
+	status, _ = postKernel(t, d, "/msg/add-member", "alice", `{"room":"r1","member":"@bob"}`)
+	if status != http.StatusBadRequest {
+		t.Errorf("add-member with @bob = %d, want 400", status)
+	}
+
+	// And a sigiled CALLER (a stale identity token) is refused rather than quietly
+	// canonicalized into someone's account.
+	status, _ = postKernel(t, d, "/msg/create-room", "@alice", `{"name":"general"}`)
+	if status != http.StatusBadRequest {
+		t.Errorf("sigiled caller = %d, want 400", status)
+	}
+
+	// Bare handles still work.
+	if status, _ := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["bob"]}`); status != http.StatusOK {
+		t.Errorf("bare handles = %d, want 200", status)
+	}
+}
+
+// The action schemas an agent reads must teach bare handles: they are the only
+// instruction a headless caller gets.
+func TestActionSchemasTeachBareHandles(t *testing.T) {
+	for _, op := range Ops {
+		if strings.Contains(string(op.InputSchema), "@bob") || strings.Contains(string(op.InputSchema), "@carol") {
+			t.Errorf("%s input schema still teaches a sigiled handle", op.Name)
+		}
+	}
+}

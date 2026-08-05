@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -66,7 +67,7 @@ var Ops = []Op{
 	{
 		Name:         "msg/create-room",
 		Description:  "Create a chat room — a named conversation the caller owns — and add the given members alongside the caller. Returns the new room's id.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Handles of users to add as members besides the caller, for example @bob and @carol. May be empty."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Handles of users to add as members besides the caller, for example bob and carol. Handles are bare — no @ prefix. May be empty."}}}`),
 		OutputSchema: json.RawMessage(outRoom),
 	},
 	{
@@ -78,7 +79,7 @@ var Ops = []Op{
 	{
 		Name:         "msg/add-member",
 		Description:  "Add a user to a chat room. Only the room's owner may add members.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Handle of the user to add, for example @bob."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Handle of the user to add, for example bob. Handles are bare — no @ prefix."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
@@ -246,20 +247,18 @@ func (d *Daemon) fireNotify(sender, roomID string) {
 
 // ---- kernel-facing writes ----
 
-// canonHandle canonicalizes a handle to the bare v0.12 form (no "@" sigil).
-// Handles reach the daemon from three eras — pre-0.4 identity tokens, sigiled
-// member input, and bare v0.12 forms — so every handle is canonicalized at this
-// boundary before it touches the store (whose rows are migrated bare at Open).
-func canonHandle(h string) string { return strings.TrimPrefix(h, "@") }
-
-func canonHandles(hs []string) []string {
-	out := make([]string, 0, len(hs))
+// checkHandles rejects any sigiled handle at the write boundary. Handles are
+// bare (requirements.md §4) and the daemon never rewrites one, so a browser
+// form and a headless action call behave identically: "@bob" is bad input on
+// both, not a handle silently meaning "bob". Historical rows were migrated bare
+// once at store.Open — that is persistence, not input.
+func checkHandles(hs ...string) error {
 	for _, h := range hs {
-		if b := canonHandle(strings.TrimSpace(h)); b != "" {
-			out = append(out, b)
+		if strings.HasPrefix(strings.TrimSpace(h), "@") {
+			return fmt.Errorf("%w: handle %q must be bare (no @)", ErrBadInput, h)
 		}
 	}
-	return out
+	return nil
 }
 
 // write adapts a store operation into an authenticated handler: identify the
@@ -272,14 +271,15 @@ func (d *Daemon) write(op func(caller string, a kargs) (map[string]any, error)) 
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthenticated caller"})
 			return
 		}
-		caller = canonHandle(caller)
 		var a kargs
 		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad request body"})
 			return
 		}
-		a.Members = canonHandles(a.Members)
-		a.Member = canonHandle(a.Member)
+		if err := checkHandles(append(a.Members, a.Member, caller)...); err != nil {
+			writeJSON(w, statusFor(err), map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
 		body, err := op(caller, a)
 		if err != nil {
 			writeJSON(w, statusFor(err), map[string]any{"ok": false, "error": err.Error()})
@@ -327,7 +327,7 @@ func (d *Daemon) admin(h http.HandlerFunc) http.HandlerFunc {
 }
 
 func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
-	rooms, err := d.store.RoomsFor(canonHandle(r.URL.Query().Get("handle")))
+	rooms, err := d.store.RoomsFor(r.URL.Query().Get("handle"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -339,7 +339,7 @@ func (d *Daemon) listRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) getRoom(w http.ResponseWriter, r *http.Request) {
-	room, msgs, err := d.store.Room(canonHandle(r.URL.Query().Get("handle")), r.PathValue("id"))
+	room, msgs, err := d.store.Room(r.URL.Query().Get("handle"), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -353,7 +353,7 @@ func (d *Daemon) getRoom(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	msgs, err := d.store.History(canonHandle(r.URL.Query().Get("handle")), r.PathValue("id"), before, limit)
+	msgs, err := d.store.History(r.URL.Query().Get("handle"), r.PathValue("id"), before, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -368,7 +368,7 @@ func (d *Daemon) getHistory(w http.ResponseWriter, r *http.Request) {
 // to remove (see Store.Poll).
 func (d *Daemon) pollRoom(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	added, deleted, err := d.store.Poll(canonHandle(r.URL.Query().Get("handle")), r.PathValue("id"), after)
+	added, deleted, err := d.store.Poll(r.URL.Query().Get("handle"), r.PathValue("id"), after)
 	if err != nil {
 		writeErr(w, err)
 		return

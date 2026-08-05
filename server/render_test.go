@@ -1213,9 +1213,9 @@ func TestThemePickerOnlyInSettings(t *testing.T) {
 	}
 }
 
-// v0.12 refs: bare owner/name splits on the first slash; a remote ref's owner
-// segment carries the kernel alias after "@"; a migration-period leading "@"
-// is tolerated (requirements.md §4).
+// v0.12 refs: bare owner/name splits on the first slash and a remote ref's owner
+// segment carries the kernel alias after "@". Refs rendered here come from the
+// kernel and are bare; nothing is stripped (requirements.md §4).
 func TestRefHelpersRemote(t *testing.T) {
 	cases := []struct {
 		ref, owner, kernel, name string
@@ -1225,7 +1225,6 @@ func TestRefHelpersRemote(t *testing.T) {
 		{"lena/ocr-translate", "lena", "", "ocr-translate", false},
 		{"alice@B/greet", "alice@B", "B", "greet", true},
 		{"tom@acme2/brief/daily", "tom@acme2", "acme2", "brief/daily", true},
-		{"@sys/llm/chat", "sys", "", "llm/chat", false}, // migration tolerance
 	}
 	for _, c := range cases {
 		if got := refOwner(c.ref); got != c.owner {

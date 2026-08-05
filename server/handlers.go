@@ -212,7 +212,6 @@ type stepsView struct {
 	Actions     map[string]client.Action // action_id → action, for name display
 	Filter      string                   // status filter
 	Superuser   bool
-	OpenForm    string
 	Error       string
 }
 
@@ -367,13 +366,6 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/login", "success", "Password reset — sign in with your new password.")
 }
 
-// bareHandle canonicalizes a handle to the bare v0.12 form, so a path segment,
-// a form value, and a stored (possibly pre-0.4, "@"-prefixed) session handle
-// compare and resolve consistently (requirements.md §4).
-func bareHandle(h string) string {
-	return strings.TrimPrefix(h, "@")
-}
-
 // ownerView is a handle's action catalogue, shown as the same cards the
 // marketplace uses. Each card self-labels its visibility (private/local/public)
 // and inactive state via its chips, so the page asserts no single level. The
@@ -386,13 +378,13 @@ type ownerView struct {
 
 func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	handle := bareHandle(r.PathValue("handle"))
+	handle := r.PathValue("handle")
 	// Show what the viewer may see across all three visibility levels. For anyone
 	// else's page that is the caller-visible active set (public + local); on your
 	// own page it is everything you own — private and inactive included — so all=1
 	// is passed exactly when the viewer is the owner (the kernel widens ?all only
 	// within the caller's own scope, §14).
-	isOwner := handle == bareHandle(s.sessions.Handle(ctx))
+	isOwner := handle == s.sessions.Handle(ctx)
 	view := ownerView{Handle: handle}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		acts, e := s.client.ListActions(ctx, tok, handle, "", isOwner, 0, 0)
@@ -458,7 +450,7 @@ func (s *Server) doLogin(ctx context.Context, handle, password string) error {
 	if err != nil {
 		return err
 	}
-	return s.sessions.Login(ctx, tokens, bareHandle(handle))
+	return s.sessions.Login(ctx, tokens, handle)
 }
 
 func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
@@ -925,7 +917,7 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("status")
-	view := stepsView{Actions: map[string]client.Action{}, Filter: filter, Superuser: s.isSuperuser(r), OpenForm: openForm(r, "step")}
+	view := stepsView{Actions: map[string]client.Action{}, Filter: filter, Superuser: s.isSuperuser(r)}
 	var myAvailable int64
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
@@ -1037,28 +1029,6 @@ func paymentFromArgs(partial json.RawMessage) (amount int64, target string) {
 	}
 	_ = json.Unmarshal(partial, &p)
 	return p.Amount, p.Target
-}
-
-// postCreateStep creates a waiting step (a developer affordance): it needs the
-// funding trace, next action, required caller, and any partial args.
-func (s *Server) postCreateStep(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	in := client.CreateStepInput{
-		TraceID:        strings.TrimSpace(r.FormValue("trace_id")),
-		ActionID:       strings.TrimSpace(r.FormValue("action_id")),
-		RequiredCaller: strings.TrimSpace(r.FormValue("required_caller")),
-	}
-	partial, err := rawJSONOrEmpty(r.FormValue("partial_args"))
-	if err != nil {
-		s.flashRedirect(w, r, "/inbox", "error", "Invalid JSON in partial args.")
-		return
-	}
-	in.PartialArgs = partial
-	oErr := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.CreateStep(ctx, tok, in)
-		return e
-	})
-	s.flashResult(w, r, oErr, "/inbox", "Step created.")
 }
 
 const (
@@ -1474,11 +1444,10 @@ func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.Status == "success" {
 			// action_name is the bare name ("echo-test"), not a full ref; prefix
-			// the signed-in owner's handle to form the callable "owner/name"
-			// (bareHandle: a pre-0.4 session may have stored a sigiled handle).
+			// the signed-in owner's handle to form the callable "owner/name".
 			view = makeResultView{
 				Success:   true,
-				ActionRef: bareHandle(s.sessions.Handle(ctx)) + "/" + res.ActionName,
+				ActionRef: s.sessions.Handle(ctx) + "/" + res.ActionName,
 				ActionID:  res.ActionID,
 			}
 		} else {
@@ -1712,7 +1681,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 // self-transfer, and peer-recipient rules — the BFF only surfaces them.
 func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	recipient := bareHandle(strings.TrimSpace(r.FormValue("recipient")))
+	recipient := strings.TrimSpace(r.FormValue("recipient"))
 	amount := parseDollars(r.FormValue("amount"))
 	if recipient == "" || amount <= 0 {
 		s.flashRedirect(w, r, "/wallet", "error", "Enter a recipient and a positive amount.")
@@ -1988,8 +1957,8 @@ var formWhitelist = map[string]map[string]bool{
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},
-	"step":          {"step-create": true},
 	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-inspect": true, "settle-cash": true},
+	"admin-user":    {"admin-rename": true},
 }
 
 // openForm returns the requested ?form value if it is whitelisted for the page

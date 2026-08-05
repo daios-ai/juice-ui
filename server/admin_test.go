@@ -533,3 +533,109 @@ func TestDepositFormAcceptsPeerKey(t *testing.T) {
 		t.Errorf("the deposit form must say it takes a key: %s", body)
 	}
 }
+
+// postTo posts a form to urlStr, taking the CSRF token from page (the form's own
+// page) and following no redirect, so a test reads the Location the handler chose.
+func postTo(t *testing.T, cl *http.Client, urlStr, page string, form url.Values) *http.Response {
+	t.Helper()
+	form.Set("gorilla.csrf.Token", csrfTokenFrom(t, page))
+	req, _ := http.NewRequest(http.MethodPost, urlStr, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	prev := cl.CheckRedirect
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	defer func() { cl.CheckRedirect = prev }()
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// Rename is one modal on the user's own detail page: it frees the old handle and
+// carries every reference to the new one, so success lands on the NEW handle's
+// page and failure stays on the old one (requirements.md §6.6).
+func TestAdminRenameUser(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	page := getBody(t, cl, srv.URL+"/admin/users/alice")
+	if !strings.Contains(page, `?form=admin-rename`) || !strings.Contains(page, `id="form-admin-rename"`) {
+		t.Error("the user page must carry the rename opener and its modal")
+	}
+	if !strings.Contains(page, "Frees the old handle; references use the new one.") {
+		t.Error("rename must disclose that references follow the account")
+	}
+
+	resp := postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_handle": {"alicia"}})
+	resp.Body.Close()
+	if got := resp.Header.Get("Location"); got != "/admin/users/alicia" {
+		t.Errorf("success must land on the new handle's page, got %q", got)
+	}
+	if lastRename != `alice {"new_handle":"alicia"}` {
+		t.Errorf("kernel saw %q", lastRename)
+	}
+}
+
+// A rejected rename (the kernel refuses sys) stays on the handle that still
+// exists, with the kernel's own reason flashed.
+func TestAdminRenameFailureStaysOnOldHandle(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	page := getBody(t, cl, srv.URL+"/admin/users/sys")
+	resp := postTo(t, cl, srv.URL+"/admin/users/sys/rename", page, url.Values{"new_handle": {"sys"}})
+	resp.Body.Close()
+	if got := resp.Header.Get("Location"); got != "/admin/users/sys" {
+		t.Errorf("failure must stay on the old handle, got %q", got)
+	}
+
+	// An empty handle never reaches the kernel.
+	lastRename = ""
+	resp = postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_handle": {"  "}})
+	resp.Body.Close()
+	if lastRename != "" {
+		t.Errorf("empty new_handle must not reach the kernel, got %q", lastRename)
+	}
+}
+
+// An unrecognised per-user verb is a 404, never a fallthrough into a destructive
+// one: the dispatch switch is exhaustive.
+func TestAdminUnknownUserOpIs404(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	page := getBody(t, cl, srv.URL+"/admin/users/alice")
+	// The route pattern only admits the three verbs; anything else never routes.
+	resp := postTo(t, cl, srv.URL+"/admin/users/alice/vaporize", page, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown user op = %d, want 404", resp.StatusCode)
+	}
+}
+
+// A peer's local alias is an ordinary handle here, so the alias itself is the way
+// into the one rename modal — no fourth command in the peer card's foot (§6.6).
+func TestPeerAliasLinksToRename(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	body := getBody(t, cl, srv.URL+"/admin/peers")
+	if !strings.Contains(body, `/admin/users/peerb?form=admin-rename`) {
+		t.Errorf("the peer alias must link to the rename modal: %s", body)
+	}
+	if strings.Contains(body, `action="/admin/peers/rename"`) {
+		t.Error("rename must not become a peer-card command")
+	}
+}

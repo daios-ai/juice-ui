@@ -1,7 +1,31 @@
 # Juice Web UI Requirements
 
-Version: 0.4.0
+Version: 0.5.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.5.0.** The naming migration ends and one workflow leaves.
+> Three axes change; the visual language and every other invariant of 0.4.0 are
+> preserved verbatim.
+>
+> 1. **Sigiled input is rejected, not rewritten (§4).** The kernel's migration
+>    period is over — `@` separates a kernel, so `@alice` is ill-formed input it
+>    refuses. The UI stops canonicalizing anything, at every boundary including
+>    the chat daemon's, and shows the kernel's own reason. Silently reading
+>    `@alice/greet` as `alice/greet` would make a UI-only dialect of a grammar
+>    the CLI and kernel share.
+> 2. **Step creation leaves the browser (§3.2, §6.3).** `POST /v1/steps` binds a
+>    live funding trace, which is exactly the bookkeeping this UI hides, so the
+>    form asked the inbox's own reader for a trace UUID. Steps are composed by
+>    actions and app modules through the kernel API; the inbox is work addressed
+>    to you: list, read, complete.
+> 3. **Rename gains a home (§3.1, §6.6).** One modal on the admin user detail
+>    frees a handle and carries every reference to the new one. A peer's local
+>    alias is an ordinary handle, so the alias itself links into that same form
+>    rather than adding a fourth command to every peer card.
+>
+> Three kernel-contract repairs ride along, each verified live against v0.12.5:
+> the ratings projection is `{value, note, created_at}`, `POST /v1/steps` takes
+> `action` (not `action_id`), and `GET /control/peers` is a bare array.
 
 > **What changed in 0.4.0.** The kernel's v0.12 contract lands: the network
 > becomes first-class — bare names, bilateral money, spendable steps. Three axes
@@ -158,15 +182,16 @@ detectable.
   surfacing parked funds and awaiting-receipt state.
 * **tx** — the immutable ledger: transactions list/show/rate; receipt
   verification (`GET /v1/transactions/{id}/receipt-verification`), on demand.
-* **step** — steps: list/show/complete; step creation as a developer affordance.
+* **step** — steps: list/show/complete. Step creation is API and app-module
+  surface only (§6.3).
 * **user** — self profile, balances (`GET /v1/me`, `available`/`locked`), and
   update (`PUT /v1/me`); the ledger of the user's own transactions.
 
 *Conditional:* the trace tree on the receipt page.
 
 * **Admin / supervision (superuser only):** the `admin` group, visible only to
-  `sys`, covers user list/show, suspend/unsuspend, credit deposits and
-  withdrawals, federation trust (peers — provisioned by use or by deposit-by-key,
+  `sys`, covers user list/show, suspend/unsuspend, rename (§6.6), credit
+  deposits and withdrawals, federation trust (peers — provisioned by use or by deposit-by-key,
   inspect, suspend/unsuspend, this kernel's identity), operator settlement (§6.6,
   Conditional on the HTTP route), and the value-transfer queue
   (`GET /control/transfers`, §6.6). The kernel serves these over HTTP on
@@ -208,9 +233,12 @@ detectable.
   part after it names a **kernel**: `owner@kernel/name` is a remote action,
   `kernel` a presentation-only local alias for a peer key — never an identity
   and never a key for anything in the UI. Handles are bare (`sys`, `alice`); the
-  UI **emits** bare names everywhere and **tolerates** a leading `@` on input
-  (form fields, stored sessions) for the kernel's migration period,
-  canonicalizing to bare. In a URL, `owner/name` is percent-encoded.
+  UI **emits** bare names everywhere and **MUST NOT rewrite** a name on input.
+  The migration period is over: `@` separates a kernel, so a sigiled handle,
+  ref, or selector is ill-formed input the kernel rejects — the UI passes it
+  through and surfaces that typed error, because silently reading `@alice/greet`
+  as `alice/greet` would make a UI-only dialect of a grammar the CLI and kernel
+  share. In a URL, `owner/name` is percent-encoded.
 * Action read/list responses carry both `id` (UUID, for management) and a
   computed `action` (`owner/name`, for calling). The UI uses `action` directly
   in call requests and never asks the user to type a UUID.
@@ -441,9 +469,11 @@ open (parked steps), the result MUST say so and link to the Wallet.
   state the reason.
 * `sys/message` steps MUST render as a message (sender, text, acknowledge
   button).
-* Step creation (`POST /v1/steps`: `action`, `process_id`, `parent_trace_id`,
-  `partial_args`, `input_schema`, `required_caller`) MUST be present but collapsed
-  by default.
+* Step creation MUST NOT be a browser form. `POST /v1/steps` binds a live
+  funding trace, and a trace id is exactly the process bookkeeping this UI keeps
+  hidden (§6.5) — a form demanding one is unusable by the person the inbox is
+  for. Steps are composed by actions and app modules through the kernel API; the
+  inbox is work addressed to you: list, read, complete.
 
 ### 6.4 action — catalog and provider workspace
 
@@ -574,6 +604,11 @@ queue.
   **inspect a kernel by key** entry so a key learned anywhere still reaches the
   inspect view, which is now the sole window onto a kernel this one has not
   transacted with.
+* **A local alias is renamable.** A peer's alias is a local name for its key —
+  presentation only, and an ordinary handle on this kernel (verified live: the
+  rename rebinds what `/control/peers` then lists). It MUST therefore reach the
+  one rename form (below) from the alias itself, not from a further command in
+  the peer card, whose verbs stay inspect, settle, and suspend.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   **grouped by issuer**, each row naming the subject action (joined from the
   inspection's own manifest list) and stating uses, successes, failures, and the
@@ -597,6 +632,17 @@ queue.
   global exposure the serving kernel alone decides admission (verified live: an
   "unfunded" proxy call succeeds), so the chip stays as a quiet hint and a
   refusal surfaces as the typed `peer_unfunded` outcome.
+
+**Rename.**
+
+* Renaming a handle frees the old one and carries every reference to the new —
+  one modal, on the user's own detail page (`POST /control/users/{handle}/rename`),
+  reached from `admin` and from a peer's alias alike. Its disclosure MUST state
+  the consequence beside the field ("Frees the old handle; references use the new
+  one."). Success MUST land on the new handle's page and a rejection stay on the
+  old one, since that is the page that still exists. The new handle is sent as
+  typed (§4): the kernel refuses `sys` and any sigiled name, and the UI shows
+  that reason.
 
 **Settlement.** Confirmed on the running kernel: `POST /control/peers/settle`
 `{handle}`, and `{handle, settlement_id}` for the record-cash leg (§10).

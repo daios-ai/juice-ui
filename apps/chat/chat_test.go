@@ -23,11 +23,12 @@ import (
 	"github.com/daios-ai/juice-ui/session"
 )
 
-// v0.12: handles are bare; sigiled input is tolerated and canonicalized, and
-// every non-empty token is a handle (there is no sigil to filter on).
+// Handles are bare and never rewritten: every non-empty token is passed through
+// as typed, so a sigiled one reaches the daemon and is rejected there — the same
+// answer a headless action call gets (requirements.md §4).
 func TestParseHandles(t *testing.T) {
 	got := parseHandles("bob, carol\n@dave  plainword @eve")
-	want := []string{"bob", "carol", "dave", "plainword", "eve"}
+	want := []string{"bob", "carol", "@dave", "plainword", "@eve"}
 	if len(got) != len(want) {
 		t.Fatalf("parseHandles = %v, want %v", got, want)
 	}
@@ -912,7 +913,7 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 		t.Errorf("doorbell partial_args missing room: %s", bodies)
 	}
 	// The onward is chat's own price-0 ack, never sys/sink (which chat can't price).
-	if !strings.Contains(bodies, `"action_id":"ack"`) {
+	if !strings.Contains(bodies, `"action":"ack"`) {
 		t.Errorf("doorbell onward is not chat/ack: %s", bodies)
 	}
 
@@ -1119,7 +1120,7 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	}
 	body := f.mints[0]
 	if !strings.Contains(body, `"required_caller":"agent"`) ||
-		!strings.Contains(body, `"action_id":"validate-act-id"`) ||
+		!strings.Contains(body, `"action":"validate-act-id"`) ||
 		!strings.Contains(body, "reg_id") {
 		t.Errorf("verification step = %s", body)
 	}
@@ -1214,5 +1215,29 @@ func TestKernelDispatchRoutesOutboxToPlugin(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "step_id") {
 		t.Errorf("outbox not handled by plugin: %s", rec.Body.String())
+	}
+}
+
+// A business rejection is the user's own input coming back — the daemon's
+// sentence must survive to the flash, because "Something went wrong" tells
+// someone who typed "@yan" nothing they can act on.
+func TestDaemonReasonSurvivesToTheUser(t *testing.T) {
+	reject := &client.KernelError{
+		Kind:          client.KindExecutionFailed,
+		Status:        500,
+		KernelMessage: `action returned status 400: {"error":"bad input: handle \"@yan\" must be bare (no @)","ok":false}`,
+	}
+	if got := daemonReason(reject); got != `handle "@yan" must be bare (no @)` {
+		t.Errorf("daemonReason = %q", got)
+	}
+	// A genuine fault carries no daemon body and must fall through to the error
+	// page rather than flash a truncated internal message.
+	for _, err := range []error{
+		&client.KernelError{Kind: client.KindUnavailable, KernelMessage: "connection refused"},
+		&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "wasm trap"},
+	} {
+		if got := daemonReason(err); got != "" {
+			t.Errorf("daemonReason(%v) = %q, want empty", err, got)
+		}
 	}
 }

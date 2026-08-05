@@ -49,7 +49,8 @@ type Adjustment struct {
 // Peer is a known peer (proxy user) row from the control surface. Available is
 // the BILATERAL POSITION under the v0.12 exposure model and may be NEGATIVE:
 // positive = the peer prepaid (this kernel owes it service), negative = the
-// peer owes this kernel. PeerCredit and LastSeen are the §13 peer-sync cache —
+// peer owes this kernel; render it with its reading, never bare (§6.6, and see
+// server.positionText). PeerCredit and LastSeen are the §13 peer-sync cache —
 // this kernel's cached credit on the peer, and when we last heard from it.
 // SettlementDue is the kernel's Y-trigger signal: information, never authority
 // (crossing it stops nothing; only the global cap X refuses calls). SuspendedAt
@@ -65,24 +66,10 @@ type Peer struct {
 	SuspendedAt   string `json:"suspended_at,omitempty"`   // set only on a suspended row under ?all=1
 }
 
-// Position is the bilateral position for display: the signed Available.
-// Render it with its reading — "we owe them" (positive: the peer prepaid or
-// earned here) / "owes us" (negative) — never as a bare negative number
-// (requirements.md §6.6).
-func (p Peer) Position() int64 { return p.Available }
-
 // Suspended reports whether this peer is frozen (its inbound calls are refused).
 // Detection is by presence: the kernel returns suspended_at only on a suspended row
 // (verified live 2026-07-19), so a non-empty string means suspended.
 func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
-
-// Peers is the /control/peers response. There is no known-network roster: the
-// kernel serves no directory of discovered kernels (verified live 2026-08-04 —
-// the roster, its introducer attribution, and the --gossip flag were removed
-// with subscription). Discovered kernels surface only through sys/lookup.
-type Peers struct {
-	Peers []Peer `json:"peers"`
-}
 
 // PeerAction is one action a peer serves, as carried by an inspection: the
 // signed manifest fields plus the peer's own earned Stats for it. Descriptions
@@ -235,27 +222,30 @@ func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser,
 // AdminGetUser returns one user by handle (GET /control/users/{handle}).
 func (c *Client) AdminGetUser(ctx context.Context, token, handle string) (AdminUser, error) {
 	var u AdminUser
-	err := c.do(ctx, http.MethodGet, "/control/users/"+url.PathEscape(normalizeHandle(handle)), token, nil, &u)
+	err := c.do(ctx, http.MethodGet, "/control/users/"+url.PathEscape(handle), token, nil, &u)
 	return u, err
 }
 
 // AdminSuspendUser suspends a user (POST /control/users/{handle}/suspend).
 func (c *Client) AdminSuspendUser(ctx context.Context, token, handle string) error {
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/suspend", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/suspend", token, nil, nil)
 }
 
 // AdminUnsuspendUser lifts a suspension (POST /control/users/{handle}/unsuspend).
 func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) error {
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/unsuspend", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/unsuspend", token, nil, nil)
 }
 
 // AdminRename changes a user's handle (POST /control/users/{handle}/rename),
-// freeing the old handle for reuse. The kernel rejects renaming sys.
+// freeing the old handle for reuse and rebinding every reference to it. The
+// kernel rejects renaming sys. A peer's local alias is an ordinary handle on
+// this kernel, so the same call rebinds it (verified live 2026-08-05: the
+// renamed alias is what admin peers then lists).
 func (c *Client) AdminRename(ctx context.Context, token, handle, newHandle string) error {
 	body := struct {
 		NewHandle string `json:"new_handle"`
-	}{normalizeHandle(newHandle)}
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(normalizeHandle(handle))+"/rename", token, body, nil)
+	}{newHandle}
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/rename", token, body, nil)
 }
 
 // AdminDeposit credits a user's balance (POST /control/deposit). The handle may
@@ -273,7 +263,7 @@ func (c *Client) AdminWithdraw(ctx context.Context, token, handle string, amount
 }
 
 func (c *Client) adjust(ctx context.Context, token, path, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
-	body := map[string]any{"handle": normalizeHandle(handle), "amount": amount}
+	body := map[string]any{"handle": handle, "amount": amount}
 	if reason != "" {
 		body["reason"] = reason
 	}
@@ -288,12 +278,12 @@ func (c *Client) adjust(ctx context.Context, token, path, handle string, amount 
 // AdminListPeers returns known peers, optionally including suspended ones —
 // GET /control/peers[?all=1]. The kernel requires the literal value "1" ("true"
 // is read as false), so the flag is emitted as "1" or omitted.
-func (c *Client) AdminListPeers(ctx context.Context, token string, all bool) (Peers, error) {
+func (c *Client) AdminListPeers(ctx context.Context, token string, all bool) ([]Peer, error) {
 	path := "/control/peers"
 	if all {
 		path += "?all=1"
 	}
-	var p Peers
+	var p []Peer
 	err := c.do(ctx, http.MethodGet, path, token, nil, &p)
 	return p, err
 }
