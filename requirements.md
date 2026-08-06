@@ -1,9 +1,9 @@
 # Juice Web UI Requirements
 
-Version: 0.6.0
+Version: 0.5.1
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.6.0.** One axis: `GET /control/peers` now merges **every**
+> **What changed in 0.5.1.** One axis: `GET /control/peers` now merges **every**
 > kernel this one knows — counterparties and discovered peers alike — so
 > `network` becomes one paged roster under a `.tabs` filter, in which a
 > discovered kernel is the unresolved counterpart of a counterparty (§6.6).
