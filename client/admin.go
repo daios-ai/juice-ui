@@ -46,22 +46,37 @@ type Adjustment struct {
 	TargetHandle   string `json:"target_handle"`
 }
 
-// Peer is a known peer (proxy user) row from the control surface. Available is
-// the BILATERAL POSITION under the v0.12 exposure model and may be NEGATIVE:
-// positive = the peer prepaid (this kernel owes it service), negative = the
-// peer owes this kernel; render it with its reading, never bare (§6.6, and see
-// server.positionText). PeerCredit and LastSeen are the §13 peer-sync cache —
-// this kernel's cached credit on the peer, and when we last heard from it.
+// Peer is one row of the merged kernel roster: every kernel this one knows,
+// keyed by public key and excluding itself. HasAccount splits the two classes
+// (verified live 2026-08-06) — a COUNTERPARTY holds a billing account here, a
+// DISCOVERED peer is a catalog entry the discovery loop learned and nothing
+// more, so its money fields are meaningless and it has no user row to suspend
+// or rename.
+//
+// Available is the BILATERAL POSITION under the v0.12 exposure model and may be
+// NEGATIVE: positive = this kernel owes the peer (it prepaid or earned here),
+// negative = the peer owes this kernel; render it with its reading, never bare
+// (§6.6, and see server.positionText). PeerCredit is our cached credit on the
+// peer and is ABSENT until a gossip pull as a counterparty returns one, so it is
+// zero-suppressed rather than shown as zero. LastSeen is the last verified
+// gossip pull for BOTH classes — catalog freshness, never a liveness claim.
 // SettlementDue is the kernel's Y-trigger signal: information, never authority
 // (crossing it stops nothing; only the global cap X refuses calls). SuspendedAt
 // is present only on a suspended row under ?all=1 (v0.9 unified moderation).
+//
+// Handle is a DISPLAY NAME, never an address: advertised names collide (two
+// kernels both answering to "twin" occupy two key-distinct rows) and the kernel
+// re-aliases a kernel when a deposit promotes it, so every action keys on
+// PublicKey.
 type Peer struct {
 	Handle        string `json:"handle"`
 	PublicKey     string `json:"public_key"`
+	HasAccount    bool   `json:"has_account"` // counterparty (billing account) vs discovered
+	Actions       int    `json:"actions"`     // public actions in its gossiped catalog
 	Available     int64  `json:"available"`
 	Locked        int64  `json:"locked"`
-	PeerCredit    int64  `json:"peer_credit"`              // our cached credit on the peer
-	LastSeen      string `json:"last_seen"`                // RFC3339; "" / null when never seen
+	PeerCredit    int64  `json:"peer_credit"`              // our cached credit on the peer; absent until synced
+	LastSeen      string `json:"last_seen"`                // RFC3339; "" / null when never pulled
 	SettlementDue bool   `json:"settlement_due,omitempty"` // gross receivables crossed Y (§13)
 	SuspendedAt   string `json:"suspended_at,omitempty"`   // set only on a suspended row under ?all=1
 }
@@ -71,23 +86,17 @@ type Peer struct {
 // (verified live 2026-07-19), so a non-empty string means suspended.
 func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
 
-// PeerAction is one action a peer serves, as carried by an inspection: the
-// signed manifest fields plus the peer's own earned Stats for it. Descriptions
-// and schemas are the canonical interface an importing kernel would cache.
+// PeerAction is one action a peer serves, as carried by an inspection. As of
+// v0.12.8 the projection is only {name, description, price} — no action_id, no
+// owner_handle, no kind, no stats (verified live 2026-08-06), and the name is
+// BARE (`register`, not `chat/register`). So a peer action cannot be turned into
+// an addressable ref here and carries no reputation: the UI renders what the
+// kernel serves and nothing more (requirements.md §10).
 type PeerAction struct {
-	ActionID    string `json:"action_id"`
-	OwnerHandle string `json:"owner_handle"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Price       int64  `json:"price"`
-	Kind        string `json:"kind"`
-	Stats       Stats  `json:"stats"`
 }
-
-// Ref is the action's reference as this kernel would address it: owner/name in
-// the serving kernel's own namespace. It is display-only — reaching the action
-// requires resolving it from that kernel (§13), never this string alone.
-func (a PeerAction) Ref() string { return a.OwnerHandle + "/" + a.Name }
 
 // Evidence is one derived metric row from the local evidence cache: what a
 // single issuer's signed receipts say about one action of the inspected kernel
@@ -96,13 +105,23 @@ func (a PeerAction) Ref() string { return a.OwnerHandle + "/" + a.Name }
 // without that link. Equivocating ratings are excluded by the kernel. This
 // proves attribution, never honesty, so it is displayed as evidence beside its
 // issuer and never folded into an action's first-party Stats.
+//
+// CorroboratedUses is the same two-kernel link applied to uses rather than
+// ratings: how many of this issuer's interactions the subject's own evidence
+// confirms. It is meaningful only on a third-party row (an issuer reporting on
+// someone else) — a subject's self-reported rows carry 0 by construction.
+//
+// `avg_latency_ms` is deliberately NOT decoded: the kernel emits it fractional
+// (690.5, 90760.5 — verified live 2026-08-06), so an integer field fails the
+// whole inspection, and nothing renders it. A field the UI does not show is a
+// decode hazard, not documentation.
 type Evidence struct {
 	IssuerPublicKey  string  `json:"issuer_public_key"`
 	SubjectActionID  string  `json:"subject_action_id"`
 	Uses             int64   `json:"uses"`
 	Successes        int64   `json:"successes"`
 	Failures         int64   `json:"failures"`
-	AvgLatencyMillis int64   `json:"avg_latency_ms"`
+	CorroboratedUses int64   `json:"corroborated_uses"`
 	RatingCount      int64   `json:"rating_count"`
 	RatingMean       float64 `json:"rating_mean"`
 	UnverifiedRating int64   `json:"unverified_ratings"`
@@ -117,65 +136,89 @@ type Reachability struct {
 	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }
 
+// PeerAccount is this kernel's billing row for the inspected kernel, served
+// inline by the inspection (verified live 2026-08-06) and NULL for a kernel that
+// holds no account here. Its presence is what distinguishes a counterparty from
+// a discovered peer on the inspect page, so it is a pointer.
+type PeerAccount struct {
+	Available int64 `json:"available"`
+	Locked    int64 `json:"locked"`
+	Suspended bool  `json:"suspended"`
+}
+
 // Inspection is GET /control/peers/inspect?key= — a remote kernel's identity, its
-// About (the peer's sys description), the public actions it serves, and the
-// evidence this kernel retains about it, plus reachability. Online and Source are
-// top-level fields (verified live): Online is true only when the live probe reached
-// the peer; Source is "live" | "local" (last-known, online=false) | "none". The
-// transacted-peers list ("friends") is GONE as of v0.12 — endorsement by
-// association is replaced by signed, per-issuer Evidence (verified live
-// 2026-08-04). The wire also carries first-party `users` and the `steps` this peer
-// holds for us; neither has a UI surface yet (ROADMAP).
+// About (the peer's sys description), the public actions it serves, the evidence
+// this kernel retains about it, and our account with it, plus reachability.
+// Online and Source are top-level fields (verified live): Online is true only
+// when the live probe reached the peer; Source is "live" | "local" (last-known,
+// online=false) | "none" (a well-formed key this kernel has never learned — a
+// usable page, not an error). The transacted-peers list ("friends") is GONE as
+// of v0.12 — endorsement by association is replaced by signed, per-issuer
+// Evidence. The wire also carries the `steps` this peer holds for us, which has
+// no UI surface yet (ROADMAP).
 type Inspection struct {
 	Handle       string       `json:"handle"`
 	PublicKey    string       `json:"public_key"`
 	About        string       `json:"about"`
 	Actions      []PeerAction `json:"actions"`
 	Evidence     []Evidence   `json:"evidence"`
+	Account      *PeerAccount `json:"account"` // nil ⇒ no billing account here
 	Online       bool         `json:"online"`
 	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
 	Reachability Reachability `json:"reachability"`
 }
 
-// EvidenceByIssuer groups the inspection's evidence by issuing kernel, in wire
-// order, and resolves each row's subject action to a display name from the
-// inspection's own manifest list (evidence carries only the action id). A
-// subject absent from that list — retained evidence about an action the kernel
-// no longer serves — keeps its raw id, which is still a truthful label.
-func (i Inspection) EvidenceByIssuer() []IssuerEvidence {
-	names := make(map[string]string, len(i.Actions))
-	for _, a := range i.Actions {
-		names[a.ActionID] = a.Ref()
+// Discovered reports that this kernel is known through the discovery loop but
+// holds no account here. The predicate is POSITIVE on Source so that a future or
+// empty value never silently reads as discovered: a stranger key answers
+// source="none" with no account and is not part of the known network.
+func (i Inspection) Discovered() bool {
+	return i.Account == nil && (i.Source == "live" || i.Source == "local")
+}
+
+// SelfEvidence is the subject's own execution evidence — the rows it issued
+// about itself. Counted alone it is the execution summary: a remote call is
+// never double-counted (juicedocs §13). It shares IssuerEvidence with the
+// counterparty view so both render through one partial, and carries Self so
+// that partial can drop the corroborated column, which only a third party's
+// rows can populate.
+func (i Inspection) SelfEvidence() IssuerEvidence {
+	out := IssuerEvidence{Issuer: i.PublicKey, Self: true}
+	for _, e := range i.Evidence {
+		if e.IssuerPublicKey == i.PublicKey {
+			out.Rows = append(out.Rows, e)
+		}
 	}
+	return out
+}
+
+// CounterpartyEvidence is every OTHER issuer's directly-observed experience of
+// this kernel, grouped by issuer in wire order. It is shown beside the execution
+// summary and never folded into it: attribution is provable, honesty is not.
+func (i Inspection) CounterpartyEvidence() []IssuerEvidence {
 	var out []IssuerEvidence
 	at := map[string]int{}
 	for _, e := range i.Evidence {
+		if e.IssuerPublicKey == i.PublicKey {
+			continue
+		}
 		idx, seen := at[e.IssuerPublicKey]
 		if !seen {
 			out = append(out, IssuerEvidence{Issuer: e.IssuerPublicKey})
 			idx = len(out) - 1
 			at[e.IssuerPublicKey] = idx
 		}
-		subject := names[e.SubjectActionID]
-		if subject == "" {
-			subject = e.SubjectActionID
-		}
-		out[idx].Rows = append(out[idx].Rows, EvidenceRow{Subject: subject, Evidence: e})
+		out[idx].Rows = append(out[idx].Rows, e)
 	}
 	return out
 }
 
 // IssuerEvidence is one issuer's block of evidence rows about the inspected
-// kernel; EvidenceRow pairs a row with its resolved subject-action label.
+// kernel. Self marks the block the subject issued about itself.
 type IssuerEvidence struct {
 	Issuer string
-	Rows   []EvidenceRow
-}
-
-// EvidenceRow is one evidence record with its subject named for display.
-type EvidenceRow struct {
-	Subject string
-	Evidence
+	Self   bool
+	Rows   []Evidence
 }
 
 // Identity is this kernel's own federation identity plus its global exposure
@@ -187,6 +230,7 @@ type EvidenceRow struct {
 type Identity struct {
 	Handle            string   `json:"handle"`
 	PublicKey         string   `json:"public_key"`
+	About             string   `json:"about"` // sys's description — what the network reads about us
 	Addrs             []string `json:"addrs"`
 	ExposureMax       int64    `json:"exposure_max"`
 	GrossReceivables  int64    `json:"gross_receivables"`
@@ -275,17 +319,34 @@ func (c *Client) adjust(ctx context.Context, token, path, handle string, amount 
 	return a, err
 }
 
-// AdminListPeers returns known peers, optionally including suspended ones —
-// GET /control/peers[?all=1]. The kernel requires the literal value "1" ("true"
-// is read as false), so the flag is emitted as "1" or omitted.
+// AdminListPeers returns the whole merged roster, optionally including suspended
+// counterparties — GET /control/peers[?all=1]. The kernel requires the literal
+// value "1" ("true" is read as false), so the flag is emitted as "1" or omitted.
+//
+// It pages to exhaustion like AdminListUsers: the roster is no longer bounded by
+// trade but by the size of the known network, so a single unpaged call would
+// silently truncate at the kernel's default 50.
 func (c *Client) AdminListPeers(ctx context.Context, token string, all bool) ([]Peer, error) {
-	path := "/control/peers"
-	if all {
-		path += "?all=1"
+	const page = 200 // server ceiling
+	var out []Peer
+	for offset := 0; ; offset += page {
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(page))
+		if offset > 0 {
+			q.Set("offset", strconv.Itoa(offset))
+		}
+		if all {
+			q.Set("all", "1")
+		}
+		var batch []Peer
+		if err := c.do(ctx, http.MethodGet, "/control/peers?"+q.Encode(), token, nil, &batch); err != nil {
+			return out, err
+		}
+		out = append(out, batch...)
+		if len(batch) < page {
+			return out, nil
+		}
 	}
-	var p []Peer
-	err := c.do(ctx, http.MethodGet, path, token, nil, &p)
-	return p, err
 }
 
 // AdminIdentity returns this kernel's federation identity (GET /control/identity).

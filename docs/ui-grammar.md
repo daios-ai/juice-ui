@@ -37,7 +37,7 @@ Three laws underpin everything:
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Search pill** | `.omni` + `.omni-go` submit segment | **the** search, segmented like a single pill: input left, equal-height icon-submit right. Topbar on desktop, in-page on browse ≤720px — identical anatomy in both |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
-| **Kernel card** | `.kernel-card` · `.banner` | a peer kernel on `network` |
+| **Kernel card** | `.kernel-card` · `.banner` | a kernel on `network` — counterparty or discovered (§5.11) |
 | Field | `.field` + inputs/select/textarea | forms |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
@@ -413,30 +413,41 @@ behind a remote owner — don't invent one.
 top-level nav entries** (`sys` only), not one page with a sub-nav — federation
 is a distinct concern. `network` owns the **this kernel** identity card. The
 `network` page is an inspect → fund → settle journey, in card + table grammar:
-**this kernel** (identity to share) · **peers** (each with Inspect + Settle +
-Suspend/Unsuspend). There is **no subscribe/unsubscribe verb and no known-network
-roster** — a peer arises from use or from a deposit addressed to its key, so the
-page's two openers are **inspect a kernel by key** and **fund a peer by key** (the
-latter reuses the `admin` deposit form, which takes a handle or a key). Discovered
-kernels reach the operator only through `sys/lookup` results (§5.13 card chips).
+**this kernel** (identity to share) · the **roster** — every known kernel, under
+one `.tabs` filter (`counterparties | known network`, §5.2), paged and never
+polled. There is **no subscribe/unsubscribe verb**; the one opener is **inspect a
+kernel by key**.
+
+The kernel card has **two states**, the same relation §5.5 draws between a
+resolved and a discovered action card. A **counterparty** carries its bilateral
+position and Inspect · Settle · Suspend/Unsuspend. A **discovered** kernel
+carries the same `known network` `.chip.tag`, its action count and catalog
+freshness, and **no account-dependent verb** — its one gesture is **Fund**, a
+`.btn-quiet` opener whose `?form=` link prefills the key (never `data-modal`,
+which would open the empty dialog) and whose authorizing control is the deposit
+form's money button. A displayed kernel name is inert text: names collide and are
+re-bound on promotion, so only a **counterparty's** alias links into the rename
+modal.
 
 **Inspect** (`/admin/peers/{key}`) shows reachability (direct/relayed + rtt), the
-kernel's public actions, and **evidence**: one block per issuer, in the same
-grouped-block grammar as the action stats table, each row naming the subject
-action with uses/successes/failures and the two rating counts stated as text —
-`N trade-backed · M unverified`. Evidence carries **no colour and no fill**: it is
-a trust fact, not a status, and never joins the first-party reputation strip.
+kernel's public actions, and **evidence** in **two blocks**, in the same
+grouped-block grammar as the action stats table: the subject's own **execution
+summary**, then **counterparty experience** per issuer with its corroborated
+count. Each row names its subject action and states uses/successes/failures with
+the two rating counts as text — `N trade-backed · M unverified`. Evidence carries
+**no colour and no fill**: it is a trust fact, not a status, and never joins the
+first-party reputation strip.
 
 **Rename** is one modal on the admin user detail (`?form=admin-rename`): a
-`.btn-quiet` opener beside Suspend, one field, a neutral `.btn` submit. A peer's
-alias is an ordinary handle here, so the **alias itself links into that same
-modal** (`/admin/users/{alias}?form=admin-rename`) — the peer card's verbs stay
-Inspect · Settle · Suspend, and the rename lives where every other per-user edit
-does. One form, one handler, one validation path.
+`.btn-quiet` opener beside Suspend, one field, a neutral `.btn` submit. A
+counterparty's alias is an ordinary handle here, so the **alias itself links into
+that same modal** (`/admin/users/{alias}?form=admin-rename`) — the card's verbs
+stay Inspect · Settle · Suspend, and the rename lives where every other per-user
+edit does. One form, one handler, one validation path.
 
-A peer's balance is the **bilateral position**, rendered signed with its
-reading — "prepaid" (positive) / "owes us" (negative) — never a bare negative
-number; a `settlement_due` peer carries a quiet `.pill`. Settle / Record-cash
+A counterparty's balance is the **bilateral position**, rendered signed with its
+reading — "we owe them" (positive) / "owes us" (negative) — never a bare negative
+number; a `settlement_due` counterparty carries a quiet `.pill`. Settle / Record-cash
 confirms (requirements.md §6.6, Conditional) are `data-confirm` modals naming
 the peer and the amounts. The superuser **transfer queue** (`/admin/transfers`)
 lists unresolved value transfers (`pending` + `quarantined`) with **Retry as the

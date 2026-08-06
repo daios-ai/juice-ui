@@ -148,10 +148,13 @@ func TestAdminPeersHasNoSubscriptionOrRoster(t *testing.T) {
 	if !strings.Contains(body, `action="/admin/peers/inspect"`) || !strings.Contains(body, `method="get"`) {
 		t.Error("peers page must offer inspect-a-kernel-by-key as a GET form")
 	}
-	if !strings.Contains(body, "/admin?form=admin-deposit") {
-		t.Error("peers page must link the deposit form as the fund-a-peer entry")
+	// Funding is reached from the kernel it is about — a discovered card's Fund
+	// opener, or the inspect page of one with no account — so the key is prefilled
+	// rather than retyped. There is no separate fund-by-key opener.
+	if strings.Contains(body, "fund a peer by key") || strings.Contains(body, "fund a kernel by key") {
+		t.Error("the page-level fund-by-key opener is retired: inspect \u2192 fund covers an out-of-band key")
 	}
-	// A peer row keeps exactly the two levers that remain.
+	// A counterparty row keeps exactly the two levers that remain.
 	for _, want := range []string{"/admin/peers/settle", "/admin/peers/suspend"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("peer row missing %q", want)
@@ -200,25 +203,23 @@ func htmxGet(t *testing.T, cl *http.Client, url string) *http.Response {
 	return resp
 }
 
-// TestAdminPeersHTMXReturnsFragment checks item 1: an htmx poll of /admin/peers
-// gets just the Friends-table fragment, not the whole page (no identity card, no
-// layout chrome) — so the swap replaces only the polled region.
-func TestAdminPeersHTMXReturnsFragment(t *testing.T) {
+// The roster is not polled. Its facts advance once per the kernel's discovery
+// interval, while a refresh now costs one pass over the whole known network, so
+// it refreshes on navigation and after a mutation. Polling stays on inspect.
+func TestAdminPeersIsNotPolled(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	resp := htmxGet(t, cl, srv.URL+"/admin/peers")
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	s := string(body)
-	if !strings.Contains(s, "peerb") {
-		t.Errorf("htmx peers fragment must carry the friends table: %s", s)
+	body := getBody(t, cl, srv.URL+"/admin/peers")
+	if strings.Contains(body, `hx-get="/admin/peers`) {
+		t.Errorf("the roster must not poll itself: %s", body)
 	}
-	if strings.Contains(s, "This kernel") || strings.Contains(s, `hx-get="/inbox/badge"`) {
-		t.Errorf("htmx peers fragment must be bare (no identity card, no layout chrome): %s", s)
+	// The inspect status card keeps its poll (it also freshens the sync cache).
+	if ibody := getBody(t, cl, srv.URL+"/admin/peers/KEYB"); !strings.Contains(ibody, `hx-get="/admin/peers/KEYB"`) {
+		t.Error("the inspect status card must still poll")
 	}
 }
 
@@ -275,12 +276,16 @@ func TestAdminInspectRenders(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
-	// The manifest's owner segment renders emphasized, as a ref does everywhere;
-	// the transport path (direct) is folded into the single online status line.
-	for _, want := range []string{"kernelc", "direct", `class="owner">maker`} {
+	// The kernel serves an action as {name, description, price}: no owner to
+	// emphasize and no id to link, so the name renders plain. The transport path
+	// (direct) is folded into the single online status line.
+	for _, want := range []string{"kernelc", "direct", "synth/make"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inspect page missing %q", want)
 		}
+	}
+	if strings.Contains(body, `class="owner">`) {
+		t.Error("a peer action carries no owner segment — none is served")
 	}
 	// online/source are top-level in the response; a reachable peer must show the
 	// "online" pill (regression guard for the always-offline decode bug).
@@ -294,23 +299,53 @@ func TestAdminInspectRenders(t *testing.T) {
 	if strings.Contains(body, "Reachability</dt>") {
 		t.Error("the separate Reachability row should be folded into Status")
 	}
-	// Evidence replaces the old transacted-peers list: grouped by issuer, with the
-	// subject named from the manifest list and the two rating counts stated apart.
+	// Evidence renders in two views that are never folded: the subject's own
+	// execution rows, then each other issuer's experience with its corroborated
+	// count. A subject is named by its full action id — nothing joins it to a name.
 	if !strings.Contains(body, "Evidence") || strings.Contains(body, "Transacted peers") {
 		t.Error("inspect must render Evidence, not the retired transacted-peers list")
 	}
-	for _, want := range []string{"issued by", "maker/synth/make", "trade-backed", "unverified"} {
+	for _, want := range []string{"as executed here", "issued by", "a2", "corroborated", "trade-backed", "unverified"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("evidence block missing %q", want)
 		}
 	}
-	// Two issuers about the same action are two blocks, never one merged score.
-	if n := strings.Count(body, "issued by"); n != 2 {
-		t.Errorf("evidence must group per issuer, got %d blocks", n)
+	// One self block and one third-party block — never merged into one score, and
+	// the self block carries no corroborated column (nothing can corroborate it).
+	if n := strings.Count(body, "as executed here"); n != 1 {
+		t.Errorf("the execution summary must be exactly one block, got %d", n)
 	}
-	// KEYC is not a peer of ours, so there is no position to state.
-	if strings.Contains(body, "owes us") || strings.Contains(body, "we owe them") {
-		t.Error("a kernel we hold no billing row for must show no position")
+	if n := strings.Count(body, "issued by"); n != 1 {
+		t.Errorf("counterparty experience must group per issuer, got %d blocks", n)
+	}
+	if n := strings.Count(body, ">corroborated<"); n != 1 {
+		t.Errorf("only a third-party block may carry the corroborated column, got %d", n)
+	}
+}
+
+// A kernel with no account here reads as discovered and offers the one gesture
+// that promotes it: fund, with its key prefilled. A stranger key (source "none")
+// is not part of the known network and must not claim to be.
+func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	disc := getBody(t, cl, srv.URL+"/admin/peers/KEYT1")
+	if !strings.Contains(disc, "known network") {
+		t.Errorf("an account-less known kernel must carry the known-network chip: %s", disc)
+	}
+	if strings.Contains(disc, "owes us") || strings.Contains(disc, "we owe them") {
+		t.Error("a kernel we hold no account for must show no position")
+	}
+	if !strings.Contains(disc, "form=admin-deposit") || !strings.Contains(disc, `value="KEYT1"`) {
+		t.Errorf("the fund gesture must be offered with the key prefilled: %s", disc)
+	}
+	stranger := getBody(t, cl, srv.URL+"/admin/peers/KEYNONE")
+	if strings.Contains(stranger, "known network") {
+		t.Error(`a source="none" key must not read as part of the known network`)
 	}
 }
 
@@ -529,7 +564,7 @@ func TestDepositFormAcceptsPeerKey(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin")
-	if !strings.Contains(body, "handle or peer key") {
+	if !strings.Contains(body, "handle or kernel key") {
 		t.Errorf("the deposit form must say it takes a key: %s", body)
 	}
 }
@@ -637,5 +672,98 @@ func TestPeerAliasLinksToRename(t *testing.T) {
 	}
 	if strings.Contains(body, `action="/admin/peers/rename"`) {
 		t.Error("rename must not become a peer-card command")
+	}
+}
+
+// The roster is one kernel list the UI partitions: the kernel pages before this
+// split, so the tab filters locally and the page slices what remains. An
+// unrecognised tab falls back to counterparties rather than showing nothing.
+func TestAdminPeersTabPartition(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	counter := getBody(t, cl, srv.URL+"/admin/peers")
+	if !strings.Contains(counter, "peerb") || !strings.Contains(counter, "debtor") {
+		t.Error("counterparties tab must list the account-holding kernels")
+	}
+	if strings.Contains(counter, "KEYT1") {
+		t.Error("a discovered kernel must not appear among counterparties")
+	}
+	known := getBody(t, cl, srv.URL+"/admin/peers?tab=known")
+	if !strings.Contains(known, "KEYT1") || !strings.Contains(known, "KEYT2") {
+		t.Error("known-network tab must list the discovered kernels")
+	}
+	if strings.Contains(known, "KEYB") {
+		t.Error("a counterparty must not appear among discovered kernels")
+	}
+	if bogus := getBody(t, cl, srv.URL+"/admin/peers?tab=nonsense"); !strings.Contains(bogus, "peerb") {
+		t.Error("an unrecognised tab must fall back to counterparties")
+	}
+}
+
+// The deposit form's return path is a closed set: a form field must never be able
+// to name an arbitrary redirect target, and the two pages that host the form are
+// the admin roster and the network page.
+func TestAdminDepositBackAllowlist(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	post := func(back string) string {
+		tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/admin"))
+		form := url.Values{"handle": {"KEYT1"}, "amount": {"5"}, "back": {back}, "gorilla.csrf.Token": {tok}}
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/admin/deposit", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("Location")
+	}
+	// Funding a kernel lands on the roster, where the promoted row now appears.
+	if loc := post("/admin/peers"); loc != "/admin/peers" {
+		t.Errorf("funding from the network page must return there, got %q", loc)
+	}
+	for _, hostile := range []string{"https://evil.example/x", "//evil.example", "/admin/peers/KEYT1", ""} {
+		if loc := post(hostile); loc != "/admin" {
+			t.Errorf("back=%q must fall back to /admin, got %q", hostile, loc)
+		}
+	}
+}
+
+// The shared deposit dialog closes to the page that opened it. An empty Back
+// would render href="" on the close and cancel links, which reloads the current
+// URL with ?form= still set — reopening the dialog forever on the no-JS path.
+func TestDepositDialogClosesToItsOwnPage(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	for _, tc := range []struct{ url, back string }{
+		{"/admin?form=admin-deposit", "/admin"},
+		{"/admin/peers?form=admin-deposit", "/admin/peers"},
+		{"/admin/peers/KEYT1?form=admin-deposit", "/admin/peers"},
+	} {
+		body := getBody(t, cl, srv.URL+tc.url)
+		dlg := body[strings.Index(body, `id="form-admin-deposit"`):]
+		dlg = dlg[:strings.Index(dlg, "</dialog>")]
+		if !strings.Contains(dlg, "<dialog") && !strings.Contains(body[:strings.Index(body, `id="form-admin-deposit"`)+40], "open") {
+			t.Errorf("%s must render the dialog open on the no-JS path", tc.url)
+		}
+		if strings.Contains(dlg, `href=""`) {
+			t.Errorf("%s: dialog close/cancel must not be an empty href (it reopens itself): %s", tc.url, dlg)
+		}
+		if !strings.Contains(dlg, `href="`+tc.back+`"`) || !strings.Contains(dlg, `name="back" value="`+tc.back+`"`) {
+			t.Errorf("%s: dialog must close and return to %s: %s", tc.url, tc.back, dlg)
+		}
 	}
 }

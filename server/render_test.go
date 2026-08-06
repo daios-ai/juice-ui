@@ -982,16 +982,20 @@ func TestCallOutcomePeerBranches(t *testing.T) {
 
 // TestPeersPollerAndSuspendedToggle checks the peers table is an htmx-polled
 // fragment, and a Show/Hide-suspended toggle drives the ?all=1 view.
-func TestPeersPollerAndSuspendedToggle(t *testing.T) {
+// The roster is one list under a tabs filter, never polled. Suspension is a
+// counterparty-only axis, so its toggle appears on that tab alone and the
+// known-network link drops it.
+func TestPeersTabsAndSuspendedToggle(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
 	}
-	renderPeers := func(showSuspended bool) string {
+	renderPeers := func(tab string, showSuspended bool) string {
 		rec := httptest.NewRecorder()
 		p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 			Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
-			Peers:         []client.Peer{{Handle: "peerb", PublicKey: "KEY", PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+			Peers:         []client.Peer{{Handle: "peerb", PublicKey: "KEY", HasAccount: true, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+			Tab:           tab,
 			ShowSuspended: showSuspended,
 		}}
 		if err := r.Render(rec, 200, "admin_peers", p); err != nil {
@@ -999,16 +1003,79 @@ func TestPeersPollerAndSuspendedToggle(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	body := renderPeers(false)
-	if !strings.Contains(body, `id="peers"`) || !strings.Contains(body, `hx-get="/admin/peers"`) || !strings.Contains(body, "every 15s") {
-		t.Errorf("peers grid must be an htmx-polled fragment: %s", body)
+	body := renderPeers(tabCounterparties, false)
+	if strings.Contains(body, `hx-get="/admin/peers`) {
+		t.Errorf("the roster must not poll itself: %s", body)
+	}
+	for _, want := range []string{`class="tabs control-tabs"`, ">counterparties<", ">known network<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("roster must switch classes with the tabs component, missing %q", want)
+		}
 	}
 	if !strings.Contains(body, `href="/admin/peers?all=1"`) || !strings.Contains(body, "Show suspended") {
-		t.Errorf("peers page must offer a Show-suspended toggle: %s", body)
+		t.Errorf("counterparties tab must offer a Show-suspended toggle: %s", body)
 	}
-	suspended := renderPeers(true)
-	if !strings.Contains(suspended, "Hide suspended") || !strings.Contains(suspended, `hx-get="/admin/peers?all=1"`) {
-		t.Errorf("suspended view must show a Hide toggle and poll ?all=1: %s", suspended)
+	suspended := renderPeers(tabCounterparties, true)
+	if !strings.Contains(suspended, "Hide suspended") {
+		t.Errorf("suspended view must show a Hide toggle: %s", suspended)
+	}
+	// The known-network tab link never carries ?all=1 — a discovered kernel has no
+	// account to suspend — and the tab itself offers no suspension control.
+	if !strings.Contains(suspended, `href="/admin/peers?tab=known"`) {
+		t.Errorf("known-network tab must drop the suspended filter: %s", suspended)
+	}
+	known := renderPeers(tabKnown, false)
+	if strings.Contains(known, "Show suspended") || strings.Contains(known, "Hide suspended") {
+		t.Errorf("suspension is a counterparty axis and must not appear on known network: %s", known)
+	}
+}
+
+// A discovered kernel is the unresolved counterpart of a counterparty: a chip,
+// its catalog, and the one gesture that promotes it. No position, no money verb,
+// no rename link — it has no account and no handle here.
+func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
+		Tab:      tabKnown,
+		Peers: []client.Peer{
+			{Handle: "twin", PublicKey: "KT1", Actions: 13, LastSeen: "2026-08-06T00:04:34Z"},
+			{Handle: "twin", PublicKey: "KT2", Actions: 7, LastSeen: "2026-08-06T00:04:35Z"},
+		},
+	}}
+	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"known network", "13 actions", "catalog verified"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("discovered card missing %q: %s", want, body)
+		}
+	}
+	for _, gone := range []string{"position", "/admin/peers/settle", "/admin/peers/suspend", "form=admin-rename", "our credit there"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("discovered card must not carry %q (it holds no account here)", gone)
+		}
+	}
+	// last_seen is catalog freshness, not liveness: muted text, never a status pill.
+	if strings.Contains(body, "status-credited") {
+		t.Error("catalog freshness must not render as a liveness pill")
+	}
+	// Two kernels advertising one handle stay two key-distinct cards.
+	if strings.Count(body, `class="chip tag"`) != 2 || !strings.Contains(body, "KT1") || !strings.Contains(body, "KT2") {
+		t.Errorf("colliding advertised handles must stay two rows: %s", body)
+	}
+	// Fund prefills the key, so it must be a real ?form= link: a data-modal trigger
+	// would open the empty in-page dialog instead (app.js preventDefaults it).
+	if !strings.Contains(body, `href="/admin/peers?form=admin-deposit&amp;fund_key=KT1"`) {
+		t.Errorf("fund opener must carry the key: %s", body)
+	}
+	if strings.Contains(body, `fund_key=KT1" data-modal`) {
+		t.Error("the prefilled fund opener must not be a data-modal trigger")
 	}
 }
 
@@ -1025,8 +1092,8 @@ func TestPeerRowOffersSettleAndSuspend(t *testing.T) {
 		Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
 		ShowSuspended: true,
 		Peers: []client.Peer{
-			{Handle: "@active", PublicKey: "KF"},
-			{Handle: "@frozen", PublicKey: "KG", SuspendedAt: "2026-07-19T17:50:24Z"},
+			{Handle: "active", PublicKey: "KF", HasAccount: true},
+			{Handle: "frozen", PublicKey: "KG", HasAccount: true, SuspendedAt: "2026-07-19T17:50:24Z"},
 		},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
@@ -1036,9 +1103,10 @@ func TestPeerRowOffersSettleAndSuspend(t *testing.T) {
 	if !strings.Contains(body, ">suspended<") {
 		t.Errorf("suspended peer must be marked: %s", body)
 	}
-	// Settle posts by handle; suspend/unsuspend post by key.
-	if !strings.Contains(body, `action="/admin/peers/settle"`) || !strings.Contains(body, `value="@active"`) {
-		t.Errorf("active row must offer Settle by handle: %s", body)
+	// Every form posts the KEY: an alias is display only and advertised names
+	// collide across kernels, so a handle is not an address.
+	if !strings.Contains(body, `action="/admin/peers/settle"`) || !strings.Contains(body, `value="KF"`) {
+		t.Errorf("active row must offer Settle by key: %s", body)
 	}
 	if strings.Contains(body, "unsubscribe") || strings.Contains(body, "Unsubscribe") {
 		t.Errorf("no peer row may offer an unsubscribe verb: %s", body)
@@ -1115,7 +1183,7 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
-		Peers:    []client.Peer{{Handle: "peerb", PublicKey: "KEY", Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+		Peers:    []client.Peer{{Handle: "peerb", PublicKey: "KEY", HasAccount: true, Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
 		t.Fatalf("render: %v", err)

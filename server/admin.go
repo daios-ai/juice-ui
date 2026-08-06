@@ -17,7 +17,17 @@ import (
 // The admin surface covers the operator verbs no ordinary user performs: money
 // (deposit/withdraw), access (suspend), and federation trust (peers, settlement).
 
+// depositForm carries the shared deposit dialog's per-page state. Every view
+// that renders _form_admin_deposit embeds it: FundKey prefills the recipient (a
+// 43-character key is not retyped) and Back names the page the operator came
+// from, so funding a kernel returns to the roster where its row now appears.
+type depositForm struct {
+	FundKey string
+	Back    string
+}
+
 type adminView struct {
+	depositForm
 	Users    []client.AdminUser
 	Pager    Pager
 	OpenForm string
@@ -28,27 +38,64 @@ type adminUserView struct {
 	OpenForm string
 }
 
+// adminPeersView drives the merged roster: every kernel this one knows, split by
+// Tab into counterparties (an account here) and the known network (discovered,
+// no account). Both classes are the same card; the tab decides which facts and
+// verbs are true of it.
 type adminPeersView struct {
+	depositForm
 	Identity      client.Identity
 	Peers         []client.Peer
-	ShowSuspended bool          // ?all=1 — peers list includes suspended peers
-	CSRFField     template.HTML // carried on the view so the polled fragment's forms keep their token
+	Tab           string // "counterparties" | "known"
+	Pager         Pager
+	ShowSuspended bool // ?all=1 — counterparties list includes suspended rows
+	CSRFField     template.HTML
 	OpenForm      string
 }
 
-// adminInspectView carries the inspected kernel plus PeerRow — this kernel's own
-// billing row for it, when one exists. A peer we have transacted with is not a
-// membership state (there is no subscription); the honest thing to show is the
-// bilateral position, so the row itself is carried rather than a boolean.
+// Known reports whether the discovered tab is selected — the templates switch
+// the card's facts and verbs on it.
+func (v adminPeersView) Known() bool { return v.Tab == tabKnown }
+
+const (
+	tabCounterparties = "counterparties"
+	tabKnown          = "known"
+)
+
+// peersHref builds a roster URL for one tab. Switching tabs drops the offset
+// (page 1 of a different list) and drops ?all=1, which is a counterparty-only
+// axis: suspension applies to accounts, and a discovered kernel has none.
+func peersHref(tab string, all bool) string {
+	q := url.Values{}
+	if tab == tabKnown {
+		q.Set("tab", tabKnown)
+	} else if all {
+		q.Set("all", "1")
+	}
+	if len(q) == 0 {
+		return "/admin/peers"
+	}
+	return "/admin/peers?" + q.Encode()
+}
+
+// adminInspectView carries the inspected kernel. The billing account arrives
+// inline on the inspection itself (client.Inspection.Account), so the page needs
+// no roster scan: a nil account is a kernel that holds none here, which is what
+// offers the fund gesture instead of a position.
 type adminInspectView struct {
+	depositForm
 	Key        string
 	Inspection client.Inspection
-	PeerRow    *client.Peer
+	OpenForm   string
+	CSRFField  template.HTML
 }
 
 func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	view := adminView{OpenForm: openForm(r, "admin")}
+	// Back drives the shared deposit dialog's close/cancel links; empty would make
+	// them reload this URL with ?form= still set, reopening the dialog on the
+	// no-JS path.
+	view := adminView{OpenForm: openForm(r, "admin"), depositForm: depositForm{Back: "/admin"}}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.AdminListUsers(ctx, tok)
 		if e != nil {
@@ -133,6 +180,18 @@ func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, handle strin
 	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newHandle), "success", handle+" is now "+newHandle+".")
 }
 
+// adjustBack resolves the page a deposit/withdraw returns to. The set is closed:
+// a form field must never be able to name an arbitrary redirect target, and the
+// only two pages that host the form are the admin roster and the network page —
+// funding from a kernel's inspect page lands on the roster, where the promoted
+// row now appears.
+func adjustBack(v string) string {
+	if v == "/admin/peers" {
+		return v
+	}
+	return "/admin"
+}
+
 // postAdminAdjust handles deposit/withdraw, dispatched on the path's last segment.
 func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 	op := lastSegment(r.URL.Path)
@@ -141,8 +200,9 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 	amount := parseDollars(r.FormValue("amount"))
 	reason := strings.TrimSpace(r.FormValue("reason"))
 	extKey := strings.TrimSpace(r.FormValue("external_key"))
+	back := adjustBack(strings.TrimSpace(r.FormValue("back")))
 	if handle == "" || amount <= 0 {
-		s.flashRedirect(w, r, "/admin", "error", "A user handle and a positive amount are required.")
+		s.flashRedirect(w, r, back, "error", "A user handle and a positive amount are required.")
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -157,33 +217,52 @@ func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
 	if op == "withdraw" {
 		verb = "Withdrew"
 	}
-	s.flashResult(w, r, err, "/admin", verb+" "+money(amount)+" · "+handle+".")
+	s.flashResult(w, r, err, back, verb+" "+money(amount)+" · "+handle+".")
 }
 
+// getAdminPeers renders the merged roster. The kernel returns counterparties and
+// discovered kernels in one list keyed by public key, so the tab partitions it
+// here and the page is sliced locally — the kernel pages before this split, so
+// asking it for one page of one class would drop rows.
+//
+// It is deliberately not polled: its facts advance once per the kernel's
+// discovery interval, while the cost of a refresh now scales with the size of
+// the known network.
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	showSuspended := r.URL.Query().Get("all") == "1"
-	view := adminPeersView{OpenForm: openForm(r, "admin"), ShowSuspended: showSuspended, CSRFField: csrf.TemplateField(r)}
+	tab := tabCounterparties
+	if r.URL.Query().Get("tab") == tabKnown {
+		tab = tabKnown
+	}
+	showSuspended := tab == tabCounterparties && r.URL.Query().Get("all") == "1"
+	view := adminPeersView{
+		OpenForm: openForm(r, "admin"), Tab: tab, ShowSuspended: showSuspended,
+		CSRFField:   csrf.TemplateField(r),
+		depositForm: depositForm{FundKey: r.URL.Query().Get("fund_key"), Back: "/admin/peers"},
+	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
 			view.Identity = id
 		}
-		// all=showSuspended also lists suspended peers.
+		// all=showSuspended also lists suspended counterparties.
 		p, e := s.client.AdminListPeers(ctx, tok, showSuspended)
 		if e != nil {
 			return e
 		}
-		view.Peers = p
+		for _, peer := range p {
+			if peer.HasAccount == (tab == tabCounterparties) {
+				view.Peers = append(view.Peers, peer)
+			}
+		}
 		return nil
 	})
-	if s.handleErrFragment(w, r, err) {
+	if s.handleErr(w, r, err) {
 		return
 	}
-	// An htmx poll refreshes just the peers grid (last_seen/peer_credit move).
-	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_peers", view)
-		return
-	}
+	offset := queryOffset(r)
+	start, end, hasNext := pageSlice(len(view.Peers), offset, pageSize)
+	view.Peers = view.Peers[start:end]
+	view.Pager = pageNav(r, offset, pageSize, hasNext)
 	s.renderPage(w, r, http.StatusOK, "admin_peers", "Peers", view)
 }
 
@@ -194,24 +273,18 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx := r.Context()
-	view := adminInspectView{Key: key}
+	view := adminInspectView{
+		Key: key, OpenForm: openForm(r, "admin"), CSRFField: csrf.TemplateField(r),
+		// Funding is the promotion gesture for a kernel with no account here, so
+		// this page prefills the key it is already about.
+		depositForm: depositForm{FundKey: key, Back: "/admin/peers"},
+	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		insp, e := s.client.AdminInspect(ctx, tok, key)
 		if e != nil {
 			return e
 		}
 		view.Inspection = insp
-		// Carry our billing row for this kernel, when there is one, so the page
-		// can state the bilateral position. Suspended peers are included: a
-		// frozen peer still holds a position, and this is the page an operator
-		// reads before unsuspending.
-		if peers, e := s.client.AdminListPeers(ctx, tok, true); e == nil {
-			for i, p := range peers {
-				if p.PublicKey == key {
-					view.PeerRow = &peers[i]
-				}
-			}
-		}
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {

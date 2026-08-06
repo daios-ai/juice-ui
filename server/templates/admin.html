@@ -41,32 +41,6 @@
 {{template "_form_admin_withdraw" .}}
 {{end}}
 
-{{define "_form_admin_deposit"}}
-<dialog id="form-admin-deposit" class="modal-form"{{if eq .Data.OpenForm "admin-deposit"}} open{{end}} aria-label="Deposit credits">
-  <div class="modal-head"><h2>Deposit credits</h2><a class="modal-close" href="/admin" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/admin/deposit" data-confirm="Deposit credits? This grants credits after out-of-band payment.">
-      {{.CSRFField}}
-      {{/* A peer's public key is accepted here too: on a kernel that does not yet
-           know that key, the deposit provisions its account and funds it in one
-           gesture. This is the funding entry the network page links to. */}}
-      <div class="field">
-        <label for="dep-handle">User (handle or peer key)</label>
-        <p class="help">A peer's public key provisions and funds its account.</p>
-        <input id="dep-handle" name="handle" type="text" placeholder="handle or key" required>
-      </div>
-      <div class="field"><label for="dep-amount">Amount</label><input id="dep-amount" name="amount" type="number" min="0.001" step="0.001" required class="input-sm"></div>
-      <div class="field"><label for="dep-reason">Reason (optional)</label><input id="dep-reason" name="reason" type="text"></div>
-      <div class="field"><label for="dep-key">External key (optional, idempotency)</label><input id="dep-key" name="external_key" type="text"></div>
-      <div class="cluster">
-        <button class="btn-money" type="submit">Deposit credits</button>
-        <a class="btn" href="/admin" data-modal-close>Cancel</a>
-      </div>
-    </form>
-  </div>
-</dialog>
-{{end}}
-
 {{define "_form_admin_withdraw"}}
 <dialog id="form-admin-withdraw" class="modal-form"{{if eq .Data.OpenForm "admin-withdraw"}} open{{end}} aria-label="Withdraw credits">
   <div class="modal-head"><h2>Withdraw credits</h2><a class="modal-close" href="/admin" data-modal-close aria-label="Close">×</a></div>

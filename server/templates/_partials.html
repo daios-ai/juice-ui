@@ -22,7 +22,7 @@
     <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</span>
   </div>
   <p class="card-desc">
-    <span class="chip tag" title="Discovered through gossip — not resolved on this kernel">known network</span>
+    <span class="chip tag" title="Discovered on the network — not resolved on this kernel">known network</span>
     {{.Action.Description}}
   </p>
 </article>
@@ -218,23 +218,21 @@
 <div class="banner banner-error" role="alert">{{.}}</div>
 {{end}}
 
-{{/* _action_stats renders a compact table of a federation kernel's actions
-     (ref + description/price/uses/rating). Input: []client.PeerAction — the
-     signed manifest fields plus that kernel's own earned stats. The refs are
-     remote-owned, so they stay plain (no local owner link): reaching one takes
-     a resolve from its home kernel, never this string. */}}
-{{define "_action_stats"}}
+{{/* _peer_actions renders a federation kernel's public actions. Input:
+     []client.PeerAction — as of v0.12.8 the kernel serves {name, description,
+     price} and nothing else, so there is no owner to emphasize, no id to link,
+     and no reputation to state: the table shows what the kernel serves. The
+     name is that kernel's own; reaching the action takes a resolve from its
+     home kernel, never this string. */}}
+{{define "_peer_actions"}}
 <div class="table-scroll">
 <table class="stats-table">
-  <thead><tr><th>action</th><th class="money">price</th><th class="money">uses</th><th class="money">rating</th></tr></thead>
+  <thead><tr><th>action</th><th class="money">price</th></tr></thead>
   <tbody>
   {{range .}}
-  {{$s := .Stats}}
   <tr>
-    <td><span class="ref mono"><span class="owner">{{.OwnerHandle}}</span>/{{.Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
+    <td><span class="ref mono">{{.Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
     <td class="money">{{money .Price}}</td>
-    <td class="money">{{$s.Uses}}</td>
-    <td class="money">{{if gt $s.RatingCount 0}}{{ratingPct $s.RatingEstimate $s.RatingCount}}%{{else}}—{{end}}</td>
   </tr>
   {{end}}
   </tbody>
@@ -242,22 +240,30 @@
 </div>
 {{end}}
 
-{{/* _evidence renders one issuer's block of retained evidence about the
-     inspected kernel. Input: client.IssuerEvidence. Ratings are stated in two
-     counts, never averaged together: trade-backed (the two-kernel receipt link
-     holds) and unverified. Evidence proves attribution, not honesty, so it
-     carries no status colour and never joins an action's own reputation strip. */}}
+{{/* _evidence renders one block of retained evidence about the inspected kernel.
+     Input: client.IssuerEvidence — .Self marks the subject's own execution rows
+     (never folded with what others report about it), which also decides the
+     corroborated column: only a third party's rows can be corroborated by the
+     subject's. A subject is named by its full action id — the kernel serves no
+     id on its action list to join against, and a truncated id would link
+     nowhere. Ratings are stated in two counts, never averaged together:
+     trade-backed (the two-kernel receipt link holds) and unverified. Evidence
+     proves attribution, not honesty, so it carries no status colour and never
+     joins an action's own reputation strip. */}}
 {{define "_evidence"}}
-<h3 class="flush">issued by <span class="mono hash">{{truncate 12 .Issuer}}…</span></h3>
+{{if .Self}}<h3 class="flush">as executed here</h3>
+{{else}}<h3 class="flush">issued by <span class="mono hash">{{truncate 12 .Issuer}}…</span></h3>{{end}}
 <div class="table-scroll">
 <table class="stats-table">
-  <thead><tr><th>action</th><th class="money">uses</th><th class="money">failures</th><th>ratings</th></tr></thead>
+  <thead><tr><th>action</th><th class="money">uses</th><th class="money">failures</th>{{if not .Self}}<th class="money">corroborated</th>{{end}}<th>ratings</th></tr></thead>
   <tbody>
+  {{$self := .Self}}
   {{range .Rows}}
   <tr>
-    <td><span class="ref mono">{{.Subject}}</span></td>
+    <td><span class="ref mono">{{.SubjectActionID}}</span></td>
     <td class="money">{{.Uses}}</td>
     <td class="money">{{.Failures}}</td>
+    {{if not $self}}<td class="money">{{.CorroboratedUses}}</td>{{end}}
     <td class="muted small">{{.RatingCount}} trade-backed{{if gt .RatingCount 0}} · {{ratingPct .RatingMean .RatingCount}}%{{end}} · {{.UnverifiedRating}} unverified</td>
   </tr>
   {{end}}
@@ -374,38 +380,58 @@
 {{end}}
 {{end}}
 
-{{/* _peers — the known-peers grid, extracted so an htmx poll on the peers page
-     can refresh last_seen/peer_credit without a reload. Root is the
-     adminPeersView (so $.CSRFField resolves whether embedded or served standalone
-     via render.Fragment). A peer is not something one joins or leaves: the row
-     appears when the kernel first transacts with that key or an operator funds
-     it, so the levers are Settle (the money) and Suspend (the access), never a
-     subscription. */}}
+{{/* _peers — the merged roster grid. Root is the adminPeersView. One card, two
+     states: a COUNTERPARTY holds an account here (a bilateral position, and the
+     levers Settle and Suspend), a DISCOVERED kernel is a catalog entry the
+     discovery loop learned — no account, so no account-dependent verb, and its
+     one gesture is Fund, which promotes it. This mirrors the resolved vs
+     discovered action card exactly (§5.5/§5.11).
+
+     The displayed name is inert on a discovered card: advertised names collide
+     across kernels and the kernel re-aliases one when a deposit promotes it, so
+     only a counterparty's alias — an ordinary handle here — links to rename, and
+     every form keys on the public key. */}}
 {{define "_peers"}}
 {{if .Peers}}
+{{$known := .Known}}
 <div class="net-grid">
   {{range .Peers}}
   <div class="kernel-card{{if .Suspended}} inactive{{end}}">
     <span class="media wide">{{cardArt .PublicKey .Handle "" "kernel"}}</span>
     <div class="kernel-body">
       <div class="row">
-        {{/* The alias is a local name for a peer key, so it is renamable like any
-             handle — the alias itself is the way in, rather than a fourth command
-             in the foot below (§6.6). */}}
+        {{if $known}}
+        <b class="ref mono grow">{{.Handle}}</b>
+        <span class="chip tag" title="Discovered on the network — no account here">known network</span>
+        {{else}}
         <b class="ref mono grow"><a class="owner" href="/admin/users/{{.Handle}}?form=admin-rename" title="Rename local alias">{{.Handle}}</a></b>
-        {{if .Suspended}}<span class="pill status-danger">suspended</span>{{else if .LastSeen}}<span class="pill status-credited" title="{{.LastSeen}}">seen {{relTime .LastSeen}}</span>{{else}}<span class="pill inactive">never seen</span>{{end}}
+        {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
+        {{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
-      {{/* The bilateral position, signed WITH its reading — "prepaid" (they paid
-           ahead) / "owes us" — never a bare negative number (§6.6). PeerCredit is
-           the peer-sync cache: what this kernel can spend calling them. */}}
-      <div class="small muted">position <span class="mono">{{positionText .Available}}</span> · our credit there <span class="mono" title="What we can spend calling this peer">{{money .PeerCredit}}</span>{{if .SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger — settle out of band">settlement due</span>{{end}}</div>
+      {{/* last_seen is the last verified gossip pull for both classes — catalog
+           freshness, not reachability, so it is muted text and never a status
+           pill. PeerCredit is absent until a counterparty sync returns one, so
+           it is omitted rather than stated as zero. */}}
+      {{if $known}}
+      <div class="small muted">{{.Actions}} actions{{if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end}}</div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{/* Settle moves REAL external money: confirm names the peer; the
-             kernel's own outcome message is flashed verbatim (§6.6). */}}
+        {{/* A real ?form= link, never data-modal: the key is prefilled
+             server-side, and a data-modal trigger would open the empty dialog. */}}
+        <a class="btn-quiet" href="/admin/peers?form=admin-deposit&amp;fund_key={{.PublicKey}}">Fund</a>
+      </div>
+      {{else}}
+      {{/* The bilateral position, signed WITH its reading — "we owe them" /
+           "owes us" — never a bare negative number (§6.6). */}}
+      <div class="small muted">position <span class="mono">{{positionText .Available}}</span>{{if .PeerCredit}} · our credit there <span class="mono" title="What we can spend calling this kernel">{{money .PeerCredit}}</span>{{end}}{{if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end}}{{if .SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger — settle out of band">settlement due</span>{{end}}</div>
+      <div class="step-foot">
+        <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
+        {{/* Settle moves REAL external money: confirm names the kernel; the
+             kernel's own outcome message is flashed verbatim (§6.6). The key is
+             what is posted — an alias is display only, and names collide. */}}
         <form method="post" action="/admin/peers/settle" data-confirm="Settle with {{.Handle}}? The kernel reports what must be paid; money moves on your rail, not here.">
-          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.Handle}}"><button class="btn-quiet" type="submit">Settle</button>
+          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Settle</button>
         </form>
         {{if .Suspended}}
         <form method="post" action="/admin/peers/unsuspend">
@@ -417,11 +443,13 @@
         </form>
         {{end}}
       </div>
+      {{end}}
     </div>
   </div>
   {{end}}
 </div>
-{{else}}<p class="muted">No peers yet. Fund one by key, or a first call creates one.</p>{{end}}
+{{else if .Known}}<p class="muted">No kernels discovered yet.</p>
+{{else}}<p class="muted">No counterparties yet. Fund a kernel by key, or a first call creates one.</p>{{end}}
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect

@@ -114,6 +114,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"tab":          tab,
 		"paneltab":     paneltab,
 		"actionsHref":  actionsHref,
+		"peersHref":    peersHref,
 		"runForm":      runForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,

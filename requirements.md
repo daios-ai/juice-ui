@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.5.0
+Version: 0.6.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.6.0.** One axis: `GET /control/peers` now merges **every**
+> kernel this one knows — counterparties and discovered peers alike — so
+> `network` becomes one paged roster under a `.tabs` filter, in which a
+> discovered kernel is the unresolved counterpart of a counterparty (§6.6).
+> Advertised names collide and the kernel re-aliases on promotion, so nothing
+> keys, links, or posts on a displayed name. Verified live against v0.12.8:
+> `admin inspect` serves an inline `account`, and its action projection lost
+> `action_id`/`owner_handle`/`stats` (§10).
 
 > **What changed in 0.5.0.** The naming migration ends and one workflow leaves.
 > Three axes change; the visual language and every other invariant of 0.4.0 are
@@ -572,10 +581,21 @@ open (parked steps), the result MUST say so and link to the Wallet.
 ### 6.6 network & admin — federation money and the transfer queue
 
 Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
-(§3.1). Three concerns live here: peers, settlement, and the value-transfer
+(§3.1). Three concerns live here: the roster, settlement, and the value-transfer
 queue.
 
 **Peers.**
+
+* **The roster is the whole known network.** `/control/peers` merges by public
+  key, excluding this kernel, **counterparties** (`has_account`, a bilateral
+  position) and **discovered peers** (a catalog: action count, `last_seen`).
+  Both render as the same `.kernel-card` under a `.tabs` filter
+  (`counterparties` | `known network`), paged and **not polled**. A discovered
+  card is the unresolved counterpart of a counterparty card, as §6.2's
+  discovered action card is of a resolved one: a `known network` chip and **no
+  account-dependent verbs** — verified live, `suspend` on an account-less key is
+  refused. `last_seen` is catalog freshness for both classes (muted text, never
+  a status pill), and an absent `peer_credit` is omitted, never stated as zero.
 
 * A peer row's balance is the **bilateral position** and MUST render signed and
   labeled by direction: a positive position reads **"we owe them"** (the peer
@@ -596,22 +616,26 @@ queue.
   **no subscribe or unsubscribe affordance**: the durable lever is suspend, and a
   peer no longer called lapses through the kernel's retention. The deposit form
   MUST accept a public key wherever it accepts a handle (the three account forms
-  are disjoint, §5), and the peers page MUST link it as the funding entry.
-* **Discovery is not a roster.** The kernel serves no known-network directory
-  (verified live: `/control/peers` returns peers only, and the gossip roster,
-  its introducer attribution, and the `--gossip` flag are gone). Discovered
-  kernels surface only through `sys/lookup` results (§6.2). The page MUST keep an
-  **inspect a kernel by key** entry so a key learned anywhere still reaches the
-  inspect view, which is now the sole window onto a kernel this one has not
-  transacted with.
-* **A local alias is renamable.** A peer's alias is a local name for its key —
-  presentation only, and an ordinary handle on this kernel (verified live: the
-  rename rebinds what `/control/peers` then lists). It MUST therefore reach the
-  one rename form (below) from the alias itself, not from a further command in
-  the peer card, whose verbs stay inspect, settle, and suspend.
+  are disjoint, §5).
+* **Fund is the promotion gesture** and the only account-adjacent control a
+  discovered card carries: it opens the deposit form with that kernel's key
+  prefilled, so it MUST be a real `?form=` link and never a `data-modal`
+  trigger, which would open the empty in-page dialog. The authorizing control
+  stays the form's money button. The same opener serves an account-less inspect
+  page, and **inspect a kernel by key** remains the way in for a key learned
+  elsewhere (verified live: an unknown key still returns a usable page).
+* **A local alias is renamable.** A counterparty's alias is a local name for its
+  key — presentation only, and an ordinary handle on this kernel (verified live:
+  the rename rebinds what `/control/peers` then lists). It MUST therefore reach
+  the one rename form (below) from the alias itself, not from a further command
+  in the card, whose verbs stay inspect, settle, and suspend. A discovered
+  kernel's name is not a handle here and MUST NOT link: names collide across
+  kernels, and the kernel re-aliases one on promotion (verified live).
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
-  **grouped by issuer**, each row naming the subject action (joined from the
-  inspection's own manifest list) and stating uses, successes, failures, and the
+  in **two views, never folded**: an **execution summary** from the rows the
+  subject issued about itself, and **counterparty experience** from the rest,
+  grouped by issuer and carrying the **corroborated** count. Each row names its
+  subject by full action id (§10) and states uses, successes, failures, and the
   two rating counts distinctly: **trade-backed** (the two-kernel receipt link
   holds) and **unverified**. Counts are text; no new colour, no status fill —
   evidence is a trust fact, not a state. Attribution is provable and honesty is
@@ -863,6 +887,13 @@ once its prerequisite is confirmed on the running kernel.
   `POST /control/peers/settle` `{handle}` initiates settlement and
   `{handle, settlement_id}` records the rail payment (the CLI `--cash` leg).
   The settle confirms are therefore mandatory (§6.6).
+* **Inspect action identity (§6.6).** `admin inspect` serves each action as
+  `{name, description, price}` only — no `action_id`, `owner_handle`, or
+  `stats`, and the name is bare. Until the kernel restores them, remote action
+  names render unlinked with no reputation columns, and an evidence subject is
+  named by its full action id (there is nothing to join it against). Evidence
+  `notes` is served but `null` on every observed row; its shape is unverified,
+  so it is not rendered.
 * **Global exposure figures (§6.6).** Confirmed: `/control/identity` serves
   `exposure_max`, `gross_receivables`, `settlement_due`, `settlement_trigger`,
   and `settlement_quantum`; the kernel card states them as evidence.

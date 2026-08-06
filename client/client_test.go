@@ -20,6 +20,9 @@ type fakeKernel struct {
 	lastRID    string
 	status     int
 	reply      string
+	// replyFn, when set, answers per request — needed to exercise a paging loop,
+	// where each offset must return a different page.
+	replyFn func(*http.Request) string
 }
 
 func newFake() *fakeKernel {
@@ -31,6 +34,10 @@ func newFake() *fakeKernel {
 		f.lastRID = r.Header.Get("X-Request-Id")
 		f.lastBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(f.status)
+		if f.replyFn != nil {
+			io.WriteString(w, f.replyFn(r))
+			return
+		}
 		io.WriteString(w, f.reply)
 	}))
 	return f

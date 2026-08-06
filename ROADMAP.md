@@ -44,15 +44,11 @@ each carry an image, as first-class metadata analogous to `description`
 * Operational note: images raise federation moderation stakes (an operator
   imports pictures, not just strings); suspension remains the enforcement tool.
 
-## Unsurfaced inspection fields (peer users, peer-held steps)
+## Unsurfaced inspection field (peer-held steps)
 
-`GET /control/peers/inspect?key=` carries two lists the UI decodes past but does
-not yet render (verified live 2026-08-04):
+`GET /control/peers/inspect?key=` carries one list the UI decodes past but does
+not yet render (the `users` list it once carried is gone as of v0.12.8):
 
-* `users` — the kernel's first-party principals (`{user_id, handle}`), the same
-  set `sys/user-lookup` ranks. A people-search leg in browse, or a recipient
-  picker for a cross-kernel transfer, would consume this; neither exists yet, and
-  neither is required by `requirements.md`.
 * `steps` — the steps that peer holds whose required caller is *this* kernel.
   Completing one is `step complete <id> --peer <key>`: a superuser act, because
   the request is signed with this kernel's own federation identity and so acts as

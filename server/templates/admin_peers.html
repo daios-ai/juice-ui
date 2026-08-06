@@ -11,6 +11,7 @@
   <div class="kernel-body">
     <div class="mono"><b>{{$d.Identity.Handle}}</b>{{if $d.Identity.SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger">settlement due</span>{{end}}</div>
     <div class="fingerprint">{{$d.Identity.PublicKey}}</div>
+    {{if $d.Identity.About}}<div class="small muted">{{$d.Identity.About}}</div>{{end}}
     {{/* Global exposure evidence (§6.6): current gross receivables against the
          cap X, the settlement trigger Y, and the residual quantum Q. Information
          only — admission control lives in the kernel. */}}
@@ -24,17 +25,24 @@
   </div>
 </div>
 
-<h2>Peers</h2>
+<h2>kernels</h2>
+{{/* One roster, two classes. Switching tabs starts at page one and drops the
+     suspended filter, which is a counterparty-only axis (§5.2). */}}
+<nav class="tabs control-tabs" aria-label="Filter kernels">
+  {{template "_tab" (tab "counterparties" (peersHref "counterparties" $d.ShowSuspended) (not $d.Known))}}
+  {{template "_tab" (tab "known network" (peersHref "known" false) $d.Known)}}
+  <a class="btn-quiet tabs-action" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
+</nav>
+{{if not $d.Known}}
 <div class="row control-row">
-  <a class="btn-quiet" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
-  <a class="btn-quiet" href="/admin?form=admin-deposit">+ fund a peer by key</a>
   <a class="btn-quiet" href="/admin/peers?form=settle-cash" data-modal="form-settle-cash">+ record a rail payment</a>
   <a class="btn-quiet" href="/admin/transfers">transfer queue</a>
   {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
 </div>
-<div id="peers" hx-get="/admin/peers{{if $d.ShowSuspended}}?all=1{{end}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
+{{end}}
 {{template "_peers" $d}}
-</div>
+{{template "_pager" $d.Pager}}
+{{template "_form_admin_deposit" .}}
 
 {{/* Inspecting is a pure read of a kernel named by key, so the form is a GET
      that lands on the canonical inspect URL. It is the successor to the retired
@@ -58,6 +66,7 @@
   </div>
 </dialog>
 
+{{if not $d.Known}}
 {{/* Record-cash: the only settlement step where external money is recorded
      (§6.6) — after paying the kernel-named amount on the rail, key the record
      by the settlement id the settle outcome printed. */}}
@@ -82,4 +91,5 @@
     </form>
   </div>
 </dialog>
+{{end}}
 {{end}}

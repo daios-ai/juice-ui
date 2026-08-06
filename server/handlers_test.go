@@ -185,14 +185,18 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"direction":"debit","amount":10,"operator_handle":"sys","target_handle":"alice"}`))
 	})
 	mux.HandleFunc("GET /control/peers", func(w http.ResponseWriter, r *http.Request) {
-		// No roster: the kernel serves no directory of discovered kernels (verified
-		// live 2026-08-04 — it went with subscription). Peers only, and a peer's
-		// sync-cache fields are omitted until the first successful pull. A suspended
-		// peer appears only under ?all=1.
-		rows := `{"handle":"peerb","public_key":"KEYB","available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z"},
-		  {"handle":"debtor","public_key":"KEYD","available":-320,"locked":0,"settlement_due":true}`
+		// The merged roster (verified live 2026-08-06): counterparties
+		// (has_account) and discovered kernels in one list keyed by public key,
+		// this kernel excluded. A discovered row carries a catalog and a last_seen
+		// but no credit; "twin" repeats an advertised handle across two keys, which
+		// is legal and must stay two rows. A suspended counterparty appears only
+		// under ?all=1.
+		rows := `{"handle":"peerb","public_key":"KEYB","has_account":true,"actions":4,"available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z"},
+		  {"handle":"debtor","public_key":"KEYD","has_account":true,"actions":0,"available":-320,"locked":0,"settlement_due":true},
+		  {"handle":"twin","public_key":"KEYT1","has_account":false,"actions":13,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:34Z"},
+		  {"handle":"twin","public_key":"KEYT2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:35Z"}`
 		if r.URL.Query().Get("all") == "1" {
-			rows += `,{"handle":"frozen","public_key":"KEYS","available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
+			rows += `,{"handle":"frozen","public_key":"KEYS","has_account":true,"available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
 		// A bare array: the kernel envelopes no list (API.md R6; verified live
 		// 2026-08-05 — an envelope here would silently render zero peers).
@@ -200,22 +204,38 @@ func authKernel() *httptest.Server {
 	})
 	mux.HandleFunc("GET /control/peers/inspect", func(w http.ResponseWriter, r *http.Request) {
 		// online/source are TOP-LEVEL in the real response; reachability holds only
-		// the transport diagnostics (path/rtt/protocols/error). `actions` are signed
-		// manifests and `evidence` replaced the old transacted-peers ("friends")
-		// list. Shapes captured live 2026-08-04.
-		w.Write([]byte(`{"handle":"kernelc","public_key":"` + r.URL.Query().Get("key") + `",
-		 "actions":[{"action_id":"a2","owner_id":"u1","owner_handle":"maker","name":"synth/make","description":"synth","price":20,"kind":"wasm",
-		   "stats":{"uses":6,"successes":6,"failures":0,"rating_count":2,"rating_estimate":1,"latency_estimate":0.5}}],
-		 "evidence":[{"issuer_public_key":"KEYC","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
-		    "avg_latency_ms":500,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
+		// the transport diagnostics. As of v0.12.8 an action is {name, description,
+		// price} only, the account arrives inline, and evidence carries both legs:
+		// the subject's own rows (issuer == public_key) and a third party's, whose
+		// corroborated_uses is the two-kernel link. Shapes captured live 2026-08-06.
+		key := r.URL.Query().Get("key")
+		// account is null for a kernel that holds none here: KEYT* are discovered
+		// (source live), KEYNONE is a stranger key the kernel has never learned.
+		account := `{"available":50,"locked":0,"suspended":false}`
+		switch {
+		case key == "KEYS":
+			account = `{"available":-40,"locked":0,"suspended":true}`
+		case key == "KEYNONE":
+			w.Write([]byte(`{"handle":"","public_key":"` + key + `","actions":[],"evidence":[],"account":null,
+			 "online":false,"source":"none","reachability":{"path":"unreachable","error":"routing: not found"}}`))
+			return
+		case strings.HasPrefix(key, "KEYT"):
+			account = "null"
+		}
+		w.Write([]byte(`{"handle":"kernelc","public_key":"` + key + `","about":"a peer kernel",
+		 "actions":[{"name":"synth/make","description":"synth","price":20}],
+		 "account":` + account + `,
+		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
+		    "corroborated_uses":0,"avg_latency_ms":690.5,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
 		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
-		    "avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
+		    "corroborated_uses":1,"avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 		 "online":true,"source":"live",
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
 	mux.HandleFunc("GET /control/identity", func(w http.ResponseWriter, r *http.Request) {
-		// v0.12: identity carries the global exposure figures (verified live).
-		w.Write([]byte(`{"handle":"kernel","public_key":"KEY","addrs":[],
+		// v0.12: identity carries the global exposure figures and the kernel's own
+		// about (sys's description) — what the network reads about us.
+		w.Write([]byte(`{"handle":"kernel","public_key":"KEY","about":"our test kernel","addrs":[],
 		 "exposure_max":1000,"gross_receivables":320,"settlement_trigger":500,"settlement_quantum":0,"settlement_due":false}`))
 	})
 	mux.HandleFunc("POST /control/peers/settle", func(w http.ResponseWriter, r *http.Request) {
