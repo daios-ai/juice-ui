@@ -7,8 +7,10 @@ live public network. Everything below is UI work unless marked *kernel-gated*.
 the reverse). No new action-creation workflow. Send names the total debit. A
 discovered action becomes runnable once the kernel's contract fingerprint lands.
 
-**Out of scope:** the duplicate `sys` stdlib in search results; the restored
-inspect projection; peer-held steps; media images; the trace tree.
+**Out of scope:** the restored inspect projection; peer-held steps; media
+images; the trace tree. Every kernel's `sys/*` natives stay listed in search:
+they are the platform stdlib offered by each peer, and seeing who serves them —
+at what price — is the point of a catalog.
 
 **Every step lands whole.** Sequencing orders the work; it never splits a change
 across releases. When a step is done, no site still uses the thing it replaced:
