@@ -523,27 +523,6 @@ func TestActionHTTPUnmarshal(t *testing.T) {
 	}
 }
 
-// TestActionPeerState checks the remote-proxy health hint round-trips (offline /
-// unfunded), and is empty for a healthy or non-remote action.
-func TestActionPeerState(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.reply = `{"id":"r1","name":"greet","kind":"remote_proxy","peer_state":"offline"}`
-	a, err := f.client().GetAction(context.Background(), "tok", "r1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.PeerState != "offline" {
-		t.Errorf("peer_state = %q, want offline", a.PeerState)
-	}
-	// Healthy remote action omits peer_state.
-	f.reply = `{"id":"r2","name":"greet","kind":"remote_proxy"}`
-	a, _ = f.client().GetAction(context.Background(), "tok", "r2")
-	if a.PeerState != "" {
-		t.Errorf("healthy peer_state = %q, want empty", a.PeerState)
-	}
-}
-
 func TestCreateActionMarshalsMethodParams(t *testing.T) {
 	f := newFake()
 	defer f.close()

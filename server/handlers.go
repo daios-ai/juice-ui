@@ -1140,12 +1140,6 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 	if s.handleErrFragment(w, r, err) {
 		return
 	}
-	// A peer-blocked run form polls this handler; return just the run region so it
-	// self-terminates (re-enables the form) once the peer recovers.
-	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_action_run", view)
-		return
-	}
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
 }
 

@@ -12,7 +12,6 @@
         {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
         {{if $d.NeedsConnect}}<span class="chip filled" title="Needs a connected account"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
         {{if not $d.Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
-        {{if $d.Action.PeerState}}<span class="chip tag" title="{{if eq $d.Action.PeerState "offline"}}Peer offline — not callable right now{{else}}Peer credit cache low — the serving kernel decides admission{{end}}">peer {{$d.Action.PeerState}}</span>{{end}}
       </span>
     </div>
     {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}

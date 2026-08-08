@@ -38,7 +38,6 @@
     {{- if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span> {{else if .Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span> {{end -}}
     {{- if .NeedsConnect}}<span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span> {{end -}}
     {{- if not .Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span> {{end -}}
-    {{- if .Action.PeerState}}<span class="chip tag" title="Peer {{.Action.PeerState}}">peer {{.Action.PeerState}}</span> {{end -}}
     {{.Action.Description}}
   </p>
   {{template "_stat_strip" (statStrip .Action.Price .Stats false false)}}
@@ -432,7 +431,7 @@
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect
      page can poll it. Root is the adminInspectView. Because inspect persists the
-     peer-sync cache, each poll also freshens this peer's peer_state kernel-wide. */}}
+     peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
 <dl class="locked-args">
@@ -450,23 +449,13 @@
 </dl>
 {{end}}
 
-{{/* _action_run — the Run region of the action page: a peer-blocked banner or the
-     call form. Self-terminating poll: when PeerState is set the wrapper polls
-     GET /actions/{id} (which returns this same partial); the moment the peer
-     recovers the fragment is the form branch, which carries NO poller, so
-     swapping it (outerHTML) stops the polling and re-enables the form. Root is
-     the actionView (so .CSRFField/.BadgeSecs resolve when served standalone). */}}
+{{/* _action_run — the Run region of the action page: the connect gesture or the
+     call form. Availability is never guessed: a remote action is offered like
+     any other and the kernel reports what happened, so there is no health
+     branch here. Root is the actionView (so .CSRFField resolves when served
+     standalone). */}}
 {{define "_action_run"}}
-{{if eq .Action.PeerState "offline"}}
-{{/* Only OFFLINE blocks: the call provably cannot leave this kernel. An
-     "unfunded" hint is the stale peer-credit cache — under v0.12 global
-     exposure the serving kernel alone decides admission, so the form stays
-     offered and a refusal surfaces as the typed peer_unfunded outcome
-     (requirements.md §6.6). */}}
-<div id="action-run" hx-get="/actions/{{.Action.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
-  <div class="banner banner-info">Peer {{.Action.PeerState}}.</div>
-</div>
-{{else if .NeedsConnect}}
+{{if .NeedsConnect}}
 {{/* A run without the per-caller grant is doomed (403 grant_required) — offer
      the connect gesture instead of the form. No poller: connecting returns
      here by full navigation. */}}

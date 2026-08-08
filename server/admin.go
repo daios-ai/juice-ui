@@ -290,9 +290,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	if s.handleErrFragment(w, r, err) {
 		return
 	}
-	// An htmx poll refreshes just the reachability/status card. Because inspect
-	// persists the peer-sync cache, each refresh also freshens this peer's
-	// peer_state kernel-wide (feeds the action/process polls).
+	// An htmx poll refreshes just the reachability/status card.
 	if isHTMX(r) {
 		_ = s.render.Fragment(w, http.StatusOK, "_inspect_status", view)
 		return

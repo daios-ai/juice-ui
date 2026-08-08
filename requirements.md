@@ -667,12 +667,15 @@ queue.
 * `peer_unfunded` on a run means **the serving kernel's global exposure cap is
   exhausted — an operator settlement matter** — and MUST NOT be rendered as the
   caller's own insufficient funds (§10 error mapping).
-* The `peer_state` display hint on a remote action changes force in v0.12:
-  `offline` still blocks the run form (the call provably cannot leave), but
-  `unfunded` (the stale peer-credit cache) MUST NOT suppress the form — under
-  global exposure the serving kernel alone decides admission (verified live: an
-  "unfunded" proxy call succeeds), so the chip stays as a quiet hint and a
-  refusal surfaces as the typed `peer_unfunded` outcome.
+* **Availability is never guessed.** The kernel withdrew the `peer_state` hint
+  (v0.12.14), and the UI MUST NOT reconstruct one: a remote action is offered
+  like any other, the call is attempted, and the kernel reports the outcome.
+  A remote action therefore carries no health chip, no status notice in place of
+  its run form, and no poller waiting for a peer to recover. The hint was
+  unsound in both directions — it read `offline` for an action that had just
+  been called successfully, since only a gossip pull refreshed it, and
+  `unfunded` is the steady state of every peer relationship funded by the
+  serving kernel's exposure headroom rather than prepayment.
 
 **Rename.**
 

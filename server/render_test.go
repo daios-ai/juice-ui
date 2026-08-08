@@ -836,90 +836,35 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 	}
 }
 
-// TestActionDetailGatesRunOnPeerState is the load-bearing federation test: a remote
-// action whose peer is offline/unfunded shows a status notice INSTEAD of the run
-// form (no doomed spend), while a healthy remote action still shows the form.
-func TestActionDetailGatesRunOnPeerState(t *testing.T) {
+// TestActionDetailNeverGuessesAvailability replaces the old peer_state gating:
+// the kernel withdrew that hint (v0.12.14), so a remote action is offered like
+// any other and the kernel reports what happened. No health branch, no notice,
+// and no poller waiting for a peer to "recover".
+func TestActionDetailNeverGuessesAvailability(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := func(ps string) actionView {
-		return actionView{
-			Action: client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
-			Form:   BuildForm(nil),
-		}
-	}
-	render := func(ps string) string {
-		rec := httptest.NewRecorder()
-		p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: view(ps)}
-		if err := r.Render(rec, 200, "action_detail", p); err != nil {
-			t.Fatalf("render %q: %v", ps, err)
-		}
-		return rec.Body.String()
-	}
-
-	off := render("offline")
-	// The banner names the state in one phrase (reusing the chip's label), no prose.
-	if !strings.Contains(off, "Peer offline.") {
-		t.Errorf("offline notice missing: %s", off)
-	}
-	if strings.Contains(off, "data-run-panel") {
-		t.Error("offline peer must NOT render the run form")
-	}
-	if !strings.Contains(off, "peer offline") {
-		t.Error("offline head chip missing")
-	}
-
-	// v0.12: "unfunded" is the stale peer-credit cache — under global exposure
-	// the serving kernel alone decides admission, so the form STAYS offered
-	// (verified live: an "unfunded" proxy call succeeds); the chip remains a
-	// quiet hint and a refusal surfaces as the typed peer_unfunded outcome
-	// (requirements.md §6.6).
-	unf := render("unfunded")
-	if !strings.Contains(unf, "data-run-panel") {
-		t.Error("unfunded peer MUST still render the run form (kernel decides admission)")
-	}
-	if !strings.Contains(unf, "peer unfunded") {
-		t.Error("unfunded head chip missing")
-	}
-
-	ok := render("")
-	if !strings.Contains(ok, "data-run-panel") {
-		t.Error("healthy remote action must render the run form")
-	}
-	if strings.Contains(ok, "Peer offline.") {
-		t.Error("no peer notice when healthy")
-	}
-}
-
-// TestActionRunPollsWhilePeerBlocked checks item 3: a peer-blocked run region polls
-// GET /actions/{id} so it re-enables on its own, and the healthy region carries NO
-// poller (self-terminating — the poll stops once the form is back).
-func TestActionRunPollsWhilePeerBlocked(t *testing.T) {
-	r, err := NewRenderer()
-	if err != nil {
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: actionView{
+		Action:    client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10},
+		Form:      BuildForm(nil),
+		BadgeSecs: 15,
+	}}
+	if err := r.Render(rec, 200, "action_detail", p); err != nil {
 		t.Fatal(err)
 	}
-	render := func(ps string) string {
-		rec := httptest.NewRecorder()
-		p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: actionView{
-			Action:    client.Action{ID: "a1", Action: "@peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10, PeerState: ps},
-			Form:      BuildForm(nil),
-			BadgeSecs: 15,
-		}}
-		if err := r.Render(rec, 200, "action_detail", p); err != nil {
-			t.Fatalf("render %q: %v", ps, err)
+	body := rec.Body.String()
+	if !strings.Contains(body, "data-run-panel") {
+		t.Error("a remote action must render the run form: availability is the kernel's to report")
+	}
+	if strings.Contains(body, `hx-get="/actions/a1"`) {
+		t.Error("the run region must carry no poller")
+	}
+	for _, gone := range []string{"peer offline", "peer unfunded", "Peer offline.", "peer_state"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("peer_state residue in the action page: %q", gone)
 		}
-		return rec.Body.String()
-	}
-	off := render("offline")
-	if !strings.Contains(off, `hx-get="/actions/a1"`) || !strings.Contains(off, "every 15s") {
-		t.Errorf("peer-blocked run region must poll /actions/a1 every 15s: %s", off)
-	}
-	ok := render("")
-	if strings.Contains(ok, `hx-get="/actions/a1"`) {
-		t.Error("healthy run region must NOT carry a poller (self-terminating)")
 	}
 }
 
