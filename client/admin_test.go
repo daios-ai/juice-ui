@@ -105,8 +105,8 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	// The merged roster: a counterparty (has_account) beside a discovered kernel
 	// that carries a catalog and a last_seen but no account — shapes captured live
 	// 2026-08-06 on three throwaway kernels.
-	f.reply = `[{"handle":"peerb","public_key":"KEY","has_account":true,"actions":13,"available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"},
-	 {"handle":"peerb","public_key":"KEY2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-07-13T00:00:00Z"}]`
+	f.reply = `[{"petname":"peerb","nickname":"twin","public_key":"KEY","has_account":true,"actions":13,"available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"},
+	 {"nickname":"twin","public_key":"KEY2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-07-13T00:00:00Z"}]`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
@@ -114,10 +114,15 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if !strings.HasPrefix(f.lastPath, "/control/peers?") || !strings.Contains(f.lastPath, "limit=200") {
 		t.Errorf("peers path = %q (the roster is unbounded and must page)", f.lastPath)
 	}
-	if len(p) != 2 || p[0].Handle != "peerb" {
+	if len(p) != 2 || p[0].Petname != "peerb" {
 		t.Errorf("peers decode wrong: %+v", p)
 	}
-	// The two classes, and the advertised handle repeating across distinct keys.
+	// Only the petname resolves; the nickname is the kernel's own claim and may
+	// repeat across distinct keys, so it is decoded but never used to address.
+	if p[0].Nickname != "twin" || p[1].Nickname != "twin" || p[1].Petname != "" {
+		t.Errorf("petname/nickname decode wrong: %+v", p)
+	}
+	// The two classes, and the advertised name repeating across distinct keys.
 	if !p[0].HasAccount || p[0].Actions != 13 || p[1].HasAccount || p[1].Actions != 7 {
 		t.Errorf("has_account/actions decode wrong: %+v", p)
 	}
@@ -149,7 +154,7 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 		t.Errorf("suspended peer must decode suspended_at and report Suspended(): %+v", dp)
 	}
 	// An active row (no suspended_at) is not suspended.
-	if (Peer{Handle: "x"}).Suspended() {
+	if (Peer{Petname: "x"}).Suspended() {
 		t.Error("a peer without suspended_at must not be Suspended()")
 	}
 	f.reply = `{"handle":"k","public_key":"PK","about":"my kernel","addrs":["/ip4/127.0.0.1/tcp/1"]}`
@@ -171,11 +176,11 @@ func TestAdminListPeersPagesToExhaustion(t *testing.T) {
 	f.replyFn = func(r *http.Request) string {
 		paths = append(paths, r.URL.RequestURI())
 		if strings.Contains(r.URL.RawQuery, "offset=200") {
-			return `[{"handle":"tail","public_key":"K2"}]`
+			return `[{"petname":"tail","public_key":"K2"}]`
 		}
 		rows := make([]string, 200)
 		for i := range rows {
-			rows[i] = `{"handle":"p","public_key":"K1"}`
+			rows[i] = `{"petname":"p","public_key":"K1"}`
 		}
 		return "[" + strings.Join(rows, ",") + "]"
 	}
@@ -183,7 +188,7 @@ func TestAdminListPeersPagesToExhaustion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p) != 201 || p[200].Handle != "tail" {
+	if len(p) != 201 || p[200].Petname != "tail" {
 		t.Errorf("paging lost rows: got %d", len(p))
 	}
 	if len(paths) != 2 || !strings.Contains(paths[1], "offset=200") {

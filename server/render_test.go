@@ -939,7 +939,7 @@ func TestPeersTabsAndSuspendedToggle(t *testing.T) {
 		rec := httptest.NewRecorder()
 		p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 			Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
-			Peers:         []client.Peer{{Handle: "peerb", PublicKey: "KEY", HasAccount: true, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+			Peers:         []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
 			Tab:           tab,
 			ShowSuspended: showSuspended,
 		}}
@@ -976,8 +976,9 @@ func TestPeersTabsAndSuspendedToggle(t *testing.T) {
 }
 
 // A discovered kernel is the unresolved counterpart of a counterparty: a chip,
-// its catalog, and the one gesture that promotes it. No position, no money verb,
-// no rename link — it has no account and no handle here.
+// its catalog, and the two gestures that apply to a kernel holding no account —
+// Fund (promote it) and Name (bind a petname, the only way to name a kernel we
+// have merely discovered). No position and no account-dependent verb.
 func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
@@ -988,8 +989,8 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
 		Tab:      tabKnown,
 		Peers: []client.Peer{
-			{Handle: "twin", PublicKey: "KT1", Actions: 13, LastSeen: "2026-08-06T00:04:34Z"},
-			{Handle: "twin", PublicKey: "KT2", Actions: 7, LastSeen: "2026-08-06T00:04:35Z"},
+			{Nickname: "twin", PublicKey: "KT1", Actions: 13, LastSeen: "2026-08-06T00:04:34Z"},
+			{Nickname: "twin", PublicKey: "KT2", Actions: 7, LastSeen: "2026-08-06T00:04:35Z"},
 		},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
@@ -1001,16 +1002,21 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 			t.Errorf("discovered card missing %q: %s", want, body)
 		}
 	}
-	for _, gone := range []string{"position", "/admin/peers/settle", "/admin/peers/suspend", "form=admin-rename", "our credit there"} {
+	for _, gone := range []string{"position", "/admin/peers/settle", "/admin/peers/suspend", "our credit there"} {
 		if strings.Contains(body, gone) {
 			t.Errorf("discovered card must not carry %q (it holds no account here)", gone)
 		}
+	}
+	// Naming it IS available — and keys on the public key, since an unbound
+	// kernel has no name to key on (§6.6).
+	if !strings.Contains(body, `href="/admin/users/KT1?form=admin-rename"`) {
+		t.Errorf("discovered card must offer Name, keyed on the public key: %s", body)
 	}
 	// last_seen is catalog freshness, not liveness: muted text, never a status pill.
 	if strings.Contains(body, "status-credited") {
 		t.Error("catalog freshness must not render as a liveness pill")
 	}
-	// Two kernels advertising one handle stay two key-distinct cards.
+	// Two kernels advertising one nickname stay two key-distinct cards.
 	if strings.Count(body, `class="chip tag"`) != 2 || !strings.Contains(body, "KT1") || !strings.Contains(body, "KT2") {
 		t.Errorf("colliding advertised handles must stay two rows: %s", body)
 	}
@@ -1037,8 +1043,8 @@ func TestPeerRowOffersSettleAndSuspend(t *testing.T) {
 		Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
 		ShowSuspended: true,
 		Peers: []client.Peer{
-			{Handle: "active", PublicKey: "KF", HasAccount: true},
-			{Handle: "frozen", PublicKey: "KG", HasAccount: true, SuspendedAt: "2026-07-19T17:50:24Z"},
+			{Petname: "active", PublicKey: "KF", HasAccount: true},
+			{Petname: "frozen", PublicKey: "KG", HasAccount: true, SuspendedAt: "2026-07-19T17:50:24Z"},
 		},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
@@ -1074,7 +1080,7 @@ func TestInspectStatusPolls(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key:        "KEYC",
-		Inspection: client.Inspection{Handle: "kernelc", Online: true, Source: "live", Reachability: client.Reachability{Path: "direct"}},
+		Inspection: client.Inspection{Petname: "kernelc", Online: true, Source: "live", Reachability: client.Reachability{Path: "direct"}},
 	}}
 	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -1096,7 +1102,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key: "KDOWN",
-		Inspection: client.Inspection{Handle: "", Online: false, Source: "none",
+		Inspection: client.Inspection{Petname: "", Online: false, Source: "none",
 			Reachability: client.Reachability{Path: "unreachable", Error: "fed: cannot resolve peer 12D3KooW…: routing: not found"}},
 	}}
 	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
@@ -1128,7 +1134,7 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
-		Peers:    []client.Peer{{Handle: "peerb", PublicKey: "KEY", HasAccount: true, Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+		Peers:    []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -1414,5 +1420,43 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 	}
 	if d := rec2.Body.String(); strings.Contains(d, "/actions/P1/disable") || strings.Contains(d, ">Manage<") {
 		t.Errorf("the action page must withhold Manage for a proxy: %s", d)
+	}
+}
+
+// The naming primitive (§13 petname model). Three name classes, one rule each:
+// a key is global but unreadable, so it renders truncated with the whole value
+// recoverable; a petname is bound here and renders whole; a nickname is never
+// chosen, because it does not resolve and offering it would invite typing
+// something the resolver rejects.
+func TestNameOfPrefersPetnameAndTruncatesKeys(t *testing.T) {
+	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I" // 43 chars, as the kernel mints them
+	if len(key) != 43 {
+		t.Fatalf("fixture key is %d chars, kernel keys are 43", len(key))
+	}
+
+	bound := nameOf("daios", key)
+	if bound.Text != "daios" || bound.IsKey {
+		t.Errorf("a bound petname must render whole: %+v", bound)
+	}
+	if bound.Title != key {
+		t.Errorf("the key must stay recoverable behind the name: %+v", bound)
+	}
+
+	unbound := nameOf("", key)
+	if !unbound.IsKey || unbound.Text != key[:keyLen]+"…" {
+		t.Errorf("an unbound kernel must render a truncated key: %+v", unbound)
+	}
+	if unbound.Title != key {
+		t.Errorf("the full key must survive in the title: %+v", unbound)
+	}
+	if len(unbound.Text) >= len(key) {
+		t.Error("a truncated key must be shorter than the key")
+	}
+
+	// A long petname is not key-shaped and must survive whole: a false positive
+	// here would silently clip a name the operator chose.
+	long := keyDisplay("a-rather-long-but-legitimate-petname")
+	if long.IsKey || long.Text != "a-rather-long-but-legitimate-petname" {
+		t.Errorf("a long bare name must not be mistaken for a key: %+v", long)
 	}
 }

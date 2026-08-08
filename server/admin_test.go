@@ -604,12 +604,12 @@ func TestAdminRenameUser(t *testing.T) {
 		t.Error("rename must disclose that references follow the account")
 	}
 
-	resp := postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_handle": {"alicia"}})
+	resp := postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_name": {"alicia"}})
 	resp.Body.Close()
 	if got := resp.Header.Get("Location"); got != "/admin/users/alicia" {
 		t.Errorf("success must land on the new handle's page, got %q", got)
 	}
-	if lastRename != `alice {"new_handle":"alicia"}` {
+	if lastRename != `alice {"new_name":"alicia"}` {
 		t.Errorf("kernel saw %q", lastRename)
 	}
 }
@@ -624,7 +624,7 @@ func TestAdminRenameFailureStaysOnOldHandle(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	page := getBody(t, cl, srv.URL+"/admin/users/sys")
-	resp := postTo(t, cl, srv.URL+"/admin/users/sys/rename", page, url.Values{"new_handle": {"sys"}})
+	resp := postTo(t, cl, srv.URL+"/admin/users/sys/rename", page, url.Values{"new_name": {"sys"}})
 	resp.Body.Close()
 	if got := resp.Header.Get("Location"); got != "/admin/users/sys" {
 		t.Errorf("failure must stay on the old handle, got %q", got)
@@ -632,10 +632,10 @@ func TestAdminRenameFailureStaysOnOldHandle(t *testing.T) {
 
 	// An empty handle never reaches the kernel.
 	lastRename = ""
-	resp = postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_handle": {"  "}})
+	resp = postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_name": {"  "}})
 	resp.Body.Close()
 	if lastRename != "" {
-		t.Errorf("empty new_handle must not reach the kernel, got %q", lastRename)
+		t.Errorf("empty new_name must not reach the kernel, got %q", lastRename)
 	}
 }
 
@@ -657,8 +657,9 @@ func TestAdminUnknownUserOpIs404(t *testing.T) {
 	}
 }
 
-// A peer's local alias is an ordinary handle here, so the alias itself is the way
-// into the one rename modal — no fourth command in the peer card's foot (§6.6).
+// A counterparty's name is the way into the one rename modal — no fourth command
+// in the peer card's foot (§6.6). It keys on the PUBLIC KEY: an unbound kernel
+// has no name to key on, and advertised names collide across kernels.
 func TestPeerAliasLinksToRename(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -667,7 +668,7 @@ func TestPeerAliasLinksToRename(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(body, `/admin/users/peerb?form=admin-rename`) {
+	if !strings.Contains(body, `/admin/users/KEYB?form=admin-rename`) {
 		t.Errorf("the peer alias must link to the rename modal: %s", body)
 	}
 	if strings.Contains(body, `action="/admin/peers/rename"`) {

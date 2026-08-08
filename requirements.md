@@ -634,20 +634,37 @@ queue.
   peer no longer called lapses through the kernel's retention. The deposit form
   MUST accept a public key wherever it accepts a handle (the three account forms
   are disjoint, §5).
-* **Fund is the promotion gesture** and the only account-adjacent control a
-  discovered card carries: it opens the deposit form with that kernel's key
-  prefilled, so it MUST be a real `?form=` link and never a `data-modal`
-  trigger, which would open the empty in-page dialog. The authorizing control
-  stays the form's money button. The same opener serves an account-less inspect
-  page, and **inspect a kernel by key** remains the way in for a key learned
+* **Naming is a petname system** (kernel §13, after Stiegler). A kernel has
+  three names and they are not interchangeable, so the UI MUST keep them apart:
+  * its **public key** — global, self-certifying, unreadable. The only thing
+    every URL, form and mutation keys on. It renders **truncated**, with the
+    whole value recoverable (a `title`), never as a card title in full.
+  * its **nickname** — what the kernel calls *itself*. Self-asserted, collides
+    freely, and **never resolves**, so it is counterparty content under §8:
+    inert, never a link, and never offered where a name that resolves is
+    expected. It MAY be shown as the claim it is.
+  * its **petname** — the name bound *here*. Unique here, and the only friendly
+    name that resolves. It renders whole, in the provenance face.
+  An unbound kernel therefore shows its truncated key and stays callable by it;
+  it MUST NOT borrow the nickname to fill the gap.
+* **Fund and Name are the two gestures a discovered card carries.** Both open a
+  real `?form=` link with the key prefilled — never a `data-modal` trigger,
+  which would open the empty in-page dialog. **Fund** promotes the kernel
+  (deposit by key provisions and funds in one gesture); its authorizing control
+  stays the form's money button. **Name** binds a petname: the kernel binds one
+  automatically only on this kernel's own first outbound use, so an explicit
+  bind is the only way to name a kernel merely discovered, and without it the
+  operator is left typing a key. Neither is account-dependent — verified live,
+  `suspend` on an account-less key is refused, and those verbs stay off the
+  card. **Inspect a kernel by key** remains the way in for a key learned
   elsewhere (verified live: an unknown key still returns a usable page).
-* **A local alias is renamable.** A counterparty's alias is a local name for its
-  key — presentation only, and an ordinary handle on this kernel (verified live:
-  the rename rebinds what `/control/peers` then lists). It MUST therefore reach
-  the one rename form (below) from the alias itself, not from a further command
-  in the card, whose verbs stay inspect, settle, and suspend. A discovered
-  kernel's name is not a handle here and MUST NOT link: names collide across
-  kernels, and the kernel re-aliases one on promotion (verified live).
+* **One rename form serves both namespaces.** A user target rebinds its handle;
+  a kernel target binds its petname, exactly, refusing an occupied name. The
+  form is reached from the displayed name on a counterparty card and from
+  **Name** on a discovered one, and both open the same modal on the same
+  handler — the card's own verbs stay inspect, settle, and suspend. It MUST key
+  on the public key for a kernel: an unbound kernel has no name to key on, and
+  advertised names collide.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the
   subject issued about itself, and **counterparty experience** from the rest,
@@ -679,14 +696,21 @@ queue.
 
 **Rename.**
 
-* Renaming a handle frees the old one and carries every reference to the new —
-  one modal, on the user's own detail page (`POST /control/users/{handle}/rename`),
-  reached from `admin` and from a peer's alias alike. Its disclosure MUST state
-  the consequence beside the field ("Frees the old handle; references use the new
-  one."). Success MUST land on the new handle's page and a rejection stay on the
-  old one, since that is the page that still exists. The new handle is sent as
-  typed (§4): the kernel refuses `sys` and any sigiled name, and the UI shows
-  that reason.
+* One modal on the target's own detail page
+  (`POST /control/users/{target}/rename`, body field `new_name` for both
+  namespaces), reached from `admin`, from a counterparty's name, and from
+  **Name** on a discovered kernel. The detail page MUST render whichever of the
+  two disjoint records the kernel returns — a user carries a handle and
+  balances, a kernel carries the petname model and its sync cache, and holds
+  balances only once it has an account — never one shape padded with the
+  other's empty fields.
+* Its disclosure MUST state the consequence beside the field, and the two
+  consequences differ: renaming a **user** frees the old handle and carries
+  every reference to the new one; naming a **kernel** binds a petname here,
+  exactly, and an occupied name is refused. Success MUST land on the page that
+  then exists — the new handle for a user, the unchanged key for a kernel — and
+  a rejection MUST stay put. The new name is sent as typed (§4): the kernel
+  refuses `sys` and any sigiled name, and the UI shows that reason.
 
 **Settlement.** Confirmed on the running kernel: `POST /control/peers/settle`
 `{handle}`, and `{handle, settlement_id}` for the record-cash leg (§10).

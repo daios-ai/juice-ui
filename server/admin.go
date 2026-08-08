@@ -139,7 +139,11 @@ func (s *Server) getAdminUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.OpenForm = openForm(r, "admin-user")
-	s.renderPage(w, r, http.StatusOK, "admin_user", "User "+handle, view)
+	title := "User " + handle
+	if view.User.IsKernel() {
+		title = nameOf(view.User.Petname, view.User.PublicKey).Text
+	}
+	s.renderPage(w, r, http.StatusOK, "admin_user", title, view)
 }
 
 // postAdminUserOp handles the per-user operator verbs, dispatched on the path's
@@ -162,22 +166,33 @@ func (s *Server) postAdminUserOp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renameUser rebinds a handle: the old one is freed and every reference follows
-// the account. A peer's local alias is an ordinary handle here, so the same verb
-// rebinds it. The new handle is taken verbatim — a sigiled one is the kernel's
-// to reject, not ours to rewrite (requirements.md §4).
-func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, handle string) {
-	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(handle)
-	newHandle := strings.TrimSpace(r.FormValue("new_handle"))
-	if newHandle == "" {
-		s.flashRedirect(w, r, back, "error", "Enter a new handle.")
+// renameUser renames one target. A USER target rebinds its handle, freeing the
+// old one so every reference follows the account; a KERNEL target binds its
+// petname — the only way to name a kernel this node has merely discovered
+// (§13). The kernel resolves which by the target's shape, so one form and one
+// handler serve both. The new name is taken verbatim — a sigiled one is the
+// kernel's to reject, not ours to rewrite (requirements.md §4).
+//
+// A kernel is addressed by its PUBLIC KEY, never by the name on screen: an
+// unbound kernel has no name to key on, and advertised names collide. So the
+// success redirect returns to the key for a kernel and to the new handle for a
+// user, each being the page that then exists.
+func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, target string) {
+	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(target)
+	newName := strings.TrimSpace(r.FormValue("new_name"))
+	if newName == "" {
+		s.flashRedirect(w, r, back, "error", "Enter a new name.")
 		return
 	}
-	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRename(ctx, tok, handle, newHandle) }); err != nil {
+	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRename(ctx, tok, target, newName) }); err != nil {
 		s.flashRedirect(w, r, back, "error", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newHandle), "success", handle+" is now "+newHandle+".")
+	to := "/admin/users/" + url.PathEscape(newName)
+	if looksLikeKey(target) {
+		to = back
+	}
+	s.flashRedirect(w, r, to, "success", target+" is now "+newName+".")
 }
 
 // adjustBack resolves the page a deposit/withdraw returns to. The set is closed:

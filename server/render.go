@@ -105,6 +105,8 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"refKernel":    refKernel,
 		"refIsRemote":  refIsRemote,
 		"refFolder":    refFolder,
+		"nameOf":       nameOf,
+		"keyDisplay":   keyDisplay,
 		"reflink":      func(ref, id string) refLinkArgs { return refLinkArgs{Ref: ref, ID: id} },
 		"shortTime":    shortTime,
 		"relTime":      relTime,
@@ -303,6 +305,52 @@ func ratingPct(estimate float64, count int64) string {
 		return ""
 	}
 	return fmt.Sprintf("%.0f", estimate*100)
+}
+
+// Name is a kernel name rendered for a human: the text to show, the full value
+// behind it, and whether that text is a truncated key.
+//
+// It exists because the kernel's naming is Stiegler's petname system (§13) and
+// the three name classes are NOT interchangeable: a public key is global and
+// self-certifying but unreadable, a nickname is self-asserted by the remote and
+// never resolves, and a petname is bound here and does resolve. The UI shows a
+// petname whole and a key truncated, and it never shows a nickname where a name
+// that resolves is expected.
+type Name struct {
+	Text  string // what to render
+	Title string // the full value, for the title attribute
+	IsKey bool   // Text is a truncated key, not a bound name
+}
+
+// keyLen is how much of a public key survives truncation — enough to
+// distinguish kernels by eye, short enough not to dominate a card title.
+const keyLen = 8
+
+// looksLikeKey reports whether s has the shape of a base64url public key: the
+// kernel's keys are 43 characters and its bare names are validated to be
+// neither key- nor id-shaped (§13, §14), so length alone separates them without
+// a false positive on a long petname.
+func looksLikeKey(s string) bool { return len(s) >= 43 }
+
+// keyDisplay renders a raw value, truncating it when it is key-shaped. THE one
+// place truncation is decided: refs (via ref) and kernel cards both route here,
+// so a key never renders whole in one place and clipped in another.
+func keyDisplay(s string) Name {
+	if looksLikeKey(s) {
+		return Name{Text: s[:keyLen] + "…", Title: s, IsKey: true}
+	}
+	return Name{Text: s, Title: s}
+}
+
+// nameOf picks the name to show for a kernel: its petname when one is bound,
+// else its truncated key. A nickname is never chosen — it does not resolve, so
+// showing it where a name is expected would invite typing something the
+// resolver rejects.
+func nameOf(petname, key string) Name {
+	if petname != "" {
+		return Name{Text: petname, Title: key}
+	}
+	return keyDisplay(key)
 }
 
 // refOwner returns the owner segment of "owner/name", split on the first

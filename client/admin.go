@@ -15,9 +15,12 @@ import (
 // the kernel DB directly; the BFF is an ordinary HTTP client of the control
 // surface.
 
-// AdminUser is a user row from the control surface. The kernel signals suspension
-// by the PRESENCE of suspended_at: it omits the field when active and includes the
-// timestamp when suspended. Email was retired in v0.9 in favour of Description.
+// AdminUser is one account as the operator sees it (GET /control/users/{target}).
+// The target resolves in EITHER namespace, and the two records are disjoint
+// (verified live on v0.12.16): a local user answers with handle/id/description
+// and balances; a KERNEL answers with petname/nickname/about/public_key and its
+// sync cache, and carries balances only once it holds an account here. IsKernel
+// discriminates, so neither is rendered as a half-empty version of the other.
 type AdminUser struct {
 	ID          string `json:"id"`
 	Handle      string `json:"handle"`
@@ -27,7 +30,25 @@ type AdminUser struct {
 	SuspendedAt string `json:"suspended_at,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
+
+	// Kernel half (§13 petname model): present only when the target is a kernel.
+	PublicKey  string `json:"public_key"`
+	Petname    string `json:"petname"`
+	Nickname   string `json:"nickname"`
+	About      string `json:"about"`
+	LastSeen   string `json:"last_seen"`
+	PeerCredit int64  `json:"peer_credit"`
 }
+
+// IsKernel reports that this record is a remote kernel rather than a local
+// user. A kernel account holds no handle by construction (the schema forbids it
+// one, §3), so the public key is the discriminator.
+func (u AdminUser) IsKernel() bool { return u.PublicKey != "" }
+
+// HasAccount reports that a kernel target also holds a billing account here.
+// A merely-discovered kernel answers with naming and sync data but no balances,
+// so a balance block would be a fabrication.
+func (u AdminUser) HasAccount() bool { return !u.IsKernel() || u.ID != "" }
 
 // Suspended reports whether the user is currently suspended. Detection is by
 // presence: the kernel omits suspended_at when active and sends the suspension
@@ -64,12 +85,17 @@ type Adjustment struct {
 // (crossing it stops nothing; only the global cap X refuses calls). SuspendedAt
 // is present only on a suspended row under ?all=1 (v0.9 unified moderation).
 //
-// Handle is a DISPLAY NAME, never an address: advertised names collide (two
-// kernels both answering to "twin" occupy two key-distinct rows) and the kernel
-// re-aliases a kernel when a deposit promotes it, so every action keys on
-// PublicKey.
+// Naming follows Stiegler's petname model, which the kernel implements (§13):
+// PublicKey is the only global, self-certifying name; Nickname is what the
+// kernel calls ITSELF and never resolves (self-asserted, collides freely, and
+// is counterparty prose); Petname is the name bound HERE and the only friendly
+// one that resolves. An unbound kernel has an empty Petname and stays callable
+// by key. Every URL, form and mutation keys on PublicKey — never on a displayed
+// name.
 type Peer struct {
-	Handle        string `json:"handle"`
+	Petname       string `json:"petname"`  // bound here; resolves; "" until bound
+	Nickname      string `json:"nickname"` // self-asserted by the remote; never resolves
+	About         string `json:"about"`    // the peer's sys description; counterparty prose
 	PublicKey     string `json:"public_key"`
 	HasAccount    bool   `json:"has_account"` // counterparty (billing account) vs discovered
 	Actions       int    `json:"actions"`     // public actions in its gossiped catalog
@@ -157,7 +183,8 @@ type PeerAccount struct {
 // Evidence. The wire also carries the `steps` this peer holds for us, which has
 // no UI surface yet (ROADMAP).
 type Inspection struct {
-	Handle       string       `json:"handle"`
+	Petname      string       `json:"petname"`  // bound here; resolves; "" until bound
+	Nickname     string       `json:"nickname"` // self-asserted by the remote; never resolves
 	PublicKey    string       `json:"public_key"`
 	About        string       `json:"about"`
 	Actions      []PeerAction `json:"actions"`
@@ -280,16 +307,23 @@ func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) e
 	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/unsuspend", token, nil, nil)
 }
 
-// AdminRename changes a user's handle (POST /control/users/{handle}/rename),
-// freeing the old handle for reuse and rebinding every reference to it. The
-// kernel rejects renaming sys. A peer's local alias is an ordinary handle on
-// this kernel, so the same call rebinds it (verified live 2026-08-05: the
-// renamed alias is what admin peers then lists).
-func (c *Client) AdminRename(ctx context.Context, token, handle, newHandle string) error {
+// AdminRename renames one target (POST /control/users/{target}/rename). The
+// target is a user handle, or a kernel's public key — the two namespaces are
+// disjoint, so the kernel resolves by shape and refuses an ambiguous bare name.
+// A user target renames the handle, freeing the old one and rebinding every
+// reference; a kernel target binds its PETNAME, exactly, and is the only way to
+// name a kernel this node has merely discovered (§13). The kernel rejects
+// renaming sys.
+//
+// The body field is new_name for BOTH targets. It was new_handle up to
+// v0.12.13 and renamed in v0.12.14 (verified live); a wrong field name is
+// rejected with a message naming a third field, so this is not guessable from
+// the error.
+func (c *Client) AdminRename(ctx context.Context, token, target, newName string) error {
 	body := struct {
-		NewHandle string `json:"new_handle"`
-	}{newHandle}
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/rename", token, body, nil)
+		NewName string `json:"new_name"`
+	}{newName}
+	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(target)+"/rename", token, body, nil)
 }
 
 // AdminDeposit credits a user's balance (POST /control/deposit). The handle may

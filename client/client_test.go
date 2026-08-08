@@ -650,7 +650,7 @@ func TestAdminRename(t *testing.T) {
 	if f.lastMethod != "POST" || f.lastPath != "/control/users/old/rename" {
 		t.Errorf("rename hit %s %s", f.lastMethod, f.lastPath)
 	}
-	if !strings.Contains(string(f.lastBody), `"new_handle":"new"`) {
+	if !strings.Contains(string(f.lastBody), `"new_name":"new"`) {
 		t.Errorf("rename body = %s", string(f.lastBody))
 	}
 }

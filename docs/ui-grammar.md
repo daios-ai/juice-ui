@@ -422,12 +422,23 @@ The kernel card has **two states**, the same relation §5.5 draws between a
 resolved and a discovered action card. A **counterparty** carries its bilateral
 position and Inspect · Settle · Suspend/Unsuspend. A **discovered** kernel
 carries the same `known network` `.chip.tag`, its action count and catalog
-freshness, and **no account-dependent verb** — its one gesture is **Fund**, a
-`.btn-quiet` opener whose `?form=` link prefills the key (never `data-modal`,
-which would open the empty dialog) and whose authorizing control is the deposit
-form's money button. A displayed kernel name is inert text: names collide and are
-re-bound on promotion, so only a **counterparty's** alias links into the rename
-modal.
+freshness, and **no account-dependent verb** — its gestures are **Fund** and
+**Name**, both `.btn-quiet` openers whose `?form=` link prefills the key (never
+`data-modal`, which would open the empty dialog); Fund's authorizing control is
+the deposit form's money button.
+
+**Naming is a petname system** (kernel §13, after Stiegler), and the three name
+classes render differently because they are trusted differently:
+
+| class | what it is | renders |
+|---|---|---|
+| **key** | global, self-certifying, unreadable | truncated (`esKD_l0c…`), full value in `title`; the only thing URLs and forms key on |
+| **nickname** | the kernel's claim about itself; never resolves | counterparty content (§6): inert, never linked, shown as a claim |
+| **petname** | bound here, unique here, resolves | whole, in the provenance face |
+
+An unbound kernel therefore shows its truncated key, never its nickname. The
+displayed name links into the **one** rename modal (§5.8), keyed on the public
+key — an unbound kernel has no name to key on, and advertised names collide.
 
 **Inspect** (`/admin/peers/{key}`) shows reachability (direct/relayed + rtt), the
 kernel's public actions, and **evidence** in **two blocks**, in the same

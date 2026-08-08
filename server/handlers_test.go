@@ -160,7 +160,16 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`[{"id":"U1","handle":"alice","email":"alice@test.com","available":500,"locked":0}]`))
 	})
 	mux.HandleFunc("GET /control/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"` + r.PathValue("handle") + `","email":"x@test.com","available":500,"locked":0}`))
+		// The target resolves in either namespace and the two records are
+		// DISJOINT (verified live v0.12.16): a kernel answers with the petname
+		// model and no balances until it holds an account; a user answers with a
+		// handle and balances. A 43-char target is key-shaped.
+		h := r.PathValue("handle")
+		if len(h) >= 43 {
+			w.Write([]byte(`{"public_key":"` + h + `","petname":"","nickname":"twin","about":"a kernel","last_seen":"2026-08-06T00:04:34Z","peer_credit":null}`))
+			return
+		}
+		w.Write([]byte(`{"id":"U1","handle":"` + h + `","description":"x","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("POST /control/users/{handle}/suspend", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -171,7 +180,7 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /control/users/{handle}/rename", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		lastRename = r.PathValue("handle") + " " + string(b)
-		if strings.Contains(string(b), `"new_handle":"sys"`) {
+		if strings.Contains(string(b), `"new_name":"sys"`) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			w.Write([]byte(`{"code":"invalid_input","error":"the superuser handle cannot be renamed"}`))
 			return
@@ -188,15 +197,15 @@ func authKernel() *httptest.Server {
 		// The merged roster (verified live 2026-08-06): counterparties
 		// (has_account) and discovered kernels in one list keyed by public key,
 		// this kernel excluded. A discovered row carries a catalog and a last_seen
-		// but no credit; "twin" repeats an advertised handle across two keys, which
-		// is legal and must stay two rows. A suspended counterparty appears only
-		// under ?all=1.
-		rows := `{"handle":"peerb","public_key":"KEYB","has_account":true,"actions":4,"available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z"},
-		  {"handle":"debtor","public_key":"KEYD","has_account":true,"actions":0,"available":-320,"locked":0,"settlement_due":true},
-		  {"handle":"twin","public_key":"KEYT1","has_account":false,"actions":13,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:34Z"},
-		  {"handle":"twin","public_key":"KEYT2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:35Z"}`
+		// but no credit, and no PETNAME until one is bound — only its self-asserted
+		// nickname, which "twin" repeats across two keys, legally, so they must
+		// stay two rows. A suspended counterparty appears only under ?all=1.
+		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z"},
+		  {"petname":"debtor","public_key":"KEYD","has_account":true,"actions":0,"available":-320,"locked":0,"settlement_due":true},
+		  {"nickname":"twin","public_key":"KEYT1","has_account":false,"actions":13,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:34Z"},
+		  {"nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:35Z"}`
 		if r.URL.Query().Get("all") == "1" {
-			rows += `,{"handle":"frozen","public_key":"KEYS","has_account":true,"available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
+			rows += `,{"petname":"frozen","public_key":"KEYS","has_account":true,"available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
 		// A bare array: the kernel envelopes no list (API.md R6; verified live
 		// 2026-08-05 — an envelope here would silently render zero peers).
@@ -222,7 +231,7 @@ func authKernel() *httptest.Server {
 		case strings.HasPrefix(key, "KEYT"):
 			account = "null"
 		}
-		w.Write([]byte(`{"handle":"kernelc","public_key":"` + key + `","about":"a peer kernel",
+		w.Write([]byte(`{"petname":"kernelc","nickname":"selfname","public_key":"` + key + `","about":"a peer kernel",
 		 "actions":[{"name":"synth/make","description":"synth","price":20}],
 		 "account":` + account + `,
 		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
