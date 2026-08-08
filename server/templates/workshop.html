@@ -58,8 +58,8 @@
   <tr class="rowable{{if not $a.Active}} dim{{end}}" tabindex="-1" data-href="/actions/{{$a.ID}}">
     <td>
       {{template "_ref" (ref $a.Ref $a.ID)}}
-      {{if $a.IsPrivate}}<span class="chip" title="Private"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $a.IsLocal}}<span class="chip tag" title="Local">local</span>{{end}}
-      {{if .LastFailure}}<span class="chip tag" title="Last failure: {{.LastFailure}}">last failed</span>{{end}}
+      {{if $a.IsPrivate}}<span class="chip" title="Private"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $a.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
+      {{if .LastFailure}}<span class="chip" title="Last failure: {{.LastFailure}}">!</span>{{end}}
     </td>
     <td>{{if $a.Active}}<span class="pill status-credited">active</span>{{else}}<span class="pill inactive">inactive</span>{{end}}</td>
     <td class="money">{{template "_price" (price $a.Price false)}}</td>

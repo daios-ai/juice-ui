@@ -24,7 +24,7 @@
     {{template "_price" (price .Action.Price true)}}
   </div>
   <p class="card-desc">
-    <span class="chip tag" title="Discovered on the network — not resolved on this kernel">known network</span>
+    <span class="chip" title="Discovered — known through the network, not resolved here">R</span>
     {{.Action.Description}}
   </p>
 </article>
@@ -37,9 +37,9 @@
   </div>
   <p class="card-desc">
     {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
-    {{- if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span> {{else if .Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span> {{end -}}
+    {{- if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span> {{else if .Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span> {{end -}}
     {{- if .NeedsConnect}}<span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span> {{end -}}
-    {{- if not .Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span> {{end -}}
+    {{- if not .Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span> {{end -}}
     {{.Action.Description}}
   </p>
   {{template "_stat_strip" (statStrip .Action.Price .Stats false false)}}
@@ -404,14 +404,12 @@
            public key, never on the displayed name — an unbound kernel has no
            name to key on, and names collide across kernels (§6.6). */}}
       <div class="row">
-        <b class="ref mono grow"><a class="owner" href="/admin/users/{{.PublicKey}}?form=admin-rename" title="{{if .Petname}}Rename · {{end}}{{$n.Title}}">{{$n.Text}}</a></b>
-        {{if $known}}<span class="chip tag" title="Discovered on the network — no account here">known network</span>{{end}}
+        {{/* The petname resolves and links; the nickname is the kernel's own
+             claim, so it trails in parentheses, inert. */}}
+        <b class="ref mono grow"><a class="owner" href="/admin/users/{{.PublicKey}}?form=admin-rename" title="{{$n.Title}}">{{$n.Text}}</a>{{if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}</b>
+        {{if $known}}<span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
       </div>
-      {{/* The nickname is what the kernel calls ITSELF: self-asserted, never
-           resolves, so it is counterparty prose — inert, never a link. Shown
-           only when it is not already the name we resolved. */}}
-      {{if and .Nickname (ne .Nickname .Petname)}}<div class="small muted">calls itself “{{.Nickname}}”</div>{{end}}
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
       {{/* last_seen is the last verified gossip pull for both classes — catalog
            freshness, not reachability, so it is muted text and never a status

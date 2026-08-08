@@ -173,37 +173,6 @@
 {{/* The wallet's one send-money surface: runs the kernel's sys/transfer action
      (a receipted spend, §6.5) — not the bare /v1/transfers endpoint. Money
      button with the amount typed adjacent (wallet-send pattern, §6.3). */}}
-{{define "_form_transfer"}}
-<dialog id="form-transfer" class="modal-form"{{if eq .Data.OpenForm "transfer"}} open{{end}} aria-label="Send credits">
-  <div class="modal-head"><h2>Send credits</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/transfers">
-      {{.CSRFField}}
-      <div class="field">
-        <label for="tr-to">Recipient</label>
-        <input id="tr-to" name="recipient" type="text" class="mono" placeholder="handle" required>
-        <p class="help">A local user on this kernel.</p>
-      </div>
-      <div class="field">
-        <label for="tr-amt">Amount</label>
-        <input id="tr-amt" name="amount" type="number" min="0.001" step="0.001" class="mono" required>
-        {{/* Sending costs the amount PLUS the execution price of sys/transfer,
-             from two different wallets. The amount is typed, so the total is not
-             knowable at render time — the button stays bare (§5.1: when the
-             operator types the amount, the field is the amount) and the price is
-             disclosed here, at the point of consequence. Omitted when zero: a
-             free action needs no fee line. */}}
-        {{if .Data.TransferPrice}}<p class="help">Plus {{money .Data.TransferPrice}} to run the transfer.</p>{{end}}
-      </div>
-      <div class="cluster">
-        <button class="btn-money" type="submit">Send</button>
-        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
-      </div>
-    </form>
-  </div>
-</dialog>
-{{end}}
-
 {{/* The deposit dialog is shared by admin (a user by handle) and network (a
      kernel by key), so it lives here rather than on either page. Two view fields
      carry the difference: .Data.FundKey prefills the recipient — a 43-character

@@ -334,7 +334,7 @@ func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	disc := getBody(t, cl, srv.URL+"/admin/peers/KEYT1")
-	if !strings.Contains(disc, "known network") {
+	if !strings.Contains(disc, `<span class="chip" title="Discovered`) {
 		t.Errorf("an account-less known kernel must carry the known-network chip: %s", disc)
 	}
 	if strings.Contains(disc, "owes us") || strings.Contains(disc, "we owe them") {
@@ -344,7 +344,7 @@ func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
 		t.Errorf("the fund gesture must be offered with the key prefilled: %s", disc)
 	}
 	stranger := getBody(t, cl, srv.URL+"/admin/peers/KEYNONE")
-	if strings.Contains(stranger, "known network") {
+	if strings.Contains(stranger, `<span class="chip" title="Discovered`) {
 		t.Error(`a source="none" key must not read as part of the known network`)
 	}
 }

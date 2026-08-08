@@ -19,6 +19,11 @@ Status: design draft — endpoint surface gated against the running kernel
 > 3. **The UI owns its failure sentences** (§6.2). The kernel now returns a
 >    failure class, not prose, so a class is never shown to a buyer.
 >
+> 4. **No action is special-cased** (§6.5). `sys/transfer` had a hand-written
+>    send form, route, command and price helper; sending is running an action,
+>    so it goes through the ordinary surfaces like everything else. Where
+>    behaviour differs it keys on a kernel-served field, never on a ref.
+>
 > Removed, because the kernel does not serve them: action synthesis (`sys/make`,
 > §6.4) and the `peer_state` display hint (§6.6). Invariants that predate 0.6.0
 > are unchanged: the BFF architecture, session/token rules, the accent's
@@ -605,25 +610,20 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * The ledger MUST list every credit and debit, newest first, each row linking to
   its receipt. Closed processes (including `run`-created ephemerals) MUST appear
   here.
-* **Send.** The wallet MUST offer a send-money form that runs the kernel's
-  `sys/transfer` action (`POST /v1/run {action: "sys/transfer", args: {target,
-  amount}}`) — a real spend through the run machinery, with the recipient
-  rendered in the provenance face. The bare `POST /v1/transfers` endpoint is NOT
-  a UI surface (it is fee-less plumbing the kernel keeps for other clients); the
-  UI has exactly one way to move money, and it produces a receipt like every
-  other spend. Recipient errors (unknown, suspended, peer) surface as the
-  kernel's typed rejections.
-* **Sending costs two figures, and both MUST be stated.** `sys/transfer` is an
-  ordinary priced action: the sender pays its **execution price** (taxed, from
-  the process budget) *and* delivers the **amount** (untaxed, from their own
-  balance), and the recipient receives exactly the amount. The execution price
-  is operator configuration (`native.transfer.price`) and MUST be read from the
-  action, never assumed to be zero. Because the amount is typed, the total is
-  not knowable when the form renders: the button therefore stays the bare money
-  `Send` (§7 — where the operator types the amount, the adjacent field is the
-  amount), the price is disclosed beside that field at the point of consequence,
-  and the success message names the **total that left the balance**. A zero
-  price states nothing.
+* **Sending money is running an action; it gets no surface of its own.** The
+  kernel moves value through `sys/transfer`, an ordinary priced action with no
+  special privileges (kernel §9: any provider could have supplied an equivalent),
+  so the UI MUST NOT carry a bespoke send form, route, command, or price helper
+  for it. It is found, priced, quoted, run, and receipted exactly like every
+  other action, through the surfaces of §6.2. The bare `POST /v1/transfers`
+  endpoint remains outside the UI (fee-less plumbing the kernel keeps for other
+  clients).
+
+  **No action may be special-cased anywhere in the UI.** A clause keyed to one
+  action's name is a defect, not a feature: it makes the interface disagree with
+  the platform it presents, and it multiplies — one exception invites the next.
+  Where behaviour genuinely differs, it MUST key on a kernel-served field the
+  action carries (`effect`, `kind`, `requires_grant`), never on a ref.
 * The transaction list (`GET /v1/transactions`) MUST return rows where the user
   is buyer (`owner_user_id`), caller (`caller_user_id`), or seller (the called
   action's owner). Each row MUST show the user's role, the action
@@ -936,7 +936,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   (§6.3), decided solely by the kernel's `payment` descriptor;
 * the run primitive: cost preview, the priced confirm, process auto-closure, and
   force-end;
-* the wallet send runs `sys/transfer` through the run machinery (§6.5);
+* no action is special-cased: no bespoke form, route, command, or price helper
+  keyed to a single ref anywhere in the UI (§6.5);
 * bare-handle auth (login, register, recover) with sigiled input tolerated;
 * signed bilateral-position rendering on the peers page (negative positions read
   "owes us", never a bare negative);

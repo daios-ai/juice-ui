@@ -79,7 +79,7 @@
   <details class="card">
     <summary>
       <span class="grant-dir mono"><b>{{.Provider}}</b></span>
-      <span class="chip tag">unused</span>
+      <span class="chip" title="Unused — no action is connected to this account">0</span>
       <span class="cluster grant-actions">
         {{if .ProviderKey}}
         <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}?">

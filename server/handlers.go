@@ -1677,22 +1677,15 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 // and the ledger (transactions the viewer is a party to). It composes the same
 // data the processes and transactions pages show, in one money-focused screen.
 type walletView struct {
-	Available int64
-	Locked    int64
-	// TransferPrice is the live execution price of sys/transfer. Sending costs
-	// that PLUS the amount delivered — two different figures, from different
-	// wallets (kernel §13: the execution price is taxed from the process budget,
-	// the value is delivered untaxed from the caller's own balance). It is
-	// operator configuration (native.transfer.price), so it is read, never
-	// assumed to be zero.
-	TransferPrice int64
-	Open          []client.Process
-	Transactions  []client.Transaction
-	Actions       map[string]client.Action
-	Ledger        []client.LedgerEntry
-	MyHandle      string
-	Superuser     bool
-	OpenForm      string
+	Available    int64
+	Locked       int64
+	Open         []client.Process
+	Transactions []client.Transaction
+	Actions      map[string]client.Action
+	Ledger       []client.LedgerEntry
+	MyHandle     string
+	Superuser    bool
+	OpenForm     string
 }
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
@@ -1716,7 +1709,6 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		// The direct-movement ledger (deposits, withdrawals, transfers) is separate
 		// from the call ledger above; best-effort so a kernel without it still renders.
 		view.Ledger, _ = s.client.Ledger(ctx, tok, 20, 0)
-		view.TransferPrice = s.transferPrice(ctx, tok)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1724,59 +1716,6 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Superuser = s.isSuperuser(r)
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
-}
-
-// transferPrice reads what sys/transfer costs to run. The price is operator
-// configuration (native.transfer.price), so it is fetched rather than assumed —
-// a hardcoded figure is wrong the moment an operator edits the kernel config.
-// Best-effort: an unreadable price renders no fee line, never a fabricated zero.
-// The list is fetched UNBOUNDED (limit 0): the kernel applies limit/offset to
-// raw rows BEFORE its owner/name filter, so a limit of 1 pages away the very row
-// being asked for and returns an empty list.
-func (s *Server) transferPrice(ctx context.Context, tok string) int64 {
-	acts, err := s.client.ListActions(ctx, tok, "sys", "transfer", false, 0, 0)
-	if err != nil || len(acts) == 0 {
-		return 0
-	}
-	return acts[0].Price
-}
-
-// postTransfer sends the caller's own credits to a local recipient by running
-// the kernel's sys/transfer action — the UI's one send-money surface, a real
-// receipted spend through the run machinery (requirements.md §6.5). The money
-// button on the form is the confirm; the kernel enforces the balance,
-// self-transfer, and peer-recipient rules — the BFF only surfaces them.
-func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	recipient := strings.TrimSpace(r.FormValue("recipient"))
-	amount := parseDollars(r.FormValue("amount"))
-	if recipient == "" || amount <= 0 {
-		s.flashRedirect(w, r, "/wallet", "error", "Enter a recipient and a positive amount.")
-		return
-	}
-	var out Outcome
-	err := s.sessions.Do(ctx, func(tok string) error {
-		o, e := s.caller.Run(ctx, tok, "sys/transfer",
-			mustArgs(map[string]any{"target": recipient, "amount": amount}), "")
-		out = o
-		return e
-	})
-	if err != nil {
-		s.flashResult(w, r, err, "/wallet", "")
-		return
-	}
-	if !out.IsSuccess() {
-		s.flashRedirect(w, r, "/wallet", "error", out.Message)
-		return
-	}
-	// The recipient receives the amount; the sender also pays the execution
-	// price, so the flash names what actually left the balance (kernel §13: the
-	// two channels are funded separately and the sender pays both).
-	msg := "Sent " + money(amount) + " to " + recipient + "."
-	if out.Cost != nil && out.Cost.Gross > 0 {
-		msg = "Sent " + money(amount) + " to " + recipient + " · " + money(amount+out.Cost.Gross) + " total."
-	}
-	s.flashResult(w, r, nil, "/wallet", msg)
 }
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {

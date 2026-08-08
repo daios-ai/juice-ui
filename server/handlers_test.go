@@ -2219,60 +2219,6 @@ func postForm(t *testing.T, cl *http.Client, urlStr string, form url.Values) *ht
 	return postTo(t, cl, urlStr, getBody(t, cl, base+"/wallet"), form)
 }
 
-// The wallet's send runs sys/transfer through POST /v1/run — the one send-money
-// surface (§6.5); the bare /v1/transfers endpoint is not used.
-func TestWalletSendRunsSysTransfer(t *testing.T) {
-	var runBody string
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"redirect":"?code=CODE"}`))
-	})
-	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
-	})
-	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
-	})
-	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		runBody = string(b)
-		w.Write([]byte(`{"result":{"amount":300},"tx_id":"TX9","trace_id":"TR9"}`))
-	})
-	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"TX9","status":"success","gross":0,"fee":0,"net":0}`))
-	})
-	mux.HandleFunc("POST /v1/transfers", func(w http.ResponseWriter, r *http.Request) {
-		t.Error("the wallet must not use /v1/transfers")
-	})
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK"}`))
-	})
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	kernel := httptest.NewServer(mux)
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv.Close()
-	cl := loginClient(t, srv.URL)
-
-	// The recipient reaches the kernel as typed (a sigiled one is the kernel's to
-	// reject, §4); dollars are parsed to credits.
-	resp := postForm(t, cl, srv.URL+"/transfers", url.Values{"recipient": {"bob"}, "amount": {"0.300"}})
-	resp.Body.Close()
-	if !strings.Contains(runBody, `"action":"sys/transfer"`) {
-		t.Errorf("wallet send must run sys/transfer: %s", runBody)
-	}
-	if !strings.Contains(runBody, `"target":"bob"`) || !strings.Contains(runBody, `"amount":300`) {
-		t.Errorf("run args must carry the target and credit amount: %s", runBody)
-	}
-}
-
-// Ratings render from the kernel's public projection: the value decides the
-// verdict pill, and the note reads as the review (requirements.md §6.2). A
-// mis-decoded value would silently render every rating "poor".
 func TestActionRatingsRenderFromProjection(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -2310,5 +2256,36 @@ func TestNoBrowserStepCreation(t *testing.T) {
 	// Nor may the palette still offer it.
 	if strings.Contains(page, `"step create"`) {
 		t.Error("the palette must not carry a step-create command")
+	}
+}
+
+// No action gets a bespoke surface. sys/transfer is an ordinary priced action
+// (kernel §9: natives hold no special privileges), so the UI must not carry a
+// hand-written form, route, or price helper for it — it is found and run like
+// anything else. This guards the absence, which is the whole point.
+func TestNoActionGetsABespokeSurface(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	wallet := getBody(t, cl, srv.URL+"/wallet")
+	for _, gone := range []string{"form=transfer", "_form_transfer", "Send credits"} {
+		if strings.Contains(wallet, gone) {
+			t.Errorf("the wallet must not carry a bespoke send surface: %q", gone)
+		}
+	}
+	// The route is gone too, not merely unlinked. Posted WITH a valid CSRF
+	// token, because the CSRF middleware runs before routing and would answer
+	// 403 either way — which would prove nothing.
+	resp := postTo(t, cl, srv.URL+"/transfers", wallet, url.Values{"recipient": {"bob"}, "amount": {"1.000"}})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST /transfers should not exist, got %d", resp.StatusCode)
+	}
+	// And no command names one action.
+	if strings.Contains(getBody(t, cl, srv.URL+"/browse"), "send credits") {
+		t.Error("the palette must not carry a command for a single action")
 	}
 }

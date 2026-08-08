@@ -441,3 +441,28 @@ func TestOutcomeCopyIsOurs(t *testing.T) {
 		t.Error("the outcome panel must not print the raw kernel message: the sentence is ours (§6.2)")
 	}
 }
+
+// TestChipsAreOneLetterOrOneIcon guards §5.5: a chip is a mark, not a caption.
+// Its body is a single character or an <svg>; the meaning lives in its title.
+// Word chips crept back in repeatedly ("known network", "local", "inactive",
+// "last failed", "unused"), each one a phrase where a glyph would do.
+func TestChipsAreOneLetterOrOneIcon(t *testing.T) {
+	chip := regexp.MustCompile(`(?s)<span class="chip[^"]*"[^>]*>(.*?)</span>`)
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		b, err := tmplFS.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range chip.FindAllStringSubmatch(string(b), -1) {
+			body := strings.TrimSpace(m[1])
+			switch {
+			case strings.HasPrefix(body, "<svg"), strings.HasPrefix(body, "{{"):
+				continue // an icon, or a helper that yields one letter (kindBadge)
+			case len([]rune(body)) <= 1:
+				continue // a single letter
+			}
+			t.Errorf("%s: chip body %q must be one letter or one icon, not a word", f, body)
+		}
+	}
+}

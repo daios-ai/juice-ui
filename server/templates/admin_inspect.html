@@ -3,12 +3,11 @@
 {{$i := $d.Inspection}}
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
 {{$n := nameOf $i.Petname $d.Key}}
-<h1 title="{{$n.Title}}">{{$n.Text}}
+<h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
   {{- if $i.Account}} <span class="pill" title="Our bilateral position with this kernel">{{positionText $i.Account.Available}}</span>
     {{- if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}
-  {{- else if $i.Discovered}} <span class="chip tag" title="Discovered on the network — no account here">known network</span>{{end}}</h1>
+  {{- else if $i.Discovered}} <span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}</h1>
 <p class="subtitle mono hash">{{$d.Key}}</p>
-{{if and $i.Nickname (ne $i.Nickname $i.Petname)}}<p class="subtitle">calls itself “{{$i.Nickname}}”</p>{{end}}
 {{if $i.About}}<p class="subtitle">{{$i.About}}</p>{{end}}
 
 <div class="card">

@@ -304,20 +304,24 @@ none float, none are colored.
   sits **below and outside** the media (kernel chrome never overlaps counterparty
   pixels). One strip, one grammar, both surfaces. **Attribute chips** (`.chip`)
   mark the *exception* only:
+  - **A chip is ONE letter or ONE icon. Never a word, never a phrase** — the
+    meaning lives in its `title`, which is also its accessible label. A chip is
+    a mark in the corner of a card, not a caption.
   - **Kind** (one chip): `W` wasm · `N` native · `H` http · `R` remote
     (`kind == "remote_proxy"`, via the `kindBadge` helper). **`R` stands out by
     weight** (`.chip.filled`), never by hue.
-  - **Visibility** → a chip only for the non-default narrowing: `private` (lock)
-    or `local` (a `local` chip); `public` shows nothing.
-  - **Inactive** → the card is dimmed (`.action-card.inactive`) plus a muted
-    `inactive` chip (`.chip.tag`).
+  - **Visibility** → a chip only for the non-default narrowing: `private` (lock
+    icon) or `local` (`L`); `public` shows nothing.
+  - **Inactive** → the card is dimmed (`.action-card.inactive`) plus an ✗ icon
+    chip.
   - **Needs account** → a filled key-icon chip (`.chip.filled`, `#key`) only
     when the action requires a per-caller grant the viewer hasn't connected.
     On the action page the run form is replaced by the connect gesture
     (banner + `Connect account`) — **a doomed run is never offered**, the
     same rule as peer-blocked runs.
-  - **Discovered** → a plain `known network` chip (`.chip.tag`) on a lookup
-    result this kernel has not resolved: the ref is kernel-qualified and the
+  - **Discovered** → an unfilled `R` on a lookup result this kernel has not
+    resolved — the same letter as a resolved remote, without the weight, because
+    it is that action before resolution: the ref is kernel-qualified and the
     card carries no reputation strip and no link, because nothing local backs it
     yet (requirements.md §6.2). It DOES carry a price — the kernel prices every
     lookup row — rendered **indicative** (muted **plus** an accessible label,

@@ -12,7 +12,7 @@
     <h2 class="flush mono">{{.Provider}}</h2>
     {{if .Covered}}<span class="pill status-credited">connected</span>{{end}}
   </div>
-  {{if .Scopes}}<p class="muted small">Scopes: {{range .Scopes}}<span class="chip tag">{{.}}</span> {{end}}</p>{{end}}
+  {{if .Scopes}}<p class="muted small mono">{{range $i, $s := .Scopes}}{{if $i}} · {{end}}{{$s}}{{end}}</p>{{end}}
   <p class="help flush">Connects {{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}:</p>
   <ul class="tiny">
     {{range .Actions}}<li>{{template "_ref" (ref .Action "")}}{{if .Granted}} <span class="muted small">— already connected</span>{{end}}</li>{{end}}
