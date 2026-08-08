@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.6.0
+Version: 0.6.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.6.1.** One rule, applied in three places: the UI states
+> things in the platform's vocabulary, not in prose of its own. No action is
+> special-cased — `sys/transfer` loses its bespoke send form, route, command and
+> price helper, because sending money is running an action (§6.5). A chip is one
+> letter or one icon with its meaning in the title, never a word (`docs/ui-grammar.md`
+> §5.5). A kernel's nickname trails its name in parentheses rather than a
+> sentence (§6.6).
 
 > **What changed in 0.6.0.** The kernel's v0.12.16 contract lands, and the
 > surface loses what the kernel no longer serves. Each axis is written into the
