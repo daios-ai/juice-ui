@@ -317,9 +317,11 @@ none float, none are colored.
     (banner + `Connect account`) — **a doomed run is never offered**, the
     same rule as peer-blocked runs.
   - **Discovered** → a plain `known network` chip (`.chip.tag`) on a lookup
-    result this kernel has not resolved: the ref is kernel-qualified, the card
-    carries no price, no reputation strip, and no link or run affordance,
-    because nothing local backs it yet (requirements.md §6.2). It is the
+    result this kernel has not resolved: the ref is kernel-qualified and the
+    card carries no reputation strip and no link, because nothing local backs it
+    yet (requirements.md §6.2). It DOES carry a price — the kernel prices every
+    lookup row — rendered **indicative** (muted **plus** an accessible label,
+    never weight alone, which a screen reader cannot perceive). It is the
     unresolved counterpart of `R`, so the two never appear together.
   - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
     is spent on them (every hue is a reserved money/trust signal); emphasis is
@@ -357,13 +359,14 @@ none float, none are colored.
   `.status-credited / -refunded / -escrow / -danger`.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
-- **Money display** renders mono + tabular with the **credit mark** — the
-  diamond/gem icon via the `gem` helper (`#gem` sprite), placed after the amount
-  (e.g. `12 ◆`, `+45 ◆`). The `¤` character is **banned from every template**
-  (`grammar_test.go` `TestNoCurrencyGlyph`) — it is the retired mark. The credit
-  mark appears **only in money *display*** — **never on a button**: a spend button
-  is `verb (N)` (§5.1), the accent conveying credits. In prose (help/flash/error)
-  spell it "N credits".
+- **Money display** renders mono + tabular in **dollars**, `$`-prefixed, always
+  three decimals, thousands-grouped, sign before the `$` (`-$2.500`), through the
+  single `money` helper — the wire unit is the integer credit (1000 credits =
+  $1, exact), and dollars are a presentation-only transform so the format is one
+  edit (requirements.md §7). The `¤` character and the retired gem/diamond mark
+  are **banned from every template**. A spend button names the amount the same
+  way — `verb ($N.NNN)` (§5.1) — and money in prose (help/flash/error) is
+  written in the same dollar form.
 
 ### 5.7 Refs
 
@@ -503,7 +506,7 @@ only mutation** — no refund/force-settle affordance exists in the grammar.
   on `.btn-money`, the `.badge`, the focus ring, `.req`, and the progress bar —
   never on links, tab underlines, active nav, or the active mobile tab (those key
   on text weight + surface). Money buttons name the amount as `verb (N)` and carry
-  **no credit glyph**; money *display* uses `N ◆` (the gem mark) in the mono
+  **no credit glyph**; money *display* uses the same dollar form in the mono
   provenance face (§5.6). **Danger beats money.** An **ordinary step completion is
   neutral** (`Complete`, no amount, no accent): the completer is not the payer;
   a **payment step** completion is a genuine spend and uses the money button
@@ -545,5 +548,5 @@ only mutation** — no refund/force-settle affordance exists in the grammar.
   any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
   phrase or into a second sentence, any prose note (`.help` / `.card-note`) that
   swells into a paragraph, and any **`¤` character anywhere in a template**
-  (`TestNoCurrencyGlyph`) — the credit mark is the `gem` helper (`◆`), and buttons
-  read `verb (N)` (§5.6).
+  (`TestNoCurrencyGlyph`) — money is dollars through the `money` helper, and
+  buttons read `verb ($N.NNN)` (§5.6).

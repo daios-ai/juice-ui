@@ -1377,7 +1377,7 @@ func TestActionCardDiscovered(t *testing.T) {
 		Discovered: true,
 		Action: client.Action{
 			ID: "REMOTE-ID", Action: "tom@KERNELKEY/greet",
-			Description: "Greets a person by name.",
+			Description: "Greets a person by name.", Price: 111,
 		},
 	})
 	if !strings.Contains(body, "known network") {
@@ -1390,9 +1390,14 @@ func TestActionCardDiscovered(t *testing.T) {
 	if strings.Contains(body, "/actions/REMOTE-ID") {
 		t.Errorf("a discovered card must not link to a local action page: %s", body)
 	}
-	// No price at all — not even the "free" fallback, which would be a claim.
-	if strings.Contains(body, "free") || strings.Contains(body, `class="price"`) {
-		t.Errorf("a discovered card must state no price: %s", body)
+	// The kernel prices every lookup row (v0.12.15), so the card states it — but
+	// as INDICATIVE, and marked by an accessible label, not by weight alone: the
+	// binding figure is fixed when the action resolves.
+	if !strings.Contains(body, "$0.111") {
+		t.Errorf("a discovered card must state its catalog price: %s", body)
+	}
+	if !strings.Contains(body, `class="price muted"`) || !strings.Contains(body, "title=\"Indicative") {
+		t.Errorf("an indicative price must be muted AND labelled: %s", body)
 	}
 	if strings.Contains(body, "stat-strip") {
 		t.Errorf("a discovered card must carry no reputation strip: %s", body)

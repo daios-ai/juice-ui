@@ -154,7 +154,15 @@ type Action struct {
 	// on sys/transfer), empty on every ordinary action. It is the ONLY signal
 	// that completing a step on this action spends the completer's own money
 	// (requirements.md §6.3): never key on the action's name.
-	Effect    string `json:"effect,omitempty"`
+	Effect string `json:"effect,omitempty"`
+	// QuoteHash fingerprints the terms quoted here — action id, effect,
+	// description, both schemas, and price (kernel §4, v0.12.15). Pin it on a run
+	// and a call whose terms moved is refused with terms_changed BEFORE funds are
+	// locked, at zero charge, so a displayed price is binding rather than
+	// advisory. Carried on action reads, listings, and sys/lookup rows; because
+	// it hashes the STABLE id, a discovered hit and the proxy it resolves to
+	// hash identically, which is what lets a first cross-kernel call bind.
+	QuoteHash string `json:"quote_hash,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }

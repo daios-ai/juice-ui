@@ -62,7 +62,7 @@
       {{if .LastFailure}}<span class="chip tag" title="Last failure: {{.LastFailure}}">last failed</span>{{end}}
     </td>
     <td>{{if $a.Active}}<span class="pill status-credited">active</span>{{else}}<span class="pill inactive">inactive</span>{{end}}</td>
-    <td class="money">{{if gt $a.Price 0}}{{money $a.Price}}{{else}}<span class="muted">free</span>{{end}}</td>
+    <td class="money">{{template "_price" (price $a.Price false)}}</td>
     <td class="money">{{if .Stats}}{{.Stats.Uses}}{{else}}0{{end}}</td>
     <td>{{if and .Stats (gt .Stats.Uses 0)}}{{pct .Stats.Successes .Stats.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
     <td>{{if and .Stats (gt .Stats.RatingCount 0)}}{{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}% <span class="muted mono">({{.Stats.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>

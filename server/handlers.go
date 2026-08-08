@@ -2024,12 +2024,16 @@ func coerce(typ, val string) (json.RawMessage, error) {
 func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {
 		Results []struct {
-			ActionID    string  `json:"action_id"`
-			Action      string  `json:"action"`
-			Name        string  `json:"name"`
-			OwnerHandle string  `json:"owner_handle"`
-			Description string  `json:"description"`
-			Score       float64 `json:"score"`
+			ActionID     string          `json:"action_id"`
+			Action       string          `json:"action"`
+			Name         string          `json:"name"`
+			OwnerHandle  string          `json:"owner_handle"`
+			Description  string          `json:"description"`
+			Price        int64           `json:"price"`
+			QuoteHash    string          `json:"quote_hash"`
+			InputSchema  json.RawMessage `json:"input_schema"`
+			OutputSchema json.RawMessage `json:"output_schema"`
+			Score        float64         `json:"score"`
 		} `json:"results"`
 	}
 	_ = json.Unmarshal(result, &lr)
@@ -2037,11 +2041,15 @@ func parseLookup(result json.RawMessage) []actionCardView {
 	for _, r := range lr.Results {
 		out = append(out, actionCardView{
 			Action: client.Action{
-				ID:          r.ActionID,
-				Action:      r.Action,
-				Name:        r.Name,
-				OwnerHandle: r.OwnerHandle,
-				Description: r.Description,
+				ID:           r.ActionID,
+				Action:       r.Action,
+				Name:         r.Name,
+				OwnerHandle:  r.OwnerHandle,
+				Description:  r.Description,
+				Price:        r.Price,
+				QuoteHash:    r.QuoteHash,
+				InputSchema:  r.InputSchema,
+				OutputSchema: r.OutputSchema,
 			},
 			Discovered: refIsRemote(r.Action),
 		})

@@ -9,17 +9,19 @@
 
 {{/* A DISCOVERED card is the unresolved counterpart of an ordinary one: the
      kernel has only heard of the action through gossip, so nothing local backs
-     it. It states what is known — the kernel-qualified ref and the description —
-     and nothing more: no price and no reputation (the discovery cache stores
-     neither), no link (the id belongs to the remote kernel), and no run (a spend
-     may never be offered that cannot name its amount). Resolution happens on the
-     first call, after which the kernel shadows this row with the cached proxy. */}}
+     it. It states what is known — the kernel-qualified ref, the description, and
+     the catalog price, which the kernel now serves on every lookup row and which
+     is INDICATIVE until resolution re-quotes it. No reputation (the discovery
+     cache stores none) and no link (the id belongs to the remote kernel).
+     Resolution happens on the first call, after which the kernel shadows this
+     row with the cached proxy. */}}
 {{define "_action_card"}}
 {{if .Discovered}}
 <article class="action-card">
   <span class="media-link">{{template "_media" .Action}}</span>
   <div class="card-top">
     <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" (ref .Action.Ref "")}}</span>
+    {{template "_price" (price .Action.Price true)}}
   </div>
   <p class="card-desc">
     <span class="chip tag" title="Discovered on the network — not resolved on this kernel">known network</span>
@@ -31,7 +33,7 @@
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
     <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" (ref .Action.Ref .Action.ID)}}</span>
-    <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}}{{else}}<span class="free">free</span>{{end}}</span>
+    {{template "_price" (price .Action.Price false)}}
   </div>
   <p class="card-desc">
     {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
@@ -51,7 +53,7 @@
      "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). */}}
 {{define "_stat_strip"}}
 <p class="stat-strip">
-  {{if .WithPrice}}<span class="price" title="Price per run">{{money .Price}}</span>
+  {{if .WithPrice}}{{template "_price" (price .Price false)}}
   · {{end}}{{if gt .S.Uses 0}}<span title="Success rate — {{.S.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
   · {{if gt .S.RatingCount 0}}<span title="Rating — {{.S.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
   · {{if gt .S.Uses 0}}<span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
@@ -155,6 +157,13 @@
      segment is emphasized; a LOCAL owner links to its profile, a REMOTE one never
      does (the kernel half is presentation-only, requirements.md §4) and its key
      is truncated with the whole value in the title. */}}
+{{/* _price — THE price (§5.5). One partial for every surface: card, stat strip,
+     table, peer catalog. Zero reads "free"; an INDICATIVE price (a discovered
+     action, priced from the gossip catalog and binding only once resolved) is
+     muted AND labelled, never distinguished by weight alone. Build it with the
+     `price` helper. */}}
+{{define "_price"}}{{if .Indicative}}<span class="price muted" title="Indicative — the binding price is confirmed when you run it">{{if gt .Price 0}}{{money .Price}}{{else}}free{{end}}</span>{{else if gt .Price 0}}<span class="price">{{money .Price}}</span>{{else}}<span class="price"><span class="free">free</span></span>{{end}}{{end}}
+
 {{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/users/{{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{end}}
 
 {{/* _call_form — THE run/complete form. Running an action and completing a step
@@ -230,7 +239,7 @@
   {{range .}}
   <tr>
     <td><span class="ref mono">{{.Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
-    <td class="money">{{money .Price}}</td>
+    <td class="money">{{template "_price" (price .Price false)}}</td>
   </tr>
   {{end}}
   </tbody>

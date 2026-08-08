@@ -8,7 +8,7 @@
   <div class="row">
     <span class="mono">{{template "_ref" (ref $d.Step.Ref "")}}</span>
     <span class="pill {{if eq $d.Step.Status "done"}}status-credited{{else if eq $d.Step.Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{$d.Step.Status}}</span>
-    <span class="price" title="Parked price">◷ {{money $d.Step.Price}}</span>
+    <span class="sig-escrow" title="Parked price">◷ {{template "_price" (price $d.Step.Price false)}}</span>
     {{if $d.Step.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
   </div>
   {{if $d.Step.CreatedBy}}

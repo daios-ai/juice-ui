@@ -380,13 +380,17 @@ detectable.
   action or stats reads that back an ordinary card — and MUST show the
   kernel-qualified ref (owner segment unlinked, §6.2 refs), the description, and a
   quiet chip marking it as discovered, distinct from the remote-proxy chip. It MUST
-  NOT show a price or a reputation strip (the discovery cache stores neither) and
-  MUST NOT offer a run affordance: the local price exists only after resolution, and
-  no spend may be offered that cannot name its amount (§8). Resolution is a side
-  effect of the first call, so a discovered card is a transient state — once a proxy
-  is cached the kernel shadows the discovery row and the action appears as an
-  ordinary priced card. *Known limitation (§3.3):* first contact therefore happens
-  outside the UI (CLI or an agent) until the kernel serves a resolving read.
+  NOT show a reputation strip (the discovery cache stores none).
+* **Every result states a price, including a discovered one.** The kernel serves
+  `price` on every `sys/lookup` row — an action's own price locally, and for a
+  discovered hit its `serving_price` marked up by the current import fee. A
+  discovered price is **indicative**: it comes from the gossip catalog, refreshed
+  each discovery pass, and the binding figure is fixed when the action resolves.
+  It MUST therefore be marked as indicative by a quiet visual treatment **and an
+  accessible label** — never by weight alone, which a screen reader cannot
+  perceive — and MUST NOT be presented as the amount a spend button authorizes
+  unless that spend pins it (§6.2 quote pinning). A blank where a price belongs
+  is not permitted: the kernel serves one for every row.
 * Catalog browse (`GET /v1/actions`, owner/name filters) MUST be available as the
   secondary path and the per-owner listing.
 * On `ErrInvalidState` from `sys/lookup`, the omnibox MUST fall back to catalog

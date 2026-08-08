@@ -103,6 +103,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"refFolder":    refFolder,
 		"nameOf":       nameOf,
 		"ref":          refOf,
+		"price":        priceOf,
 		"shortTime":    shortTime,
 		"relTime":      relTime,
 		"txAmount":     txAmount,
@@ -300,6 +301,25 @@ func ratingPct(estimate float64, count int64) string {
 		return ""
 	}
 	return fmt.Sprintf("%.0f", estimate*100)
+}
+
+// PriceView is a price as rendered: the amount, and whether it is indicative
+// rather than binding. Free is not a special case in the data — it is what the
+// template says when the amount is zero — so every price on every surface goes
+// through one partial and cannot drift.
+//
+// Indicative marks a DISCOVERED action's price: it comes from the gossip
+// catalog, refreshed each discovery pass, and only resolution fixes the binding
+// figure. It is marked quietly and with an accessible label, never by weight
+// alone, which a screen reader cannot perceive.
+type PriceView struct {
+	Price      int64
+	Indicative bool
+}
+
+// priceOf builds a PriceView. The one entry point templates use.
+func priceOf(price int64, indicative bool) PriceView {
+	return PriceView{Price: price, Indicative: indicative}
 }
 
 // Name is a kernel name rendered for a human: the text to show, the full value
