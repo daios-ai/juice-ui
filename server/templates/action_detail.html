@@ -6,7 +6,7 @@
   {{template "_media" $d.Action}}
   <div>
     <div class="action-head">
-      <h1 class="mono">{{template "_ref" $d.Action.Ref}}</h1>
+      <h1 class="mono">{{template "_ref" (ref $d.Action.Ref "")}}</h1>
       <span class="chips">
         {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span>{{end}}
         {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}

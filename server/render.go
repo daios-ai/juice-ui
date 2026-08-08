@@ -100,14 +100,9 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"buildForm":    BuildForm, // lets templates derive a FormModel from a raw schema
 		"pct":          pct,
 		"ratingPct":    ratingPct,
-		"refOwner":     refOwner,
-		"refName":      refName,
-		"refKernel":    refKernel,
-		"refIsRemote":  refIsRemote,
 		"refFolder":    refFolder,
 		"nameOf":       nameOf,
-		"keyDisplay":   keyDisplay,
-		"reflink":      func(ref, id string) refLinkArgs { return refLinkArgs{Ref: ref, ID: id} },
+		"ref":          refOf,
 		"shortTime":    shortTime,
 		"relTime":      relTime,
 		"txAmount":     txAmount,
@@ -383,12 +378,37 @@ func refKernel(ref string) string {
 // partials render them unlinked.
 func refIsRemote(ref string) bool { return refKernel(ref) != "" }
 
-// refLinkArgs feeds the _reflink partial: the ref (for owner/name split) plus the
-// action id the name links to. Used where a ref appears as a marketplace action
-// link — the owner segment links to the owner page, the name to the action.
-type refLinkArgs struct {
-	Ref string
-	ID  string
+// RefView is a rendered action reference: the owner segment, the name half, and
+// the id the name links to when one exists. THE one place a ref is split, so a
+// key never renders whole in one template and truncated in another.
+//
+// Owner is a Name because a remote owner segment carries a kernel that may be a
+// raw public key (owner@<43 chars>) — unreadable as a card title, and truncated
+// here through the same primitive that renders a kernel card (§13 petname
+// model). Local reports that the owner has a profile page here; a remote owner
+// never links, the kernel half being presentation-only (requirements.md §4).
+type RefView struct {
+	Owner Name
+	Name  string
+	ID    string // "" ⇒ the name is not a link
+	Local bool
+}
+
+// refOf splits a ref for rendering. Split on the FIRST slash: names may contain
+// slashes (sys/llm/chat) but handles never do, so the first is unambiguous.
+func refOf(ref, id string) RefView {
+	owner, name := refOwner(ref), refName(ref)
+	v := RefView{Name: name, ID: id, Local: !refIsRemote(ref)}
+	if v.Local {
+		v.Owner = Name{Text: owner, Title: owner}
+		return v
+	}
+	// owner@kernel: the kernel half alone is truncated when it is a raw key, so
+	// the owner stays readable and the whole segment survives in the title.
+	at := strings.IndexByte(owner, '@')
+	k := keyDisplay(owner[at+1:])
+	v.Owner = Name{Text: owner[:at+1] + k.Text, Title: owner, IsKey: k.IsKey}
+	return v
 }
 
 // refName returns the name segment of "owner/name" (everything after the first

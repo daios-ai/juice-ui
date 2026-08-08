@@ -15,7 +15,7 @@
   {{range .Steps}}
   {{$step := .Step}}
   <div class="step-card">
-    <div class="step-ask">{{if $req}}{{template "_ref" $req}} needs {{end}}{{template "_ref" $step.Ref}}{{if $step.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
+    <div class="step-ask">{{if $req}}{{template "_ref" (ref $req "")}} needs {{end}}{{template "_ref" (ref $step.Ref "")}}{{if $step.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
     {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval .Form.Locked $step.PartialArgs nil .IsPayment .Payment .PayTo)}}
   </div>
   {{end}}
@@ -39,7 +39,7 @@
   {{range $d.History}}
   <tr class="rowable" tabindex="-1" data-href="/inbox/{{.ID}}">
     <td class="id mono"><a href="/inbox/{{.ID}}">{{truncate 8 .ID}}…</a></td>
-    <td>{{if .Action}}{{template "_reflink" (reflink .Action .ActionID)}}{{else}}<span class="muted mono">{{truncate 8 .ActionID}}…</span>{{end}}</td>
+    <td>{{if .Action}}{{template "_ref" (ref .Action .ActionID)}}{{else}}<span class="muted mono">{{truncate 8 .ActionID}}…</span>{{end}}</td>
     <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{.Status}}</span></td>
     <td class="money">{{money .Price}}</td>
     <td class="mono muted">{{.RequiredCallerHandle}}</td>

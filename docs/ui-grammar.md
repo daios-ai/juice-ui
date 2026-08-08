@@ -367,12 +367,20 @@ none float, none are colored.
 
 ### 5.7 Refs
 
-`owner/name` renders via the `_ref` partial: `<span class="ref mono">` with the
+`owner/name` renders via the **one** `_ref` partial, built with the `ref` helper
+(`ref <ref> <id>`; pass `""` for no link): `<span class="ref mono">` with the
 owner in `.owner` (weight-emphasized, confusable-distinct, **not** accent),
-split on the first `/`. A **remote** ref (`owner@kernel/name`) renders the whole
-owner segment (`owner@kernel`) in `.owner` the same way but **unlinked**: the
-kernel alias is presentation-only (requirements.md §4) and no local route exists
-behind a remote owner — don't invent one.
+split on the first `/`. Passing an action id makes the **name** the link to the
+action; the owner links to its profile only when it is **local**. A **remote**
+ref (`owner@kernel/name`) renders its owner segment **unlinked**: the kernel half
+is presentation-only (requirements.md §4) and no local route exists behind a
+remote owner — don't invent one.
+
+When that kernel half is a **raw public key** — an action discovered but not yet
+resolved is `owner@<43 chars>/name` — it is **truncated** through the same
+primitive a kernel card uses (§5.11), leaving the owner legible and the whole
+segment in the `title`. A bound petname is not key-shaped and renders whole. A
+43-character key MUST never be a card title.
 
 ### 5.8 Modals & floating forms
 

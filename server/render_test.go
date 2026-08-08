@@ -1246,17 +1246,18 @@ func TestRefHelpersRemote(t *testing.T) {
 		{"tom@acme2/brief/daily", "tom@acme2", "acme2", "brief/daily", true},
 	}
 	for _, c := range cases {
-		if got := refOwner(c.ref); got != c.owner {
-			t.Errorf("refOwner(%q)=%q want %q", c.ref, got, c.owner)
+		v := refOf(c.ref, "")
+		if v.Owner.Text != c.owner {
+			t.Errorf("ref(%q).Owner=%q want %q", c.ref, v.Owner.Text, c.owner)
+		}
+		if v.Name != c.name {
+			t.Errorf("ref(%q).Name=%q want %q", c.ref, v.Name, c.name)
+		}
+		if v.Local == c.remote {
+			t.Errorf("ref(%q).Local=%v want %v", c.ref, v.Local, !c.remote)
 		}
 		if got := refKernel(c.ref); got != c.kernel {
 			t.Errorf("refKernel(%q)=%q want %q", c.ref, got, c.kernel)
-		}
-		if got := refName(c.ref); got != c.name {
-			t.Errorf("refName(%q)=%q want %q", c.ref, got, c.name)
-		}
-		if got := refIsRemote(c.ref); got != c.remote {
-			t.Errorf("refIsRemote(%q)=%v want %v", c.ref, got, c.remote)
 		}
 	}
 }
@@ -1270,7 +1271,7 @@ func TestRefRemoteUnlinked(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_ref", "alice@B/greet"); err != nil {
+	if err := r.Fragment(rec, 200, "_ref", refOf("alice@B/greet", "")); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
@@ -1282,11 +1283,42 @@ func TestRefRemoteUnlinked(t *testing.T) {
 	}
 	// A local ref keeps its owner-page link.
 	rec2 := httptest.NewRecorder()
-	if err := r.Fragment(rec2, 200, "_ref", "lena/greet"); err != nil {
+	if err := r.Fragment(rec2, 200, "_ref", refOf("lena/greet", "")); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rec2.Body.String(), `href="/users/lena"`) {
 		t.Errorf("local owner must link to its owner page: %s", rec2.Body.String())
+	}
+	// Passing an id makes the NAME the action link — the case _reflink used to
+	// serve, now the same partial with one more argument.
+	rec3 := httptest.NewRecorder()
+	if err := r.Fragment(rec3, 200, "_ref", refOf("lena/greet", "A1")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec3.Body.String(), `href="/actions/A1"`) {
+		t.Errorf("an id must link the name to the action: %s", rec3.Body.String())
+	}
+}
+
+// A raw kernel key never renders whole in a ref: an unresolved remote action is
+// addressed owner@<43-char key>/name, which as a card title is unreadable. The
+// owner stays legible, the key is truncated through the SAME primitive a kernel
+// card uses, and the whole segment survives in the title.
+func TestRefTruncatesRawKernelKeys(t *testing.T) {
+	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I"
+	v := refOf("sys@"+key+"/llm/embed", "")
+	if v.Owner.Text != "sys@"+key[:keyLen]+"…" {
+		t.Errorf("owner segment = %q, want the key truncated", v.Owner.Text)
+	}
+	if v.Owner.Title != "sys@"+key {
+		t.Errorf("the full segment must survive in the title, got %q", v.Owner.Title)
+	}
+	if v.Name != "llm/embed" || v.Local {
+		t.Errorf("split wrong: %+v", v)
+	}
+	// A bound petname is not key-shaped and renders whole.
+	if b := refOf("sys@daios/llm/embed", ""); b.Owner.Text != "sys@daios" || b.Owner.IsKey {
+		t.Errorf("a petname-qualified ref must render whole: %+v", b)
 	}
 }
 

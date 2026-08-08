@@ -19,7 +19,7 @@
 <article class="action-card">
   <span class="media-link">{{template "_media" .Action}}</span>
   <div class="card-top">
-    <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" .Action.Ref}}</span>
+    <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" (ref .Action.Ref "")}}</span>
   </div>
   <p class="card-desc">
     <span class="chip tag" title="Discovered on the network — not resolved on this kernel">known network</span>
@@ -30,7 +30,7 @@
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
-    <span class="card-title" title="{{.Action.Ref}}">{{template "_reflink" (reflink .Action.Ref .Action.ID)}}</span>
+    <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" (ref .Action.Ref .Action.ID)}}</span>
     <span class="price">{{if gt .Action.Price 0}}{{money .Action.Price}}{{else}}<span class="free">free</span>{{end}}</span>
   </div>
   <p class="card-desc">
@@ -136,7 +136,7 @@
 {{$tx := .Tx}}
 <tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
   <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}…</a></td>
-  <td>{{if .Ref}}{{template "_reflink" (reflink .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
+  <td>{{if .Ref}}{{template "_ref" (ref .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
   <td class="muted small">{{if eq .Viewer $tx.TargetHandle}}seller{{else if eq .Viewer $tx.OwnerHandle}}buyer{{else if eq .Viewer $tx.CallerHandle}}caller{{else}}—{{end}}</td>
   <td class="money">{{txAmount $tx .Viewer}}</td>
   <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
@@ -150,13 +150,12 @@
      the alias is presentation-only, requirements.md §4) renders the same but
      UNLINKED, since no local profile exists behind it. The name is plain here.
      Use _reflink where the name should also link to the action. */}}
-{{define "_ref"}}<span class="ref mono"><span class="owner">{{if refIsRemote .}}{{refOwner .}}{{else}}<a href="/users/{{refOwner .}}">{{refOwner .}}</a>{{end}}</span>/{{refName .}}</span>{{end}}
-
-{{/* _reflink is _ref for a marketplace action link: local owner → owner page,
-     name → the action; a remote owner stays unlinked (see _ref). Input:
-     refLinkArgs {Ref, ID}. Avoids nesting the owner <a> inside an action <a>
-     at sites that would otherwise wrap the whole ref in one link. */}}
-{{define "_reflink"}}<span class="ref mono"><span class="owner">{{if refIsRemote .Ref}}{{refOwner .Ref}}{{else}}<a href="/users/{{refOwner .Ref}}">{{refOwner .Ref}}</a>{{end}}</span>/<a href="/actions/{{.ID}}">{{refName .Ref}}</a></span>{{end}}
+{{/* _ref — THE action reference (§5.7). One partial, one split: build it with
+     the `ref` helper, passing the action id when the name should link. The owner
+     segment is emphasized; a LOCAL owner links to its profile, a REMOTE one never
+     does (the kernel half is presentation-only, requirements.md §4) and its key
+     is truncated with the whole value in the title. */}}
+{{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/users/{{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{end}}
 
 {{/* _call_form — THE run/complete form. Running an action and completing a step
      are the same act, so both render here: locked args (a step's pre-bound input)
@@ -478,7 +477,7 @@
      names the amount on the button and shows the refund + first-payment hint;
      nothing floats in a modal. */}}
 <div id="action-run">
-{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome .FirstPayee (refOwner .Action.Ref))}}
+{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome .FirstPayee (ref .Action.Ref "").Owner.Text)}}
 </div>
 {{end}}
 {{end}}

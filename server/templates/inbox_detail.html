@@ -6,7 +6,7 @@
 
 <div class="card stack">
   <div class="row">
-    <span class="mono">{{template "_ref" $d.Step.Ref}}</span>
+    <span class="mono">{{template "_ref" (ref $d.Step.Ref "")}}</span>
     <span class="pill {{if eq $d.Step.Status "done"}}status-credited{{else if eq $d.Step.Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{$d.Step.Status}}</span>
     <span class="price" title="Parked price">◷ {{money $d.Step.Price}}</span>
     {{if $d.Step.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
@@ -14,7 +14,7 @@
   {{if $d.Step.CreatedBy}}
   <div>
     <h3>Created by</h3>
-    <p>{{template "_ref" $d.Step.CreatedBy}}</p>
+    <p>{{template "_ref" (ref $d.Step.CreatedBy "")}}</p>
   </div>
   {{end}}
   <div>

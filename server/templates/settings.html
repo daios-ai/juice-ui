@@ -60,7 +60,7 @@
       <tbody>
       {{range .Actions}}
       <tr>
-        <td>{{template "_ref" .Action}}</td>
+        <td>{{template "_ref" (ref .Action "")}}</td>
         <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
         <td class="muted">{{shortTime .CreatedAt}}</td>
         <td>

@@ -15,7 +15,7 @@
   {{if .Scopes}}<p class="muted small">Scopes: {{range .Scopes}}<span class="chip tag">{{.}}</span> {{end}}</p>{{end}}
   <p class="help flush">Connects {{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}:</p>
   <ul class="tiny">
-    {{range .Actions}}<li>{{template "_ref" .Action}}{{if .Granted}} <span class="muted small">— already connected</span>{{end}}</li>{{end}}
+    {{range .Actions}}<li>{{template "_ref" (ref .Action "")}}{{if .Granted}} <span class="muted small">— already connected</span>{{end}}</li>{{end}}
   </ul>
   {{if .Covered}}
   <p class="muted small flush">This account already covers every action above.</p>

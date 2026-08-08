@@ -11,7 +11,7 @@
 
   <div class="row">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
-    {{if $d.Action}}{{template "_reflink" (reflink $d.Action.Ref $d.Action.ID)}}
+    {{if $d.Action}}{{template "_ref" (ref $d.Action.Ref $d.Action.ID)}}
     {{else}}<span class="muted mono">{{truncate 8 $d.Tx.ActionID}}… (deleted)</span>{{end}}
   </div>
 
