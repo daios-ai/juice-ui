@@ -244,8 +244,9 @@ type Process struct {
 
 // RunRequest is the body for POST /v1/run.
 type RunRequest struct {
-	Action string          `json:"action"`
-	Args   json.RawMessage `json:"args"`
+	Action    string          `json:"action"`
+	Args      json.RawMessage `json:"args"`
+	QuoteHash string          `json:"quote_hash,omitempty"`
 }
 
 // CallReply is the success response of POST /v1/run.
@@ -887,8 +888,13 @@ func (c *Client) EndProcess(ctx context.Context, token, id string) error {
 // Run executes an action via POST /v1/run. The kernel atomically creates a
 // process funded with exactly action.price, issues the call, and closes the
 // process when the root call returns and no steps remain outstanding.
-func (c *Client) Run(ctx context.Context, token, action string, args json.RawMessage) (CallReply, error) {
-	req := RunRequest{Action: action, Args: emptyArgs(args)}
+// Run executes an action. quoteHash, when non-empty, PINS the terms the caller
+// was shown (kernel §4): the kernel refuses with terms_changed before locking
+// any funds if the price, description or schemas have moved since, so a
+// displayed price is binding rather than advisory. Empty leaves the older
+// behaviour — the call runs at whatever the terms now are.
+func (c *Client) Run(ctx context.Context, token, action string, args json.RawMessage, quoteHash string) (CallReply, error) {
+	req := RunRequest{Action: action, Args: emptyArgs(args), QuoteHash: quoteHash}
 	var r CallReply
 	err := c.do(ctx, http.MethodPost, "/v1/run", token, req, &r)
 	return r, err

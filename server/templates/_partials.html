@@ -18,9 +18,9 @@
 {{define "_action_card"}}
 {{if .Discovered}}
 <article class="action-card">
-  <span class="media-link">{{template "_media" .Action}}</span>
+  <a class="media-link" href="/discovered?ref={{.Action.Ref}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
-    <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" (ref .Action.Ref "")}}</span>
+    <span class="card-title" title="{{.Action.Ref}}"><a href="/discovered?ref={{.Action.Ref}}">{{template "_ref" (ref .Action.Ref "")}}</a></span>
     {{template "_price" (price .Action.Price true)}}
   </div>
   <p class="card-desc">
@@ -185,6 +185,11 @@
       hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
       hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
+  {{/* The quote this form was RENDERED with. The handler reads it back from the
+       request, never from a fresh read of the action — a pin taken from the
+       re-read would always match and silently disable the protection. */}}
+  {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
+  {{if .ActionRef}}<input type="hidden" name="action" value="{{.ActionRef}}">{{end}}
   {{/* The sealed part (a step's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
   {{if .Locked}}<dl class="locked-args flush">{{range .Locked}}<dt>{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{else if .LockedRaw}}<pre class="json">{{json .LockedRaw}}</pre>{{end}}
@@ -482,7 +487,14 @@
      branch here. Root is the actionView (so .CSRFField resolves when served
      standalone). */}}
 {{define "_action_run"}}
-{{if .NeedsConnect}}
+{{if .Discovered}}
+{{/* A discovered action has no local id, so its run posts BY REF. The pin is
+     the catalog quote: if the terms moved since the catalog was refreshed, the
+     kernel refuses before locking, at zero charge, and the buyer re-confirms. */}}
+<div id="action-run">
+{{template "_call_form" (refRunForm .CSRFField .Action.Ref .Action.Price .Form .Outcome .Action.QuoteHash)}}
+</div>
+{{else if .NeedsConnect}}
 {{/* A run without the per-caller grant is doomed (403 grant_required) — offer
      the connect gesture instead of the form. No poller: connecting returns
      here by full navigation. */}}
@@ -495,7 +507,7 @@
      names the amount on the button and shows the refund + first-payment hint;
      nothing floats in a modal. */}}
 <div id="action-run">
-{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome .FirstPayee (ref .Action.Ref "").Owner.Text)}}
+{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome .FirstPayee (ref .Action.Ref "").Owner.Text .Action.QuoteHash)}}
 </div>
 {{end}}
 {{end}}

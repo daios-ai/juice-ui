@@ -8,14 +8,15 @@
     <div class="action-head">
       <h1 class="mono">{{template "_ref" (ref $d.Action.Ref "")}}</h1>
       <span class="chips">
+        {{if $d.Discovered}}<span class="chip tag" title="Discovered on the network — not resolved on this kernel">known network</span>{{end}}
         {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip tag" title="Local — callers on this kernel only, never peers">local</span>{{end}}
         {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
         {{if $d.NeedsConnect}}<span class="chip filled" title="Needs a connected account"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
-        {{if not $d.Action.Active}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
+        {{if and (not $d.Discovered) (not $d.Action.Active)}}<span class="chip tag" title="Inactive — not callable">inactive</span>{{end}}
       </span>
     </div>
     {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-    {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true true)}}
+    {{if $d.Discovered}}{{template "_price" (price $d.Action.Price true)}}{{else}}{{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true true)}}{{end}}
   </div>
 </div>
 

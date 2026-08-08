@@ -114,6 +114,7 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"actionsHref":  actionsHref,
 		"peersHref":    peersHref,
 		"runForm":      runForm,
+		"refRunForm":   refRunForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
 		"badge":        badge,

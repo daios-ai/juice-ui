@@ -593,7 +593,7 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 			}
 		}
 	}
-	reply, err := c.deps.Client.Run(ctx, tok, chatHandle+"/"+outboxName, mustJSON(map[string]any{}))
+	reply, err := c.deps.Client.Run(ctx, tok, chatHandle+"/"+outboxName, mustJSON(map[string]any{}), "")
 	if err != nil {
 		return fmt.Errorf("chat: open outbox seed: %w", err)
 	}
@@ -818,7 +818,7 @@ func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
 	stage := "register"
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
 		reply, e := c.deps.Client.Run(r.Context(), tok, chatHandle+"/"+registerName,
-			mustJSON(map[string]any{"username": handle}))
+			mustJSON(map[string]any{"username": handle}), "")
 		if e != nil {
 			return e
 		}
@@ -1222,7 +1222,7 @@ func (c *Chat) run(r *http.Request, action string, args map[string]any) (client.
 	var reply client.CallReply
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
 		var e error
-		reply, e = c.deps.Client.Run(r.Context(), tok, chatHandle+"/msg/"+action, mustJSON(args))
+		reply, e = c.deps.Client.Run(r.Context(), tok, chatHandle+"/msg/"+action, mustJSON(args), "")
 		return e
 	})
 	return reply, err

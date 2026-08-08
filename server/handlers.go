@@ -106,7 +106,12 @@ type actionView struct {
 	OpenForm     string
 	Error        string
 	CSRFField    template.HTML // carried so the polled _action_run fragment's form keeps its token
-	BadgeSecs    int           // poll interval for the self-terminating peer-state poll
+	BadgeSecs    int
+	// Discovered marks a page built from the gossip catalog rather than a local
+	// action row: no stats, no owner controls, an indicative price, and a run
+	// that posts by REF (there is no local id to post to). The quote pin is what
+	// keeps that run honest.
+	Discovered bool
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -720,7 +725,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		// Semantic search via sys/lookup (price 0; run creates and closes process).
-		out, e := s.caller.Run(ctx, tok, "sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}))
+		out, e := s.caller.Run(ctx, tok, "sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}), "")
 		if e != nil {
 			return e
 		}
@@ -802,7 +807,10 @@ func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
 	}
 	var outcome Outcome
 	err := s.sessions.Do(ctx, func(tok string) error {
-		out, e := s.caller.Run(ctx, tok, ref, args)
+		// Same pin discipline as postRun: the hash the buyer was shown, taken
+		// from the request. Both run surfaces honour it, or one would accept
+		// moved terms while the other refused them.
+		out, e := s.caller.Run(ctx, tok, ref, args, r.FormValue("quote_hash"))
 		if e != nil {
 			return e
 		}
@@ -1143,6 +1151,105 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
 }
 
+// getDiscovered renders the action page for a DISCOVERED remote action — one
+// this kernel has only heard of through gossip. It has no local row (its
+// action_id belongs to the remote kernel), so the page is rebuilt from the
+// lookup row that produced the card: the kernel serves the ref, description,
+// both schemas, the catalog price and the quote hash on every result.
+//
+// That hash is what makes the page honest. The price is indicative — the
+// catalog refreshes each discovery pass — but pinning the hash means the kernel
+// refuses before locking if the terms moved, at zero charge, so a buyer is
+// never charged a figure they were not shown.
+func (s *Server) getDiscovered(w http.ResponseWriter, r *http.Request) {
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	if ref == "" || !refIsRemote(ref) {
+		s.flashRedirect(w, r, "/browse", "error", "No discovered action specified.")
+		return
+	}
+	ctx := r.Context()
+	var view actionView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		// Re-run the lookup and take the row whose ref matches exactly. The name
+		// half is the query: it is what the catalog indexes.
+		out, e := s.caller.Run(ctx, tok, "sys/lookup",
+			mustArgs(map[string]any{"query": refName(ref), "limit": 20}), "")
+		if e != nil {
+			return e
+		}
+		if !out.IsSuccess() {
+			return nil
+		}
+		for _, c := range parseLookup(out.Result) {
+			if c.Action.Action == ref {
+				view = actionView{
+					Action:     c.Action,
+					Form:       BuildForm(c.Action.InputSchema),
+					IsPaid:     c.Action.Price > 0,
+					Discovered: true,
+				}
+				return nil
+			}
+		}
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	if view.Action.Action == "" {
+		// Once resolved, the kernel SHADOWS the discovery row with the cached
+		// proxy — so a ref that has left the catalog has usually just become an
+		// ordinary local action. Follow it there rather than dead-ending; that
+		// transition is the normal outcome of a first call, including a refused
+		// one (a terms_changed refusal still resolves the contract).
+		if id := s.proxyIDForRef(ctx, ref); id != "" {
+			http.Redirect(w, r, "/actions/"+url.PathEscape(id), http.StatusSeeOther)
+			return
+		}
+		s.flashRedirect(w, r, "/browse", "error", "That action is no longer in the catalog.")
+		return
+	}
+	view.CSRFField = csrf.TemplateField(r)
+	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
+}
+
+// proxyIDForRef finds the local cached proxy for a kernel-qualified ref, or ""
+// when none exists. The proxy's own computed ref is the match key: the kernel
+// renders it owner@petname/name once a petname is bound, so the discovered form
+// (owner@key/name) and the resolved form can differ — the stable halves are the
+// owner and the name.
+func (s *Server) proxyIDForRef(ctx context.Context, ref string) string {
+	var id string
+	_ = s.sessions.Do(ctx, func(tok string) error {
+		acts, err := s.client.ListActions(ctx, tok, "", "", true, 0, 0)
+		if err != nil {
+			return err
+		}
+		want := refOf(ref, "")
+		for _, a := range acts {
+			if a.Kind != "remote_proxy" {
+				continue
+			}
+			got := refOf(a.Ref(), "")
+			if got.Name == want.Name && ownerHalf(got.Owner.Title) == ownerHalf(want.Owner.Title) {
+				id = a.ID
+				return nil
+			}
+		}
+		return nil
+	})
+	return id
+}
+
+// ownerHalf returns the owner name from an "owner@kernel" segment — the half
+// that is stable across a petname binding.
+func ownerHalf(seg string) string {
+	if i := strings.IndexByte(seg, '@'); i >= 0 {
+		return seg[:i]
+	}
+	return seg
+}
+
 func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
@@ -1160,9 +1267,31 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		}
 		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerHandle == me.Handle, IsPaid: a.Price > 0, NeedsConnect: needsConnect(a, grantedRefs(me))}
 		if argErr == nil {
-			out, e := s.caller.Run(ctx, tok, a.Ref(), args)
+			// The pin comes from the REQUEST — the terms the buyer was actually
+			// shown — never from the re-read above, which would always match and
+			// silently disable the protection while looking correct.
+			out, e := s.caller.Run(ctx, tok, a.Ref(), args, r.FormValue("quote_hash"))
 			if e != nil {
 				return e
+			}
+			// A refused quote re-renders the form pinned to the terms the kernel
+			// just quoted, so accepting them is one more click, not a re-read.
+			if out.Class == TermsChanged && out.QuoteHash != "" {
+				view.Action.QuoteHash, view.Action.Price = out.QuoteHash, out.Price
+			}
+			// A cached proxy whose row is stale against its peer answers
+			// execution_failed with no terms: the peer refused the dispatch and
+			// the proxy re-resolved. Re-READ the action so the buyer sees the
+			// terms that now hold — but never re-run it: execution_failed is
+			// indistinguishable from a call that genuinely executed and failed,
+			// so an automatic retry could repeat a side effect or a payment.
+			if out.Class == Failed && a.Kind == "remote_proxy" {
+				if fresh, e := s.client.GetAction(ctx, tok, id); e == nil && fresh.QuoteHash != a.QuoteHash {
+					view.Action = fresh
+					view.Form = BuildForm(fresh.InputSchema)
+					out.Class, out.Price, out.QuoteHash = TermsChanged, fresh.Price, fresh.QuoteHash
+					out.Message = "The price changed to " + money(fresh.Price) + " while this page was open. Nothing was charged."
+				}
 			}
 			view.Outcome = &out
 			view.Outcome.CSRFField = csrf.TemplateField(r)
@@ -1628,7 +1757,7 @@ func (s *Server) postTransfer(w http.ResponseWriter, r *http.Request) {
 	var out Outcome
 	err := s.sessions.Do(ctx, func(tok string) error {
 		o, e := s.caller.Run(ctx, tok, "sys/transfer",
-			mustArgs(map[string]any{"target": recipient, "amount": amount}))
+			mustArgs(map[string]any{"target": recipient, "amount": amount}), "")
 		out = o
 		return e
 	})

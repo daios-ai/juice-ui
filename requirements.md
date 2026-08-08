@@ -247,11 +247,12 @@ detectable.
   credits. Peer accounts differ: a peer's balance is a bilateral position that
   may go negative under the kernel's global exposure cap, and settling it is an
   operator act (§6.6) — never a user-facing top-up.
-* A **discovered** remote action (§6.2) cannot be run from the UI. Resolution —
-  which is what fixes the local price — happens only as a side effect of the
-  first call, so the first call must be made where a price need not be stated in
-  advance (CLI or an agent). Thereafter the cached proxy is an ordinary priced
-  card. This lifts if the kernel ever serves a resolving read.
+* A **discovered** remote action is runnable from the UI as of 0.6.0: its
+  catalog price is indicative, but the run pins the catalog's `quote_hash`, so
+  terms that moved since the last discovery pass are refused before any funds
+  are locked rather than charged silently (§6.2). Resolution still happens as a
+  side effect of that first call; afterwards the cached proxy is an ordinary
+  priced card.
 
 ## 4. API contract the UI must honor
 
@@ -426,6 +427,29 @@ detectable.
 * Inputs MUST be generated from `input_schema` (typed fields, required markers,
   descriptions as help text, client-side hints only; the kernel validates). A
   raw-JSON input MUST be available.
+* **A run MUST pin the quote it was shown.** Every action read and every
+  `sys/lookup` row carries `quote_hash`, a fingerprint of the quoted terms
+  (price, description, schemas, effect). The form carries it as a hidden field
+  and the handler MUST read it back **from the request** — never from a fresh
+  read of the action, which would always match and silently disable the
+  protection. If the terms moved, the kernel refuses with `terms_changed` before
+  locking anything, at zero charge; the UI re-renders the form pinned to the
+  terms just quoted, so accepting them is one more click (§6.2 outcomes). Both
+  run surfaces (by id and by ref) MUST pin, or one would accept moved terms
+  while the other refused them.
+* **A discovered action is runnable.** It has no local row, so its page is built
+  from the lookup row (ref, description, schemas, indicative price, quote hash)
+  and its run posts **by ref**. The pin is what makes this honest: the catalog
+  price may be a discovery interval stale, and pinning means the buyer is
+  refused rather than charged a figure they were not shown. *(This lifts the
+  §3.3 limitation: first contact no longer requires the CLI.)*
+* **A remote-proxy failure MUST NOT be retried automatically.** When a cached
+  proxy is stale against its peer, the peer refuses the dispatch and the kernel
+  answers `execution_failed` with no terms, having re-resolved the proxy. The UI
+  re-reads the action and shows the terms that now hold; it MUST NOT re-run,
+  because `execution_failed` is indistinguishable from a call that genuinely
+  executed and failed, and an automatic retry could repeat a side effect or a
+  payment.
 * A **paid** run's confirm is the single money button reading `Run (N)` (the
   accent conveys credits — no glyph on the button), and the form MUST disclose
   "Maximum, all-in. Refunded in full if it fails." A **first payment** to this

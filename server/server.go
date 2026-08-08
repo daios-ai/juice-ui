@@ -185,6 +185,9 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /actions", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /actions/import", s.requireAuth(s.postImport))
 	mux.HandleFunc("POST /actions/unimport", s.requireAuth(s.postUnimport))
+	// A DISCOVERED action has no local id — its action_id belongs to the remote
+	// kernel — so it cannot be reached by /actions/{id}. It is addressed by ref.
+	mux.HandleFunc("GET /discovered", s.requireAuth(s.getDiscovered))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
 	mux.HandleFunc("POST /actions/{id}/enable", s.requireAuth(s.postActionLifecycle))

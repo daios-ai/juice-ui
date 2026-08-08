@@ -329,7 +329,7 @@ func TestRunSendsActionAndArgs(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"result":{"ok":true},"tx_id":"t1","trace_id":"tr1","receipt_id":"r1"}`
-	rep, err := f.client().Run(context.Background(), "tok", "sys/llm/chat", nil)
+	rep, err := f.client().Run(context.Background(), "tok", "sys/llm/chat", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestErrorResponseClassified(t *testing.T) {
 	defer f.close()
 	f.status = 402
 	f.reply = `{"error":"insufficient user balance"}`
-	_, err := f.client().Run(context.Background(), "tok", "sys/lookup", nil)
+	_, err := f.client().Run(context.Background(), "tok", "sys/lookup", nil, "")
 	ke, ok := AsKernelError(err)
 	if !ok || ke.Kind != KindInsufficientFunds {
 		t.Fatalf("expected insufficient funds, got %v", err)

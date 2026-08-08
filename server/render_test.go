@@ -529,7 +529,7 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, true, "alice")
+	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, true, "alice", "QH")
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -1548,5 +1548,68 @@ func TestTransferFormDisclosesItsPrice(t *testing.T) {
 	}
 	if free := render(0); strings.Contains(free, "to run the transfer") {
 		t.Error("a zero price must state nothing, not 'plus $0.000'")
+	}
+}
+
+// The run form pins the quote it was RENDERED with, so the kernel can refuse
+// terms that moved before locking anything. Without the hidden field the pin is
+// silently absent and every displayed price is advisory again.
+func TestRunFormPinsItsQuote(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, false, "lena", "QH1")
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Body.String(), `name="quote_hash" value="QH1"`) {
+		t.Errorf("the run form must carry the quote it was rendered with: %s", rec.Body.String())
+	}
+	// No hash (an older kernel) carries no field, leaving behaviour unchanged.
+	rec2 := httptest.NewRecorder()
+	cf2 := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, false, "lena", "")
+	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec2.Body.String(), "quote_hash") {
+		t.Error("no quote means no pin field, not an empty one")
+	}
+}
+
+// A discovered action is bought BY REF — it has no local id — and its form
+// carries both the ref and the catalog quote, so the kernel refuses rather than
+// charging a price the buyer never saw.
+func TestDiscoveredActionRunsByRefWithPin(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: actionView{
+		Discovered: true,
+		Action: client.Action{
+			Action: "sys@KERNELKEY/llm/chat", Name: "llm/chat", Price: 111, QuoteHash: "QH",
+			Description: "Chat completion.",
+		},
+		Form: BuildForm(nil),
+	}}
+	if err := r.Render(rec, 200, "action_detail", p); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="/run"`) || !strings.Contains(body, `name="action" value="sys@KERNELKEY/llm/chat"`) {
+		t.Errorf("a discovered run must post by ref: %s", body)
+	}
+	if !strings.Contains(body, `name="quote_hash" value="QH"`) {
+		t.Errorf("a discovered run must pin the catalog quote: %s", body)
+	}
+	if !strings.Contains(body, "Run ($0.111)") {
+		t.Errorf("the button must name the price being pinned: %s", body)
+	}
+	// It has no local stats, so the strip's four "none"s would be noise.
+	if strings.Contains(body, "stat-strip") {
+		t.Errorf("a discovered page carries no reputation strip: %s", body)
 	}
 }

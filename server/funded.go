@@ -111,15 +111,37 @@ type CallForm struct {
 	IsPayment bool
 	Payment   int64
 	PayTo     string
+	// QuoteHash pins the terms this form was RENDERED with (kernel §4). It rides
+	// as a hidden field and the handler reads it back from the request — never
+	// from a fresh read of the action, which would always match and silently
+	// disable the protection while looking correct. If the terms moved between
+	// render and submit, the kernel refuses before locking, at zero charge.
+	QuoteHash string
+	// ActionRef is set only on a by-ref run (a discovered action): it rides as a
+	// hidden field because there is no id in the URL to carry it.
+	ActionRef string
 }
 
 // runForm builds a CallForm for running an action (repeatable, no locked args).
 // firstPayee/payeeOwner drive the first-payment hint (§8.3) on a paid run.
-func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome, firstPayee bool, payeeOwner string) CallForm {
+func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome, firstPayee bool, payeeOwner, quoteHash string) CallForm {
 	return CallForm{
 		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", Verb: "Run",
-		Price: price, Editable: editable, ResultID: "run-result", Outcome: outcome,
+		QuoteHash: quoteHash,
+		Price:     price, Editable: editable, ResultID: "run-result", Outcome: outcome,
 		FirstPayee: firstPayee, PayeeOwner: payeeOwner,
+	}
+}
+
+// refRunForm builds a CallForm for running an action addressed BY REF rather
+// than by local id — the discovered case, where the action_id belongs to the
+// remote kernel and names nothing here. It posts to the by-ref run surface,
+// carrying the same quote pin, so both run paths honour identical terms.
+func refRunForm(csrf template.HTML, ref string, price int64, editable FormModel, outcome *Outcome, quoteHash string) CallForm {
+	return CallForm{
+		CSRFField: csrf, PostURL: "/run", Verb: "Run", ActionRef: ref,
+		QuoteHash: quoteHash, Price: price, Editable: editable,
+		ResultID: "run-result", Outcome: outcome,
 	}
 }
 
@@ -149,8 +171,10 @@ func NewCaller(c *client.Client) *Caller { return &Caller{c: c} }
 // The result is classified into one of the three outcome classes; auth,
 // insufficient-funds, not-found, and rate-limit errors are returned as errors
 // for the caller to handle generically.
-func (k *Caller) Run(ctx context.Context, token, ref string, args json.RawMessage) (Outcome, error) {
-	reply, err := k.c.Run(ctx, token, ref, args)
+// quoteHash, when non-empty, pins the terms the buyer was shown; the kernel
+// refuses with terms_changed before locking anything if they have moved.
+func (k *Caller) Run(ctx context.Context, token, ref string, args json.RawMessage, quoteHash string) (Outcome, error) {
+	reply, err := k.c.Run(ctx, token, ref, args, quoteHash)
 	if err != nil {
 		out, oerr := classifyErr(err)
 		// The action being run is known here; use it if the error's metadata
