@@ -1520,3 +1520,33 @@ func TestNameOfPrefersPetnameAndTruncatesKeys(t *testing.T) {
 		t.Errorf("a long bare name must not be mistaken for a key: %+v", long)
 	}
 }
+
+// Sending costs the amount PLUS the execution price of sys/transfer — two
+// figures from two wallets (kernel §13). The amount is typed, so the total is
+// not knowable at render time: the button stays bare and the price is disclosed
+// beside the field. A zero price states nothing, rather than "plus $0.000".
+func TestTransferFormDisclosesItsPrice(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(price int64) string {
+		rec := httptest.NewRecorder()
+		p := Page{Handle: "me", CSRFField: template.HTML("<input>"),
+			Data: walletView{OpenForm: "transfer", TransferPrice: price}}
+		if err := r.Render(rec, 200, "wallet", p); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	priced := render(5)
+	if !strings.Contains(priced, "Plus $0.005 to run the transfer.") {
+		t.Errorf("a non-zero transfer price must be disclosed at the field: %s", priced)
+	}
+	if strings.Contains(priced, "Send ($") {
+		t.Error("the button must not name a total the server cannot know: the amount is typed")
+	}
+	if free := render(0); strings.Contains(free, "to run the transfer") {
+		t.Error("a zero price must state nothing, not 'plus $0.000'")
+	}
+}

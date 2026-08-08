@@ -583,12 +583,23 @@ open (parked steps), the result MUST say so and link to the Wallet.
   here.
 * **Send.** The wallet MUST offer a send-money form that runs the kernel's
   `sys/transfer` action (`POST /v1/run {action: "sys/transfer", args: {target,
-  amount}}`) — a real spend through the run machinery, with the money button
-  naming the amount and the recipient rendered in the provenance face. The bare
-  `POST /v1/transfers` endpoint is NOT a UI surface (it is fee-less plumbing the
-  kernel keeps for other clients); the UI has exactly one way to move money, and
-  it produces a receipt like every other spend. Recipient errors (unknown,
-  suspended, peer) surface as the kernel's typed rejections.
+  amount}}`) — a real spend through the run machinery, with the recipient
+  rendered in the provenance face. The bare `POST /v1/transfers` endpoint is NOT
+  a UI surface (it is fee-less plumbing the kernel keeps for other clients); the
+  UI has exactly one way to move money, and it produces a receipt like every
+  other spend. Recipient errors (unknown, suspended, peer) surface as the
+  kernel's typed rejections.
+* **Sending costs two figures, and both MUST be stated.** `sys/transfer` is an
+  ordinary priced action: the sender pays its **execution price** (taxed, from
+  the process budget) *and* delivers the **amount** (untaxed, from their own
+  balance), and the recipient receives exactly the amount. The execution price
+  is operator configuration (`native.transfer.price`) and MUST be read from the
+  action, never assumed to be zero. Because the amount is typed, the total is
+  not knowable when the form renders: the button therefore stays the bare money
+  `Send` (§7 — where the operator types the amount, the adjacent field is the
+  amount), the price is disclosed beside that field at the point of consequence,
+  and the success message names the **total that left the balance**. A zero
+  price states nothing.
 * The transaction list (`GET /v1/transactions`) MUST return rows where the user
   is buyer (`owner_user_id`), caller (`caller_user_id`), or seller (the called
   action's owner). Each row MUST show the user's role, the action
