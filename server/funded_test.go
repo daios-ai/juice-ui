@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -74,8 +75,8 @@ func TestRunInputRejected(t *testing.T) {
 
 func TestRunExecutionFailed(t *testing.T) {
 	f := &fakeKernel{
-		runStatus: 409,
-		runBody:   `{"error":"lookup requires an embedding service"}`,
+		runStatus: 500,
+		runBody:   `{"code":"execution_failed","error":"remote call failed"}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
@@ -246,8 +247,8 @@ func TestCompleteStepRejected(t *testing.T) {
 
 func TestCompleteStepFailed(t *testing.T) {
 	f := &stepKernel{
-		completeStatus: 409,
-		completeBody:   `{"error":"action execution failed"}`,
+		completeStatus: 500,
+		completeBody:   `{"code":"execution_failed","error":"remote call failed"}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
@@ -260,5 +261,60 @@ func TestCompleteStepFailed(t *testing.T) {
 	}
 	if out.Message == "" {
 		t.Error("failed outcome should carry a message")
+	}
+}
+
+// A 409 is refused BEFORE execution — the action never ran and nothing was
+// charged — so it must not read as a failure with a refund. Splitting it out of
+// Failed is what keeps "refunded" from being claimed over money that never moved.
+func TestRunInvalidStateIsRejectedNotFailed(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: 409,
+		runBody:   `{"code":"invalid_state","error":"action is inactive"}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "lena/greet", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Class != Rejected {
+		t.Fatalf("class = %v want Rejected", out.Class)
+	}
+	// The "not charged" fact is the panel's headline; the message says what was
+	// wrong and must not repeat it (§3 copy discipline).
+	if out.Message != "action is inactive" {
+		t.Errorf("message should state the reason alone, got %q", out.Message)
+	}
+	if strings.Contains(out.Message, "not charged") {
+		t.Errorf("the message must not repeat the headline: %q", out.Message)
+	}
+}
+
+// A refused quote carries the CURRENT terms, so the form can re-pin in one round
+// trip instead of re-reading the action. Both values arrive as strings on the
+// wire (verified live on v0.12.16).
+func TestRunTermsChangedCarriesNewTerms(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: 409,
+		runBody:   `{"code":"terms_changed","error":"the action's terms changed; it now costs 500","meta":{"price":"500","quote_hash":"NEWHASH"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "lena/greet", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Class != TermsChanged {
+		t.Fatalf("class = %v want TermsChanged", out.Class)
+	}
+	if out.Price != 500 || out.QuoteHash != "NEWHASH" {
+		t.Errorf("new terms not carried: price=%d hash=%q", out.Price, out.QuoteHash)
+	}
+	if !strings.Contains(out.Message, "$0.500") {
+		t.Errorf("the message must name the new price in dollars: %q", out.Message)
+	}
+	if strings.Contains(out.Message, "refund") {
+		t.Errorf("nothing was locked, so nothing was refunded: %q", out.Message)
 	}
 }

@@ -2090,16 +2090,15 @@ func signupErrorMessage(err error) string {
 		if ke.Kind == client.KindRateLimited {
 			return "Too many sign-up attempts from your network. Please wait a moment and try again."
 		}
-		// A duplicate handle surfaces as a raw 500 (the kernel leaks its
-		// UNIQUE-constraint failure). Detect it by the message and translate to a
-		// friendly line — never the run-outcome UserMessage() ("action failed /
-		// refunded"), which makes no sense for account creation, and never the raw
-		// constraint text.
-		m := strings.ToLower(ke.KernelMessage)
-		for _, hint := range []string{"constraint", "unique", "already", "exists", "duplicate", "handle"} {
-			if strings.Contains(m, hint) {
-				return "That handle is already taken — try signing in, or pick a different one."
-			}
+		// A taken handle is typed now (v0.12.14): 422 invalid_input "create
+		// account: already exists". Key on the code and the kernel's own phrase,
+		// not the substring scan the old raw-500 leak forced — that scan matched
+		// on "handle", so any 500 mentioning one became "handle taken".
+		if ke.Kind == client.KindInvalidInput && strings.Contains(strings.ToLower(ke.KernelMessage), "already exists") {
+			return "That handle is already taken — try signing in, or pick a different one."
+		}
+		if ke.Kind == client.KindInvalidInput {
+			return ke.UserMessage()
 		}
 	}
 	return "Could not create the account. Please check your details and try again."

@@ -28,6 +28,11 @@ const (
 	// PeerUnfunded: the serving kernel's global exposure cap is exhausted — an
 	// operator settlement condition, never the caller's own balance; not charged.
 	PeerUnfunded
+	// TermsChanged: the quote pinned on the run had moved, so the kernel refused
+	// BEFORE locking funds — nothing ran and nothing was charged. It is a
+	// re-confirmation, not a failure: the buyer is shown the current terms and
+	// asked again (requirements.md §6.2).
+	TermsChanged
 )
 
 // Cost is the gross/fee/net breakdown of a successful call.
@@ -48,7 +53,14 @@ type Outcome struct {
 	Detail    string        // raw kernel error message (for diagnostics; never includes secrets)
 	ActionRef string        // the action ref, for a GrantRequired outcome's Connect affordance
 	CSRFField template.HTML // injected by the handler for the inline rating form
+	// Price and QuoteHash carry the CURRENT terms of a TermsChanged refusal, so
+	// the form re-renders and re-pins in one round trip rather than re-reading.
+	Price     int64
+	QuoteHash string
 }
+
+// IsTermsChanged reports a refused quote (template helper).
+func (o Outcome) IsTermsChanged() bool { return o.Class == TermsChanged }
 
 // IsSuccess reports a successful call outcome (template helper).
 func (o Outcome) IsSuccess() bool { return o.Class == Success }
@@ -189,17 +201,40 @@ func classifyErr(err error) (Outcome, error) {
 	}
 	switch ke.Kind {
 	case client.KindInvalidInput:
+		// The headline states "not charged"; the message says what to fix. It
+		// must not repeat the headline back at the reader.
 		return Outcome{
 			Class:   Rejected,
-			Message: "Not sent — you were not charged. " + ke.UserMessage(),
-			Detail:  ke.KernelMessage,
-		}, nil
-	case client.KindExecutionFailed, client.KindTimeout, client.KindInvalidState:
-		return Outcome{
-			Class:   Failed,
 			Message: ke.UserMessage(),
 			Detail:  ke.KernelMessage,
 		}, nil
+	case client.KindExecutionFailed, client.KindTimeout:
+		// The kernel answers a failure CLASS now, not prose, so the sentence is
+		// ours and the class is never shown: Detail would print
+		// "execution_failed" to a buyer.
+		return Outcome{
+			Class:   Failed,
+			Message: ke.UserMessage(),
+		}, nil
+	case client.KindInvalidState:
+		// A 409 is refused BEFORE execution: nothing ran and nothing was
+		// charged, so it must not read as a failure with a refund. The kernel's
+		// own message is human-readable here ("action is inactive") and is the
+		// only class where echoing it informs rather than leaks a code.
+		return Outcome{
+			Class:   Rejected,
+			Message: ke.UserMessage(),
+		}, nil
+	case client.KindTermsChanged:
+		// The pinned quote moved: refused before locking, zero charge. This is a
+		// re-confirmation, not a failure — the buyer is shown what it costs now.
+		o := Outcome{Class: TermsChanged, Message: ke.UserMessage()}
+		if p, ok := ke.MetaInt64("price"); ok {
+			o.Price = p
+			o.Message = "The price changed to " + money(p) + " while this page was open. Nothing was charged."
+		}
+		o.QuoteHash = ke.MetaString("quote_hash")
+		return o, nil
 	case client.KindGrantRequired:
 		return Outcome{
 			Class:     GrantRequired,

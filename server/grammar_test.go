@@ -404,3 +404,40 @@ func snippet(s string, at int) string {
 	}
 	return s[lo:hi]
 }
+
+var tmplComment = regexp.MustCompile(`(?s)\{\{/\*.*?\*/\}\}`)
+
+// TestOutcomeCopyIsOurs guards the §6.2 rule that the UI owns its failure
+// sentences. The kernel classifies rather than narrates (v0.12.14: a remote
+// failure answers "execution_failed"), so a raw class must never reach a
+// template — and the outcome panel must not print the kernel's message
+// alongside our sentence, which is how a class leaked to buyers before.
+func TestOutcomeCopyIsOurs(t *testing.T) {
+	raw, err := tmplFS.ReadFile("templates/_partials.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	start := strings.Index(body, `{{define "_call_outcome"}}`)
+	if start < 0 {
+		t.Fatal("_call_outcome not found")
+	}
+	rest := body[start+len(`{{define "_call_outcome"}}`):]
+	if next := strings.Index(rest, "{{define "); next >= 0 {
+		rest = rest[:next]
+	}
+	// Comments explain the rule; only rendered markup is linted.
+	outcome := tmplComment.ReplaceAllString(rest, "")
+
+	// A kernel error class is machine vocabulary; it explains nothing to a buyer.
+	for _, code := range []string{"execution_failed", "invalid_state", "terms_changed", "peer_unreachable", "peer_unfunded"} {
+		if strings.Contains(outcome, code) {
+			t.Errorf("the outcome panel must not render the kernel class %q", code)
+		}
+	}
+	// .Detail is the raw kernel message. It may inform on a rejection (a schema
+	// complaint names the field), but never on a failure, where it is the class.
+	if strings.Contains(outcome, "{{.Detail}}") {
+		t.Error("the outcome panel must not print the raw kernel message: the sentence is ours (§6.2)")
+	}
+}

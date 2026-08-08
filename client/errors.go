@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Kind is the typed classification of a kernel error. The running kernel does
-// NOT return a typed error code in the body — verified live, the body is simply
-// {"error":"<human message>"} — so the Kind is derived from the HTTP status
-// code, with the message preserved for field-level detail and logging.
+// Kind is the typed classification of a kernel error. It is derived from the
+// HTTP status, then overridden by the machine `code` where the kernel sets one:
+// the code is the more specific fact, and since v0.12.14 the kernel classifies
+// rather than narrating (a remote failure now answers `execution_failed`, not
+// the serving kernel's own error prose), so the code is what the UI keys on and
+// the message is for logs and field detail.
 type Kind int
 
 const (
@@ -29,6 +32,7 @@ const (
 	KindGrantRequired          // 403 code="grant_required": needs a delegated OAuth grant
 	KindPeerUnreachable        // 502 code="peer_unreachable": remote peer offline; call refunded
 	KindPeerUnfunded           // 402 code="peer_unfunded": the serving kernel's exposure cap is exhausted (v0.12 §13)
+	KindTermsChanged           // 409 code="terms_changed": the pinned quote moved; refused BEFORE locking, zero charge (v0.12.16)
 	KindUnavailable            // transport failure: the kernel gave no HTTP response (down/restarting)
 )
 
@@ -42,6 +46,40 @@ type KernelError struct {
 	Field         string // best-effort offending field for 422 validation errors
 	Code          string // machine code when the kernel sets one (e.g. "grant_required")
 	GrantAction   string // the action ref carried in a grant_required error's meta
+	// Meta is the error's structured metadata, kept raw per key so a value's
+	// wire type is not guessed. The kernel answers strings today (verified live:
+	// terms_changed carries {"price":"500","quote_hash":"…"}), but a numeric
+	// price later would silently fail a map[string]string. Read it through
+	// MetaString/MetaInt64.
+	Meta map[string]json.RawMessage
+}
+
+// MetaString reads a metadata value as a string, tolerating both a JSON string
+// and a bare number.
+func (e *KernelError) MetaString(key string) string {
+	raw, ok := e.Meta[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// MetaInt64 reads a metadata value as an integer, tolerating either encoding.
+// Returns 0 and false when absent or not a number.
+func (e *KernelError) MetaInt64(key string) (int64, bool) {
+	s := e.MetaString(key)
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func (e *KernelError) Error() string {
@@ -123,11 +161,9 @@ func classify(status int, body []byte) error {
 		return nil
 	}
 	var wire struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-		Meta  struct {
-			Action string `json:"action"`
-		} `json:"meta"`
+		Error string                     `json:"error"`
+		Code  string                     `json:"code"`
+		Meta  map[string]json.RawMessage `json:"meta"`
 	}
 	_ = json.Unmarshal(body, &wire)
 	msg := strings.TrimSpace(wire.Error)
@@ -135,7 +171,7 @@ func classify(status int, body []byte) error {
 		msg = strings.TrimSpace(string(body))
 	}
 
-	e := &KernelError{Status: status, KernelMessage: msg, Code: wire.Code}
+	e := &KernelError{Status: status, KernelMessage: msg, Code: wire.Code, Meta: wire.Meta}
 	switch status {
 	case http.StatusUnauthorized:
 		e.Kind = KindUnauthenticated
@@ -145,7 +181,7 @@ func classify(status int, body []byte) error {
 		e.Kind = KindUnauthorized
 		if wire.Code == "grant_required" {
 			e.Kind = KindGrantRequired
-			e.GrantAction = wire.Meta.Action
+			e.GrantAction = e.MetaString("action")
 		}
 	case http.StatusNotFound:
 		e.Kind = KindNotFound
@@ -173,6 +209,8 @@ func classify(status int, body []byte) error {
 		e.Kind = KindPeerUnreachable
 	case "peer_unfunded":
 		e.Kind = KindPeerUnfunded
+	case "terms_changed":
+		e.Kind = KindTermsChanged
 	}
 	return e
 }
@@ -203,16 +241,29 @@ func (e *KernelError) UserMessage() string {
 	case KindInsufficientFunds:
 		return "This session doesn't have enough credits. Credits are added out of band by an operator — contact them to top up your account."
 	case KindExecutionFailed:
-		return "The action failed to run."
+		// The kernel now answers a CLASS, not prose (v0.12.14: a remote failure
+		// reads "remote call failed", and the stored reason is the bare
+		// "execution_failed"), so the sentence is ours to write. Never echo it.
+		return "The action failed to run. You were refunded in full."
 	case KindTimeout:
-		return "The action timed out."
+		return "The action timed out. You were refunded in full."
 	case KindRateLimited:
 		return "Too many attempts. Please wait a moment and try again."
 	case KindGrantRequired:
 		return "This action needs a connected account. Connect it and try again."
+	case KindTermsChanged:
+		// Refused before anything was locked, so nothing moved. The new price
+		// rides in Meta and is worded by the server, which owns money formatting.
+		return "The terms changed while this page was open. Nothing was charged."
 	case KindPeerUnreachable:
+		if p := e.MetaString("peer"); p != "" {
+			return "This action runs on " + p + ", which is currently unreachable. Your funds were not spent — try again when it's back."
+		}
 		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
 	case KindPeerUnfunded:
+		if p := e.MetaString("peer"); p != "" {
+			return "The kernel serving this action (" + p + ") has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."
+		}
 		return "The kernel serving this action has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."
 	case KindUnavailable:
 		return "The Juice kernel is unreachable — it may be down or restarting. Please try again shortly."

@@ -75,11 +75,20 @@
   <p>{{.Message}}</p>
 </div>
 {{else if .IsFailed}}
+{{/* The sentence is ours: the kernel answers a failure CLASS now, and printing
+     "execution_failed" to a buyer explains nothing (§6.2). */}}
 <div class="outcome failed" role="status">
   <strong>Failed — fully refunded.</strong>
   <p>{{.Message}}</p>
-  {{if .Detail}}<p class="muted">{{.Detail}}</p>{{end}}
   <p><a href="/settings">View your ledger →</a></p>
+</div>
+{{else if .IsTermsChanged}}
+{{/* Refused before anything was locked, so nothing moved. Not a failure: the
+     terms moved while the page was open, and the buyer is asked again. */}}
+<div class="outcome rejected" role="status">
+  <strong>Terms changed — you were not charged.</strong>
+  <p>{{.Message}}</p>
+  <p class="muted">Run it again to accept the new terms.</p>
 </div>
 {{else if .IsGrantRequired}}
 <div class="outcome rejected" role="status">

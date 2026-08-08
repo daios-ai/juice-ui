@@ -467,7 +467,7 @@ func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	out := Outcome{Class: Failed, Message: "The action timed out.", Detail: "remote receipt pending"}
+	out := Outcome{Class: Failed, Message: "The action timed out. You were refunded in full."}
 	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
 		t.Fatal(err)
 	}
@@ -475,14 +475,37 @@ func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
 	if !strings.Contains(body, "Failed — fully refunded.") {
 		t.Errorf("failure headline must state the refund once: %s", body)
 	}
-	if n := strings.Count(body, "refunded"); n != 1 {
-		t.Errorf("refund must be stated exactly once, got %d: %s", n, body)
-	}
 	if strings.Contains(body, "not charged") {
 		t.Errorf("a refunded failure must not also claim 'not charged': %s", body)
 	}
-	if !strings.Contains(body, "remote receipt pending") {
-		t.Errorf("kernel detail must render below the reason: %s", body)
+	// The kernel answers a failure CLASS now, never prose: a raw code must not
+	// reach the buyer (§6.2).
+	for _, code := range []string{"execution_failed", "invalid_state", "remote call failed"} {
+		if strings.Contains(body, code) {
+			t.Errorf("a kernel error class must never be shown to a buyer: %q in %s", code, body)
+		}
+	}
+}
+
+// A refused quote is NOT a failure: the kernel checks the pin before locking, so
+// nothing ran and nothing was charged. It states the new price and asks again.
+func TestCallOutcomeTermsChanged(t *testing.T) {
+	r, err := NewRenderer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	out := Outcome{Class: TermsChanged, Price: 500, QuoteHash: "abc",
+		Message: "The price changed to $0.500 while this page was open. Nothing was charged."}
+	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "not charged") || !strings.Contains(body, "$0.500") {
+		t.Errorf("a refused quote must state the new price and that nothing moved: %s", body)
+	}
+	if strings.Contains(body, "refunded") || strings.Contains(body, "Failed") {
+		t.Errorf("a refused quote is not a failure and nothing was refunded: %s", body)
 	}
 }
 

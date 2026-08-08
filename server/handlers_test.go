@@ -146,11 +146,13 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller_handle":"alice","action":"alice/hello","action_id":"A1","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {
-		// A "dupe" email/handle simulates the kernel's raw UNIQUE-constraint 500.
+		// A taken handle is TYPED as of v0.12.14 (verified live): 422
+		// invalid_input "create account: already exists", not the raw
+		// UNIQUE-constraint 500 the UI once had to sniff for.
 		body, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(body), "dupe") {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"code":"internal","error":"create user: constraint failed: UNIQUE constraint failed: users.email (2067)"}`))
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(`{"code":"invalid_input","error":"create account: already exists"}`))
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -397,7 +399,7 @@ func TestSignupDuplicateShowsFriendlyError(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 
-	// "dupe" handle → kernel returns a raw UNIQUE-constraint 500.
+	// "dupe" handle → the kernel's typed 422 invalid_input "already exists".
 	_, body := signupPost(t, srv, url.Values{
 		"handle":   {"@dupe"},
 		"password": {"password1"}, "confirm_password": {"password1"},

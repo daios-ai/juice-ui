@@ -449,8 +449,20 @@ detectable.
 
 * input-schema rejection → "Not sent. You were not charged"; field-level errors
   inline on the sheet; no receipt.
-* failure → "Failed — fully refunded"; the refund reflected in the balance; the
-  kernel's `reason` shown; a link to the failure receipt.
+* failure → "Failed — fully refunded"; the refund reflected in the balance; a
+  link to the failure receipt. **The sentence is the UI's, never the kernel's
+  string:** since v0.12.14 the kernel classifies rather than narrates (a remote
+  failure answers `execution_failed`), and a class explains nothing to a buyer.
+  Each error class maps to exactly one sentence, in one place; a raw class MUST
+  NOT reach a template (enforced by drift guard).
+* refused-before-execution → "Not sent — you were not charged". A `409` is
+  checked before funds are locked, so nothing ran and nothing moved; it MUST NOT
+  be dressed as a failure with a refund, which would claim a movement that never
+  happened.
+* refused quote (`terms_changed`) → "Terms changed — you were not charged",
+  naming the price the kernel now quotes, with the form re-pinned so one more
+  click accepts the new terms (§6.2 quote pinning). Not a failure: nothing was
+  locked, so nothing was refunded.
 * success → the result (formatted, foldable, downloadable JSON); a receipt
   summary (gross paid / net to provider / fee captioned "on value added"); an
   inline rate control (0/1 + optional note).
