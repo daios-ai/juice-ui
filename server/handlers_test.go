@@ -733,12 +733,10 @@ func TestStudioPageTwoZones(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/workshop")
-	// Creation zone: AI synthesis form present (R6.3.6).
-	if !strings.Contains(body, "Synthesize") {
-		t.Error("studio must show AI synthesis creation zone")
-	}
-	if !strings.Contains(body, "/actions/make") {
-		t.Error("studio must have the sys/make form action")
+	// The workshop offers no control the kernel cannot serve: sys/make is not a
+	// kernel action, so no synthesis affordance exists anywhere on the page.
+	if strings.Contains(body, "Synthesize") || strings.Contains(body, "/actions/make") {
+		t.Error("workshop must not offer synthesis: sys/make does not exist on the kernel")
 	}
 	// Manual creation form present.
 	if !strings.Contains(body, "/actions") {
@@ -1263,7 +1261,7 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	if !strings.Contains(body, `class="btn-quiet tabs-action" data-menu="menu-new-action"`) {
 		t.Error("+ new action must be a quiet menu trigger on the tab row, not a solid button")
 	}
-	for _, form := range []string{"action-create", "action-make", "action-import", "action-unimport"} {
+	for _, form := range []string{"action-create", "action-import", "action-unimport"} {
 		if !strings.Contains(body, "?form="+form) {
 			t.Errorf("+ new action menu missing the %q method", form)
 		}
@@ -1309,78 +1307,6 @@ func TestActionsScopeSwitch(t *testing.T) {
 	// escapes the & in the href).
 	if !strings.Contains(body, `href="/workshop?filter=active&amp;scope=all"`) {
 		t.Error("filter tabs must preserve the scope (carry scope=all)")
-	}
-}
-
-func TestStudioMakeActionSuccess(t *testing.T) {
-	kernel := authKernel()
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv.Close()
-	cl := loginClient(t, srv.URL)
-
-	// Get CSRF token from studio page.
-	body := getBody(t, cl, srv.URL+"/workshop")
-	tok := csrfTokenFrom(t, body)
-
-	// POST to /studio/make with htmx headers.
-	form := url.Values{"description": {"Return a fixed greeting"}, "gorilla.csrf.Token": {tok}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/make", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("HX-Request", "true")
-	resp, err := cl.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	fragment, _ := io.ReadAll(resp.Body)
-	frag := string(fragment)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("make returned %d, body: %s", resp.StatusCode, frag)
-	}
-	// Success fragment: link to the created action and its name.
-	if !strings.Contains(frag, "synthesized") {
-		t.Error("success fragment must include the synthesized action name")
-	}
-	if !strings.Contains(frag, "/actions/A2") {
-		t.Error("success fragment must link to the created action")
-	}
-}
-
-func TestStudioMakeActionInsufficientCredits(t *testing.T) {
-	// Kernel that returns only 5 credits — not enough for sys/make.
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"redirect":"?code=CODE"}`))
-	})
-	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
-	})
-	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":5,"locked":0}`))
-	})
-	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[]`))
-	})
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[]`))
-	})
-	kernel := httptest.NewServer(mux)
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv.Close()
-	cl := loginClient(t, srv.URL)
-
-	// Studio page shows the synthesis form regardless of balance; the kernel
-	// enforces the credit check at run time (v0.3 behaviour).
-	body := getBody(t, cl, srv.URL+"/workshop")
-	if !strings.Contains(body, `action="/actions/make"`) {
-		t.Error("synthesis form must always be shown (kernel enforces credit check on run)")
-	}
-	// The page must surface the user's current balance so they can see they're short.
-	if !strings.Contains(body, "5") {
-		t.Error("studio must show the user's current available balance")
 	}
 }
 

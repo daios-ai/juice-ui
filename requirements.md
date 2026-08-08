@@ -1,7 +1,31 @@
 # Juice Web UI Requirements
 
-Version: 0.5.1
+Version: 0.6.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.6.0.** The kernel's v0.12.16 contract lands, and the
+> surface loses what the kernel no longer serves. Each axis is written into the
+> section it governs; this note is the index, not a second specification.
+>
+> 1. **A displayed price is binding.** Every result carries one, including a
+>    discovered action (§6.2), and a run may pin the `quote_hash` it was shown:
+>    terms that moved are refused before funds are locked, at zero charge, and
+>    the buyer re-confirms the new terms (§6.2, §8). A discovered action is
+>    therefore runnable — the §3.3 limitation lifts.
+> 2. **Naming follows the petname model** (§6.6). A kernel has a key, a
+>    self-asserted nickname that never resolves, and a petname bound here. Only
+>    the first two are facts; the nickname is counterparty prose. Naming a
+>    discovered kernel is an explicit act with its own affordance.
+> 3. **The UI owns its failure sentences** (§6.2). The kernel now returns a
+>    failure class, not prose, so a class is never shown to a buyer.
+>
+> Removed, because the kernel does not serve them: action synthesis (`sys/make`,
+> §6.4) and the `peer_state` display hint (§6.6). Invariants that predate 0.6.0
+> are unchanged: the BFF architecture, session/token rules, the accent's
+> spend-only discipline and the closed button vocabulary, inert counterparty
+> rendering, the single aria-live region, monospace tabular money in dollars,
+> floating modal forms with the `?form=` fallback, keyboard navigation,
+> admin/supervision gating, the CSP, and the test discipline.
 
 > **What changed in 0.5.1.** One axis: `GET /control/peers` now merges **every**
 > kernel this one knows — counterparties and discovered peers alike — so
@@ -184,9 +208,9 @@ detectable.
   execution (`POST /v1/run`), including run-by-ref from the palette.
 * **browse / workshop** — catalog browse plus owner action management: create,
   list/show (including inactive, via `GET /v1/actions?owner=<self>`), update,
-  enable, disable, delete; three-way `visibility` (private/local/public); AI
-  synthesis via `sys/make`; OpenAPI import/unimport; stats; ratings list;
-  earnings folded from the owner's transactions.
+  enable, disable, delete; three-way `visibility` (private/local/public);
+  OpenAPI import/unimport; stats; ratings list; earnings folded from the owner's
+  transactions.
 * **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
   surfacing parked funds and awaiting-receipt state.
 * **tx** — the immutable ledger: transactions list/show/rate; receipt
@@ -510,20 +534,13 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * Source-URL input MAY be preflighted for obvious non-HTTP(S)/loopback cases; the
   UI MUST surface the kernel's URL rejection verbatim and MUST NOT reimplement the
   policy.
-* The creation zone MUST offer two paths, each with a the accent spend button stating
-  the price:
-  * `sys/make`: `POST /v1/run {action: "sys/make", args: {description}}`,
-    button `[ Synthesize ($0.020) ]` (price from `native.make.price`). The call is
-    synchronous: the UI MUST show progress against elapsed time and render
-    `{status, action_id, action_name, diagnostics, tests}`. On `status="success"`
-    the action is already registered and active, owned by the caller; the UI MUST
-    link to its Studio card. On `status="failure"` the UI MUST render
-    `diagnostics[]` as feedback, not a kernel error. Fewer than 20 available
-    credits MUST block submission.
-  * Manual: `POST /v1/actions` (inactive by default), with the schema-driven
-    editors used elsewhere, schema linting as hints only, and WASM build errors on
-    enable. Upstream auth (`auth`) MUST follow the same write-only treatment as the
-    import wizard: secret fields are masked inputs, never pre-populated.
+* The creation zone MUST offer manual creation: `POST /v1/actions` (inactive by
+  default), with the schema-driven editors used elsewhere, schema linting as
+  hints only, and WASM build errors on enable. Upstream auth (`auth`) MUST follow
+  the same write-only treatment as the import wizard: secret fields are masked
+  inputs, never pre-populated. There is no synthesis path: `sys/make` is not a
+  kernel action (§10), and no control may be offered that the kernel cannot
+  serve.
 * OpenAPI import MUST be a wizard: spec URL → preview table of importable
   operations with per-operation validation messages → `POST /v1/actions/import`
   (idempotent) → created/updated/deactivated results. Reimport MUST be presented
@@ -699,7 +716,7 @@ queue.
   confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
-  as `verb ($N.NNN)` (e.g. "Run ($0.012)", "Synthesize ($0.020)") — the `$`-prefixed
+  as `verb ($N.NNN)` (e.g. "Run ($0.012)") — the `$`-prefixed
   dollar amount is the same one the money helper renders everywhere. Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
@@ -849,8 +866,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   mutation, no refund/force-settle affordance anywhere in the DOM;
 * the three call-outcome classes, rendered distinctly;
 * discovery: lookup path and catalog fallback on `ErrInvalidState`;
-* synchronous `sys/make`: success links to an active owned action; failure
-  renders `diagnostics`; sub-20-credit block;
+* the workshop offers no synthesis affordance, `sys/make` being absent from the
+  kernel;
 * access control of owner-only UI affordances (Studio surfaces shown only to the
   owner);
 * security invariants: counterparty content renders inert; trust affordances key
@@ -862,16 +879,15 @@ Every production `.go` file has a `_test.go` file with independent tests.
 Features marked *Conditional* elsewhere are indexed here; each is mandatory only
 once its prerequisite is confirmed on the running kernel.
 
-* **Duplicate-user signup leaks a raw 500.** `POST /v1/users` with an existing
-  handle/email returns `500 {"code":"internal","error":"…UNIQUE constraint
-  failed…"}` instead of a clean `409`/`422`. The BFF detects this by message and
-  shows a friendly "already registered" line; if the kernel later returns a typed
-  conflict, simplify the detection. The kernel also does not enforce a minimum
-  password length, so the BFF requires ≥8 characters on new passwords.
-* **`sys/register-action` — dropped.** Not in the final kernel spec. The
-  registration-approval Inbox card and the asynchronous "draft reviewed before
-  going live" synthesis flow are removed; `sys/make` is synchronous and
-  self-activating.
+* **Duplicate signup — resolved.** `POST /v1/users` with a taken handle returns
+  `422 {"code":"invalid_input","error":"create account: already exists"}`
+  (verified on v0.12.16), and the kernel enforces the ≥8-character minimum
+  itself. The BFF keys on the code, not the message.
+* **Action synthesis — dropped.** `sys/make` is not a kernel action; the
+  workshop offers manual creation and OpenAPI import only (§6.4). The kernel's
+  own path is `sys/tinygo/compile` → `POST /v1/actions {kind:"wasm",
+  wasm_artifact}`; designing a UI for it is future work, not a gap in this
+  version.
 * **Trace tree (Wallet receipt page).** No trace-read HTTP route is confirmed.
   Until one is, the Engine-room trace tree stays conditional; receipt
   verification is confirmed and mandatory.

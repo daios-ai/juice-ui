@@ -31,7 +31,6 @@ func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 		{Name: "browse", Hint: "Discover and run an action", Kind: "nav", Href: "/browse"},
 		{Name: "workshop", Hint: "Your actions, earnings, and creation", Kind: "nav", Href: "/workshop"},
 		{Name: "action create", Hint: "Create a new action", Kind: "form", Href: "/workshop?form=action-create"},
-		{Name: "action make", Hint: "Synthesize an action from a description", Kind: "form", Href: "/workshop?form=action-make"},
 		{Name: "action import", Hint: "Import an OpenAPI spec", Kind: "form", Href: "/workshop?form=action-import"},
 		{Name: "action unimport", Hint: "Unimport an OpenAPI spec", Kind: "form", Href: "/workshop?form=action-unimport"},
 		{Name: "wallet", Hint: "Balances, sessions, and the ledger", Kind: "nav", Href: "/wallet"},

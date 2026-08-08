@@ -42,7 +42,6 @@
   <button class="btn-quiet tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
   <div class="menu" id="menu-new-action" role="menu" hidden>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-create" data-modal="form-action-create">Create manually</a>
-    <a class="menu-item" role="menuitem" href="/workshop?form=action-make" data-modal="form-action-make">Synthesize ($0.020)</a>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-import" data-modal="form-action-import">Import from OpenAPI</a>
     <div class="menu-divider"></div>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-unimport" data-modal="form-action-unimport">Unimport a spec…</a>
@@ -103,7 +102,6 @@
 {{end}}
 
 {{template "_form_action_create" .}}
-{{template "_form_action_make" .}}
 {{template "_form_action_import" .}}
 {{template "_form_action_unimport" .}}
 {{end}}

@@ -311,28 +311,6 @@
 {{if not .UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
 {{end}}
 
-{{define "_make_result"}}
-{{if .Error}}
-<div class="banner" role="alert">{{.Error}}</div>
-{{else if .Success}}
-<div class="outcome success" role="status">
-  <strong>Action synthesized.</strong>
-  <p><a href="/actions/{{.ActionID}}">{{.ActionRef}}</a> was created and is now active.</p>
-</div>
-{{else}}
-<div class="outcome failed" role="status">
-  <strong>Synthesis failed — your $0.020 was fully refunded.</strong>
-  {{if .Diagnostics}}
-  <ul>
-    {{range .Diagnostics}}<li>{{.}}</li>{{end}}
-  </ul>
-  {{else}}
-  <p>No diagnostic detail returned.</p>
-  {{end}}
-</div>
-{{end}}
-{{end}}
-
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 
 {{/* _menu_account — identity, preferences and sign-out; NO navigation. Used by

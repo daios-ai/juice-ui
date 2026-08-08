@@ -3,8 +3,7 @@
   anchor (href="?form=NAME" data-modal="form-NAME") opens it — with JS via
   showModal(), without JS by the server rendering it [open] (dialog[open]:not(:modal)
   falls back to an in-flow card). Partials receive the Page (.), so .CSRFField and
-  .Data.OpenForm are both in scope. The only accent (spend) button in this file is
-  the sys/make synthesize button, which names the amount.
+  .Data.OpenForm are both in scope.
 */}}
 
 {{define "_form_action_create"}}
@@ -103,30 +102,6 @@
       </div>
       <p class="help muted flush">Created inactive.</p>
     </form>
-  </div>
-</dialog>
-{{end}}
-
-{{define "_form_action_make"}}
-<dialog id="form-action-make" class="modal-form"{{if eq .Data.OpenForm "action-make"}} open{{end}} aria-label="Synthesize an action">
-  <div class="modal-head"><h2>Synthesize an action</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/actions/make"
-          hx-post="/actions/make" hx-target="#make-result" hx-swap="innerHTML"
-          hx-indicator="#make-progress" hx-disabled-elt="find button[type='submit']">
-      {{.CSRFField}}
-      <div class="field">
-        <label for="m-desc">Describe the action</label>
-        <p class="help">Writes, compiles, and activates a WASM action.</p>
-        <textarea id="m-desc" name="description" placeholder="e.g. Given a list of numbers, return their mean and standard deviation." required rows="1"></textarea>
-      </div>
-      <div class="row">
-        <button class="btn-money" type="submit">Synthesize ($0.020)</button>
-        <div id="make-progress" class="progress" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>Synthesizing…</span></div>
-      </div>
-      <p class="help muted flush">Costs $0.020. Refunded in full if synthesis fails.</p>
-    </form>
-    <div id="make-result"></div>
   </div>
 </dialog>
 {{end}}

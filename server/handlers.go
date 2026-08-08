@@ -126,14 +126,6 @@ type actionsView struct {
 	Notice      string
 }
 
-type makeResultView struct {
-	Success     bool
-	ActionRef   string   // "@owner/name" on success
-	ActionID    string   // UUID on success, for link
-	Diagnostics []string // synthesis-failure diagnostics
-	Error       string   // kernel or validation error
-}
-
 type processesView struct {
 	Open, Closed []client.Process
 	Superuser    bool
@@ -1403,77 +1395,6 @@ func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
 }
 
-// postMakeAction calls sys/make to synthesize a WASM action from a
-// natural-language description (R6.3.6). It provisions an ephemeral 20-credit
-// process, calls sys/make, ends the process, then returns an htmx fragment
-// (_make_result) or, for no-JS clients, a flash-redirect.
-func (s *Server) postMakeAction(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	desc := strings.TrimSpace(r.FormValue("description"))
-
-	var view makeResultView
-	err := s.sessions.Do(ctx, func(tok string) error {
-		if desc == "" {
-			view = makeResultView{Error: "A description is required."}
-			return nil
-		}
-		me, e := s.client.Me(ctx, tok)
-		if e != nil {
-			return e
-		}
-		if me.Available < 20 {
-			view = makeResultView{Error: fmt.Sprintf("You need at least $0.020 to synthesize an action. Your balance is %s.", money(me.Available))}
-			return nil
-		}
-		out, e := s.caller.Run(ctx, tok, "sys/make", mustArgs(map[string]any{"description": desc}))
-		if e != nil {
-			return e
-		}
-		if !out.IsSuccess() {
-			view = makeResultView{Error: out.Message}
-			return nil
-		}
-		var res struct {
-			Status      string   `json:"status"`
-			ActionID    string   `json:"action_id"`
-			ActionName  string   `json:"action_name"` // bare name; kernel does NOT return a full ref
-			Diagnostics []string `json:"diagnostics"`
-		}
-		if e := json.Unmarshal(out.Result, &res); e != nil {
-			return fmt.Errorf("parse sys/make result: %w", e)
-		}
-		if res.Status == "success" {
-			// action_name is the bare name ("echo-test"), not a full ref; prefix
-			// the signed-in owner's handle to form the callable "owner/name".
-			view = makeResultView{
-				Success:   true,
-				ActionRef: s.sessions.Handle(ctx) + "/" + res.ActionName,
-				ActionID:  res.ActionID,
-			}
-		} else {
-			view = makeResultView{Diagnostics: res.Diagnostics}
-		}
-		return nil
-	})
-	if s.handleErrFragment(w, r, err) {
-		return
-	}
-	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_make_result", view)
-		return
-	}
-	// No-JS fallback: redirect with flash.
-	if view.Success {
-		s.flashRedirect(w, r, "/actions/"+view.ActionID, "success", "Action synthesized.")
-		return
-	}
-	msg := view.Error
-	if msg == "" {
-		msg = "Synthesis failed. Refine your description and try again."
-	}
-	s.flashRedirect(w, r, "/workshop", "error", msg)
-}
-
 func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	op := lastSegment(r.URL.Path)
@@ -1953,7 +1874,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 // The no-JS fallback renders the named dialog with the [open] attribute, so the
 // value is validated here before it ever reaches a template.
 var formWhitelist = map[string]map[string]bool{
-	"action":        {"action-create": true, "action-make": true, "action-import": true, "action-unimport": true},
+	"action":        {"action-create": true, "action-import": true, "action-unimport": true},
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},

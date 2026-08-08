@@ -185,7 +185,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /actions", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /actions/import", s.requireAuth(s.postImport))
 	mux.HandleFunc("POST /actions/unimport", s.requireAuth(s.postUnimport))
-	mux.HandleFunc("POST /actions/make", s.requireAuth(s.postMakeAction))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
 	mux.HandleFunc("POST /actions/{id}/enable", s.requireAuth(s.postActionLifecycle))
