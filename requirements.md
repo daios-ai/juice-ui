@@ -1,9 +1,9 @@
 # Juice Web UI Requirements
 
-Version: 0.7.0
+Version: 0.6.2
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.7.0.** The kernel's v0.12.23 contract lands, verified live
+> **What changed in 0.6.2.** The kernel's v0.12.23 contract lands, verified live
 > against a federated pair. Every axis is written into the section it governs;
 > this note is the index, not a second specification.
 >
@@ -28,7 +28,7 @@ Status: design draft — endpoint surface gated against the running kernel
 > Removed, because the kernel does not serve it: the value-transfer queue
 > (`/control/transfers`, 404 as of v0.12.23 — with value local-only there is no
 > unresolved buyer-side transfer to queue) and the receipt's `value_premium` row.
-> Invariants that predate 0.7.0 are unchanged: the BFF architecture, session and
+> Invariants that predate 0.6.2 are unchanged: the BFF architecture, session and
 > token rules, the accent's spend-only discipline and the closed button
 > vocabulary, inert counterparty rendering, the single aria-live region,
 > monospace tabular money in dollars, floating modal forms with the `?form=`
