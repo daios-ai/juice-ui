@@ -238,3 +238,46 @@ func TestBuildStepFormExtraKeysInPartial(t *testing.T) {
 		t.Errorf("both schema and extra keys locked, expected 2, got %d", len(sfm.Locked))
 	}
 }
+
+// An approval-only step has nothing to collect, so the form is its confirm
+// button alone. The kernel expresses that with an EXPLICITLY EMPTY properties
+// map — distinct from an absent one, which is an unconstrained object where the
+// raw editor is right (§10). Both shapes were observed live on v0.12.23.
+func TestEmptyPropertiesMeansNothingToFillNotFreeForm(t *testing.T) {
+	// Shape seen on a payment step's allowed_input.
+	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{},"required":null}`))
+	if !fm.NoFields {
+		t.Error("explicitly empty properties declares no fields")
+	}
+	if fm.UseRawFallback {
+		t.Error("an empty-properties schema must not offer a raw JSON box — there is nothing to author")
+	}
+	if len(fm.Fields) != 0 {
+		t.Errorf("expected no fields, got %d", len(fm.Fields))
+	}
+	// The unconstrained shape keeps the raw editor: any object is valid there.
+	free := BuildForm(json.RawMessage(`{"type":"object"}`))
+	if free.NoFields || !free.UseRawFallback {
+		t.Error("an absent properties key is unconstrained, so the raw editor stands")
+	}
+}
+
+// The step form collapses to a single confirm in both routes: an empty-
+// properties schema with nothing bound, and a free-form schema whose keys are
+// all sealed in partial_args (the sys/message case).
+func TestApprovalCollapsesForBothKernelShapes(t *testing.T) {
+	noFields := BuildStepForm(json.RawMessage(`{"type":"object","properties":{},"required":null}`), nil)
+	if !noFields.IsApproval {
+		t.Error("empty-properties + nothing bound is an approval, not a raw box")
+	}
+	if noFields.Editable.UseRawFallback {
+		t.Error("an approval must not fall back to the raw editor")
+	}
+	sealed := BuildStepForm(json.RawMessage(`{"type":"object"}`), json.RawMessage(`{"message":"please review"}`))
+	if !sealed.IsApproval {
+		t.Error("a free-form step whose payload is sealed is an approval")
+	}
+	if len(sealed.Locked) != 1 {
+		t.Errorf("the sealed payload renders read-only, got %d locked", len(sealed.Locked))
+	}
+}

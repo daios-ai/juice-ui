@@ -326,44 +326,6 @@ func TestAdminPeersBilateralAndExposure(t *testing.T) {
 	}
 }
 
-// v0.12: the value-transfer queue — list (status filter), show, and retry (the
-// only mutation, POST .../retry).
-func TestAdminTransfers(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.reply = `[{"id":"T1","status":"quarantined","amount":300,"created_at":"2026-08-01T00:00:00Z"}]`
-	ts, err := f.client().AdminListTransfers(context.Background(), "tok", "", 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.lastMethod != "GET" || f.lastPath != "/control/transfers" {
-		t.Errorf("transfers list = %s %s", f.lastMethod, f.lastPath)
-	}
-	if len(ts) != 1 || ts[0].Status != "quarantined" || ts[0].Amount != 300 {
-		t.Errorf("transfers decode wrong: %+v", ts)
-	}
-	if _, err := f.client().AdminListTransfers(context.Background(), "tok", "settled", 20, 20); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastPath != "/control/transfers?limit=20&offset=20&status=settled" {
-		t.Errorf("transfers filter path = %q", f.lastPath)
-	}
-	f.reply = `{"id":"T1","status":"pending","created_at":"2026-08-01T00:00:00Z"}`
-	tr, err := f.client().AdminGetTransfer(context.Background(), "tok", "T1")
-	if err != nil || tr.ID != "T1" {
-		t.Fatalf("get transfer = %+v %v", tr, err)
-	}
-	if f.lastPath != "/control/transfers/T1" {
-		t.Errorf("get transfer path = %q", f.lastPath)
-	}
-	if _, err := f.client().AdminRetryTransfer(context.Background(), "tok", "T1"); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastMethod != "POST" || f.lastPath != "/control/transfers/T1/retry" {
-		t.Errorf("retry = %s %s", f.lastMethod, f.lastPath)
-	}
-}
-
 // v0.12: settlement over HTTP — POST /control/peers/settle {handle}, and the
 // --cash leg with settlement_id (route + body verified live 2026-08-03).
 func TestAdminSettle(t *testing.T) {

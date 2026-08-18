@@ -27,6 +27,7 @@
     <span class="chip" title="Discovered — known through the network, not resolved here">R</span>
     {{.Action.Description}}
   </p>
+  {{if .Observed}}<p class="card-observed muted tiny">terms seen {{.ObservedAgo}}</p>{{end}}
 </article>
 {{else}}
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
@@ -81,6 +82,30 @@
   <strong>Failed — fully refunded.</strong>
   <p>{{.Message}}</p>
   <p><a href="/settings">View your ledger →</a></p>
+</div>
+{{else if .IsParked}}
+{{/* Dispatched, unsettled: the funds are RESERVED, not refunded (§6.2). The
+     escrow-pending signal, never the failure or refund vocabulary. The amount is
+     omitted when we don't hold it — a figure here is a kernel-vouched fact or it
+     is absent. */}}
+<div class="outcome parked" role="status">
+  <strong class="sig-escrow">◷ Result pending{{if .Reserved}} — {{.ReservedMoney}} reserved{{end}}.</strong>
+  <p>{{.Message}}</p>
+  {{if .RefundEligibleDate}}<p class="muted">Refunds in full from {{.RefundEligibleDate}} if it stays unconfirmed.</p>{{end}}
+  {{if .ProcessID}}<p><a href="/processes/{{.ProcessID}}">Follow the reserved funds →</a></p>{{end}}
+</div>
+{{else if .IsRefreshed}}
+{{/* The provider changed the contract: the kernel refused, charged nothing, and
+     discarded its cached copy. A refusal, so the buyer is asked again. */}}
+<div class="outcome rejected" role="status">
+  <strong>Terms changed — you were not charged.</strong>
+  <p>{{.Message}}</p>
+  <p class="muted">Run it again to accept the provider's new terms.</p>
+</div>
+{{else if .IsPeerRefused}}
+<div class="outcome rejected" role="status">
+  <strong>Declined by {{.Peer}} — you were not charged.</strong>
+  <p>{{.Message}}</p>
 </div>
 {{else if .IsTermsChanged}}
 {{/* Refused before anything was locked, so nothing moved. Not a failure: the
@@ -152,6 +177,31 @@
   <td class="money">{{txAmount $tx .Viewer}}</td>
   <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
   <td class="muted">{{shortTime $tx.StartedAt}}</td>
+</tr>
+{{end}}
+
+{{/* _activity_call / _activity_entry — the two row shapes of the wallet's one
+     activity list (§6.5). Same columns, so a call and a direct movement read as
+     one sequence: what · role · amount · status · when. */}}
+{{define "_activity_call"}}
+{{$tx := .Tx}}
+<tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
+  <td>{{if .Ref}}{{template "_ref" (ref .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
+  <td class="muted small">{{if eq .Viewer $tx.TargetHandle}}seller{{else if eq .Viewer $tx.OwnerHandle}}buyer{{else if eq .Viewer $tx.CallerHandle}}caller{{else}}—{{end}}</td>
+  <td class="money">{{txAmount $tx .Viewer}}</td>
+  <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
+  <td class="muted">{{shortTime $tx.StartedAt}}</td>
+</tr>
+{{end}}
+
+{{define "_activity_entry"}}
+{{$e := .Entry}}
+<tr>
+  <td>{{.Label}}{{if $e.Reason}} <span class="muted small">{{$e.Reason}}</span>{{end}}</td>
+  <td class="muted small">—</td>
+  <td class="money">{{if .Credited}}<span class="sig-credited">+{{money $e.Amount}}</span>{{else}}−{{money $e.Amount}}{{end}}</td>
+  <td class="muted small">—</td>
+  <td class="muted">{{shortTime $e.CreatedAt}}</td>
 </tr>
 {{end}}
 
@@ -294,6 +344,10 @@
 {{end}}
 
 {{define "_form_fields"}}
+{{/* Nothing to collect: the schema is a well-formed object asking for no input,
+     so the form is its confirm button alone. A raw-JSON box here would ask a
+     person to author `{}` by hand (§10). */}}
+{{if .NoFields}}{{else}}
 {{if not .UseRawFallback}}
 <div class="field-switch" role="group" aria-label="Input mode">
   <button type="button" class="seg" data-raw-seg="fields" aria-pressed="true">fields</button>
@@ -330,6 +384,7 @@
   <textarea name="raw_args" placeholder="{}" rows="1">{{if .Example}}{{.Example}}{{end}}</textarea>
 </div>
 {{if not .UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
+{{end}}
 {{end}}
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
@@ -411,10 +466,11 @@
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
-      {{/* last_seen is the last verified gossip pull for both classes — catalog
-           freshness, not reachability, so it is muted text and never a status
-           pill. PeerCredit is absent until a counterparty sync returns one, so
-           it is omitted rather than stated as zero. */}}
+      {{/* last_seen is the last verified gossip pull — catalog freshness, not
+           reachability, so it is muted text and never a status pill. Only a
+           COUNTERPARTY pull persists it (kernel §D16), so a discovery-only row
+           carries none and shows none, exactly as PeerCredit is omitted rather
+           than stated as zero until a sync returns one (§6.6). */}}
       {{if $known}}
       <div class="small muted">{{.Actions}} actions{{if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end}}</div>
       <div class="step-foot">

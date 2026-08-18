@@ -142,3 +142,70 @@ func TestUserMessageSurfacesKernelDetailForInput(t *testing.T) {
 		t.Errorf("input message should surface kernel detail, got %q", ke.UserMessage())
 	}
 }
+
+// A parked call is NOT a refund. The kernel answers 504 with the process still
+// holding the funds (verified live on v0.12.23: available fell, locked rose by
+// the same amount), so the message must not claim money came back.
+func TestTimeoutMessageNeverClaimsARefund(t *testing.T) {
+	body := []byte(`{"code":"timeout","error":"remote receipt pending; result confirmation is pending — funds remain reserved on process P1 and the call retries automatically","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"P1","refund_eligible_at":"2026-08-19T17:01:54Z"}}`)
+	err := classify(504, body)
+	ke, _ := AsKernelError(err)
+	if ke.Kind != KindTimeout {
+		t.Fatalf("Kind = %v want KindTimeout", ke.Kind)
+	}
+	msg := ke.UserMessage()
+	for _, banned := range []string{"refund", "refunded", "returned"} {
+		if strings.Contains(strings.ToLower(msg), banned) {
+			t.Errorf("a parked call must not claim a refund, got %q", msg)
+		}
+	}
+	if ke.MetaString("process_id") != "P1" {
+		t.Errorf("process_id = %q", ke.MetaString("process_id"))
+	}
+	if ke.MetaString("refund_eligible_at") != "2026-08-19T17:01:54Z" {
+		t.Errorf("refund_eligible_at = %q", ke.MetaString("refund_eligible_at"))
+	}
+}
+
+// Contract drift answers the same class as a genuine failure but marks itself.
+// The marker is the ONLY thing that makes a retry safe to offer, so it decides
+// the sentence (verified live: nothing charged, immediate retry succeeded).
+func TestRefreshableIsNotAFailure(t *testing.T) {
+	body := []byte(`{"code":"execution_failed","error":"the provider updated this action; nothing was charged — re-run to refresh","meta":{"retry":"refresh"}}`)
+	ke, _ := AsKernelError(classify(500, body))
+	if !ke.IsRefreshable() {
+		t.Fatal("meta.retry=refresh must mark the error refreshable")
+	}
+	if msg := ke.UserMessage(); strings.Contains(strings.ToLower(msg), "refunded") {
+		t.Errorf("nothing was charged, so nothing was refunded: %q", msg)
+	}
+	// An unmarked execution_failed keeps the failure sentence and offers no retry.
+	plain, _ := AsKernelError(classify(500, []byte(`{"code":"execution_failed","error":"remote call failed"}`)))
+	if plain.IsRefreshable() {
+		t.Error("an unmarked execution_failed must never be treated as retryable")
+	}
+	if !strings.Contains(plain.UserMessage(), "refunded") {
+		t.Errorf("a genuine failure states the refund: %q", plain.UserMessage())
+	}
+}
+
+// A peer's refusal arrives as 403 but is an operator relationship fact, not the
+// user's own permissions (verified live: meta.peer names the kernel).
+func TestPeerRefusalIsNotTheUsersPermission(t *testing.T) {
+	ke, _ := AsKernelError(classify(403, []byte(`{"code":"unauthorized","error":"peer bravo refused this call","meta":{"peer":"bravo"}}`)))
+	if ke.Peer() != "bravo" {
+		t.Fatalf("Peer() = %q want bravo", ke.Peer())
+	}
+	msg := ke.UserMessage()
+	if !strings.Contains(msg, "bravo") {
+		t.Errorf("the refusing kernel must be named: %q", msg)
+	}
+	if strings.Contains(msg, "You don't have permission") {
+		t.Errorf("a peer refusal must not read as the user's own permission: %q", msg)
+	}
+	// A plain 403 keeps the ordinary message.
+	plain, _ := AsKernelError(classify(403, []byte(`{"error":"not yours"}`)))
+	if !strings.Contains(plain.UserMessage(), "permission") {
+		t.Errorf("plain 403 keeps the not-permitted message: %q", plain.UserMessage())
+	}
+}

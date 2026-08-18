@@ -318,3 +318,101 @@ func TestRunTermsChangedCarriesNewTerms(t *testing.T) {
 		t.Errorf("nothing was locked, so nothing was refunded: %q", out.Message)
 	}
 }
+
+// A dispatched call awaiting a signed outcome is PARKED, not failed and not
+// refunded: the kernel keeps the funds locked and retries. Wire shape verified
+// live on v0.12.23.
+func TestRunParkedCarriesTheReservedFundsNotARefund(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: http.StatusGatewayTimeout,
+		runBody:   `{"code":"timeout","error":"remote receipt pending","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"proc-7","refund_eligible_at":"2026-08-19T17:01:54Z"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "vendor@bravo/slow", nil, "")
+	if err != nil {
+		t.Fatalf("a parked call is an outcome, not a transport error: %v", err)
+	}
+	if !out.IsParked() {
+		t.Fatalf("Class = %v, want Parked", out.Class)
+	}
+	if out.IsFailed() {
+		t.Error("a parked call must never also read as failed")
+	}
+	if out.ProcessID != "proc-7" {
+		t.Errorf("ProcessID = %q — the wallet link depends on it", out.ProcessID)
+	}
+	if strings.Contains(strings.ToLower(out.Message), "refund") {
+		t.Errorf("parked message must not claim a refund: %q", out.Message)
+	}
+	if got := out.RefundEligibleDate(); got != "19 August 2026" {
+		t.Errorf("RefundEligibleDate = %q want 19 August 2026", got)
+	}
+	// An unparseable stamp renders empty so the clause is simply omitted.
+	if (Outcome{RefundEligibleAt: "soon"}).RefundEligibleDate() != "" {
+		t.Error("an unparseable eligibility stamp must render empty, never raw")
+	}
+}
+
+// The provider changed the contract: the kernel marks it, charges nothing, and
+// re-resolves. That is a refusal the buyer may accept again — not a failure.
+func TestRunRefreshedIsARefusalNotAFailure(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: http.StatusInternalServerError,
+		runBody:   `{"code":"execution_failed","error":"the provider updated this action; nothing was charged — re-run to refresh","meta":{"retry":"refresh"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "vendor@bravo/fast", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.IsRefreshed() || out.IsFailed() {
+		t.Fatalf("Class = %v, want Refreshed and not Failed", out.Class)
+	}
+	if strings.Contains(strings.ToLower(out.Message), "refunded") {
+		t.Errorf("nothing was charged, so nothing was refunded: %q", out.Message)
+	}
+}
+
+// An UNMARKED execution_failed may have executed, so it stays a failure and the
+// UI offers no retry. This is the pair that guards the retry rule (§6.2).
+func TestRunUnmarkedExecutionFailureStaysFailed(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: http.StatusInternalServerError,
+		runBody:   `{"code":"execution_failed","error":"remote call failed"}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, _ := NewCaller(c).Run(context.Background(), "tok", "vendor@bravo/fast", nil, "")
+	if !out.IsFailed() {
+		t.Fatalf("Class = %v, want Failed", out.Class)
+	}
+	if out.IsRefreshed() {
+		t.Error("an unmarked failure must never be classified as retryable")
+	}
+}
+
+// A peer's refusal is an outcome naming the peer, not the caller's own 403.
+func TestRunPeerRefusedNamesThePeer(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: http.StatusForbidden,
+		runBody:   `{"code":"unauthorized","error":"peer bravo refused this call","meta":{"peer":"bravo"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "vendor@bravo/fast", nil, "")
+	if err != nil {
+		t.Fatalf("a peer refusal is an outcome, not an error: %v", err)
+	}
+	if !out.IsPeerRefused() || out.Peer != "bravo" {
+		t.Fatalf("Class = %v Peer = %q, want PeerRefused/bravo", out.Class, out.Peer)
+	}
+	// A plain 403 is NOT an outcome — it stays an error for the generic handler.
+	f2 := &fakeKernel{runStatus: http.StatusForbidden, runBody: `{"error":"not yours"}`}
+	c2, stop2 := f2.start(t)
+	defer stop2()
+	if _, err := NewCaller(c2).Run(context.Background(), "tok", "a/b", nil, ""); err == nil {
+		t.Error("a plain 403 must propagate as an error, not render as an outcome")
+	}
+}

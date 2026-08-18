@@ -22,8 +22,15 @@ type Field struct {
 // validation authority (R2.5).
 type FormModel struct {
 	Fields         []Field
-	UseRawFallback bool   // no usable object schema -> offer only the raw-JSON editor
-	Example        string // a pretty-printed JSON skeleton of the whole input, for the raw editor
+	UseRawFallback bool // no usable object schema -> offer only the raw-JSON editor
+	// NoFields marks a schema that IS a well-formed object and asks for nothing:
+	// there is no input to collect, so the form is just its confirm button. It is
+	// distinct from UseRawFallback, which means "shape unknown, type it yourself"
+	// — offering a JSON box here would ask a person to author `{}` by hand. The
+	// kernel serves this for an approval-only step in either of two shapes,
+	// `{"type":"object"}` and `{"type":"object","properties":{}}` (§10).
+	NoFields bool
+	Example  string // a pretty-printed JSON skeleton of the whole input, for the raw editor
 }
 
 // schemaDoc is the subset of JSON Schema the form renderer understands.
@@ -50,12 +57,17 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	if err := json.Unmarshal(inputSchema, &doc); err != nil {
 		return FormModel{UseRawFallback: true}
 	}
+	// No `properties` key at all is an UNCONSTRAINED object — any shape is
+	// valid, so the completer needs the raw editor. An explicitly EMPTY
+	// `properties` is the opposite claim: this input declares no fields, so
+	// there is nothing to collect and the form is its confirm button alone.
+	// The kernel serves the latter as an approval-only step's allowed_input.
 	if doc.Type != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 {
 		return FormModel{UseRawFallback: true}
 	}
 	keys := orderedKeys(doc.Properties)
 	if len(keys) == 0 {
-		return FormModel{UseRawFallback: true}
+		return FormModel{NoFields: true}
 	}
 	var props map[string]propDoc
 	if err := json.Unmarshal(doc.Properties, &props); err != nil {
@@ -232,7 +244,9 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 	}
 
 	if len(bound) == 0 {
-		return StepFormModel{Editable: full}
+		// An empty-object schema with nothing pre-bound is still an approval: the
+		// kernel is asking for a confirmation, not for input.
+		return StepFormModel{Editable: full, IsApproval: full.NoFields}
 	}
 
 	// Split schema fields into locked (present in partial_args) and editable.
@@ -257,6 +271,7 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 	editFM := FormModel{
 		Fields:         editFields,
 		UseRawFallback: full.UseRawFallback,
+		NoFields:       full.NoFields,
 		Example:        full.Example,
 	}
 	// Approval: nothing meaningful is left for the completer to fill. This covers

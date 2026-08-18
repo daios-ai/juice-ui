@@ -36,7 +36,6 @@
 {{if not $d.Known}}
 <div class="row control-row">
   <a class="btn-quiet" href="/admin/peers?form=settle-cash" data-modal="form-settle-cash">+ record a rail payment</a>
-  <a class="btn-quiet" href="/admin/transfers">transfer queue</a>
   {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
 </div>
 {{end}}

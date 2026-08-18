@@ -706,6 +706,32 @@ func txRowOf(tx client.Transaction, viewer string, actions map[string]client.Act
 	return txRow{Tx: tx, Viewer: viewer, Ref: ref}
 }
 
+// entryRow bundles a ledger entry with the viewer's perspective, so the
+// activity list renders a direct movement (deposit, withdrawal, transfer) beside
+// a call without the template deciding sign or wording.
+type entryRow struct {
+	Entry    client.LedgerEntry
+	Label    string // "deposit" | "withdrawal" | "transfer to bob" | "transfer from alice"
+	Credited bool   // the amount arrived in the viewer's balance
+}
+
+// entryRowOf reads the movement from the kernel's own from/to projection: a
+// deposit has no from-side, a withdrawal no to-side, a transfer both.
+func entryRowOf(e client.LedgerEntry, viewer string) entryRow {
+	r := entryRow{Entry: e, Credited: e.ToHandle == viewer}
+	switch {
+	case e.FromHandle == "":
+		r.Label = "deposit"
+	case e.ToHandle == "":
+		r.Label = "withdrawal"
+	case r.Credited:
+		r.Label = "transfer from " + e.FromHandle
+	default:
+		r.Label = "transfer to " + e.ToHandle
+	}
+	return r
+}
+
 // amountDash is the amount cell for a viewer with no stake in a transaction.
 const amountDash = template.HTML(`<span class="muted">—</span>`)
 

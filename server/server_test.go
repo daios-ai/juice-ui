@@ -51,11 +51,16 @@ func TestCSRFBlocksStateChangingPost(t *testing.T) {
 	}
 }
 
+// §5: every surface is signed-in. The kernel registers its natives `local`
+// (v0.12.23), so an anonymous caller is served an empty catalog and sys/lookup
+// refuses a token-less call outright — an anonymous storefront would be a blank
+// page with a search box that cannot answer. Only login, signup and recovery
+// are reachable without a session.
 func TestUnauthRedirectsToLogin(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
 	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/", "/browse", "/workshop", "/inbox", "/settings", "/wallet", "/processes", "/transactions"} {
+	for _, path := range []string{"/", "/browse", "/workshop", "/inbox", "/settings", "/wallet", "/processes", "/transactions", "/discovered?ref=vendor@bravo/x"} {
 		resp, err := cl.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -63,6 +68,18 @@ func TestUnauthRedirectsToLogin(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
 			t.Errorf("%s: status=%d loc=%q want 303 /login", path, resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
+	// The complement: the sign-in surfaces stay open, or a locked-out user has
+	// no way back in.
+	for _, path := range []string{"/login", "/recover"} {
+		resp, err := cl.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s must stay reachable signed-out, got %d", path, resp.StatusCode)
 		}
 	}
 }

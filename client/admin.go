@@ -416,66 +416,6 @@ func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspectio
 	return out, err
 }
 
-// PendingTransfer is one buyer-side value-transfer record from the v0.12
-// transfer queue (GET /control/transfers). Status is "pending" (no settleable
-// receipt yet), "quarantined" (a receipt that failed validation — evidence
-// insufficient, reconciled out of band), or terminal "settled"/"refunded".
-// Field set kept lenient: shapes gated against the running kernel in the
-// admin handler tests; unknown fields are ignored by encoding/json.
-type PendingTransfer struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	Peer      string `json:"peer,omitempty"` // the serving peer (handle or key)
-	StepID    string `json:"step_id,omitempty"`
-	Amount    int64  `json:"amount,omitempty"`  // the delivered value
-	Reserve   int64  `json:"reserve,omitempty"` // total locked from the buyer
-	Reason    string `json:"reason,omitempty"`  // why quarantined, when it is
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-}
-
-// AdminListTransfers lists value-transfer records (GET /control/transfers).
-// An empty status lists the kernel's default: the unresolved set (pending +
-// quarantined); a specific status ("pending", "quarantined", "settled",
-// "refunded") filters to it. Paged like every kernel list.
-func (c *Client) AdminListTransfers(ctx context.Context, token, status string, limit, offset int) ([]PendingTransfer, error) {
-	q := url.Values{}
-	if status != "" {
-		q.Set("status", status)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	if offset > 0 {
-		q.Set("offset", strconv.Itoa(offset))
-	}
-	path := "/control/transfers"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	var out []PendingTransfer
-	err := c.do(ctx, http.MethodGet, path, token, nil, &out)
-	return out, err
-}
-
-// AdminGetTransfer reads one value-transfer record (GET /control/transfers/{id}).
-func (c *Client) AdminGetTransfer(ctx context.Context, token, id string) (PendingTransfer, error) {
-	var t PendingTransfer
-	err := c.do(ctx, http.MethodGet, "/control/transfers/"+url.PathEscape(id), token, nil, &t)
-	return t, err
-}
-
-// AdminRetryTransfer re-presents a transfer's stored signed completion and
-// settles strictly on receipt evidence (POST /control/transfers/{id}/retry).
-// Retry is the ONLY mutation on this resource — it never picks an outcome
-// (juicedocs §13): success settles, failure refunds, no receipt stays pending,
-// an invalid receipt stays quarantined.
-func (c *Client) AdminRetryTransfer(ctx context.Context, token, id string) (PendingTransfer, error) {
-	var t PendingTransfer
-	err := c.do(ctx, http.MethodPost, "/control/transfers/"+url.PathEscape(id)+"/retry", token, nil, &t)
-	return t, err
-}
-
 // SettleResult is the kernel's settlement outcome (shapes verified live
 // 2026-08-03). status "creditor": the peer owes us — its operator initiates;
 // status/mode "exact": pay Amount on the rail and record it with the named

@@ -35,36 +35,23 @@
 </div>
 {{else}}<p class="muted">No open sessions.</p>{{end}}
 
+{{/* One activity list, folded from the two records the kernel keeps: calls
+     (transactions) and direct movements (ledger entries). Running sys/transfer
+     writes only the former, so separate tables would let a send appear in
+     neither (requirements.md §6.5). */}}
 <div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
-{{if .Data.Transactions}}
+{{if .Data.Activity}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>Action</th><th>Role</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
+  <thead><tr><th>What</th><th>Role</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
   <tbody>
-  {{range .Data.Transactions}}{{template "_tx_row" (txrow . $.Data.MyHandle $.Data.Actions)}}{{end}}
-  </tbody>
-</table>
-</div>
-{{else}}<p class="muted">No transactions yet.</p>{{end}}
-
-{{if .Data.Ledger}}
-<h2>Ledger &amp; transfers</h2>
-<div class="table-scroll">
-<table>
-  <thead><tr><th>From</th><th>To</th><th class="money">Amount</th><th>Reason</th><th>When</th></tr></thead>
-  <tbody>
-  {{range .Data.Ledger}}
-  <tr>
-    <td class="mono">{{if .FromHandle}}{{.FromHandle}}{{else}}<span class="muted">deposit</span>{{end}}</td>
-    <td class="mono">{{if .ToHandle}}{{.ToHandle}}{{else}}<span class="muted">withdrawal</span>{{end}}</td>
-    <td class="money">{{if eq .ToHandle $.Data.MyHandle}}<span class="sig-credited">+{{money .Amount}}</span>{{else}}−{{money .Amount}}{{end}}</td>
-    <td class="muted small">{{.Reason}}</td>
-    <td class="muted">{{shortTime .CreatedAt}}</td>
-  </tr>
+  {{range .Data.Activity}}
+  {{if .IsCall}}{{template "_activity_call" (.CallRow $.Data.MyHandle $.Data.Actions)}}
+  {{else}}{{template "_activity_entry" (.EntryRow $.Data.MyHandle)}}{{end}}
   {{end}}
   </tbody>
 </table>
 </div>
-{{end}}
+{{else}}<p class="muted">No activity yet.</p>{{end}}
 
 {{end}}

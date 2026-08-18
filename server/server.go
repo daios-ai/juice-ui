@@ -244,9 +244,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/settle", s.requireSuperuser(s.postAdminSettle))
-	mux.HandleFunc("GET /admin/transfers", s.requireSuperuser(s.getAdminTransfers))
-	mux.HandleFunc("GET /admin/transfers/{id}", s.requireSuperuser(s.getAdminTransfer))
-	mux.HandleFunc("POST /admin/transfers/{id}/retry", s.requireSuperuser(s.postAdminTransferRetry))
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only
@@ -637,8 +634,8 @@ func activeGroup(path string) string {
 		return "wallet"
 	case strings.HasPrefix(path, "/settings"), strings.HasPrefix(path, "/grants"):
 		return "settings"
-	case strings.HasPrefix(path, "/admin/peers"), strings.HasPrefix(path, "/admin/transfers"):
-		// Federation is the network group: peers and the value-transfer queue.
+	case strings.HasPrefix(path, "/admin/peers"):
+		// Federation is the network group: the peer roster and settlement.
 		return "network"
 	case strings.HasPrefix(path, "/admin"):
 		return "admin"

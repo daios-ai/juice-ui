@@ -414,6 +414,9 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .card-top .price { flex: 0 0 auto; font-size: .9rem; }
 .card-desc { margin: 0; font-size: .85rem; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-desc .chip { vertical-align: 1px; }
+/* Freshness of a remote-backed row's terms (the kernel's observed_at). Quiet:
+   it qualifies the price, it is not a status. */
+.card-observed { margin: .15rem 0 0; }
 /* legacy head (kept for any old refs) */
 .action-card-head { display: flex; align-items: center; gap: .4rem; margin: .5rem 0 .1rem; }
 .action-card-ref { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); font-size: 1rem; }
@@ -589,6 +592,9 @@ textarea {
 .outcome.rejected { border-left-color: var(--escrow); }
 .outcome.failed   { border-left-color: var(--danger); }
 .outcome.success  { border-left-color: var(--credited); }
+/* Parked: dispatched, unsettled, funds still reserved — the escrow signal, not
+   the failure one (requirements.md §6.2). */
+.outcome.parked   { border-left-color: var(--escrow); }
 
 /* Code blocks for inline JSON */
 pre.json { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem; overflow: auto; font-family: var(--font-mono); font-size: .85rem; }

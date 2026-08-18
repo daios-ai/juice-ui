@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,11 +78,24 @@ type actionCardView struct {
 	Earned       int64  // net earned by this action (folded from transactions), workshop table
 	LastFailure  string // reason of the latest failed call, a quiet peek
 	// Discovered marks a lookup hit this kernel has only learned of through
-	// gossip: nothing local backs it, so it carries no price, no stats, and no
-	// run affordance (requirements.md §6.2). Resolution happens on first call,
-	// after which the kernel shadows the discovery row with the cached proxy.
+	// gossip: no local row backs it, so it carries no stats and its page is built
+	// from the lookup row alone (requirements.md §6.2). It is decided by whether
+	// the action_id resolves locally, NOT by the ref's shape — once resolved, a
+	// proxy keeps its kernel-qualified ref and gains a local row with real stats.
 	Discovered bool
+	// ObservedAt is the kernel's own freshness stamp on a remote-backed row (a
+	// gossip observation or a proxy's reconcile); empty on a local action.
+	ObservedAt string
 }
+
+// Observed reports whether this row's terms were last verified against a remote
+// home kernel, which is the only case where freshness is worth stating
+// (template helper).
+func (c actionCardView) Observed() bool { return c.ObservedAt != "" }
+
+// ObservedAgo renders the freshness stamp as an age in words, through the same
+// helper the peer roster's last-seen uses.
+func (c actionCardView) ObservedAgo() string { return relTime(c.ObservedAt) }
 
 type discoverView struct {
 	Query           string
@@ -746,22 +760,29 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Results = catalogAsResults(cat, q)
 		}
-		// Fetch stats (and full action data for partial lookup entries)
-		// concurrently. A discovered hit is skipped entirely: its id belongs to
-		// the remote kernel, so both reads would 404, and the card is rendered
-		// from the lookup row alone (requirements.md §6.2).
+		// Fetch each hit's full action row and stats concurrently. The read is
+		// also what DECIDES the card's class: a lookup row whose action_id names
+		// no local action is a discovered one, rendered from the row alone. The
+		// ref's shape cannot decide it — a resolved proxy keeps its kernel-
+		// qualified ref while having a perfectly readable local row, and reading
+		// discovery off the ref would strip a card the buyer has already paid for
+		// down to a stranger's (requirements.md §6.2).
 		var wg sync.WaitGroup
 		for i := range view.Results {
-			if view.Results[i].Discovered {
-				continue
-			}
 			wg.Add(1)
 			go func(i int, id string) {
 				defer wg.Done()
+				a, e := s.client.GetAction(ctx, tok, id)
+				if e != nil {
+					// No local row. A kernel-qualified ref means it is discovered;
+					// a local ref that fails to read is a row that has since gone,
+					// and keeps the lookup row's own fields.
+					view.Results[i].Discovered = refIsRemote(view.Results[i].Action.Action)
+					return
+				}
+				view.Results[i].Discovered = false
 				if view.Results[i].Action.Kind == "" {
-					if a, e := s.client.GetAction(ctx, tok, id); e == nil {
-						view.Results[i].Action = a
-					}
+					view.Results[i].Action = a
 				}
 				if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 					view.Results[i].Stats = &st
@@ -827,6 +848,13 @@ func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
 	}
 	if outcome.TxID != "" {
 		http.Redirect(w, r, "/transactions/"+outcome.TxID, http.StatusSeeOther)
+		return
+	}
+	// A parked call has no transaction yet, but it does have a process holding
+	// the reserved funds — land the buyer where that money is visible rather
+	// than on a browse page with a sentence about it.
+	if outcome.ProcessID != "" {
+		s.flashRedirect(w, r, "/processes/"+outcome.ProcessID, "info", outcome.Message)
 		return
 	}
 	s.flashRedirect(w, r, "/browse", "info", outcome.Message)
@@ -1279,19 +1307,22 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 			if out.Class == TermsChanged && out.QuoteHash != "" {
 				view.Action.QuoteHash, view.Action.Price = out.QuoteHash, out.Price
 			}
-			// A cached proxy whose row is stale against its peer answers
-			// execution_failed with no terms: the peer refused the dispatch and
-			// the proxy re-resolved. Re-READ the action so the buyer sees the
-			// terms that now hold — but never re-run it: execution_failed is
-			// indistinguishable from a call that genuinely executed and failed,
-			// so an automatic retry could repeat a side effect or a payment.
-			if out.Class == Failed && a.Kind == "remote_proxy" {
-				if fresh, e := s.client.GetAction(ctx, tok, id); e == nil && fresh.QuoteHash != a.QuoteHash {
+			// The provider changed the contract: the kernel says so, charged
+			// nothing, and discarded the cached copy. Re-read so the form re-pins
+			// to the terms that now hold and one more click accepts them. This is
+			// keyed on the kernel's marker, never on the action's kind — an
+			// unmarked execution_failed may have executed, and is never retried.
+			if out.Class == Refreshed {
+				if fresh, e := s.client.GetAction(ctx, tok, id); e == nil {
 					view.Action = fresh
 					view.Form = BuildForm(fresh.InputSchema)
-					out.Class, out.Price, out.QuoteHash = TermsChanged, fresh.Price, fresh.QuoteHash
-					out.Message = "The price changed to " + money(fresh.Price) + " while this page was open. Nothing was charged."
+					out.Price, out.QuoteHash = fresh.Price, fresh.QuoteHash
 				}
+			}
+			// `run` parks exactly the action's price, so the quote the buyer was
+			// shown is the amount now reserved.
+			if out.Class == Parked {
+				out.Reserved = a.Price
 			}
 			view.Outcome = &out
 			view.Outcome.CSRFField = csrf.TemplateField(r)
@@ -1674,18 +1705,60 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 // ---- processes ----
 
 // walletView backs the wallet page: balances, open processes (each force-endable),
-// and the ledger (transactions the viewer is a party to). It composes the same
-// data the processes and transactions pages show, in one money-focused screen.
+// and the activity list. It composes the same data the processes and transactions
+// pages show, in one money-focused screen.
 type walletView struct {
-	Available    int64
-	Locked       int64
-	Open         []client.Process
-	Transactions []client.Transaction
-	Actions      map[string]client.Action
-	Ledger       []client.LedgerEntry
-	MyHandle     string
-	Superuser    bool
-	OpenForm     string
+	Available int64
+	Locked    int64
+	Open      []client.Process
+	Activity  []activityRow
+	Actions   map[string]client.Action
+	MyHandle  string
+	Superuser bool
+	OpenForm  string
+}
+
+// activityRow is one line of the wallet's activity list. Money leaves a balance
+// through two kernel records that share no log — a transaction (every call,
+// including a `sys/transfer` run) and a ledger entry (deposits, withdrawals, and
+// direct transfers) — and a `sys/transfer` writes only the former (verified
+// live). Listing them separately therefore lets a send appear in neither table,
+// so the wallet folds both into one time-ordered list (requirements.md §6.5).
+// Exactly one of Tx and Entry is set; this is an arrangement of served rows,
+// never a recomputation of kernel settlement.
+type activityRow struct {
+	When  string // RFC 3339; the sort key and the displayed time
+	Tx    *client.Transaction
+	Entry *client.LedgerEntry
+}
+
+// IsCall reports a row backed by a transaction (template helper).
+func (a activityRow) IsCall() bool { return a.Tx != nil }
+
+// CallRow and EntryRow build the render structs the two row partials take, so
+// the template picks a shape and never assembles one (template helpers).
+func (a activityRow) CallRow(viewer string, actions map[string]client.Action) txRow {
+	return txRowOf(*a.Tx, viewer, actions)
+}
+
+func (a activityRow) EntryRow(viewer string) entryRow { return entryRowOf(*a.Entry, viewer) }
+
+// mergeActivity folds transactions and ledger entries into one list, newest
+// first, capped at limit. Both kernel lists arrive newest-first already; this
+// merges them on their timestamps without reordering within either.
+func mergeActivity(txs []client.Transaction, entries []client.LedgerEntry, limit int) []activityRow {
+	rows := make([]activityRow, 0, len(txs)+len(entries))
+	for i := range txs {
+		rows = append(rows, activityRow{When: txs[i].StartedAt, Tx: &txs[i]})
+	}
+	for i := range entries {
+		rows = append(rows, activityRow{When: entries[i].CreatedAt, Entry: &entries[i]})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].When > rows[j].When })
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
 }
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
@@ -1700,15 +1773,14 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
 			view.Open = filterStatus(procs, "open", true)
 		}
-		// A preview only — the most recent 10; "all transactions →" links to the
-		// paginated ledger. Capped kernel-side via ?limit rather than fetching all.
-		if txs, e := s.client.ListTransactions(ctx, tok, "", 10); e == nil {
-			view.Transactions = txs
-			view.Actions = s.actionsByID(ctx, tok, txs)
-		}
-		// The direct-movement ledger (deposits, withdrawals, transfers) is separate
-		// from the call ledger above; best-effort so a kernel without it still renders.
-		view.Ledger, _ = s.client.Ledger(ctx, tok, 20, 0)
+		// A preview only — the most recent 10 of the merged activity; "all
+		// transactions →" links to the paginated ledger. Each source is capped
+		// kernel-side, then folded and re-capped so one busy source cannot crowd
+		// the other out of the preview.
+		txs, _ := s.client.ListTransactions(ctx, tok, "", 10)
+		entries, _ := s.client.Ledger(ctx, tok, 10, 0)
+		view.Activity = mergeActivity(txs, entries, 10)
+		view.Actions = s.actionsByID(ctx, tok, txs)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -2132,6 +2204,11 @@ func parseLookup(result json.RawMessage) []actionCardView {
 			InputSchema  json.RawMessage `json:"input_schema"`
 			OutputSchema json.RawMessage `json:"output_schema"`
 			Score        float64         `json:"score"`
+			// ObservedAt is the last time these terms were verified against their
+			// home kernel — a gossip observation, or a proxy's reconcile. The
+			// kernel omits it on a local action, so it is the served fact that
+			// marks a row as remote-backed (requirements.md §6.2).
+			ObservedAt string `json:"observed_at"`
 		} `json:"results"`
 	}
 	_ = json.Unmarshal(result, &lr)
@@ -2149,6 +2226,10 @@ func parseLookup(result json.RawMessage) []actionCardView {
 				InputSchema:  r.InputSchema,
 				OutputSchema: r.OutputSchema,
 			},
+			ObservedAt: r.ObservedAt,
+			// Provisional: a kernel-qualified ref MAY be a row this kernel has
+			// never resolved. It is settled by the read below — a resolved proxy
+			// keeps its remote ref but does have a local row.
 			Discovered: refIsRemote(r.Action),
 		})
 	}

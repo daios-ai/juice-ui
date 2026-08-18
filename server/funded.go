@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"html/template"
+	"time"
 
 	"github.com/daios-ai/juice-ui/client"
 )
@@ -33,6 +34,20 @@ const (
 	// re-confirmation, not a failure: the buyer is shown the current terms and
 	// asked again (requirements.md §6.2).
 	TermsChanged
+	// Parked: the call was dispatched to a peer and has no signed outcome yet.
+	// The funds are RESERVED, not refunded — the kernel keeps them locked and
+	// retries until a receipt arrives or the refund becomes eligible. Rendering
+	// this as a refund would state a movement that has not happened (§6.2).
+	Parked
+	// Refreshed: the provider changed the action's contract, so the peer refused
+	// the dispatch and the kernel discarded the cached copy — nothing ran and
+	// nothing was charged. A refusal, not a failure: the buyer is re-quoted and
+	// one click re-runs (§6.2).
+	Refreshed
+	// PeerRefused: the serving kernel refused this call outright — it suspended
+	// us, or will not serve that action. An operator relationship fact that no
+	// retry fixes, and never the buyer's own permissions (§6.2).
+	PeerRefused
 )
 
 // Cost is the gross/fee/net breakdown of a successful call.
@@ -53,10 +68,20 @@ type Outcome struct {
 	Detail    string        // raw kernel error message (for diagnostics; never includes secrets)
 	ActionRef string        // the action ref, for a GrantRequired outcome's Connect affordance
 	CSRFField template.HTML // injected by the handler for the inline rating form
-	// Price and QuoteHash carry the CURRENT terms of a TermsChanged refusal, so
-	// the form re-renders and re-pins in one round trip rather than re-reading.
+	// Price and QuoteHash carry the CURRENT terms of a TermsChanged or Refreshed
+	// refusal, so the form re-renders and re-pins in one round trip rather than
+	// re-reading.
 	Price     int64
 	QuoteHash string
+	// Reserved, ProcessID and RefundEligibleAt describe a Parked outcome: the
+	// amount still locked, the process holding it (so the wallet can be reached
+	// from the result), and the date from which the automatic full refund
+	// applies — an eligibility, never a settlement promise.
+	Reserved         int64
+	ProcessID        string
+	RefundEligibleAt string
+	// Peer names the kernel that refused a PeerRefused outcome.
+	Peer string
 }
 
 // IsTermsChanged reports a refused quote (template helper).
@@ -83,6 +108,33 @@ func (o Outcome) IsPeerUnreachable() bool { return o.Class == PeerUnreachable }
 // kernel's global exposure cap is exhausted — an operator settlement matter,
 // not the caller's balance, not charged (template helper).
 func (o Outcome) IsPeerUnfunded() bool { return o.Class == PeerUnfunded }
+
+// IsParked reports a dispatched call awaiting a signed outcome, with the funds
+// still reserved — neither a failure nor a refund (template helper).
+func (o Outcome) IsParked() bool { return o.Class == Parked }
+
+// IsRefreshed reports a call refused because the provider's contract moved —
+// nothing ran, nothing charged, re-quoted (template helper).
+func (o Outcome) IsRefreshed() bool { return o.Class == Refreshed }
+
+// IsPeerRefused reports a call the serving kernel refused outright (template
+// helper).
+func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
+
+// ReservedMoney renders the parked amount in the money format (template helper),
+// so the template never formats currency itself (§7).
+func (o Outcome) ReservedMoney() string { return money(o.Reserved) }
+
+// RefundEligibleDate renders the parked refund-eligibility instant as a plain
+// date. The kernel sends RFC 3339; an unparseable value renders empty so the
+// template simply omits the clause rather than printing a raw timestamp.
+func (o Outcome) RefundEligibleDate() string {
+	t, err := time.Parse(time.RFC3339, o.RefundEligibleAt)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format("2 January 2006")
+}
 
 // CallForm drives the shared _call_form partial for both running an action and
 // completing a step — conceptually the same act (execute an action). Locked
@@ -232,14 +284,45 @@ func classifyErr(err error) (Outcome, error) {
 			Message: ke.UserMessage(),
 			Detail:  ke.KernelMessage,
 		}, nil
-	case client.KindExecutionFailed, client.KindTimeout:
-		// The kernel answers a failure CLASS now, not prose, so the sentence is
-		// ours and the class is never shown: Detail would print
+	case client.KindExecutionFailed:
+		// A marked contract change never executed and was never charged, so it is
+		// a refusal the buyer can accept again — not a failure with a refund.
+		if ke.IsRefreshable() {
+			return Outcome{
+				Class:   Refreshed,
+				Message: ke.UserMessage(),
+			}, nil
+		}
+		// Otherwise the kernel answers a failure CLASS, not prose, so the
+		// sentence is ours and the class is never shown: Detail would print
 		// "execution_failed" to a buyer.
 		return Outcome{
 			Class:   Failed,
 			Message: ke.UserMessage(),
 		}, nil
+	case client.KindTimeout:
+		// Dispatched, unsettled: the funds are LOCKED, not returned. The metadata
+		// is what makes the sentence honest — the process still holding them and
+		// the date the automatic refund becomes eligible. The reserved AMOUNT is
+		// not in the metadata; `run` parks exactly the action's price, so the
+		// handler fills it from the quote the buyer was shown.
+		return Outcome{
+			Class:            Parked,
+			Message:          ke.UserMessage(),
+			ProcessID:        ke.MetaString("process_id"),
+			RefundEligibleAt: ke.MetaString("refund_eligible_at"),
+		}, nil
+	case client.KindUnauthorized:
+		// Only a peer's refusal is an outcome; an ordinary 403 stays an error for
+		// the generic handler, which renders the not-permitted page.
+		if p := ke.Peer(); p != "" {
+			return Outcome{
+				Class:   PeerRefused,
+				Peer:    p,
+				Message: ke.UserMessage(),
+			}, nil
+		}
+		return Outcome{}, err
 	case client.KindInvalidState:
 		// A 409 is refused BEFORE execution: nothing ran and nothing was
 		// charged, so it must not read as a failure with a refund. The kernel's

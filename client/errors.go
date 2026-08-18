@@ -82,6 +82,21 @@ func (e *KernelError) MetaInt64(key string) (int64, bool) {
 	return n, true
 }
 
+// IsRefreshable reports the kernel's own marker that the call never executed
+// because the provider's contract had moved: the cached proxy was discarded, the
+// caller was charged nothing, and the next call re-resolves. It is the ONLY
+// signal that distinguishes this from a call that genuinely executed and failed,
+// so a retry may be offered here and nowhere else in the class
+// (requirements.md §6.2).
+func (e *KernelError) IsRefreshable() bool {
+	return e.Kind == KindExecutionFailed && e.MetaString("retry") == "refresh"
+}
+
+// Peer names the remote kernel a federation error is about, when the kernel
+// says so. Absent on peer_unreachable (verified live), so callers that want a
+// name there must supply it from the ref they submitted.
+func (e *KernelError) Peer() string { return e.MetaString("peer") }
+
 func (e *KernelError) Error() string {
 	return fmt.Sprintf("kernel error kind=%s status=%d msg=%q", e.Kind, e.Status, e.KernelMessage)
 }
@@ -225,6 +240,12 @@ func (e *KernelError) UserMessage() string {
 	case KindUnauthenticated:
 		return "Your session has expired. Please sign in again."
 	case KindUnauthorized:
+		// A peer's refusal arrives in this class but is an operator relationship
+		// fact — the peer suspended us, or will not serve that action — and must
+		// never read as the user's own lack of permission (v0.12.23).
+		if p := e.Peer(); p != "" {
+			return "Kernel " + p + " declined this call. Nothing was charged, and retrying won't help."
+		}
 		return "You don't have permission to do that."
 	case KindNotFound:
 		return "That item could not be found."
@@ -241,12 +262,22 @@ func (e *KernelError) UserMessage() string {
 	case KindInsufficientFunds:
 		return "This session doesn't have enough credits. Credits are added out of band by an operator — contact them to top up your account."
 	case KindExecutionFailed:
-		// The kernel now answers a CLASS, not prose (v0.12.14: a remote failure
-		// reads "remote call failed", and the stored reason is the bare
+		// A provider that changed the action's contract answers the same class
+		// but marks it: nothing executed and nothing was charged, so it must not
+		// read as a failure with a refund (verified live on v0.12.23).
+		if e.IsRefreshable() {
+			return "The provider changed this action — you were not charged."
+		}
+		// Otherwise the kernel answers a CLASS, not prose (v0.12.14: a remote
+		// failure reads "remote call failed", and the stored reason is the bare
 		// "execution_failed"), so the sentence is ours to write. Never echo it.
 		return "The action failed to run. You were refunded in full."
 	case KindTimeout:
-		return "The action timed out. You were refunded in full."
+		// NOT a refund: the call was dispatched, has no signed outcome yet, and
+		// the kernel keeps the funds locked while it retries (verified live —
+		// the balance moves available→locked). The server words the reserved
+		// amount and the eligibility date, which it can format as money.
+		return "Result pending — your funds stay reserved until this settles."
 	case KindRateLimited:
 		return "Too many attempts. Please wait a moment and try again."
 	case KindGrantRequired:

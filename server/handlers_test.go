@@ -2289,3 +2289,211 @@ func TestNoActionGetsABespokeSurface(t *testing.T) {
 		t.Error("the palette must not carry a command for a single action")
 	}
 }
+
+// §6.5: the wallet's activity list folds BOTH kernel records. Money leaves a
+// balance through a transaction (every call, including a sys/transfer run) and
+// through a ledger entry (deposits, withdrawals, direct transfers), and a
+// sys/transfer writes only the former — verified live. Two separate tables let
+// a send appear in neither, so the fold is what makes the wallet complete.
+func TestMergeActivityInterleavesBothRecords(t *testing.T) {
+	txs := []client.Transaction{
+		{ID: "tx-new", StartedAt: "2026-08-18T12:00:00Z"},
+		{ID: "tx-old", StartedAt: "2026-08-16T12:00:00Z"},
+	}
+	entries := []client.LedgerEntry{
+		{ID: "led-mid", CreatedAt: "2026-08-17T12:00:00Z"},
+	}
+	rows := mergeActivity(txs, entries, 10)
+	if len(rows) != 3 {
+		t.Fatalf("expected all three records, got %d", len(rows))
+	}
+	// Newest first, regardless of which source a row came from.
+	if !rows[0].IsCall() || rows[0].Tx.ID != "tx-new" {
+		t.Errorf("row 0 = %+v, want tx-new", rows[0])
+	}
+	if rows[1].IsCall() || rows[1].Entry.ID != "led-mid" {
+		t.Errorf("row 1 = %+v, want the ledger entry between the two calls", rows[1])
+	}
+	if !rows[2].IsCall() || rows[2].Tx.ID != "tx-old" {
+		t.Errorf("row 2 = %+v, want tx-old", rows[2])
+	}
+	// Exactly one record backs each row.
+	for i, r := range rows {
+		if (r.Tx == nil) == (r.Entry == nil) {
+			t.Errorf("row %d must hold exactly one record", i)
+		}
+	}
+	if got := mergeActivity(txs, entries, 2); len(got) != 2 {
+		t.Errorf("limit must cap the folded list, got %d", len(got))
+	}
+}
+
+// The ledger half of the activity list reads its direction from the kernel's own
+// from/to projection, never from a guess.
+func TestEntryRowLabelsAndSign(t *testing.T) {
+	cases := []struct {
+		name     string
+		entry    client.LedgerEntry
+		label    string
+		credited bool
+	}{
+		{"deposit", client.LedgerEntry{ToHandle: "bob", Amount: 100}, "deposit", true},
+		{"withdrawal", client.LedgerEntry{FromHandle: "bob", Amount: 100}, "withdrawal", false},
+		{"sent", client.LedgerEntry{FromHandle: "bob", ToHandle: "alice", Amount: 25}, "transfer to alice", false},
+		{"received", client.LedgerEntry{FromHandle: "alice", ToHandle: "bob", Amount: 25}, "transfer from alice", true},
+	}
+	for _, c := range cases {
+		got := entryRowOf(c.entry, "bob")
+		if got.Label != c.label || got.Credited != c.credited {
+			t.Errorf("%s: label=%q credited=%v, want %q/%v", c.name, got.Label, got.Credited, c.label, c.credited)
+		}
+	}
+}
+
+// §6.2: a lookup row is discovered iff its action_id names no LOCAL action. A
+// resolved proxy keeps its kernel-qualified ref while having a readable local
+// row, so reading provenance off the ref would strip a card the buyer has
+// already paid for down to a stranger's.
+func TestLookupRowsCarryObservedAt(t *testing.T) {
+	result := json.RawMessage(`{"results":[
+		{"action_id":"local-1","action":"alice/echo","price":50},
+		{"action_id":"remote-1","action":"vendor@bravo/fast","price":111,"observed_at":"2026-08-18T17:00:10Z"}
+	]}`)
+	cards := parseLookup(result)
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 cards, got %d", len(cards))
+	}
+	if cards[0].Observed() {
+		t.Error("a local row carries no observed_at and must state no freshness")
+	}
+	if !cards[1].Observed() || cards[1].ObservedAgo() == "" {
+		t.Errorf("a remote-backed row states its freshness: %+v", cards[1])
+	}
+	// The ref only makes the discovered flag PROVISIONAL; the read settles it.
+	if cards[1].Discovered != true {
+		t.Error("a kernel-qualified ref starts out provisionally discovered")
+	}
+}
+
+// §6.2: browse decides "discovered" by whether the action_id resolves LOCALLY,
+// not by the shape of the ref. A resolved proxy keeps its kernel-qualified ref
+// (vendor@bravo/name) while having a local row with stats — the previous
+// ref-sniffing rule stripped such a card, already paid for, down to a
+// stranger's. This drives the real handler through a kernel that 404s the
+// unresolved id, exactly as the live kernel does.
+func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK"}`))
+	})
+	// sys/lookup: one unresolved discovery hit and one RESOLVED proxy. Both
+	// carry a kernel-qualified ref and an observed_at; only the second has a
+	// local row.
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"result":{"results":[
+			{"action_id":"remote-unresolved","action":"vendor@bravo/fresh","description":"never called","price":111,"observed_at":"2026-08-18T17:00:10Z"},
+			{"action_id":"proxy-local","action":"vendor@bravo/bought","description":"already resolved","price":111,"observed_at":"2026-08-18T17:00:10Z"}
+		]},"tx_id":"TX1","trace_id":"TR1"}`))
+	})
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != "proxy-local" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"code":"not_found","error":"action not found"}`))
+			return
+		}
+		w.Write([]byte(`{"id":"proxy-local","action":"vendor@bravo/bought","owner_handle":"bravo","name":"vendor/bought","kind":"remote_proxy","active":true,"visibility":"local","price":111}`))
+	})
+	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"action_id":"proxy-local","uses":4,"successes":4}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "alice")
+
+	body := getBody(t, cl, srv.URL+"/browse?q=vendor")
+	// The resolved proxy links to its LOCAL action page and keeps its stats.
+	if !strings.Contains(body, `/actions/proxy-local`) {
+		t.Error("a resolved proxy must link to its local action page, not the discovered view")
+	}
+	if strings.Contains(body, `/discovered?ref=vendor%40bravo%2Fbought`) ||
+		strings.Contains(body, `/discovered?ref=vendor@bravo/bought`) {
+		t.Error("a resolved proxy must not be routed through the discovered view")
+	}
+	// The unresolved one still renders as discovered, from the lookup row alone.
+	if !strings.Contains(body, "/discovered?ref=vendor") {
+		t.Error("an unresolved hit must still render as a discovered card")
+	}
+	// Both rows are remote-backed, so both state the kernel's freshness stamp.
+	if !strings.Contains(body, "terms seen") {
+		t.Error("a remote-backed row must state its observed_at freshness")
+	}
+}
+
+// §6.2: a parked run must render as reserved funds, never as a refund. This
+// drives the real run handler with the kernel's live 504 shape and asserts the
+// three things the buyer needs: the amount still held, where it is held, and no
+// claim that money came back.
+func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK"}`))
+	})
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"P1","action":"vendor@bravo/slow","owner_handle":"bravo","name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
+		 "input_schema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"output_schema":{"type":"object"}}`))
+	})
+	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) })
+	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	// The live v0.12.23 shape: dispatched, unsettled, funds locked.
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+		w.Write([]byte(`{"code":"timeout","error":"remote receipt pending","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"proc-7","refund_eligible_at":"2026-08-19T17:01:54Z"}}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "alice")
+
+	page := getBody(t, cl, srv.URL+"/actions/P1")
+	resp := postTo(t, cl, srv.URL+"/actions/P1/run", page,
+		url.Values{"f_q": {"hello"}, "t_q": {"string"}, "has_fields": {"1"}})
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	body := string(raw)
+	for _, want := range []string{"Result pending", "$0.111", "/processes/proc-7", "19 August 2026"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("parked outcome missing %q:\n%s", want, body)
+		}
+	}
+	// The whole point: no refund is claimed, and it is not dressed as a failure.
+	for _, banned := range []string{"fully refunded", "Failed —"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("parked outcome must not say %q — the funds are still locked", banned)
+		}
+	}
+}

@@ -496,60 +496,30 @@ func TestAdminSettleFlashesKernelMessage(t *testing.T) {
 	}
 }
 
-// v0.12 §6.6: the transfer queue — unresolved default, status filter, detail,
-// and Retry as the ONLY mutation (no refund/force-settle affordance anywhere).
-func TestAdminTransfersQueue(t *testing.T) {
+// §6.6: the value-transfer queue is GONE. The kernel stopped serving
+// /control/transfers once value became local to a kernel (404 on v0.12.23), so
+// no route, no link, and no client method may remain — a page that cannot load
+// is worse than no page.
+func TestNoTransferQueueSurface(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	body := getBody(t, cl, srv.URL+"/admin/transfers")
-	for _, want := range []string{"TQ1", "TP1", "quarantined", "pending", "Retry", "$0.300"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("transfers list missing %q", want)
+	for _, path := range []string{"/admin/transfers", "/admin/transfers/TQ1"} {
+		resp, err := cl.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s must not be routed, got %d", path, resp.StatusCode)
 		}
 	}
-	// Retry is the only mutation: no refund/force-settle/edit/delete affordance
-	// may exist in the DOM (§6.6 — quarantine is "evidence insufficient").
-	for _, banned := range []string{"Refund", "Force", "force-settle", "Delete", "Edit"} {
-		if strings.Contains(body, banned) {
-			t.Errorf("transfer queue must not offer %q", banned)
-		}
-	}
-	// Status filter tabs are real links.
-	if !strings.Contains(body, `href="/admin/transfers?status=quarantined"`) {
-		t.Error("status filter tabs must be real links")
-	}
-	// Detail page.
-	detail := getBody(t, cl, srv.URL+"/admin/transfers/TQ1")
-	for _, want := range []string{"TQ1", "receipt hash mismatch", "$0.330", "Retry"} {
-		if !strings.Contains(detail, want) {
-			t.Errorf("transfer detail missing %q", want)
-		}
-	}
-	// Settled filter shows the terminal record without a Retry button.
-	settled := getBody(t, cl, srv.URL+"/admin/transfers?status=settled")
-	if !strings.Contains(settled, "TSET") || strings.Contains(settled, "Retry") {
-		t.Errorf("settled records must render without a Retry affordance: %s", settled)
-	}
-}
-
-// The transfer queue is superuser-only, like every /admin surface.
-func TestAdminTransfersHiddenFromNonSuperuser(t *testing.T) {
-	kernel := authKernel()
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv.Close()
-	cl := loginClientAs(t, srv.URL, "alice")
-	resp, err := cl.Get(srv.URL + "/admin/transfers")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("non-superuser must get 404, got %d", resp.StatusCode)
+	// And nothing may link to it.
+	if body := getBody(t, cl, srv.URL+"/admin/peers"); strings.Contains(body, "/admin/transfers") {
+		t.Error("the peers page must not link to a removed queue")
 	}
 }
 

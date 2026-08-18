@@ -1,7 +1,39 @@
 # Juice Web UI Requirements
 
-Version: 0.6.1
+Version: 0.7.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.7.0.** The kernel's v0.12.23 contract lands, verified live
+> against a federated pair. Every axis is written into the section it governs;
+> this note is the index, not a second specification.
+>
+> 1. **A call that parks is not a call that failed** (§6.2). A dispatched remote
+>    call with no signed outcome answers `timeout` and keeps the funds
+>    *reserved* — the UI gains a fourth outcome class saying so, naming the
+>    reserved amount and the date the automatic refund becomes eligible. Calling
+>    that a refund was a false statement about money.
+> 2. **A provider's contract change is a refusal, not a failure** (§6.2). The
+>    kernel marks it (`meta.retry`) and charges nothing, so the buyer is
+>    re-quoted and one click re-runs — the blanket no-retry rule keyed on an
+>    indistinguishability the kernel has since removed.
+> 3. **A peer's refusal names the peer** (§6.2, §10). It is an operator
+>    relationship fact, never the buyer's own permissions.
+> 4. **The wallet shows one activity list** (§6.5), folding the ledger and the
+>    transactions, because value moved by running `sys/transfer` writes no ledger
+>    entry: two separate tables let a spend appear in neither.
+> 5. **Every surface is signed-in** (§5). The kernel serves its natives `local`,
+>    so an anonymous catalog is empty by construction; a signed-out visitor gets
+>    the login screen, not an empty storefront.
+>
+> Removed, because the kernel does not serve it: the value-transfer queue
+> (`/control/transfers`, 404 as of v0.12.23 — with value local-only there is no
+> unresolved buyer-side transfer to queue) and the receipt's `value_premium` row.
+> Invariants that predate 0.7.0 are unchanged: the BFF architecture, session and
+> token rules, the accent's spend-only discipline and the closed button
+> vocabulary, inert counterparty rendering, the single aria-live region,
+> monospace tabular money in dollars, floating modal forms with the `?form=`
+> fallback, keyboard navigation, admin/supervision gating, the CSP, and the test
+> discipline.
 
 > **What changed in 0.6.1.** One rule, applied in three places: the UI states
 > things in the platform's vocabulary, not in prose of its own. No action is
@@ -238,9 +270,8 @@ detectable.
 * **Admin / supervision (superuser only):** the `admin` group, visible only to
   `sys`, covers user list/show, suspend/unsuspend, rename (§6.6), credit
   deposits and withdrawals, federation trust (peers — provisioned by use or by deposit-by-key,
-  inspect, suspend/unsuspend, this kernel's identity), operator settlement (§6.6,
-  Conditional on the HTTP route), and the value-transfer queue
-  (`GET /control/transfers`, §6.6). The kernel serves these over HTTP on
+  inspect, suspend/unsuspend, this kernel's identity), and operator settlement
+  (§6.6). The kernel serves these over HTTP on
   `/control/*`, gated by an `IsSuperuser` check on the `sys` bearer (API.md
   C13); the UI is an ordinary client of that surface. Superuser **scope** on
   the normal list pages (a `sys` session sees all actions/processes/tx/steps)
@@ -314,6 +345,14 @@ detectable.
   routes are CSRF-protected.
 * Account creation (`POST /v1/users`) is available from the UI; the UI surfaces
   the kernel's per-IP rate limiting (HTTP 429) gracefully.
+* **Every surface is signed-in.** Only login, signup, and password recovery are
+  reachable without a session; every other route MUST redirect a signed-out
+  visitor to the login screen. This is not a policy choice the UI makes on its
+  own — the kernel registers its natives `local` (v0.12.23), so an anonymous
+  caller is served an empty catalog and `sys/lookup` refuses the token-less call
+  outright. An anonymous storefront would therefore be a blank page with a search
+  box that cannot answer, which is a worse account of the system than the login
+  screen.
 
 ## 6. The interface
 
@@ -390,11 +429,21 @@ detectable.
   authenticated local caller, so results MAY name a remote action this kernel has
   not resolved: the ref is kernel-qualified (`owner@<kernel-key>/name`) and the
   `action_id` is the **remote** id, which resolves to nothing locally. Such a card
-  MUST be rendered from the lookup row alone — the UI MUST NOT attempt the local
-  action or stats reads that back an ordinary card — and MUST show the
-  kernel-qualified ref (owner segment unlinked, §6.2 refs), the description, and a
-  quiet chip marking it as discovered, distinct from the remote-proxy chip. It MUST
-  NOT show a reputation strip (the discovery cache stores none).
+  MUST be rendered from the lookup row alone, and MUST show the kernel-qualified
+  ref (owner segment unlinked, §6.2 refs), the description, and a quiet chip
+  marking it as discovered, distinct from the remote-proxy chip. It MUST NOT show
+  a reputation strip (the discovery cache stores none).
+  **A row is discovered iff its `action_id` names no local action** — the UI
+  attempts the ordinary read and falls back when it 404s. A kernel-qualified ref
+  MUST NOT be the test: once resolved, a proxy keeps its remote ref *and* gains a
+  local row with real stats, so reading discovery off the ref would strip a card
+  the buyer has already paid for down to a stranger's.
+* **`observed_at` marks a remote-backed row.** The kernel serves it on any row
+  whose terms were last verified against their home kernel — a gossip
+  observation, or a proxy's reconcile — and omits it on a local action. Where a
+  row carries it, the card MUST state that freshness quietly (the age, in words),
+  since it is the only evidence of how current a remote quote is. It is the
+  served fact that replaces reading provenance out of the ref.
 * **Every result states a price, including a discovered one.** The kernel serves
   `price` on every `sys/lookup` row — an action's own price locally, and for a
   discovered hit its `serving_price` marked up by the current import fee. A
@@ -456,13 +505,16 @@ detectable.
   price may be a discovery interval stale, and pinning means the buyer is
   refused rather than charged a figure they were not shown. *(This lifts the
   §3.3 limitation: first contact no longer requires the CLI.)*
-* **A remote-proxy failure MUST NOT be retried automatically.** When a cached
-  proxy is stale against its peer, the peer refuses the dispatch and the kernel
-  answers `execution_failed` with no terms, having re-resolved the proxy. The UI
-  re-reads the action and shows the terms that now hold; it MUST NOT re-run,
-  because `execution_failed` is indistinguishable from a call that genuinely
-  executed and failed, and an automatic retry could repeat a side effect or a
-  payment.
+* **A retry is offered only where the kernel marks the call as unrun.** When a
+  cached proxy is stale against its peer, the kernel answers `execution_failed`
+  carrying `meta.retry = "refresh"`, having charged nothing and re-resolved the
+  proxy; that marker is the kernel's own statement that nothing executed, so the
+  UI re-reads the action, re-pins the form to the terms that now hold, and lets
+  one click re-run (§6.2 outcomes, *refreshed*). Without the marker an
+  `execution_failed` is indistinguishable from a call that genuinely executed
+  and failed, and the UI MUST NOT re-run it, automatically or by offering a
+  one-click retry: repeating it could repeat a side effect or a payment. The
+  discriminator is the kernel's field, never the action's kind.
 * A **paid** run's confirm is the single money button reading `Run (N)` (the
   accent conveys credits — no glyph on the button), and the form MUST disclose
   "Maximum, all-in. Refunded in full if it fails." A **first payment** to this
@@ -482,7 +534,8 @@ detectable.
   └────────────────────────────────────────────┘
 ```
 
-**Outcomes.** The three outcome classes MUST render distinctly:
+**Outcomes.** Each outcome class MUST render distinctly. The classes divide on
+one question — what happened to the money — so no two may share a sentence:
 
 * input-schema rejection → "Not sent. You were not charged"; field-level errors
   inline on the sheet; no receipt.
@@ -492,6 +545,26 @@ detectable.
   failure answers `execution_failed`), and a class explains nothing to a buyer.
   Each error class maps to exactly one sentence, in one place; a raw class MUST
   NOT reach a template (enforced by drift guard).
+* **parked** (`timeout`) → "Result pending — $N reserved". A call that was
+  dispatched but has no signed outcome yet is **not** a failure and **not** a
+  refund: the kernel keeps the funds locked and retries. Verified live — the
+  balance moves from available to locked, and `meta` carries `process_id`,
+  `pending_since`, and `refund_eligible_at`. The card MUST therefore carry the
+  escrow-pending signal (§7), name the reserved amount through the money helper,
+  link to the process it names, and state the date from which the automatic full
+  refund applies — as eligibility, never as a promise of settlement. It MUST NOT
+  claim a refund has happened, and MUST NOT poll the peer (§6.6).
+* **refreshed** (`execution_failed` with `meta.retry = "refresh"`) → "The
+  provider changed this action — you were not charged". Nothing ran and nothing
+  moved, so it is a refusal, not a failure. The UI re-reads the action and
+  re-pins the form so one more click accepts the new terms — the same recovery
+  as a refused quote.
+* **peer refused** (`unauthorized` with `meta.peer`) → "Kernel *peer* declined
+  this call". An operator relationship fact — the peer suspended this kernel or
+  will not serve that action — which no retry fixes and which MUST NOT render as
+  the buyer's own lack of permission. The kernel deactivates the cached proxy on
+  such a refusal, so the action leaves the catalog; that absence is ordinary
+  kernel-managed cache state (§6.6) and MUST NOT be reported as a deleted action.
 * refused-before-execution → "Not sent — you were not charged". A `409` is
   checked before funds are locked, so nothing ran and nothing moved; it MUST NOT
   be dressed as a failure with a refund, which would claim a movement that never
@@ -613,11 +686,29 @@ open (parked steps), the result MUST say so and link to the Wallet.
   a user-facing label.
 * The wallet MUST link to the full **sessions** page (`GET /v1/processes`, open +
   closed), which itself MUST offer the same force-end control on each open row and
-  paginate (§7). The wallet's own activity table is a preview (most recent 10) that
-  links to the paginated ledger.
-* The ledger MUST list every credit and debit, newest first, each row linking to
-  its receipt. Closed processes (including `run`-created ephemerals) MUST appear
-  here.
+  paginate (§7). A session awaiting a remote receipt MUST show that state and its
+  age from the kernel's `awaiting_receipt`/`awaiting_receipt_since` — the standing
+  evidence behind a parked run (§6.2).
+* **Activity is one list, folded from both records the kernel keeps.** Money
+  leaves a user's balance through two surfaces that do not share a log: the
+  ledger (`GET /v1/ledger` — deposits, withdrawals, direct transfers) and
+  transactions (`GET /v1/transactions` — every call, including a `sys/transfer`
+  run). Verified live: running `sys/transfer` writes **no** ledger entry, so two
+  separate tables let a spend appear in neither and the wallet would silently
+  omit exactly the sends §6.5 prescribes. The BFF MUST therefore merge both into
+  a single time-ordered activity list — an arrangement of served rows, never a
+  recomputation — each row linking to its receipt or ledger entry. The wallet
+  shows the most recent 10 and links to the paginated ledger.
+* **A value-bearing call renders its value only where the kernel serves it.**
+  Verified live, a local `sys/transfer` transaction carries `gross`/`fee`/`net`/
+  `refund` all zero with the moved amount visible only in `args`/`result`, and no
+  `value`/`value_to` field. The UI MUST NOT manufacture a money figure out of
+  `args`: a displayed amount is a kernel-vouched fact or it is not displayed
+  (§7). Where the kernel serves `value`/`value_to`, they render as breakdown
+  rows, zero-suppressed, and the payer named beside them is the transaction's
+  **`caller_handle`** — the immediate caller, whose balance the value actually
+  leaves — never the `owner_handle` that pays for execution. The two differ
+  exactly when a payment step settles inside someone else's process (§6.3).
 * **Sending money is running an action; it gets no surface of its own.** The
   kernel moves value through `sys/transfer`, an ordinary priced action with no
   special privileges (kernel §9: any provider could have supplied an equivalent),
@@ -633,16 +724,19 @@ open (parked steps), the result MUST say so and link to the Wallet.
   Where behaviour genuinely differs, it MUST key on a kernel-served field the
   action carries (`effect`, `kind`, `requires_grant`), never on a ref.
 * The transaction list (`GET /v1/transactions`) MUST return rows where the user
-  is buyer (`owner_user_id`), caller (`caller_user_id`), or seller (the called
-  action's owner). Each row MUST show the user's role, the action
+  is buyer, caller, or seller. The kernel renders each party as a handle —
+  `owner_handle`, `caller_handle`, `target_handle` — and returns no raw user id,
+  so the UI compares handles. Each row MUST show the user's role, the action
   (`owner/name`, linked via `GET /v1/actions/{action_id}`; a truncated ID if the
   action was since deleted), status, and cost breakdown.
 * The receipt page MUST show parties (buyer/seller, viewer's role highlighted),
   action ref, inline args and result, gross/fee/net (fee captioned "on value
   added"), failure `reason` when present, and the buyer's rating block.
-  *Conditional:* where the kernel serves them, the value-transfer and federation
-  economics fields (`premium`, `value`, `value_premium`, `value_to`) render as
-  additional breakdown rows, zero-suppressed — absent fields render nothing.
+  *Conditional:* where the kernel serves them, the value and federation economics
+  fields (`premium`, `value`, `value_to`) render as additional breakdown rows,
+  zero-suppressed — absent fields render nothing. `value_premium` is not among
+  them: with value local to a kernel it was deleted from the receipt entirely
+  (kernel §10, migration 044).
 * A Verify control MUST call `GET /v1/transactions/{id}/receipt-verification` and
   render per-check results as a checklist (signature, hash, settlement
   arithmetic) plus the top-level `valid` flag, for both success and failure.
@@ -654,24 +748,26 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * *Conditional:* an Engine-room disclosure below the receipt showing the trace
   tree with per-call cost and `latency_ms`.
 
-### 6.6 network & admin — federation money and the transfer queue
+### 6.6 network & admin — federation money
 
 Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
-(§3.1). Three concerns live here: the roster, settlement, and the value-transfer
-queue.
+(§3.1). Two concerns live here: the roster and settlement.
 
 **Peers.**
 
 * **The roster is the whole known network.** `/control/peers` merges by public
   key, excluding this kernel, **counterparties** (`has_account`, a bilateral
-  position) and **discovered peers** (a catalog: action count, `last_seen`).
+  position) and **discovered peers** (a catalog: action count).
   Both render as the same `.kernel-card` under a `.tabs` filter
   (`counterparties` | `known network`), paged and **not polled**. A discovered
   card is the unresolved counterpart of a counterparty card, as §6.2's
   discovered action card is of a resolved one: a `known network` chip and **no
   account-dependent verbs** — verified live, `suspend` on an account-less key is
-  refused. `last_seen` is catalog freshness for both classes (muted text, never
-  a status pill), and an absent `peer_credit` is omitted, never stated as zero.
+  refused. `last_seen` is catalog freshness on a **counterparty** row (muted
+  text, never a status pill); only a counterparty pull persists it, so a
+  discovery-only row carries none and MUST show none. Every absent field —
+  `last_seen`, `peer_credit`, `about`, `petname` — is omitted, never rendered as
+  zero, an empty string, or a placeholder.
 
 * A peer row's balance is the **bilateral position** and MUST render signed and
   labeled by direction: a positive position reads **"we owe them"** (the peer
@@ -783,17 +879,12 @@ queue.
   The UI presents the kernel's settlement outcome verbatim and never computes
   or predicts one.
 
-**The value-transfer queue** (`GET /control/transfers`).
-
-* A page listing the kernel's buyer-side value transfers: default view is the
-  unresolved set (`pending` + `quarantined`), a `status` filter also exposes
-  terminal `settled`/`refunded`; each row opens a detail view. Paged (§7).
-* **Retry is the only mutation.** `POST /control/transfers/{id}/retry`
-  re-presents the same signed completion and settles strictly on receipt
-  evidence. The UI MUST NOT offer refund, force-settle, edit, or delete — no
-  such affordance may exist, because quarantine means "evidence insufficient,
-  reconciled out of band", never an operator-chosen outcome. The page states
-  this as one orienting phrase, not narration (§7 feedback rules).
+**No value-transfer queue.** The kernel served one while value could cross a
+kernel boundary and a buyer-side transfer could sit unresolved. Value is now
+local to a kernel (kernel §D18): what is locked from the caller is exactly what
+the beneficiary receives, in one settlement, so no such record can exist and
+`/control/transfers` is gone (404, verified live). The UI carries no queue, no
+retry affordance, and no successor page — there is no state left to represent.
 
 ## 7. Visual language and non-functional requirements
 
@@ -829,8 +920,7 @@ queue.
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
 * **Pagination.** No list renders unbounded. Every long list — browse, the
-  transaction ledger, the workshop management table, the admin roster, the
-  value-transfer queue (§6.6), an action's
+  transaction ledger, the workshop management table, the admin roster, an action's
   ratings, and open/closed sessions — MUST page with `limit`/`offset` at **20 per
   page** through **one shared, quiet pager** (`← previous · page N · next →`; a
   boundary renders a dimmed non-link). The pager carries no accent (money-reserved).
@@ -908,8 +998,9 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
    step's `required_caller` and `next_action`), never on payload shape.
-2. Route every act that moves the user's own money — run, payment-step
-   completion (§6.3), the wallet send, force-end — through a confirm whose
+2. Route every act that moves the user's own money — run (including a run of a
+   value-bearing action, which is how money is sent, §6.5), payment-step
+   completion (§6.3), force-end — through a confirm whose
    button names the amount or refund. An ordinary step completion moves none of
    the completer's money and stays neutral (§6.3, the single statement). No
    spend MUST be reachable from a list view or by a GET.
@@ -941,7 +1032,7 @@ Every production `.go` file has a `_test.go` file with independent tests.
   form still renders);
 * the two completion branches: ordinary steps neutral (no amount anywhere);
   payment steps render the money button naming the amount and the beneficiary
-  (§6.3), decided solely by the kernel's `payment` descriptor;
+  (§6.3), decided solely by the target action's signed `effect` field;
 * the run primitive: cost preview, the priced confirm, process auto-closure, and
   force-end;
 * no action is special-cased: no bespoke form, route, command, or price helper
@@ -949,9 +1040,12 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * bare-handle auth (login, register, recover) with sigiled input tolerated;
 * signed bilateral-position rendering on the peers page (negative positions read
   "owes us", never a bare negative);
-* the value-transfer queue: unresolved default, status filter, retry as the only
-  mutation, no refund/force-settle affordance anywhere in the DOM;
-* the three call-outcome classes, rendered distinctly;
+* no value-transfer queue: no route, handler, client method, or link to
+  `/control/transfers` anywhere (§6.6);
+* the call-outcome classes, rendered distinctly — including that a parked
+  (`timeout`) outcome names the reserved amount and claims no refund, that a
+  `meta.retry="refresh"` refusal offers the re-pinned retry while a bare
+  `execution_failed` offers none, and that a peer's refusal names the peer;
 * discovery: lookup path and catalog fallback on `ErrInvalidState`;
 * the workshop offers no synthesis affordance, `sys/make` being absent from the
   kernel;
@@ -1000,18 +1094,44 @@ once its prerequisite is confirmed on the running kernel.
 * **Global exposure figures (§6.6).** Confirmed: `/control/identity` serves
   `exposure_max`, `gross_receivables`, `settlement_due`, `settlement_trigger`,
   and `settlement_quantum`; the kernel card states them as evidence.
-* **Receipt value fields (§6.5).** NOT served on local transaction reads
-  (confirmed: a local `sys/transfer` tx carries only the ordinary
-  gross/fee/net, all zero at price 0, with the moved amount visible in `args`
-  and `result`). The breakdown rows render only what the kernel serves,
-  zero-suppressed — currently nothing extra on local calls; remote-proxy
-  transactions may carry them in the remote receipt JSON.
+* **Receipt value fields (§6.5).** Re-confirmed on v0.12.23: NOT served on local
+  transaction reads — a `sys/transfer` tx carries `gross`/`fee`/`net`/`refund`
+  all zero with the moved amount only in `args`/`result`, and no `value` or
+  `value_to`. So a send is currently legible as a transaction row and a balance
+  movement, but its amount is stated by no money field the UI may render. The
+  breakdown rows stay zero-suppressed and render nothing extra on local calls;
+  remote-proxy transactions may carry them in the remote receipt JSON. **Open
+  against the kernel:** serving `value`/`value_to` on transaction reads would
+  make the amount and the true payer (`caller_handle`) renderable; until then the
+  UI states neither rather than inventing one from `args`.
+* **Parked-run metadata (§6.2).** Confirmed on v0.12.23: a dispatched call with
+  no signed outcome answers `504 timeout` with `meta.process_id`,
+  `meta.pending_since`, and `meta.refund_eligible_at` (24 h out), and the funds
+  move from `available` into `locked` — measured, not inferred.
+* **Contract-drift and peer-refusal markers (§6.2).** Confirmed on v0.12.23:
+  drift answers `500 execution_failed` with `meta.retry = "refresh"` and charges
+  nothing (the immediate retry succeeds); a peer that has suspended this kernel
+  answers `403 unauthorized` with `meta.peer`, and the cached proxy is
+  deactivated so it leaves the buyer's catalog. `peer_unreachable` (502) carries
+  no `meta` at all.
+* **`/control/transfers` — gone.** 404 on v0.12.23, and the 404 is plain text,
+  not a typed error envelope. The queue is removed from this specification
+  (§6.6); nothing replaces it.
 * **`allowed_input` on `/v1/steps` (§6.3).** Confirmed on the running kernel
-  (waiting steps carry it; an approval-only step serves an empty object). The
-  completion form falls back to the target action's `input_schema` where
-  `allowed_input` is absent (older kernels). The federation `payment` descriptor
-  does NOT appear on `/v1` step listings (confirmed); payment steps are detected
-  by the target action's `effect` field (§6.3).
+  (waiting steps carry it). The completion form falls back to the target action's
+  `input_schema` where `allowed_input` is absent (older kernels). The federation
+  `payment` descriptor does NOT appear on `/v1` step listings (confirmed);
+  payment steps are detected by the target action's `effect` field, re-confirmed
+  served on v0.12.23 action reads and readable by the completer (§6.3).
+  An approval-only step serves an object with no fields, in either of two shapes
+  observed live — `{"type":"object","properties":{},"required":null}` and
+  `{"type":"object"}` — and both MUST collapse to the single confirm of §6.3,
+  never to a raw-JSON box, which would ask a human to author `{}`. The two
+  shapes reach that outcome by different routes, and the distinction is load
+  bearing: an **explicitly empty** `properties` declares that the input has no
+  fields, so nothing can be collected; **no `properties` key at all** is an
+  unconstrained object, where the raw editor is correct and the collapse instead
+  follows from every key being sealed in `partial_args`.
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;
@@ -1019,11 +1139,21 @@ logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFou
 (also the kernel's refusal of a lifecycle verb on a remote proxy, §6.6 — which the
 UI does not offer, so this is a defence, not a flow);
 `ErrInsufficientFunds` → clear message noting top-ups are out-of-band;
-`peer_unreachable` → the peer was offline, the call refunded, retry later;
+`peer_unreachable` → the peer was offline, the call refunded, retry later (the
+kernel sends no `meta` here, so the UI names the peer from the ref it submitted
+or names none);
 `peer_unfunded` → the serving kernel's exposure cap is exhausted — an operator
 settlement matter, never rendered as the caller's own insufficient funds (§6.6);
-`ErrExecutionFailed`/`ErrTimeout` → "the action failed and your funds were fully
-refunded," with the failure transaction linked when the kernel records one;
+`ErrUnauthorized` **with `meta.peer`** → the peer refused this call (§6.2), which
+must never read as the user's own lack of permission — plain `ErrUnauthorized`
+keeps the not-permitted message;
+`ErrExecutionFailed` → "the action failed and your funds were fully refunded,"
+with the failure transaction linked when the kernel records one — **except** with
+`meta.retry = "refresh"`, which is the provider's contract change: nothing ran,
+nothing was charged, and the buyer is re-quoted (§6.2);
+`ErrTimeout` → **not** a refund: the call is parked with its funds reserved, and
+the message names the reserved amount, the process, and `refund_eligible_at`
+(§6.2);
 `ErrInternal`. Raw status codes are never shown; diagnostic detail goes to logs
 only and never includes tokens or secrets.
 
