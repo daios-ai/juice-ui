@@ -216,14 +216,14 @@ func TestPeerRefusalIsNotTheUsersPermission(t *testing.T) {
 // while the raw value stays available for logic.
 func TestPeerDisplayAbbreviatesAKeyButNotAPetname(t *testing.T) {
 	key := "1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4" // 43 chars, as the kernel sends
-	if len(key) != keyLen {
+	if len(key) != KeyLen {
 		t.Fatalf("fixture is not a key-shaped name: %d chars", len(key))
 	}
 	ke, _ := AsKernelError(classify(502, []byte(`{"code":"peer_unreachable","error":"peer `+key+` is unreachable","meta":{"peer":"`+key+`"}}`)))
 	if ke.Peer() != key {
 		t.Errorf("Peer() must stay raw for logic, got %q", ke.Peer())
 	}
-	if got := ke.PeerDisplay(); got != "1MutJi6K…_mq4" {
+	if got := ke.PeerDisplay(); got != "1MutJi6KXZ…_mq4" {
 		t.Errorf("PeerDisplay() = %q, want the abbreviated key", got)
 	}
 	if msg := ke.UserMessage(); strings.Contains(msg, key) {

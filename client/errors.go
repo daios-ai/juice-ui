@@ -92,28 +92,22 @@ func (e *KernelError) IsRefreshable() bool {
 	return e.Kind == KindExecutionFailed && e.MetaString("retry") == "refresh"
 }
 
-// Peer names the remote kernel a federation error is about. Every failure to
-// reach a peer carries it as of kernel v0.12.24 — a petname where the failing
-// path knows one, the public key otherwise (both name a kernel, kernel §D15).
-// This is the raw value: compare on it, never print it (see PeerDisplay).
+// Peer names the remote kernel a federation error is about, exactly as the
+// kernel sent it. Every failure to reach a peer carries it as of kernel
+// v0.12.24 — a petname where the failing path knows one, the public key
+// otherwise (both name a kernel, kernel §D15). PeerDisplay renders it.
 func (e *KernelError) Peer() string { return e.MetaString("peer") }
 
-// PeerDisplay is the peer name as prose. A public key is 43 base64url chars —
-// unreadable in a sentence and never what a person recognises the kernel by —
-// so it renders head…tail; a petname passes through whole. The three name
-// classes are disjoint by shape (kernel §D15), so no configuration decides this.
-func (e *KernelError) PeerDisplay() string { return shortKernelName(e.Peer()) }
-
-// keyLen is the length of a base64url-encoded Ed25519 public key (32 bytes).
-const keyLen = 43
-
-// shortKernelName abbreviates a key-shaped name and leaves every other name
-// alone.
-func shortKernelName(name string) string {
-	if len(name) != keyLen {
-		return name
+// PeerDisplay is the peer name as prose. Which name the kernel had to hand
+// varies by failing path, so this abbreviates a KEY and leaves a petname whole:
+// a petname is already what a person recognises the kernel by, however long it
+// is, while 43 characters of base64url in a sentence are unreadable.
+func (e *KernelError) PeerDisplay() string {
+	p := e.Peer()
+	if len(p) == KeyLen {
+		return ShortKey(p)
 	}
-	return name[:8] + "…" + name[len(name)-4:]
+	return p
 }
 
 func (e *KernelError) Error() string {

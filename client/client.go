@@ -382,6 +382,24 @@ type Health struct {
 	PublicKey string `json:"public_key"`
 }
 
+// KeyLen is the length of a kernel's public key: 32 bytes, base64url-encoded.
+// A name of exactly this length is a key rather than a petname or a handle —
+// the three name classes are disjoint by shape (kernel §D15).
+const KeyLen = 43
+
+// ShortKey abbreviates a kernel's public key for display. A key is the
+// canonical global name and unreadable in full, so it shows head…tail: both
+// ends carry distinguishing signal, and the result is still the value to
+// eyeball against the original (no hashing). This is the single definition, so
+// one kernel abbreviates identically everywhere it is named — an error
+// sentence, the header, a card.
+func ShortKey(key string) string {
+	if len(key) <= 14 {
+		return key
+	}
+	return key[:10] + "…" + key[len(key)-4:]
+}
+
 // ---- core request helper ----
 
 // do performs an HTTP request to the kernel, injecting the bearer token and a

@@ -448,7 +448,7 @@ func TestPeerRefusedNamesThePeerExactlyOnce(t *testing.T) {
 	ck, stopk := fk.start(t)
 	defer stopk()
 	outk, _ := NewCaller(ck).Run(context.Background(), "tok", "vendor@k/fast", nil, "")
-	if outk.Peer != "1MutJi6K…_mq4" {
+	if outk.Peer != "1MutJi6KXZ…_mq4" {
 		t.Errorf("Peer = %q, want the abbreviated key", outk.Peer)
 	}
 }

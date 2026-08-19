@@ -97,15 +97,10 @@ func (s *Server) publicBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// keyFingerprint shortens a base64url public key to a head…tail form for
-// eyeball verification. The key itself is the canonical global name, so a
-// truncation of it is the value to compare against (no hashing).
-func keyFingerprint(key string) string {
-	if len(key) <= 14 {
-		return key
-	}
-	return key[:10] + "…" + key[len(key)-4:]
-}
+// keyFingerprint shortens a base64url public key for eyeball verification.
+// One definition serves the whole UI (client.ShortKey), so the same kernel
+// abbreviates identically in the header, on a card, and inside a sentence.
+func keyFingerprint(key string) string { return client.ShortKey(key) }
 
 // New builds the BFF HTTP handler: routes plus the middleware chain
 // (request-id, structured logging, session load/save, CSRF, R5.5/R8.4).

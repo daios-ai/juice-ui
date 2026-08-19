@@ -518,6 +518,15 @@ func TestKeyFingerprint(t *testing.T) {
 	if got := keyFingerprint("short"); got != "short" {
 		t.Errorf("keyFingerprint(short) = %q want %q", got, "short")
 	}
+	// One kernel, one abbreviation, wherever it is named: the header's
+	// fingerprint and a peer named inside an error sentence must be the same
+	// string, or a reader cannot tell they are the same kernel.
+	key := "1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4"
+	ke := &client.KernelError{Meta: map[string]json.RawMessage{"peer": json.RawMessage(`"` + key + `"`)}}
+	if keyFingerprint(key) != ke.PeerDisplay() {
+		t.Errorf("the same key abbreviates two ways: header %q vs sentence %q",
+			keyFingerprint(key), ke.PeerDisplay())
+	}
 }
 
 // TestCallFormRun renders the shared _call_form for an action run: a repeatable
