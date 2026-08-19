@@ -738,3 +738,43 @@ func TestDepositDialogClosesToItsOwnPage(t *testing.T) {
 		}
 	}
 }
+
+// §6.6: the kernel's contact cache renders as dated fact on every roster row —
+// when an exchange last succeeded, and when one last failed. Muted text, never
+// a pill: the kernel states no verdict about whether a peer is up, and neither
+// does the UI. Each clause is omitted until that thing has happened.
+func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	body := getBody(t, cl, srv.URL+"/admin/peers")
+	if !strings.Contains(body, "catalog verified") {
+		t.Error("a row with last_seen states its catalog freshness")
+	}
+	if !strings.Contains(body, "last contact failed") {
+		t.Error("a row with last_contact_failed_at states it")
+	}
+	// Never a status pill — that would read as a verdict on availability.
+	for _, banned := range []string{`pill status-danger">offline`, `pill">unreachable`, ">offline<"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("contact timestamps must not become a status signal: %q", banned)
+		}
+	}
+	// The debtor row has neither timestamp, so it states neither. Its own
+	// distinguishing text (settlement due) proves the row rendered at all.
+	if !strings.Contains(body, "settlement due") {
+		t.Fatal("fixture changed: the debtor row is missing")
+	}
+	if strings.Count(body, "last contact failed") != 1 {
+		t.Errorf("only the one row with a failure states it, got %d", strings.Count(body, "last contact failed"))
+	}
+	// The discovered rows carry last_seen too (v0.12.24 stamps every row), so
+	// catalog freshness appears on both classes.
+	known := getBody(t, cl, srv.URL+"/admin/peers?tab=known")
+	if !strings.Contains(known, "catalog verified") {
+		t.Error("a discovery-only row carries last_seen and states it")
+	}
+}

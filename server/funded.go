@@ -80,7 +80,8 @@ type Outcome struct {
 	Reserved         int64
 	ProcessID        string
 	RefundEligibleAt string
-	// Peer names the kernel that refused a PeerRefused outcome.
+	// Peer names the kernel that refused a PeerRefused outcome, ready to print
+	// (a public key arrives abbreviated). Display only: nothing keys on it.
 	Peer string
 }
 
@@ -315,11 +316,14 @@ func classifyErr(err error) (Outcome, error) {
 	case client.KindUnauthorized:
 		// Only a peer's refusal is an outcome; an ordinary 403 stays an error for
 		// the generic handler, which renders the not-permitted page.
-		if p := ke.Peer(); p != "" {
+		if p := ke.PeerDisplay(); p != "" {
+			// The card's headline names the peer, so the supporting sentence must
+			// not name it again — one fact, one place. UserMessage() keeps its
+			// named form for the surfaces that render a sentence alone (flashes).
 			return Outcome{
 				Class:   PeerRefused,
 				Peer:    p,
-				Message: ke.UserMessage(),
+				Message: "The kernel serving this action refused the call. Nothing was charged, and retrying won't help.",
 			}, nil
 		}
 		return Outcome{}, err

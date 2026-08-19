@@ -79,6 +79,15 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"action_id":"x"}`))
 	})
+	// The journal: an operator deposit, and the value a transfer-effect call
+	// delivered. The kernel sets the value entry's reason to the settling
+	// transaction's id (v0.12.24, verified live) — an id, not prose.
+	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+			{"amount":300,"reason":"T1","created_at":"2024-01-02T12:00:00Z","operator_handle":"alice","from_handle":"alice","to_handle":"bob"},
+			{"amount":5000,"reason":"","created_at":"2024-01-01T00:00:00Z","operator_handle":"sys","to_handle":"alice"}
+		]`))
+	})
 	// The kernel's public ratings projection: value/note/time and nothing else
 	// (verified live 2026-08-05) — no rater, transaction, or receipt identity.
 	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +211,7 @@ func authKernel() *httptest.Server {
 		// but no credit, and no PETNAME until one is bound — only its self-asserted
 		// nickname, which "twin" repeats across two keys, legally, so they must
 		// stay two rows. A suspended counterparty appears only under ?all=1.
-		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z"},
+		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
 		  {"petname":"debtor","public_key":"KEYD","has_account":true,"actions":0,"available":-320,"locked":0,"settlement_due":true},
 		  {"nickname":"twin","public_key":"KEYT1","has_account":false,"actions":13,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:34Z"},
 		  {"nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:35Z"}`
@@ -2495,5 +2504,36 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 		if strings.Contains(body, banned) {
 			t.Errorf("parked outcome must not say %q — the funds are still locked", banned)
 		}
+	}
+}
+
+// §6.5: a value movement renders as a bank-statement row — what moved, which
+// way, when. Its `reason` is the settling transaction's id (kernel §D18), so it
+// is NOT rendered: an id is not a reason a person wrote. The call that caused
+// it is a separate row, because an action whose effect is a money movement is
+// an ordinary action that produces both records.
+func TestWalletValueMovementRendersWithoutTheTransactionID(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/wallet")
+	activity := body[strings.Index(body, "Recent activity"):]
+	if !strings.Contains(activity, "transfer to bob") {
+		t.Error("the movement must name its direction and counterparty")
+	}
+	if !strings.Contains(activity, "−$0.300") {
+		t.Errorf("the movement must state the amount that left the balance:\n%s", activity)
+	}
+	// The id belongs to the transaction row, which links to the receipt; the
+	// movement row must not print it as prose.
+	if strings.Contains(activity, `small">T1<`) {
+		t.Error("a ledger entry's reason (a transaction id) must not render as text")
+	}
+	// Both records are present: the call and the movement.
+	if !strings.Contains(activity, "/transactions/T1") {
+		t.Error("the call itself still renders as its own row, linking to the receipt")
 	}
 }

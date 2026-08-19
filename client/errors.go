@@ -92,10 +92,29 @@ func (e *KernelError) IsRefreshable() bool {
 	return e.Kind == KindExecutionFailed && e.MetaString("retry") == "refresh"
 }
 
-// Peer names the remote kernel a federation error is about, when the kernel
-// says so. Absent on peer_unreachable (verified live), so callers that want a
-// name there must supply it from the ref they submitted.
+// Peer names the remote kernel a federation error is about. Every failure to
+// reach a peer carries it as of kernel v0.12.24 — a petname where the failing
+// path knows one, the public key otherwise (both name a kernel, kernel §D15).
+// This is the raw value: compare on it, never print it (see PeerDisplay).
 func (e *KernelError) Peer() string { return e.MetaString("peer") }
+
+// PeerDisplay is the peer name as prose. A public key is 43 base64url chars —
+// unreadable in a sentence and never what a person recognises the kernel by —
+// so it renders head…tail; a petname passes through whole. The three name
+// classes are disjoint by shape (kernel §D15), so no configuration decides this.
+func (e *KernelError) PeerDisplay() string { return shortKernelName(e.Peer()) }
+
+// keyLen is the length of a base64url-encoded Ed25519 public key (32 bytes).
+const keyLen = 43
+
+// shortKernelName abbreviates a key-shaped name and leaves every other name
+// alone.
+func shortKernelName(name string) string {
+	if len(name) != keyLen {
+		return name
+	}
+	return name[:8] + "…" + name[len(name)-4:]
+}
 
 func (e *KernelError) Error() string {
 	return fmt.Sprintf("kernel error kind=%s status=%d msg=%q", e.Kind, e.Status, e.KernelMessage)
@@ -243,7 +262,7 @@ func (e *KernelError) UserMessage() string {
 		// A peer's refusal arrives in this class but is an operator relationship
 		// fact — the peer suspended us, or will not serve that action — and must
 		// never read as the user's own lack of permission (v0.12.23).
-		if p := e.Peer(); p != "" {
+		if p := e.PeerDisplay(); p != "" {
 			return "Kernel " + p + " declined this call. Nothing was charged, and retrying won't help."
 		}
 		return "You don't have permission to do that."
@@ -287,12 +306,12 @@ func (e *KernelError) UserMessage() string {
 		// rides in Meta and is worded by the server, which owns money formatting.
 		return "The terms changed while this page was open. Nothing was charged."
 	case KindPeerUnreachable:
-		if p := e.MetaString("peer"); p != "" {
+		if p := e.PeerDisplay(); p != "" {
 			return "This action runs on " + p + ", which is currently unreachable. Your funds were not spent — try again when it's back."
 		}
 		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
 	case KindPeerUnfunded:
-		if p := e.MetaString("peer"); p != "" {
+		if p := e.PeerDisplay(); p != "" {
 			return "The kernel serving this action (" + p + ") has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."
 		}
 		return "The kernel serving this action has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."

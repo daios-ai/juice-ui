@@ -416,3 +416,39 @@ func TestRunPeerRefusedNamesThePeer(t *testing.T) {
 		t.Error("a plain 403 must propagate as an error, not render as an outcome")
 	}
 }
+
+// The refused card's headline names the peer ("Declined by bravo"), so the
+// supporting sentence must not name it again — one fact, one place. The Peer
+// field is display-ready: a public key arrives abbreviated.
+func TestPeerRefusedNamesThePeerExactlyOnce(t *testing.T) {
+	f := &fakeKernel{
+		runStatus: http.StatusForbidden,
+		runBody:   `{"code":"unauthorized","error":"peer bravo refused this call","meta":{"peer":"bravo"}}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).Run(context.Background(), "tok", "vendor@bravo/fast", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Peer != "bravo" {
+		t.Fatalf("Peer = %q, want bravo", out.Peer)
+	}
+	if strings.Contains(out.Message, "bravo") {
+		t.Errorf("the headline already names the peer; the sentence must not repeat it: %q", out.Message)
+	}
+	if strings.Contains(strings.ToLower(out.Message), "refunded") {
+		t.Errorf("nothing was charged, so nothing was refunded: %q", out.Message)
+	}
+	// A key-shaped name is abbreviated before it reaches the card.
+	fk := &fakeKernel{
+		runStatus: http.StatusForbidden,
+		runBody:   `{"code":"unauthorized","error":"refused","meta":{"peer":"1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4"}}`,
+	}
+	ck, stopk := fk.start(t)
+	defer stopk()
+	outk, _ := NewCaller(ck).Run(context.Background(), "tok", "vendor@k/fast", nil, "")
+	if outk.Peer != "1MutJi6K…_mq4" {
+		t.Errorf("Peer = %q, want the abbreviated key", outk.Peer)
+	}
+}

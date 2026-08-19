@@ -79,8 +79,7 @@ type Adjustment struct {
 // negative = the peer owes this kernel; render it with its reading, never bare
 // (§6.6, and see server.positionText). PeerCredit is our cached credit on the
 // peer and is ABSENT until a gossip pull as a counterparty returns one, so it is
-// zero-suppressed rather than shown as zero. LastSeen is the last verified
-// gossip pull for BOTH classes — catalog freshness, never a liveness claim.
+// zero-suppressed rather than shown as zero.
 // SettlementDue is the kernel's Y-trigger signal: information, never authority
 // (crossing it stops nothing; only the global cap X refuses calls). SuspendedAt
 // is present only on a suspended row under ?all=1 (v0.9 unified moderation).
@@ -93,18 +92,24 @@ type Adjustment struct {
 // by key. Every URL, form and mutation keys on PublicKey — never on a displayed
 // name.
 type Peer struct {
-	Petname       string `json:"petname"`  // bound here; resolves; "" until bound
-	Nickname      string `json:"nickname"` // self-asserted by the remote; never resolves
-	About         string `json:"about"`    // the peer's sys description; counterparty prose
-	PublicKey     string `json:"public_key"`
-	HasAccount    bool   `json:"has_account"` // counterparty (billing account) vs discovered
-	Actions       int    `json:"actions"`     // public actions in its gossiped catalog
-	Available     int64  `json:"available"`
-	Locked        int64  `json:"locked"`
-	PeerCredit    int64  `json:"peer_credit"`              // our cached credit on the peer; absent until synced
-	LastSeen      string `json:"last_seen"`                // RFC3339; "" / null when never pulled
-	SettlementDue bool   `json:"settlement_due,omitempty"` // gross receivables crossed Y (§13)
-	SuspendedAt   string `json:"suspended_at,omitempty"`   // set only on a suspended row under ?all=1
+	Petname    string `json:"petname"`  // bound here; resolves; "" until bound
+	Nickname   string `json:"nickname"` // self-asserted by the remote; never resolves
+	About      string `json:"about"`    // the peer's sys description; counterparty prose
+	PublicKey  string `json:"public_key"`
+	HasAccount bool   `json:"has_account"` // counterparty (billing account) vs discovered
+	Actions    int    `json:"actions"`     // public actions in its gossiped catalog
+	Available  int64  `json:"available"`
+	Locked     int64  `json:"locked"`
+	PeerCredit int64  `json:"peer_credit"` // our cached credit on the peer; absent until synced
+	// LastSeen and LastContactFailedAt are the kernel's contact cache (§13):
+	// when a verified exchange last succeeded, and when one last failed. Raw
+	// RFC3339 facts, each "" until it has happened — the kernel states neither
+	// as a verdict and neither ever moves backwards, so the UI dates them and
+	// draws no conclusion about whether the peer is up.
+	LastSeen            string `json:"last_seen"`
+	LastContactFailedAt string `json:"last_contact_failed_at"`
+	SettlementDue       bool   `json:"settlement_due,omitempty"` // gross receivables crossed Y (§13)
+	SuspendedAt         string `json:"suspended_at,omitempty"`   // set only on a suspended row under ?all=1
 }
 
 // Suspended reports whether this peer is frozen (its inbound calls are refused).

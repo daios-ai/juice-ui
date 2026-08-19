@@ -194,10 +194,14 @@
 </tr>
 {{end}}
 
+{{/* A movement row is the bank-statement shape: what moved, which way, when.
+     `reason` is not shown — on a value movement the kernel sets it to the
+     settling transaction's id (kernel §D18), which is an id, not a reason a
+     person wrote. */}}
 {{define "_activity_entry"}}
 {{$e := .Entry}}
 <tr>
-  <td>{{.Label}}{{if $e.Reason}} <span class="muted small">{{$e.Reason}}</span>{{end}}</td>
+  <td>{{.Label}}</td>
   <td class="muted small">—</td>
   <td class="money">{{if .Credited}}<span class="sig-credited">+{{money $e.Amount}}</span>{{else}}−{{money $e.Amount}}{{end}}</td>
   <td class="muted small">—</td>
@@ -445,6 +449,17 @@
      across kernels and the kernel re-aliases one when a deposit promotes it, so
      only a counterparty's alias — an ordinary handle here — links to rename, and
      every form keys on the public key. */}}
+{{/* _peer_contact — the kernel's contact cache, dated and drawing no
+     conclusion. `last_seen` is when a verified exchange last succeeded (catalog
+     freshness, served for every roster row); `last_contact_failed_at` is when
+     one last failed. Both are muted text, never a status pill: the kernel
+     states neither as a verdict, and a peer is called and the outcome reported
+     rather than pre-judged (§6.6). Each is omitted until it has happened. */}}
+{{define "_peer_contact"}}
+{{- if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end -}}
+{{- if .LastContactFailedAt}} · last contact failed {{relTime .LastContactFailedAt}}{{end -}}
+{{end}}
+
 {{define "_peers"}}
 {{if .Peers}}
 {{$known := .Known}}
@@ -466,13 +481,8 @@
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
       </div>
       <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
-      {{/* last_seen is the last verified gossip pull — catalog freshness, not
-           reachability, so it is muted text and never a status pill. Only a
-           COUNTERPARTY pull persists it (kernel §D16), so a discovery-only row
-           carries none and shows none, exactly as PeerCredit is omitted rather
-           than stated as zero until a sync returns one (§6.6). */}}
       {{if $known}}
-      <div class="small muted">{{.Actions}} actions{{if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end}}</div>
+      <div class="small muted">{{.Actions}} actions{{template "_peer_contact" .}}</div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{/* A real ?form= link, never data-modal: the key is prefilled
@@ -487,7 +497,7 @@
       {{else}}
       {{/* The bilateral position, signed WITH its reading — "we owe them" /
            "owes us" — never a bare negative number (§6.6). */}}
-      <div class="small muted">position <span class="mono">{{positionText .Available}}</span>{{if .PeerCredit}} · our credit there <span class="mono" title="What we can spend calling this kernel">{{money .PeerCredit}}</span>{{end}}{{if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end}}{{if .SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger — settle out of band">settlement due</span>{{end}}</div>
+      <div class="small muted">position <span class="mono">{{positionText .Available}}</span>{{if .PeerCredit}} · our credit there <span class="mono" title="What we can spend calling this kernel">{{money .PeerCredit}}</span>{{end}}{{template "_peer_contact" .}}{{if .SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger — settle out of band">settlement due</span>{{end}}</div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{/* Settle moves REAL external money: confirm names the kernel; the

@@ -1,7 +1,22 @@
 # Juice Web UI Requirements
 
-Version: 0.6.2
+Version: 0.6.3
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.6.3.** The kernel's v0.12.24 contract, verified live.
+> Money that moves through an action is now **journalled**: settling a
+> `transfer`-effect call writes a ledger entry from the caller to the
+> beneficiary, so both parties read the movement even though the beneficiary is
+> no party to the transaction (§6.5). The wallet's activity list already folds
+> the two records the kernel keeps, and needs no new shape: the transaction is
+> the call, the entry is the movement, and an ordinary action whose effect is a
+> money movement produces both.
+>
+> Two names stop being printed raw: a ledger entry's `reason`, which the kernel
+> sets to the settling transaction's id, and a `meta.peer` that arrives as a
+> public key rather than a petname (§6.6). A kernel's contact cache
+> (`last_seen`, `last_contact_failed_at`) is served for every roster row and
+> renders as dated fact, never as a verdict on whether the peer is up.
 
 > **What changed in 0.6.2.** The kernel's v0.12.23 contract lands, verified live
 > against a federated pair. Every axis is written into the section it governs;
@@ -444,6 +459,13 @@ detectable.
   row carries it, the card MUST state that freshness quietly (the age, in words),
   since it is the only evidence of how current a remote quote is. It is the
   served fact that replaces reading provenance out of the ref.
+  A lookup row also carries the **hosting kernel's** contact timestamps
+  (`last_seen`, `last_contact_failed_at`). The card MUST NOT render them: they
+  describe the kernel, not the quote, and a per-action availability signal is
+  exactly what §6.6 retired — a card that says "last reached an hour ago" is
+  read as "this will fail", which the kernel declines to claim and the UI must
+  not imply. They belong on the operator's roster (§6.6), where a kernel is the
+  subject. A remote action is offered, called, and its outcome reported.
 * **Every result states a price, including a discovered one.** The kernel serves
   `price` on every `sys/lookup` row — an action's own price locally, and for a
   discovered hit its `serving_price` marked up by the current import fee. A
@@ -691,21 +713,30 @@ open (parked steps), the result MUST say so and link to the Wallet.
   evidence behind a parked run (§6.2).
 * **Activity is one list, folded from both records the kernel keeps.** Money
   leaves a user's balance through two surfaces that do not share a log: the
-  ledger (`GET /v1/ledger` — deposits, withdrawals, direct transfers) and
-  transactions (`GET /v1/transactions` — every call, including a `sys/transfer`
-  run). Verified live: running `sys/transfer` writes **no** ledger entry, so two
-  separate tables let a spend appear in neither and the wallet would silently
-  omit exactly the sends §6.5 prescribes. The BFF MUST therefore merge both into
-  a single time-ordered activity list — an arrangement of served rows, never a
-  recomputation — each row linking to its receipt or ledger entry. The wallet
-  shows the most recent 10 and links to the paginated ledger.
-* **A value-bearing call renders its value only where the kernel serves it.**
-  Verified live, a local `sys/transfer` transaction carries `gross`/`fee`/`net`/
-  `refund` all zero with the moved amount visible only in `args`/`result`, and no
-  `value`/`value_to` field. The UI MUST NOT manufacture a money figure out of
-  `args`: a displayed amount is a kernel-vouched fact or it is not displayed
-  (§7). Where the kernel serves `value`/`value_to`, they render as breakdown
-  rows, zero-suppressed, and the payer named beside them is the transaction's
+  ledger (`GET /v1/ledger` — deposits, withdrawals, direct transfers, and value
+  delivered by a `transfer`-effect call) and transactions
+  (`GET /v1/transactions` — every call). Neither is a superset: a plain run
+  appears only in the second, a deposit and an incoming transfer only in the
+  first. The BFF MUST therefore merge both into a single time-ordered activity
+  list — an arrangement of served rows, never a recomputation — each row
+  linking to its receipt or ledger entry. The wallet shows the most recent 10
+  and links to the paginated ledger.
+* **A value-bearing call is two records, and renders as two rows.** Settling a
+  `transfer`-effect call writes a ledger entry from the immediate caller to the
+  beneficiary alongside the ordinary transaction (verified live on v0.12.24;
+  the entry's `reason` is the settling transaction's id). The transaction states
+  what the *call* cost — zero for a price-0 action — and the entry states what
+  *moved*. The UI MUST NOT fold them into one row or reconcile one against the
+  other: an action whose effect is a money movement is an ordinary action that
+  produces both records, and the activity list shows each as what it is. The
+  journal is also the only surface the recipient has, since the beneficiary is
+  no party to the transaction and cannot read it.
+  The `reason` MUST NOT render as prose: it is an id, not a sentence a person
+  wrote. The UI MUST still NOT manufacture a money figure out of a
+  transaction's `args` — a displayed amount is a kernel-vouched fact or it is
+  not displayed (§7); the entry is now that fact. Where the kernel additionally
+  serves `value`/`value_to` on a transaction, they render as breakdown rows,
+  zero-suppressed, and the payer named beside them is the transaction's
   **`caller_handle`** — the immediate caller, whose balance the value actually
   leaves — never the `owner_handle` that pays for execution. The two differ
   exactly when a payment step settles inside someone else's process (§6.3).
@@ -763,11 +794,16 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
   card is the unresolved counterpart of a counterparty card, as §6.2's
   discovered action card is of a resolved one: a `known network` chip and **no
   account-dependent verbs** — verified live, `suspend` on an account-less key is
-  refused. `last_seen` is catalog freshness on a **counterparty** row (muted
-  text, never a status pill); only a counterparty pull persists it, so a
-  discovery-only row carries none and MUST show none. Every absent field —
-  `last_seen`, `peer_credit`, `about`, `petname` — is omitted, never rendered as
-  zero, an empty string, or a placeholder.
+  refused. The kernel's **contact cache** is served for every roster row, both
+  classes: `last_seen` (when a verified exchange last succeeded — catalog
+  freshness) and `last_contact_failed_at` (when one last failed). Both render as
+  muted dated text and never as a status pill, because the kernel states neither
+  as a verdict: it holds two timestamps that only ever move forward, and it
+  neither hides nor reorders a peer for having failed. The UI therefore reports
+  them and draws no conclusion about whether a peer is up — the call-and-see
+  rule below is unchanged. Every absent field — either timestamp,
+  `peer_credit`, `about`, `petname` — is omitted, never rendered as zero, an
+  empty string, or a placeholder.
 
 * A peer row's balance is the **bilateral position** and MUST render signed and
   labeled by direction: a positive position reads **"we owe them"** (the peer
@@ -793,7 +829,12 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
   three names and they are not interchangeable, so the UI MUST keep them apart:
   * its **public key** — global, self-certifying, unreadable. The only thing
     every URL, form and mutation keys on. It renders **truncated**, with the
-    whole value recoverable (a `title`), never as a card title in full.
+    whole value recoverable (a `title`), never as a card title in full. This
+    holds wherever a kernel is named, including inside a sentence: a failure
+    naming a peer (§6.2) carries whichever name the kernel had to hand —
+    a petname where the failing path knew one, the key otherwise — so the UI
+    abbreviates a key-shaped name before printing it. The three name classes
+    are disjoint by shape, so nothing configures this.
   * its **nickname** — what the kernel calls *itself*. Self-asserted, collides
     freely, and **never resolves**, so it is counterparty content under §8:
     inert, never a link, and never offered where a name that resolves is
@@ -1094,26 +1135,38 @@ once its prerequisite is confirmed on the running kernel.
 * **Global exposure figures (§6.6).** Confirmed: `/control/identity` serves
   `exposure_max`, `gross_receivables`, `settlement_due`, `settlement_trigger`,
   and `settlement_quantum`; the kernel card states them as evidence.
-* **Receipt value fields (§6.5).** Re-confirmed on v0.12.23: NOT served on local
-  transaction reads — a `sys/transfer` tx carries `gross`/`fee`/`net`/`refund`
-  all zero with the moved amount only in `args`/`result`, and no `value` or
-  `value_to`. So a send is currently legible as a transaction row and a balance
-  movement, but its amount is stated by no money field the UI may render. The
-  breakdown rows stay zero-suppressed and render nothing extra on local calls;
-  remote-proxy transactions may carry them in the remote receipt JSON. **Open
-  against the kernel:** serving `value`/`value_to` on transaction reads would
-  make the amount and the true payer (`caller_handle`) renderable; until then the
-  UI states neither rather than inventing one from `args`.
+* **A moved amount — resolved (§6.5).** v0.12.24 journals it: settling a
+  `transfer`-effect call writes a ledger entry from the immediate caller to the
+  beneficiary, `reason` = the settling transaction's id, and **both** parties
+  read it (verified: the beneficiary gets 404 on the transaction itself, so the
+  journal is their only record). The transaction still carries
+  `gross`/`fee`/`net`/`refund` — zero at price 0 — and no `value`/`value_to`;
+  the breakdown rows stay zero-suppressed and would render those if a kernel
+  ever serves them. Remote-proxy transactions may carry them in the remote
+  receipt JSON.
 * **Parked-run metadata (§6.2).** Confirmed on v0.12.23: a dispatched call with
   no signed outcome answers `504 timeout` with `meta.process_id`,
   `meta.pending_since`, and `meta.refund_eligible_at` (24 h out), and the funds
   move from `available` into `locked` — measured, not inferred.
-* **Contract-drift and peer-refusal markers (§6.2).** Confirmed on v0.12.23:
+* **Contract-drift and peer-refusal markers (§6.2).** Re-confirmed on v0.12.24:
   drift answers `500 execution_failed` with `meta.retry = "refresh"` and charges
   nothing (the immediate retry succeeds); a peer that has suspended this kernel
   answers `403 unauthorized` with `meta.peer`, and the cached proxy is
-  deactivated so it leaves the buyer's catalog. `peer_unreachable` (502) carries
-  no `meta` at all.
+  deactivated so it leaves the buyer's catalog. **`peer_unreachable` (502) now
+  carries `meta.peer` too** — every failure to reach a peer names it. The name
+  is a petname where the failing path knows one and the public key otherwise
+  (observed: refusal gave `bravo`, unreachable gave the key), so the UI
+  abbreviates a key-shaped name before printing it (§6.6).
+* **Kernel contact cache (§6.6).** Confirmed on v0.12.24: every roster row
+  carries `last_seen`, and `last_contact_failed_at` appears once a contact has
+  failed; `sys/lookup` rows carry the same two for the hosting kernel. Raw
+  timestamps that only move forward — the kernel neither hides nor reorders a
+  hit for being unreachable, and states no verdict.
+* **Action read shape (§6.4).** v0.12.24 drops `source` from a `kind=http`
+  read: the decomposed `http` object is the read shape and `source` is a
+  write-only input (the encoded-string form is gone). A `kind=wasm` read still
+  carries its `source`, which is authored text. `effect` is now documented and
+  is **absent**, not null, on an ordinary action.
 * **`/control/transfers` — gone.** 404 on v0.12.23, and the 404 is plain text,
   not a typed error envelope. The queue is removed from this specification
   (§6.6); nothing replaces it.
