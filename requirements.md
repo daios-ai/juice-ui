@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.6.3
+Version: 0.6.4
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.6.4.** One definition of a shortened public key, so a
+> kernel abbreviates to the same string wherever it is named — the header, a
+> card, or inside a failure sentence (§6.6). Two abbreviations of one key defeat
+> the purpose of truncating it, which is to let a person match one against
+> another.
 
 > **What changed in 0.6.3.** The kernel's v0.12.24 contract, verified live.
 > Money that moves through an action is now **journalled**: settling a
@@ -834,7 +840,9 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
     naming a peer (§6.2) carries whichever name the kernel had to hand —
     a petname where the failing path knew one, the key otherwise — so the UI
     abbreviates a key-shaped name before printing it. The three name classes
-    are disjoint by shape, so nothing configures this.
+    are disjoint by shape, so nothing configures this. The abbreviation MUST
+    have exactly one definition: a truncated key exists so a person can match
+    one against another, which two spellings of the same key defeat.
   * its **nickname** — what the kernel calls *itself*. Self-asserted, collides
     freely, and **never resolves**, so it is counterparty content under §8:
     inert, never a link, and never offered where a name that resolves is
