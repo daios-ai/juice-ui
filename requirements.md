@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.6.4
+Version: 0.6.5
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.6.5.** The UI stops speaking a naming dialect of its own.
+> A handle is bare wherever it is shown, and a name is taken as typed wherever it
+> is read (§4): no surface decorates a handle with a sigil on display, and none
+> strips one on input — a sigiled handle is refused as the ill-formed input it
+> is, exactly as the kernel refuses it. Printing `@h` while silently reading it
+> back as `h` let the two halves hold each other up, so neither looked wrong, and
+> the same dead grammar reached the code that spawns the agent daemon. A drift
+> guard over every template, core and app, now fails the build if a name grows a
+> sigil again (§9).
 
 > **What changed in 0.6.4.** One definition of a shortened public key, so a
 > kernel abbreviates to the same string wherever it is named — the header, a
@@ -1086,7 +1096,11 @@ Every production `.go` file has a `_test.go` file with independent tests.
   force-end;
 * no action is special-cased: no bespoke form, route, command, or price helper
   keyed to a single ref anywhere in the UI (§6.5);
-* bare-handle auth (login, register, recover) with sigiled input tolerated;
+* bare-handle auth (login, register, recover) with sigiled input refused, never
+  rewritten — at every boundary that reads a name (§4);
+* no surface emits a sigiled name: no template decorates a handle or ref with
+  `@`, and the only `@` a template may carry is the `owner@kernel/name` join
+  (§4), enforced by a drift guard over the core and app templates;
 * signed bilateral-position rendering on the peers page (negative positions read
   "owes us", never a bare negative);
 * no value-transfer queue: no route, handler, client method, or link to
