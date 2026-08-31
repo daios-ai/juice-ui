@@ -2,6 +2,7 @@ package agents
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -144,6 +145,29 @@ func TestSupervisorStartError(t *testing.T) {
 	}
 	if s.running("a") {
 		t.Fatal("failed start must not be tracked as running")
+	}
+}
+
+// The serve grammar is the one thing about the daemon this package cannot
+// discover at runtime: a wrong argv exits with usage, which start() cannot tell
+// from a healthy spawn. Pinned here against juice-agent v0.2.0
+// (`juice-agent serve [handle]`, handles bare, --password-stdin).
+func TestServeArgsMatchesDaemonGrammar(t *testing.T) {
+	got := serveArgs("research")
+	want := []string{"serve", "--password-stdin", "research"}
+	if len(got) != len(want) {
+		t.Fatalf("serveArgs = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("serveArgs = %q, want %q", got, want)
+		}
+	}
+	// The handle is passed bare: the sigil belonged to the superseded grammar.
+	for _, a := range got {
+		if strings.HasPrefix(a, "@") {
+			t.Fatalf("handle must be bare, got %q in %q", a, got)
+		}
 	}
 }
 

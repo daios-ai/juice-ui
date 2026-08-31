@@ -8,7 +8,7 @@ import (
 
 func TestCallerIdentityRoundTrips(t *testing.T) {
 	id := NewCallerIdentity("s3cret-signing-key")
-	for _, h := range []string{"alice", "sys", "@a/weird.handle", "bob"} {
+	for _, h := range []string{"alice", "sys", "a/weird.handle", "bob"} {
 		tok := id.Token(h)
 		if tok == "" {
 			t.Fatalf("empty token for %q", h)
@@ -35,7 +35,7 @@ func TestCallerIdentityRejectsForgeryAndTamper(t *testing.T) {
 	}
 	// A token whose handle is swapped but signature kept must not verify.
 	forged := NewCallerIdentity("key-A")
-	tampered := enc.EncodeToString([]byte("@mallory")) + "." + tok[len(enc.EncodeToString([]byte("alice")))+1:]
+	tampered := enc.EncodeToString([]byte("mallory")) + "." + tok[len(enc.EncodeToString([]byte("alice")))+1:]
 	if _, ok := forged.Verify(tampered); ok {
 		t.Error("tampered handle verified")
 	}

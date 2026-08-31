@@ -8,7 +8,7 @@
 //
 //   - Kernel-facing writes (KernelHandler): fixed URLs, args in the JSON body; the
 //     caller is whatever the injected auth hook returns for the request. These are
-//     the @chat/* action sources. They enforce authorization (creator-only admin
+//     the chat/* action sources. They enforce authorization (creator-only admin
 //     ops, member-only posting) and return a real success or failure, synchronously.
 //   - Admin (reached only through the in-process Client): the read/provision
 //     surface — list rooms + unread, read a room, page history, mark read — gated by
@@ -34,7 +34,7 @@ const adminHeader = "X-Chat-Admin"
 // → chat/msg/message), so a single grant selector (chat/msg) covers them all and
 // leaves the open chat/register outside that folder. It is the action's full public
 // contract: a natural-language Description plus JSON-Schema args and success response
-// — written to be sufficient for @sys/lookup and LLM function calling (kernel
+// — written to be sufficient for sys/lookup and LLM function calling (kernel
 // requirements §3).
 type Op struct {
 	Name         string

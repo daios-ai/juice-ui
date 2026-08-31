@@ -40,7 +40,7 @@ func TestCardArtHueIsPerOwner(t *testing.T) {
 	// And different owners generally do not. Not a guarantee for any given pair
 	// (twelve hues collide), so assert over a spread of handles instead.
 	seen := map[string]bool{}
-	for _, o := range []string{"@a", "@b", "@c", "lena", "@kai", "sys", "@mail", "@vera"} {
+	for _, o := range []string{"a", "b", "c", "lena", "kai", "sys", "mail", "vera"} {
 		seen[hue(string(CardArt("x", o, "run", "http")))] = true
 	}
 	if len(seen) < 3 {
@@ -68,7 +68,7 @@ func TestCardArtCSPSafe(t *testing.T) {
 	// Cover the glyph path too: corpus artwork is inlined, so it is under test.
 	for _, art := range []string{
 		string(CardArt("act-1", "lena", "ocr-translate", "http")),
-		string(CardArt("act-2", "@kai", "", "wasm")),
+		string(CardArt("act-2", "kai", "", "wasm")),
 	} {
 		if strings.Contains(art, "style=") {
 			t.Error("CardArt must not use inline style= (CSP / grammar)")
@@ -123,9 +123,9 @@ func TestCardArtGradientIDsUnique(t *testing.T) {
 	seen := map[string]string{}
 	for _, c := range []struct{ id, owner, name, kind string }{
 		{"1", "chat", "inbox", "http"}, {"2", "chat", "output", "http"},
-		{"3", "@mail", "list", "http"}, {"4", "@mail", "send", "http"},
+		{"3", "mail", "list", "http"}, {"4", "mail", "send", "http"},
 		{"5", "sys", "make", "native"}, {"6", "sys", "lookup", "native"},
-		{"7", "@kai", "", "wasm"}, {"8", "lena", "ocr-translate", "http"},
+		{"7", "kai", "", "wasm"}, {"8", "lena", "ocr-translate", "http"},
 	} {
 		ref := c.owner + "/" + c.name
 		g := gid(string(CardArt(c.id, c.owner, c.name, c.kind)))

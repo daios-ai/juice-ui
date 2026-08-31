@@ -3,7 +3,7 @@
 {{$h := $d.Handle}}
 <nav class="crumb"><a href="/agents">← agents</a></nav>
 <div class="page-head">
-  <h1><span class="ref mono"><span class="owner">@{{$h}}</span></span></h1>
+  <h1><span class="ref mono"><span class="owner">{{$h}}</span></span></h1>
 </div>
 
 <h2>Status</h2>
@@ -34,7 +34,7 @@
 
 <h2>Danger</h2>
 <div class="cluster">
-  <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete @{{$h}}? Its home, files, and memory are removed. This cannot be undone.">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
+  <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}? Its home, files, and memory are removed. This cannot be undone.">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
 </div>
 
 {{/* ---- edit modals (persona / knowledge / config) ---- */}}

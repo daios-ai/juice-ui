@@ -107,7 +107,7 @@ func newSA(t *testing.T, f *fakeAuth, buf *syncBuf) *ServiceAccount {
 	if buf != nil {
 		deps.Logger = slog.New(slog.NewTextHandler(buf, nil))
 	}
-	return NewServiceAccount(deps, "@svc", "svcpass123")
+	return NewServiceAccount(deps, "svc", "svcpass123")
 }
 
 func waitFor(t *testing.T, cond func() bool, within time.Duration, msg string) {
@@ -195,7 +195,7 @@ func TestSuspendedLogsUnsuspendHintBacksOffAndSelfHeals(t *testing.T) {
 	defer sa.Stop()
 
 	// It logs the actionable unsuspend hint, and does NOT tight-spin.
-	waitFor(t, func() bool { return strings.Contains(buf.String(), "admin unsuspend @svc") }, time.Second,
+	waitFor(t, func() bool { return strings.Contains(buf.String(), "admin unsuspend svc") }, time.Second,
 		"suspended log with unsuspend fix")
 	time.Sleep(150 * time.Millisecond)
 	if sa.Ready() {

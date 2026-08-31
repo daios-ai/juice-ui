@@ -17,7 +17,7 @@ import (
 // Two orthogonal signals, per docs/action-thumbnails.md:
 //
 //   - the ground color says *who provides it* — the hue is hashed from the owner
-//     handle alone, so @chat/inbox and @chat/output are the same color and read
+//     handle alone, so chat/inbox and chat/output are the same color and read
 //     as one provider's shelf;
 //   - the glyph says *what it does* — icons.Pick matches the action name against
 //     an icon corpus, falling back to a per-kind glyph when the name carries too

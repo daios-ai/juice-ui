@@ -62,7 +62,7 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	sessions := session.NewManager(sm, kernel)
 
 	// App modules. Each is self-contained; the core only knows the apps.App
-	// seam. Chat runs the in-process @chat application, which provisions its own
+	// seam. Chat runs the in-process chat application, which provisions its own
 	// service account on first run and persists it in state.json — no chat
 	// configuration required.
 	var appList []apps.App

@@ -384,6 +384,49 @@ func TestAppTemplatesFollowGrammar(t *testing.T) {
 	}
 }
 
+// sigilRe finds an "@" used as a sigil on a name: one that does not join to a
+// preceding name character. The remote-action form owner@kernel/name (§4) joins
+// the "@" to the owner segment — a literal one, or a template action's "}}" —
+// and is the only legitimate "@" a template may carry.
+var sigilRe = regexp.MustCompile(`(^|[^A-Za-z0-9_}])@[A-Za-z{]`)
+
+// TestTemplatesEmitBareNames is the drift guard for requirements.md §4: a handle
+// is bare ("sys", "alice") and the UI emits it as it is, never decorated. The
+// agents app rendered "@{{.Handle}}" on every card, heading, and confirm, which
+// made the UI disagree with the platform it presents — "@x" names a *kernel* in
+// this grammar, not a user — and forced a matching strip on input, so the two
+// defects held each other up. It also taught the wrong convention to the code
+// that spawned the agent daemon, whose "@handle serve" argv the daemon had
+// already stopped accepting. A sigil in a template is a defect, not a style.
+func TestTemplatesEmitBareNames(t *testing.T) {
+	core, err := fs.Glob(tmplFS, "templates/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := filepath.Glob("../apps/*/templates/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(core) == 0 {
+		t.Fatal("no core templates found")
+	}
+	for _, f := range append(core, app...) {
+		var b []byte
+		if strings.HasPrefix(f, "..") {
+			b, err = os.ReadFile(f)
+		} else {
+			b, err = tmplFS.ReadFile(f)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		for _, loc := range sigilRe.FindAllStringIndex(src, -1) {
+			t.Errorf("%s: a name carries an @ sigil — handles and refs are bare (§4); only owner@kernel/name joins an @: …%s…", f, snippet(src, loc[0]))
+		}
+	}
+}
+
 func mustRead(t *testing.T, f string) []byte {
 	t.Helper()
 	b, err := tmplFS.ReadFile(f)

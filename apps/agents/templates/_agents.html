@@ -10,7 +10,7 @@
 {{define "_agent_status"}}
 {{if .Running}}
 <span class="pill">running</span>
-<form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop @{{.Handle}}? It drains in-flight tasks and exits.">{{.CSRF}}<button class="btn-danger small" type="submit">Stop</button></form>
+<form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}? It drains in-flight tasks and exits.">{{.CSRF}}<button class="btn-danger small" type="submit">Stop</button></form>
 {{else}}
 <span class="muted small">stopped</span>
 <a class="btn small" href="/agents/{{.Handle}}?form=start" data-modal="form-start-{{.Handle}}">Start…</a>
@@ -24,7 +24,7 @@
 */}}
 {{define "_agent_start"}}
 <dialog id="form-start-{{.Handle}}" class="modal-form"{{if .Open}} open{{end}} aria-label="Start agent">
-  <div class="modal-head"><h2>Start @{{.Handle}}</h2><a class="modal-close" href="{{.CloseHref}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Start {{.Handle}}</h2><a class="modal-close" href="{{.CloseHref}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/agents/{{.Handle}}/start">
       {{.CSRF}}

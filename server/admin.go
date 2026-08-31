@@ -12,7 +12,7 @@ import (
 )
 
 // Admin (superuser) handlers. Every route reaches here only through
-// requireSuperuser (@sys), and the kernel independently rejects a non-superuser
+// requireSuperuser (sys), and the kernel independently rejects a non-superuser
 // bearer with 403 — so a stale UI check can never authorize a real admin action.
 // The admin surface covers the operator verbs no ordinary user performs: money
 // (deposit/withdraw), access (suspend), and federation trust (peers, settlement).

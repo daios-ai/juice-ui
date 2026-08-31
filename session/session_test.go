@@ -67,9 +67,9 @@ func TestGrantState(t *testing.T) {
 	if _, _, ok := m.TakeGrantState(ctx); ok {
 		t.Fatal("no state stored yet")
 	}
-	m.PutGrantState(ctx, "S1", "@sys/gmail-send")
+	m.PutGrantState(ctx, "S1", "sys/gmail-send")
 	state, action, ok := m.TakeGrantState(ctx)
-	if !ok || state != "S1" || action != "@sys/gmail-send" {
+	if !ok || state != "S1" || action != "sys/gmail-send" {
 		t.Fatalf("got %q %q ok=%v", state, action, ok)
 	}
 	// single-use: a second take (and thus a replayed callback) finds nothing.
@@ -83,14 +83,14 @@ func TestLoginLogout(t *testing.T) {
 	if m.IsAuthenticated(ctx) {
 		t.Fatal("should start unauthenticated")
 	}
-	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "@alice"); err != nil {
+	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	toks, ok := m.Tokens(ctx)
 	if !ok || toks.AccessToken != "at" || toks.RefreshToken != "rt" {
 		t.Fatalf("tokens = %+v ok=%v", toks, ok)
 	}
-	if m.Handle(ctx) != "@alice" {
+	if m.Handle(ctx) != "alice" {
 		t.Errorf("handle = %q", m.Handle(ctx))
 	}
 	if err := m.Logout(ctx); err != nil {
@@ -111,7 +111,7 @@ func TestDoNoSession(t *testing.T) {
 
 func TestDoPassThroughNonAuthError(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
-	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "@a")
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a")
 	sentinel := errors.New("boom")
 	err := m.Do(ctx, func(string) error { return sentinel })
 	if !errors.Is(err, sentinel) {
@@ -122,7 +122,7 @@ func TestDoPassThroughNonAuthError(t *testing.T) {
 func TestDoRefreshAndRetry(t *testing.T) {
 	fr := &fakeRefresher{next: client.Tokens{AccessToken: "at1", RefreshToken: "rt1"}}
 	m, ctx := newCtx(t, fr)
-	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "@a")
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a")
 
 	var tokensSeen []string
 	err := m.Do(ctx, func(tok string) error {
@@ -150,7 +150,7 @@ func TestDoRefreshAndRetry(t *testing.T) {
 func TestDoRefreshFailureReturnsError(t *testing.T) {
 	fr := &fakeRefresher{err: client.ErrUnauthenticated}
 	m, ctx := newCtx(t, fr)
-	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "@a")
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a")
 	err := m.Do(ctx, func(string) error { return client.ErrUnauthenticated })
 	if !errors.Is(err, client.ErrUnauthenticated) {
 		t.Errorf("expected refresh failure surfaced, got %v", err)
@@ -163,7 +163,7 @@ func TestDoRefreshFailureReturnsError(t *testing.T) {
 func TestSingleFlightRefresh(t *testing.T) {
 	fr := &fakeRefresher{next: client.Tokens{AccessToken: "at1", RefreshToken: "rt1"}}
 	m, ctx := newCtx(t, fr)
-	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "@a")
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a")
 
 	const n = 25
 	var wg sync.WaitGroup

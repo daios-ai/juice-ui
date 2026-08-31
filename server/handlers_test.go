@@ -34,7 +34,7 @@ func authKernel() *httptest.Server {
 	})
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		// Open endpoint; also carries the kernel's own federation identity.
-		w.Write([]byte(`{"status":"ok","handle":"@testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","handle":"alice","description":"","available":500,"locked":0,
@@ -410,7 +410,7 @@ func TestSignupDuplicateShowsFriendlyError(t *testing.T) {
 
 	// "dupe" handle → the kernel's typed 422 invalid_input "already exists".
 	_, body := signupPost(t, srv, url.Values{
-		"handle":   {"@dupe"},
+		"handle":   {"dupe"},
 		"password": {"password1"}, "confirm_password": {"password1"},
 	})
 	if !strings.Contains(body, "already taken") {
@@ -476,7 +476,7 @@ func TestSignupShowsRecoveryPhraseThenLogin(t *testing.T) {
 	}
 
 	page := getBody(t, cl, srv.URL+"/login?tab=signup")
-	resp := post("/signup", url.Values{"handle": {"@newbie"}, "password": {"password1"}, "confirm_password": {"password1"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}})
+	resp := post("/signup", url.Values{"handle": {"newbie"}, "password": {"password1"}, "confirm_password": {"password1"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}})
 	resp.Body.Close()
 	if loc := resp.Header.Get("Location"); loc != "/recovery-phrase" {
 		t.Fatalf("signup must redirect to the phrase page (not into the app), got %q", loc)
@@ -1080,15 +1080,15 @@ func TestKernelIdentityShown(t *testing.T) {
 
 	// Login page (unauthenticated) names the kernel and shows the key fingerprint.
 	login := getBody(t, &http.Client{}, srv.URL+"/login")
-	if !strings.Contains(login, "Sign in to") || !strings.Contains(login, "@testnet") {
-		t.Error("login page must name the kernel it's joining (@testnet)")
+	if !strings.Contains(login, "Sign in to") || !strings.Contains(login, "testnet") {
+		t.Error("login page must name the kernel it's joining (testnet)")
 	}
 	if !strings.Contains(login, "ABCDEFGHIJ…abcd") {
 		t.Error("login page must show the kernel key fingerprint for verification")
 	}
 	// The sidebar brand shows the kernel handle once signed in.
 	cl := loginClient(t, srv.URL)
-	if !strings.Contains(getBody(t, cl, srv.URL+"/browse"), `class="lbl">@testnet`) {
+	if !strings.Contains(getBody(t, cl, srv.URL+"/browse"), `class="lbl">testnet`) {
 		t.Error("sidebar brand must show the kernel handle")
 	}
 }
@@ -1588,10 +1588,10 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 
 	page := getBody(t, cl, srv.URL+"/actions/A1")
 
-	// The header titles on @owner/name (the ref), not the bare name, and drops the
+	// The header titles on owner/name (the ref), not the bare name, and drops the
 	// spelled-out "active · public" meta line (state shows via chips, like the cards).
 	if !strings.Contains(page, `class="action-head"`) || !strings.Contains(page, "weather") {
-		t.Errorf("action header must title on the @owner/name ref: %s", page)
+		t.Errorf("action header must title on the owner/name ref: %s", page)
 	}
 	if strings.Contains(page, "action-detail-meta") {
 		t.Error("action header must not carry the spelled-out kind·active·public meta line")

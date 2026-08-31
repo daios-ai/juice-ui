@@ -12,27 +12,27 @@ import (
 // signal at all (which must fall below MinScore rather than invent a meaning).
 var (
 	repoRefs = []string{
-		"@chat/inbox", "@chat/output", "@chat/register", "@chat/validate-user",
-		"@mail/list", "@mail/send", "@sys/llm/chat", "@sys/make", "@sys/lookup",
-		"@sys/message", "@sys/random",
+		"chat/inbox", "chat/output", "chat/register", "chat/validate-user",
+		"mail/list", "mail/send", "sys/llm/chat", "sys/make", "sys/lookup",
+		"sys/message", "sys/random",
 	}
 	marketRefs = []string{
-		"@lena/ocr-translate", "@kai/pdf-extract", "@tomo/tts-narrate",
-		"@vera/code-review", "@nordic/ana/weather", "@miro/logo-forge",
-		"@ana/image-upscale", "@raj/invoice-parse", "@sol/calendar-sync",
-		"@ivy/video-transcribe", "@finn/map-geocode", "@zoe/spreadsheet-clean",
-		"@omar/podcast-summarize", "@lin/backup-archive", "@dev/deploy-rollback",
+		"lena/ocr-translate", "kai/pdf-extract", "tomo/tts-narrate",
+		"vera/code-review", "nordic/ana/weather", "miro/logo-forge",
+		"ana/image-upscale", "raj/invoice-parse", "sol/calendar-sync",
+		"ivy/video-transcribe", "finn/map-geocode", "zoe/spreadsheet-clean",
+		"omar/podcast-summarize", "lin/backup-archive", "dev/deploy-rollback",
 	}
 	// No term the corpus knows: the picker must decline rather than invent.
 	meaninglessRefs = []string{
-		"@kai/v2", "@x/proc", "@z/xyzzy", "@a/qq", "@w/blorp", "@q/plugh",
+		"kai/v2", "x/proc", "z/xyzzy", "a/qq", "w/blorp", "q/plugh",
 	}
 	// Terms the corpus knows, but not in the sense the author meant. These are
 	// the honest weakness of a lexical method: "run3" reads as running, "foo-bar"
 	// finds battery bars. They are shown in the harness and deliberately not
 	// asserted, because no purely lexical scheme can distinguish them.
 	falseFriendRefs = []string{
-		"@y/run3", "@b/foo-bar", "@c/spam-filter", "@d/tar-gz", "@e/git-blame",
+		"y/run3", "b/foo-bar", "c/spam-filter", "d/tar-gz", "e/git-blame",
 	}
 )
 
@@ -111,8 +111,6 @@ func TestObviousMatches(t *testing.T) {
 		"x/print":            "print",
 		"x/download":         "download",
 		"x/search":           "search",
-		// migration-period sigiled refs still resolve
-		"@lena/ocr-translate": "translate",
 	}
 	for ref, want := range cases {
 		got, ok := Pick(ref)
@@ -143,7 +141,7 @@ func TestOwnerIsIgnored(t *testing.T) {
 		t.Fatalf("owner token leaked into the query: %v/%v want %v", c, okC, a)
 	}
 	// A bare handle names no operation.
-	if _, ok := Pick("@lena"); ok {
+	if _, ok := Pick("lena"); ok {
 		t.Error("bare handle should not match")
 	}
 }
@@ -186,7 +184,7 @@ func TestTrademarkedGlyphsExcluded(t *testing.T) {
 		}
 	}
 	// And no query may reach one.
-	for _, ref := range []string{"@x/android-build", "@y/flutter-app", "@z/logo-forge"} {
+	for _, ref := range []string{"x/android-build", "y/flutter-app", "z/logo-forge"} {
 		if m, ok := Pick(ref); ok && (m.Name == "android" || m.Name == "flutter_dash") {
 			t.Errorf("%s reached trademarked glyph %q", ref, m.Name)
 		}
@@ -243,13 +241,13 @@ func TestSingular(t *testing.T) {
 }
 
 func TestTopBounds(t *testing.T) {
-	if got := Top("@x/translate", 0); got != nil {
+	if got := Top("x/translate", 0); got != nil {
 		t.Errorf("n=0 should yield nil, got %v", got)
 	}
-	if got := Top("@x/xyzzy-qqq", 5); len(got) != 0 {
+	if got := Top("x/xyzzy-qqq", 5); len(got) != 0 {
 		t.Errorf("unknown terms should yield no candidates, got %v", got)
 	}
-	if got := Top("@x/translate", 3); len(got) > 3 {
+	if got := Top("x/translate", 3); len(got) > 3 {
 		t.Errorf("Top(3) returned %d", len(got))
 	}
 }

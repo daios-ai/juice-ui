@@ -67,7 +67,7 @@ type User struct {
 }
 
 // Connector is one node of the directory-grouped consent tree in GET /v1/me: a
-// folder (the granted actions' shared ref prefix, e.g. @chat or @chat/inbox), the
+// folder (the granted actions' shared ref prefix, e.g. chat or chat/inbox), the
 // upstream account(s) that back it (usually one), and the per-action grants under
 // it. The directory is a display grouping only — it never gates a credential.
 type Connector struct {
@@ -328,7 +328,7 @@ type Step struct {
 	ID                   string          `json:"id"`
 	ParentTraceID        string          `json:"parent_trace_id"`
 	RequiredCallerHandle string          `json:"required_caller_handle"`
-	OwnerHandle          string          `json:"owner_handle"` // process owner/payer; chat doorbells carry @chat
+	OwnerHandle          string          `json:"owner_handle"` // process owner/payer; chat doorbells carry chat
 	ActionID             string          `json:"action_id"`
 	Action               string          `json:"action"`
 	Price                int64           `json:"price"`
@@ -745,7 +745,7 @@ func (c *Client) Ledger(ctx context.Context, token string, limit, offset int) ([
 // limit>0 returns a single server page of that size at the given offset (newest
 // first). limit==0 returns the FULL set: the kernel pages every list endpoint
 // with a default of 50 (ceiling 200, §R6), so an unpaged call would silently
-// truncate — the workshop and @chat's own-action reconciliation need every row,
+// truncate — the workshop and chat's own-action reconciliation need every row,
 // so we page through with offset.
 func (c *Client) ListActions(ctx context.Context, token, owner, name string, all bool, limit, offset int) ([]Action, error) {
 	if limit > 0 {
@@ -1044,7 +1044,7 @@ const (
 // CallbackCreateStep creates a step via the trace-capability the kernel injected into
 // a kind=http dispatch, rather than via a session token. It POSTs to
 // {callbackBase}/v1/steps carrying `capability` in the X-Juice-Capability header (NOT a
-// bearer) with NO trace_id — the capability IS the trace. Used by the @chat/outbox
+// bearer) with NO trace_id — the capability IS the trace. Used by the chat/outbox
 // handler to create the sentinel step that holds the outbox seed open. Valid only while
 // the dispatch's trace is unsettled (call it during the dispatch, before returning).
 func (c *Client) CallbackCreateStep(ctx context.Context, callbackBase, capability string, in CreateStepInput) (Step, error) {

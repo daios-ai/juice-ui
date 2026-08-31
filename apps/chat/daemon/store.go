@@ -39,7 +39,7 @@ var (
 type Room struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Creator   string   `json:"creator"` // @handle
+	Creator   string   `json:"creator"` // handle
 	Members   []string `json:"members"`
 	CreatedAt string   `json:"created_at"`
 	Unread    int      `json:"unread"`
@@ -54,7 +54,7 @@ type Room struct {
 type Message struct {
 	ID   string `json:"id"`
 	Seq  int64  `json:"seq"`
-	From string `json:"from"` // @handle of the sender (unforgeable — the kernel-injected key)
+	From string `json:"from"` // handle of the sender (unforgeable — the kernel-injected key)
 	Text string `json:"text"`
 	At   string `json:"at"`
 	// RoomID is set only by Inbox (which spans rooms), so a caller can address a
@@ -508,17 +508,17 @@ func (s *Store) Recipients(roomID string) (name string, members []string, err er
 
 // ---- api tokens (register / verify) ----
 //
-// A token is @chat's own per-caller credential: the caller registers a @handle,
+// A token is chat's own per-caller credential: the caller registers a handle,
 // receives an opaque API key (stored here only as its hash), and — once the handle
 // owner accepts the verification step — the key is activated. The kernel injects the
-// key on every @chat/msg/* call; the daemon's auth hook recovers the caller by hashing
+// key on every chat/msg/* call; the daemon's auth hook recovers the caller by hashing
 // it and looking up the (active) row. Registration and verification are the plugin's
 // job (they need Juice); the store only mints, activates, and resolves.
 
 // RegisterToken mints a pending (inactive) API key for username, storing only its
 // hash. It returns the raw key (shown to the caller once) and the reg_id used to
 // activate it. A standalone daemon can register directly; the plugin drives it from
-// the open @chat/register action.
+// the open chat/register action.
 func (s *Store) RegisterToken(username string) (rawKey, regID string, err error) {
 	if username == "" {
 		return "", "", ErrBadInput

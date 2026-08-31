@@ -362,7 +362,7 @@ func TestTokenRegisterActivateLookup(t *testing.T) {
 func TestTokenReconnectRotatesKey(t *testing.T) {
 	s := newStore(t)
 
-	key1, reg1, err := s.RegisterToken("@ana")
+	key1, reg1, err := s.RegisterToken("ana")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestTokenReconnectRotatesKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reconnect: a fresh registration + activation for the same handle.
-	key2, reg2, err := s.RegisterToken("@ana")
+	key2, reg2, err := s.RegisterToken("ana")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,10 +387,10 @@ func TestTokenReconnectRotatesKey(t *testing.T) {
 	}
 	// Exactly one active row for the handle.
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tokens WHERE username = ? AND active = 1`, "@ana").Scan(&n); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tokens WHERE username = ? AND active = 1`, "ana").Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Errorf("active key rows for @ana = %d, want exactly 1", n)
+		t.Errorf("active key rows for ana = %d, want exactly 1", n)
 	}
 }

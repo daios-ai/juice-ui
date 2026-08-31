@@ -239,8 +239,18 @@ func TestPostCreateValidatesAndScaffolds(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(a.root, "Bad!")); !os.IsNotExist(err) {
 		t.Fatal("invalid handle should create nothing")
 	}
-	// Valid handle (leading @ tolerated) → created, success flash to detail.
+	// A sigiled handle is refused, not rewritten to the bare one (§4): rewriting
+	// it would make "@research" and "research" the same name here and nowhere
+	// else, which is the dialect the kernel's grammar forbids.
 	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=%40research"))
+	if cap.flashKind != "error" {
+		t.Fatalf("sigiled handle flash = %q, want error", cap.flashKind)
+	}
+	if _, err := os.Stat(filepath.Join(a.root, "research")); !os.IsNotExist(err) {
+		t.Fatal("sigiled handle should create nothing")
+	}
+	// Bare handle → created, success flash to detail.
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research"))
 	if cap.flashKind != "success" || cap.flashTo != "/agents/research" {
 		t.Fatalf("create flash = %q to %q", cap.flashKind, cap.flashTo)
 	}

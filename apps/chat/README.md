@@ -45,7 +45,7 @@ per-app environment variables.
 - **Outbound** (chat acting as a Juice user): `apps.ServiceAccount` — provision
   once, PKCE login, token refresh, self-heal with backoff.
 - **Inbound** (identifying the user who calls a chat action): `chat`'s own **API
-  keys**. A caller registers a `@handle` and, once its owner accepts a verification
+  keys**. A caller registers a `handle` and, once its owner accepts a verification
   step, receives an activated key; the daemon stores only the key's **hash → handle**.
   There is no juice-ui secret involved, so the same path works for a headless agent
   and for a browser user. See "Registration & verification" below.
@@ -62,7 +62,7 @@ Three actions, split into folders so one grant selector covers the members:
 
 - **`chat/register`** — *open* (a `bearer` upstream secret, `requires_grant:false`),
   so any kernel-authenticated caller invokes it with **no grant**. It takes a
-  `@handle`, mints a **pending** key, and sends that handle a verification **step**
+  `handle`, mints a **pending** key, and sends that handle a verification **step**
   (minted off the outbox seed, so `chat` owns it; its onward is the private
   `chat/validate-user`). Returns `{api_key, step_id}`. Handled by the *plugin*
   (`serveRegister`), not a daemon Op, because minting the step is a Juice call.

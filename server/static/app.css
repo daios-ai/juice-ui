@@ -30,7 +30,7 @@ body {
 
 .mono { font-family: var(--font-mono); }
 
-/* Money, IDs, hashes, @owner/name — mono with tabular figures (R7). */
+/* Money, IDs, hashes, owner/name — mono with tabular figures (R7). */
 .money, .id, .hash, .ref { font-family: var(--font-mono); }
 .money { font-variant-numeric: tabular-nums; }
 
@@ -463,14 +463,14 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .locked-args dd { margin: 0; }
 .parties { width: auto; }
 .parties th { padding-right: 2rem; }
-/* Action detail header: title on @owner/name + card-consistent chips beside it. */
+/* Action detail header: title on owner/name + card-consistent chips beside it. */
 .action-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .action-head h1 { margin: 0; }
 /* The detail/hero stat strip is a facts line, left-aligned (cards center theirs). */
 .action-detail-card .stat-strip, .hero .stat-strip { justify-content: flex-start; }
 .hero h1 { font-size: 1.25rem; }
 
-/* @owner/name — owner segment emphasized, confusable-distinct, never accent (R7) */
+/* owner/name — owner segment emphasized, confusable-distinct, never accent (R7) */
 .ref .owner { font-weight: 700; color: var(--text); }
 .ref .owner a { color: var(--text); }
 .scope-note { color: var(--text-muted); font-size: .82rem; border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: .2rem .5rem; display: inline-block; }

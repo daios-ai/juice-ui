@@ -1,7 +1,7 @@
 // Keyboard layer: a command palette that mirrors the CLI, plus vim-style
 // shortcuts. All progressive enhancement — every command targets a real link or
 // form, so nothing here is the only way to do anything. The command registry is
-// server-rendered inert JSON (CSP-safe); admin commands appear only for @sys.
+// server-rendered inert JSON (CSP-safe); admin commands appear only for sys.
 
 import { openDialog } from "/static/app.js";
 

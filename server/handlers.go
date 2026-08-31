@@ -169,7 +169,7 @@ type transactionsView struct {
 }
 
 // actionsByID fetches each transaction's action once (deduped) so lists can
-// render the full @owner/name ref and link it. Deleted actions (404) are simply
+// render the full owner/name ref and link it. Deleted actions (404) are simply
 // absent from the map; the row falls back to the bare id.
 func (s *Server) actionsByID(ctx context.Context, tok string, txs []client.Transaction) map[string]client.Action {
 	actions := map[string]client.Action{}
@@ -635,7 +635,7 @@ func needsConnect(a client.Action, granted map[string]bool) bool {
 
 // grantTarget reads the selector (and optional provider) a grant form posts. It
 // accepts the modern `selector`+`provider` fields and falls back to the legacy
-// `action` field — a full @owner/name is the degenerate single-action selector.
+// `action` field — a full owner/name is the degenerate single-action selector.
 func grantTarget(r *http.Request) (selector, provider string) {
 	selector = strings.TrimSpace(r.FormValue("selector"))
 	if selector == "" {
@@ -811,7 +811,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
 }
 
-// postRunByRef runs an action named by "@owner/name" (the palette / run-page
+// postRunByRef runs an action named by "owner/name" (the palette / run-page
 // path). It resolves the action to confirm the price, then executes; the caller
 // is expected to have passed through the priced confirm form.
 func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {

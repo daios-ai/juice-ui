@@ -14,8 +14,8 @@
 //   - browses the learned memory.md (read-only — the daemon owns it);
 //   - starts/stops the daemon as a supervised child process. The daemon has no
 //     stop command or status endpoint (agent requirements.md §11), so start spawns
-//     `juice-agent @<handle> serve --password-stdin` and stop sends SIGTERM;
-//     "running" is whether the tracked child is alive.
+//     `juice-agent serve --password-stdin <handle>` (see serveArgs) and stop sends
+//     SIGTERM; "running" is whether the tracked child is alive.
 //
 // The agent's kernel password is required to start it. It lives only in the start
 // request body, is piped to the child's stdin, and is then discarded — never
@@ -320,7 +320,10 @@ func (a *Agents) getIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
-	handle := strings.TrimPrefix(strings.TrimSpace(r.FormValue("handle")), "@")
+	// Taken as typed: a sigiled handle is ill-formed input, not a handle silently
+	// meaning the bare one (requirements.md §4; the chat daemon's checkHandles
+	// refuses it the same way at its own boundary).
+	handle := strings.TrimSpace(r.FormValue("handle"))
 	if !validHandle(handle) {
 		a.deps.FlashRedirect(w, r, "/agents", "error", "A handle is lowercase letters, digits, - or _.")
 		return

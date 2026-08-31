@@ -764,7 +764,7 @@ func TestGetBadge(t *testing.T) {
 	f.stepsJSON = `[
 	  {"id":"d1","status":"waiting","owner_handle":"chat","partial_args":{"room":"r1"}},
 	  {"id":"d2","status":"waiting","owner_handle":"chat","partial_args":{"room":"r2"}},
-	  {"id":"x","status":"waiting","owner_handle":"@someone","partial_args":{}}]`
+	  {"id":"x","status":"waiting","owner_handle":"someone","partial_args":{}}]`
 	c := New()
 	cl := client.New(f.url, nil)
 	sm := scs.New()
@@ -780,7 +780,7 @@ func TestGetBadge(t *testing.T) {
 		return strings.TrimSpace(rec.Body.String())
 	}
 	if got := body(); got != "2" {
-		t.Errorf("badge = %q, want 2 (two chat doorbell rooms; the @someone step ignored)", got)
+		t.Errorf("badge = %q, want 2 (two chat doorbell rooms; the someone step ignored)", got)
 	}
 	f.stepsJSON = `[]` // no doorbells → empty body (hidden by .badge:empty)
 	if got := body(); got != "" {

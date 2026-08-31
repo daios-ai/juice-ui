@@ -11,9 +11,9 @@
 <div class="grid">
   {{range $d.Agents}}
   <article class="action-card">
-    <a class="media-link" href="/agents/{{.Handle}}" aria-label="@{{.Handle}}"><span class="media">{{cardArt .Handle .Handle "" "agent"}}</span></a>
+    <a class="media-link" href="/agents/{{.Handle}}" aria-label="{{.Handle}}"><span class="media">{{cardArt .Handle .Handle "" "agent"}}</span></a>
     <div class="card-top">
-      <a class="card-title ref mono" href="/agents/{{.Handle}}"><span class="owner">@{{.Handle}}</span></a>
+      <a class="card-title ref mono" href="/agents/{{.Handle}}"><span class="owner">{{.Handle}}</span></a>
     </div>
     <div class="card-meta row compact" id="agent-status-{{.Handle}}"
          hx-get="/agents/{{.Handle}}/status" hx-trigger="every 3s"

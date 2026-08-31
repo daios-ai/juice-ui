@@ -106,7 +106,7 @@ func TestBadgeIntervalClamped(t *testing.T) {
 
 // TestStatePathLegacyCwd verifies the migration bridge: an existing cwd
 // TestNoLegacyPaths asserts app-state and config are read ONLY from $JUICE_HOME/ui —
-// no cwd/config-dir legacy fallback. Silent legacy resolution is what drifted @chat's
+// no cwd/config-dir legacy fallback. Silent legacy resolution is what drifted chat's
 // stored credentials (it minted a fresh state.json when the prior file wasn't at the
 // expected path), so legacy files must be ignored entirely.
 func TestNoLegacyPaths(t *testing.T) {

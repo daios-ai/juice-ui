@@ -134,10 +134,10 @@ func TestRefFolder(t *testing.T) {
 	// whole provider group — the ref up to its LAST slash (the kernel directory),
 	// not the degenerate single-action selector. Contrast refOwner (first slash).
 	cases := []struct{ in, want string }{
-		{"@service/a", "@service"},
-		{"@service/msg/message", "@service/msg"},
+		{"service/a", "service"},
+		{"service/msg/message", "service/msg"},
 		{"sys/llm/chat", "sys/llm"},
-		{"@service", "@service"}, // no slash — returned unchanged
+		{"service", "service"}, // no slash — returned unchanged
 		{"", ""},
 	}
 	for _, c := range cases {
@@ -173,24 +173,24 @@ func TestRatingPct(t *testing.T) {
 }
 
 func TestTxAmount(t *testing.T) {
-	// @buyer pays gross, @seller earns net, sys (platform) earns fee; a viewer
+	// buyer pays gross, seller earns net, sys (platform) earns fee; a viewer
 	// occupying several roles sees the sum. gross = net + fee, so the three
 	// viewpoints of a settled call sum to zero.
 	mk := func(status string, gross, net, fee int64) client.Transaction {
-		return client.Transaction{OwnerHandle: "@buyer", TargetHandle: "@seller", Status: status, Gross: gross, Net: net, Fee: fee}
+		return client.Transaction{OwnerHandle: "buyer", TargetHandle: "seller", Status: status, Gross: gross, Net: net, Fee: fee}
 	}
 	cases := []struct {
 		name, viewer string
 		tx           client.Transaction
 		want         []string // substrings the rendered cell must contain
 	}{
-		{"buyer pays gross", "@buyer", mk("success", 100, 90, 10), []string{"-$0.100"}},
-		{"seller earns net", "@seller", mk("success", 100, 90, 10), []string{"sig-credited", "+$0.090"}},
+		{"buyer pays gross", "buyer", mk("success", 100, 90, 10), []string{"-$0.100"}},
+		{"seller earns net", "seller", mk("success", 100, 90, 10), []string{"sig-credited", "+$0.090"}},
 		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+$0.010"}},
-		{"no stake shows dash", "@bystander", mk("success", 100, 90, 10), []string{"—"}},
-		{"failed refunds buyer", "@buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "$0.100"}},
-		{"failed non-buyer dash", "@seller", mk("failure", 100, 0, 0), []string{"—"}},
-		{"open parks buyer", "@buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "$0.100"}},
+		{"no stake shows dash", "bystander", mk("success", 100, 90, 10), []string{"—"}},
+		{"failed refunds buyer", "buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "$0.100"}},
+		{"failed non-buyer dash", "seller", mk("failure", 100, 0, 0), []string{"—"}},
+		{"open parks buyer", "buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "$0.100"}},
 	}
 	for _, c := range cases {
 		got := string(txAmount(c.tx, c.viewer))
@@ -202,12 +202,12 @@ func TestTxAmount(t *testing.T) {
 	}
 
 	// Self-call by a normal user (buyer == seller): nets to −fee.
-	self := client.Transaction{OwnerHandle: "@a", TargetHandle: "@a", Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(txAmount(self, "@a")); !strings.Contains(got, "-$0.010") {
+	self := client.Transaction{OwnerHandle: "a", TargetHandle: "a", Status: "success", Gross: 100, Net: 90, Fee: 10}
+	if got := string(txAmount(self, "a")); !strings.Contains(got, "-$0.010") {
 		t.Errorf("self-call = %q, want -$0.010 (the fee)", got)
 	}
 	// sys as the seller collects net + fee = gross.
-	sysSell := client.Transaction{OwnerHandle: "@a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
+	sysSell := client.Transaction{OwnerHandle: "a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
 	if got := string(txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+$0.100") {
 		t.Errorf("sys-as-seller = %q, want +$0.100 (net+fee)", got)
 	}
@@ -352,13 +352,13 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 	plan := client.GrantPlan{
 		Groups: []client.GrantGroup{
 			{ProviderKey: "bearer:api.acme.com", Provider: "api.acme.com", Scheme: "delegated_bearer",
-				Actions: []client.GrantPlanAction{{Action: "@acme/send"}, {Action: "@acme/read"}}},
+				Actions: []client.GrantPlanAction{{Action: "acme/send"}, {Action: "acme/read"}}},
 			{ProviderKey: "oauth:https://g/token|cid", Provider: "google", Scheme: "oauth_delegated", Scopes: []string{"mail.send"},
-				Actions: []client.GrantPlanAction{{Action: "@g/mail"}}},
+				Actions: []client.GrantPlanAction{{Action: "g/mail"}}},
 		},
 		SkippedUncallable: 2,
 	}
-	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "@acme", Plan: plan}}
+	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "acme", Plan: plan}}
 	if err := r.Render(rec, 200, "grant_connect", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 	if !strings.Contains(body, `type="password"`) || !strings.Contains(body, `action="/grants/connect"`) {
 		t.Errorf("bearer group must offer a masked token form: %s", body)
 	}
-	if !strings.Contains(body, `value="bearer:api.acme.com"`) || !strings.Contains(body, `value="@acme"`) {
+	if !strings.Contains(body, `value="bearer:api.acme.com"`) || !strings.Contains(body, `value="acme"`) {
 		t.Errorf("token form must carry provider_key + selector: %s", body)
 	}
 	// The oauth group offers the browser consent instead — a navigational link,
@@ -443,7 +443,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
-		Users: []client.AdminUser{{Handle: "@victim", SuspendedAt: "0001-01-01T00:00:00Z"}},
+		Users: []client.AdminUser{{Handle: "victim", SuspendedAt: "0001-01-01T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -452,7 +452,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 	if !strings.Contains(body, "suspended") {
 		t.Errorf("zero-value suspended_at must render the suspended pill: %s", body)
 	}
-	if !strings.Contains(body, "/admin/users/@victim/unsuspend") {
+	if !strings.Contains(body, "/admin/users/victim/unsuspend") {
 		t.Errorf("suspended user must offer the Unsuspend action: %s", body)
 	}
 }

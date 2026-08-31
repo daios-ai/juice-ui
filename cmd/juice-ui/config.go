@@ -129,8 +129,9 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	cfg.TrustedOrigins = origins
 
 	// App state and config live only in the component home ($JUICE_HOME/ui). No
-	// legacy-path fallback: a fallback silently minted fresh @chat credentials when
-	// the prior file wasn't found at the expected place, orphaning the kernel's @chat.
+	// legacy-path fallback: a fallback silently minted fresh chat credentials when
+	// the prior file wasn't found at the expected place, orphaning the kernel's chat
+	// account.
 	cfg.StatePath = filepath.Join(home, "state.json")
 	return cfg, nil
 }
