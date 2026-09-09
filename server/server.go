@@ -186,22 +186,22 @@ func New(o Options) (http.Handler, error) {
 
 	// Browse — discovery, catalog, and execution.
 	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))
-	mux.HandleFunc("POST /run", s.requireAuth(s.postRunByRef)) // run-by-ref (palette)
 
 	// Workshop — the provider surface (own actions, earnings, creation).
 	mux.HandleFunc("GET /workshop", s.requireAuth(s.getWorkshop))
 	mux.HandleFunc("POST /actions", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /actions/import", s.requireAuth(s.postImport))
-	mux.HandleFunc("POST /actions/unimport", s.requireAuth(s.postUnimport))
-	// A DISCOVERED action has no local id — its action_id belongs to the remote
-	// kernel — so it cannot be reached by /actions/{id}. It is addressed by ref.
+	// A DISCOVERED action has no local row yet: opening it resolves the reference
+	// with its home kernel, which caches a proxy and lands on an ordinary page.
 	mux.HandleFunc("GET /discovered", s.requireAuth(s.getDiscovered))
+	// A mutation names a target — an action id, or an owner/path naming a whole
+	// application — so these are not per-id routes (kernel §D20).
+	mux.HandleFunc("POST /actions/enable", s.requireAuth(s.postActionLifecycle))
+	mux.HandleFunc("POST /actions/disable", s.requireAuth(s.postActionLifecycle))
+	mux.HandleFunc("POST /actions/visibility", s.requireAuth(s.postActionLifecycle))
+	mux.HandleFunc("POST /actions/delete", s.requireAuth(s.postActionDelete))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
-	mux.HandleFunc("POST /actions/{id}/enable", s.requireAuth(s.postActionLifecycle))
-	mux.HandleFunc("POST /actions/{id}/disable", s.requireAuth(s.postActionLifecycle))
-	mux.HandleFunc("POST /actions/{id}/delete", s.requireAuth(s.postActionDelete))
-	mux.HandleFunc("POST /actions/{id}/visibility", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/{id}/update-price", s.requireAuth(s.postUpdateActionPrice))
 	mux.HandleFunc("POST /actions/{id}/update", s.requireAuth(s.postUpdateAction))
 

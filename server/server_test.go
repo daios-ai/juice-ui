@@ -196,7 +196,7 @@ func TestSessionRefusesADifferentKernel(t *testing.T) {
 	defer wrap.Close()
 	// A short identity interval: the kernel is re-read within a heartbeat, which
 	// is the window in which a swapped server is noticed.
-	srv := httptest.NewServer(newTestHandler(t, wrap.URL, func(o *Options) { o.BadgeInterval = time.Millisecond }))
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL, func(o *Options) { o.BadgeInterval = time.Nanosecond }))
 	defer srv.Close()
 
 	cl := loginClient(t, srv.URL)

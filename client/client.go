@@ -214,6 +214,8 @@ type CreateActionInput struct {
 
 // UpdateActionInput is the body for PUT /v1/actions/{id}. All fields optional.
 type UpdateActionInput struct {
+	// Target is the action id or owner/path this update names; set by UpdateAction.
+	Target       string          `json:"target"`
 	Price        *int64          `json:"price,omitempty"`
 	Description  *string         `json:"description,omitempty"`
 	Source       *string         `json:"source,omitempty"`
@@ -361,10 +363,19 @@ type StepCompleteReply struct {
 // ImportResult is the response of POST /v1/actions/import. Go's JSON decoding is
 // case-insensitive, so these tags match the kernel's capitalized keys.
 type ImportResult struct {
-	Created     []Action `json:"created"`
-	Updated     []Action `json:"updated"`
-	Unchanged   []Action `json:"unchanged"`
-	Deactivated []Action `json:"deactivated"`
+	Created     []Action          `json:"created"`
+	Updated     []Action          `json:"updated"`
+	Unchanged   []Action          `json:"unchanged"`
+	Deactivated []Action          `json:"deactivated"`
+	Rejected    []ImportRejection `json:"rejected"`
+}
+
+// ImportRejection is one operation the kernel would not install, and why —
+// a missing description, an unsupported body, an ambiguous success schema. The
+// wizard shows them: an operation silently absent reads as a kernel fault.
+type ImportRejection struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
 }
 
 // Health is GET /health (open): the identity banner a client pins before it
@@ -785,6 +796,23 @@ func (c *Client) actionsPage(ctx context.Context, token, owner, name string, all
 	return a, err
 }
 
+// ResolveRef resolves one reference exactly as a call would (GET /v1/actions?ref=):
+// the action named, else that path's index child. A kernel-qualified reference
+// (owner@kernel/name) is resolved WITH ITS HOME KERNEL over federation, which
+// caches a local proxy — so a discovered action becomes an ordinary priced row
+// with a live quote, at the cost of one round trip and no spend. The kernel
+// answers with 0 or 1 rows, so a miss is an empty list rather than an error.
+func (c *Client) ResolveRef(ctx context.Context, token, ref string) (Action, bool, error) {
+	var out []Action
+	if err := c.do(ctx, http.MethodGet, "/v1/actions?ref="+url.QueryEscape(ref), token, nil, &out); err != nil {
+		return Action{}, false, err
+	}
+	if len(out) == 0 {
+		return Action{}, false, nil
+	}
+	return out[0], true, nil
+}
+
 func (c *Client) GetAction(ctx context.Context, token, id string) (Action, error) {
 	var a Action
 	err := c.do(ctx, http.MethodGet, "/v1/actions/"+url.PathEscape(id), token, nil, &a)
@@ -797,38 +825,57 @@ func (c *Client) CreateAction(ctx context.Context, token string, in CreateAction
 	return a, err
 }
 
-func (c *Client) UpdateAction(ctx context.Context, token, id string, in UpdateActionInput) (Action, error) {
-	var a Action
-	err := c.do(ctx, http.MethodPut, "/v1/actions/"+url.PathEscape(id), token, in, &a)
-	return a, err
-}
-
-func (c *Client) EnableAction(ctx context.Context, token, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/actions/"+url.PathEscape(id)+"/enable", token, nil, nil)
-}
-
-func (c *Client) DisableAction(ctx context.Context, token, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/actions/"+url.PathEscape(id)+"/disable", token, nil, nil)
-}
-
-func (c *Client) DeleteAction(ctx context.Context, token, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/actions/"+url.PathEscape(id), token, nil, nil)
-}
-
-func (c *Client) ImportOpenAPI(ctx context.Context, token, specURL string) (ImportResult, error) {
-	var r ImportResult
-	err := c.do(ctx, http.MethodPost, "/v1/actions/import", token, map[string]string{"spec_url": specURL}, &r)
-	return r, err
-}
-
-func (c *Client) UnimportOpenAPI(ctx context.Context, token, specURL, name string) ([]Action, error) {
-	body := map[string]string{"spec_url": specURL}
-	if name != "" {
-		body["name"] = name
-	}
+// A mutation names a TARGET: an action id, which is exactly that row, or
+// owner/path, which is the action at that path and every action beneath it
+// (bob/mail reaches bob/mail/send, never bob/mailer). The kernel returns the
+// rows it wrote, in name order, because one target may name a whole application
+// — so the caller re-renders from the answer rather than predicting it.
+//
+// Visibility, price and auth apply to a subtree; a description, a schema or a
+// source needs a target that resolves to one action, and the kernel refuses the
+// rest. A target matching nothing is a 404.
+func (c *Client) UpdateAction(ctx context.Context, token, target string, in UpdateActionInput) ([]Action, error) {
+	in.Target = target
 	var a []Action
-	err := c.do(ctx, http.MethodPost, "/v1/actions/unimport", token, body, &a)
+	err := c.do(ctx, http.MethodPut, "/v1/actions", token, in, &a)
 	return a, err
+}
+
+func (c *Client) EnableAction(ctx context.Context, token, target string) ([]Action, error) {
+	return c.actionLifecycle(ctx, token, "/v1/actions/enable", target)
+}
+
+func (c *Client) DisableAction(ctx context.Context, token, target string) ([]Action, error) {
+	return c.actionLifecycle(ctx, token, "/v1/actions/disable", target)
+}
+
+func (c *Client) actionLifecycle(ctx context.Context, token, path, target string) ([]Action, error) {
+	var a []Action
+	err := c.do(ctx, http.MethodPost, path, token, map[string]string{"target": target}, &a)
+	return a, err
+}
+
+// DeleteAction soft-deletes a target, keeping its history.
+func (c *Client) DeleteAction(ctx context.Context, token, target string) ([]Action, error) {
+	var a []Action
+	err := c.do(ctx, http.MethodDelete, "/v1/actions?target="+url.QueryEscape(target), token, nil, &a)
+	return a, err
+}
+
+// ImportOpenAPI installs one OpenAPI document as the application at name: one
+// action per representable operation, and the operation keyed `index` becomes
+// its root. The URL is given once — a later import by name alone re-reads the
+// recorded document and reconciles it, keeping each action's id, history,
+// credentials and any price the owner set. There is no unimport: an application
+// is switched off or removed with the ordinary verbs over its path.
+func (c *Client) ImportOpenAPI(ctx context.Context, token, name, specURL string) (ImportResult, error) {
+	body := map[string]string{"name": name}
+	if specURL != "" {
+		body["spec_url"] = specURL
+	}
+	var r ImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/actions/import", token, body, &r)
+	return r, err
 }
 
 func (c *Client) ActionStats(ctx context.Context, token, actionID string) (Stats, error) {

@@ -26,6 +26,15 @@ var lastRename string
 
 // fakeHealth gives a fake kernel the identity banner every login pins: its key,
 // the network digest, and the decimals that scale every amount (§5, §7).
+// mutationTarget reads the target an action mutation names.
+func mutationTarget(r *http.Request) string {
+	var in struct {
+		Target string `json:"target"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	return in.Target
+}
+
 func fakeHealth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd",
@@ -141,14 +150,19 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_handle":"alice","target_handle":"bob","caller_handle":"alice","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
 	})
-	mux.HandleFunc("POST /v1/actions/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"active":true}`))
+	// A mutation names a target and answers with the rows it wrote, in name order
+	// — one target may name a whole application (kernel v0.14.0).
+	mux.HandleFunc("POST /v1/actions/enable", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","active":true}]`))
 	})
-	mux.HandleFunc("POST /v1/actions/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"active":false}`))
+	mux.HandleFunc("POST /v1/actions/disable", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","active":false}]`))
 	})
-	mux.HandleFunc("PUT /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"alice/x","owner_handle":"alice","name":"x","kind":"http","active":true,"public":true,"price":0}`))
+	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","action":"alice/x","owner_handle":"alice","name":"x","kind":"http","active":true,"price":0}]`))
+	})
+	mux.HandleFunc("DELETE /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"` + r.URL.Query().Get("target") + `"}]`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
 		// Two waiting steps spawned by the same creating action (sys/make) — the
@@ -1289,10 +1303,15 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	if !strings.Contains(body, `class="btn-quiet tabs-action" data-menu="menu-new-action"`) {
 		t.Error("+ new action must be a quiet menu trigger on the tab row, not a solid button")
 	}
-	for _, form := range []string{"action-create", "action-import", "action-unimport"} {
+	for _, form := range []string{"action-create", "action-import"} {
 		if !strings.Contains(body, "?form="+form) {
 			t.Errorf("+ new action menu missing the %q method", form)
 		}
+	}
+	// There is no unimport: an application is switched off or removed with the
+	// ordinary verbs over its path (kernel §D21).
+	if strings.Contains(body, "unimport") {
+		t.Error("the kernel serves no unimport")
 	}
 
 	// Filters are the unified .tabs view-switch component (not the retired linkbar).
@@ -1350,8 +1369,8 @@ func TestStudioLifecycleRedirect(t *testing.T) {
 	tok := csrfTokenFrom(t, body)
 
 	// Disable action A1: must redirect to the action detail page.
-	form := url.Values{"gorilla.csrf.Token": {tok}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/disable", strings.NewReader(form.Encode()))
+	form := url.Values{"gorilla.csrf.Token": {tok}, "target": {"A1"}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/disable", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	noRedirect := &http.Client{
@@ -2047,9 +2066,9 @@ func updateActionKernel(gotBody *[]byte) *http.ServeMux {
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("PUT /v1/actions/A1", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		*gotBody, _ = io.ReadAll(r.Body)
-		w.Write([]byte(`{"id":"A1","owner_handle":"alice","name":"weather","kind":"http","active":false}`))
+		w.Write([]byte(`[{"id":"A1","owner_handle":"alice","name":"weather","kind":"http","active":false}]`))
 	})
 	return mux
 }
@@ -2083,7 +2102,7 @@ func TestUpdateAction(t *testing.T) {
 	resp.Body.Close()
 
 	if gotBody == nil {
-		t.Fatal("kernel PUT /v1/actions/A1 was not called")
+		t.Fatal("kernel PUT /v1/actions was not called")
 	}
 	var sent client.UpdateActionInput
 	if err := json.Unmarshal(gotBody, &sent); err != nil {

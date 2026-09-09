@@ -8,15 +8,14 @@
     <div class="action-head">
       <h1 class="mono">{{template "_ref" (ref $d.Action.Ref "")}}</h1>
       <span class="chips">
-        {{if $d.Discovered}}<span class="chip" title="Discovered — known through the network, not resolved here">R</span>{{end}}
         {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
         {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
         {{if $d.NeedsConnect}}<span class="chip filled" title="Needs a connected account"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
-        {{if and (not $d.Discovered) (not $d.Action.Active)}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
+        {{if not $d.Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
       </span>
     </div>
     {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-    {{if $d.Discovered}}{{template "_price" (price $d.Action.Price true)}}{{else}}{{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true true)}}{{end}}
+    {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true true)}}
   </div>
 </div>
 
@@ -51,11 +50,11 @@
 <div class="card stack">
   <div class="cluster">
     {{if $d.Action.Active}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/disable">{{$.CSRFField}}<button class="btn" type="submit">Disable</button></form>
+    <form method="post" action="/actions/disable">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn" type="submit">Disable</button></form>
     {{else}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/enable">{{$.CSRFField}}<button class="btn" type="submit">Enable</button></form>
+    <form method="post" action="/actions/enable">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn" type="submit">Enable</button></form>
     {{end}}
-    <form method="post" action="/actions/{{$d.Action.ID}}/visibility" class="cluster">{{$.CSRFField}}
+    <form method="post" action="/actions/visibility" class="cluster">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}">
       <label for="vis-{{$d.Action.ID}}" class="sr-only">Visibility</label>
       <select id="vis-{{$d.Action.ID}}" name="visibility" class="input-sm">
         <option value="private"{{if $d.Action.IsPrivate}} selected{{end}}>private</option>
@@ -65,7 +64,7 @@
       <button class="btn" type="submit">Set visibility</button>
     </form>
     <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
-    <form method="post" action="/actions/{{$d.Action.ID}}/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<button class="btn-danger" type="submit">Delete</button></form>
+    <form method="post" action="/actions/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn-danger" type="submit">Delete</button></form>
   </div>
 </div>
 

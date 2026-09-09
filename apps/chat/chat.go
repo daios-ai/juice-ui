@@ -440,14 +440,14 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 					}); err != nil {
 						return fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, op.Name, err)
 					}
-					if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
+					if _, err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
 						return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
 					}
 					return nil
 				}
 				// Contract already correct — only nudge active/public state if needed.
 				if !a.Active {
-					if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
+					if _, err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
 						return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
 					}
 				}
@@ -466,7 +466,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 			if wanted[name] || !a.Active {
 				continue
 			}
-			if err := c.deps.Client.DisableAction(ctx, tok, a.ID); err != nil {
+			if _, err := c.deps.Client.DisableAction(ctx, tok, a.ID); err != nil {
 				errs = append(errs, fmt.Errorf("chat: retire %s/%s: %w", chatHandle, name, err))
 			}
 		}
@@ -670,7 +670,7 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 		if err != nil {
 			return "", fmt.Errorf("chat: create %s/%s: %w", chatHandle, sp.name, err)
 		}
-		if err := c.deps.Client.EnableAction(ctx, tok, na.ID); err != nil {
+		if _, err := c.deps.Client.EnableAction(ctx, tok, na.ID); err != nil {
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 		if vis != "private" { // private is the create default; widen when needed
@@ -688,13 +688,13 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 		}); err != nil {
 			return "", fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, sp.name, err)
 		}
-		if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
+		if _, err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 		return a.ID, nil
 	}
 	if !a.Active {
-		if err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
+		if _, err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 	}
@@ -745,7 +745,7 @@ func schemaEqual(x, y json.RawMessage) bool {
 
 // enablePublic activates a freshly created action and makes it public.
 func (c *Chat) enablePublic(ctx context.Context, tok, id string) error {
-	if err := c.deps.Client.EnableAction(ctx, tok, id); err != nil {
+	if _, err := c.deps.Client.EnableAction(ctx, tok, id); err != nil {
 		return fmt.Errorf("chat: enable %s: %w", id, err)
 	}
 	visPublic := "public"

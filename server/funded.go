@@ -166,9 +166,6 @@ type CallForm struct {
 	// disable the protection while looking correct. If the terms moved between
 	// render and submit, the kernel refuses before locking, at zero charge.
 	QuoteHash string
-	// ActionRef is set only on a by-ref run (a discovered action): it rides as a
-	// hidden field because there is no id in the URL to carry it.
-	ActionRef string
 }
 
 // runForm builds a CallForm for running an action (repeatable, no locked args).
@@ -179,18 +176,6 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 		QuoteHash: quoteHash,
 		Price:     price, Editable: editable, ResultID: "run-result", Outcome: outcome,
 		FirstPayee: firstPayee, PayeeOwner: payeeOwner,
-	}
-}
-
-// refRunForm builds a CallForm for running an action addressed BY REF rather
-// than by local id — the discovered case, where the action_id belongs to the
-// remote kernel and names nothing here. It posts to the by-ref run surface,
-// carrying the same quote pin, so both run paths honour identical terms.
-func refRunForm(csrf template.HTML, ref string, price int64, editable FormModel, outcome *Outcome, quoteHash string) CallForm {
-	return CallForm{
-		CSRFField: csrf, PostURL: "/run", Verb: "Run", ActionRef: ref,
-		QuoteHash: quoteHash, Price: price, Editable: editable,
-		ResultID: "run-result", Outcome: outcome,
 	}
 }
 

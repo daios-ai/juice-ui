@@ -122,11 +122,6 @@ type actionView struct {
 	Error        string
 	CSRFField    template.HTML // carried so the polled _action_run fragment's form keeps its token
 	BadgeSecs    int
-	// Discovered marks a page built from the gossip catalog rather than a local
-	// action row: no stats, no owner controls, an indicative price, and a run
-	// that posts by REF (there is no local id to post to). The quote pin is what
-	// keeps that run honest.
-	Discovered bool
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -823,55 +818,6 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
 }
 
-// postRunByRef runs an action named by "owner/name" (the palette / run-page
-// path). It resolves the action to confirm the price, then executes; the caller
-// is expected to have passed through the priced confirm form.
-func (s *Server) postRunByRef(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	ref := strings.TrimSpace(r.FormValue("action"))
-	args, argErr := buildArgs(r)
-	if ref == "" {
-		s.flashRedirect(w, r, "/browse", "error", "No action specified.")
-		return
-	}
-	if argErr != nil {
-		s.flashRedirect(w, r, "/browse", "error", "Invalid JSON in arguments: "+argErr.Error())
-		return
-	}
-	var outcome Outcome
-	err := s.sessions.Do(ctx, func(tok string) error {
-		// Same pin discipline as postRun: the hash the buyer was shown, taken
-		// from the request. Both run surfaces honour it, or one would accept
-		// moved terms while the other refused them.
-		out, e := s.caller.Run(ctx, tok, ref, args, r.FormValue("quote_hash"))
-		if e != nil {
-			return e
-		}
-		outcome = out
-		outcome.CSRFField = csrf.TemplateField(r)
-		return nil
-	})
-	if s.handleErrFragment(w, r, err) {
-		return
-	}
-	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
-		return
-	}
-	if outcome.TxID != "" {
-		http.Redirect(w, r, "/transactions/"+outcome.TxID, http.StatusSeeOther)
-		return
-	}
-	// A parked call has no transaction yet, but it does have a process holding
-	// the reserved funds — land the buyer where that money is visible rather
-	// than on a browse page with a sentence about it.
-	if outcome.ProcessID != "" {
-		s.flashRedirect(w, r, "/processes/"+outcome.ProcessID, "info", outcome.Message)
-		return
-	}
-	s.flashRedirect(w, r, "/browse", "info", outcome.Message)
-}
-
 // ---- user (account + wallet) ----
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -1191,103 +1137,41 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
 }
 
-// getDiscovered renders the action page for a DISCOVERED remote action — one
-// this kernel has only heard of through gossip. It has no local row (its
-// action_id belongs to the remote kernel), so the page is rebuilt from the
-// lookup row that produced the card: the kernel serves the ref, description,
-// both schemas, the catalog price and the quote hash on every result.
+// getDiscovered opens an action this kernel has only heard of through gossip.
+// It has no local row — its action_id belongs to the remote kernel — so the
+// reference is RESOLVED with its home kernel, which verifies the signed contract
+// and caches a proxy. What the buyer reads is then an ordinary priced action
+// page quoting live terms, rather than a catalog row that may be a discovery
+// interval stale.
 //
-// That hash is what makes the page honest. The price is indicative — the
-// catalog refreshes each discovery pass — but pinning the hash means the kernel
-// refuses before locking if the terms moved, at zero charge, so a buyer is
-// never charged a figure they were not shown.
+// The resolve is a pure read: one round trip, and it spends nothing.
 func (s *Server) getDiscovered(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-	if ref == "" || !refIsRemote(ref) {
-		s.flashRedirect(w, r, "/browse", "error", "No discovered action specified.")
+	if ref == "" {
+		s.flashRedirect(w, r, "/browse", "error", "No action specified.")
 		return
 	}
 	ctx := r.Context()
-	var view actionView
+	var (
+		action client.Action
+		found  bool
+	)
 	err := s.sessions.Do(ctx, func(tok string) error {
-		// Re-run the lookup and take the row whose ref matches exactly. The name
-		// half is the query: it is what the catalog indexes.
-		out, e := s.caller.Run(ctx, tok, "sys/lookup",
-			mustArgs(map[string]any{"query": refName(ref), "limit": 20}), "")
-		if e != nil {
-			return e
-		}
-		if !out.IsSuccess() {
-			return nil
-		}
-		for _, c := range parseLookup(out.Result) {
-			if c.Action.Action == ref {
-				view = actionView{
-					Action:     c.Action,
-					Form:       BuildForm(c.Action.InputSchema),
-					IsPaid:     c.Action.Price > 0,
-					Discovered: true,
-				}
-				return nil
-			}
-		}
-		return nil
+		a, ok, e := s.client.ResolveRef(ctx, tok, ref)
+		action, found = a, ok
+		return e
 	})
-	if s.handleErr(w, r, err) {
+	if err != nil {
+		// An unreachable or refusing home kernel is a fact about that kernel, and
+		// its own sentence says so (§6.2).
+		s.flashRedirect(w, r, "/browse", "error", userMessage(err))
 		return
 	}
-	if view.Action.Action == "" {
-		// Once resolved, the kernel SHADOWS the discovery row with the cached
-		// proxy — so a ref that has left the catalog has usually just become an
-		// ordinary local action. Follow it there rather than dead-ending; that
-		// transition is the normal outcome of a first call, including a refused
-		// one (a terms_changed refusal still resolves the contract).
-		if id := s.proxyIDForRef(ctx, ref); id != "" {
-			http.Redirect(w, r, "/actions/"+url.PathEscape(id), http.StatusSeeOther)
-			return
-		}
-		s.flashRedirect(w, r, "/browse", "error", "That action is no longer in the catalog.")
+	if !found {
+		s.flashRedirect(w, r, "/browse", "error", "That action could not be resolved from its kernel.")
 		return
 	}
-	view.CSRFField = csrf.TemplateField(r)
-	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
-}
-
-// proxyIDForRef finds the local cached proxy for a kernel-qualified ref, or ""
-// when none exists. The proxy's own computed ref is the match key: the kernel
-// renders it owner@petname/name once a petname is bound, so the discovered form
-// (owner@key/name) and the resolved form can differ — the stable halves are the
-// owner and the name.
-func (s *Server) proxyIDForRef(ctx context.Context, ref string) string {
-	var id string
-	_ = s.sessions.Do(ctx, func(tok string) error {
-		acts, err := s.client.ListActions(ctx, tok, "", "", true, 0, 0)
-		if err != nil {
-			return err
-		}
-		want := refOf(ref, "")
-		for _, a := range acts {
-			if a.Kind != "remote_proxy" {
-				continue
-			}
-			got := refOf(a.Ref(), "")
-			if got.Name == want.Name && ownerHalf(got.Owner.Title) == ownerHalf(want.Owner.Title) {
-				id = a.ID
-				return nil
-			}
-		}
-		return nil
-	})
-	return id
-}
-
-// ownerHalf returns the owner name from an "owner@kernel" segment — the half
-// that is stable across a petname binding.
-func ownerHalf(seg string) string {
-	if i := strings.IndexByte(seg, '@'); i >= 0 {
-		return seg[:i]
-	}
-	return seg
+	http.Redirect(w, r, "/actions/"+url.PathEscape(action.ID), http.StatusSeeOther)
 }
 
 func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
@@ -1538,44 +1422,59 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	name := strings.TrimSpace(r.FormValue("name"))
 	specURL := strings.TrimSpace(r.FormValue("spec_url"))
+	if name == "" {
+		s.flashRedirect(w, r, "/workshop", "error", "Name the application to install.")
+		return
+	}
 	var res client.ImportResult
 	err := s.sessions.Do(ctx, func(tok string) error {
-		v, e := s.client.ImportOpenAPI(ctx, tok, specURL)
+		v, e := s.client.ImportOpenAPI(ctx, tok, name, specURL)
 		res = v
 		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("Import complete: %d created, %d updated.", len(res.Created), len(res.Updated)))
-}
-
-func (s *Server) postUnimport(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	specURL := strings.TrimSpace(r.FormValue("spec_url"))
-	var deactivated []client.Action
-	err := s.sessions.Do(ctx, func(tok string) error {
-		a, e := s.client.UnimportOpenAPI(ctx, tok, specURL, "")
-		deactivated = a
-		return e
-	})
-	if s.handleErr(w, r, err) {
-		return
+	msg := fmt.Sprintf("%s: %d created, %d updated, %d unchanged, %d deactivated.",
+		name, len(res.Created), len(res.Updated), len(res.Unchanged), len(res.Deactivated))
+	// A rejected operation is named with the kernel's reason: silently absent, it
+	// would read as a kernel fault rather than a document that cannot be installed.
+	kind := "success"
+	if len(res.Rejected) > 0 {
+		kind = "info"
+		var parts []string
+		for _, rj := range res.Rejected {
+			parts = append(parts, rj.Key+" — "+rj.Reason)
+		}
+		msg += " Not installed: " + strings.Join(parts, "; ") + "."
 	}
-	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("Unimport complete: %d action(s) deactivated. History is preserved.", len(deactivated)))
+	s.flashRedirect(w, r, "/workshop", kind, msg)
 }
 
+// postActionLifecycle enables, disables or re-scopes a TARGET: an action id, or
+// an owner/path naming a whole application. The kernel answers with the rows it
+// wrote, so the flash counts what actually changed rather than predicting it.
 func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	target := strings.TrimSpace(r.FormValue("target"))
 	op := lastSegment(r.URL.Path)
 	ctx := r.Context()
+	if target == "" {
+		s.flashRedirect(w, r, "/workshop", "error", "Name the action or path to change.")
+		return
+	}
+	var rows []client.Action
 	err := s.sessions.Do(ctx, func(tok string) error {
 		switch op {
 		case "enable":
-			return s.client.EnableAction(ctx, tok, id)
+			a, e := s.client.EnableAction(ctx, tok, target)
+			rows = a
+			return e
 		case "disable":
-			return s.client.DisableAction(ctx, tok, id)
+			a, e := s.client.DisableAction(ctx, tok, target)
+			rows = a
+			return e
 		case "visibility":
 			// Three-way caller-scope (private/local/public); the form names the
 			// target value. Guard the whitelist so an arbitrary string never reaches
@@ -1586,7 +1485,8 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 			default:
 				return nil
 			}
-			_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Visibility: &v})
+			a, e := s.client.UpdateAction(ctx, tok, target, client.UpdateActionInput{Visibility: &v})
+			rows = a
 			return e
 		}
 		return nil
@@ -1600,7 +1500,13 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 		s.handleErr(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/actions/"+id, http.StatusSeeOther)
+	// A single row returns to its own page; a path names many, so the workshop is
+	// where the result is legible.
+	if len(rows) == 1 && rows[0].ID == target {
+		http.Redirect(w, r, "/actions/"+url.PathEscape(target), http.StatusSeeOther)
+		return
+	}
+	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("%d action(s) %sd.", len(rows), op))
 }
 
 func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
@@ -1704,21 +1610,37 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 		in.Method = strings.TrimSpace(r.FormValue("method"))
 		in.Params = parseHTTPParams(r)
 	}
+	var rows []client.Action
 	err := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.UpdateAction(ctx, tok, id, in)
+		a, e := s.client.UpdateAction(ctx, tok, id, in)
+		rows = a
 		return e
 	})
-	s.flashResult(w, r, err, "/actions/"+id, "Action updated. It is now inactive.")
+	// The kernel decides what an edit costs: a price, schema or source change
+	// deactivates, a description change does not (kernel §D4). Report the state it
+	// returned rather than predicting one.
+	msg := "Action updated."
+	if len(rows) == 1 && !rows[0].Active {
+		msg += " It is now inactive — enable it when ready."
+	}
+	s.flashResult(w, r, err, "/actions/"+id, msg)
 }
 
 func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	target := strings.TrimSpace(r.FormValue("target"))
 	ctx := r.Context()
-	err := s.sessions.Do(ctx, func(tok string) error { return s.client.DeleteAction(ctx, tok, id) })
+	if target == "" {
+		s.flashRedirect(w, r, "/workshop", "error", "Name the action or path to delete.")
+		return
+	}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.DeleteAction(ctx, tok, target)
+		return e
+	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.flashRedirect(w, r, "/workshop", "success", "Action deleted. History is preserved.")
+	s.flashRedirect(w, r, "/workshop", "success", "Deleted. History is preserved.")
 }
 
 // ---- processes ----
@@ -2057,7 +1979,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 // The no-JS fallback renders the named dialog with the [open] attribute, so the
 // value is validated here before it ever reaches a template.
 var formWhitelist = map[string]map[string]bool{
-	"action":        {"action-create": true, "action-import": true, "action-unimport": true},
+	"action":        {"action-create": true, "action-import": true},
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
 	"wallet":        {"transfer": true},

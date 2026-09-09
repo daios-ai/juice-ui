@@ -113,9 +113,14 @@
     <form class="stack" method="post" action="/actions/import">
       {{.CSRFField}}
       <div class="field">
+        <label for="i-name">Application name<span class="req">*</span></label>
+        <p class="help">One name holds one document. Re-importing it reconciles changes.</p>
+        <input id="i-name" name="name" type="text" class="mono" placeholder="pets" required>
+      </div>
+      <div class="field">
         <label for="i-url">Spec URL</label>
-        <p class="help">Representable operations import as inactive http actions.</p>
-        <input id="i-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json" required>
+        <p class="help">Given once; later imports re-read the recorded document.</p>
+        <input id="i-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json">
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Import</button>
@@ -126,25 +131,6 @@
 </dialog>
 {{end}}
 
-{{define "_form_action_unimport"}}
-<dialog id="form-action-unimport" class="modal-form"{{if eq .Data.OpenForm "action-unimport"}} open{{end}} aria-label="Unimport OpenAPI">
-  <div class="modal-head"><h2>Unimport OpenAPI</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/actions/unimport">
-      {{.CSRFField}}
-      <div class="field">
-        <label for="u-url">Spec URL</label>
-        <p class="help">Deactivates matching actions. History is preserved.</p>
-        <input id="u-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json" required>
-      </div>
-      <div class="cluster">
-        <button class="btn" type="submit">Unimport</button>
-        <a class="btn" href="/workshop" data-modal-close>Cancel</a>
-      </div>
-    </form>
-  </div>
-</dialog>
-{{end}}
 
 {{define "_form_user_update"}}
 <dialog id="form-user-update" class="modal-form"{{if eq .Data.OpenForm "user-update"}} open{{end}} aria-label="Update account">

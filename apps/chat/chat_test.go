@@ -524,6 +524,15 @@ type fakeKernel struct {
 	meJSON    string           // body returned by GET /v1/me (default: no chat/msg connector)
 }
 
+// targetOf reads the target a mutation names from its body.
+func targetOf(b []byte) string {
+	var in struct {
+		Target string `json:"target"`
+	}
+	_ = json.Unmarshal(b, &in)
+	return in.Target
+}
+
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string]string{}, enables: map[string]bool{}, disables: map[string]bool{}, done: map[string]bool{}}
 	for i := range seed {
@@ -566,16 +575,18 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.WriteHeader(201)
 		w.Write([]byte(a.wire()))
 	})
-	mux.HandleFunc("PUT /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
+	// A mutation names a target — an id, or an owner/path naming a subtree — and
+	// answers with the rows it wrote (kernel v0.14.0).
+	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		id := targetOf(b)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		var in client.UpdateActionInput
 		_ = json.Unmarshal(b, &in)
 		a := f.acts[id]
 		if a == nil {
-			w.Write([]byte(`{}`))
+			w.Write([]byte(`[]`))
 			return
 		}
 		if !isSpecialName(a.Name) { // exclude the non-Op special actions from op-churn counts
@@ -596,10 +607,11 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		if len(in.OutputSchema) > 0 {
 			a.OutSchema = string(in.OutputSchema)
 		}
-		w.Write([]byte(a.wire()))
+		w.Write([]byte(`[` + a.wire() + `]`))
 	})
-	mux.HandleFunc("POST /v1/actions/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
+	mux.HandleFunc("POST /v1/actions/enable", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		id := targetOf(b)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if a := f.acts[id]; a != nil && a.Name == f.failName {
@@ -613,17 +625,18 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 				f.enables[id] = true
 			}
 		}
-		w.Write([]byte(`{"active":true}`))
+		w.Write([]byte(`[{"active":true}]`))
 	})
-	mux.HandleFunc("POST /v1/actions/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
+	mux.HandleFunc("POST /v1/actions/disable", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		id := targetOf(b)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.disables[id] = true
 		if a := f.acts[id]; a != nil {
 			a.Active = false
 		}
-		w.Write([]byte(`{"active":false}`))
+		w.Write([]byte(`[{"active":false}]`))
 	})
 	// Seed/outbox stubs: ensureSeed resolves sys/sink and opens an outbox trace via
 	// a self sys/message; some tests may re-check the sentinel via ListSteps.

@@ -410,17 +410,92 @@ func TestStepRef(t *testing.T) {
 	}
 }
 
-func TestImportResultCaseInsensitive(t *testing.T) {
+// An application is installed by NAME, and the URL is given once: a later import
+// by name alone re-reads the recorded document. Operations the kernel will not
+// install are named with its reason, so an absent one never reads as our fault.
+func TestImportInstallsAnApplicationByName(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	// Kernel emits capitalized keys (verified live); Go decode is case-insensitive.
-	f.reply = `{"Created":[{"id":"a1","name":"x"}],"Updated":[]}`
-	res, err := f.client().ImportOpenAPI(context.Background(), "tok", "http://spec")
+	f.reply = `{"created":[{"id":"a1","name":"pets/index"}],"updated":[],"unchanged":[],"deactivated":[],
+	 "rejected":[{"key":"noDesc","reason":"missing description and summary"}]}`
+	res, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "http://spec")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(f.lastBody), `"name":"pets"`) || !strings.Contains(string(f.lastBody), `"spec_url":"http://spec"`) {
+		t.Errorf("import body = %s", f.lastBody)
+	}
 	if len(res.Created) != 1 || res.Created[0].ID != "a1" {
 		t.Fatalf("import result = %+v", res)
+	}
+	if len(res.Rejected) != 1 || res.Rejected[0].Key != "noDesc" {
+		t.Errorf("a rejected operation must be carried with its reason: %+v", res.Rejected)
+	}
+	// Re-import by name alone: the kernel re-reads the document it recorded.
+	if _, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(f.lastBody), "spec_url") {
+		t.Errorf("a re-import names only the application: %s", f.lastBody)
+	}
+}
+
+// A mutation names a target — an id, or an owner/path naming a whole
+// application — and answers with the rows it wrote.
+func TestActionMutationsNameATarget(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `[{"id":"a1","active":true},{"id":"a2","active":true}]`
+	rows, err := f.client().EnableAction(context.Background(), "tok", "vendor/pets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/v1/actions/enable" || !strings.Contains(string(f.lastBody), `"target":"vendor/pets"`) {
+		t.Errorf("enable request = %s %s", f.lastPath, f.lastBody)
+	}
+	if len(rows) != 2 {
+		t.Errorf("the kernel answers with every row it wrote: %+v", rows)
+	}
+	if _, err := f.client().DisableAction(context.Background(), "tok", "a1"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/v1/actions/disable" {
+		t.Errorf("disable path = %q", f.lastPath)
+	}
+	if _, err := f.client().UpdateAction(context.Background(), "tok", "vendor/pets", UpdateActionInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "PUT" || f.lastPath != "/v1/actions" || !strings.Contains(string(f.lastBody), `"target":"vendor/pets"`) {
+		t.Errorf("update request = %s %s %s", f.lastMethod, f.lastPath, f.lastBody)
+	}
+	if _, err := f.client().DeleteAction(context.Background(), "tok", "vendor/pets"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "DELETE" || f.lastPath != "/v1/actions?target=vendor%2Fpets" {
+		t.Errorf("delete request = %s %s", f.lastMethod, f.lastPath)
+	}
+}
+
+// A reference resolves exactly as a call would, and a miss is an empty list
+// rather than an error — including a kernel-qualified one, which the kernel
+// resolves over federation and caches.
+func TestResolveRef(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `[{"id":"PX","action":"vendor@bravo/echo/index","kind":"remote_proxy","price":133}]`
+	a, ok, err := f.client().ResolveRef(context.Background(), "tok", "vendor@bravo/echo")
+	if err != nil || !ok {
+		t.Fatalf("resolve = %+v %v %v", a, ok, err)
+	}
+	if f.lastPath != "/v1/actions?ref=vendor%40bravo%2Fecho" {
+		t.Errorf("resolve path = %q", f.lastPath)
+	}
+	if a.ID != "PX" {
+		t.Errorf("resolved row = %+v", a)
+	}
+	f.reply = `[]`
+	if _, ok, err := f.client().ResolveRef(context.Background(), "tok", "nobody@bravo/x"); err != nil || ok {
+		t.Errorf("a miss is an empty list, not an error: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -562,7 +637,7 @@ func TestCreateActionMarshalsMethodParams(t *testing.T) {
 func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"a1","name":"x","kind":"http"}`
+	f.reply = `[{"id":"a1","name":"x","kind":"http"}]`
 	src := "https://ui/_kernel/chat/message"
 	vis := "public"
 	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{
@@ -578,7 +653,7 @@ func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 		t.Errorf("auth not sent in update: %s", body)
 	}
 	// omitempty: an update with no auth omits the field.
-	f.reply = `{"id":"a1","name":"x","kind":"http"}`
+	f.reply = `[{"id":"a1","name":"x","kind":"http"}]`
 	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{Visibility: &vis}); err != nil {
 		t.Fatal(err)
 	}

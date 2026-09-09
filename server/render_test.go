@@ -1511,13 +1511,13 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 		t.Fatalf("render workshop: %v", err)
 	}
 	body := rec.Body.String()
-	for _, gone := range []string{"/actions/P1/disable", "/actions/P1/enable", "/actions/P1/visibility", "/actions/P1/delete"} {
-		if strings.Contains(body, gone) {
-			t.Errorf("workshop must offer no lifecycle verb on a proxy row: %q in %s", gone, body)
-		}
+	// A mutation names its target in the body, so a proxy offering no verb means
+	// no form carries its id.
+	if strings.Contains(body, `name="target" value="P1"`) {
+		t.Errorf("workshop must offer no lifecycle verb on a proxy row: %s", body)
 	}
 	// The operator's own action keeps its full menu — the rule is about proxies.
-	if !strings.Contains(body, "/actions/A1/disable") {
+	if !strings.Contains(body, `name="target" value="A1"`) {
 		t.Errorf("an ordinary owned action must keep its lifecycle menu: %s", body)
 	}
 
@@ -1592,41 +1592,5 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 	}
 	if strings.Contains(rec2.Body.String(), "quote_hash") {
 		t.Error("no quote means no pin field, not an empty one")
-	}
-}
-
-// A discovered action is bought BY REF — it has no local id — and its form
-// carries both the ref and the catalog quote, so the kernel refuses rather than
-// charging a price the buyer never saw.
-func TestDiscoveredActionRunsByRefWithPin(t *testing.T) {
-	r, err := NewRenderer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: actionView{
-		Discovered: true,
-		Action: client.Action{
-			Action: "sys@KERNELKEY/llm/chat", Name: "llm/chat", Price: 111, QuoteHash: "QH",
-			Description: "Chat completion.",
-		},
-		Form: BuildForm(nil),
-	}}
-	if err := r.Render(rec, 200, "action_detail", p); err != nil {
-		t.Fatal(err)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `action="/run"`) || !strings.Contains(body, `name="action" value="sys@KERNELKEY/llm/chat"`) {
-		t.Errorf("a discovered run must post by ref: %s", body)
-	}
-	if !strings.Contains(body, `name="quote_hash" value="QH"`) {
-		t.Errorf("a discovered run must pin the catalog quote: %s", body)
-	}
-	if !strings.Contains(body, "Run (111.000000)") {
-		t.Errorf("the button must name the price being pinned: %s", body)
-	}
-	// It has no local stats, so the strip's four "none"s would be noise.
-	if strings.Contains(body, "stat-strip") {
-		t.Errorf("a discovered page carries no reputation strip: %s", body)
 	}
 }
