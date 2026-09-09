@@ -234,7 +234,12 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /control/deposits", func(w http.ResponseWriter, r *http.Request) {
 		// One obligation a buyer says it paid, whose money has not arrived. Amount
 		// is the draw's and exceeds what the call owed (kernel §P10).
-		w.Write([]byte(`{"deposits":[],"owed":[{"id":"TICKET1","obligation":8,"amount":10,
+		// One obligation, and one payment whose sender no account has registered —
+		// the held row's shape verified live on a chain world (anvil, decimals 6).
+		w.Write([]byte(`{"deposits":[{"id":"rail:0xabc:0","kind":"deposit","amount":5000000,"credit":5000000,
+		  "status":"held","tx_hash":"0xabc","created_at":"2026-09-09T15:22:32Z",
+		  "party_handle":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}],
+		 "owed":[{"id":"TICKET1","obligation":8,"amount":10,
 		 "tx_hash":"manual:TICKET1","status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"}]}`))
 	})
 	mux.HandleFunc("GET /control/peers", func(w http.ResponseWriter, r *http.Request) {

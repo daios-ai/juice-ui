@@ -316,13 +316,25 @@ type Deposits struct {
 	Owed []Obligation  `json:"owed"`
 }
 
-// HeldDeposit is a payment booked against no account yet. Only its id is
-// contractually named (it is what --ref names to attribute it), so nothing else
-// is rendered until a chain world confirms the rest of the shape.
+// HeldDeposit is a payment the rail has witnessed whose sender no account has
+// registered, so the kernel cannot decide whose it is and holds it on sys until
+// the operator says (kernel §D23). PartyHandle is the sending address — the fact
+// the operator reads to decide.
+//
+// Attribute it by its TxHash, not by its ID: the id carries a "rail:" prefix the
+// deposit endpoint refuses ("no finalized payment rail:0x… has been observed"),
+// while the bare hash and hash:index forms both work. Verified live on a chain
+// world (anvil, decimals 6); reported to the kernel, since API.md says the row's
+// id is what names it.
 type HeldDeposit struct {
-	ID        string `json:"id"`
-	Amount    int64  `json:"amount"`
-	CreatedAt string `json:"created_at"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Amount      int64  `json:"amount"`
+	Credit      int64  `json:"credit"`
+	Status      string `json:"status"`
+	TxHash      string `json:"tx_hash"`
+	CreatedAt   string `json:"created_at"`
+	PartyHandle string `json:"party_handle"`
 }
 
 // Obligation is one cross-kernel debt owed TO this kernel: the ticket both

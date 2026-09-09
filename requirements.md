@@ -983,6 +983,9 @@ initiate, and the kernel serves no settle route.
   the peer's public key and the ticket id to `POST /control/deposit`. Recording a
   payment moves real money to the seller, so it is never a bare click, and the
   key is what is posted — a displayed name is presentation only.
+* Payments the rail has witnessed whose sender no account has registered MUST be
+  listed too, each naming the **address it came from** — the fact that decides
+  whose it is — with an attribute link that prefills the transaction naming it.
 * The deposit dialog serves the kernel's three forms by which fields are filled:
   a user with an amount and a reference; a user with a reference alone, to
   attribute a payment already received; a peer with a ticket reference, to close
@@ -1233,10 +1236,13 @@ once its prerequisite is confirmed on the running kernel.
   the same row), `GET /v1/withdrawals`, and `PUT /v1/me/address {address,
   signature}`. On a world without payment addresses both refuse (409), and while
   a rail payment is blocked every money verb answers `503 rail_stopped`.
-* **Held deposits (§6.6) — conditional.** `GET /control/deposits` also carries
-  `deposits`: payments booked against no account yet. Only the row's `id` is
-  contractually named, and no chain world was available to observe the rest, so
-  the UI renders the `owed` list alone until the shape is verified.
+* **Held deposits — resolved (§6.6).** Verified on a local chain (anvil,
+  decimals 6): a payment to the vault from an address no account has registered
+  is listed with the sender under `party_handle`, and the operator attributes it
+  to a user. It is attributed by its **transaction hash**, not by the row's `id`:
+  that id carries a `rail:` prefix the deposit endpoint refuses, though API.md
+  says the id is what names it — reported to the kernel, and the UI links the
+  hash meanwhile.
 * **The money unit above six decimals (§7) — conditional.** `Unit.Format`
   truncates beyond six fraction digits. No shipped world needs more (`play` is 0,
   the token worlds are 6); a world that did would need the display widened.

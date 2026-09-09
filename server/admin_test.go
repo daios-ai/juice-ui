@@ -454,6 +454,20 @@ func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 	if !strings.Contains(body, "Confirm (10.000000)") || !strings.Contains(body, "data-confirm") {
 		t.Error("recording a payment is a money act: it names the amount behind a confirm")
 	}
+	// A payment whose sender nobody has registered waits for the operator to say
+	// whose it is. The address it came from is the fact that decides, and the
+	// attribute link carries the reference so it is not retyped.
+	if !strings.Contains(body, "Awaiting an owner") || !strings.Contains(body, "0x70997970c518") {
+		t.Errorf("a held payment must be listed with the address it came from: %s", body)
+	}
+	// The PAYMENT names it, not the row: a held row's id carries a rail: prefix
+	// the deposit endpoint refuses (verified live on a chain world).
+	if !strings.Contains(body, "form=admin-deposit&amp;ref=0xabc") {
+		t.Errorf("attributing a held payment must prefill the transaction that names it: %s", body)
+	}
+	if strings.Contains(body, "ref=rail%3a") {
+		t.Error("the row id is not a reference the kernel accepts")
+	}
 }
 
 // §6.6: the value-transfer queue is GONE. The kernel stopped serving

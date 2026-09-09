@@ -101,6 +101,29 @@ Harness: two throwaway kernels on world `play`, A=`alpha` :4141 (buyer, seeded w
 - One draw won: alice's ledger gains `res:<ticket>` alice→sys **amount 100** (reason "obligation <ticket>"), then sys's ledger `rail:manual:<ticket>` sys→null 100 (auto on manual rail); B's `owed` row `{obligation:8, amount:100, status:"announced", tx_hash:"manual:<ticket>"}`. Realised cost 101. Expected 9 ✓. The winning stake is the only money movement a buyer ever sees for a remote call besides the tx.
 - receipt-verification `draw:true` on all.
 
+## 13b. Chain world on a local chain (anvil, decimals 6) — 2026-09-09
+
+Rig: `anvil --chain-id 31337 --slots-in-an-epoch 1`, juice-rail's compiled mocks
+(`MockUSDT0`, `MockRouter`) deployed by the kernel's own `flows/lib.sh` recipe, a
+generated world file naming them, one kernel serving it with `rail_rpc`.
+
+- `/health` → `decimals:6`, `network:"anvil"`, `rail_address:<vault>`; identity
+  carries the same. Money renders scaled: 5000000 base units is `5.000000`.
+- **Held deposit shape (this is what was unverifiable on play).** A token transfer
+  to the vault from an address no account has registered is booked and listed:
+  `GET /control/deposits.deposits[] = {id:"rail:<txhash>:<index>", kind:"deposit",
+  amount, credit, status:"held", tx_hash, created_at, party_handle:<sender>}`.
+  `party_handle` is the sending address — the fact the operator reads to decide
+  whose it is.
+- **KERNEL DEVIATION**: the row's `id` is NOT a reference `POST /control/deposit`
+  accepts — `ref:"rail:0x…:0"` → 404 "no finalized payment rail:0x… has been
+  observed". The bare `<txhash>` and `<txhash>:<index>` both work. API.md says
+  "Every row's `id` is what `--ref` names to close it", which holds for `owed`
+  (ticket ids) but not for a held deposit. The UI attributes by `tx_hash`.
+- Attributing credits the named user for the full amount, empties the held list,
+  and replays harmlessly (200, no second credit). An unknown reference → 404
+  "no finalized payment 0x… has been observed".
+
 ## 13. Chain world (`test`, decimals 6) with an unreachable RPC
 - Boot without `rail_rpc` → refuses: `rail: world "test" needs rail_rpc: an endpoint is the one thing only you can supply`. With a dead RPC the server STARTS (`rail.unready` logged) and serves `/health` `{decimals:6, network:"test", rail_address:"0x…", …}`; `/v1/me` still has NO `rail_address`; identity `lottery 1000000000, credit_limit 100000000000` (world-scaled defaults), `rail_address`, `finalized:null`.
 - Every money verb while the rail is unready → 503 `rail_stopped` "rail is not ready: read chain id: Post …connection refused": `PUT /v1/me/address`, `POST /v1/withdrawals`, `POST /control/deposit`.

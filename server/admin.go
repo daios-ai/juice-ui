@@ -18,11 +18,12 @@ import (
 // (deposit/withdraw), access (suspend), and federation trust (peers, settlement).
 
 // depositForm carries the shared deposit dialog's per-page state. Every view
-// that renders _form_admin_deposit embeds it: FundKey prefills the recipient (a
-// 43-character key is not retyped) and Back names the page the operator came
-// from, so funding a kernel returns to the roster where its row now appears.
+// that renders _form_admin_deposit embeds it: FundKey prefills the recipient and
+// FundRef the payment being named — neither a 43-character key nor a
+// transaction hash is retyped — and Back names the page the operator came from.
 type depositForm struct {
 	FundKey string
+	FundRef string
 	Back    string
 }
 
@@ -257,8 +258,14 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	showSuspended := tab == tabCounterparties && r.URL.Query().Get("all") == "1"
 	view := adminPeersView{
 		OpenForm: openForm(r, "admin"), Tab: tab, ShowSuspended: showSuspended,
-		CSRFField:   csrf.TemplateField(r),
-		depositForm: depositForm{FundKey: r.URL.Query().Get("fund_key"), Back: "/admin/peers"},
+		CSRFField: csrf.TemplateField(r),
+		depositForm: depositForm{
+			FundKey: r.URL.Query().Get("fund_key"),
+			// A held payment is attributed from its own row, so the reference it
+			// is named by rides into the form rather than being retyped.
+			FundRef: r.URL.Query().Get("ref"),
+			Back:    "/admin/peers",
+		},
 	}
 	view.Petnames = map[string]string{}
 	err := s.sessions.Do(ctx, func(tok string) error {
