@@ -62,8 +62,9 @@ type User struct {
 	Description string       `json:"description"`
 	Available   int64        `json:"available"`
 	Locked      int64        `json:"locked"`
-	Connectors  []Connector  `json:"connectors"`  // directory-grouped consent tree (§8)
-	Connections []Connection `json:"connections"` // full upstream-account inventory
+	RailAddress string       `json:"rail_address,omitempty"` // the caller's registered payout address
+	Connectors  []Connector  `json:"connectors"`             // directory-grouped consent tree (§8)
+	Connections []Connection `json:"connections"`            // full upstream-account inventory
 }
 
 // Connector is one node of the directory-grouped consent tree in GET /v1/me: a
@@ -290,7 +291,20 @@ type Transaction struct {
 	Rating        *TransactionRating `json:"rating"`
 	StartedAt     string             `json:"started_at"`
 	EndedAt       string             `json:"ended_at"`
+	// A cross-kernel call carries the peer's signed receipt and the TicketID both
+	// kernels know its obligation by (kernel §P10). On such a call Net is the
+	// obligation returned to the caller and Fee the import fee retained here —
+	// NOT the provider's revenue, which is the peer's own economics inside
+	// RemoteReceiptJSON. RemoteReceiptHash is set iff the call crossed a boundary.
+	RemoteActionID    string `json:"remote_action_id,omitempty"`
+	RemoteReceiptHash string `json:"remote_receipt_hash,omitempty"`
+	RemoteSignerKey   string `json:"remote_signer_key,omitempty"`
+	TicketID          string `json:"ticket_id,omitempty"`
 }
+
+// IsRemote reports a call that crossed a kernel boundary: it settles per call on
+// the rail, so its cost breakdown reads differently (§6.5).
+func (t Transaction) IsRemote() bool { return t.RemoteReceiptHash != "" }
 
 // ReceiptVerification is the kernel's immutable receipt-verification report.
 // The exact per-check object is kernel-owned, so the BFF renders it as JSON.
@@ -705,7 +719,6 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 // from GET /v1/ledger. from_handle is absent on a deposit, to_handle on a
 // withdrawal; operator_handle is sys for admin ops and the sender for a transfer.
 type LedgerEntry struct {
-	ID             string `json:"id"`
 	Amount         int64  `json:"amount"`
 	Reason         string `json:"reason,omitempty"`
 	ExternalKey    string `json:"external_key,omitempty"`
@@ -713,6 +726,61 @@ type LedgerEntry struct {
 	FromHandle     string `json:"from_handle,omitempty"`
 	ToHandle       string `json:"to_handle,omitempty"`
 	CreatedAt      string `json:"created_at"`
+}
+
+// Withdrawal is one payout of the caller's own credits. The id is minted by the
+// caller, so a replay returns the same row and a double submit moves nothing.
+// A withdrawal snapshots its destination when it is made: registering another
+// address never redirects one already under way (kernel §D23).
+type Withdrawal struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Amount      int64  `json:"amount"`
+	Credit      int64  `json:"credit"`
+	Status      string `json:"status"`
+	TxHash      string `json:"tx_hash,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	FinalizedAt string `json:"finalized_at,omitempty"`
+	PartyHandle string `json:"party_handle,omitempty"`
+}
+
+// Withdraw pays credits out to the address the caller registered. The id is the
+// row's own: replaying it returns that row rather than paying twice.
+func (c *Client) Withdraw(ctx context.Context, token, id string, amount int64, reason string) (Withdrawal, error) {
+	body := map[string]any{"id": id, "amount": amount}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	var wd Withdrawal
+	err := c.do(ctx, http.MethodPost, "/v1/withdrawals", token, body, &wd)
+	return wd, err
+}
+
+// ListWithdrawals lists the caller's own withdrawals and where each stands.
+func (c *Client) ListWithdrawals(ctx context.Context, token string) ([]Withdrawal, error) {
+	var out []Withdrawal
+	err := c.do(ctx, http.MethodGet, "/v1/withdrawals", token, nil, &out)
+	return out, err
+}
+
+// AddressResult is the outcome of registering a payout address: the canonical
+// form the kernel stored, and how many payments already received from that
+// sender it attributed to the caller.
+type AddressResult struct {
+	Address    string `json:"address"`
+	Attributed int    `json:"attributed"`
+}
+
+// RegisterAddress proves control of a payout address. The signature is over the
+// kernel's own registration message, produced by the wallet holding the address —
+// the kernel credits the finalized sender, never whoever reports a payment, so
+// the proof is what makes a payment yours (kernel §D23).
+func (c *Client) RegisterAddress(ctx context.Context, token, address, signature string) (AddressResult, error) {
+	var out AddressResult
+	err := c.do(ctx, http.MethodPut, "/v1/me/address",
+		token, map[string]string{"address": address, "signature": signature}, &out)
+	return out, err
 }
 
 // Ledger lists the caller's own balance movements (newest first), paginated.

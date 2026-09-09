@@ -378,9 +378,10 @@ func statusClass(status string) string {
 }
 
 // costOf extracts a success transaction's gross/fee/net for the breakdown
-// partial.
+// partial, carrying whether the call crossed a kernel boundary — where those
+// three numbers mean something else (§6.5).
 func costOf(tx client.Transaction) Cost {
-	return Cost{Gross: tx.Gross, Fee: tx.Fee, Net: tx.Net}
+	return Cost{Gross: tx.Gross, Fee: tx.Fee, Net: tx.Net, Remote: tx.IsRemote(), Ticket: tx.TicketID}
 }
 
 func truncate(n int, s string) string {

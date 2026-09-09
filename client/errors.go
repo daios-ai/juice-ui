@@ -33,6 +33,7 @@ const (
 	KindPeerUnreachable        // 502 code="peer_unreachable": remote peer offline; call refunded
 	KindPeerUnfunded           // 402 code="peer_unfunded": the serving kernel's exposure cap is exhausted (v0.12 §13)
 	KindTermsChanged           // 409 code="terms_changed": the pinned quote moved; refused BEFORE locking, zero charge (v0.12.16)
+	KindRailStopped            // 503 code="rail_stopped": a blocked payment halts outgoing rail work
 	KindUnavailable            // transport failure: the kernel gave no HTTP response (down/restarting)
 )
 
@@ -139,6 +140,7 @@ var (
 	ErrGrantRequired     = &KernelError{Kind: KindGrantRequired}
 	ErrPeerUnreachable   = &KernelError{Kind: KindPeerUnreachable}
 	ErrPeerUnfunded      = &KernelError{Kind: KindPeerUnfunded}
+	ErrRailStopped       = &KernelError{Kind: KindRailStopped}
 	ErrUnavailable       = &KernelError{Kind: KindUnavailable}
 )
 
@@ -170,6 +172,8 @@ func (k Kind) String() string {
 		return "peer_unreachable"
 	case KindPeerUnfunded:
 		return "peer_unfunded"
+	case KindRailStopped:
+		return "rail_stopped"
 	case KindUnavailable:
 		return "unavailable"
 	default:
@@ -239,6 +243,10 @@ func classify(status int, body []byte) error {
 		e.Kind = KindPeerUnfunded
 	case "terms_changed":
 		e.Kind = KindTermsChanged
+	case "rail_stopped":
+		// A blocked payment halts outgoing rail work; deposits, paid work and
+		// reads continue (kernel §D23). A plain 503 stays internal.
+		e.Kind = KindRailStopped
 	}
 	return e
 }
@@ -273,7 +281,7 @@ func (e *KernelError) UserMessage() string {
 		}
 		return "This action isn't available right now."
 	case KindInsufficientFunds:
-		return "This session doesn't have enough credits. Credits are added out of band by an operator — contact them to top up your account."
+		return "Not enough available balance for this."
 	case KindExecutionFailed:
 		// A provider that changed the action's contract answers the same class
 		// but marks it: nothing executed and nothing was charged, so it must not
@@ -305,10 +313,15 @@ func (e *KernelError) UserMessage() string {
 		}
 		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
 	case KindPeerUnfunded:
+		// The serving kernel has delivered us more than it will carry unpaid: its
+		// operator records our payments before it serves us again (kernel §D14).
+		// Never the buyer's own balance.
 		if p := e.PeerDisplay(); p != "" {
-			return "The kernel serving this action (" + p + ") has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."
+			return "Kernel " + p + " has used up the credit it extends to this kernel. Its operator settles that, not you."
 		}
-		return "The kernel serving this action has hit its credit limit for this kernel — not your balance. The operators need to settle before this action can run."
+		return "The kernel serving this action has used up the credit it extends to this kernel. Its operator settles that, not you."
+	case KindRailStopped:
+		return "Payments out are paused while a rail payment is blocked. Deposits and calls continue."
 	case KindUnavailable:
 		return "The Juice kernel is unreachable — it may be down or restarting. Please try again shortly."
 	default:

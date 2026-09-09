@@ -1657,7 +1657,21 @@ type walletView struct {
 	MyHandle  string
 	Superuser bool
 	OpenForm  string
+	// The rail surface. KernelAddress is where this kernel is paid, and is empty
+	// on a world whose money has no addresses — where the operator records
+	// payments instead and there is nothing to send from a user's side (kernel
+	// §D23). MyAddress is the caller's own registered payout address, empty until
+	// they prove one. WithdrawalID is minted per render so a double submit
+	// replays to the same row rather than paying twice.
+	KernelAddress string
+	MyAddress     string
+	Withdrawals   []client.Withdrawal
+	WithdrawalID  string
 }
+
+// HasRail reports a world whose money has addresses: only there can a user
+// register one and withdraw to it (template helper).
+func (v walletView) HasRail() bool { return v.KernelAddress != "" }
 
 // activityRow is one line of the wallet's activity list. Money leaves a balance
 // through two kernel records that share no log — a transaction (every call,
@@ -1704,13 +1718,21 @@ func mergeActivity(txs []client.Transaction, entries []client.LedgerEntry, limit
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	view := walletView{OpenForm: openForm(r, "wallet")}
+	view := walletView{
+		OpenForm:      openForm(r, "wallet"),
+		KernelAddress: s.kernelIdentity(ctx).RailAddress,
+		WithdrawalID:  newUUID(),
+	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
 		view.Available, view.Locked, view.MyHandle = me.Available, me.Locked, me.Handle
+		view.MyAddress = me.RailAddress
+		if view.HasRail() {
+			view.Withdrawals, _ = s.client.ListWithdrawals(ctx, tok)
+		}
 		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
 			view.Open = filterStatus(procs, "open", true)
 		}
@@ -1729,6 +1751,55 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Superuser = s.isSuperuser(r)
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
+}
+
+// postWithdraw pays credits out to the address the caller registered. The id is
+// minted server-side and rides the form, so a double submit replays to the same
+// row rather than paying twice (kernel §D23).
+func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	amount, err := s.parseAmount(r.FormValue("amount"))
+	if err != nil {
+		s.flashRedirect(w, r, "/wallet", "error", capitalize(err.Error())+".")
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	if amount <= 0 || id == "" {
+		s.flashRedirect(w, r, "/wallet", "error", "Enter an amount to withdraw.")
+		return
+	}
+	var wd client.Withdrawal
+	err = s.sessions.Do(ctx, func(tok string) error {
+		out, e := s.client.Withdraw(ctx, tok, id, amount, strings.TrimSpace(r.FormValue("reason")))
+		wd = out
+		return e
+	})
+	s.flashResult(w, r, err, "/wallet", "Withdrew "+s.render.money(wd.Amount)+".")
+}
+
+// postRegisterAddress registers the address the caller is paid at, proving
+// control of it with a signature over the kernel's registration message. The
+// kernel credits the finalized sender, so the proof is what makes a payment
+// theirs; registering also attributes payments already received from it.
+func (s *Server) postRegisterAddress(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	address := strings.TrimSpace(r.FormValue("address"))
+	signature := strings.TrimSpace(r.FormValue("signature"))
+	if address == "" || signature == "" {
+		s.flashRedirect(w, r, "/wallet", "error", "An address and its signature are both required.")
+		return
+	}
+	var res client.AddressResult
+	err := s.sessions.Do(ctx, func(tok string) error {
+		out, e := s.client.RegisterAddress(ctx, tok, address, signature)
+		res = out
+		return e
+	})
+	msg := "Address registered."
+	if res.Attributed > 0 {
+		msg = fmt.Sprintf("Address registered; %d earlier payment(s) credited.", res.Attributed)
+	}
+	s.flashResult(w, r, err, "/wallet", msg)
 }
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
@@ -1982,7 +2053,7 @@ var formWhitelist = map[string]map[string]bool{
 	"action":        {"action-create": true, "action-import": true},
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
-	"wallet":        {"transfer": true},
+	"wallet":        {"withdraw": true, "address": true},
 	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-inspect": true, "settle-cash": true},
 	"admin-user":    {"admin-rename": true},
 }

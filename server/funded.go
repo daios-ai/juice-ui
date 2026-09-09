@@ -55,6 +55,12 @@ type Cost struct {
 	Gross int64
 	Fee   int64
 	Net   int64
+	// Remote marks a call that crossed a kernel boundary, where the same three
+	// numbers mean different things: Net is the obligation returned to the caller
+	// and Fee the import fee retained here, not the provider's revenue (§6.5).
+	// Ticket names the obligation both kernels know it by.
+	Remote bool
+	Ticket string
 }
 
 // Outcome is the rendered result of a call through POST /v1/run.

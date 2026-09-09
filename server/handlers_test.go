@@ -738,20 +738,81 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 	}
 }
 
-func TestWalletShowsBalancesAndDepositNote(t *testing.T) {
+// How money comes in, and whether it can go out, are facts about the world this
+// kernel serves: a world without payment addresses has nothing a user can send
+// from, and the operator records payments instead (kernel §D23).
+func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
+	// The fake kernel serves no rail address (a play-style world).
 	body := getBody(t, cl, srv.URL+"/wallet")
 	if !strings.Contains(body, "500") {
 		t.Error("wallet should show available balance")
 	}
-	// R3.3.1: must state plainly that top-ups happen out-of-band.
-	if !strings.Contains(strings.ToLower(body), "top-up") && !strings.Contains(strings.ToLower(body), "out-of-band") {
-		t.Error("wallet must explain credit top-ups happen out-of-band")
+	if !strings.Contains(body, "recorded by the operator") {
+		t.Error("without addresses, the wallet must say who records a payment")
+	}
+	for _, gone := range []string{"form=withdraw", "form=address"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("a world without addresses offers no %q", gone)
+		}
+	}
+}
+
+// On a world whose money has addresses the wallet offers the two verbs that
+// exist there: register the address you are paid at, and withdraw to it.
+func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"test","network_digest":"D9","decimals":6,"rail_address":"0xKERNEL"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=C"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":5000000,"locked":0,"rail_address":"0xALICE"}`))
+	})
+	mux.HandleFunc("GET /v1/withdrawals", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"W1","kind":"payout","amount":10,"status":"confirmed","tx_hash":"manual:W1","created_at":"2026-09-09T09:17:26Z"}]`))
+	})
+	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/wallet")
+	if !strings.Contains(body, "0xKERNEL") || !strings.Contains(body, "0xALICE") {
+		t.Errorf("the wallet must name where the kernel is paid and where the user is: %s", body)
+	}
+	if !strings.Contains(body, "form-withdraw") || !strings.Contains(body, "form-address") {
+		t.Error("an address world offers withdraw and register")
+	}
+	// The id is minted here so a double submit replays to one row.
+	if !strings.Contains(body, `name="id" value="`) {
+		t.Error("the withdrawal form must carry a minted id")
+	}
+	// Six decimals against the world's own scale: 5000000 base units is 5.
+	if !strings.Contains(body, "5.000000") {
+		t.Errorf("the balance must scale by the world's decimals: %s", body)
+	}
+	if !strings.Contains(body, "manual:W1") {
+		t.Error("the withdrawals table must show the payment that settled it")
 	}
 }
 
@@ -2338,8 +2399,10 @@ func TestMergeActivityInterleavesBothRecords(t *testing.T) {
 		{ID: "tx-new", StartedAt: "2026-08-18T12:00:00Z"},
 		{ID: "tx-old", StartedAt: "2026-08-16T12:00:00Z"},
 	}
+	// A ledger entry carries no id (the kernel serves none), so it is identified
+	// here by what it says: an amount and a time.
 	entries := []client.LedgerEntry{
-		{ID: "led-mid", CreatedAt: "2026-08-17T12:00:00Z"},
+		{Amount: 50, Reason: "gift", CreatedAt: "2026-08-17T12:00:00Z"},
 	}
 	rows := mergeActivity(txs, entries, 10)
 	if len(rows) != 3 {
@@ -2349,7 +2412,7 @@ func TestMergeActivityInterleavesBothRecords(t *testing.T) {
 	if !rows[0].IsCall() || rows[0].Tx.ID != "tx-new" {
 		t.Errorf("row 0 = %+v, want tx-new", rows[0])
 	}
-	if rows[1].IsCall() || rows[1].Entry.ID != "led-mid" {
+	if rows[1].IsCall() || rows[1].Entry.Reason != "gift" {
 		t.Errorf("row 1 = %+v, want the ledger entry between the two calls", rows[1])
 	}
 	if !rows[2].IsCall() || rows[2].Tx.ID != "tx-old" {
@@ -2560,5 +2623,49 @@ func TestWalletValueMovementRendersWithoutTheTransactionID(t *testing.T) {
 	// Both records are present: the call and the movement.
 	if !strings.Contains(activity, "/transactions/T1") {
 		t.Error("the call itself still renders as its own row, linking to the receipt")
+	}
+}
+
+// A cross-kernel call reads differently from a local one: the buyer paid the
+// all-in quote, the import fee stayed here, and what is called `net` is the
+// obligation returned to the caller — the provider's own economics live in the
+// peer's signed receipt. Captioning it "net to provider" would be false (§6.5).
+func TestRemoteTransactionBreakdownNamesTheObligation(t *testing.T) {
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=C"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
+	})
+	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"TX9","action_id":"PX","action_name":"vendor/echo/index","status":"success",
+		 "gross":133,"net":126,"fee":7,"owner_handle":"alice","caller_handle":"alice","target_handle":"bravo",
+		 "remote_receipt_hash":"H","remote_signer_key":"KEYB","ticket_id":"TICKET1",
+		 "started_at":"2026-09-09T09:20:29Z"}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "alice")
+
+	body := getBody(t, cl, srv.URL+"/transactions/TX9")
+	for _, want := range []string{"paid", "import fee", "obligation", "TICKET1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a remote call's breakdown must name %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Fee is charged on value added") {
+		t.Error("that caption describes a local settlement, not a cross-kernel one")
 	}
 }

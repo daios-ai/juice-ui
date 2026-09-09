@@ -30,7 +30,8 @@
   {{/* Cost */}}
   {{if eq $d.Tx.Status "success"}}
   {{template "_cost_breakdown" (costOf $d.Tx)}}
-  <p class="cost-note muted">Fee is charged on value added.</p>
+  {{if $d.Tx.IsRemote}}<p class="cost-note muted">Settles on the rail as ticket <span class="mono" title="{{$d.Tx.TicketID}}">{{truncate 8 $d.Tx.TicketID}}…</span>.</p>
+  {{else}}<p class="cost-note muted">Fee is charged on value added.</p>{{end}}
   {{else}}
   <div class="outcome failed"><strong>Failed — fully refunded.</strong>{{if $d.Tx.Reason}}<p>{{$d.Tx.Reason}}</p>{{end}}</div>
   {{end}}

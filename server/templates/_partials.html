@@ -61,11 +61,22 @@
 </p>
 {{end}}
 
+{{/* One call, two readings. Locally the buyer pays gross, the operator takes a
+     fee on value added, and the provider is paid net. Across kernels the same
+     row means something else: net is the obligation returned to the caller, fee
+     is the import fee retained here, and the provider's own economics live in
+     the peer's signed receipt (§6.5). */}}
 {{define "_cost_breakdown"}}
 <div class="cost" aria-label="cost breakdown">
+  {{if .Remote}}
+  <span class="g">paid <b class="money">{{money .Gross}}</b></span>
+  <span class="f">import fee <b class="money">{{money .Fee}}</b></span>
+  <span class="n">obligation <b class="money">{{money .Net}}</b></span>
+  {{else}}
   <span class="g">gross <b class="money">{{money .Gross}}</b></span>
   <span class="f">fee <b class="money">{{money .Fee}}</b></span>
   <span class="n">net <b class="money">{{money .Net}}</b></span>
+  {{end}}
 </div>
 {{end}}
 

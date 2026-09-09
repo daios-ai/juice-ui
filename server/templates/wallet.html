@@ -14,7 +14,18 @@
     <div class="label">parked ◷</div>
   </div>
 </div>
-<p class="card-note">Top-ups happen out of band — ask your operator.</p>
+{{/* Where money comes in, and where it goes out, differ by world: a world whose
+     money has no addresses has nothing to send from a user's side, and the
+     operator records payments instead (kernel §D23). */}}
+{{if .Data.HasRail}}
+<p class="card-note">Paid in at <span class="mono">{{.Data.KernelAddress}}</span>{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
+<div class="row control-row">
+  {{if .Data.MyAddress}}<a class="btn-quiet" href="/wallet?form=withdraw" data-modal="form-withdraw">+ withdraw</a>{{end}}
+  <a class="btn-quiet" href="/wallet?form=address" data-modal="form-address">{{if .Data.MyAddress}}change your address{{else}}+ register your address{{end}}</a>
+</div>
+{{else}}
+<p class="card-note">Deposits are recorded by the operator.</p>
+{{end}}
 
 <div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
 {{if .Data.Open}}
@@ -39,6 +50,26 @@
      (transactions) and direct movements (ledger entries). Running sys/transfer
      writes only the former, so separate tables would let a send appear in
      neither (requirements.md §6.5). */}}
+{{if .Data.Withdrawals}}
+<h2>Withdrawals</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Id</th><th class="money">Amount</th><th>Status</th><th>Payment</th><th>When</th></tr></thead>
+  <tbody>
+  {{range .Data.Withdrawals}}
+  <tr>
+    <td class="mono" title="{{.ID}}">{{truncate 8 .ID}}…</td>
+    <td class="money">{{money .Amount}}</td>
+    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+    <td class="mono muted">{{if .TxHash}}<span title="{{.TxHash}}">{{truncate 12 .TxHash}}…</span>{{else}}—{{end}}</td>
+    <td class="muted">{{shortTime .CreatedAt}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
 <div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
 {{if .Data.Activity}}
 <div class="table-scroll">
@@ -54,4 +85,48 @@
 </div>
 {{else}}<p class="muted">No activity yet.</p>{{end}}
 
+{{if .Data.HasRail}}
+<dialog id="form-withdraw" class="modal-form"{{if eq .Data.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">
+  <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/wallet/withdraw" data-confirm="Withdraw to your registered address? A withdrawal keeps the destination it was made with.">
+      {{.CSRFField}}
+      <input type="hidden" name="id" value="{{.Data.WithdrawalID}}">
+      <div class="field">
+        <label for="wd-amt">Amount<span class="req">*</span></label>
+        <p class="help">Paid to {{.Data.MyAddress}}{{if unit}} in {{unit}}{{end}}.</p>
+        <input id="wd-amt" name="amount" type="number" min="0" step="0.000001" required class="input-sm">
+      </div>
+      <div class="field"><label for="wd-why">Reason (optional)</label><input id="wd-why" name="reason" type="text"></div>
+      <div class="cluster">
+        <button class="btn-money" type="submit">Withdraw</button>
+        <a class="btn" href="/wallet" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="form-address" class="modal-form"{{if eq .Data.OpenForm "address"}} open{{end}} aria-label="Register your address">
+  <div class="modal-head"><h2>Your address</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/wallet/address">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="ad-addr">Address<span class="req">*</span></label>
+        <p class="help">Money is credited to the address it came from, so payments count only once this is registered.</p>
+        <input id="ad-addr" name="address" type="text" class="mono" required>
+      </div>
+      <div class="field">
+        <label for="ad-sig">Signature<span class="req">*</span></label>
+        <p class="help">Sign this kernel's registration message with the wallet holding the address.</p>
+        <input id="ad-sig" name="signature" type="text" class="mono" required>
+      </div>
+      <div class="cluster">
+        <button class="btn" type="submit">Register</button>
+        <a class="btn" href="/wallet" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
 {{end}}
