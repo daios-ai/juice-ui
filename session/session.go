@@ -18,7 +18,18 @@ const (
 	keyGrantState  = "grant_state"     // opaque state for an in-flight OAuth grant consent
 	keyGrantAction = "grant_action"    // the action the in-flight grant is for (for the return redirect)
 	keyRecovery    = "recovery_phrase" // one-shot seed phrase to show once after signup
+	keyKernelKey   = "kernel_public_key"
+	keyKernelNet   = "kernel_network_digest"
 )
+
+// Pin is the kernel this session signed in to: its public key and the digest of
+// the world it serves. A client sends a stored credential only to the server it
+// recorded (ecosystem-standard §5), so every authenticated request compares this
+// against what the kernel now reports and refuses a server that has changed.
+type Pin struct {
+	PublicKey     string
+	NetworkDigest string
+}
 
 // ErrNoSession is returned by Do when no authenticated session is present.
 var ErrNoSession = errors.New("no authenticated session")
@@ -47,17 +58,29 @@ func NewManager(sm *scs.SessionManager, r Refresher) *Manager {
 // LoadAndSave middleware.
 func (m *Manager) SCS() *scs.SessionManager { return m.sm }
 
-// Login stores a fresh token pair and the user handle, and renews the session
-// token to prevent fixation.
-func (m *Manager) Login(ctx context.Context, t client.Tokens, handle string) error {
+// Login stores a fresh token pair, the user handle and the kernel this login is
+// for, and renews the session token to prevent fixation.
+func (m *Manager) Login(ctx context.Context, t client.Tokens, handle string, pin Pin) error {
 	if err := m.sm.RenewToken(ctx); err != nil {
 		return err
 	}
 	m.sm.Put(ctx, keyAccess, t.AccessToken)
 	m.sm.Put(ctx, keyRefresh, t.RefreshToken)
 	m.sm.Put(ctx, keyHandle, handle)
+	m.sm.Put(ctx, keyKernelKey, pin.PublicKey)
+	m.sm.Put(ctx, keyKernelNet, pin.NetworkDigest)
 	m.sm.Remove(ctx, keyVerifier)
 	return nil
+}
+
+// Pin returns the kernel this session signed in to. A session that predates the
+// pin returns a zero Pin, which no live identity matches — it is signed in to a
+// kernel we cannot name, and that is exactly what must not be trusted.
+func (m *Manager) Pin(ctx context.Context) Pin {
+	return Pin{
+		PublicKey:     m.sm.GetString(ctx, keyKernelKey),
+		NetworkDigest: m.sm.GetString(ctx, keyKernelNet),
+	}
 }
 
 // Logout destroys the session.

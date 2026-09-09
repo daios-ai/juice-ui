@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -23,18 +24,24 @@ import (
 // sequential (no t.Parallel), so one recorder is enough.
 var lastRename string
 
+// fakeHealth gives a fake kernel the identity banner every login pins: its key,
+// the network digest, and the decimals that scale every amount (§5, §7).
+func fakeHealth(mux *http.ServeMux) {
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd",
+		 "network":"play","network_digest":"D1","decimals":0,"rail_address":""}`))
+	})
+}
+
 func authKernel() *httptest.Server {
 	lastRename = ""
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
-	})
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		// Open endpoint; also carries the kernel's own federation identity.
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","handle":"alice","description":"","available":500,"locked":0,
@@ -1047,8 +1054,9 @@ func TestHtmxAuthLossRedirectsViaHeader(t *testing.T) {
 func TestHealthHeartbeatLogsOutWhenKernelDown(t *testing.T) {
 	base := authKernel()
 	defer base.Close()
+	var down atomic.Bool
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" { // kernel is up for login, but /health now fails
+		if r.URL.Path == "/health" && down.Load() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -1058,6 +1066,7 @@ func TestHealthHeartbeatLogsOutWhenKernelDown(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
+	down.Store(true) // the kernel goes away after the session exists
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/health", nil)
 	req.Header.Set("HX-Request", "true")
@@ -1558,6 +1567,7 @@ func TestUpdateActionPrice(t *testing.T) {
 // endpoints the action page and post-login dashboard need.
 func actionDetailKernel(actionJSON string) *http.ServeMux {
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
@@ -1846,6 +1856,7 @@ func TestCreateActionAuth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotBody []byte
 			mux := http.NewServeMux()
+			fakeHealth(mux)
 			mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"redirect":"?code=CODE"}`))
 			})
@@ -1931,6 +1942,7 @@ func TestCreateActionAuth(t *testing.T) {
 // actionCreateKernel returns a kernel mux that captures the POST /v1/actions body.
 func actionCreateKernel(gotBody *[]byte) *http.ServeMux {
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
@@ -2023,6 +2035,7 @@ func TestCreateActionHTTPParams(t *testing.T) {
 // (nil until the kernel is called).
 func updateActionKernel(gotBody *[]byte) *http.ServeMux {
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
@@ -2130,6 +2143,7 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 // step's own allowed_input (requirements.md §6.3).
 func paymentKernel() *httptest.Server {
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
@@ -2161,9 +2175,6 @@ func paymentKernel() *httptest.Server {
 		// by the completer.
 		w.WriteHeader(403)
 		w.Write([]byte(`{"code":"unauthorized","error":"not allowed"}`))
-	})
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -2391,6 +2402,7 @@ func TestLookupRowsCarryObservedAt(t *testing.T) {
 // unresolved id, exactly as the live kernel does.
 func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
@@ -2402,9 +2414,6 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK"}`))
-	})
 	// sys/lookup: one unresolved discovery hit and one RESOLVED proxy. Both
 	// carry a kernel-qualified ref and an observed_at; only the second has a
 	// local row.
@@ -2456,6 +2465,7 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 // claim that money came back.
 func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	mux := http.NewServeMux()
+	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
@@ -2467,9 +2477,6 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK"}`))
-	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"P1","action":"vendor@bravo/slow","owner_handle":"bravo","name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
 		 "input_schema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"output_schema":{"type":"object"}}`))

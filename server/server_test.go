@@ -5,9 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/client"
@@ -15,7 +19,9 @@ import (
 )
 
 // newTestHandler builds the full BFF handler pointed at the given kernel URL.
-func newTestHandler(t *testing.T, kernelURL string) http.Handler {
+// newTestHandler builds the BFF against a fake kernel. opts adjust the wiring for
+// a test that needs it (e.g. a short identity/badge interval).
+func newTestHandler(t *testing.T, kernelURL string, opts ...func(*Options)) http.Handler {
 	t.Helper()
 	r, err := NewRenderer()
 	if err != nil {
@@ -23,14 +29,18 @@ func newTestHandler(t *testing.T, kernelURL string) http.Handler {
 	}
 	c := client.New(kernelURL, nil)
 	sm := scs.New()
-	h, err := New(Options{
+	o := Options{
 		Client:   c,
 		Sessions: session.NewManager(sm, c),
 		Renderer: r,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		CSRFKey:  bytes.Repeat([]byte("k"), 32),
 		Secure:   false,
-	})
+	}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	h, err := New(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,5 +175,74 @@ func TestFaviconServed(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Errorf("/favicon.ico status = %d want 200", resp.StatusCode)
+	}
+}
+
+// A credential travels only to the server that issued it: the session records
+// the kernel's key and network digest at login, and an address that later
+// answers for a different kernel ends the session rather than spending on the
+// wrong ledger (§5, ecosystem-standard §5).
+func TestSessionRefusesADifferentKernel(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	var swapped atomic.Bool
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" && swapped.Load() {
+			w.Write([]byte(`{"status":"ok","handle":"other","public_key":"OTHERKEY","network":"play","network_digest":"D2","decimals":0}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer wrap.Close()
+	// A short identity interval: the kernel is re-read within a heartbeat, which
+	// is the window in which a swapped server is noticed.
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL, func(o *Options) { o.BadgeInterval = time.Millisecond }))
+	defer srv.Close()
+
+	cl := loginClient(t, srv.URL)
+	if body := getBody(t, cl, srv.URL+"/wallet"); !strings.Contains(body, "wallet") {
+		t.Fatal("the session must work against the kernel it signed in to")
+	}
+	swapped.Store(true)
+
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := cl.Get(srv.URL + "/wallet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Errorf("a changed kernel must end the session: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+// A kernel that cannot identify itself cannot be signed in to: pinning after the
+// fact would record whatever answered rather than what was trusted.
+func TestLoginRefusedWhenTheKernelCannotBeIdentified(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer wrap.Close()
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	cl := &http.Client{Jar: jar}
+	page := getBody(t, cl, srv.URL+"/login")
+	form := url.Values{"handle": {"alice"}, "password": {"pw"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}}
+	resp, err := cl.PostForm(srv.URL+"/login", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Sign in") {
+		t.Errorf("an unidentifiable kernel must not authenticate a session: %s", body)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/session"
 	"github.com/gorilla/csrf"
 )
 
@@ -443,8 +444,16 @@ func recoverErrorMessage(err error) string {
 // doLogin runs the PKCE authorization-code flow: the verifier is generated and
 // kept server-side, the challenge is sent to authorize, the returned code is
 // exchanged with the verifier, and the resulting tokens are stored in the
-// session (R5.1).
+// session (R5.1) together with the kernel they are for (§5).
+//
+// The kernel is identified BEFORE the credential is sent: a login is only
+// meaningful against a server we can name, and pinning it after the fact would
+// record whatever answered rather than what was trusted.
 func (s *Server) doLogin(ctx context.Context, handle, password string) error {
+	id := s.kernelIdentity(ctx)
+	if id.PublicKey == "" {
+		return client.ErrUnavailable
+	}
 	challenge, err := s.sessions.BeginPKCE(ctx)
 	if err != nil {
 		return err
@@ -461,7 +470,10 @@ func (s *Server) doLogin(ctx context.Context, handle, password string) error {
 	if err != nil {
 		return err
 	}
-	return s.sessions.Login(ctx, tokens, handle)
+	return s.sessions.Login(ctx, tokens, handle, session.Pin{
+		PublicKey:     id.PublicKey,
+		NetworkDigest: id.NetworkDigest,
+	})
 }
 
 func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {

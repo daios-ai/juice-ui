@@ -211,7 +211,7 @@ func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
 			c.postMessage(w, req)
 		})).ServeHTTP(rec, req)
 		return rec
@@ -251,7 +251,7 @@ func TestPostDeleteMessageHTMX(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
 			c.postDeleteMessage(w, req)
 		})).ServeHTTP(rec, req)
 		return rec
@@ -773,7 +773,7 @@ func TestGetBadge(t *testing.T) {
 	body := func() string {
 		rec := httptest.NewRecorder()
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
 			c.getBadge(w, r)
 		}))
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
@@ -821,7 +821,7 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 			outer.Header.Set("X-Visible", visible)
 		}
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
 			c.getMessages(w, req)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), outer)
@@ -968,7 +968,7 @@ func TestDismissCompletesDoorbellFromSteps(t *testing.T) {
 	// Drive dismiss inside a loaded, logged-in (bob) session, so completion runs
 	// under bob's own token (only the required_caller may complete).
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "bob"); err != nil {
+		if err := c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "bob", session.Pin{}); err != nil {
 			t.Fatal(err)
 		}
 		c.dismiss(r, "bob", "r1")
@@ -1145,7 +1145,7 @@ func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
+		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
 		c.postConnect(w, r)
 	}))
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/chat/connect", nil))
@@ -1185,7 +1185,7 @@ func TestIndexGateOnConnector(t *testing.T) {
 	render := func() indexView {
 		got = indexView{}
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice")
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
 			c.getIndex(w, r)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/chat", nil))

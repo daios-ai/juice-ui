@@ -407,8 +407,34 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 			hxRedirect(w, r, "/login")
 			return
 		}
+		if s.kernelChanged(w, r) {
+			return
+		}
 		h(w, r)
 	}
+}
+
+// kernelChanged ends the session when the server at this address is no longer
+// the kernel it was signed in to. A credential travels only to the server that
+// issued it (ecosystem-standard §5), and a port is a default, never an identity:
+// another kernel can hold it, and everything after that would be spent on the
+// wrong ledger.
+//
+// An identity we cannot read is UNKNOWN, not a mismatch: the kernel is down or
+// restarting, the request fails on its own kernel call, and the heartbeat ends
+// the session. Only a positive disagreement logs out.
+func (s *Server) kernelChanged(w http.ResponseWriter, r *http.Request) bool {
+	id := s.kernelIdentity(r.Context())
+	if id.PublicKey == "" {
+		return false
+	}
+	pin := s.sessions.Pin(r.Context())
+	if pin.PublicKey == id.PublicKey && pin.NetworkDigest == id.NetworkDigest {
+		return false
+	}
+	_ = s.sessions.Logout(r.Context())
+	s.flashRedirect(w, r, "/login", "error", "This address now answers for a different kernel. Sign in again.")
+	return true
 }
 
 // superuserHandle is the fixed superuser identity (kernel requirements §12); the
@@ -434,6 +460,9 @@ func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
 			// hxRedirect, not a bare 303: an admin view that polls a fragment must
 			// navigate on a lost session, never swap the login page into the div.
 			hxRedirect(w, r, "/login")
+			return
+		}
+		if s.kernelChanged(w, r) {
 			return
 		}
 		if !s.isSuperuser(r) {

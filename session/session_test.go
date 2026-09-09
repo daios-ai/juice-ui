@@ -83,7 +83,7 @@ func TestLoginLogout(t *testing.T) {
 	if m.IsAuthenticated(ctx) {
 		t.Fatal("should start unauthenticated")
 	}
-	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice"); err != nil {
+	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	toks, ok := m.Tokens(ctx)
@@ -111,7 +111,7 @@ func TestDoNoSession(t *testing.T) {
 
 func TestDoPassThroughNonAuthError(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
-	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a")
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
 	sentinel := errors.New("boom")
 	err := m.Do(ctx, func(string) error { return sentinel })
 	if !errors.Is(err, sentinel) {
@@ -122,7 +122,7 @@ func TestDoPassThroughNonAuthError(t *testing.T) {
 func TestDoRefreshAndRetry(t *testing.T) {
 	fr := &fakeRefresher{next: client.Tokens{AccessToken: "at1", RefreshToken: "rt1"}}
 	m, ctx := newCtx(t, fr)
-	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a")
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a", Pin{})
 
 	var tokensSeen []string
 	err := m.Do(ctx, func(tok string) error {
@@ -150,7 +150,7 @@ func TestDoRefreshAndRetry(t *testing.T) {
 func TestDoRefreshFailureReturnsError(t *testing.T) {
 	fr := &fakeRefresher{err: client.ErrUnauthenticated}
 	m, ctx := newCtx(t, fr)
-	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a")
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a", Pin{})
 	err := m.Do(ctx, func(string) error { return client.ErrUnauthenticated })
 	if !errors.Is(err, client.ErrUnauthenticated) {
 		t.Errorf("expected refresh failure surfaced, got %v", err)
@@ -163,7 +163,7 @@ func TestDoRefreshFailureReturnsError(t *testing.T) {
 func TestSingleFlightRefresh(t *testing.T) {
 	fr := &fakeRefresher{next: client.Tokens{AccessToken: "at1", RefreshToken: "rt1"}}
 	m, ctx := newCtx(t, fr)
-	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a")
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a", Pin{})
 
 	const n = 25
 	var wg sync.WaitGroup
