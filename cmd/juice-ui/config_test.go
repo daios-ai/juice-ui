@@ -133,3 +133,43 @@ func TestNoLegacyPaths(t *testing.T) {
 		t.Errorf("unexpected migration notices: %v", cfg.Notices)
 	}
 }
+
+// A named context is the kernel (ecosystem-standard §4): its endpoint, key and
+// network come from the client records every juice program shares, and a bare
+// address given beside it is ignored — the record is what was verified when the
+// context was made, the address is only a claim.
+func TestContextNamesTheKernelFromClientRecords(t *testing.T) {
+	client := filepath.Join("/j", "client", "config.json")
+	records := `{"current":"alpha","kernels":{"alpha":{"endpoint":"http://127.0.0.1:4141","public_key":"KEYA","world_digest":"D1","network":"play"}},
+	 "contexts":{"alpha":{"kernel":"alpha","handle":"sys","principal_id":"u1"}}}`
+	uiCfg := filepath.Join("/j", "ui", "config.json")
+	cfg, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL_URL": "http://elsewhere:1"}),
+		files(map[string]string{client: records, uiCfg: `{"context":"alpha"}`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Context != "alpha" || cfg.KernelBaseURL != "http://127.0.0.1:4141" || cfg.KernelPublicKey != "KEYA" || cfg.KernelNetwork != "play" {
+		t.Errorf("context not resolved from the client records: %+v", cfg)
+	}
+	if len(cfg.Notices) != 1 || !contains(cfg.Notices[0], "kernel_url is ignored") {
+		t.Errorf("a bare address beside a context must be reported as ignored: %v", cfg.Notices)
+	}
+	// The environment names a context too, and wins over the file.
+	cfg2, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_CONTEXT": "alpha"}), files(map[string]string{client: records}))
+	if err != nil || cfg2.KernelPublicKey != "KEYA" {
+		t.Errorf("JUICE_CONTEXT must resolve: %+v %v", cfg2, err)
+	}
+}
+
+// A UI that cannot name its kernel must not guess one: an unknown context, or
+// records that do not exist, are hard startup errors.
+func TestUnknownContextIsAStartupError(t *testing.T) {
+	client := filepath.Join("/j", "client", "config.json")
+	records := `{"kernels":{"alpha":{"endpoint":"http://k","public_key":"KEYA","network":"play"}},"contexts":{"alpha":{"kernel":"alpha"}}}`
+	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_CONTEXT": "nope"}), files(map[string]string{client: records})); err == nil {
+		t.Error("an unknown context must refuse to start")
+	}
+	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_CONTEXT": "alpha"}), noFiles); err == nil {
+		t.Error("a context with no client records must refuse to start")
+	}
+}

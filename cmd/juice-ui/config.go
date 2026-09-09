@@ -18,15 +18,22 @@ import (
 // (config.json), then environment variables (which always win, so a container or
 // systemd override needs no file edit). No secrets are committed.
 type Config struct {
-	KernelBaseURL  string
-	ListenAddr     string
-	SessionSecret  string   // optional; derives the CSRF key. Empty -> ephemeral key.
-	Secure         bool     // Secure flag on cookies; enable behind HTTPS.
-	TrustedOrigins []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
-	PublicURL      string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
-	Home           string   // the component home, $JUICE_HOME/ui (docs/installation.md)
-	StatePath      string   // resolved path to state.json (machine-written app state)
-	Notices        []string // one-line startup notices (e.g. a legacy path in use, to migrate)
+	KernelBaseURL string
+	// Context is the client context this UI names (ecosystem-standard §4): the
+	// kernel it works on is then read from $JUICE_HOME/client/config.json rather
+	// than from an address, and KernelPublicKey/KernelNetwork are what that record
+	// says the kernel is. Empty when the UI is pointed at a bare URL instead.
+	Context         string
+	KernelPublicKey string
+	KernelNetwork   string
+	ListenAddr      string
+	SessionSecret   string   // optional; derives the CSRF key. Empty -> ephemeral key.
+	Secure          bool     // Secure flag on cookies; enable behind HTTPS.
+	TrustedOrigins  []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
+	PublicURL       string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
+	Home            string   // the component home, $JUICE_HOME/ui (docs/installation.md)
+	StatePath       string   // resolved path to state.json (machine-written app state)
+	Notices         []string // one-line startup notices (e.g. a legacy path in use, to migrate)
 
 	// BadgeInterval is how often every nav badge (steps + each app) is polled, and
 	// also the steps-badge cache TTL. File-only knob (badge_interval_seconds),
@@ -38,6 +45,7 @@ type Config struct {
 // key is optional; a pointer or zero value means "not set, keep the lower layer".
 // It is distinct from state.json, which is machine-written app state.
 type fileConfig struct {
+	Context              string   `json:"context"`
 	KernelURL            string   `json:"kernel_url"`
 	Addr                 string   `json:"addr"`
 	SessionSecret        string   `json:"session_secret"`
@@ -59,7 +67,8 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 		BadgeInterval: 30 * time.Second,
 	}
 
-	home := uiHome(getenv)
+	root := juiceRoot(getenv)
+	home := filepath.Join(root, "ui")
 	cfg.Home = home
 
 	// 2. config file
@@ -68,6 +77,9 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 		return Config{}, err
 	}
 	if fc != nil {
+		if v := strings.TrimSpace(fc.Context); v != "" {
+			cfg.Context = v
+		}
 		if v := strings.TrimSpace(fc.KernelURL); v != "" {
 			cfg.KernelBaseURL = v
 		}
@@ -89,6 +101,9 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	}
 
 	// 3. environment (wins)
+	if v := strings.TrimSpace(getenv("JUICE_CONTEXT")); v != "" {
+		cfg.Context = v
+	}
 	if v := strings.TrimSpace(getenv("JUICE_KERNEL_URL")); v != "" {
 		cfg.KernelBaseURL = v
 	}
@@ -107,6 +122,21 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 
 	if cfg.BadgeInterval < 5*time.Second {
 		cfg.BadgeInterval = 5 * time.Second
+	}
+
+	// A named context is the kernel: its recorded endpoint, key and network come
+	// from the client records every juice program shares, and a bare address
+	// given beside it is ignored — what a server says about itself is a claim,
+	// what the record says is what was verified when the context was made.
+	if cfg.Context != "" {
+		rec, err := contextRecord(root, cfg.Context, readFile)
+		if err != nil {
+			return Config{}, err
+		}
+		if fromURL := strings.TrimSpace(fc.kernelURL()) != "" || strings.TrimSpace(getenv("JUICE_KERNEL_URL")) != ""; fromURL {
+			cfg.Notices = append(cfg.Notices, "kernel_url is ignored: context "+cfg.Context+" names the kernel")
+		}
+		cfg.KernelBaseURL, cfg.KernelPublicKey, cfg.KernelNetwork = rec.Endpoint, rec.PublicKey, rec.Network
 	}
 
 	u, err := url.Parse(cfg.KernelBaseURL)
@@ -136,20 +166,70 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	return cfg, nil
 }
 
-// uiHome is juice-ui's component home: $JUICE_HOME/ui, else ~/.juice/ui (fixed,
-// never cwd-relative — docs/installation.md — except a last-resort cwd fallback when
-// the home directory cannot be determined at all, keeping the binary usable in
-// minimal environments). JUICE_HOME is the only path knob.
-func uiHome(getenv func(string) string) string {
+// juiceRoot is the installation root every juice program shares: $JUICE_HOME,
+// else ~/.juice (fixed, never cwd-relative — ecosystem-standard §1 — except a
+// last-resort cwd fallback when the home directory cannot be determined at all).
+// The UI's own state lives under <root>/ui; the client records it reads a
+// context from live under <root>/client. JUICE_HOME is the only path knob.
+func juiceRoot(getenv func(string) string) string {
 	root := strings.TrimSpace(getenv("JUICE_HOME"))
-	if root == "" {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			root = filepath.Join(home, ".juice")
-		} else {
-			root = ".juice"
-		}
+	if root != "" {
+		return root
 	}
-	return filepath.Join(root, "ui")
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".juice")
+	}
+	return ".juice"
+}
+
+// kernelURL is the file's kernel_url, or "" when the file is absent.
+func (fc *fileConfig) kernelURL() string {
+	if fc == nil {
+		return ""
+	}
+	return fc.KernelURL
+}
+
+// kernelRecord is one kernel as the client records know it (ecosystem-standard
+// §4): where it answers, the key it must present, and the network it serves.
+type kernelRecord struct {
+	Endpoint  string `json:"endpoint"`
+	PublicKey string `json:"public_key"`
+	Network   string `json:"network"`
+}
+
+// clientConfig is the shape of $JUICE_HOME/client/config.json: the kernels this
+// client knows and the contexts naming one kernel and one login on it. Only the
+// kernel half is read here — the UI serves many browser users, each with their
+// own session, so a context tells it WHICH kernel and never WHOSE login.
+type clientConfig struct {
+	Kernels  map[string]kernelRecord `json:"kernels"`
+	Contexts map[string]struct {
+		Kernel string `json:"kernel"`
+	} `json:"contexts"`
+}
+
+// contextRecord resolves a context name to its kernel record. Every failure is a
+// hard startup error: a UI that cannot name its kernel must not guess one.
+func contextRecord(root, name string, readFile func(string) ([]byte, error)) (kernelRecord, error) {
+	path := filepath.Join(root, "client", "config.json")
+	b, err := readFile(path)
+	if err != nil {
+		return kernelRecord{}, fmt.Errorf("context %q: read %s: %w (run `juice use %s --endpoint URL` first)", name, path, err, name)
+	}
+	var cc clientConfig
+	if err := json.Unmarshal(b, &cc); err != nil {
+		return kernelRecord{}, fmt.Errorf("context %q: parse %s: %w", name, path, err)
+	}
+	c, ok := cc.Contexts[name]
+	if !ok {
+		return kernelRecord{}, fmt.Errorf("context %q is not in %s", name, path)
+	}
+	rec, ok := cc.Kernels[c.Kernel]
+	if !ok || rec.Endpoint == "" || rec.PublicKey == "" {
+		return kernelRecord{}, fmt.Errorf("context %q names kernel %q, which %s does not record", name, c.Kernel, path)
+	}
+	return rec, nil
 }
 
 // loadConfigFile reads and parses the operator config file — $JUICE_HOME/ui/

@@ -114,8 +114,36 @@ func TestCSRFKey(t *testing.T) {
 	}
 }
 
+// fakeKernel is a kernel that can identify itself, which a build now requires:
+// app state is keyed by the kernel, so the UI must know which one it is for.
+func fakeKernel(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"KEYTEST","network":"play","network_digest":"D1","decimals":0}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A UI that cannot identify its kernel does not start: it would otherwise key
+// app state under a guess. A named context supplies the identity offline.
+func TestBuildRefusesAnUnidentifiableKernel(t *testing.T) {
+	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": "http://127.0.0.1:1", "JUICE_UI_SESSION_SECRET": "s"}), noFiles)
+	cfg.StatePath = ""
+	if _, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+		t.Fatal("build must refuse a kernel it cannot identify")
+	}
+	// With a context the identity is on record, and no probe is needed to start.
+	cfg.Context, cfg.KernelPublicKey = "alpha", "KEYA"
+	if _, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("a named context must let the UI start with the kernel down: %v", err)
+	}
+}
+
 func TestBuildServesLogin(t *testing.T) {
-	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "secret-for-test"}), noFiles)
+	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": fakeKernel(t).URL, "JUICE_UI_SESSION_SECRET": "secret-for-test"}), noFiles)
 	cfg.StatePath = "" // in-memory app state; tests write no file
 	h, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -143,7 +171,7 @@ func TestBuildServesLogin(t *testing.T) {
 }
 
 func TestBuildRequiresAuthRedirect(t *testing.T) {
-	cfg, _ := LoadConfig(env(map[string]string{"JUICE_UI_SESSION_SECRET": "s"}), noFiles)
+	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": fakeKernel(t).URL, "JUICE_UI_SESSION_SECRET": "s"}), noFiles)
 	cfg.StatePath = "" // in-memory app state; tests write no file
 	h, _ := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(h)

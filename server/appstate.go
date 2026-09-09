@@ -8,25 +8,41 @@ import (
 )
 
 // appStore persists per-app configuration in a single JSON file (state.json),
-// namespaced by app slug: {"apps":{"<slug>":<blob>}}. It is the generic mechanism
-// apps use to provision and remember their own state (e.g. a service-account
-// password) across restarts — a new app adds a key, never a new env var. Safe for
+// keyed by the KERNEL the state was provisioned on, then by app slug:
+// {"kernels":{"<public_key>":{"apps":{"<slug>":<blob>}}}}. Anything durable is
+// keyed by the kernel's identity, never by a name or an address
+// (ecosystem-standard §4): a service-account password minted on one kernel must
+// not be replayed on another, and the same UI pointed at a second kernel starts
+// clean there rather than carrying the first one's secrets across.
+//
+// It is the generic mechanism apps use to provision and remember their own state
+// across restarts — a new app adds a key, never a new env var. Safe for
 // concurrent use. A "" path means in-memory only (no persistence), for tests.
 type appStore struct {
 	mu   sync.Mutex
 	path string
-	data map[string]json.RawMessage
+	key  string                                // the kernel this store serves
+	all  map[string]map[string]json.RawMessage // kernel key → slug → blob
+	// Adopted reports that a state.json written before kernel keying was found
+	// and its apps were taken over by the current kernel — the one guess made,
+	// once, because such a file was always provisioned on the kernel the UI was
+	// pointed at. It is rewritten in the keyed shape on the next save.
+	Adopted bool
 }
 
-// appConfigFile is the on-disk shape of state.json.
+// appConfigFile is the on-disk shape of state.json. Apps is the pre-keying shape,
+// read once for adoption and never written again.
 type appConfigFile struct {
-	Apps map[string]json.RawMessage `json:"apps"`
+	Kernels map[string]struct {
+		Apps map[string]json.RawMessage `json:"apps"`
+	} `json:"kernels,omitempty"`
+	Apps map[string]json.RawMessage `json:"apps,omitempty"`
 }
 
-// newAppStore loads the config file (tolerating a missing file), or returns an
-// in-memory store when path is "".
-func newAppStore(path string) (*appStore, error) {
-	a := &appStore{path: path, data: map[string]json.RawMessage{}}
+// newAppStore loads the state file (tolerating a missing file) for one kernel, or
+// returns an in-memory store when path is "".
+func newAppStore(path, kernelKey string) (*appStore, error) {
+	a := &appStore{path: path, key: kernelKey, all: map[string]map[string]json.RawMessage{}}
 	if path == "" {
 		return a, nil
 	}
@@ -41,29 +57,45 @@ func newAppStore(path string) (*appStore, error) {
 	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}
-	if f.Apps != nil {
-		a.data = f.Apps
+	for k, v := range f.Kernels {
+		a.all[k] = v.Apps
+	}
+	if len(f.Apps) > 0 && a.all[kernelKey] == nil {
+		a.all[kernelKey] = f.Apps
+		a.Adopted = true
 	}
 	return a, nil
 }
 
-// load returns the app's persisted blob (nil if none).
+// load returns the app's persisted blob for this kernel (nil if none).
 func (a *appStore) load(slug string) json.RawMessage {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.data[slug]
+	return a.all[a.key][slug]
 }
 
-// save records the app's blob and (when persistent) writes the whole file back
-// atomically with 0600 perms.
+// save records the app's blob under this kernel and (when persistent) writes the
+// whole file back atomically with 0600 perms, other kernels' state included.
 func (a *appStore) save(slug string, v json.RawMessage) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.data[slug] = v
+	if a.all[a.key] == nil {
+		a.all[a.key] = map[string]json.RawMessage{}
+	}
+	a.all[a.key][slug] = v
 	if a.path == "" {
 		return nil
 	}
-	b, err := json.MarshalIndent(appConfigFile{Apps: a.data}, "", "  ")
+	var f appConfigFile
+	f.Kernels = map[string]struct {
+		Apps map[string]json.RawMessage `json:"apps"`
+	}{}
+	for k, apps := range a.all {
+		f.Kernels[k] = struct {
+			Apps map[string]json.RawMessage `json:"apps"`
+		}{Apps: apps}
+	}
+	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
 	}

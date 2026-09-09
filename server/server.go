@@ -35,6 +35,16 @@ type Options struct {
 	StatePath      string        // path to state.json for per-app persisted state; "" = in-memory
 	Home           string        // component home dir ($JUICE_HOME/ui) handed to apps; "" = none
 	BadgeInterval  time.Duration // nav-badge poll interval + steps-badge cache TTL; 0 → default 30s
+
+	// KernelPublicKey is the kernel this UI is for, as its records say — from the
+	// named client context, or identified once at startup. Every /health answer is
+	// held to it: a server presenting another key is not this kernel, whatever
+	// port it holds (ecosystem-standard §5). It also keys the app state, so what
+	// an app provisioned on one kernel is never replayed on another (§4).
+	KernelPublicKey string
+	// KernelContext is the client context's name, shown so a person can see which
+	// kernel the interface is on (ecosystem-standard §6); "" when a bare URL.
+	KernelContext string
 }
 
 // Server holds dependencies and serves the BFF.
@@ -47,9 +57,11 @@ type Server struct {
 	secure    bool
 	publicURL string // configured absolute base URL; "" → derive from the request
 	apps      []apps.App
-	appStore  *appStore     // per-app persisted state (state.json)
+	appStore  *appStore     // per-app persisted state (state.json), keyed by kernel
 	home      string        // component home dir handed to apps
 	badgeTTL  time.Duration // nav-badge poll interval + steps-badge cache TTL
+	recorded  string        // the kernel's recorded public key; "" when unknown at wiring
+	context   string        // the client context's name, for the chrome
 
 	// Cached kernel identity from the open /health: what the session pins, what
 	// names the kernel in the chrome, and the world's money unit. Re-read at the
@@ -74,6 +86,14 @@ func (s *Server) kernelIdentity(ctx context.Context) client.Health {
 	hc, err := s.client.Health(ctx)
 	if err != nil || hc.Handle == "" {
 		return id // keep what we had; retry on a later render
+	}
+	if s.recorded != "" && hc.PublicKey != s.recorded {
+		// The address answers, but not as the kernel our records name. That is
+		// not this kernel and nothing is trusted from it: no identity, no unit,
+		// no login. Logged, because it is the one thing an operator must know.
+		s.log.Warn("kernel identity mismatch: the server at this address is not the recorded kernel",
+			"recorded", keyFingerprint(s.recorded), "answered", keyFingerprint(hc.PublicKey))
+		return client.Health{}
 	}
 	s.idMu.Lock()
 	s.kernelID, s.idFetched = hc, time.Now()
@@ -133,13 +153,19 @@ func New(o Options) (http.Handler, error) {
 		apps:      o.Apps,
 		home:      o.Home,
 		badgeTTL:  badgeTTL,
+		recorded:  o.KernelPublicKey,
+		context:   o.KernelContext,
 	}
 	// The money unit is the kernel's, not ours: the renderer reads it from the
 	// cached /health identity (§7).
 	o.Renderer.SetUnitSource(s.unit)
-	as, err := newAppStore(o.StatePath)
+	as, err := newAppStore(o.StatePath, o.KernelPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
+	}
+	if as.Adopted {
+		s.log.Warn("app state predates kernel keying; its apps are adopted by the current kernel and the file is rewritten keyed",
+			"kernel", keyFingerprint(o.KernelPublicKey))
 	}
 	s.appStore = as
 
@@ -627,25 +653,26 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		// ?menu=open is the no-JS route into the mobile nav: the drawer is
 		// server-rendered [open] and falls back to an in-flow card, exactly as
 		// ?form= does for modals (§6.1). With JS, data-modal intercepts first.
-		MenuOpen:     r.URL.Query().Get("menu") == "open",
-		Theme:        themeFromRequest(r),
-		Sidebar:      sidebarFromRequest(r),
-		Active:       active,
-		Nav:          s.buildNav(r, active),
-		Handle:       s.sessions.Handle(r.Context()),
-		KernelHandle: kernelID.Handle,
-		KernelFP:     keyFingerprint(kernelID.PublicKey),
-		KernelNet:    kernelID.Network,
-		IsSuperuser:  super,
-		Themes:       ThemeList(),
-		CSRFField:    csrf.TemplateField(r),
-		CSRFToken:    csrf.Token(r),
-		Commands:     template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
-		Flash:        flash,
-		FlashKind:    flashKind,
-		AppNav:       s.appNav(r),
-		BadgeSecs:    int(s.badgeTTL / time.Second),
-		Data:         data,
+		MenuOpen:      r.URL.Query().Get("menu") == "open",
+		Theme:         themeFromRequest(r),
+		Sidebar:       sidebarFromRequest(r),
+		Active:        active,
+		Nav:           s.buildNav(r, active),
+		Handle:        s.sessions.Handle(r.Context()),
+		KernelHandle:  kernelID.Handle,
+		KernelFP:      keyFingerprint(kernelID.PublicKey),
+		KernelNet:     kernelID.Network,
+		KernelContext: s.context,
+		IsSuperuser:   super,
+		Themes:        ThemeList(),
+		CSRFField:     csrf.TemplateField(r),
+		CSRFToken:     csrf.Token(r),
+		Commands:      template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
+		Flash:         flash,
+		FlashKind:     flashKind,
+		AppNav:        s.appNav(r),
+		BadgeSecs:     int(s.badgeTTL / time.Second),
+		Data:          data,
 	}
 }
 

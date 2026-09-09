@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -49,6 +50,20 @@ func csrfKey(secret string) (key []byte, ephemeral bool, err error) {
 // testability.
 func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	kernel := client.New(cfg.KernelBaseURL, &http.Client{Timeout: 5 * time.Minute})
+
+	// The UI must know WHICH kernel it is for before anything durable is keyed on
+	// it. A named context says so from the client records, offline. A bare URL
+	// says nothing, so the kernel is asked once — and a UI that cannot identify
+	// its kernel does not start, rather than provisioning app state under a guess.
+	kernelKey := cfg.KernelPublicKey
+	if kernelKey == "" {
+		id, err := identifyKernel(kernel)
+		if err != nil {
+			return nil, fmt.Errorf("kernel at %s could not be identified (%w); name a context with JUICE_CONTEXT or `context` in config.json, or start the kernel", cfg.KernelBaseURL, err)
+		}
+		kernelKey = id.PublicKey
+		log.Info("kernel identified", "handle", id.Handle, "network", id.Network, "key", client.ShortKey(id.PublicKey))
+	}
 
 	sm := scs.New()
 	sm.Lifetime = 24 * time.Hour
@@ -97,19 +112,45 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		publicURL = "http://" + cfg.ListenAddr
 	}
 	return server.New(server.Options{
-		Client:         kernel,
-		Sessions:       sessions,
-		Renderer:       renderer,
-		Logger:         log,
-		CSRFKey:        key,
-		Secure:         cfg.Secure,
-		TrustedOrigins: cfg.TrustedOrigins,
-		PublicURL:      publicURL,
-		Apps:           appList,
-		StatePath:      cfg.StatePath,
-		Home:           cfg.Home,
-		BadgeInterval:  cfg.BadgeInterval,
+		Client:          kernel,
+		Sessions:        sessions,
+		Renderer:        renderer,
+		Logger:          log,
+		CSRFKey:         key,
+		Secure:          cfg.Secure,
+		TrustedOrigins:  cfg.TrustedOrigins,
+		PublicURL:       publicURL,
+		Apps:            appList,
+		StatePath:       cfg.StatePath,
+		Home:            cfg.Home,
+		BadgeInterval:   cfg.BadgeInterval,
+		KernelPublicKey: kernelKey,
+		KernelContext:   cfg.Context,
 	})
+}
+
+// identifyKernel reads /health, retrying briefly: a kernel started beside the UI
+// may bind its port a moment later. Ten seconds is enough for a supervisor
+// bringing both up, and short enough that a wrong address fails loudly.
+func identifyKernel(kernel *client.Client) (client.Health, error) {
+	var last error
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		id, err := kernel.Health(ctx)
+		cancel()
+		if err == nil && id.PublicKey != "" {
+			return id, nil
+		}
+		if err == nil {
+			err = fmt.Errorf("no public key in /health")
+		}
+		last = err
+		if time.Now().After(deadline) {
+			return client.Health{}, last
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func main() {

@@ -17,6 +17,7 @@ startup error, so a typo surfaces loudly.
 
 ```json
 {
+  "context": "alpha",
   "kernel_url": "http://127.0.0.1:4040",
   "addr": "127.0.0.1:8080",
   "session_secret": "…",
@@ -29,6 +30,18 @@ startup error, so a typo surfaces loudly.
 
 Every key is optional:
 
+- **`context`** — the client context this UI is on (ecosystem-standard §4). The
+  kernel is then read from `$JUICE_HOME/client/config.json`, the record every
+  juice program shares: its endpoint, the key it must present, and its network.
+  Make one with `juice use NAME --endpoint URL`. When set, `kernel_url` is
+  ignored and reported as such. The UI names its context explicitly and never
+  follows the CLI's `current`, so switching contexts in a terminal cannot move a
+  running interface onto another kernel.
+- **`kernel_url`** — a bare address, for a machine with no client records. The
+  kernel is then identified once at startup from its `/health`; a kernel that
+  cannot be identified within ten seconds is a startup error, because the UI
+  keys everything durable on which kernel it is for and will not guess.
+
 - **`badge_interval_seconds`** — how often every nav badge (steps + each app) is
   polled, and the steps-badge cache TTL. File-only; default 30, clamped to ≥ 5.
 - **`trusted_origins`** — additive: the listen-addr localhost defaults, plus this
@@ -37,13 +50,18 @@ Every key is optional:
 
 `config.json` (operator, hand-written) is distinct from `state.json` (machine, the
 app-state file holding provisioned secrets and `AuthRev`) — see installation.md.
+`state.json` is keyed by the kernel the state was provisioned on
+(`{"kernels":{"<public_key>":{"apps":{…}}}}`), so a secret minted on one kernel is
+never replayed on another; a file from before that keying is adopted by the
+current kernel once, and rewritten keyed.
 
 ## Environment variables
 
 | Variable | Overrides | Notes |
 |---|---|---|
 | `JUICE_HOME` | the whole home | relocates `$JUICE_HOME/ui/` (config, state, data); default `~/.juice`. The only path knob. |
-| `JUICE_KERNEL_URL` | `kernel_url` | http(s) URL; default `http://127.0.0.1:4040` |
+| `JUICE_CONTEXT` | `context` | the same variable the CLI reads for one command |
+| `JUICE_KERNEL_URL` | `kernel_url` | http(s) URL; default `http://127.0.0.1:4040`; ignored under a context |
 | `JUICE_UI_ADDR` | `addr` | default `127.0.0.1:8080` |
 | `JUICE_UI_SESSION_SECRET` | `session_secret` | absent ⇒ ephemeral key (sessions reset on restart) |
 | `JUICE_UI_SECURE` | `secure` | `true` sets Secure cookies (behind HTTPS) |

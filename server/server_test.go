@@ -246,3 +246,30 @@ func TestLoginRefusedWhenTheKernelCannotBeIdentified(t *testing.T) {
 		t.Errorf("an unidentifiable kernel must not authenticate a session: %s", body)
 	}
 }
+
+// The records say which kernel this UI is for. An address answering with another
+// key is not that kernel, whatever port it holds (ecosystem-standard §5): nothing
+// is trusted from it, and a login is refused rather than pinned to a stranger.
+func TestRecordedKeyRefusesAnotherKernel(t *testing.T) {
+	kernel := authKernel() // presents ABCDEF…abcd
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(o *Options) { o.KernelPublicKey = "SOMEOTHERKEY" }))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	cl := &http.Client{Jar: jar}
+	page := getBody(t, cl, srv.URL+"/login")
+	if strings.Contains(page, "testnet") {
+		t.Error("a server that is not the recorded kernel must not be named as if it were")
+	}
+	form := url.Values{"handle": {"alice"}, "password": {"pw"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}}
+	resp, err := cl.PostForm(srv.URL+"/login", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "Sign in") {
+		t.Errorf("login against a mismatched kernel must be refused: %s", body)
+	}
+}

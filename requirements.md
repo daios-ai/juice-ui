@@ -288,9 +288,20 @@ detectable.
 * Always test a new or updated feature against a live kernel (start a throwaway
   one if needed; clean up after).
 * Configuration loads from an optional JSON config file overlaid by environment
-  variables (env wins), over safe local defaults. At minimum: kernel API base URL
-  (default `http://127.0.0.1:4040`), the UI listen address, and a session secret.
-  Commit no secrets. Reject invalid startup configuration clearly.
+  variables (env wins), over safe local defaults. At minimum: the kernel — named
+  by a **client context** (`context` / `JUICE_CONTEXT`), resolved from
+  `$JUICE_HOME/client/config.json` to the recorded endpoint, public key and
+  network, or else a bare URL (default `http://127.0.0.1:4040`) — the UI listen
+  address, and a session secret. Commit no secrets. Reject invalid startup
+  configuration clearly, including a context the records do not hold.
+* **The UI knows which kernel it is for before it starts.** Under a context that
+  is the recorded key; under a bare URL the kernel is identified once at startup
+  and a kernel that cannot be identified is a startup error. Every `/health`
+  answer is held to that key: an address presenting another kernel is not this
+  kernel, and nothing is trusted from it. Everything durable the UI keeps for
+  its apps is keyed by that kernel's public key, never by a name or an address
+  (ecosystem-standard §4), so state provisioned on one kernel is never replayed
+  on another. The chrome names the context in use.
 * Technology stack (standard-library-first; dependencies only where hand-rolling
   would be a correctness or security risk):
   * **Routing:** stdlib `net/http` ServeMux (Go 1.22+ method/pattern routing,
