@@ -199,10 +199,22 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"handle":"renamed"}`))
 	})
 	mux.HandleFunc("POST /control/deposit", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"direction":"credit","amount":100,"operator_handle":"sys","target_handle":"alice"}`))
+		// A deposit answers with the ledger entry it wrote; a replay returns that
+		// same entry (verified live on v0.14.0). Ledger entries carry no id.
+		var body struct{ Ref string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Ref == "" {
+			w.WriteHeader(422)
+			w.Write([]byte(`{"code":"invalid_input","error":"a deposit must name the payment it records (--ref)"}`))
+			return
+		}
+		w.Write([]byte(`{"amount":100,"external_key":"attr:rail:ref:` + body.Ref + `","operator_handle":"sys","from_handle":"sys","to_handle":"alice"}`))
 	})
-	mux.HandleFunc("POST /control/withdraw", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"direction":"debit","amount":10,"operator_handle":"sys","target_handle":"alice"}`))
+	mux.HandleFunc("GET /control/deposits", func(w http.ResponseWriter, r *http.Request) {
+		// One obligation a buyer says it paid, whose money has not arrived. Amount
+		// is the draw's and exceeds what the call owed (kernel §P10).
+		w.Write([]byte(`{"deposits":[],"owed":[{"id":"TICKET1","obligation":8,"amount":10,
+		 "tx_hash":"manual:TICKET1","status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"}]}`))
 	})
 	mux.HandleFunc("GET /control/peers", func(w http.ResponseWriter, r *http.Request) {
 		// The merged roster (verified live 2026-08-06): counterparties
@@ -211,12 +223,12 @@ func authKernel() *httptest.Server {
 		// but no credit, and no PETNAME until one is bound — only its self-asserted
 		// nickname, which "twin" repeats across two keys, legally, so they must
 		// stay two rows. A suspended counterparty appears only under ?all=1.
-		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"available":50,"locked":0,"peer_credit":250,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
-		  {"petname":"debtor","public_key":"KEYD","has_account":true,"actions":0,"available":-320,"locked":0,"settlement_due":true},
-		  {"nickname":"twin","public_key":"KEYT1","has_account":false,"actions":13,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:34Z"},
-		  {"nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-08-06T00:04:35Z"}`
+		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
+		  {"petname":"debtor","public_key":"KEYD","has_account":true,"actions":0},
+		  {"nickname":"twin","public_key":"KEYT1","has_account":false,"actions":13,"last_seen":"2026-08-06T00:04:34Z"},
+		  {"nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
 		if r.URL.Query().Get("all") == "1" {
-			rows += `,{"petname":"frozen","public_key":"KEYS","has_account":true,"available":-40,"locked":0,"suspended_at":"2026-08-01T00:00:00Z"}`
+			rows += `,{"petname":"frozen","public_key":"KEYS","has_account":true,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
 		// A bare array: the kernel envelopes no list (API.md R6; verified live
 		// 2026-08-05 — an envelope here would silently render zero peers).
@@ -231,10 +243,10 @@ func authKernel() *httptest.Server {
 		key := r.URL.Query().Get("key")
 		// account is null for a kernel that holds none here: KEYT* are discovered
 		// (source live), KEYNONE is a stranger key the kernel has never learned.
-		account := `{"available":50,"locked":0,"suspended":false}`
+		account := `{"suspended":false}`
 		switch {
 		case key == "KEYS":
-			account = `{"available":-40,"locked":0,"suspended":true}`
+			account = `{"suspended":true}`
 		case key == "KEYNONE":
 			w.Write([]byte(`{"handle":"","public_key":"` + key + `","actions":[],"evidence":[],"account":null,
 			 "online":false,"source":"none","reachability":{"path":"unreachable","error":"routing: not found"}}`))
@@ -243,7 +255,7 @@ func authKernel() *httptest.Server {
 			account = "null"
 		}
 		w.Write([]byte(`{"petname":"kernelc","nickname":"selfname","public_key":"` + key + `","about":"a peer kernel",
-		 "actions":[{"name":"synth/make","description":"synth","price":20}],
+		 "actions":[{"action_id":"a2","name":"synth/make","description":"synth","price":20,"indicative":true}],
 		 "account":` + account + `,
 		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
 		    "corroborated_uses":0,"avg_latency_ms":690.5,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
@@ -253,29 +265,16 @@ func authKernel() *httptest.Server {
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
 	mux.HandleFunc("GET /control/identity", func(w http.ResponseWriter, r *http.Request) {
-		// v0.12: identity carries the global exposure figures and the kernel's own
-		// about (sys's description) — what the network reads about us.
+		// v0.14: the kernel's identity, the money rules it serves under, its rail
+		// position, and its credit position — what it has delivered unpaid against
+		// the limit it set (kernel §D14). `stop` is absent unless the rail halts.
 		w.Write([]byte(`{"handle":"kernel","public_key":"KEY","about":"our test kernel","addrs":[],
-		 "exposure_max":1000,"gross_receivables":320,"settlement_trigger":500,"settlement_quantum":0,"settlement_due":false}`))
-	})
-	mux.HandleFunc("POST /control/peers/settle", func(w http.ResponseWriter, r *http.Request) {
-		// Verified live shapes: debtor "exact" outcome with a follow-up message.
-		w.Write([]byte(`{"handle":"debtor","amount":320,"mode":"exact","status":"exact",
-		 "settlement_id":"SID-1","message":"pay 320 on the rail, then record it"}`))
-	})
-	mux.HandleFunc("GET /control/transfers", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("status") == "settled" {
-			w.Write([]byte(`[{"id":"TSET","status":"settled","amount":300,"peer":"kernelb","created_at":"2026-08-01T00:00:00Z"}]`))
-			return
-		}
-		w.Write([]byte(`[{"id":"TQ1","status":"quarantined","amount":300,"peer":"kernelb","step_id":"SP1","reserve":330,"created_at":"2026-08-01T00:00:00Z"},
-		 {"id":"TP1","status":"pending","amount":100,"peer":"kernelb","created_at":"2026-08-02T00:00:00Z"}]`))
-	})
-	mux.HandleFunc("GET /control/transfers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","status":"quarantined","amount":300,"peer":"kernelb","step_id":"SP1","reserve":330,"reason":"receipt hash mismatch","created_at":"2026-08-01T00:00:00Z"}`))
-	})
-	mux.HandleFunc("POST /control/transfers/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","status":"quarantined","created_at":"2026-08-01T00:00:00Z"}`))
+		 "network":"play","network_digest":"ef1f","rail_address":"","finalized":null,
+		 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
+		 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
+		 "custody":{"checked":false,"difference":0,"ok":false},
+		 "lottery":10,"credit_limit":1000,"exposure":320,
+		 "fee_bps":2000,"remote_bps":500,"import_bps":500}`))
 	})
 	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","step_id":"` + r.PathValue("id") + `"}`))
@@ -649,11 +648,11 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/transactions")
 	// Signed, perspective amounts: alice is buyer on T1 (−gross) and seller on
 	// T2 (+net) — the Role/Gross/Fee columns are gone (they live on the detail).
-	if !strings.Contains(body, "-$0.100") {
-		t.Error("buyer transaction must show the negative gross (−$0.100)")
+	if !strings.Contains(body, "-100.000000") {
+		t.Error("buyer transaction must show the negative gross (−100.000000)")
 	}
-	if !strings.Contains(body, "+$0.045") || !strings.Contains(body, "sig-credited") {
-		t.Error("seller transaction must show the positive net (+$0.045) as credited")
+	if !strings.Contains(body, "+45.000000") || !strings.Contains(body, "sig-credited") {
+		t.Error("seller transaction must show the positive net (+45.000000) as credited")
 	}
 	// Gross/fee/full-party breakdown stays on the detail page; the list shows the
 	// signed perspective amount (plus the viewer's role, a lightweight label).
@@ -692,7 +691,7 @@ func TestUserLedgerUsesUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("user ledger must link the action ref (was missing before)")
 	}
-	if !strings.Contains(body, "-$0.100") || !strings.Contains(body, "+$0.045") {
+	if !strings.Contains(body, "-100.000000") || !strings.Contains(body, "+45.000000") {
 		t.Error("user ledger must show the signed perspective amounts")
 	}
 	if strings.Contains(body, "<th>Gross</th>") {
@@ -852,7 +851,7 @@ func TestGrantConnectPostsToken(t *testing.T) {
 
 // TestCreateActionParsesDollarPrice: a price typed in dollars on the create form
 // reaches the kernel as the correct integer credits (the parseDollars inverse of
-// the money display). "$0.012" MUST arrive as "price":12, not 0 or 12000.
+// the money display). "12.000000" MUST arrive as "price":12, not 0 or 12000.
 func TestCreateActionParsesDollarPrice(t *testing.T) {
 	base := authKernel()
 	defer base.Close()
@@ -881,7 +880,7 @@ func TestCreateActionParsesDollarPrice(t *testing.T) {
 	form := url.Values{
 		"name":               {"priced"},
 		"kind":               {"http"},
-		"price":              {"$0.012"},
+		"price":              {"12.000000"},
 		"gorilla.csrf.Token": {tok},
 	}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(form.Encode()))
@@ -896,7 +895,7 @@ func TestCreateActionParsesDollarPrice(t *testing.T) {
 	got := gotBody
 	mu.Unlock()
 	if !strings.Contains(got, `"price":12`) {
-		t.Errorf("dollar price $0.012 must reach the kernel as 12 credits; kernel body = %s", got)
+		t.Errorf("dollar price 12.000000 must reach the kernel as 12 credits; kernel body = %s", got)
 	}
 }
 
@@ -1499,10 +1498,10 @@ func TestWalletShowsLedger(t *testing.T) {
 	// Each row encodes the viewer's role by the signed amount: as seller (T2, payee)
 	// alice sees a credited +net; as buyer (T1, payer) she sees a −gross debit.
 	txBody := getBody(t, cl, srv.URL+"/transactions")
-	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+$0.045") {
+	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+45.000000") {
 		t.Error("transactions ledger must show alice's seller credit (+net) on T2")
 	}
-	if !strings.Contains(txBody, ">-$0.100<") {
+	if !strings.Contains(txBody, ">-100.000000<") {
 		t.Error("transactions ledger must show alice's buyer debit (−gross) on T1")
 	}
 }
@@ -1523,8 +1522,8 @@ func TestStudioShowsEarnings(t *testing.T) {
 			t.Errorf("workshop must show the %q earnings tile", tile)
 		}
 	}
-	if !strings.Contains(body, "+$0.045") {
-		t.Errorf("all-time earnings tile must show the +$0.045 net: %s", body)
+	if !strings.Contains(body, "+45.000000") {
+		t.Errorf("all-time earnings tile must show the +45.000000 net: %s", body)
 	}
 }
 
@@ -2184,8 +2183,8 @@ func TestInboxTwoBranchCompletion(t *testing.T) {
 
 	// Payment branch: the completion is a SPEND of the completer's own money —
 	// money button naming the sealed amount, recipient named in the provenance
-	// face (§6.3). 300 credits render as $0.300.
-	if !strings.Contains(page, "Complete ($0.300)") {
+	// face (§6.3). 300 credits render as 300.000000.
+	if !strings.Contains(page, "Complete (300.000000)") {
 		t.Errorf("payment step must render the money amount on the button: %s", page)
 	}
 	if !strings.Contains(page, "Paid from your balance") || !strings.Contains(page, "alice") {
@@ -2494,7 +2493,7 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	body := string(raw)
-	for _, want := range []string{"Result pending", "$0.111", "/processes/proc-7", "19 August 2026"} {
+	for _, want := range []string{"Result pending", "111.000000", "/processes/proc-7", "19 August 2026"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("parked outcome missing %q:\n%s", want, body)
 		}
@@ -2524,7 +2523,7 @@ func TestWalletValueMovementRendersWithoutTheTransactionID(t *testing.T) {
 	if !strings.Contains(activity, "transfer to bob") {
 		t.Error("the movement must name its direction and counterparty")
 	}
-	if !strings.Contains(activity, "−$0.300") {
+	if !strings.Contains(activity, "−300.000000") {
 		t.Errorf("the movement must state the amount that left the balance:\n%s", activity)
 	}
 	// The id belongs to the transaction row, which links to the receipt; the

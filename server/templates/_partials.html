@@ -89,7 +89,7 @@
      omitted when we don't hold it — a figure here is a kernel-vouched fact or it
      is absent. */}}
 <div class="outcome parked" role="status">
-  <strong class="sig-escrow">◷ Result pending{{if .Reserved}} — {{.ReservedMoney}} reserved{{end}}.</strong>
+  <strong class="sig-escrow">◷ Result pending{{if .Reserved}} — {{money .Reserved}} reserved{{end}}.</strong>
   <p>{{.Message}}</p>
   {{if .RefundEligibleDate}}<p class="muted">Refunds in full from {{.RefundEligibleDate}} if it stays unconfirmed.</p>{{end}}
   {{if .ProcessID}}<p><a href="/processes/{{.ProcessID}}">Follow the reserved funds →</a></p>{{end}}
@@ -112,7 +112,7 @@
      terms moved while the page was open, and the buyer is asked again. */}}
 <div class="outcome rejected" role="status">
   <strong>Terms changed — you were not charged.</strong>
-  <p>{{.Message}}</p>
+  <p>{{.Message}}{{if .Price}} It now costs {{money .Price}}.{{end}}</p>
   <p class="muted">Run it again to accept the new terms.</p>
 </div>
 {{else if .IsGrantRequired}}
@@ -455,6 +455,31 @@
      one last failed. Both are muted text, never a status pill: the kernel
      states neither as a verdict, and a peer is called and the outcome reported
      rather than pre-judged (§6.6). Each is omitted until it has happened. */}}
+{{/* One debt owed to this kernel, and the gesture that closes it. The buyer has
+     paid and named the payment; the operator confirms the money arrived, which
+     credits the seller. The amount to pay is the draw's, and may exceed what the
+     call owed (kernel §P10) — both are shown, neither is computed here. The form
+     keys on the peer's public key and the ticket id, never on a displayed name. */}}
+{{define "_obligation_row"}}
+<tr>
+  <td><span class="mono" title="{{.Peer.Title}}">{{.Peer.Text}}</span></td>
+  <td class="mono" title="{{.O.ID}}">{{truncate 8 .O.ID}}…</td>
+  <td class="money">{{money .O.Obligation}}</td>
+  <td class="money">{{money .O.Amount}}</td>
+  <td><span class="pill status-escrow">{{.O.Status}}</span></td>
+  <td class="muted">{{shortTime .O.CreatedAt}}</td>
+  <td>
+    <form method="post" action="/admin/deposit" data-confirm="Confirm {{money .O.Amount}} received for this ticket? The seller is credited.">
+      {{.CSRFField}}
+      <input type="hidden" name="handle" value="{{.O.Peer}}">
+      <input type="hidden" name="ref" value="{{.O.ID}}">
+      <input type="hidden" name="back" value="/admin/peers">
+      <button class="btn-money" type="submit">Confirm ({{money .O.Amount}})</button>
+    </form>
+  </td>
+</tr>
+{{end}}
+
 {{define "_peer_contact"}}
 {{- if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end -}}
 {{- if .LastContactFailedAt}} · last contact failed {{relTime .LastContactFailedAt}}{{end -}}
@@ -495,17 +520,12 @@
         <a class="btn-quiet" href="/admin/users/{{.PublicKey}}?form=admin-rename">Name</a>
       </div>
       {{else}}
-      {{/* The bilateral position, signed WITH its reading — "we owe them" /
-           "owes us" — never a bare negative number (§6.6). */}}
-      <div class="small muted">position <span class="mono">{{positionText .Available}}</span>{{if .PeerCredit}} · our credit there <span class="mono" title="What we can spend calling this kernel">{{money .PeerCredit}}</span>{{end}}{{template "_peer_contact" .}}{{if .SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger — settle out of band">settlement due</span>{{end}}</div>
+      {{/* A peer holds no money here: a foreign call is funded by the serving
+           kernel and settles per call on the rail (kernel §D14/§P10), so a
+           counterparty row carries contact facts, not a balance. */}}
+      <div class="small muted">{{template "_peer_contact" .}}</div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{/* Settle moves REAL external money: confirm names the kernel; the
-             kernel's own outcome message is flashed verbatim (§6.6). The key is
-             what is posted — an alias is display only, and names collide. */}}
-        <form method="post" action="/admin/peers/settle" data-confirm="Settle with {{$n.Text}}? The kernel reports what must be paid; money moves on your rail, not here.">
-          {{$.CSRFField}}<input type="hidden" name="peer" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Settle</button>
-        </form>
         {{if .Suspended}}
         <form method="post" action="/admin/peers/unsuspend">
           {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Unsuspend</button>

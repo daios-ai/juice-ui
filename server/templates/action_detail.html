@@ -134,7 +134,7 @@
       {{end}}
       <div class="field">
         <label for="edit-price">Price</label>
-        <input id="edit-price" name="price" type="number" min="0" step="0.001" value="{{dollarsInput $d.Action.Price}}" class="input-sm">
+        <input id="edit-price" name="price" type="number" min="0" step="0.000001" value="{{amountInput $d.Action.Price}}" class="input-sm">
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Save changes</button>
@@ -146,7 +146,7 @@
     <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">
       {{$.CSRFField}}
       <label for="new-price" class="flush">Price only</label>
-      <input id="new-price" name="price" type="number" min="0" step="0.001" value="{{dollarsInput $d.Action.Price}}" class="input-sm">
+      <input id="new-price" name="price" type="number" min="0" step="0.000001" value="{{amountInput $d.Action.Price}}" class="input-sm">
       <button class="btn" type="submit">Update price</button>
     </form>
   </div>

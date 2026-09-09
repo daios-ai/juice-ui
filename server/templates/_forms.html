@@ -86,7 +86,7 @@
       </div>
       <div class="field">
         <label for="c-price">Price</label>
-        <input id="c-price" name="price" type="number" min="0" step="0.001" value="0.000" class="input-sm">
+        <input id="c-price" name="price" type="number" min="0" step="0.000001" value="0" class="input-sm">
       </div>
       <div class="field">
         <label for="c-in">Input schema (JSON)</label>
@@ -170,9 +170,6 @@
 </dialog>
 {{end}}
 
-{{/* The wallet's one send-money surface: runs the kernel's sys/transfer action
-     (a receipted spend, §6.5) — not the bare /v1/transfers endpoint. Money
-     button with the amount typed adjacent (wallet-send pattern, §6.3). */}}
 {{/* The deposit dialog is shared by admin (a user by handle) and network (a
      kernel by key), so it lives here rather than on either page. Two view fields
      carry the difference: .Data.FundKey prefills the recipient — a 43-character
@@ -184,19 +181,26 @@
 <dialog id="form-admin-deposit" class="modal-form"{{if eq .Data.OpenForm "admin-deposit"}} open{{end}} aria-label="Deposit credits">
   <div class="modal-head"><h2>Deposit credits</h2><a class="modal-close" href="{{.Data.Back}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/admin/deposit" data-confirm="Deposit credits? This grants credits after out-of-band payment.">
+    <form class="stack" method="post" action="/admin/deposit" data-confirm="Record this payment? The account is credited against the reference you named.">
       {{.CSRFField}}
       <input type="hidden" name="back" value="{{.Data.Back}}">
       <div class="field">
-        <label for="dep-handle">User (handle or kernel key)</label>
-        <p class="help">A kernel's public key provisions and funds its account.</p>
+        <label for="dep-handle">Account (handle or kernel key)</label>
         <input id="dep-handle" name="handle" type="text" class="mono" placeholder="handle or key" value="{{.Data.FundKey}}" required>
       </div>
-      <div class="field"><label for="dep-amount">Amount</label><input id="dep-amount" name="amount" type="number" min="0.001" step="0.001" required class="input-sm"></div>
+      <div class="field">
+        <label for="dep-ref">Payment reference</label>
+        <p class="help">Your record of it, a transaction hash, or a ticket id for a peer.</p>
+        <input id="dep-ref" name="ref" type="text" class="mono" required>
+      </div>
+      <div class="field">
+        <label for="dep-amount">Amount</label>
+        <p class="help">Leave empty to attribute a payment already received, or to close a peer's ticket.</p>
+        <input id="dep-amount" name="amount" type="number" min="0" step="0.000001" class="input-sm">
+      </div>
       <div class="field"><label for="dep-reason">Reason (optional)</label><input id="dep-reason" name="reason" type="text"></div>
-      <div class="field"><label for="dep-key">External key (optional, idempotency)</label><input id="dep-key" name="external_key" type="text"></div>
       <div class="cluster">
-        <button class="btn-money" type="submit">Deposit credits</button>
+        <button class="btn-money" type="submit">Record payment</button>
         <a class="btn" href="{{.Data.Back}}" data-modal-close>Cancel</a>
       </div>
     </form>

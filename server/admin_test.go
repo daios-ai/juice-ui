@@ -154,11 +154,13 @@ func TestAdminPeersHasNoSubscriptionOrRoster(t *testing.T) {
 	if strings.Contains(body, "fund a peer by key") || strings.Contains(body, "fund a kernel by key") {
 		t.Error("the page-level fund-by-key opener is retired: inspect \u2192 fund covers an out-of-band key")
 	}
-	// A counterparty row keeps exactly the two levers that remain.
-	for _, want := range []string{"/admin/peers/settle", "/admin/peers/suspend"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("peer row missing %q", want)
-		}
+	// Suspend is the one durable lever left on a counterparty: a peer holds no
+	// money here, so there is nothing to settle from this page (kernel §D14).
+	if !strings.Contains(body, "/admin/peers/suspend") {
+		t.Error("peer row missing the suspend lever")
+	}
+	if strings.Contains(body, "/admin/peers/settle") {
+		t.Error("settlement is per call on the rail; the kernel serves no settle route")
 	}
 }
 
@@ -340,8 +342,10 @@ func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
 	if strings.Contains(disc, "owes us") || strings.Contains(disc, "we owe them") {
 		t.Error("a kernel we hold no account for must show no position")
 	}
-	if !strings.Contains(disc, "form=admin-deposit") || !strings.Contains(disc, `value="KEYT1"`) {
-		t.Errorf("the fund gesture must be offered with the key prefilled: %s", disc)
+	// Funding a kernel is gone: a peer account holds no money, and a deposit
+	// naming a peer is refused unless it names the obligation it closes (§6.6).
+	if strings.Contains(disc, "fund this kernel") {
+		t.Error("a peer is not funded: its payments close obligations, they do not top up a balance")
 	}
 	stranger := getBody(t, cl, srv.URL+"/admin/peers/KEYNONE")
 	if strings.Contains(stranger, `<span class="chip" title="Discovered`) {
@@ -349,40 +353,26 @@ func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
 	}
 }
 
-// A kernel we have transacted with shows the bilateral position in place of the
-// retired membership badge — the honest fact, since there is nothing to join.
-func TestAdminInspectShowsPosition(t *testing.T) {
+// A peer account is identity and moderation state, never a wallet (kernel §D14),
+// so the inspect page states suspension and never a balance.
+func TestAdminInspectStatesModerationNotMoney(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	// KEYB is a peer with available=50 in the fake /control/peers.
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
-	if !strings.Contains(body, "we owe them") {
-		t.Errorf("a peer's inspect must state the bilateral position: %s", body)
-	}
-	for _, gone := range []string{">Subscribe<", ">Unsubscribe<", ">subscribed</span>"} {
+	for _, gone := range []string{"we owe them", "owes us", "position", ">Subscribe<", ">Unsubscribe<"} {
 		if strings.Contains(body, gone) {
-			t.Errorf("retired affordance still rendered: %q", gone)
+			t.Errorf("retired money or membership vocabulary still rendered: %q", gone)
 		}
 	}
-}
-
-// A suspended peer still holds a position, and this is the page an operator reads
-// before unsuspending — so the peer lookup behind it must include suspended rows.
-func TestAdminInspectSuspendedPeerShowsPosition(t *testing.T) {
-	kernel := authKernel()
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv.Close()
-	cl := loginClientAs(t, srv.URL, "sys")
-
-	// KEYS appears only under ?all=1 in the fake kernel.
-	body := getBody(t, cl, srv.URL+"/admin/peers/KEYS")
-	if !strings.Contains(body, "owes us") {
-		t.Errorf("a suspended peer's position must still show: %s", body)
+	// KEYS is suspended in the fake kernel and appears only under ?all=1, so the
+	// lookup behind this page must include suspended rows.
+	susp := getBody(t, cl, srv.URL+"/admin/peers/KEYS")
+	if !strings.Contains(susp, "suspended") {
+		t.Errorf("a suspended peer must say so: %s", susp)
 	}
 }
 
@@ -432,10 +422,11 @@ func TestAdminDepositRejectsNonSuperuser(t *testing.T) {
 	}
 }
 
-// v0.12 §6.6: the peers page renders the SIGNED bilateral position with its
-// reading (never a bare negative), the settlement_due pill, the global exposure
-// evidence on the kernel card, and the Settle affordance.
-func TestAdminPeersBilateralPosition(t *testing.T) {
+// The network page states this kernel's own credit position — what it has
+// delivered to foreign buyers and not been paid for, against the limit it set —
+// the rates it serves under, and the obligations awaiting the operator. A peer
+// row carries no money at all (kernel §D14/§P10).
+func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -443,56 +434,25 @@ func TestAdminPeersBilateralPosition(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(body, "owes us $0.320") {
-		t.Errorf("negative position must read 'owes us', not a bare negative: %s", body)
-	}
-	if !strings.Contains(body, "we owe them $0.050") {
-		t.Error("positive position must read 'we owe them' (earnings accrue on the row; 'prepaid' misreads it)")
-	}
-	if strings.Contains(body, "-$0.320") {
-		t.Error("a bare negative amount must never render on the peers page")
-	}
-	if !strings.Contains(body, "settlement due") {
-		t.Error("a settlement_due peer must carry the pill")
-	}
-	// Kernel card: exposure evidence from /control/identity.
-	for _, want := range []string{"exposure", "$0.320", "$1.000", "trigger", "$0.500"} {
+	for _, want := range []string{"owed to us", "320.000000", "1,000.000000", "limit", "fee 20%", "import 5%"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("kernel card missing exposure evidence %q", want)
+			t.Errorf("kernel card missing the credit position or rates: %q", want)
 		}
 	}
-	// Settle is present and routed through a confirm (data-confirm) — external
-	// money is never a bare click.
-	if !strings.Contains(body, `action="/admin/peers/settle"`) || !strings.Contains(body, "Settle with") {
-		t.Error("peer rows must offer Settle behind a confirm")
+	for _, gone := range []string{"we owe them", "owes us ", "settlement due", "our credit there"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("a peer holds no money here: found %q", gone)
+		}
 	}
-	// The retired prepaid-credit gating copy must be gone.
-	if strings.Contains(body, "Calls stay rejected until the peer holds credit") {
-		t.Error("retired prepaid-gating copy must not render")
+	// One obligation, closed by confirming the payment that pays it.
+	if !strings.Contains(body, "Owed to us") || !strings.Contains(body, "TICKET1") {
+		t.Errorf("the obligations section must list the owed ticket: %s", body)
 	}
-}
-
-// The settle POST flashes the kernel's own outcome message verbatim — the UI
-// never computes or predicts a settlement outcome (§6.6).
-func TestAdminSettleFlashesKernelMessage(t *testing.T) {
-	kernel := authKernel()
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv.Close()
-	cl := loginClientAs(t, srv.URL, "sys")
-
-	page := getBody(t, cl, srv.URL+"/admin/peers")
-	form := url.Values{"peer": {"debtor"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}}
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/admin/peers/settle", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := cl.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(body, `value="KEYB"`) || !strings.Contains(body, `name="ref" value="TICKET1"`) {
+		t.Error("the confirm must post the peer's key and the ticket id")
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if !strings.Contains(string(body), "pay 320 on the rail") {
-		t.Errorf("settle must flash the kernel's outcome message verbatim: %s", body)
+	if !strings.Contains(body, "Confirm (10.000000)") || !strings.Contains(body, "data-confirm") {
+		t.Error("recording a payment is a money act: it names the amount behind a confirm")
 	}
 }
 
@@ -763,9 +723,9 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 			t.Errorf("contact timestamps must not become a status signal: %q", banned)
 		}
 	}
-	// The debtor row has neither timestamp, so it states neither. Its own
-	// distinguishing text (settlement due) proves the row rendered at all.
-	if !strings.Contains(body, "settlement due") {
+	// The debtor row has neither timestamp, so it states neither. Its own name
+	// proves the row rendered at all.
+	if !strings.Contains(body, ">debtor<") {
 		t.Fatal("fixture changed: the debtor row is missing")
 	}
 	if strings.Count(body, "last contact failed") != 1 {

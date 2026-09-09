@@ -41,10 +41,13 @@ type adminUserView struct {
 // adminPeersView drives the merged roster: every kernel this one knows, split by
 // Tab into counterparties (an account here) and the known network (discovered,
 // no account). Both classes are the same card; the tab decides which facts and
-// verbs are true of it.
+// verbs are true of it. Deposits is the money awaiting the operator, shown above
+// the roster because closing an obligation is the one money verb left here.
 type adminPeersView struct {
 	depositForm
 	Identity      client.Identity
+	Deposits      client.Deposits
+	Petnames      map[string]string // public key → bound petname, for naming a debtor
 	Peers         []client.Peer
 	Tab           string // "counterparties" | "known"
 	Pager         Pager
@@ -207,32 +210,34 @@ func adjustBack(v string) string {
 	return "/admin"
 }
 
-// postAdminAdjust handles deposit/withdraw, dispatched on the path's last segment.
-func (s *Server) postAdminAdjust(w http.ResponseWriter, r *http.Request) {
-	op := lastSegment(r.URL.Path)
+// postAdminDeposit records a payment made outside the system. Ref is mandatory:
+// the kernel credits nothing it cannot name, and the same fact never moves money
+// twice (§6.6). Amount is optional — omitted, it attributes a payment already
+// received, or closes a peer's obligation for the amount its draw decided.
+func (s *Server) postAdminDeposit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	handle := strings.TrimSpace(r.FormValue("handle"))
-	amount := parseDollars(r.FormValue("amount"))
+	ref := strings.TrimSpace(r.FormValue("ref"))
 	reason := strings.TrimSpace(r.FormValue("reason"))
-	extKey := strings.TrimSpace(r.FormValue("external_key"))
 	back := adjustBack(strings.TrimSpace(r.FormValue("back")))
-	if handle == "" || amount <= 0 {
-		s.flashRedirect(w, r, back, "error", "A user handle and a positive amount are required.")
+	amount, err := s.parseAmount(r.FormValue("amount"))
+	if err != nil {
+		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		if op == "withdraw" {
-			_, e := s.client.AdminWithdraw(ctx, tok, handle, amount, reason, extKey)
-			return e
-		}
-		_, e := s.client.AdminDeposit(ctx, tok, handle, amount, reason, extKey)
+	if handle == "" || ref == "" {
+		s.flashRedirect(w, r, back, "error", "An account and the payment it records are both required.")
+		return
+	}
+	err = s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.AdminDeposit(ctx, tok, handle, amount, ref, reason)
 		return e
 	})
-	verb := "Deposited"
-	if op == "withdraw" {
-		verb = "Withdrew"
+	msg := "Recorded " + ref + " · " + handle + "."
+	if amount > 0 {
+		msg = "Recorded " + s.render.money(amount) + " · " + handle + "."
 	}
-	s.flashResult(w, r, err, back, verb+" "+money(amount)+" · "+handle+".")
+	s.flashResult(w, r, err, back, msg)
 }
 
 // getAdminPeers renders the merged roster. The kernel returns counterparties and
@@ -255,9 +260,15 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		CSRFField:   csrf.TemplateField(r),
 		depositForm: depositForm{FundKey: r.URL.Query().Get("fund_key"), Back: "/admin/peers"},
 	}
+	view.Petnames = map[string]string{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
 			view.Identity = id
+		}
+		// The money awaiting the operator: an obligation is closed here, and a
+		// held payment is attributed here (§6.6).
+		if d, e := s.client.AdminListDeposits(ctx, tok); e == nil {
+			view.Deposits = d
 		}
 		// all=showSuspended also lists suspended counterparties.
 		p, e := s.client.AdminListPeers(ctx, tok, showSuspended)
@@ -265,6 +276,10 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		for _, peer := range p {
+			// Every known kernel names the debtor rows, whichever tab is showing.
+			if peer.Petname != "" {
+				view.Petnames[peer.PublicKey] = peer.Petname
+			}
 			if peer.HasAccount == (tab == tabCounterparties) {
 				view.Peers = append(view.Peers, peer)
 			}
@@ -290,9 +305,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	view := adminInspectView{
 		Key: key, OpenForm: openForm(r, "admin"), CSRFField: csrf.TemplateField(r),
-		// Funding is the promotion gesture for a kernel with no account here, so
-		// this page prefills the key it is already about.
-		depositForm: depositForm{FundKey: key, Back: "/admin/peers"},
+		depositForm: depositForm{Back: "/admin/peers"},
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		insp, e := s.client.AdminInspect(ctx, tok, key)
@@ -348,45 +361,4 @@ func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 		verb = "unsuspended"
 	}
 	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
-}
-
-// positionText renders a peer's bilateral position with its reading — never a
-// bare negative number (requirements.md §6.6): positive = we owe the peer (it
-// prepaid or earned here — verified live: earnings accrue on the same row, so
-// "prepaid" would misread it), negative = the peer owes this kernel.
-func positionText(available int64) string {
-	switch {
-	case available > 0:
-		return "we owe them " + money(available)
-	case available < 0:
-		return "owes us " + money(-available)
-	default:
-		return "settled"
-	}
-}
-
-// postAdminSettle initiates settlement of the bilateral position with a peer,
-// or — with a settlement_id — records the external rail payment for a prior
-// outcome (the CLI --cash leg). Both concern REAL external money, so the forms
-// route through confirms naming the peer (§6.6); the kernel's own outcome
-// message is flashed verbatim (the UI never computes or predicts one).
-func (s *Server) postAdminSettle(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	peer := strings.TrimSpace(r.FormValue("peer"))
-	settlementID := strings.TrimSpace(r.FormValue("settlement_id"))
-	if peer == "" {
-		s.flashRedirect(w, r, "/admin/peers", "error", "A peer handle or key is required.")
-		return
-	}
-	var res client.SettleResult
-	err := s.sessions.Do(ctx, func(tok string) error {
-		out, e := s.client.AdminSettle(ctx, tok, peer, settlementID)
-		res = out
-		return e
-	})
-	msg := res.Message
-	if msg == "" {
-		msg = "Settlement " + res.Status + "."
-	}
-	s.flashResult(w, r, err, "/admin/peers", msg)
 }

@@ -17,11 +17,87 @@ func TestNewRendererParsesAllTemplates(t *testing.T) {
 	}
 }
 
-func TestMoneyFormatting(t *testing.T) {
-	cases := map[int64]string{0: "$0.000", 5: "$0.005", 100: "$0.100", 1000: "$1.000", 1234567: "$1,234.567", -2500: "-$2.500"}
-	for in, want := range cases {
-		if got := money(in); got != want {
-			t.Errorf("money(%d) = %q want %q", in, got, want)
+func TestUnitFormatsTheWorldsBaseUnit(t *testing.T) {
+	// The wire integer is the world's base unit and only the kernel knows its
+	// scale, so the same number reads differently on two worlds. Six fraction
+	// digits always, so amounts line up in one column (§7).
+	play := Unit{Decimals: 0, Network: "play"}
+	chain := Unit{Decimals: 6, Network: "test"}
+	cases := []struct {
+		u    Unit
+		in   int64
+		want string
+	}{
+		{play, 0, "0.000000"},
+		{play, 133, "133.000000"},
+		{play, 1234567, "1,234,567.000000"},
+		{play, -2500, "-2,500.000000"},
+		{chain, 133, "0.000133"},
+		{chain, 1000000, "1.000000"},
+		{chain, 1234567890, "1,234.567890"},
+		{chain, -1500000, "-1.500000"},
+	}
+	for _, c := range cases {
+		if got := c.u.Format(c.in); got != c.want {
+			t.Errorf("Unit{%d}.Format(%d) = %q want %q", c.u.Decimals, c.in, got, c.want)
+		}
+	}
+}
+
+func TestUnitInputIsUngrouped(t *testing.T) {
+	// A number input rejects commas, so the input form drops the grouping.
+	if got := (Unit{Decimals: 6}).Input(1234567890); got != "1234.567890" {
+		t.Errorf("Input = %q", got)
+	}
+	if got := (Unit{}).Input(133); got != "133.000000" {
+		t.Errorf("Input = %q", got)
+	}
+}
+
+func TestParseAmountRefusesFinerThanTheBaseUnit(t *testing.T) {
+	// parseAmount is the inverse of Format. Rounding somebody's money silently
+	// would be worse than refusing it, so a digit the world cannot express is an
+	// error rather than a truncation.
+	ok := []struct {
+		in       string
+		decimals int
+		want     int64
+	}{
+		{"133", 0, 133},
+		{"133.000000", 0, 133},
+		{"1,234", 0, 1234},
+		{" 12 ", 0, 12},
+		{"", 0, 0},
+		{"0.000133", 6, 133},
+		{"1.5", 6, 1500000},
+		{".5", 6, 500000},
+		{"1", 6, 1000000},
+	}
+	for _, c := range ok {
+		got, err := parseAmount(c.in, c.decimals)
+		if err != nil || got != c.want {
+			t.Errorf("parseAmount(%q, %d) = %d, %v want %d", c.in, c.decimals, got, err, c.want)
+		}
+	}
+	bad := []struct {
+		in       string
+		decimals int
+	}{
+		{"1.5", 0},       // no fractional unit on this world
+		{"0.0000001", 6}, // finer than the base unit
+		{"-1", 0},        // negative
+		{"abc", 0},       // not a number
+	}
+	for _, c := range bad {
+		if _, err := parseAmount(c.in, c.decimals); err == nil {
+			t.Errorf("parseAmount(%q, %d) should have failed", c.in, c.decimals)
+		}
+	}
+	// Round-trip through the input form.
+	for _, n := range []int64{0, 133, 1234567} {
+		u := Unit{Decimals: 6}
+		if got, err := parseAmount(u.Input(n), 6); err != nil || got != n {
+			t.Errorf("round trip %d = %d, %v", n, got, err)
 		}
 	}
 }
@@ -83,49 +159,11 @@ func TestRenderPageStampsThemeNoLeak(t *testing.T) {
 	if !strings.Contains(body, `data-theme="dracula"`) {
 		t.Error("theme not stamped onto <html>")
 	}
-	if !strings.Contains(body, "$1.000") {
+	if !strings.Contains(body, "1,000.000000") {
 		t.Error("available balance not rendered with money formatting")
 	}
 	if !strings.Contains(body, "alice") {
 		t.Error("handle not rendered in nav")
-	}
-}
-
-func TestDollarsInput(t *testing.T) {
-	// dollarsInput renders a bare decimal for number-input values (no $, no commas).
-	cases := map[int64]string{0: "0.000", 12: "0.012", 1000: "1.000", 1234567: "1234.567"}
-	for in, want := range cases {
-		if got := dollarsInput(in); got != want {
-			t.Errorf("dollarsInput(%d) = %q want %q", in, got, want)
-		}
-	}
-}
-
-func TestParseDollars(t *testing.T) {
-	// parseDollars is the inverse of money: a dollar string → integer credits,
-	// tolerating a leading $ and thousands commas, truncating beyond milli-dollars.
-	cases := map[string]int64{
-		"0.012":      12,
-		"1":          1000,
-		"1.5":        1500,
-		".5":         500,
-		"$0.020":     20,
-		"$1,234.567": 1234567,
-		"-2.5":       -2500,
-		"":           0,
-		"  12.000  ": 12000,
-		"1.2345":     1234, // 4th decimal truncated
-	}
-	for in, want := range cases {
-		if got := parseDollars(in); got != want {
-			t.Errorf("parseDollars(%q) = %d want %d", in, got, want)
-		}
-	}
-	// Round-trips: money(parseDollars(dollarsInput(n))) is stable for whole credits.
-	for _, n := range []int64{0, 12, 20, 1000, 1234567} {
-		if got := parseDollars(dollarsInput(n)); got != n {
-			t.Errorf("round-trip parseDollars(dollarsInput(%d)) = %d", n, got)
-		}
 	}
 }
 
@@ -184,16 +222,17 @@ func TestTxAmount(t *testing.T) {
 		tx           client.Transaction
 		want         []string // substrings the rendered cell must contain
 	}{
-		{"buyer pays gross", "buyer", mk("success", 100, 90, 10), []string{"-$0.100"}},
-		{"seller earns net", "seller", mk("success", 100, 90, 10), []string{"sig-credited", "+$0.090"}},
-		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+$0.010"}},
+		{"buyer pays gross", "buyer", mk("success", 100, 90, 10), []string{"-100.000000"}},
+		{"seller earns net", "seller", mk("success", 100, 90, 10), []string{"sig-credited", "+90.000000"}},
+		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+10.000000"}},
 		{"no stake shows dash", "bystander", mk("success", 100, 90, 10), []string{"—"}},
-		{"failed refunds buyer", "buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "$0.100"}},
+		{"failed refunds buyer", "buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "100.000000"}},
 		{"failed non-buyer dash", "seller", mk("failure", 100, 0, 0), []string{"—"}},
-		{"open parks buyer", "buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "$0.100"}},
+		{"open parks buyer", "buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "100.000000"}},
 	}
+	r := &Renderer{}
 	for _, c := range cases {
-		got := string(txAmount(c.tx, c.viewer))
+		got := string(r.txAmount(c.tx, c.viewer))
 		for _, w := range c.want {
 			if !strings.Contains(got, w) {
 				t.Errorf("%s: txAmount = %q, want substring %q", c.name, got, w)
@@ -203,13 +242,13 @@ func TestTxAmount(t *testing.T) {
 
 	// Self-call by a normal user (buyer == seller): nets to −fee.
 	self := client.Transaction{OwnerHandle: "a", TargetHandle: "a", Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(txAmount(self, "a")); !strings.Contains(got, "-$0.010") {
-		t.Errorf("self-call = %q, want -$0.010 (the fee)", got)
+	if got := string(r.txAmount(self, "a")); !strings.Contains(got, "-10.000000") {
+		t.Errorf("self-call = %q, want -10.000000 (the fee)", got)
 	}
 	// sys as the seller collects net + fee = gross.
 	sysSell := client.Transaction{OwnerHandle: "a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+$0.100") {
-		t.Errorf("sys-as-seller = %q, want +$0.100 (net+fee)", got)
+	if got := string(r.txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+100.000000") {
+		t.Errorf("sys-as-seller = %q, want +100.000000 (net+fee)", got)
 	}
 }
 
@@ -496,12 +535,12 @@ func TestCallOutcomeTermsChanged(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	out := Outcome{Class: TermsChanged, Price: 500, QuoteHash: "abc",
-		Message: "The price changed to $0.500 while this page was open. Nothing was charged."}
+		Message: "The price changed to 500.000000 while this page was open. Nothing was charged."}
 	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "not charged") || !strings.Contains(body, "$0.500") {
+	if !strings.Contains(body, "not charged") || !strings.Contains(body, "500.000000") {
 		t.Errorf("a refused quote must state the new price and that nothing moved: %s", body)
 	}
 	if strings.Contains(body, "refunded") || strings.Contains(body, "Failed") {
@@ -543,8 +582,8 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run ($0.012)") {
-		t.Errorf("run form must have a money button reading %q: %s", "Run ($0.012)", body)
+	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run (12.000000)") {
+		t.Errorf("run form must have a money button reading %q: %s", "Run (12.000000)", body)
 	}
 	if strings.ContainsRune(body, '¤') {
 		t.Error("money button must not render the ¤ glyph")
@@ -852,8 +891,8 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 	if strings.Contains(body, ">Parked<") || strings.Contains(body, ">Available<") {
 		t.Errorf("list must drop the standing Available/Parked columns: %s", body)
 	}
-	if !strings.Contains(body, ">$0.100<") {
-		t.Errorf("amount cell must show the total 30+70=100 credits = $0.100: %s", body)
+	if !strings.Contains(body, ">100.000000<") {
+		t.Errorf("amount cell must show the total 30+70=100 credits = 100.000000: %s", body)
 	}
 
 	// Detail → the available + parked split is kept.
@@ -971,7 +1010,7 @@ func TestPeersTabsAndSuspendedToggle(t *testing.T) {
 		rec := httptest.NewRecorder()
 		p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 			Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
-			Peers:         []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+			Peers:         []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, LastSeen: "2026-07-12T00:00:00Z"}},
 			Tab:           tab,
 			ShowSuspended: showSuspended,
 		}}
@@ -1065,7 +1104,7 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 // TestPeerRowOffersSettleAndSuspend: the two levers that remain on a peer row —
 // Settle (by handle) and Suspend (by key); a suspended peer is marked and offers
 // Unsuspend. There is no unsubscribe: a peer is not something one leaves.
-func TestPeerRowOffersSettleAndSuspend(t *testing.T) {
+func TestPeerRowOffersSuspendByKey(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
@@ -1088,8 +1127,8 @@ func TestPeerRowOffersSettleAndSuspend(t *testing.T) {
 	}
 	// Every form posts the KEY: an alias is display only and advertised names
 	// collide across kernels, so a handle is not an address.
-	if !strings.Contains(body, `action="/admin/peers/settle"`) || !strings.Contains(body, `value="KF"`) {
-		t.Errorf("active row must offer Settle by key: %s", body)
+	if strings.Contains(body, "/admin/peers/settle") {
+		t.Errorf("settlement is per call on the rail, not a peer verb: %s", body)
 	}
 	if strings.Contains(body, "unsubscribe") || strings.Contains(body, "Unsubscribe") {
 		t.Errorf("no peer row may offer an unsubscribe verb: %s", body)
@@ -1156,9 +1195,10 @@ func TestInspectOfflineStranger(t *testing.T) {
 	}
 }
 
-// TestPeersPageShowsCreditAndLastSeen checks gap (a): the Friends table surfaces our
-// prepaid credit on the peer and when it was last seen.
-func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
+// A counterparty card carries contact facts and no balance: a peer holds no
+// money on any path (kernel §D14), so a position or a credit figure here would
+// be a fabrication.
+func TestPeerCardCarriesContactNotMoney(t *testing.T) {
 	r, err := NewRenderer()
 	if err != nil {
 		t.Fatal(err)
@@ -1166,21 +1206,22 @@ func TestPeersPageShowsCreditAndLastSeen(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
-		Peers:    []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, Available: 10, Locked: 0, PeerCredit: 250, LastSeen: "2026-07-12T00:00:00Z"}},
+		Peers:    []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, LastSeen: "2026-07-12T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	// Friends now render as kernel cards (with banner art), not a table.
-	if !strings.Contains(body, "our credit there") {
-		t.Error("friend kernel card missing the our-credit figure")
+	if !strings.Contains(body, "catalog verified") {
+		t.Errorf("counterparty card missing the contact cache: %s", body)
 	}
-	if !strings.Contains(body, "$0.250") {
-		t.Errorf("our credit value not rendered as dollars: %s", body)
+	for _, gone := range []string{"our credit there", "owes us", "we owe them", "position"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("a peer card must state no money: found %q", gone)
+		}
 	}
 	if !strings.Contains(body, `class="kernel-card`) || !strings.Contains(body, `class="media wide"`) {
-		t.Errorf("friend must render as a kernel card with a banner: %s", body)
+		t.Errorf("a counterparty must render as a kernel card with a banner: %s", body)
 	}
 }
 
@@ -1370,7 +1411,7 @@ func TestCallFormPayment(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "btn-money") || !strings.Contains(body, "Complete ($0.300)") {
+	if !strings.Contains(body, "btn-money") || !strings.Contains(body, "Complete (300.000000)") {
 		t.Errorf("sealed payment must use the money button naming the amount: %s", body)
 	}
 	if !strings.Contains(body, "Paid from your balance") || !strings.Contains(body, "alice") {
@@ -1425,7 +1466,7 @@ func TestActionCardDiscovered(t *testing.T) {
 	// The kernel prices every lookup row (v0.12.15), so the card states it — but
 	// as INDICATIVE, and marked by an accessible label, not by weight alone: the
 	// binding figure is fixed when the action resolves.
-	if !strings.Contains(body, "$0.111") {
+	if !strings.Contains(body, "111.000000") {
 		t.Errorf("a discovered card must state its catalog price: %s", body)
 	}
 	if !strings.Contains(body, `class="price muted"`) || !strings.Contains(body, "title=\"Indicative") {
@@ -1581,7 +1622,7 @@ func TestDiscoveredActionRunsByRefWithPin(t *testing.T) {
 	if !strings.Contains(body, `name="quote_hash" value="QH"`) {
 		t.Errorf("a discovered run must pin the catalog quote: %s", body)
 	}
-	if !strings.Contains(body, "Run ($0.111)") {
+	if !strings.Contains(body, "Run (111.000000)") {
 		t.Errorf("the button must name the price being pinned: %s", body)
 	}
 	// It has no local stats, so the strip's four "none"s would be noise.

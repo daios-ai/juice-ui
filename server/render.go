@@ -58,6 +58,7 @@ type Page struct {
 	Handle       string          // signed-in handle for the nav, or "" when anonymous
 	KernelHandle string          // this kernel's own handle (from /health), or "" if unknown
 	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
+	KernelNet    string          // the network this kernel serves, named on the login page
 	IsSuperuser  bool            // handle == "sys": show the admin group and admin scope
 	Available    int64           // signed-in user's available balance; 0 when unknown
 	Themes       []ANSIPalette   // selectable terminal themes for the picker
@@ -78,6 +79,113 @@ type Page struct {
 type Renderer struct {
 	pages    map[string]*template.Template
 	partials *template.Template
+	unit     func() Unit // the kernel's money unit; nil until wiring sets it
+}
+
+// SetUnitSource supplies the kernel's money unit to the money helpers. Amounts
+// are integers in the world's base unit and only the kernel knows how that unit
+// scales (§7), so the renderer reads it from the live /health identity rather
+// than assuming one. Called once during wiring (server.New), before serving.
+func (r *Renderer) SetUnitSource(f func() Unit) { r.unit = f }
+
+// Unit is the money unit of the world this kernel serves: how many decimal
+// places its base-unit integer carries, and the network's name. One kernel
+// serves one world for life (kernel §D23), so this is fixed per installation.
+type Unit struct {
+	Decimals int
+	Network  string
+}
+
+// Format renders a base-unit integer for display: thousands-grouped, sign
+// first, and always six fraction digits, so amounts from different worlds line
+// up in one column. On a world with no fractional unit (decimals 0) 133 reads
+// "133.000000"; on a six-decimal world it reads "0.000133". The unit itself is
+// named separately (the `unit` helper), never with a currency mark.
+func (u Unit) Format(n int64) string {
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	whole, frac := u.split(n)
+	out := group3(whole) + "." + frac
+	if neg {
+		return "-" + out
+	}
+	return out
+}
+
+// Input renders a non-negative base-unit integer as a bare decimal for an HTML
+// number input's value (no grouping — number inputs reject commas).
+func (u Unit) Input(n int64) string {
+	if n < 0 {
+		n = -n
+	}
+	whole, frac := u.split(n)
+	return strconv.FormatInt(whole, 10) + "." + frac
+}
+
+// split divides a non-negative base-unit amount into its whole part and its
+// six-digit fraction string.
+func (u Unit) split(n int64) (int64, string) {
+	d := u.Decimals
+	if d < 0 {
+		d = 0
+	}
+	if d > 6 {
+		d = 6 // beyond six digits the display truncates; no shipped world needs it
+	}
+	scale := pow10(d)
+	whole := n / scale
+	frac := (n % scale) * pow10(6-d)
+	return whole, fmt.Sprintf("%06d", frac)
+}
+
+// pow10 returns 10^n for the small n a decimals field can hold.
+func pow10(n int) int64 {
+	p := int64(1)
+	for i := 0; i < n; i++ {
+		p *= 10
+	}
+	return p
+}
+
+// parseAmount is the inverse of Unit.Format: it reads a typed amount and returns
+// the kernel's base-unit integer. It rejects a negative, a non-numeric value, and
+// a digit finer than the world's base unit — silently rounding someone's money
+// would be worse than refusing it.
+func parseAmount(s string, decimals int) (int64, error) {
+	s = strings.NewReplacer(",", "", " ", "").Replace(strings.TrimSpace(s))
+	if s == "" {
+		return 0, nil
+	}
+	if strings.HasPrefix(s, "-") {
+		return 0, fmt.Errorf("amount must not be negative")
+	}
+	whole, frac, hasFrac := strings.Cut(s, ".")
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if whole != "" && err != nil {
+		return 0, fmt.Errorf("amount must be a number")
+	}
+	if decimals < 0 {
+		decimals = 0
+	}
+	if !hasFrac {
+		return w * pow10(decimals), nil
+	}
+	if len(frac) > decimals && strings.Trim(frac[decimals:], "0") != "" {
+		if decimals == 0 {
+			return 0, fmt.Errorf("amount must be a whole number here")
+		}
+		return 0, fmt.Errorf("amount has at most %d decimals here", decimals)
+	}
+	frac = (frac + strings.Repeat("0", decimals))[:decimals]
+	f := int64(0)
+	if frac != "" {
+		if f, err = strconv.ParseInt(frac, 10, 64); err != nil {
+			return 0, fmt.Errorf("amount must be a number")
+		}
+	}
+	return w*pow10(decimals) + f, nil
 }
 
 // NewRenderer parses all embedded templates, plus any app-module template
@@ -86,10 +194,11 @@ type Renderer struct {
 // base, so a app page renders through the same layout, partials, and helpers
 // as a core page.
 func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
+	r := &Renderer{}
 	funcs := template.FuncMap{
-		"money":        money,
-		"positionText": positionText,
-		"dollarsInput": dollarsInput,
+		"money":        r.money,
+		"unit":         r.unitName,
+		"amountInput":  r.amountInput,
 		"sum":          func(a, b int64) int64 { return a + b },
 		"sub":          func(a, b int64) int64 { return a - b },
 		"json":         prettyJSON,
@@ -102,11 +211,12 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 		"ratingPct":    ratingPct,
 		"refFolder":    refFolder,
 		"nameOf":       nameOf,
+		"obligation":   obligation,
 		"ref":          refOf,
 		"price":        priceOf,
 		"shortTime":    shortTime,
 		"relTime":      relTime,
-		"txAmount":     txAmount,
+		"txAmount":     r.txAmount,
 		"txrow":        txRowOf,
 		"kindBadge":    kindBadge,
 		"tab":          tab,
@@ -164,8 +274,29 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 			return nil, err
 		}
 	}
-	return &Renderer{pages: pages, partials: base}, nil
+	r.pages, r.partials = pages, base
+	return r, nil
 }
+
+// unitOrZero is the money unit, or a zero unit before wiring (tests that render
+// without a server) — whole base units, unnamed network.
+func (r *Renderer) unitOrZero() Unit {
+	if r.unit == nil {
+		return Unit{}
+	}
+	return r.unit()
+}
+
+// money formats a base-unit amount for display — the single source of truth for
+// every amount the UI shows (§7).
+func (r *Renderer) money(n int64) string { return r.unitOrZero().Format(n) }
+
+// amountInput formats a base-unit amount as an HTML number input's value.
+func (r *Renderer) amountInput(n int64) string { return r.unitOrZero().Input(n) }
+
+// unitName is the network whose money this is, for the quiet label beside a
+// balance. Empty before the kernel has answered, and then nothing is labelled.
+func (r *Renderer) unitName() string { return r.unitOrZero().Network }
 
 // Render writes a full page (page template wrapped in the layout). It buffers
 // first so a template error never produces a half-written response.
@@ -197,32 +328,6 @@ func (r *Renderer) Fragment(w http.ResponseWriter, status int, name string, data
 }
 
 // ---- template helpers ----
-
-// money formats integer credits as dollars — the single source of truth for every
-// displayed amount. 1000 credits = $1, always 3 decimals, thousands-grouped, sign
-// before the $: money(12)="$0.012", money(1000)="$1.000", money(-2500)="-$2.500",
-// money(1234567)="$1,234.567". Rendered in a monospace tabular face by the
-// stylesheet (R8.5); the credit↔dollar ratio is lossless (1 credit = $0.001).
-func money(n int64) string {
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	out := "$" + group3(n/1000) + "." + fmt.Sprintf("%03d", n%1000)
-	if neg {
-		return "-" + out
-	}
-	return out
-}
-
-// dollarsInput formats non-negative credits as a bare decimal for an HTML number
-// input's value (no $, no commas — number inputs reject those): 12 → "0.012".
-func dollarsInput(n int64) string {
-	if n < 0 {
-		n = -n
-	}
-	return fmt.Sprintf("%d.%03d", n/1000, n%1000)
-}
 
 // group3 renders a non-negative integer with thousands-separating commas.
 func group3(n int64) string {
@@ -362,6 +467,21 @@ func keyDisplay(s string) Name {
 // else its truncated key. A nickname is never chosen — it does not resolve, so
 // showing it where a name is expected would invite typing something the
 // resolver rejects.
+// obligationRow pairs one debt with the debtor's name as this kernel knows it
+// and the CSRF field its confirm needs, so _obligation_row renders from one
+// value. The petname map is the roster's; an unbound kernel shows its truncated
+// key, which is what the form posts either way.
+type obligationRow struct {
+	O         client.Obligation
+	Peer      Name
+	CSRFField template.HTML
+}
+
+// obligation builds that pairing (template helper).
+func obligation(o client.Obligation, petnames map[string]string, csrfField template.HTML) obligationRow {
+	return obligationRow{O: o, Peer: nameOf(petnames[o.Peer], o.Peer), CSRFField: csrfField}
+}
+
 func nameOf(petname, key string) Name {
 	if petname != "" {
 		return Name{Text: petname, Title: key}
@@ -742,16 +862,16 @@ const amountDash = template.HTML(`<span class="muted">—</span>`)
 // returns to it). A failed call shows the buyer the ↩ refund; an open call shows
 // the buyer the ◷ parked gross. A viewer with no stake sees an em dash. Gross,
 // fee and the full party list live on the transaction detail page.
-func txAmount(tx client.Transaction, viewer string) template.HTML {
+func (r *Renderer) txAmount(tx client.Transaction, viewer string) template.HTML {
 	switch tx.Status {
 	case "failure":
 		if viewer == tx.OwnerHandle {
-			return sigAmount("sig-refunded", "↩ ", tx.Gross)
+			return r.sigAmount("sig-refunded", "↩ ", tx.Gross)
 		}
 		return amountDash
 	case "open":
 		if viewer == tx.OwnerHandle {
-			return sigAmount("sig-escrow", "◷ ", tx.Gross)
+			return r.sigAmount("sig-escrow", "◷ ", tx.Gross)
 		}
 		return amountDash
 	default: // success / settled
@@ -767,9 +887,9 @@ func txAmount(tx client.Transaction, viewer string) template.HTML {
 		}
 		switch {
 		case amt > 0:
-			return sigAmount("sig-credited", "+", amt)
+			return r.sigAmount("sig-credited", "+", amt)
 		case amt < 0:
-			return sigAmount("", "", amt) // money() already prints the leading −
+			return r.sigAmount("", "", amt) // Format already prints the leading −
 		default:
 			return amountDash
 		}
@@ -779,10 +899,10 @@ func txAmount(tx client.Transaction, viewer string) template.HTML {
 // sigAmount builds a money cell: an optional signal class + glyph before the
 // formatted amount. Inputs are constant-controlled or numeric, so the result is
 // safe HTML.
-func sigAmount(sig, glyph string, n int64) template.HTML {
+func (r *Renderer) sigAmount(sig, glyph string, n int64) template.HTML {
 	cls := "money"
 	if sig != "" {
 		cls += " " + sig
 	}
-	return template.HTML(`<span class="` + cls + `">` + glyph + template.HTMLEscapeString(money(n)) + `</span>`)
+	return template.HTML(`<span class="` + cls + `">` + glyph + template.HTMLEscapeString(r.money(n)) + `</span>`)
 }

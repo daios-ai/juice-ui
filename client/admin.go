@@ -32,12 +32,12 @@ type AdminUser struct {
 	UpdatedAt   string `json:"updated_at"`
 
 	// Kernel half (§13 petname model): present only when the target is a kernel.
-	PublicKey  string `json:"public_key"`
-	Petname    string `json:"petname"`
-	Nickname   string `json:"nickname"`
-	About      string `json:"about"`
-	LastSeen   string `json:"last_seen"`
-	PeerCredit int64  `json:"peer_credit"`
+	PublicKey   string `json:"public_key"`
+	Petname     string `json:"petname"`
+	Nickname    string `json:"nickname"`
+	About       string `json:"about"`
+	LastSeen    string `json:"last_seen"`
+	RailAddress string `json:"rail_address"`
 }
 
 // IsKernel reports that this record is a remote kernel rather than a local
@@ -45,46 +45,24 @@ type AdminUser struct {
 // one, §3), so the public key is the discriminator.
 func (u AdminUser) IsKernel() bool { return u.PublicKey != "" }
 
-// HasAccount reports that a kernel target also holds a billing account here.
-// A merely-discovered kernel answers with naming and sync data but no balances,
-// so a balance block would be a fabrication.
-func (u AdminUser) HasAccount() bool { return !u.IsKernel() || u.ID != "" }
-
 // Suspended reports whether the user is currently suspended. Detection is by
 // presence: the kernel omits suspended_at when active and sends the suspension
 // timestamp when suspended, so a non-empty string means suspended — robust also to
 // an older kernel that sent the RFC3339 zero value.
 func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 
-// Adjustment is the audit record returned by deposit/withdraw.
-type Adjustment struct {
-	Direction      string `json:"direction"` // "credit" | "debit"
-	Amount         int64  `json:"amount"`
-	Reason         string `json:"reason"`
-	ExternalKey    string `json:"external_key,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	OperatorHandle string `json:"operator_handle"`
-	TargetHandle   string `json:"target_handle"`
-}
-
 // Peer is one row of the merged kernel roster: every kernel this one knows,
-// keyed by public key and excluding itself. HasAccount splits the two classes
-// (verified live 2026-08-06) — a COUNTERPARTY holds a billing account here, a
-// DISCOVERED peer is a catalog entry the discovery loop learned and nothing
-// more, so its money fields are meaningless and it has no user row to suspend
-// or rename.
+// keyed by public key and excluding itself. HasAccount splits the two classes —
+// a COUNTERPARTY holds an account here, a DISCOVERED peer is a catalog entry the
+// discovery loop learned and nothing more, so it has no user row to suspend or
+// rename.
 //
-// Available is the BILATERAL POSITION under the v0.12 exposure model and may be
-// NEGATIVE: positive = this kernel owes the peer (it prepaid or earned here),
-// negative = the peer owes this kernel; render it with its reading, never bare
-// (§6.6, and see server.positionText). PeerCredit is our cached credit on the
-// peer and is ABSENT until a gossip pull as a counterparty returns one, so it is
-// zero-suppressed rather than shown as zero.
-// SettlementDue is the kernel's Y-trigger signal: information, never authority
-// (crossing it stops nothing; only the global cap X refuses calls). SuspendedAt
-// is present only on a suspended row under ?all=1 (v0.9 unified moderation).
+// A peer holds NO MONEY on any path (kernel §D14): a foreign call is funded by
+// the serving kernel and every obligation settles per call on the rail (§P10),
+// so this row carries names, reachability and a catalog count — never a balance.
+// SuspendedAt is present only on a suspended row under ?all=1.
 //
-// Naming follows Stiegler's petname model, which the kernel implements (§13):
+// Naming follows Stiegler's petname model, which the kernel implements (§D15):
 // PublicKey is the only global, self-certifying name; Nickname is what the
 // kernel calls ITSELF and never resolves (self-asserted, collides freely, and
 // is counterparty prose); Petname is the name bound HERE and the only friendly
@@ -96,11 +74,8 @@ type Peer struct {
 	Nickname   string `json:"nickname"` // self-asserted by the remote; never resolves
 	About      string `json:"about"`    // the peer's sys description; counterparty prose
 	PublicKey  string `json:"public_key"`
-	HasAccount bool   `json:"has_account"` // counterparty (billing account) vs discovered
+	HasAccount bool   `json:"has_account"` // counterparty (account here) vs discovered
 	Actions    int    `json:"actions"`     // public actions in its gossiped catalog
-	Available  int64  `json:"available"`
-	Locked     int64  `json:"locked"`
-	PeerCredit int64  `json:"peer_credit"` // our cached credit on the peer; absent until synced
 	// LastSeen and LastContactFailedAt are the kernel's contact cache (§13):
 	// when a verified exchange last succeeded, and when one last failed. Raw
 	// RFC3339 facts, each "" until it has happened — the kernel states neither
@@ -108,8 +83,7 @@ type Peer struct {
 	// draws no conclusion about whether the peer is up.
 	LastSeen            string `json:"last_seen"`
 	LastContactFailedAt string `json:"last_contact_failed_at"`
-	SettlementDue       bool   `json:"settlement_due,omitempty"` // gross receivables crossed Y (§13)
-	SuspendedAt         string `json:"suspended_at,omitempty"`   // set only on a suspended row under ?all=1
+	SuspendedAt         string `json:"suspended_at,omitempty"` // set only on a suspended row under ?all=1
 }
 
 // Suspended reports whether this peer is frozen (its inbound calls are refused).
@@ -117,16 +91,17 @@ type Peer struct {
 // (verified live 2026-07-19), so a non-empty string means suspended.
 func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
 
-// PeerAction is one action a peer serves, as carried by an inspection. As of
-// v0.12.8 the projection is only {name, description, price} — no action_id, no
-// owner_handle, no kind, no stats (verified live 2026-08-06), and the name is
-// BARE (`register`, not `chat/register`). So a peer action cannot be turned into
-// an addressable ref here and carries no reputation: the UI renders what the
-// kernel serves and nothing more (requirements.md §10).
+// PeerAction is one action a peer serves, as carried by an inspection. The name
+// is BARE (`register`, not `chat/register`) and the projection carries no owner
+// or stats, so it is not an addressable ref and shows no reputation. Price is
+// the all-in local price and Indicative says so: it is quoted from the catalog
+// and re-quoted authoritatively when the action resolves (kernel §D13).
 type PeerAction struct {
+	ActionID    string `json:"action_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Price       int64  `json:"price"`
+	Indicative  bool   `json:"indicative"`
 }
 
 // Evidence is one derived metric row from the local evidence cache: what a
@@ -167,14 +142,13 @@ type Reachability struct {
 	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }
 
-// PeerAccount is this kernel's billing row for the inspected kernel, served
-// inline by the inspection (verified live 2026-08-06) and NULL for a kernel that
-// holds no account here. Its presence is what distinguishes a counterparty from
-// a discovered peer on the inspect page, so it is a pointer.
+// PeerAccount is this kernel's account row for the inspected kernel, served
+// inline by the inspection and NULL for a kernel that holds no account here. Its
+// presence is what distinguishes a counterparty from a discovered peer on the
+// inspect page, so it is a pointer. It carries no balance: a peer account is
+// identity, attribution and moderation state, never a wallet (kernel §D14).
 type PeerAccount struct {
-	Available int64 `json:"available"`
-	Locked    int64 `json:"locked"`
-	Suspended bool  `json:"suspended"`
+	Suspended bool `json:"suspended"`
 }
 
 // Inspection is GET /control/peers/inspect?key= — a remote kernel's identity, its
@@ -253,22 +227,118 @@ type IssuerEvidence struct {
 	Rows   []Evidence
 }
 
-// Identity is this kernel's own federation identity plus its global exposure
-// evidence (/control/identity; exposure fields verified live 2026-08-03):
-// ExposureMax is the cap X on gross unsecured receivables across ALL peers,
-// GrossReceivables the current G, SettlementTrigger the flag level Y, and
-// SettlementQuantum the smallest fee-rational external payment Q (0 = the
-// probabilistic residual path is disabled). SettlementDue mirrors G ≥ Y.
+// Identity is GET /control/identity: who this kernel is, what its money is
+// doing, and how much unpaid work it is carrying.
+//
+// Sys splits the superuser's balance into what it has earned and what is merely
+// in transit on the rail (open payouts, deposits nobody has claimed, fuel locks)
+// — money held on sys and never spendable (kernel §D3). Solvency is the identity
+// every user credit is backed by cash: Liabilities − Vault must be zero, and Gap
+// names the difference when a record has been broken by hand. Custody compares
+// that vault against the rail's own finalized reads and is reported only at a
+// valid cut, so Checked says whether the comparison ran at all. Stop is present
+// only while outgoing rail work is halted, and names why.
+//
+// Exposure is what this kernel has delivered to foreign buyers and not been paid
+// for, against the CreditLimit it set — one number for the whole kernel, so
+// minting identities cannot multiply it (kernel §D14). Lottery is the largest
+// ticket this kernel writes, and the three bps rates are the money rules it
+// serves under.
 type Identity struct {
-	Handle            string   `json:"handle"`
-	PublicKey         string   `json:"public_key"`
-	About             string   `json:"about"` // sys's description — what the network reads about us
-	Addrs             []string `json:"addrs"`
-	ExposureMax       int64    `json:"exposure_max"`
-	GrossReceivables  int64    `json:"gross_receivables"`
-	SettlementTrigger int64    `json:"settlement_trigger"`
-	SettlementQuantum int64    `json:"settlement_quantum"`
-	SettlementDue     bool     `json:"settlement_due"`
+	Handle        string   `json:"handle"`
+	PublicKey     string   `json:"public_key"`
+	About         string   `json:"about"` // sys's description — what the network reads about us
+	Addrs         []string `json:"addrs"`
+	Network       string   `json:"network"`
+	NetworkDigest string   `json:"network_digest"`
+	RailAddress   string   `json:"rail_address"` // where this kernel is paid; "" on a world without addresses
+
+	Finalized *RailHoldings `json:"finalized"` // nil until a chain rail has read a block
+	Sys       SysFunds      `json:"sys"`
+	Solvency  Solvency      `json:"solvency"`
+	Custody   Custody       `json:"custody"`
+	Stop      *RailStop     `json:"stop"` // nil unless outgoing rail work is halted
+
+	Lottery     int64 `json:"lottery"`
+	CreditLimit int64 `json:"credit_limit"`
+	Exposure    int64 `json:"exposure"`
+	FeeBps      int64 `json:"fee_bps"`
+	RemoteBps   int64 `json:"remote_bps"`
+	ImportBps   int64 `json:"import_bps"`
+}
+
+// RailHoldings is what the rail holds for this kernel at a finalized block.
+type RailHoldings struct {
+	Token string `json:"token"`
+	Gas   string `json:"gas"`
+	Block int64  `json:"block"`
+}
+
+// SysFunds splits the operator's balance: what it earned, and what is in transit
+// on the rail and therefore not spendable.
+type SysFunds struct {
+	Earnings       int64 `json:"earnings"`
+	PendingPayouts int64 `json:"pending_payouts"`
+	HeldDeposits   int64 `json:"held_deposits"`
+	RefillLocks    int64 `json:"refill_locks"`
+}
+
+// Solvency is the backing identity: every user credit against the money that
+// crossed in. Gap names the term that differs when it does not hold.
+type Solvency struct {
+	Liabilities int64 `json:"liabilities"`
+	Vault       int64 `json:"vault"`
+	Gap         int64 `json:"gap"`
+}
+
+// Custody compares the kernel's own vault figure against the rail's finalized
+// reads. Checked is false when no valid cut was available, and then Difference
+// and OK say nothing.
+type Custody struct {
+	Checked    bool  `json:"checked"`
+	Difference int64 `json:"difference"`
+	OK         bool  `json:"ok"`
+}
+
+// RailStop is a halt on outgoing rail work: deposits, paid work and reads
+// continue, and the halt lifts when the blocked payment clears.
+type RailStop struct {
+	Reason string `json:"reason"`
+	Since  string `json:"since"`
+}
+
+// Deposits is GET /control/deposits: the money awaiting the operator. Held are
+// payments whose sender nobody has registered; Owed are obligations a buyer says
+// it has paid whose money this kernel has not yet seen. Each Owed row is closed
+// by recording its payment against the ticket id (§6.6).
+type Deposits struct {
+	Held []HeldDeposit `json:"deposits"`
+	Owed []Obligation  `json:"owed"`
+}
+
+// HeldDeposit is a payment booked against no account yet. Only its id is
+// contractually named (it is what --ref names to attribute it), so nothing else
+// is rendered until a chain world confirms the rest of the shape.
+type HeldDeposit struct {
+	ID        string `json:"id"`
+	Amount    int64  `json:"amount"`
+	CreatedAt string `json:"created_at"`
+}
+
+// Obligation is one cross-kernel debt owed TO this kernel: the ticket both
+// kernels know it by, what the call owed, and what the draw decided must
+// actually be paid — Amount is a face value that may exceed Obligation, since a
+// small debt pays a larger amount with the probability that makes the expected
+// payment the debt (kernel §P10). Peer is the buyer's public key, and TxHash the
+// payment the buyer named.
+type Obligation struct {
+	ID         string `json:"id"`
+	Obligation int64  `json:"obligation"`
+	Amount     int64  `json:"amount"`
+	TxHash     string `json:"tx_hash"`
+	Status     string `json:"status"`
+	CreatedAt  string `json:"created_at"`
+	Peer       string `json:"peer"`
 }
 
 // AdminListUsers returns every user (GET /control/users). The kernel pages every
@@ -331,31 +401,37 @@ func (c *Client) AdminRename(ctx context.Context, token, target, newName string)
 	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(target)+"/rename", token, body, nil)
 }
 
-// AdminDeposit credits a user's balance (POST /control/deposit). The handle may
-// be a peer's base64url public key: on a kernel that does not yet know that key,
-// the deposit provisions the peer's billing account and funds it in one gesture
-// (verified live 2026-08-04) — this is how a peer is brought into being now that
-// there is no subscription.
-func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
-	return c.adjust(ctx, token, "/control/deposit", handle, amount, reason, externalKey)
-}
-
-// AdminWithdraw debits a user's balance (POST /control/withdraw).
-func (c *Client) AdminWithdraw(ctx context.Context, token, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
-	return c.adjust(ctx, token, "/control/withdraw", handle, amount, reason, externalKey)
-}
-
-func (c *Client) adjust(ctx context.Context, token, path, handle string, amount int64, reason, externalKey string) (Adjustment, error) {
-	body := map[string]any{"handle": handle, "amount": amount}
+// AdminDeposit records a payment made outside the system (POST /control/deposit).
+// Ref names that payment — the operator's own record of it where the world has no
+// chain, the transaction that carried it where it has, or, when the target is a
+// PEER, the ticket id of the obligation the payment closes. It is mandatory: the
+// kernel credits nothing it cannot name, a second use of the same fact moves no
+// money, and the same fact on other terms is refused.
+//
+// Amount is omitted when zero, which is how the two amount-less forms are sent:
+// attributing a payment already received, and closing a peer's obligation for the
+// amount the draw decided. A peer's payment reaches the seller it is owed to — a
+// peer account is identity, never a wallet (kernel §D14).
+func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, ref, reason string) (LedgerEntry, error) {
+	body := map[string]any{"handle": handle, "ref": ref}
+	if amount > 0 {
+		body["amount"] = amount
+	}
 	if reason != "" {
 		body["reason"] = reason
 	}
-	if externalKey != "" {
-		body["external_key"] = externalKey
-	}
-	var a Adjustment
-	err := c.do(ctx, http.MethodPost, path, token, body, &a)
-	return a, err
+	var e LedgerEntry
+	err := c.do(ctx, http.MethodPost, "/control/deposit", token, body, &e)
+	return e, err
+}
+
+// AdminListDeposits returns the money awaiting the operator: payments held for a
+// sender nobody has registered, and obligations a buyer says it has paid whose
+// money this kernel has not yet seen (GET /control/deposits).
+func (c *Client) AdminListDeposits(ctx context.Context, token string) (Deposits, error) {
+	var d Deposits
+	err := c.do(ctx, http.MethodGet, "/control/deposits", token, nil, &d)
+	return d, err
 }
 
 // AdminListPeers returns the whole merged roster, optionally including suspended
@@ -419,35 +495,4 @@ func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspectio
 	var out Inspection
 	err := c.do(ctx, http.MethodGet, "/control/peers/inspect?key="+url.QueryEscape(key), token, nil, &out)
 	return out, err
-}
-
-// SettleResult is the kernel's settlement outcome (shapes verified live
-// 2026-08-03). status "creditor": the peer owes us — its operator initiates;
-// status/mode "exact": pay Amount on the rail and record it with the named
-// settlement id; the probabilistic path reports its clear/pay outcome the same
-// way. Message is the kernel's own operator instruction, shown verbatim
-// (requirements.md §6.6 — the UI never computes or predicts an outcome).
-type SettleResult struct {
-	Handle       string `json:"handle,omitempty"`
-	SettlementID string `json:"settlement_id,omitempty"`
-	Mode         string `json:"mode,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Amount       int64  `json:"amount,omitempty"`
-	Message      string `json:"message,omitempty"`
-}
-
-// AdminSettle settles the bilateral position with a peer (POST
-// /control/peers/settle, body {"handle": ...} — route and body verified live
-// 2026-08-03). With a settlementID it records the external rail payment for a
-// paid probabilistic outcome (the CLI --cash leg, body field "settlement_id").
-// Both move or record REAL external money; the UI routes each through a modal
-// confirm naming the peer and amounts (requirements.md §6.6).
-func (c *Client) AdminSettle(ctx context.Context, token, handleOrKey, settlementID string) (SettleResult, error) {
-	body := map[string]string{"handle": handleOrKey}
-	if settlementID != "" {
-		body["settlement_id"] = settlementID
-	}
-	var r SettleResult
-	err := c.do(ctx, http.MethodPost, "/control/peers/settle", token, body, &r)
-	return r, err
 }

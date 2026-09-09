@@ -1,10 +1,11 @@
 {{define "content"}}
 {{$u := .Data.User}}
 {{/* One page, two disjoint records (client.AdminUser): a local USER carries a
-     handle and balances; a KERNEL carries the petname model and its sync cache,
-     and balances only once it holds an account here. A kernel is addressed by
-     its PUBLIC KEY throughout — an unbound one has no name to key on, and
-     advertised names collide (§6.6). */}}
+     handle and balances; a KERNEL carries the petname model and its sync cache
+     and no money at all, since a peer account is identity and moderation state
+     rather than a wallet (kernel §D14). A kernel is addressed by its PUBLIC KEY
+     throughout — an unbound one has no name to key on, and advertised names
+     collide (§6.6). */}}
 {{$target := $u.Handle}}{{if $u.IsKernel}}{{$target = $u.PublicKey}}{{end}}
 {{$n := nameOf $u.Petname $u.PublicKey}}
 <nav class="crumb"><a href="{{if $u.IsKernel}}/admin/peers{{else}}/admin{{end}}">← {{if $u.IsKernel}}peers{{else}}admin{{end}}</a></nav>
@@ -23,19 +24,19 @@
     <dt>Handle</dt><dd class="mono">{{$u.Handle}}</dd>
     {{if $u.Description}}<dt>About</dt><dd>{{$u.Description}}</dd>{{end}}
     {{end}}
-    {{if $u.HasAccount}}
+    {{if $u.IsKernel}}
+    {{if $u.RailAddress}}<dt>Paid at</dt><dd class="mono">{{$u.RailAddress}}</dd>{{end}}
+    {{else}}
     <dt>Available</dt><dd class="money">{{money $u.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $u.Locked}}</dd>
-    <dt>State</dt><dd>{{if $u.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
     {{end}}
+    <dt>State</dt><dd>{{if $u.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
   </dl>
   <div class="cluster">
-    {{if $u.HasAccount}}
     {{if $u.Suspended}}
     <form method="post" action="/admin/users/{{$target}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
     {{else}}
     <form method="post" action="/admin/users/{{$target}}/suspend" data-confirm="Suspend {{$n.Text}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
-    {{end}}
     {{end}}
     <a class="btn-quiet" href="/admin/users/{{$target}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
   </div>

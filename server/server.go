@@ -51,36 +51,46 @@ type Server struct {
 	home      string        // component home dir handed to apps
 	badgeTTL  time.Duration // nav-badge poll interval + steps-badge cache TTL
 
-	// Cached kernel identity (handle + key fingerprint) from the open /health,
-	// so the login page and sidebar can name/verify the kernel. Fetched once on
-	// the first successful render; retried until then.
-	idMu         sync.Mutex
-	kernelHandle string
-	kernelFP     string
-	idFetched    bool
+	// Cached kernel identity from the open /health: what the session pins, what
+	// names the kernel in the chrome, and the world's money unit. Re-read at the
+	// badge interval, because a client must refuse a server that no longer
+	// reports the key and network it recorded (ecosystem §5).
+	idMu      sync.Mutex
+	kernelID  client.Health
+	idFetched time.Time
 }
 
-// kernelIdentity returns the kernel's handle and a short key fingerprint from
-// the open /health endpoint, cached after the first success (identity is
-// stable). Empty strings when the kernel hasn't answered yet — templates then
-// fall back to the plain brand.
-func (s *Server) kernelIdentity(ctx context.Context) (handle, fp string) {
+// kernelIdentity returns the kernel's own /health banner, cached for the badge
+// interval. A zero Health means the kernel has not answered yet: the chrome
+// falls back to the plain brand and the session pin treats it as unknown rather
+// than as a mismatch.
+func (s *Server) kernelIdentity(ctx context.Context) client.Health {
 	s.idMu.Lock()
-	fetched, h, f := s.idFetched, s.kernelHandle, s.kernelFP
+	id, at := s.kernelID, s.idFetched
 	s.idMu.Unlock()
-	if fetched {
-		return h, f
+	if id.Handle != "" && time.Since(at) < s.badgeTTL {
+		return id
 	}
 	hc, err := s.client.Health(ctx)
 	if err != nil || hc.Handle == "" {
-		return "", "" // retry on a later render
+		return id // keep what we had; retry on a later render
 	}
-	handle, fp = hc.Handle, keyFingerprint(hc.PublicKey)
 	s.idMu.Lock()
-	s.kernelHandle, s.kernelFP, s.idFetched = handle, fp, true
+	s.kernelID, s.idFetched = hc, time.Now()
 	s.idMu.Unlock()
-	return handle, fp
+	return hc
 }
+
+// unit is the money unit of the world this kernel serves, for the renderer and
+// for parsing typed amounts. Zero before the kernel has answered.
+func (s *Server) unit() Unit {
+	s.idMu.Lock()
+	defer s.idMu.Unlock()
+	return Unit{Decimals: s.kernelID.Decimals, Network: s.kernelID.Network}
+}
+
+// parseAmount reads a typed amount in the kernel's own unit.
+func (s *Server) parseAmount(v string) (int64, error) { return parseAmount(v, s.unit().Decimals) }
 
 // publicBaseURL is the absolute base URL of this BFF, used to build the OAuth
 // grant redirect_uri. It uses the configured PublicURL when set (for reverse
@@ -124,6 +134,9 @@ func New(o Options) (http.Handler, error) {
 		home:      o.Home,
 		badgeTTL:  badgeTTL,
 	}
+	// The money unit is the kernel's, not ours: the renderer reads it from the
+	// cached /health identity (§7).
+	o.Renderer.SetUnitSource(s.unit)
 	as, err := newAppStore(o.StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
@@ -229,8 +242,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/users/{handle}/suspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{handle}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{handle}/rename", s.requireSuperuser(s.postAdminUserOp))
-	mux.HandleFunc("POST /admin/deposit", s.requireSuperuser(s.postAdminAdjust))
-	mux.HandleFunc("POST /admin/withdraw", s.requireSuperuser(s.postAdminAdjust))
+	mux.HandleFunc("POST /admin/deposit", s.requireSuperuser(s.postAdminDeposit))
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a
 	// peer key is 43 base64url chars and can never collide with it.
@@ -238,7 +250,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /admin/peers/{key}", s.requireSuperuser(s.getAdminInspect))
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
-	mux.HandleFunc("POST /admin/peers/settle", s.requireSuperuser(s.postAdminSettle))
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only
@@ -577,7 +588,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		}
 	}
 	super := s.isSuperuser(r)
-	kernelHandle, kernelFP := s.kernelIdentity(r.Context())
+	kernelID := s.kernelIdentity(r.Context())
 	active := activeGroup(r.URL.Path)
 	return Page{
 		Title: title,
@@ -591,8 +602,9 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Active:       active,
 		Nav:          s.buildNav(r, active),
 		Handle:       s.sessions.Handle(r.Context()),
-		KernelHandle: kernelHandle,
-		KernelFP:     kernelFP,
+		KernelHandle: kernelID.Handle,
+		KernelFP:     keyFingerprint(kernelID.PublicKey),
+		KernelNet:    kernelID.Network,
 		IsSuperuser:  super,
 		Themes:       ThemeList(),
 		CSRFField:    csrf.TemplateField(r),

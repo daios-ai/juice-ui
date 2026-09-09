@@ -2,20 +2,27 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>network</h1>
-  <p class="subtitle">Inspect, fund, and settle kernels. <span class="scope-note">superuser only</span></p>
+  <p class="subtitle">Kernels, and the money they owe. <span class="scope-note">superuser only</span></p>
 </div>
+
+{{/* A halt refuses outgoing rail work while deposits, paid work and reads
+     continue (kernel §D23) — stated here, where those verbs are. */}}
+{{if $d.Identity.Stop}}<div class="banner banner-error" role="status">Payments out are paused — {{$d.Identity.Stop.Reason}}{{if $d.Identity.Stop.Since}} (since {{shortTime $d.Identity.Stop.Since}}){{end}}.</div>{{end}}
 
 <h2>This kernel</h2>
 <div class="kernel-card">
   <span class="media wide">{{cardArt $d.Identity.PublicKey $d.Identity.Handle "" "kernel"}}</span>
   <div class="kernel-body">
-    <div class="mono"><b>{{$d.Identity.Handle}}</b>{{if $d.Identity.SettlementDue}} <span class="pill status-escrow" title="Gross receivables crossed the settlement trigger">settlement due</span>{{end}}</div>
+    <div class="mono"><b>{{$d.Identity.Handle}}</b>{{if $d.Identity.Network}} <span class="muted small">{{$d.Identity.Network}}</span>{{end}}</div>
     <div class="fingerprint">{{$d.Identity.PublicKey}}</div>
     {{if $d.Identity.About}}<div class="small muted">{{$d.Identity.About}}</div>{{end}}
-    {{/* Global exposure evidence (§6.6): current gross receivables against the
-         cap X, the settlement trigger Y, and the residual quantum Q. Information
-         only — admission control lives in the kernel. */}}
-    <div class="small muted">exposure <span class="mono">{{money $d.Identity.GrossReceivables}}</span> of <span class="mono">{{money $d.Identity.ExposureMax}}</span> cap · trigger <span class="mono">{{money $d.Identity.SettlementTrigger}}</span>{{if $d.Identity.SettlementQuantum}} · quantum <span class="mono">{{money $d.Identity.SettlementQuantum}}</span>{{end}}</div>
+    {{if $d.Identity.RailAddress}}<div class="small muted">paid at <span class="mono">{{$d.Identity.RailAddress}}</span></div>{{end}}
+    {{/* What this kernel has delivered to foreign buyers and not been paid for,
+         against the limit it set — one number for the whole kernel (§D14). */}}
+    <div class="small muted">owed to us <span class="mono">{{money $d.Identity.Exposure}}</span> of <span class="mono">{{money $d.Identity.CreditLimit}}</span> limit · ticket <span class="mono">{{money $d.Identity.Lottery}}</span></div>
+    <div class="small muted">fee {{pct $d.Identity.FeeBps 10000}}% · serving {{pct $d.Identity.RemoteBps 10000}}% · import {{pct $d.Identity.ImportBps 10000}}%</div>
+    <div class="small muted">earned <span class="mono">{{money $d.Identity.Sys.Earnings}}</span> · in transit <span class="mono">{{money (sum (sum $d.Identity.Sys.PendingPayouts $d.Identity.Sys.HeldDeposits) $d.Identity.Sys.RefillLocks)}}</span></div>
+    <div class="small muted">user credits <span class="mono">{{money $d.Identity.Solvency.Liabilities}}</span> · money in <span class="mono">{{money $d.Identity.Solvency.Vault}}</span>{{if $d.Identity.Solvency.Gap}} · <span class="pill status-danger">gap {{money $d.Identity.Solvency.Gap}}</span>{{end}}</div>
     {{if $d.Identity.Addrs}}
     <details class="details-panel">
       <summary>Listen addresses</summary>
@@ -24,6 +31,23 @@
     {{end}}
   </div>
 </div>
+
+{{/* Every cross-kernel debt settles on the rail per call, by a ticket both
+     kernels name (kernel §P10). A buyer pays and says so; the operator confirms
+     the money arrived, which is what closes the debt and pays the seller. */}}
+{{if not $d.Known}}
+<h2>Owed to us</h2>
+{{if $d.Deposits.Owed}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Peer</th><th>Ticket</th><th class="money">Owed</th><th class="money">To pay</th><th>Status</th><th>When</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Deposits.Owed}}{{template "_obligation_row" (obligation . $d.Petnames $.CSRFField)}}{{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="muted">Nothing owed.</p>{{end}}
+{{end}}
 
 <h2>kernels</h2>
 {{/* One roster, two classes. Switching tabs starts at page one and drops the
@@ -35,7 +59,6 @@
 </nav>
 {{if not $d.Known}}
 <div class="row control-row">
-  <a class="btn-quiet" href="/admin/peers?form=settle-cash" data-modal="form-settle-cash">+ record a rail payment</a>
   {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
 </div>
 {{end}}
@@ -65,30 +88,4 @@
   </div>
 </dialog>
 
-{{if not $d.Known}}
-{{/* Record-cash: the only settlement step where external money is recorded
-     (§6.6) — after paying the kernel-named amount on the rail, key the record
-     by the settlement id the settle outcome printed. */}}
-<dialog id="form-settle-cash" class="modal-form"{{if eq $d.OpenForm "settle-cash"}} open{{end}} aria-label="Record a rail payment">
-  <div class="modal-head"><h2>Record a rail payment</h2><a class="modal-close" href="/admin/peers" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/admin/peers/settle" data-confirm="Record this rail payment? The kernel books the settlement against the named id.">
-      {{.CSRFField}}
-      <div class="field">
-        <label for="sc-peer">Peer</label>
-        <input id="sc-peer" name="peer" type="text" class="mono" placeholder="handle or key" required>
-      </div>
-      <div class="field">
-        <label for="sc-sid">Settlement id</label>
-        <p class="help">From the settle outcome. The rail payment must already have been made.</p>
-        <input id="sc-sid" name="settlement_id" type="text" class="mono" required>
-      </div>
-      <div class="cluster">
-        <button class="btn" type="submit">Record</button>
-        <a class="btn" href="/admin/peers" data-modal-close>Cancel</a>
-      </div>
-    </form>
-  </div>
-</dialog>
-{{end}}
 {{end}}

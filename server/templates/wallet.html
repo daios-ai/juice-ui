@@ -7,7 +7,7 @@
 <div class="balances">
   <div class="balance">
     <div class="amount mono">{{money .Data.Available}}</div>
-    <div class="label">available</div>
+    <div class="label">available{{if unit}} · {{unit}}{{end}}</div>
   </div>
   <div class="balance">
     <div class="amount mono sig-escrow">{{money .Data.Locked}}</div>

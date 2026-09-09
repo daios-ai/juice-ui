@@ -67,11 +67,11 @@ func TestAdminSuspendUnsuspend(t *testing.T) {
 	}
 }
 
-func TestAdminDepositWithdraw(t *testing.T) {
+func TestAdminDepositNamesThePayment(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"direction":"credit","amount":100,"operator_handle":"sys","target_handle":"alice"}`
-	adj, err := f.client().AdminDeposit(context.Background(), "tok", "alice", 100, "grant", "idem-1")
+	f.reply = `{"amount":100,"external_key":"attr:rail:ref:pay-1","operator_handle":"sys","from_handle":"sys","to_handle":"alice"}`
+	e, err := f.client().AdminDeposit(context.Background(), "tok", "alice", 100, "pay-1", "grant")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,23 +79,49 @@ func TestAdminDepositWithdraw(t *testing.T) {
 		t.Errorf("deposit request = %s %s", f.lastMethod, f.lastPath)
 	}
 	body := string(f.lastBody)
-	for _, want := range []string{`"handle":"alice"`, `"amount":100`, `"reason":"grant"`, `"external_key":"idem-1"`} {
+	for _, want := range []string{`"handle":"alice"`, `"amount":100`, `"ref":"pay-1"`, `"reason":"grant"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("deposit body missing %s: %s", want, body)
 		}
 	}
-	if adj.Direction != "credit" || adj.Amount != 100 {
-		t.Errorf("adjustment decode wrong: %+v", adj)
+	if e.Amount != 100 || e.ToHandle != "alice" {
+		t.Errorf("the deposit answers with the ledger entry it wrote: %+v", e)
 	}
-	// Withdraw hits its own path; empty reason/key are omitted.
-	if _, err := f.client().AdminWithdraw(context.Background(), "tok", "alice", 5, "", ""); err != nil {
+	// The two amount-less forms — attributing a received payment, and closing a
+	// peer's ticket — send no amount at all, so the kernel uses the one the draw
+	// decided rather than one we made up.
+	if _, err := f.client().AdminDeposit(context.Background(), "tok", "KEYB", 0, "TICKET1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/withdraw" {
-		t.Errorf("withdraw path = %q", f.lastPath)
+	if strings.Contains(string(f.lastBody), "amount") || strings.Contains(string(f.lastBody), "reason") {
+		t.Errorf("a zero amount and an empty reason are omitted: %s", f.lastBody)
 	}
-	if strings.Contains(string(f.lastBody), "reason") || strings.Contains(string(f.lastBody), "external_key") {
-		t.Errorf("empty reason/key must be omitted: %s", f.lastBody)
+	if !strings.Contains(string(f.lastBody), `"ref":"TICKET1"`) {
+		t.Errorf("the ticket is what closes an obligation: %s", f.lastBody)
+	}
+}
+
+// The money awaiting the operator: payments nobody has claimed, and obligations
+// a buyer says it paid whose money has not arrived (§6.6).
+func TestAdminListDeposits(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"deposits":[],"owed":[{"id":"TICKET1","obligation":8,"amount":10,"tx_hash":"manual:TICKET1",
+	 "status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"}]}`
+	d, err := f.client().AdminListDeposits(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/control/deposits" {
+		t.Errorf("deposits path = %q", f.lastPath)
+	}
+	if len(d.Owed) != 1 || d.Owed[0].ID != "TICKET1" || d.Owed[0].Peer != "KEYB" {
+		t.Errorf("obligation decode wrong: %+v", d.Owed)
+	}
+	// What was owed and what must be paid are different numbers: the draw pays a
+	// larger amount with the probability that makes the expectation the debt.
+	if d.Owed[0].Obligation != 8 || d.Owed[0].Amount != 10 {
+		t.Errorf("the draw's amount and the debt are both carried: %+v", d.Owed[0])
 	}
 }
 
@@ -105,8 +131,8 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	// The merged roster: a counterparty (has_account) beside a discovered kernel
 	// that carries a catalog and a last_seen but no account — shapes captured live
 	// 2026-08-06 on three throwaway kernels.
-	f.reply = `[{"petname":"peerb","nickname":"twin","public_key":"KEY","has_account":true,"actions":13,"available":10,"locked":0,"peer_credit":250,"last_seen":"2026-07-12T00:00:00Z"},
-	 {"nickname":"twin","public_key":"KEY2","has_account":false,"actions":7,"available":0,"locked":0,"last_seen":"2026-07-13T00:00:00Z"}]`
+	f.reply = `[{"petname":"peerb","nickname":"twin","public_key":"KEY","has_account":true,"actions":13,"last_seen":"2026-07-12T00:00:00Z"},
+	 {"nickname":"twin","public_key":"KEY2","has_account":false,"actions":7,"last_seen":"2026-07-13T00:00:00Z"}]`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
@@ -129,13 +155,10 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if p[0].PublicKey == p[1].PublicKey {
 		t.Error("two rows sharing an advertised handle must stay key-distinct")
 	}
-	// The §13 peer-sync cache — our credit on the peer and when last seen.
-	if p[0].PeerCredit != 250 || p[0].LastSeen != "2026-07-12T00:00:00Z" {
-		t.Errorf("peer sync-cache decode wrong: credit=%d last_seen=%q", p[0].PeerCredit, p[0].LastSeen)
-	}
-	// A discovered row carries catalog freshness but no credit: absent, not zero.
-	if p[1].LastSeen == "" || p[1].PeerCredit != 0 {
-		t.Errorf("discovered row sync fields wrong: %+v", p[1])
+	// The contact cache — when a verified exchange last succeeded. Both classes
+	// carry it; neither carries money.
+	if p[0].LastSeen != "2026-07-12T00:00:00Z" || p[1].LastSeen == "" {
+		t.Errorf("contact cache decode wrong: %+v", p)
 	}
 	// all → the flag is emitted as literal "1" (the kernel reads "true" as false).
 	if _, err := f.client().AdminListPeers(context.Background(), "tok", true); err != nil {
@@ -233,8 +256,9 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	if len(insp.Actions) != 1 || insp.Actions[0].Name != "greet" || insp.Actions[0].Price != 12 {
 		t.Errorf("peer action not decoded: %+v", insp.Actions)
 	}
-	// The account arrives inline, so the page needs no roster scan to state a position.
-	if insp.Account == nil || insp.Account.Available != 5 || insp.Discovered() {
+	// The account arrives inline, so the page needs no roster scan. It is
+	// moderation state, never a balance: a peer holds no money (kernel §D14).
+	if insp.Account == nil || insp.Account.Suspended || insp.Discovered() {
 		t.Errorf("account not decoded, or a counterparty read as discovered: %+v", insp.Account)
 	}
 	// avg_latency_ms is FRACTIONAL on the wire (690.5, 90760.5 — verified live).
@@ -301,55 +325,34 @@ func TestEvidenceViews(t *testing.T) {
 	}
 }
 
-// v0.12: the bilateral position may be negative and carries the Y-trigger flag;
-// /control/identity carries the global exposure figures (verified live 2026-08-03).
-func TestAdminPeersBilateralAndExposure(t *testing.T) {
+// A peer row carries no money, and /control/identity carries this kernel's own
+// credit position, money rules and rail standing (verified live on v0.14.0).
+func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `[{"handle":"peerb","public_key":"KEY","available":-320,"locked":0,"settlement_due":true}]`
-	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p[0].Available != -320 || !p[0].SettlementDue {
-		t.Errorf("bilateral decode wrong: %+v", p[0])
-	}
-	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"exposure_max":1000,"gross_receivables":620,
-	 "settlement_trigger":500,"settlement_quantum":3000,"settlement_due":true}`
+	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"network":"play","network_digest":"ef1f",
+	 "rail_address":"","finalized":null,
+	 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
+	 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
+	 "custody":{"checked":false,"difference":0,"ok":false},
+	 "lottery":10,"credit_limit":1000,"exposure":320,
+	 "fee_bps":2000,"remote_bps":500,"import_bps":500}`
 	id, err := f.client().AdminIdentity(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id.ExposureMax != 1000 || id.GrossReceivables != 620 || id.SettlementTrigger != 500 ||
-		id.SettlementQuantum != 3000 || !id.SettlementDue {
-		t.Errorf("exposure decode wrong: %+v", id)
+	if id.Exposure != 320 || id.CreditLimit != 1000 || id.Lottery != 10 {
+		t.Errorf("credit position decode wrong: %+v", id)
 	}
-}
-
-// v0.12: settlement over HTTP — POST /control/peers/settle {handle}, and the
-// --cash leg with settlement_id (route + body verified live 2026-08-03).
-func TestAdminSettle(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.reply = `{"handle":"peerb","settlement_id":"SID1","mode":"exact","status":"exact","amount":700,"message":"pay 700 on the rail"}`
-	r, err := f.client().AdminSettle(context.Background(), "tok", "peerb", "")
-	if err != nil {
-		t.Fatal(err)
+	if id.FeeBps != 2000 || id.RemoteBps != 500 || id.ImportBps != 500 {
+		t.Errorf("money rules decode wrong: %+v", id)
 	}
-	if f.lastMethod != "POST" || f.lastPath != "/control/peers/settle" {
-		t.Errorf("settle = %s %s", f.lastMethod, f.lastPath)
+	if id.Sys.Earnings != 170 || id.Solvency.Liabilities != 8126 || id.Solvency.Gap != 0 {
+		t.Errorf("operator split or solvency decode wrong: %+v", id)
 	}
-	if !strings.Contains(string(f.lastBody), `"handle":"peerb"`) || strings.Contains(string(f.lastBody), "settlement_id") {
-		t.Errorf("settle body = %s", f.lastBody)
-	}
-	if r.SettlementID != "SID1" || r.Mode != "exact" || r.Message == "" {
-		t.Errorf("settle result = %+v", r)
-	}
-	if _, err := f.client().AdminSettle(context.Background(), "tok", "peerb", "SID1"); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(f.lastBody), `"settlement_id":"SID1"`) {
-		t.Errorf("cash body = %s", f.lastBody)
+	// Absent while nothing is wrong: a halt and a chain reading are both optional.
+	if id.Stop != nil || id.Finalized != nil || id.Custody.Checked {
+		t.Errorf("optional rail state must stay absent: %+v", id)
 	}
 }
 

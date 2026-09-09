@@ -311,8 +311,10 @@ func TestRunTermsChangedCarriesNewTerms(t *testing.T) {
 	if out.Price != 500 || out.QuoteHash != "NEWHASH" {
 		t.Errorf("new terms not carried: price=%d hash=%q", out.Price, out.QuoteHash)
 	}
-	if !strings.Contains(out.Message, "$0.500") {
-		t.Errorf("the message must name the new price in dollars: %q", out.Message)
+	// The price rides as a number, not baked into the sentence: only the renderer
+	// knows the world's unit, so the template names it (§7).
+	if strings.ContainsAny(out.Message, "0123456789") {
+		t.Errorf("the sentence must not format money itself: %q", out.Message)
 	}
 	if strings.Contains(out.Message, "refund") {
 		t.Errorf("nothing was locked, so nothing was refunded: %q", out.Message)

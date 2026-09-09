@@ -4,7 +4,7 @@
   <div class="card auth-card">
     <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
     {{if .KernelHandle}}
-    <p class="auth-kernel">Sign in to <b class="mono">{{.KernelHandle}}</b></p>
+    <p class="auth-kernel">Sign in to <b class="mono">{{.KernelHandle}}</b>{{if .KernelNet}} on {{.KernelNet}}{{end}}</p>
     {{if .KernelFP}}<p class="kernel-fp mono" title="Kernel public key — verify you reached the right kernel"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg> {{.KernelFP}}</p>{{end}}
     {{else}}
     <p class="subtitle auth-subtitle">A terminal for callable actions.</p>

@@ -122,10 +122,6 @@ func (o Outcome) IsRefreshed() bool { return o.Class == Refreshed }
 // helper).
 func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
 
-// ReservedMoney renders the parked amount in the money format (template helper),
-// so the template never formats currency itself (§7).
-func (o Outcome) ReservedMoney() string { return money(o.Reserved) }
-
 // RefundEligibleDate renders the parked refund-eligibility instant as a plain
 // date. The kernel sends RFC 3339; an unparseable value renders empty so the
 // template simply omits the clause rather than printing a raw timestamp.
@@ -341,8 +337,7 @@ func classifyErr(err error) (Outcome, error) {
 		// re-confirmation, not a failure — the buyer is shown what it costs now.
 		o := Outcome{Class: TermsChanged, Message: ke.UserMessage()}
 		if p, ok := ke.MetaInt64("price"); ok {
-			o.Price = p
-			o.Message = "The price changed to " + money(p) + " while this page was open. Nothing was charged."
+			o.Price = p // the template names it in the kernel's own unit (§7)
 		}
 		o.QuoteHash = ke.MetaString("quote_hash")
 		return o, nil

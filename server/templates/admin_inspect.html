@@ -4,8 +4,7 @@
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
 {{$n := nameOf $i.Petname $d.Key}}
 <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
-  {{- if $i.Account}} <span class="pill" title="Our bilateral position with this kernel">{{positionText $i.Account.Available}}</span>
-    {{- if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}
+  {{- if $i.Account}}{{if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}
   {{- else if $i.Discovered}} <span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}</h1>
 <p class="subtitle mono hash">{{$d.Key}}</p>
 {{if $i.About}}<p class="subtitle">{{$i.About}}</p>{{end}}
@@ -16,14 +15,6 @@
   </div>
 </div>
 
-{{/* Funding a kernel with no account here is the one gesture that promotes it to
-     a counterparty; the key is prefilled, so this is a real ?form= link and never
-     a data-modal trigger (§6.6). */}}
-{{if not $i.Account}}
-<div class="row control-row">
-  <a class="btn-quiet" href="/admin/peers/{{$d.Key}}?form=admin-deposit">+ fund this kernel</a>
-</div>
-{{end}}
 
 <h2>Public actions</h2>
 {{if $i.Actions}}{{template "_peer_actions" $i.Actions}}{{else}}<p class="muted">No public actions.</p>{{end}}

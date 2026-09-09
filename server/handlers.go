@@ -1463,12 +1463,17 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	price, err := s.parseAmount(r.FormValue("price"))
+	if err != nil {
+		s.flashRedirect(w, r, "/workshop", "error", capitalize(err.Error())+".")
+		return
+	}
 	in := client.CreateActionInput{
 		Name:        strings.TrimSpace(r.FormValue("name")),
 		Kind:        r.FormValue("kind"),
 		Source:      strings.TrimSpace(r.FormValue("source")),
 		Description: r.FormValue("description"),
-		Price:       parseDollars(r.FormValue("price")),
+		Price:       price,
 	}
 	if in.Kind == "http" {
 		in.Method = strings.TrimSpace(r.FormValue("method"))
@@ -1511,7 +1516,7 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var created client.Action
-	err := s.sessions.Do(ctx, func(tok string) error {
+	err = s.sessions.Do(ctx, func(tok string) error {
 		a, e := s.client.CreateAction(ctx, tok, in)
 		created = a
 		return e
@@ -1589,12 +1594,12 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	price := parseDollars(r.FormValue("price"))
-	if price < 0 {
-		s.flashRedirect(w, r, "/actions/"+id, "error", "Price must be non-negative.")
+	price, err := s.parseAmount(r.FormValue("price"))
+	if err != nil {
+		s.flashRedirect(w, r, "/actions/"+id, "error", capitalize(err.Error())+".")
 		return
 	}
-	err := s.sessions.Do(ctx, func(tok string) error {
+	err = s.sessions.Do(ctx, func(tok string) error {
 		_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Price: &price})
 		return e
 	})
@@ -1669,10 +1674,12 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 	desc := r.FormValue("description")
 	in := client.UpdateActionInput{Description: &desc}
 	if r.PostForm.Has("price") {
-		p := parseDollars(r.FormValue("price"))
-		if p >= 0 {
-			in.Price = &p
+		p, err := s.parseAmount(r.FormValue("price"))
+		if err != nil {
+			s.flashRedirect(w, r, "/actions/"+id, "error", capitalize(err.Error())+".")
+			return
 		}
+		in.Price = &p
 	}
 	if !s.applySchemas(w, r, "/actions/"+id, &in.InputSchema, &in.OutputSchema) {
 		return
@@ -2072,28 +2079,13 @@ func parseInt64(s string) int64 {
 	return n
 }
 
-// parseDollars is the mirror of money: it reads a dollar amount from a form field
-// and returns integer credits (1000 credits = $1, 3-decimal precision). It tolerates
-// a leading "$" and thousands commas, so "$1,234.567" → 1234567 and "0.012" → 12.
-// Like parseInt64 it is lenient — a blank or unparsable field yields 0 — matching
-// the kernel-validates-not-the-BFF discipline.
-func parseDollars(s string) int64 {
-	s = strings.TrimSpace(s)
-	s = strings.NewReplacer("$", "", ",", "", " ", "").Replace(s)
+// capitalize upper-cases the first letter of a validation message, so a helper's
+// lowercase error reads as a sentence in a flash.
+func capitalize(s string) string {
 	if s == "" {
-		return 0
+		return s
 	}
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	whole, frac, _ := strings.Cut(s, ".")
-	dollars, _ := strconv.ParseInt(whole, 10, 64) // "" → 0
-	frac = (frac + "000")[:3]                     // right-pad / truncate to milli-dollars
-	milli, _ := strconv.ParseInt(frac, 10, 64)
-	credits := dollars*1000 + milli
-	if neg {
-		return -credits
-	}
-	return credits
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func lastSegment(path string) string {

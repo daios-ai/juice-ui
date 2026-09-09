@@ -46,18 +46,22 @@ func newFake() *fakeKernel {
 func (f *fakeKernel) client() *Client { return New(f.srv.URL, nil) }
 func (f *fakeKernel) close()          { f.srv.Close() }
 
-func TestHealthAndWellKnown(t *testing.T) {
+func TestHealthCarriesTheIdentityBanner(t *testing.T) {
+	// /health is what a client pins before it trusts a server, and it fixes the
+	// money unit: the key and network digest identify the kernel, decimals scales
+	// every amount, and rail_address says where the kernel is paid.
 	f := newFake()
 	defer f.close()
-	f.reply = `{"status":"ok"}`
+	f.reply = `{"status":"ok","handle":"alpha","public_key":"abc","network":"play","network_digest":"ef1f","decimals":6,"rail_address":"0xdead"}`
 	h, err := f.client().Health(context.Background())
-	if err != nil || h.Status != "ok" {
-		t.Fatalf("Health = %+v, %v", h, err)
+	if err != nil {
+		t.Fatalf("Health: %v", err)
 	}
-	f.reply = `{"base_url":"","handle":"sys","public_key":"abc"}`
-	w, err := f.client().WellKnown(context.Background())
-	if err != nil || w.Handle != "sys" || w.PublicKey != "abc" {
-		t.Fatalf("WellKnown = %+v, %v", w, err)
+	if h.Status != "ok" || h.Handle != "alpha" || h.PublicKey != "abc" {
+		t.Errorf("identity = %+v", h)
+	}
+	if h.Network != "play" || h.NetworkDigest != "ef1f" || h.Decimals != 6 || h.RailAddress != "0xdead" {
+		t.Errorf("world fields = %+v", h)
 	}
 }
 

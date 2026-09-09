@@ -367,19 +367,18 @@ type ImportResult struct {
 	Deactivated []Action `json:"deactivated"`
 }
 
-// WellKnown is GET /.well-known/juice-kernel.json.
-type WellKnown struct {
-	BaseURL   string `json:"base_url"`
-	Handle    string `json:"handle"`
-	PublicKey string `json:"public_key"`
-}
-
-// Health is GET /health (open) — it also carries the kernel's own federation
-// identity, so the UI can name/verify the kernel before authenticating.
+// Health is GET /health (open): the identity banner a client pins before it
+// trusts a server (API C13). Beyond naming the kernel it fixes the money unit —
+// Decimals is the world's base-unit scale and Network its name — and, on a world
+// whose money has addresses, RailAddress is where this kernel is paid.
 type Health struct {
-	Status    string `json:"status"`
-	Handle    string `json:"handle"`
-	PublicKey string `json:"public_key"`
+	Status        string `json:"status"`
+	Handle        string `json:"handle"`
+	PublicKey     string `json:"public_key"`
+	Network       string `json:"network"`
+	NetworkDigest string `json:"network_digest"`
+	Decimals      int    `json:"decimals"`
+	RailAddress   string `json:"rail_address"`
 }
 
 // KeyLen is the length of a kernel's public key: 32 bytes, base64url-encoded.
@@ -464,12 +463,6 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	var h Health
 	err := c.do(ctx, http.MethodGet, "/health", "", nil, &h)
 	return h, err
-}
-
-func (c *Client) WellKnown(ctx context.Context) (WellKnown, error) {
-	var w WellKnown
-	err := c.do(ctx, http.MethodGet, "/.well-known/juice-kernel.json", "", nil, &w)
-	return w, err
 }
 
 // ---- authentication ----
