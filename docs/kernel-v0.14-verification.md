@@ -1,4 +1,7 @@
-# Kernel v0.14.0 (6f347c0) live verification record — 2026-09-09
+# Kernel v0.14 live verification record — 2026-09-09
+
+Base pass on v0.14.0 (`6f347c0`); re-verified on v0.14.1 (`660e969`) after the
+engineer's fixes. Every "FIXED" note below was re-run, not assumed.
 
 Harness: two throwaway kernels on world `play`, A=`alpha` :4141 (buyer, seeded with B), B=`bravo` :4142 (provider, bootstrap). Config: fee_bps 2000, remote_bps 500, import_bps 500, lottery 10, credit_limit 100000, retry 5s, discovery 5s.
 
@@ -115,11 +118,11 @@ generated world file naming them, one kernel serving it with `rail_rpc`.
   amount, credit, status:"held", tx_hash, created_at, party_handle:<sender>}`.
   `party_handle` is the sending address — the fact the operator reads to decide
   whose it is.
-- **KERNEL DEVIATION**: the row's `id` is NOT a reference `POST /control/deposit`
-  accepts — `ref:"rail:0x…:0"` → 404 "no finalized payment rail:0x… has been
-  observed". The bare `<txhash>` and `<txhash>:<index>` both work. API.md says
-  "Every row's `id` is what `--ref` names to close it", which holds for `owed`
-  (ticket ids) but not for a held deposit. The UI attributes by `tx_hash`.
+- ~~KERNEL DEVIATION: the row's `id` is not a reference `POST /control/deposit`
+  accepts~~ → **FIXED in v0.14.1** (`660e969`), re-verified on the chain rig: the
+  prefixed id, the bare `<txhash>` and `<txhash>:<index>` are all accepted, and a
+  replay of any of them moves money once. On v0.14.0 the id answered 404 "no
+  finalized payment rail:0x… has been observed". The UI links the id.
 - Attributing credits the named user for the full amount, empties the held list,
   and replays harmlessly (200, no second credit). An unknown reference → 404
   "no finalized payment 0x… has been observed".

@@ -1239,10 +1239,9 @@ once its prerequisite is confirmed on the running kernel.
 * **Held deposits — resolved (§6.6).** Verified on a local chain (anvil,
   decimals 6): a payment to the vault from an address no account has registered
   is listed with the sender under `party_handle`, and the operator attributes it
-  to a user. It is attributed by its **transaction hash**, not by the row's `id`:
-  that id carries a `rail:` prefix the deposit endpoint refuses, though API.md
-  says the id is what names it — reported to the kernel, and the UI links the
-  hash meanwhile.
+  to a user by the row's own `id`, as the contract says. (v0.14.0 refused that
+  id, accepting only the bare transaction hash; fixed in v0.14.1, and both forms
+  now work.)
 * **The money unit above six decimals (§7) — conditional.** `Unit.Format`
   truncates beyond six fraction digits. No shipped world needs more (`play` is 0,
   the token worlds are 6); a world that did would need the display widened.

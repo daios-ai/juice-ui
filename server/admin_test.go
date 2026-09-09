@@ -460,13 +460,8 @@ func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 	if !strings.Contains(body, "Awaiting an owner") || !strings.Contains(body, "0x70997970c518") {
 		t.Errorf("a held payment must be listed with the address it came from: %s", body)
 	}
-	// The PAYMENT names it, not the row: a held row's id carries a rail: prefix
-	// the deposit endpoint refuses (verified live on a chain world).
-	if !strings.Contains(body, "form=admin-deposit&amp;ref=0xabc") {
-		t.Errorf("attributing a held payment must prefill the transaction that names it: %s", body)
-	}
-	if strings.Contains(body, "ref=rail%3a") {
-		t.Error("the row id is not a reference the kernel accepts")
+	if !strings.Contains(body, "form=admin-deposit&amp;ref=rail%3a0xabc%3a0") {
+		t.Errorf("attributing a held payment must prefill the id that names it: %s", body)
 	}
 }
 

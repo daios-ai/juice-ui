@@ -319,13 +319,8 @@ type Deposits struct {
 // HeldDeposit is a payment the rail has witnessed whose sender no account has
 // registered, so the kernel cannot decide whose it is and holds it on sys until
 // the operator says (kernel §D23). PartyHandle is the sending address — the fact
-// the operator reads to decide.
-//
-// Attribute it by its TxHash, not by its ID: the id carries a "rail:" prefix the
-// deposit endpoint refuses ("no finalized payment rail:0x… has been observed"),
-// while the bare hash and hash:index forms both work. Verified live on a chain
-// world (anvil, decimals 6); reported to the kernel, since API.md says the row's
-// id is what names it.
+// the operator reads to decide, and ID is what names the payment when attributing
+// it. Shape and both acts verified live on a chain world (anvil, decimals 6).
 type HeldDeposit struct {
 	ID          string `json:"id"`
 	Kind        string `json:"kind"`
