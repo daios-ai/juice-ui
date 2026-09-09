@@ -363,14 +363,14 @@ none float, none are colored.
   `.status-credited / -refunded / -escrow / -danger`.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
-- **Money display** renders mono + tabular in **dollars**, `$`-prefixed, always
-  three decimals, thousands-grouped, sign before the `$` (`-$2.500`), through the
-  single `money` helper — the wire unit is the integer credit (1000 credits =
-  $1, exact), and dollars are a presentation-only transform so the format is one
-  edit (requirements.md §7). The `¤` character and the retired gem/diamond mark
-  are **banned from every template**. A spend button names the amount the same
-  way — `verb ($N.NNN)` (§5.1) — and money in prose (help/flash/error) is
-  written in the same dollar form.
+- **Money display** renders mono + tabular through the single `money` helper,
+  which scales the kernel's base-unit integer by the world's `decimals` and
+  always shows six fraction digits, thousands-grouped, sign first
+  (`133.000000`, `0.000133`, `-2,500.000000`). The unit is the **network name**,
+  a quiet label beside the amount where one is needed — never a currency symbol.
+  `$`, the `¤` character and the retired gem/diamond mark are **banned from every
+  template**. A spend button names the amount the same way — `verb (N)` (§5.1) —
+  and money in prose (help/flash/error) is written in the same form.
 
 ### 5.7 Refs
 
@@ -427,20 +427,19 @@ segment in the `title`. A bound petname is not key-shaped and renders whole. A
 `admin` (users, money, access) and `network` (federation) are **two separate
 top-level nav entries** (`sys` only), not one page with a sub-nav — federation
 is a distinct concern. `network` owns the **this kernel** identity card. The
-`network` page is an inspect → fund → settle journey, in card + table grammar:
+`network` page is an inspect → confirm-what-is-owed journey, in card + table
+grammar:
 **this kernel** (identity to share) · the **roster** — every known kernel, under
 one `.tabs` filter (`counterparties | known network`, §5.2), paged and never
 polled. There is **no subscribe/unsubscribe verb**; the one opener is **inspect a
 kernel by key**.
 
 The kernel card has **two states**, the same relation §5.5 draws between a
-resolved and a discovered action card. A **counterparty** carries its bilateral
-position and Inspect · Settle · Suspend/Unsuspend. A **discovered** kernel
-carries the same `known network` `.chip.tag`, its action count and catalog
-freshness, and **no account-dependent verb** — its gestures are **Fund** and
-**Name**, both `.btn-quiet` openers whose `?form=` link prefills the key (never
-`data-modal`, which would open the empty dialog); Fund's authorizing control is
-the deposit form's money button.
+resolved and a discovered action card. A **counterparty** carries Inspect ·
+Suspend/Unsuspend. A **discovered** kernel carries the same `known network`
+`.chip.tag`, its action count and catalog freshness, and **no account-dependent
+verb** — its one gesture is **Name**, a `.btn-quiet` opener whose `?form=` link
+prefills the key (never `data-modal`, which would open the empty dialog).
 
 **Naming is a petname system** (kernel §13, after Stiegler), and the three name
 classes render differently because they are trusted differently:
@@ -464,20 +463,24 @@ the two rating counts as text — `N trade-backed · M unverified`. Evidence car
 **no colour and no fill**: it is a trust fact, not a status, and never joins the
 first-party reputation strip.
 
+**Obligations** sit between the identity card and the roster: every cross-kernel
+debt settles per call on the rail by a ticket both kernels name, so each row is
+one debt — the debtor, the ticket, what was owed, what the draw says must be
+paid — and one gesture: a `.btn-money` `Confirm (N)` behind `data-confirm`,
+posting the peer's key and the ticket id. Recording a payment moves real money.
+
 **Rename** is one modal on the admin user detail (`?form=admin-rename`): a
 `.btn-quiet` opener beside Suspend, one field, a neutral `.btn` submit. A
 counterparty's alias is an ordinary handle here, so the **alias itself links into
 that same modal** (`/admin/users/{alias}?form=admin-rename`) — the card's verbs
-stay Inspect · Settle · Suspend, and the rename lives where every other per-user
+stay Inspect · Suspend, and the rename lives where every other per-user
 edit does. One form, one handler, one validation path.
 
-A counterparty's balance is the **bilateral position**, rendered signed with its
-reading — "we owe them" (positive) / "owes us" (negative) — never a bare negative
-number; a `settlement_due` counterparty carries a quiet `.pill`. Settle / Record-cash
-confirms (requirements.md §6.6, Conditional) are `data-confirm` modals naming
-the peer and the amounts. The superuser **transfer queue** (`/admin/transfers`)
-lists unresolved value transfers (`pending` + `quarantined`) with **Retry as the
-only mutation** — no refund/force-settle affordance exists in the grammar.
+A counterparty carries **no money at all**: a peer account is identity and
+moderation state, never a wallet (kernel §D14), so a card states its names, its
+catalog count and the contact cache. The money on this page is this kernel's
+own — exposure against its credit limit, the rates, the operator split, solvency,
+and a rail halt as a `.banner-error` — plus the obligations above.
 
 ### 5.12 Menus & icons
 
@@ -510,7 +513,7 @@ only mutation** — no refund/force-settle affordance exists in the grammar.
   on `.btn-money`, the `.badge`, the focus ring, `.req`, and the progress bar —
   never on links, tab underlines, active nav, or the active mobile tab (those key
   on text weight + surface). Money buttons name the amount as `verb (N)` and carry
-  **no credit glyph**; money *display* uses the same dollar form in the mono
+  **no credit glyph**; money *display* uses the same scaled form in the mono
   provenance face (§5.6). **Danger beats money.** An **ordinary step completion is
   neutral** (`Complete`, no amount, no accent): the completer is not the payer;
   a **payment step** completion is a genuine spend and uses the money button
@@ -551,6 +554,8 @@ only mutation** — no refund/force-settle affordance exists in the grammar.
   any `.linkbar`, the superseded `auth-tab` class,
   any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
   phrase or into a second sentence, any prose note (`.help` / `.card-note`) that
-  swells into a paragraph, and any **`¤` character anywhere in a template**
-  (`TestNoCurrencyGlyph`) — money is dollars through the `money` helper, and
-  buttons read `verb ($N.NNN)` (§5.6).
+  swells into a paragraph, and any **`¤` character or `$` before a figure**
+  (`TestMoneyGrammar`) — money is the world's unit through the `money` helper,
+  and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the
+  vocabulary the kernel retired: settle, unimport, the transfer queue, admin
+  withdraw, a peer's balance.

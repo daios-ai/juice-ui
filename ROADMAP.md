@@ -44,14 +44,12 @@ each carry an image, as first-class metadata analogous to `description`
 * Operational note: images raise federation moderation stakes (an operator
   imports pictures, not just strings); suspension remains the enforcement tool.
 
-## Unsurfaced inspection field (peer-held steps)
+## Peer-held steps (operator surface)
 
-`GET /control/peers/inspect?key=` carries one list the UI decodes past but does
-not yet render (the `users` list it once carried is gone as of v0.12.8):
-
-* `steps` — the steps that peer holds whose required caller is *this* kernel.
-  Completing one is `step complete <id> --peer <key>`: a superuser act, because
-  the request is signed with this kernel's own federation identity and so acts as
-  the whole kernel. That makes it a distinct feature from the ordinary inbox (the
-  completer is the operator, not a user), so it wants its own surface and its own
-  §6.6 clause before anything is built.
+`GET /control/peers/inspect?key=` carries the `steps` that peer holds whose
+required caller is *this* kernel. Completing one is `step complete <id> --peer
+<key>`: a superuser act, because the request is signed with this kernel's own
+federation identity and so acts as the whole kernel — and the kernel serves no
+HTTP route for it (verified on v0.14.0: `?peer=` on complete is a 404). That
+makes it a distinct feature from the ordinary inbox, wanting its own §6.6 clause
+before anything is built. The client decodes past the field today.

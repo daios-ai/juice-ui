@@ -1,7 +1,45 @@
 # Juice Web UI Requirements
 
-Version: 0.6.5
+Version: 0.7.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.7.0.** The kernel's v0.14 contract lands, verified live
+> against a federated pair (`docs/kernel-v0.14-verification.md`). Six axes; each
+> is written into the section it governs, and this note is the index.
+>
+> 1. **Money is the world's unit, not ours** (§7). A kernel serves one world for
+>    life and `/health` names its money: `decimals` scales every base-unit
+>    integer, `network` names it. The dollar format was a UI invention — 1000
+>    credits to a dollar is true on no world the kernel ships — so amounts render
+>    scaled, always six fraction digits, labelled by the network, and an amount
+>    finer than the base unit is refused rather than rounded.
+> 2. **A session is pinned to the kernel it signed in to** (§5). A port is a
+>    default, never an identity; the session records the kernel's key and network
+>    digest and refuses a server that no longer reports them.
+> 3. **A mutation names a target** (§6.4). Enable, disable, update and delete
+>    name an action id or an `owner/path` subtree and return the rows written, so
+>    the UI reports what changed rather than predicting it. An application is
+>    imported by name and switched off by path; unimport is gone.
+> 4. **A discovered action resolves on open** (§6.2). Opening its card resolves
+>    the reference with its home kernel — one round trip, no spend — and lands on
+>    the ordinary action page quoting live terms. The by-ref run surface is gone:
+>    one run path, one pin.
+> 5. **The wallet follows the rail** (§6.5). A user withdraws and registers the
+>    address they are paid at where the world has addresses, and reads
+>    "recorded by the operator" where it does not. A cross-kernel call's
+>    breakdown names what its numbers mean: paid, import fee, obligation.
+> 6. **A peer holds no money** (§6.6). Every cross-kernel debt settles per call
+>    on the rail by a ticket both kernels name, so the bilateral position, Settle,
+>    Record cash and admin withdraw are gone. The network page states this
+>    kernel's own credit position and lists what it is owed, each row closed by
+>    confirming the payment that pays it.
+>
+> Invariants that predate 0.7.0 are unchanged: the BFF architecture, session and
+> token rules, the accent's spend-only discipline and the closed button
+> vocabulary, inert counterparty rendering, the single aria-live region,
+> monospace tabular money, floating modal forms with the `?form=` fallback,
+> keyboard navigation, admin/supervision gating, the CSP, and the test
+> discipline.
 
 > **What changed in 0.6.5.** The UI stops speaking a naming dialect of its own.
 > A handle is bare wherever it is shown, and a name is taken as typed wherever it
@@ -281,11 +319,12 @@ detectable.
 
 * **run** — server status (`GET /health`), read-only; natural-language discovery
   via `sys/lookup`; catalog browse (`GET /v1/actions`); action detail; call
-  execution (`POST /v1/run`), including run-by-ref from the palette.
+  execution (`POST /v1/run`); a discovered action is opened by resolving its
+  reference (`GET /v1/actions?ref=`), which lands on the ordinary action page.
 * **browse / workshop** — catalog browse plus owner action management: create,
   list/show (including inactive, via `GET /v1/actions?owner=<self>`), update,
   enable, disable, delete; three-way `visibility` (private/local/public);
-  OpenAPI import/unimport; stats; ratings list; earnings folded from the owner's
+  OpenAPI import by name; stats; ratings list; earnings folded from the owner's
   transactions.
 * **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
   surfacing parked funds and awaiting-receipt state.
@@ -294,15 +333,17 @@ detectable.
 * **step** — steps: list/show/complete. Step creation is API and app-module
   surface only (§6.3).
 * **user** — self profile, balances (`GET /v1/me`, `available`/`locked`), and
-  update (`PUT /v1/me`); the ledger of the user's own transactions.
+  update (`PUT /v1/me`); the ledger of the user's own transactions; and, on a
+  world whose money has addresses, the payout address (`PUT /v1/me/address`) and
+  withdrawals (`POST`/`GET /v1/withdrawals`).
 
 *Conditional:* the trace tree on the receipt page.
 
 * **Admin / supervision (superuser only):** the `admin` group, visible only to
   `sys`, covers user list/show, suspend/unsuspend, rename (§6.6), credit
   deposits and withdrawals, federation trust (peers — provisioned by use or by deposit-by-key,
-  inspect, suspend/unsuspend, this kernel's identity), and operator settlement
-  (§6.6). The kernel serves these over HTTP on
+  inspect, suspend/unsuspend, this kernel's identity), and the obligations owed
+  to this kernel (§6.6). The kernel serves these over HTTP on
   `/control/*`, gated by an `IsSuperuser` check on the `sys` bearer (API.md
   C13); the UI is an ordinary client of that surface. Superuser **scope** on
   the normal list pages (a `sys` session sees all actions/processes/tx/steps)
@@ -317,11 +358,11 @@ detectable.
 ### 3.3 Known limitations
 
 * Because deposits are admin-only, a UI user cannot top up their own balance.
-  Balance views MUST state plainly that credit top-ups happen out-of-band
-  (operator/CLI). The UI still shows balances and funds processes from existing
-  credits. Peer accounts differ: a peer's balance is a bilateral position that
-  may go negative under the kernel's global exposure cap, and settling it is an
-  operator act (§6.6) — never a user-facing top-up.
+  Balance views MUST state where money comes in on THIS world: an operator
+  records it where the world has no payment addresses, and where it has them the
+  wallet names the kernel's address and offers the user their own (§6.5). A peer
+  account holds no money on any path (kernel §D14), so no peer surface shows a
+  balance or a top-up.
 * A **discovered** remote action is runnable from the UI as of 0.6.0: its
   catalog price is indicative, but the run pins the catalog's `quote_hash`, so
   terms that moved since the last discovery pass are refused before any funds
@@ -463,7 +504,8 @@ detectable.
   MUST be rendered from the lookup row alone, and MUST show the kernel-qualified
   ref (owner segment unlinked, §6.2 refs), the description, and a quiet chip
   marking it as discovered, distinct from the remote-proxy chip. It MUST NOT show
-  a reputation strip (the discovery cache stores none).
+  a reputation strip (the discovery cache stores none). Its link is the resolve
+  entry, not a page built from the row.
   **A row is discovered iff its `action_id` names no local action** — the UI
   attempts the ordinary read and falls back when it 404s. A kernel-qualified ref
   MUST NOT be the test: once resolved, a proxy keeps its remote ref *and* gains a
@@ -534,15 +576,16 @@ detectable.
   read of the action, which would always match and silently disable the
   protection. If the terms moved, the kernel refuses with `terms_changed` before
   locking anything, at zero charge; the UI re-renders the form pinned to the
-  terms just quoted, so accepting them is one more click (§6.2 outcomes). Both
-  run surfaces (by id and by ref) MUST pin, or one would accept moved terms
-  while the other refused them.
-* **A discovered action is runnable.** It has no local row, so its page is built
-  from the lookup row (ref, description, schemas, indicative price, quote hash)
-  and its run posts **by ref**. The pin is what makes this honest: the catalog
-  price may be a discovery interval stale, and pinning means the buyer is
-  refused rather than charged a figure they were not shown. *(This lifts the
-  §3.3 limitation: first contact no longer requires the CLI.)*
+  terms just quoted, so accepting them is one more click (§6.2 outcomes). There
+  is ONE run surface, by id, and it pins.
+* **A discovered action resolves on open.** Its card links to a resolve
+  (`GET /v1/actions?ref=`), which asks its home kernel for the signed contract
+  and caches a proxy — a pure read: one round trip, no spend. The buyer then
+  lands on the ordinary action page, quoting terms verified moments ago rather
+  than a catalog row that may be a discovery interval stale, and the pin protects
+  the gap between that page and the run. A reference that resolves to nothing,
+  or whose kernel refuses or cannot be reached, returns to browse with that
+  kernel's own sentence (§6.2 outcomes) — never a page built from gossip.
 * **A retry is offered only where the kernel marks the call as unrun.** When a
   cached proxy is stale against its peer, the kernel answers `execution_failed`
   carrying `meta.retry = "refresh"`, having charged nothing and re-resolved the
@@ -708,9 +751,9 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * OpenAPI import MUST be a wizard: spec URL → preview table of importable
   operations with per-operation validation messages → `POST /v1/actions/import`
   (idempotent) → created/updated/deactivated results. Reimport MUST be presented
-  as "changed → deactivated; re-verify and re-enable." Unimport
-  (`POST /v1/actions/unimport`) MUST deactivate matching actions without deleting
-  history. Upstream credentials (`auth_json`) MUST be entered in write-only
+  as "changed → deactivated; re-verify and re-enable." There is no unimport: an
+  application is switched off or removed with the ordinary verbs over its path
+  (`target: owner/name`), which is what the kernel serves. Upstream credentials (`auth_json`) MUST be entered in write-only
   fields, never re-displayed, shown afterward only as "configured ✓ (replace)".
   *Conditional:* a UI-driven ownership-proof flow for public activation; until
   then the UI MUST surface the kernel's rejection rather than drive a proof.
@@ -791,14 +834,15 @@ open (parked steps), the result MUST say so and link to the Wallet.
   except from the kernel's own per-check response.
 * The buyer MAY rate a transaction once (`POST .../rate`, 0/1, optional `note`);
   the control MUST appear only for the buyer and only when unrated.
-* Balance views MUST state that top-ups are out-of-band.
+* Balance views MUST state how money enters on this world (§6.5 pay-in), and
+  MUST NOT claim a mechanism the world does not have.
 * *Conditional:* an Engine-room disclosure below the receipt showing the trace
   tree with per-call cost and `latency_ms`.
 
 ### 6.6 network & admin — federation money
 
 Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
-(§3.1). Two concerns live here: the roster and settlement.
+(§3.1). Two concerns live here: the roster, and the money owed to this kernel.
 
 **Peers.**
 
@@ -817,30 +861,30 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
   as a verdict: it holds two timestamps that only ever move forward, and it
   neither hides nor reorders a peer for having failed. The UI therefore reports
   them and draws no conclusion about whether a peer is up — the call-and-see
-  rule below is unchanged. Every absent field — either timestamp,
-  `peer_credit`, `about`, `petname` — is omitted, never rendered as zero, an
-  empty string, or a placeholder.
+  rule below is unchanged. Every absent field — either timestamp, `about`,
+  `petname` — is omitted, never rendered as zero, an empty string, or a
+  placeholder.
 
-* A peer row's balance is the **bilateral position** and MUST render signed and
-  labeled by direction: a positive position reads **"we owe them"** (the peer
-  prepaid or earned here — verified live: a peer's earnings accrue on the same
-  row, so "prepaid" would misread it), a negative one **"owes us"** — the raw
-  sign convention is never shown as a bare negative number without its reading.
-  The old "their credit here / calls rejected until the peer holds credit"
-  framing is retired: calling is permissionless and admission is governed by
-  the kernel's global exposure cap, which the UI reports, never enforces.
-* A peer flagged `settlement_due` MUST carry a quiet status pill (information,
-  never authority — crossing the trigger stops nothing). *Conditional:* where
-  the kernel serves its global exposure figures (cap and current gross
-  receivables), the kernel card states them as evidence.
+* **A peer row carries no money.** A peer account is identity, attribution and
+  moderation state, never a wallet: a foreign call is funded by the serving
+  kernel and every obligation settles per call on the rail (kernel §D14, §P10).
+  So a counterparty card states its names, its catalog count and the contact
+  cache, and nothing else. A balance, a position or a credit figure here would
+  be a fabrication.
+* **This kernel's own credit position is the money fact on this page.** The
+  identity card states what this kernel has delivered to foreign buyers and not
+  been paid for, against the limit it set (`exposure` of `credit_limit`); the
+  rates it serves under (`fee_bps`, `remote_bps`, `import_bps`) and its ticket
+  face; the operator split of `sys` into earnings and money in transit; and the
+  solvency identity, whose `gap` MUST carry a danger pill when it is non-zero.
+  A rail halt (`stop`) MUST render as a banner naming its reason, on this page
+  because the money verbs it refuses are here.
 * **There is no subscription.** A peer row comes into being by use — a first
-  inbound call, or an outbound call that resolves and caches a proxy — or by
-  `deposit` addressed to a peer's public key, which provisions and funds the
-  account in one gesture (peering is handshake-free). The page therefore offers
-  **no subscribe or unsubscribe affordance**: the durable lever is suspend, and a
-  peer no longer called lapses through the kernel's retention. The deposit form
-  MUST accept a public key wherever it accepts a handle (the three account forms
-  are disjoint, §5).
+  inbound call, or an outbound call that resolves and caches a proxy (peering is
+  handshake-free). The page therefore offers **no subscribe or unsubscribe
+  affordance**, and no funding gesture: a deposit naming a peer is refused unless
+  it names the obligation its payment closes. The durable lever is suspend, and a
+  peer no longer called lapses through the kernel's retention.
 * **Naming is a petname system** (kernel §13, after Stiegler). A kernel has
   three names and they are not interchangeable, so the UI MUST keep them apart:
   * its **public key** — global, self-certifying, unreadable. The only thing
@@ -861,29 +905,27 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
     name that resolves. It renders whole, in the provenance face.
   An unbound kernel therefore shows its truncated key and stays callable by it;
   it MUST NOT borrow the nickname to fill the gap.
-* **Fund and Name are the two gestures a discovered card carries.** Both open a
-  real `?form=` link with the key prefilled — never a `data-modal` trigger,
-  which would open the empty in-page dialog. **Fund** promotes the kernel
-  (deposit by key provisions and funds in one gesture); its authorizing control
-  stays the form's money button. **Name** binds a petname: the kernel binds one
+* **Name is the gesture a discovered card carries**, through a real `?form=`
+  link with the key prefilled — never a `data-modal` trigger, which would open
+  the empty in-page dialog. It binds a petname: the kernel binds one
   automatically only on this kernel's own first outbound use, so an explicit
   bind is the only way to name a kernel merely discovered, and without it the
-  operator is left typing a key. Neither is account-dependent — verified live,
-  `suspend` on an account-less key is refused, and those verbs stay off the
-  card. **Inspect a kernel by key** remains the way in for a key learned
-  elsewhere (verified live: an unknown key still returns a usable page).
+  operator is left typing a key. It is not account-dependent, while `suspend` on
+  an account-less key is refused, so that verb stays off the card. **Inspect a
+  kernel by key** remains the way in for a key learned elsewhere (verified live:
+  an unknown key still returns a usable page).
 * **One rename form serves both namespaces.** A user target rebinds its handle;
   a kernel target binds its petname, exactly, refusing an occupied name. The
   form is reached from the displayed name on a counterparty card and from
   **Name** on a discovered one, and both open the same modal on the same
-  handler — the card's own verbs stay inspect, settle, and suspend. It MUST key
+  handler — the card's own verbs stay inspect and suspend. It MUST key
   on the public key for a kernel: an unbound kernel has no name to key on, and
   advertised names collide.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the
   subject issued about itself, and **counterparty experience** from the rest,
   grouped by issuer and carrying the **corroborated** count. Each row names its
-  subject by full action id (§10) and states uses, successes, failures, and the
+  subject by its action id (§10) and states uses, successes, failures, and the
   two rating counts distinctly: **trade-backed** (the two-kernel receipt link
   holds) and **unverified**. Counts are text; no new colour, no status fill —
   evidence is a trust fact, not a state. Attribution is provable and honesty is
@@ -895,9 +937,9 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
   UI MUST NOT offer lifecycle verbs — enable/disable, visibility, delete — on a
   proxy row anywhere it lists actions, including the superuser-scoped workshop.
   The peer-level lever is suspend, on this page.
-* `peer_unfunded` on a run means **the serving kernel's global exposure cap is
-  exhausted — an operator settlement matter** — and MUST NOT be rendered as the
-  caller's own insufficient funds (§10 error mapping).
+* `peer_unfunded` on a run means **the serving kernel has used up the credit it
+  extends to this kernel — its operator's to settle** — and MUST NOT be rendered
+  as the caller's own insufficient funds (§10 error mapping).
 * **Availability is never guessed.** The kernel withdrew the `peer_state` hint
   (v0.12.14), and the UI MUST NOT reconstruct one: a remote action is offered
   like any other, the call is attempted, and the kernel reports the outcome.
@@ -926,17 +968,26 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
   a rejection MUST stay put. The new name is sent as typed (§4): the kernel
   refuses `sys` and any sigiled name, and the UI shows that reason.
 
-**Settlement.** Confirmed on the running kernel: `POST /control/peers/settle`
-`{handle}`, and `{handle, settlement_id}` for the record-cash leg (§10).
+**What this kernel is owed.** Every cross-kernel debt settles on its own, per
+call, by a ticket both kernels name (kernel §P10): the buyer pays on the rail and
+says so, and the seller's operator confirms the money arrived, which is what
+closes the debt and credits the seller. There is no bilateral settlement to
+initiate, and the kernel serves no settle route.
 
-* Settling moves real external money, so both verbs are modal confirms naming
-  the peer and the amounts, on the peer row: **Settle** (initiates the kernel's
-  settlement of the bilateral position — exact when the debt covers the
-  quantum, else the kernel's probabilistic residual protocol) and **Record
-  cash** (records that the external rail payment happened, keyed by the
-  settlement id the settle outcome names). Neither is ever reachable by GET.
-  The UI presents the kernel's settlement outcome verbatim and never computes
-  or predicts one.
+* The page MUST list the obligations owed to this kernel from
+  `GET /control/deposits`, each row naming the debtor (by petname where one is
+  bound, else its truncated key), the ticket, what the call owed, and what the
+  draw decided must actually be paid — the two figures differ, and neither is
+  computed here.
+* Each row MUST carry one gesture: a **money confirm** naming the amount, posting
+  the peer's public key and the ticket id to `POST /control/deposit`. Recording a
+  payment moves real money to the seller, so it is never a bare click, and the
+  key is what is posted — a displayed name is presentation only.
+* The deposit dialog serves the kernel's three forms by which fields are filled:
+  a user with an amount and a reference; a user with a reference alone, to
+  attribute a payment already received; a peer with a ticket reference, to close
+  what it owes. **The reference is mandatory** — the kernel credits nothing it
+  cannot name — and an amount is optional, because the draw already decided one.
 
 **No value-transfer queue.** The kernel served one while value could cross a
 kernel boundary and a buyer-side transfer could sit unresolved. Value is now
@@ -952,8 +1003,8 @@ retry affordance, and no successor page — there is no state left to represent.
   confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
-  as `verb ($N.NNN)` (e.g. "Run ($0.012)") — the `$`-prefixed
-  dollar amount is the same one the money helper renders everywhere. Primary
+  as `verb (N)` (e.g. "Run (133.000000)") — the same figure the money helper
+  renders everywhere. Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist. (A step completion is two-branch per
@@ -961,15 +1012,21 @@ retry affordance, and no successor page — there is no state left to represent.
   **payment step** completion is a genuine spend and uses the money button.)
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
-  of the surrounding proportional chrome. Money MUST render in **dollars**,
-  `$`-prefixed, **always three decimals**, thousands-grouped (`$1,234.567`), with
-  the sign before the `$` (`-$2.500`). The wire unit is the integer **credit**
-  (`1000 credits = $1`, so 1 credit = `$0.001`, exact); dollars are a
-  presentation-only transform produced by **one** helper (`money`), so a future
-  change to the money format is a single edit. No diamond/gem/`◆` mark and never
-  the `¤` character. Ledger rows MUST carry explicit `−`/`+`; spend buttons state
-  the unsigned gross as `verb ($N.NNN)` (above). Editable amount inputs are typed
-  in dollars and parsed server-side back to credits. The owner segment of
+  of the surrounding proportional chrome.
+
+  **The unit is the world's, and the kernel serves it.** Every amount on the wire
+  is an integer in the base unit of the world this kernel serves, and only the
+  kernel knows how that unit scales: `GET /health` carries `decimals` (0 on a
+  world with no fractional unit, 6 on a token world) and `network`. Money MUST
+  therefore render scaled by that `decimals`, **always six fraction digits**,
+  thousands-grouped, sign first (`133.000000`, `0.000133`, `-2,500.000000`),
+  through **one** helper (`money`) reading the live identity — never a currency
+  symbol, never a fixed ratio the UI invented, and never a `¤` or gem mark. Where
+  an amount needs its unit named, the **network name** is that label, quietly
+  beside it. Ledger rows MUST carry explicit `−`/`+`; spend buttons state the
+  unsigned gross as `verb (N)` (above). An editable amount is typed in the same
+  scaled form and parsed server-side back to base units; a value finer than the
+  world's base unit MUST be **refused**, never silently rounded. The owner segment of
   `owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
   and MUST NOT use the accent; a remote owner segment (`owner@kernel`) renders
   the same way, unlinked (§6.2).
@@ -1101,10 +1158,25 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * no surface emits a sigiled name: no template decorates a handle or ref with
   `@`, and the only `@` a template may carry is the `owner@kernel/name` join
   (§4), enforced by a drift guard over the core and app templates;
-* signed bilateral-position rendering on the peers page (negative positions read
-  "owes us", never a bare negative);
-* no value-transfer queue: no route, handler, client method, or link to
-  `/control/transfers` anywhere (§6.6);
+* the money unit: amounts scale by the world's `decimals` and always show six
+  fraction digits; an amount finer than the base unit is refused, not rounded;
+  and no template renders a currency symbol (§7, drift guard);
+* the session pin: a login records the kernel's key and network digest, an
+  address that answers for another kernel ends the session, and a kernel that
+  cannot identify itself cannot be signed in to (§5);
+* target-based mutations: enable/disable/update/delete name an id or a path and
+  the UI reports the rows returned, not a predicted state (§6.4);
+* a discovered action resolves on open and lands on the ordinary action page;
+  there is no by-ref run surface (§6.2);
+* the wallet's world: pay-in copy, the withdraw and address forms and the
+  withdrawals table appear only where the world has addresses (§6.5);
+* a cross-kernel transaction's breakdown names paid, import fee and obligation,
+  and its ticket — never "fee on value added" (§6.5);
+* a peer row carries no money, and the network page states this kernel's own
+  credit position and the obligations owed to it, each closed by a money confirm
+  posting the peer's key and the ticket (§6.6);
+* the retired surfaces stay gone: settle, admin withdraw, unimport, the transfer
+  queue, a peer's balance (drift guard);
 * the call-outcome classes, rendered distinctly — including that a parked
   (`timeout`) outcome names the reserved amount and claims no refund, that a
   `meta.retry="refresh"` refusal offers the re-pinned retry while a bare
@@ -1143,21 +1215,33 @@ once its prerequisite is confirmed on the running kernel.
   (mandatory); selects semantic ranking versus catalog fallback.
 * **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
   spec; conditional, not assumed. No current UI feature depends on them.
-* **Settlement over HTTP (§6.6).** Confirmed on the running kernel:
-  `POST /control/peers/settle` `{handle}` initiates settlement and
-  `{handle, settlement_id}` records the rail payment (the CLI `--cash` leg).
-  The settle confirms are therefore mandatory (§6.6).
-* **Inspect action identity (§6.6).** `admin inspect` serves each action as
-  `{name, description, price}` only — no `action_id`, `owner_handle`, or
-  `stats`, and the name is bare. Until the kernel restores them, remote action
-  names render unlinked with no reputation columns, and an evidence subject is
-  named by its full action id (there is nothing to join it against). Evidence
-  `notes` is served but `null` on every observed row; its shape is unverified,
-  so it is not rendered.
-* **Global exposure figures (§6.6).** Confirmed: `/control/identity` serves
-  `exposure_max`, `gross_receivables`, `settlement_due`, `settlement_trigger`,
-  and `settlement_quantum`; the kernel card states them as evidence.
-* **A moved amount — resolved (§6.5).** v0.12.24 journals it: settling a
+* **Settlement — retired (§6.6).** v0.14.0 serves no settle route: every debt
+  settles per call on the rail by its own ticket, and the operator's act is
+  confirming the payment that closes one. `admin withdraw` is gone with it;
+  withdrawing is a user's own verb (§6.5).
+* **Inspect action identity (§6.6).** `admin inspect` serves each action with an
+  `action_id` again, plus an `indicative` all-in price, so an evidence subject
+  can be named. The name is still bare and carries no owner, so a peer action is
+  not an addressable ref and shows no reputation. Evidence `notes` remains
+  unverified and unrendered.
+* **Credit position (§6.6).** Confirmed on v0.14.0: `/control/identity` serves
+  `exposure` against `credit_limit`, the three bps rates and the ticket face, the
+  `sys` split, `solvency`, `custody`, `rail_address`, `finalized` and an optional
+  `stop`. The kernel card states them.
+* **Withdrawals and payout addresses (§6.5).** Confirmed on v0.14.0:
+  `POST /v1/withdrawals {id, amount}` with a caller-minted UUID (a replay returns
+  the same row), `GET /v1/withdrawals`, and `PUT /v1/me/address {address,
+  signature}`. On a world without payment addresses both refuse (409), and while
+  a rail payment is blocked every money verb answers `503 rail_stopped`.
+* **Held deposits (§6.6) — conditional.** `GET /control/deposits` also carries
+  `deposits`: payments booked against no account yet. Only the row's `id` is
+  contractually named, and no chain world was available to observe the rest, so
+  the UI renders the `owed` list alone until the shape is verified.
+* **The money unit above six decimals (§7) — conditional.** `Unit.Format`
+  truncates beyond six fraction digits. No shipped world needs more (`play` is 0,
+  the token worlds are 6); a world that did would need the display widened.
+* **A moved amount — resolved (§6.5).** v0.12.24 journals it (re-confirmed on
+  v0.14.0): settling a
   `transfer`-effect call writes a ledger entry from the immediate caller to the
   beneficiary, `reason` = the settling transaction's id, and **both** parties
   read it (verified: the beneficiary gets 404 on the transaction itself, so the
@@ -1192,6 +1276,17 @@ once its prerequisite is confirmed on the running kernel.
 * **`/control/transfers` — gone.** 404 on v0.12.23, and the 404 is plain text,
   not a typed error envelope. The queue is removed from this specification
   (§6.6); nothing replaces it.
+* **Action mutations and `?ref=` (§6.4, §6.2).** Confirmed on v0.14.0: the
+  per-id mutation routes answer a plain-text 404, `enable`/`disable`/`update`/
+  `delete` take a `target` and return the rows written, and `GET /v1/actions?ref=`
+  resolves a reference the way a call does — a kernel-qualified one over
+  federation, caching a proxy, and a miss is an empty list rather than an error.
+* **The remote transaction (§6.5).** Confirmed on v0.14.0: a cross-kernel
+  transaction carries `ticket_id`, `remote_receipt_hash` and `remote_signer_key`,
+  and its `net` is the obligation returned to the caller while `fee` is the
+  import fee retained here. The seller's own row carries `ticket_id: null` and
+  names its buyer by raw public key — both reported to the kernel as questions,
+  and rendered as served meanwhile.
 * **`allowed_input` on `/v1/steps` (§6.3).** Confirmed on the running kernel
   (waiting steps carry it). The completion form falls back to the target action's
   `input_schema` where `allowed_input` is absent (older kernels). The federation
@@ -1213,12 +1308,15 @@ logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFou
 `ErrInvalidInput`/`ErrSchemaViolation` → field-level form errors; `ErrInvalidState`
 (also the kernel's refusal of a lifecycle verb on a remote proxy, §6.6 — which the
 UI does not offer, so this is a defence, not a flow);
-`ErrInsufficientFunds` → clear message noting top-ups are out-of-band;
+`ErrInsufficientFunds` → a plain not-enough-balance message (how money enters is
+the wallet's disclosure, §6.5); `rail_stopped` → payments out are paused while a
+rail payment is blocked, and deposits, calls and reads continue;
 `peer_unreachable` → the peer was offline, the call refunded, retry later (the
 kernel sends no `meta` here, so the UI names the peer from the ref it submitted
 or names none);
-`peer_unfunded` → the serving kernel's exposure cap is exhausted — an operator
-settlement matter, never rendered as the caller's own insufficient funds (§6.6);
+`peer_unfunded` → the serving kernel has used up the credit it extends to this
+kernel; its operator records our payments before it serves us again, and this is
+never the caller's own balance (§6.6);
 `ErrUnauthorized` **with `meta.peer`** → the peer refused this call (§6.2), which
 must never read as the user's own lack of permission — plain `ErrUnauthorized`
 keeps the not-permitted message;

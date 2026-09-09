@@ -128,12 +128,14 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
-// TestNoCurrencyGlyph enforces the money grammar (§7): every amount renders in
-// dollars through the single `money` helper (`$N.NNN`), and a spend button reads
-// `verb ($N.NNN)`. Neither the ¤ character nor the retired gem/diamond mark (the
-// `gem` helper or `#gem` sprite) may appear in any template — both are regressions
-// of superseded marks.
-func TestNoCurrencyGlyph(t *testing.T) {
+// TestMoneyGrammar enforces the money rule (§7): every amount renders through the
+// single `money` helper, which scales the kernel's base-unit integer by the
+// world's own decimals. A currency symbol is a claim about a world the UI does
+// not get to make — one kernel serves one world, and only it knows what its
+// integer is worth — so `$` before a figure is banned along with the ¤ character
+// and the retired gem/diamond mark.
+func TestMoneyGrammar(t *testing.T) {
+	dollarAmount := regexp.MustCompile(`\$\s*(?:[0-9]|\{\{\s*money)`)
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
@@ -141,7 +143,57 @@ func TestNoCurrencyGlyph(t *testing.T) {
 			t.Errorf("%s: the ¤ glyph is banned — render amounts with the {{money}} helper (§7)", f)
 		}
 		if strings.Contains(src, "{{gem}}") || strings.Contains(src, "#gem") {
-			t.Errorf("%s: the gem/diamond mark is retired — money renders in dollars via {{money}} (§7)", f)
+			t.Errorf("%s: the gem/diamond mark is retired — money renders via {{money}} (§7)", f)
+		}
+		if m := dollarAmount.FindString(src); m != "" {
+			t.Errorf("%s: %q — the unit is the world's, named by {{unit}}, never a currency symbol (§7)", f, m)
+		}
+	}
+}
+
+// The kernel retired a whole vocabulary in v0.14: a peer holds no money, so
+// there is no position to settle and no queue of unresolved transfers; an
+// application is switched off by path rather than unimported; withdrawing is a
+// user's own verb. A guard, because a template or handler outliving its endpoint
+// fails only when someone clicks it.
+func TestNoRetiredSurfaces(t *testing.T) {
+	retired := map[string]string{
+		"/admin/peers/settle": "settlement is per call on the rail, by ticket (§6.6)",
+		"/admin/withdraw":     "withdrawing is a user's verb (§6.5)",
+		"/control/transfers":  "the value-transfer queue is gone (§6.6)",
+		"/actions/unimport":   "an application is disabled or deleted by path (§6.4)",
+		"positionText":        "a peer holds no money (§6.6)",
+		"peer_credit":         "a peer holds no money (§6.6)",
+		"dollarsInput":        "amounts scale by the world's decimals (§7)",
+		"parseDollars":        "amounts scale by the world's decimals (§7)",
+		"settlement_id":       "there is no bilateral settlement to record (§6.6)",
+	}
+	var files []string
+	for _, pat := range []string{"templates/*.html", "*.go"} {
+		f, _ := fs.Glob(tmplFS, pat)
+		files = append(files, f...)
+	}
+	goFiles, _ := filepath.Glob("*.go")
+	for _, f := range files {
+		src := string(mustRead(t, f))
+		for token, why := range retired {
+			if strings.Contains(src, token) {
+				t.Errorf("%s: %q is retired — %s", f, token, why)
+			}
+		}
+	}
+	for _, f := range goFiles {
+		if strings.HasSuffix(f, "_test.go") {
+			continue // a test may name a retired surface to assert its absence
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for token, why := range retired {
+			if strings.Contains(string(b), token) {
+				t.Errorf("%s: %q is retired — %s", f, token, why)
+			}
 		}
 	}
 }

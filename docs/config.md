@@ -51,4 +51,11 @@ app-state file holding provisioned secrets and `AuthRev`) — see installation.m
 | `JUICE_UI_TRUSTED_ORIGINS` | (adds to) `trusted_origins` | comma-separated |
 
 `badge_interval_seconds` has **no** env override — it is the kind of setting the
-file exists for.
+file exists for. It also paces the kernel-identity re-read behind the session
+pin (§5), so a swapped server is noticed within one heartbeat.
+
+**The money unit is not configured.** A kernel serves one world for life and
+`GET /health` says how its amounts scale (`decimals`) and what that money is
+called (`network`). The UI reads it from the live identity; there is no key for
+it, and there must not be one — a local override could only ever disagree with
+the ledger.
