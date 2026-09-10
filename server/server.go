@@ -36,12 +36,11 @@ type Options struct {
 	Home           string        // component home dir ($JUICE_HOME/ui) handed to apps; "" = none
 	BadgeInterval  time.Duration // nav-badge poll interval + steps-badge cache TTL; 0 → default 30s
 
-	// KernelPublicKey is the kernel this UI is for, as its records say — from the
-	// named client context, or identified once at startup. Every /health answer is
-	// held to it: a server presenting another key is not this kernel, whatever
-	// port it holds (ecosystem-standard §5). It also keys the app state, so what
-	// an app provisioned on one kernel is never replayed on another (§4).
-	KernelPublicKey string
+	// Identity is the kernel this UI is for: built once at wiring, held to the key
+	// its records name (ecosystem-standard §5), and the source of the world's
+	// money unit. It also keys the app state, so what an app provisioned on one
+	// kernel is never replayed on another (§4).
+	Identity *KernelIdentity
 	// KernelContext is the client context's name, shown so a person can see which
 	// kernel the interface is on (ecosystem-standard §6); "" when a bare URL.
 	KernelContext string
@@ -57,60 +56,127 @@ type Server struct {
 	secure    bool
 	publicURL string // configured absolute base URL; "" → derive from the request
 	apps      []apps.App
-	appStore  *appStore     // per-app persisted state (state.json), keyed by kernel
-	home      string        // component home dir handed to apps
-	badgeTTL  time.Duration // nav-badge poll interval + steps-badge cache TTL
-	recorded  string        // the kernel's recorded public key; "" when unknown at wiring
-	context   string        // the client context's name, for the chrome
-
-	// Cached kernel identity from the open /health: what the session pins, what
-	// names the kernel in the chrome, and the world's money unit. Re-read at the
-	// badge interval, because a client must refuse a server that no longer
-	// reports the key and network it recorded (ecosystem §5).
-	idMu      sync.Mutex
-	kernelID  client.Health
-	idFetched time.Time
+	appStore  *appStore       // per-app persisted state (state.json), keyed by kernel
+	home      string          // component home dir handed to apps
+	badgeTTL  time.Duration   // nav-badge poll interval + steps-badge cache TTL
+	identity  *KernelIdentity // which kernel this UI is for, and its money unit
+	context   string          // the client context's name, for the chrome
 }
 
-// kernelIdentity returns the kernel's own /health banner, cached for the badge
-// interval. A zero Health means the kernel has not answered yet: the chrome
-// falls back to the plain brand and the session pin treats it as unknown rather
-// than as a mismatch.
-func (s *Server) kernelIdentity(ctx context.Context) client.Health {
-	s.idMu.Lock()
-	id, at := s.kernelID, s.idFetched
-	s.idMu.Unlock()
-	if id.Handle != "" && time.Since(at) < s.badgeTTL {
-		return id
+// KernelIdentity is the kernel this UI is for: the /health banner, cached for a
+// TTL, held to the key the records name. It is built once at wiring and owns
+// that question for the whole process — the renderer asks it for the world's
+// money unit, the server for the kernel's identity — so neither has to be told
+// later what it is working with.
+type KernelIdentity struct {
+	client   *client.Client
+	recorded string // the kernel's public key as recorded; never changes
+	ttl      time.Duration
+	log      *slog.Logger
+
+	mu      sync.Mutex
+	id      client.Health
+	fetched time.Time
+}
+
+// NewKernelIdentity binds this UI to one kernel. recorded is its public key —
+// from the named client context, or from AwaitKernel when a bare address was
+// given — and is fixed from here: an address that later answers with another key
+// is another kernel, not a change of mind.
+func NewKernelIdentity(c *client.Client, recorded string, ttl time.Duration, log *slog.Logger) *KernelIdentity {
+	if ttl <= 0 {
+		ttl = 30 * time.Second
 	}
-	hc, err := s.client.Health(ctx)
+	if log == nil {
+		log = slog.Default()
+	}
+	return &KernelIdentity{client: c, recorded: recorded, ttl: ttl, log: log}
+}
+
+// AwaitKernel reads /health until the server answers or the timeout passes. It
+// is how a UI given a bare address learns which kernel that is, before anything
+// is keyed on it; a UI given a context already knows and never calls this.
+func AwaitKernel(c *client.Client, timeout time.Duration) (client.Health, error) {
+	deadline := time.Now().Add(timeout)
+	var last error
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		id, err := c.Health(ctx)
+		cancel()
+		switch {
+		case err != nil:
+			last = err
+		case id.PublicKey == "":
+			last = fmt.Errorf("/health carries no public key")
+		default:
+			return id, nil
+		}
+		if time.Now().After(deadline) {
+			return client.Health{}, last
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// Get returns the kernel's own /health banner, cached for the TTL, and whether
+// it is known. Unknown means the kernel has not answered yet, or the address
+// answered as a different kernel: the chrome falls back to the plain brand, the
+// session pin treats it as unknown rather than as a mismatch, and money neither
+// renders nor is accepted (§7).
+func (k *KernelIdentity) Get(ctx context.Context) (client.Health, bool) {
+	k.mu.Lock()
+	id, at := k.id, k.fetched
+	k.mu.Unlock()
+	if id.Handle != "" && time.Since(at) < k.ttl {
+		return id, true
+	}
+	hc, err := k.client.Health(ctx)
 	if err != nil || hc.Handle == "" {
-		return id // keep what we had; retry on a later render
+		return id, id.Handle != "" // keep what we had; retry on a later render
 	}
-	if s.recorded != "" && hc.PublicKey != s.recorded {
+	if k.recorded != "" && hc.PublicKey != k.recorded {
 		// The address answers, but not as the kernel our records name. That is
 		// not this kernel and nothing is trusted from it: no identity, no unit,
 		// no login. Logged, because it is the one thing an operator must know.
-		s.log.Warn("kernel identity mismatch: the server at this address is not the recorded kernel",
-			"recorded", keyFingerprint(s.recorded), "answered", keyFingerprint(hc.PublicKey))
-		return client.Health{}
+		k.log.Warn("kernel identity mismatch: the server at this address is not the recorded kernel",
+			"recorded", keyFingerprint(k.recorded), "answered", keyFingerprint(hc.PublicKey))
+		return client.Health{}, false
 	}
-	s.idMu.Lock()
-	s.kernelID, s.idFetched = hc, time.Now()
-	s.idMu.Unlock()
-	return hc
+	k.mu.Lock()
+	k.id, k.fetched = hc, time.Now()
+	k.mu.Unlock()
+	return hc, true
 }
 
-// unit is the money unit of the world this kernel serves, for the renderer and
-// for parsing typed amounts. Zero before the kernel has answered.
-func (s *Server) unit() Unit {
-	s.idMu.Lock()
-	defer s.idMu.Unlock()
-	return Unit{Decimals: s.kernelID.Decimals, Network: s.kernelID.Network}
+// Unit is the money unit of the world this kernel serves — its decimals and its
+// symbol — and whether it is known at all. A client that cannot learn the unit
+// renders no amount and accepts none, rather than scaling by a guess (§7).
+func (k *KernelIdentity) Unit() (Unit, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.id.Handle == "" {
+		return Unit{}, false
+	}
+	return Unit{Decimals: k.id.Decimals, Symbol: k.id.Symbol}, true
 }
 
-// parseAmount reads a typed amount in the kernel's own unit.
-func (s *Server) parseAmount(v string) (int64, error) { return parseAmount(v, s.unit().Decimals) }
+// kernelIdentity is the kernel's banner for this request, or a zero Health when
+// it is not known.
+func (s *Server) kernelIdentity(ctx context.Context) client.Health {
+	id, _ := s.identity.Get(ctx)
+	return id
+}
+
+// parseAmount reads a typed amount in the kernel's own unit. A unit we cannot
+// learn is a refusal, never a guess: scaling by an assumed decimals would send
+// the kernel a number the person did not type (§7).
+func (s *Server) parseAmount(v string) (int64, error) {
+	u, ok := s.identity.Unit()
+	if !ok {
+		return 0, fmt.Errorf("the kernel has not said what its money is; try again in a moment")
+	}
+	return parseAmount(v, u.Decimals)
+}
 
 // publicBaseURL is the absolute base URL of this BFF, used to build the OAuth
 // grant redirect_uri. It uses the configured PublicURL when set (for reverse
@@ -138,6 +204,11 @@ func New(o Options) (http.Handler, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
+	if o.Identity == nil {
+		// Which kernel this UI is for is not a thing to default: it keys the app
+		// state, pins the session, and fixes the unit every amount is read in.
+		return nil, fmt.Errorf("server: Options.Identity is required")
+	}
 	badgeTTL := o.BadgeInterval
 	if badgeTTL <= 0 {
 		badgeTTL = 30 * time.Second
@@ -153,19 +224,16 @@ func New(o Options) (http.Handler, error) {
 		apps:      o.Apps,
 		home:      o.Home,
 		badgeTTL:  badgeTTL,
-		recorded:  o.KernelPublicKey,
+		identity:  o.Identity,
 		context:   o.KernelContext,
 	}
-	// The money unit is the kernel's, not ours: the renderer reads it from the
-	// cached /health identity (§7).
-	o.Renderer.SetUnitSource(s.unit)
-	as, err := newAppStore(o.StatePath, o.KernelPublicKey)
+	as, err := newAppStore(o.StatePath, o.Identity.recorded)
 	if err != nil {
 		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
 	}
 	if as.Adopted {
 		s.log.Warn("app state predates kernel keying; its apps are adopted by the current kernel and the file is rewritten keyed",
-			"kernel", keyFingerprint(o.KernelPublicKey))
+			"kernel", keyFingerprint(o.Identity.recorded))
 	}
 	s.appStore = as
 

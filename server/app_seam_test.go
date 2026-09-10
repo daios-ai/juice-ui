@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/apps"
@@ -39,7 +40,7 @@ func (f *seamFake) Stop(ctx context.Context) error  { return nil }
 // shared base set, so app pages can reference them.
 func TestAppSeamMerges(t *testing.T) {
 	fake := &seamFake{}
-	r, err := NewRenderer(fake.Templates())
+	r, err := NewRenderer(playUnit, fake.Templates())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,20 +58,22 @@ func TestAppSeamMerges(t *testing.T) {
 // unauthenticated; a missing route would 404).
 func TestAppSeamMountsAndStarts(t *testing.T) {
 	fake := &seamFake{}
-	r, err := NewRenderer(fake.Templates())
+	r, err := NewRenderer(playUnit, fake.Templates())
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := client.New("http://127.0.0.1:1", nil)
 	sm := scs.New()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h, err := New(Options{
 		Client:   c,
 		Sessions: session.NewManager(sm, c),
 		Renderer: r,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:   log,
 		CSRFKey:  bytes.Repeat([]byte("k"), 32),
 		Secure:   false,
 		Apps:     []apps.App{fake},
+		Identity: NewKernelIdentity(c, "KTEST", time.Minute, log),
 	})
 	if err != nil {
 		t.Fatal(err)

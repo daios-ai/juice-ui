@@ -434,7 +434,7 @@ func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	for _, want := range []string{"owed to us", "320.000000", "1,000.000000", "limit", "fee 20%", "import 5%"} {
+	for _, want := range []string{"owed to us", "320 credits", "1000 credits", "limit", "fee 20%", "import 5%"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("kernel card missing the credit position or rates: %q", want)
 		}
@@ -451,7 +451,7 @@ func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 	if !strings.Contains(body, `value="KEYB"`) || !strings.Contains(body, `name="ref" value="TICKET1"`) {
 		t.Error("the confirm must post the peer's key and the ticket id")
 	}
-	if !strings.Contains(body, "Confirm (10.000000)") || !strings.Contains(body, "data-confirm") {
+	if !strings.Contains(body, "Confirm (10 credits)") || !strings.Contains(body, "data-confirm") {
 		t.Error("recording a payment is a money act: it names the amount behind a confirm")
 	}
 	// A payment whose sender nobody has registered waits for the operator to say

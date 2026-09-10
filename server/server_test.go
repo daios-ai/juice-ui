@@ -18,29 +18,40 @@ import (
 	"github.com/daios-ai/juice-ui/session"
 )
 
-// newTestHandler builds the full BFF handler pointed at the given kernel URL.
-// newTestHandler builds the BFF against a fake kernel. opts adjust the wiring for
-// a test that needs it (e.g. a short identity/badge interval).
-func newTestHandler(t *testing.T, kernelURL string, opts ...func(*Options)) http.Handler {
+// testWiring is what a test may vary about the wiring: which kernel the records
+// name, and how quickly the identity is re-read.
+type testWiring struct {
+	recordedKey string
+	badge       time.Duration
+}
+
+// newTestHandler builds the BFF against a fake kernel, wired exactly as
+// production is: one identity, built first, feeding both the renderer's money
+// unit and the server's notion of which kernel this is.
+func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) http.Handler {
 	t.Helper()
-	r, err := NewRenderer()
+	w := testWiring{badge: 30 * time.Second}
+	for _, opt := range opts {
+		opt(&w)
+	}
+	c := client.New(kernelURL, nil)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	identity := NewKernelIdentity(c, w.recordedKey, w.badge, log)
+	r, err := NewRenderer(identity.Unit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := client.New(kernelURL, nil)
 	sm := scs.New()
-	o := Options{
-		Client:   c,
-		Sessions: session.NewManager(sm, c),
-		Renderer: r,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		CSRFKey:  bytes.Repeat([]byte("k"), 32),
-		Secure:   false,
-	}
-	for _, opt := range opts {
-		opt(&o)
-	}
-	h, err := New(o)
+	h, err := New(Options{
+		Client:        c,
+		Sessions:      session.NewManager(sm, c),
+		Renderer:      r,
+		Logger:        log,
+		CSRFKey:       bytes.Repeat([]byte("k"), 32),
+		Secure:        false,
+		Identity:      identity,
+		BadgeInterval: w.badge,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +207,7 @@ func TestSessionRefusesADifferentKernel(t *testing.T) {
 	defer wrap.Close()
 	// A short identity interval: the kernel is re-read within a heartbeat, which
 	// is the window in which a swapped server is noticed.
-	srv := httptest.NewServer(newTestHandler(t, wrap.URL, func(o *Options) { o.BadgeInterval = time.Nanosecond }))
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL, func(w *testWiring) { w.badge = time.Nanosecond }))
 	defer srv.Close()
 
 	cl := loginClient(t, srv.URL)
@@ -253,7 +264,7 @@ func TestLoginRefusedWhenTheKernelCannotBeIdentified(t *testing.T) {
 func TestRecordedKeyRefusesAnotherKernel(t *testing.T) {
 	kernel := authKernel() // presents ABCDEF…abcd
 	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(o *Options) { o.KernelPublicKey = "SOMEOTHERKEY" }))
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.recordedKey = "SOMEOTHERKEY" }))
 	defer srv.Close()
 
 	jar, _ := cookiejar.New(nil)

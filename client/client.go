@@ -394,8 +394,9 @@ type ImportRejection struct {
 
 // Health is GET /health (open): the identity banner a client pins before it
 // trusts a server (API C13). Beyond naming the kernel it fixes the money unit —
-// Decimals is the world's base-unit scale and Network its name — and, on a world
-// whose money has addresses, RailAddress is where this kernel is paid.
+// Decimals is the world's base-unit scale and Symbol what that money is called,
+// "credits" or "USDC" — and, on a world whose money has addresses, RailAddress
+// is where this kernel is paid.
 type Health struct {
 	Status        string `json:"status"`
 	Handle        string `json:"handle"`
@@ -403,6 +404,7 @@ type Health struct {
 	Network       string `json:"network"`
 	NetworkDigest string `json:"network_digest"`
 	Decimals      int    `json:"decimals"`
+	Symbol        string `json:"symbol"`
 	RailAddress   string `json:"rail_address"`
 }
 

@@ -364,13 +364,16 @@ none float, none are colored.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
 - **Money display** renders mono + tabular through the single `money` helper,
-  which scales the kernel's base-unit integer by the world's `decimals` and
-  always shows six fraction digits, thousands-grouped, sign first
-  (`133.000000`, `0.000133`, `-2,500.000000`). The unit is the **network name**,
-  a quiet label beside the amount where one is needed — never a currency symbol.
-  `$`, the `¤` character and the retired gem/diamond mark are **banned from every
-  template**. A spend button names the amount the same way — `verb (N)` (§5.1) —
-  and money in prose (help/flash/error) is written in the same form.
+  which renders the kernel's own way: the base-unit integer scaled by the world's
+  `decimals`, trailing zeros trimmed to a **two-digit floor**, **no separators**,
+  the world's `symbol` appended — `133 credits`, `1.50 USDC`, `0.000133 USDC`,
+  `-2500 credits`. Separators are absent by design: the text pastes back into an
+  amount field. A symbol the UI picks is a claim about a world it does not own,
+  so `$`, `¤` and the retired gem/diamond mark are **banned from every template**,
+  as is a hard-coded `step` on an amount input (`{{amountStep}}` reads the world's).
+  A spend button names the amount the same way — `verb (N)` (§5.1) — and money in
+  prose (help/flash/error) is written in the same form. Where the unit is not yet
+  known, a money cell renders an em dash and no amount is accepted.
 
 ### 5.7 Refs
 
@@ -554,8 +557,9 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   any `.linkbar`, the superseded `auth-tab` class,
   any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
   phrase or into a second sentence, any prose note (`.help` / `.card-note`) that
-  swells into a paragraph, and any **`¤` character or `$` before a figure**
-  (`TestMoneyGrammar`) — money is the world's unit through the `money` helper,
-  and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the
+  swells into a paragraph, and any **`¤` character, `$` before a figure, or
+  hard-coded `step` on an amount input** (`TestMoneyGrammar`) — money is the
+  world's unit and symbol through the `money` helper, the step is the world's
+  through `{{amountStep}}`, and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the
   vocabulary the kernel retired: settle, unimport, the transfer queue, admin
   withdraw, a peer's balance.

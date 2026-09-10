@@ -168,3 +168,37 @@ Kernel decisions the UI adapts to (documented or defensible):
 - **Natives**: `sys/user-lookup` gone; all `local`; `sys/lookup` rows carry `price`, `quote_hash`, `observed_at`, `last_seen`, `last_contact_failed_at`.
 - **OpenAPI wizard**: `{name, spec_url}` first, `{name}` re-import; result keys PascalCase; `Rejected[{Key,Reason}]`; no unimport (disable/delete by path instead).
 - **WASM path**: compile → create with `wasm_artifact` server-side (body ~1.4 MB).
+
+## 16. v0.14.2 (`bd4c40c`) — money is the world's, verified 2026-09-10
+
+Re-run on throwaway kernels after the UI adopted the kernel's rendering. Two rigs:
+a `play` pair (A=`alpha` :4141 buyer, B=`bravo` :4142 provider) and a single
+`anvil` kernel (`charlie` :4141, decimals 6) on the chain rig of §13b.
+
+- `GET /health` gains **`symbol`**: `"credits"` on play, `"USDC"` on the anvil
+  world (`{"decimals":6,…,"rail_address":"0x3468…f7d7","symbol":"USDC"}`). The
+  pair `(decimals, symbol)` is the whole unit; nothing else names money.
+- The published rendering, re-rendered by the UI and confirmed on screen: trailing
+  zeros trimmed to a **two-digit floor**, **no thousands separators**, symbol
+  appended. Live: `5000 credits`, `133 credits`, `0.00 USDC`, `5.00 USDC`.
+- **Both open questions of §14 resolved in the UI's favour.** A cross-kernel
+  transaction carries `ticket_id` on *both* books — the buyer's row on A
+  (`paid 133 credits`, `import fee 7 credits`, `obligation 126 credits`) and the
+  seller's row on B (`gross 120`, `fee 24`, `net 96`) each render "Settles on the
+  rail as ticket …". A step parked for a remote principal returns
+  `required_caller_handle` as a handle (`vendor@bravo`), not a raw id.
+- **A refusal, not a guess, when the unit is unknown.** The UI now sends nothing
+  it cannot scale: display falls back to an em dash and every typed amount is
+  refused server-side.
+- Acceptance follows the world's own scale, live on both rigs: on play the amount
+  input carries `step="1"` and a price of `1.5` is refused ("Amount must be a
+  whole number here."), while `2` reaches the kernel as `"price":2`; on anvil the
+  input carries `step="0.000001"` and `0.0000001` is refused ("Amount has at most
+  6 decimals here.").
+- No code needed for the rest of v0.14.2: empty lists are `[]` (already handled),
+  a held payment is closed by its own `id` (§14, fixed in v0.14.1), `sys/lookup`
+  carries `quote_hash` and a remote `action_id` belonging to the peer, and
+  caller-supplied transfer keys are namespaced (the UI sends none).
+- Harness note: `juice serve NAME` is positional, and a first boot **refuses off a
+  terminal**, naming the configuration key that would have answered — so a
+  throwaway kernel pre-writes `world` in `kernels/<name>/config.json`.

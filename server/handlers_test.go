@@ -38,7 +38,7 @@ func mutationTarget(r *http.Request) string {
 func fakeHealth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd",
-		 "network":"play","network_digest":"D1","decimals":0,"rail_address":""}`))
+		 "network":"play","network_digest":"D1","decimals":0,"symbol":"credits","rail_address":""}`))
 	})
 }
 
@@ -674,11 +674,11 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/transactions")
 	// Signed, perspective amounts: alice is buyer on T1 (−gross) and seller on
 	// T2 (+net) — the Role/Gross/Fee columns are gone (they live on the detail).
-	if !strings.Contains(body, "-100.000000") {
+	if !strings.Contains(body, "-100 credits") {
 		t.Error("buyer transaction must show the negative gross (−100.000000)")
 	}
-	if !strings.Contains(body, "+45.000000") || !strings.Contains(body, "sig-credited") {
-		t.Error("seller transaction must show the positive net (+45.000000) as credited")
+	if !strings.Contains(body, "+45 credits") || !strings.Contains(body, "sig-credited") {
+		t.Error("seller transaction must show the positive net (+45 credits) as credited")
 	}
 	// Gross/fee/full-party breakdown stays on the detail page; the list shows the
 	// signed perspective amount (plus the viewer's role, a lightweight label).
@@ -717,7 +717,7 @@ func TestUserLedgerUsesUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("user ledger must link the action ref (was missing before)")
 	}
-	if !strings.Contains(body, "-100.000000") || !strings.Contains(body, "+45.000000") {
+	if !strings.Contains(body, "-100 credits") || !strings.Contains(body, "+45 credits") {
 		t.Error("user ledger must show the signed perspective amounts")
 	}
 	if strings.Contains(body, "<th>Gross</th>") {
@@ -773,7 +773,7 @@ func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"test","network_digest":"D9","decimals":6,"rail_address":"0xKERNEL"}`))
+		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"test","network_digest":"D9","decimals":6,"symbol":"USDC","rail_address":"0xKERNEL"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=C"}`))
@@ -812,8 +812,9 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	if !strings.Contains(body, `name="id" value="`) {
 		t.Error("the withdrawal form must carry a minted id")
 	}
-	// Six decimals against the world's own scale: 5000000 base units is 5.
-	if !strings.Contains(body, "5.000000") {
+	// The world's own scale and symbol: 5000000 base units at six decimals is
+	// 5.00 USDC, and the trailing zeros stop at the two-digit floor.
+	if !strings.Contains(body, "5.00 USDC") {
 		t.Errorf("the balance must scale by the world's decimals: %s", body)
 	}
 	if !strings.Contains(body, "manual:W1") {
@@ -938,8 +939,8 @@ func TestGrantConnectPostsToken(t *testing.T) {
 
 // TestCreateActionParsesDollarPrice: a price typed in dollars on the create form
 // reaches the kernel as the correct integer credits (the parseDollars inverse of
-// the money display). "12.000000" MUST arrive as "price":12, not 0 or 12000.
-func TestCreateActionParsesDollarPrice(t *testing.T) {
+// the money display). "12 credits" MUST arrive as "price":12, not 0 or 12000.
+func TestCreateActionParsesTypedPrice(t *testing.T) {
 	base := authKernel()
 	defer base.Close()
 	var mu sync.Mutex
@@ -967,7 +968,7 @@ func TestCreateActionParsesDollarPrice(t *testing.T) {
 	form := url.Values{
 		"name":               {"priced"},
 		"kind":               {"http"},
-		"price":              {"12.000000"},
+		"price":              {"12"}, // a typed amount is digits: the symbol is display only
 		"gorilla.csrf.Token": {tok},
 	}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(form.Encode()))
@@ -982,7 +983,7 @@ func TestCreateActionParsesDollarPrice(t *testing.T) {
 	got := gotBody
 	mu.Unlock()
 	if !strings.Contains(got, `"price":12`) {
-		t.Errorf("dollar price 12.000000 must reach the kernel as 12 credits; kernel body = %s", got)
+		t.Errorf("a typed price of 12 must reach the kernel as 12 base units; kernel body = %s", got)
 	}
 }
 
@@ -1592,10 +1593,10 @@ func TestWalletShowsLedger(t *testing.T) {
 	// Each row encodes the viewer's role by the signed amount: as seller (T2, payee)
 	// alice sees a credited +net; as buyer (T1, payer) she sees a −gross debit.
 	txBody := getBody(t, cl, srv.URL+"/transactions")
-	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+45.000000") {
+	if !strings.Contains(txBody, "sig-credited") || !strings.Contains(txBody, "+45 credits") {
 		t.Error("transactions ledger must show alice's seller credit (+net) on T2")
 	}
-	if !strings.Contains(txBody, ">-100.000000<") {
+	if !strings.Contains(txBody, ">-100 credits<") {
 		t.Error("transactions ledger must show alice's buyer debit (−gross) on T1")
 	}
 }
@@ -1616,8 +1617,8 @@ func TestStudioShowsEarnings(t *testing.T) {
 			t.Errorf("workshop must show the %q earnings tile", tile)
 		}
 	}
-	if !strings.Contains(body, "+45.000000") {
-		t.Errorf("all-time earnings tile must show the +45.000000 net: %s", body)
+	if !strings.Contains(body, "+45 credits") {
+		t.Errorf("all-time earnings tile must show the +45 credits net: %s", body)
 	}
 }
 
@@ -2279,8 +2280,8 @@ func TestInboxTwoBranchCompletion(t *testing.T) {
 
 	// Payment branch: the completion is a SPEND of the completer's own money —
 	// money button naming the sealed amount, recipient named in the provenance
-	// face (§6.3). 300 credits render as 300.000000.
-	if !strings.Contains(page, "Complete (300.000000)") {
+	// face (§6.3).
+	if !strings.Contains(page, "Complete (300 credits)") {
 		t.Errorf("payment step must render the money amount on the button: %s", page)
 	}
 	if !strings.Contains(page, "Paid from your balance") || !strings.Contains(page, "alice") {
@@ -2587,7 +2588,7 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	body := string(raw)
-	for _, want := range []string{"Result pending", "111.000000", "/processes/proc-7", "19 August 2026"} {
+	for _, want := range []string{"Result pending", "111 credits", "/processes/proc-7", "19 August 2026"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("parked outcome missing %q:\n%s", want, body)
 		}
@@ -2617,7 +2618,7 @@ func TestWalletValueMovementRendersWithoutTheTransactionID(t *testing.T) {
 	if !strings.Contains(activity, "transfer to bob") {
 		t.Error("the movement must name its direction and counterparty")
 	}
-	if !strings.Contains(activity, "−300.000000") {
+	if !strings.Contains(activity, "−300 credits") {
 		t.Errorf("the movement must state the amount that left the balance:\n%s", activity)
 	}
 	// The id belongs to the transaction row, which links to the receipt; the

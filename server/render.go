@@ -80,113 +80,113 @@ type Page struct {
 type Renderer struct {
 	pages    map[string]*template.Template
 	partials *template.Template
-	unit     func() Unit // the kernel's money unit; nil until wiring sets it
+	unit     func() (Unit, bool) // the kernel's money unit, given at construction
 }
 
-// SetUnitSource supplies the kernel's money unit to the money helpers. Amounts
-// are integers in the world's base unit and only the kernel knows how that unit
-// scales (§7), so the renderer reads it from the live /health identity rather
-// than assuming one. Called once during wiring (server.New), before serving.
-func (r *Renderer) SetUnitSource(f func() Unit) { r.unit = f }
-
 // Unit is the money unit of the world this kernel serves: how many decimal
-// places its base-unit integer carries, and the network's name. One kernel
+// places its base-unit integer carries, and the symbol that names it. One kernel
 // serves one world for life (kernel §D23), so this is fixed per installation.
 type Unit struct {
 	Decimals int
-	Network  string
+	Symbol   string
 }
 
-// Format renders a base-unit integer for display: thousands-grouped, sign
-// first, and always six fraction digits, so amounts from different worlds line
-// up in one column. On a world with no fractional unit (decimals 0) 133 reads
-// "133.000000"; on a six-decimal world it reads "0.000133". The unit itself is
-// named separately (the `unit` helper), never with a currency mark.
-func (u Unit) Format(n int64) string {
-	neg := n < 0
-	if neg {
-		n = -n
+// Format renders a base-unit integer the way the kernel renders it, symbol and
+// all: "133 credits" on a world with no fractional unit, "1.50 USDC" on one with
+// six. Trailing zeros are trimmed to a two-digit floor — a round amount reads
+// 1.50, not 1.500000, while extra digits are kept, because rounding money for
+// display is a lie the reconciliation finds — and there are NO separators, so
+// the text pastes back into an amount field unchanged.
+//
+// This is a transcription of the kernel's own Network.Amount. The BFF may not
+// import kernel packages (CLAUDE.md), so the algorithm is copied; the test pins
+// the kernel's own examples, and that test is what keeps the two from drifting.
+func (u Unit) Format(v int64) string {
+	unit := ""
+	if u.Symbol != "" {
+		unit = " " + u.Symbol
 	}
-	whole, frac := u.split(n)
-	out := group3(whole) + "." + frac
-	if neg {
-		return "-" + out
-	}
-	return out
+	return u.digits(v) + unit
 }
 
-// Input renders a non-negative base-unit integer as a bare decimal for an HTML
-// number input's value (no grouping — number inputs reject commas).
-func (u Unit) Input(n int64) string {
-	if n < 0 {
-		n = -n
+// Input renders the same amount without its symbol, for a number input's value:
+// what the field shows is what the kernel's parser accepts back.
+func (u Unit) Input(v int64) string { return u.digits(v) }
+
+// Step is the granularity of an amount input on this world — 1 where money has
+// no fractional unit, else the smallest amount that exists. A hint only: the
+// kernel validates, and the server refuses anything finer (§6.2).
+func (u Unit) Step() string {
+	if u.Decimals <= 0 {
+		return "1"
 	}
-	whole, frac := u.split(n)
-	return strconv.FormatInt(whole, 10) + "." + frac
+	return "0." + strings.Repeat("0", u.Decimals-1) + "1"
 }
 
-// split divides a non-negative base-unit amount into its whole part and its
-// six-digit fraction string.
-func (u Unit) split(n int64) (int64, string) {
-	d := u.Decimals
-	if d < 0 {
-		d = 0
+// digits renders the amount without a symbol.
+func (u Unit) digits(v int64) string {
+	if u.Decimals <= 0 {
+		return strconv.FormatInt(v, 10)
 	}
-	if d > 6 {
-		d = 6 // beyond six digits the display truncates; no shipped world needs it
+	s := strconv.FormatInt(v, 10)
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
 	}
-	scale := pow10(d)
-	whole := n / scale
-	frac := (n % scale) * pow10(6-d)
-	return whole, fmt.Sprintf("%06d", frac)
+	for len(s) <= u.Decimals {
+		s = "0" + s
+	}
+	whole, frac := s[:len(s)-u.Decimals], s[len(s)-u.Decimals:]
+	for len(frac) > 2 && strings.HasSuffix(frac, "0") {
+		frac = frac[:len(frac)-1]
+	}
+	return sign + whole + "." + frac
 }
 
-// pow10 returns 10^n for the small n a decimals field can hold.
-func pow10(n int) int64 {
-	p := int64(1)
-	for i := 0; i < n; i++ {
-		p *= 10
-	}
-	return p
-}
-
-// parseAmount is the inverse of Unit.Format: it reads a typed amount and returns
-// the kernel's base-unit integer. It rejects a negative, a non-numeric value, and
-// a digit finer than the world's base unit — silently rounding someone's money
-// would be worse than refusing it.
+// parseAmount is the inverse of Unit.Input: it reads a typed amount and returns
+// the kernel's base-unit integer. Digits and at most the world's own decimal
+// places — a separator is refused rather than stripped, because nothing renders
+// one, and a digit finer than the base unit is refused rather than rounded:
+// silently changing someone's amount is worse than declining it.
+//
+// Zero is allowed. An action may cost nothing, and the kernel's own parser is
+// stricter only because its callers are money verbs.
 func parseAmount(s string, decimals int) (int64, error) {
-	s = strings.NewReplacer(",", "", " ", "").Replace(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, nil
-	}
-	if strings.HasPrefix(s, "-") {
-		return 0, fmt.Errorf("amount must not be negative")
-	}
-	whole, frac, hasFrac := strings.Cut(s, ".")
-	w, err := strconv.ParseInt(whole, 10, 64)
-	if whole != "" && err != nil {
-		return 0, fmt.Errorf("amount must be a number")
 	}
 	if decimals < 0 {
 		decimals = 0
 	}
-	if !hasFrac {
-		return w * pow10(decimals), nil
+	whole, frac, hasFrac := strings.Cut(s, ".")
+	if !allDigits(whole) || (hasFrac && !allDigits(frac)) {
+		return 0, fmt.Errorf("amount must be a number, without separators")
 	}
-	if len(frac) > decimals && strings.Trim(frac[decimals:], "0") != "" {
+	if len(frac) > decimals {
 		if decimals == 0 {
 			return 0, fmt.Errorf("amount must be a whole number here")
 		}
 		return 0, fmt.Errorf("amount has at most %d decimals here", decimals)
 	}
-	frac = (frac + strings.Repeat("0", decimals))[:decimals]
-	f := int64(0)
-	if frac != "" {
-		if f, err = strconv.ParseInt(frac, 10, 64); err != nil {
-			return 0, fmt.Errorf("amount must be a number")
+	v, err := strconv.ParseInt(whole+frac+strings.Repeat("0", decimals-len(frac)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("amount must be a number, without separators")
+	}
+	return v, nil
+}
+
+// allDigits reports a non-empty run of digits — no sign, no separator, no space.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
 		}
 	}
-	return w*pow10(decimals) + f, nil
+	return true
 }
 
 // NewRenderer parses all embedded templates, plus any app-module template
@@ -194,12 +194,15 @@ func parseAmount(s string, decimals int) (int64, error) {
 // with "_") are merged into the shared base set; its pages are cloned from that
 // base, so a app page renders through the same layout, partials, and helpers
 // as a core page.
-func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
-	r := &Renderer{}
+// unit is the money unit of the world the kernel serves, and whether it is known
+// (server.KernelIdentity.Unit). The renderer is built before the server, so the
+// source arrives here rather than being set afterwards.
+func NewRenderer(unit func() (Unit, bool), appTemplates ...fs.FS) (*Renderer, error) {
+	r := &Renderer{unit: unit}
 	funcs := template.FuncMap{
 		"money":        r.money,
-		"unit":         r.unitName,
 		"amountInput":  r.amountInput,
+		"amountStep":   r.amountStep,
 		"sum":          func(a, b int64) int64 { return a + b },
 		"sub":          func(a, b int64) int64 { return a - b },
 		"json":         prettyJSON,
@@ -278,25 +281,38 @@ func NewRenderer(appTemplates ...fs.FS) (*Renderer, error) {
 	return r, nil
 }
 
-// unitOrZero is the money unit, or a zero unit before wiring (tests that render
-// without a server) — whole base units, unnamed network.
-func (r *Renderer) unitOrZero() Unit {
-	if r.unit == nil {
-		return Unit{}
+// noAmount is what a money cell renders when the kernel has not said what its
+// money is. An em dash claims nothing; a number would claim a unit (§7).
+const noAmount = "—"
+
+// money formats a base-unit amount — the single source of truth for every amount
+// the UI shows (§7) — or refuses when the unit is unknown.
+func (r *Renderer) money(n int64) string {
+	u, ok := r.unit()
+	if !ok {
+		return noAmount
 	}
-	return r.unit()
+	return u.Format(n)
 }
 
-// money formats a base-unit amount for display — the single source of truth for
-// every amount the UI shows (§7).
-func (r *Renderer) money(n int64) string { return r.unitOrZero().Format(n) }
+// amountInput formats a base-unit amount as an HTML number input's value; empty
+// when the unit is unknown, so the field offers no figure to submit.
+func (r *Renderer) amountInput(n int64) string {
+	u, ok := r.unit()
+	if !ok {
+		return ""
+	}
+	return u.Input(n)
+}
 
-// amountInput formats a base-unit amount as an HTML number input's value.
-func (r *Renderer) amountInput(n int64) string { return r.unitOrZero().Input(n) }
-
-// unitName is the network whose money this is, for the quiet label beside a
-// balance. Empty before the kernel has answered, and then nothing is labelled.
-func (r *Renderer) unitName() string { return r.unitOrZero().Network }
+// amountStep is the step attribute for an amount input.
+func (r *Renderer) amountStep() string {
+	u, ok := r.unit()
+	if !ok {
+		return "any"
+	}
+	return u.Step()
+}
 
 // Render writes a full page (page template wrapped in the layout). It buffers
 // first so a template error never produces a half-written response.
@@ -328,21 +344,6 @@ func (r *Renderer) Fragment(w http.ResponseWriter, status int, name string, data
 }
 
 // ---- template helpers ----
-
-// group3 renders a non-negative integer with thousands-separating commas.
-func group3(n int64) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var parts []string
-	for len(s) > 3 {
-		parts = append([]string{s[len(s)-3:]}, parts...)
-		s = s[:len(s)-3]
-	}
-	parts = append([]string{s}, parts...)
-	return strings.Join(parts, ",")
-}
 
 // indentJSON pretty-prints inline JSON (args/result) as indented text (R4.2),
 // never double-encoding (structured fields arrive as raw JSON). Empty input yields

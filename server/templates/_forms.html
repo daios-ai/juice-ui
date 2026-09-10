@@ -86,7 +86,7 @@
       </div>
       <div class="field">
         <label for="c-price">Price</label>
-        <input id="c-price" name="price" type="number" min="0" step="0.000001" value="0" class="input-sm">
+        <input id="c-price" name="price" type="number" min="0" step="{{amountStep}}" value="0" class="input-sm">
       </div>
       <div class="field">
         <label for="c-in">Input schema (JSON)</label>
@@ -182,7 +182,7 @@
       <div class="field">
         <label for="dep-amount">Amount</label>
         <p class="help">Leave empty to attribute a payment already received, or to close a peer's ticket.</p>
-        <input id="dep-amount" name="amount" type="number" min="0" step="0.000001" class="input-sm">
+        <input id="dep-amount" name="amount" type="number" min="0" step="{{amountStep}}" class="input-sm">
       </div>
       <div class="field"><label for="dep-reason">Reason (optional)</label><input id="dep-reason" name="reason" type="text"></div>
       <div class="cluster">

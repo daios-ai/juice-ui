@@ -1,7 +1,19 @@
 # Juice Web UI Requirements
 
-Version: 0.7.0
+Version: 0.7.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.7.1.** The kernel published a money rendering and gave each
+> world a `symbol`, so the UI stops rendering its own (§7): amounts read the way
+> every juice client reads them — trailing zeros trimmed to a two-digit floor, no
+> separators, the world's symbol appended — and a unit the UI cannot learn is a
+> refusal rather than a guess. The six-decimal grouped form of 0.7.0 was mine to
+> invent only while the kernel had published nothing.
+>
+> Two things the kernel resolved in the UI's favour land with it (§10): a
+> cross-kernel transaction now names its ticket on **both** books, so the seller's
+> page names it too, and a step parked for a remote principal renders a handle
+> rather than a raw id.
 
 > **What changed in 0.7.0.** The kernel's v0.14 contract lands, verified live
 > against a federated pair (`docs/kernel-v0.14-verification.md`). Six axes; each
@@ -11,8 +23,9 @@ Status: design draft — endpoint surface gated against the running kernel
 >    life and `/health` names its money: `decimals` scales every base-unit
 >    integer, `network` names it. The dollar format was a UI invention — 1000
 >    credits to a dollar is true on no world the kernel ships — so amounts render
->    scaled, always six fraction digits, labelled by the network, and an amount
->    finer than the base unit is refused rather than rounded.
+>    scaled by the world's own decimals, and an amount finer than the base unit
+>    is refused rather than rounded. (The display form itself is superseded by
+>    0.7.1, which adopts the kernel's.)
 > 2. **A session is pinned to the kernel it signed in to** (§5). A port is a
 >    default, never an identity; the session records the kernel's key and network
 >    digest and refuses a server that no longer reports them.
@@ -1028,22 +1041,29 @@ retry affordance, and no successor page — there is no state left to represent.
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
 
-  **The unit is the world's, and the kernel serves it.** Every amount on the wire
-  is an integer in the base unit of the world this kernel serves, and only the
-  kernel knows how that unit scales: `GET /health` carries `decimals` (0 on a
-  world with no fractional unit, 6 on a token world) and `network`. Money MUST
-  therefore render scaled by that `decimals`, **always six fraction digits**,
-  thousands-grouped, sign first (`133.000000`, `0.000133`, `-2,500.000000`),
-  through **one** helper (`money`) reading the live identity — never a currency
-  symbol, never a fixed ratio the UI invented, and never a `¤` or gem mark. Where
-  an amount needs its unit named, the **network name** is that label, quietly
-  beside it. Ledger rows MUST carry explicit `−`/`+`; spend buttons state the
-  unsigned gross as `verb (N)` (above). An editable amount is typed in the same
-  scaled form and parsed server-side back to base units; a value finer than the
-  world's base unit MUST be **refused**, never silently rounded. The owner segment of
-  `owner/name` MUST be weight-emphasized in a confusable-distinct monospace face
-  and MUST NOT use the accent; a remote owner segment (`owner@kernel`) renders
-  the same way, unlinked (§6.2).
+  **The unit is the world's, and the kernel renders it.** Every amount on the
+  wire is an integer in the base unit of the world this kernel serves, and only
+  the kernel knows how that unit scales and what it is called: `GET /health`
+  carries `decimals` (0 where money has no fractional unit, 6 on a token world)
+  and `symbol` (`credits`, `USDC`). The kernel also publishes ONE rendering, and
+  the UI MUST use it rather than invent a second: the amount, its trailing zeros
+  trimmed to a **two-digit floor**, **no thousands separators**, the world's
+  symbol appended — `133 credits`, `1.50 USDC`, `0.000133 USDC`, `-2500 credits`.
+  Separators are absent by design: the text is meant to paste back into an amount
+  field unchanged. It renders through **one** helper (`money`) reading the live
+  identity — never a currency mark the UI chose, never a `¤` or gem.
+
+  An editable amount is typed in that same form without the symbol, its `step`
+  the world's own smallest unit, and parsed server-side back to base units; a
+  separator or a digit finer than the base unit is **refused**, never stripped or
+  rounded. Ledger rows carry explicit `−`/`+`; spend buttons state the unsigned
+  gross as `verb (N)`.
+
+  **A unit the UI cannot learn is a refusal, not a guess.** Until the kernel has
+  said what its money is, a money cell renders an em dash and every typed amount
+  is refused with that reason. Assuming a scale would put a figure in front of a
+  person that neither they nor the kernel ever said.
+
 * **Status signals.** The credited, refunded, and escrow-pending states MUST be
   mutually distinct and distinct from the accent in both themes, each pairing a color
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
@@ -1253,9 +1273,8 @@ once its prerequisite is confirmed on the running kernel.
   to a user by the row's own `id`, as the contract says. (v0.14.0 refused that
   id, accepting only the bare transaction hash; fixed in v0.14.1, and both forms
   now work.)
-* **The money unit above six decimals (§7) — conditional.** `Unit.Format`
-  truncates beyond six fraction digits. No shipped world needs more (`play` is 0,
-  the token worlds are 6); a world that did would need the display widened.
+* **The money unit above six decimals (§7) — closed.** `Unit.Format` now carries
+  every digit the world declares, so nothing is truncated at any scale.
 * **A moved amount — resolved (§6.5).** v0.12.24 journals it (re-confirmed on
   v0.14.0): settling a
   `transfer`-effect call writes a ledger entry from the immediate caller to the
@@ -1297,12 +1316,20 @@ once its prerequisite is confirmed on the running kernel.
   `delete` take a `target` and return the rows written, and `GET /v1/actions?ref=`
   resolves a reference the way a call does — a kernel-qualified one over
   federation, caching a proxy, and a miss is an empty list rather than an error.
-* **The remote transaction (§6.5).** Confirmed on v0.14.0: a cross-kernel
-  transaction carries `ticket_id`, `remote_receipt_hash` and `remote_signer_key`,
-  and its `net` is the obligation returned to the caller while `fee` is the
-  import fee retained here. The seller's own row carries `ticket_id: null` and
-  names its buyer by raw public key — both reported to the kernel as questions,
-  and rendered as served meanwhile.
+* **The remote transaction — resolved (§6.5).** A cross-kernel transaction
+  carries `ticket_id`, `remote_receipt_hash` and `remote_signer_key`, and on the
+  buyer's row `net` is the obligation returned to the caller while `fee` is the
+  import fee retained here. As of v0.14.2 the **seller's row carries the same
+  ticket**, so either party can follow the obligation and both pages name it; the
+  seller's `net`/`fee` remain its own economics, which is why the captions key on
+  `remote_receipt_hash` and not on the ticket. It still names its buyer by raw
+  public key, which is the only name it has for a peer.
+* **The remote step caller — resolved (§6.3).** As of v0.14.2 a step parked for a
+  principal on a peer renders `required_caller_handle` as `vendor@bravo` — the
+  handle it went by when the step was made, beneath the peer's local name — with
+  the stable id still beside it. The raw-id rendering is gone.
+* **The world's symbol (§7).** Confirmed on v0.14.2: `/health` carries `symbol`,
+  and the kernel publishes the rendering the UI now follows.
 * **`allowed_input` on `/v1/steps` (§6.3).** Confirmed on the running kernel
   (waiting steps carry it). The completion form falls back to the target action's
   `input_schema` where `allowed_input` is absent (older kernels). The federation

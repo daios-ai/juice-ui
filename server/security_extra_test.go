@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/client"
@@ -30,6 +31,7 @@ func TestOriginAllowlist(t *testing.T) {
 		CSRFKey:        bytes.Repeat([]byte("k"), 32),
 		Secure:         false,
 		TrustedOrigins: []string{"trusted.example:4321"},
+		Identity:       NewKernelIdentity(c, "KTEST", time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil))),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +86,7 @@ func TestOriginAllowlist(t *testing.T) {
 
 func mustRenderer(t *testing.T) *Renderer {
 	t.Helper()
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}

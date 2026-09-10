@@ -130,12 +130,14 @@ func TestTablesAreScrollable(t *testing.T) {
 
 // TestMoneyGrammar enforces the money rule (§7): every amount renders through the
 // single `money` helper, which scales the kernel's base-unit integer by the
-// world's own decimals. A currency symbol is a claim about a world the UI does
-// not get to make — one kernel serves one world, and only it knows what its
-// integer is worth — so `$` before a figure is banned along with the ¤ character
-// and the retired gem/diamond mark.
+// world's own decimals and names it with the world's own symbol. A symbol the UI
+// picks is a claim about a world it does not get to make, so `$` before a figure
+// is banned along with the ¤ character and the retired gem/diamond mark. A
+// hard-coded `step` is the same mistake in an input: how finely money divides is
+// the world's fact, and `amountStep` is where it is read.
 func TestMoneyGrammar(t *testing.T) {
 	dollarAmount := regexp.MustCompile(`\$\s*(?:[0-9]|\{\{\s*money)`)
+	fixedStep := regexp.MustCompile(`step="[0-9.]+"`)
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
@@ -146,7 +148,11 @@ func TestMoneyGrammar(t *testing.T) {
 			t.Errorf("%s: the gem/diamond mark is retired — money renders via {{money}} (§7)", f)
 		}
 		if m := dollarAmount.FindString(src); m != "" {
-			t.Errorf("%s: %q — the unit is the world's, named by {{unit}}, never a currency symbol (§7)", f, m)
+			t.Errorf("%s: %q — the symbol is the world's, rendered by {{money}}, never one the UI picks (§7)", f, m)
+		}
+		// A schema-derived number field may fix its own step; an amount may not.
+		if m := fixedStep.FindString(src); m != "" && strings.Contains(src, "amountInput") || (m != "" && strings.Contains(src, `name="amount"`)) {
+			t.Errorf("%s: %q — an amount's step is the world's own, from {{amountStep}} (§7)", f, m)
 		}
 	}
 }

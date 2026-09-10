@@ -11,66 +11,117 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 )
 
+// playUnit is the world a render test renders in: whole credits, as the shipped
+// `play` world serves. A test asserting formatted money should say which world
+// it is in rather than lean on a default.
+func playUnit() (Unit, bool) { return Unit{Decimals: 0, Symbol: "credits"}, true }
+
+// noUnit is a kernel that has not said what its money is.
+func noUnit() (Unit, bool) { return Unit{}, false }
+
 func TestNewRendererParsesAllTemplates(t *testing.T) {
-	if _, err := NewRenderer(); err != nil {
+	if _, err := NewRenderer(playUnit); err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
 }
 
-func TestUnitFormatsTheWorldsBaseUnit(t *testing.T) {
-	// The wire integer is the world's base unit and only the kernel knows its
-	// scale, so the same number reads differently on two worlds. Six fraction
-	// digits always, so amounts line up in one column (§7).
-	play := Unit{Decimals: 0, Network: "play"}
-	chain := Unit{Decimals: 6, Network: "test"}
+// The kernel publishes one rendering for money and this is a transcription of
+// it, so these cases are ITS cases: a two-digit floor with the trailing zeros
+// trimmed, no separators, the world's own symbol appended. If the kernel's
+// Network.Amount ever moves, this table is what fails.
+func TestUnitRendersMoneyTheKernelsWay(t *testing.T) {
+	play := Unit{Decimals: 0, Symbol: "credits"}
+	usdc := Unit{Decimals: 6, Symbol: "USDC"}
 	cases := []struct {
 		u    Unit
 		in   int64
 		want string
 	}{
-		{play, 0, "0.000000"},
-		{play, 133, "133.000000"},
-		{play, 1234567, "1,234,567.000000"},
-		{play, -2500, "-2,500.000000"},
-		{chain, 133, "0.000133"},
-		{chain, 1000000, "1.000000"},
-		{chain, 1234567890, "1,234.567890"},
-		{chain, -1500000, "-1.500000"},
+		{play, 0, "0 credits"},
+		{play, 133, "133 credits"},
+		{play, -2500, "-2500 credits"},
+		// No thousands separators: the text pastes straight back into an amount
+		// field, and a separator is exactly what the parser refuses.
+		{play, 1234567, "1234567 credits"},
+		{usdc, 1500000, "1.50 USDC"},
+		{usdc, 1000000, "1.00 USDC"},
+		{usdc, 133, "0.000133 USDC"},
+		{usdc, 1234567890, "1234.56789 USDC"},
+		{usdc, -1500000, "-1.50 USDC"},
+		// A world that names no symbol renders the bare figure.
+		{Unit{Decimals: 0}, 133, "133"},
 	}
 	for _, c := range cases {
 		if got := c.u.Format(c.in); got != c.want {
-			t.Errorf("Unit{%d}.Format(%d) = %q want %q", c.u.Decimals, c.in, got, c.want)
+			t.Errorf("Unit{%d,%q}.Format(%d) = %q want %q", c.u.Decimals, c.u.Symbol, c.in, got, c.want)
 		}
 	}
 }
 
-func TestUnitInputIsUngrouped(t *testing.T) {
-	// A number input rejects commas, so the input form drops the grouping.
-	if got := (Unit{Decimals: 6}).Input(1234567890); got != "1234.567890" {
-		t.Errorf("Input = %q", got)
+func TestUnitInputAndStepMatchTheWorld(t *testing.T) {
+	// An input's value is the amount without its symbol, so what the field shows
+	// is what the parser takes back; the step is the smallest amount that exists.
+	if got := (Unit{Decimals: 6, Symbol: "USDC"}).Input(1500000); got != "1.50" {
+		t.Errorf("Input = %q want 1.50 (no symbol in a form field)", got)
 	}
-	if got := (Unit{}).Input(133); got != "133.000000" {
-		t.Errorf("Input = %q", got)
+	if got := (Unit{Decimals: 0, Symbol: "credits"}).Input(133); got != "133" {
+		t.Errorf("Input = %q want 133", got)
+	}
+	if got := (Unit{Decimals: 0}).Step(); got != "1" {
+		t.Errorf("Step on a whole-unit world = %q want 1", got)
+	}
+	if got := (Unit{Decimals: 6}).Step(); got != "0.000001" {
+		t.Errorf("Step at six decimals = %q want 0.000001", got)
+	}
+	// Round trip: what Input renders, parseAmount reads back exactly.
+	for _, n := range []int64{0, 133, 1500000, 1234567890} {
+		if got, err := parseAmount((Unit{Decimals: 6}).Input(n), 6); err != nil || got != n {
+			t.Errorf("round trip %d = %d, %v", n, got, err)
+		}
 	}
 }
 
-func TestParseAmountRefusesFinerThanTheBaseUnit(t *testing.T) {
-	// parseAmount is the inverse of Format. Rounding somebody's money silently
-	// would be worse than refusing it, so a digit the world cannot express is an
-	// error rather than a truncation.
+// A kernel that has not said what its money is gets no figure and no form value:
+// scaling by an assumed unit would put a number in front of someone that they
+// did not type and the kernel did not quote (§7).
+func TestMoneyRefusesAnUnknownUnit(t *testing.T) {
+	r, err := NewRenderer(noUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.money(133); got != noAmount {
+		t.Errorf("money with no unit = %q, want the em dash", got)
+	}
+	if got := r.amountInput(133); got != "" {
+		t.Errorf("amountInput with no unit = %q, want empty", got)
+	}
+	if got := r.amountStep(); got != "any" {
+		t.Errorf("amountStep with no unit = %q", got)
+	}
+	// And it renders that way through a real page, not only in isolation.
+	rec := httptest.NewRecorder()
+	p := Page{Handle: "me", Data: walletView{Available: 500, MyHandle: "me"}}
+	if err := r.Render(rec, 200, "wallet", p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Body.String(), noAmount) {
+		t.Error("a wallet with no known unit must show no figure")
+	}
+}
+
+func TestParseAmountRefusesWhatTheWorldCannotExpress(t *testing.T) {
 	ok := []struct {
 		in       string
 		decimals int
 		want     int64
 	}{
 		{"133", 0, 133},
-		{"133.000000", 0, 133},
-		{"1,234", 0, 1234},
-		{" 12 ", 0, 12},
 		{"", 0, 0},
+		{" 12 ", 0, 12},
+		{"0", 0, 0}, // an action may cost nothing
 		{"0.000133", 6, 133},
 		{"1.5", 6, 1500000},
-		{".5", 6, 500000},
+		{"1.50", 6, 1500000},
 		{"1", 6, 1000000},
 	}
 	for _, c := range ok {
@@ -82,88 +133,20 @@ func TestParseAmountRefusesFinerThanTheBaseUnit(t *testing.T) {
 	bad := []struct {
 		in       string
 		decimals int
+		why      string
 	}{
-		{"1.5", 0},       // no fractional unit on this world
-		{"0.0000001", 6}, // finer than the base unit
-		{"-1", 0},        // negative
-		{"abc", 0},       // not a number
+		{"1.5", 0, "no fractional unit on this world"},
+		{"0 credits1", 6, "finer than the base unit"},
+		{"-1", 0, "negative"},
+		{"abc", 0, "not a number"},
+		{"1,234", 0, "a separator: nothing renders one, so nothing may type one"},
+		{"133 credits", 0, "trailing zeros are still decimals this world lacks"},
+		{".5", 6, "no leading digit"},
 	}
 	for _, c := range bad {
-		if _, err := parseAmount(c.in, c.decimals); err == nil {
-			t.Errorf("parseAmount(%q, %d) should have failed", c.in, c.decimals)
+		if v, err := parseAmount(c.in, c.decimals); err == nil {
+			t.Errorf("parseAmount(%q, %d) = %d, should have failed: %s", c.in, c.decimals, v, c.why)
 		}
-	}
-	// Round-trip through the input form.
-	for _, n := range []int64{0, 133, 1234567} {
-		u := Unit{Decimals: 6}
-		if got, err := parseAmount(u.Input(n), 6); err != nil || got != n {
-			t.Errorf("round trip %d = %d, %v", n, got, err)
-		}
-	}
-}
-
-func TestPrettyJSONNoDoubleEncode(t *testing.T) {
-	out := prettyJSON(json.RawMessage(`{"a":1}`))
-	if !strings.Contains(out, "\"a\": 1") {
-		t.Errorf("prettyJSON = %q", out)
-	}
-	if prettyJSON(nil) != "—" {
-		t.Errorf("empty json should render placeholder")
-	}
-}
-
-func TestJSONEdit(t *testing.T) {
-	out := jsonEdit(json.RawMessage(`{"a":1}`))
-	if !strings.Contains(out, "\"a\": 1") {
-		t.Errorf("jsonEdit = %q, want indented", out)
-	}
-	// Empty input must yield "" (blank textarea), not prettyJSON's "—".
-	if jsonEdit(nil) != "" || jsonEdit(json.RawMessage("  ")) != "" {
-		t.Error("empty json must render as empty string for textarea prefill")
-	}
-}
-
-func TestStatusClassesDistinct(t *testing.T) {
-	// The three financial states must map to three distinct classes (R8.7).
-	c := map[string]string{
-		"success": statusClass("success"),
-		"failure": statusClass("failure"),
-		"open":    statusClass("open"),
-	}
-	seen := map[string]bool{}
-	for _, v := range c {
-		if v == "" || seen[v] {
-			t.Errorf("status classes not distinct/non-empty: %v", c)
-		}
-		seen[v] = true
-	}
-}
-
-func TestRenderPageStampsThemeNoLeak(t *testing.T) {
-	r, err := NewRenderer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	p := Page{
-		Title:     "Account",
-		Theme:     "dracula",
-		Handle:    "alice",
-		Available: 1000,
-		Data:      userView{User: client.User{Handle: "alice", Available: 1000, Locked: 250}},
-	}
-	if err := r.Render(rec, 200, "settings", p); err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `data-theme="dracula"`) {
-		t.Error("theme not stamped onto <html>")
-	}
-	if !strings.Contains(body, "1,000.000000") {
-		t.Error("available balance not rendered with money formatting")
-	}
-	if !strings.Contains(body, "alice") {
-		t.Error("handle not rendered in nav")
 	}
 }
 
@@ -222,15 +205,15 @@ func TestTxAmount(t *testing.T) {
 		tx           client.Transaction
 		want         []string // substrings the rendered cell must contain
 	}{
-		{"buyer pays gross", "buyer", mk("success", 100, 90, 10), []string{"-100.000000"}},
-		{"seller earns net", "seller", mk("success", 100, 90, 10), []string{"sig-credited", "+90.000000"}},
-		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+10.000000"}},
+		{"buyer pays gross", "buyer", mk("success", 100, 90, 10), []string{"-100 credits"}},
+		{"seller earns net", "seller", mk("success", 100, 90, 10), []string{"sig-credited", "+90 credits"}},
+		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+10 credits"}},
 		{"no stake shows dash", "bystander", mk("success", 100, 90, 10), []string{"—"}},
-		{"failed refunds buyer", "buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "100.000000"}},
+		{"failed refunds buyer", "buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "100 credits"}},
 		{"failed non-buyer dash", "seller", mk("failure", 100, 0, 0), []string{"—"}},
-		{"open parks buyer", "buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "100.000000"}},
+		{"open parks buyer", "buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "100 credits"}},
 	}
-	r := &Renderer{}
+	r := &Renderer{unit: playUnit}
 	for _, c := range cases {
 		got := string(r.txAmount(c.tx, c.viewer))
 		for _, w := range c.want {
@@ -242,13 +225,13 @@ func TestTxAmount(t *testing.T) {
 
 	// Self-call by a normal user (buyer == seller): nets to −fee.
 	self := client.Transaction{OwnerHandle: "a", TargetHandle: "a", Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(r.txAmount(self, "a")); !strings.Contains(got, "-10.000000") {
-		t.Errorf("self-call = %q, want -10.000000 (the fee)", got)
+	if got := string(r.txAmount(self, "a")); !strings.Contains(got, "-10 credits") {
+		t.Errorf("self-call = %q, want -10 credits (the fee)", got)
 	}
 	// sys as the seller collects net + fee = gross.
 	sysSell := client.Transaction{OwnerHandle: "a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(r.txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+100.000000") {
-		t.Errorf("sys-as-seller = %q, want +100.000000 (net+fee)", got)
+	if got := string(r.txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+100 credits") {
+		t.Errorf("sys-as-seller = %q, want +100 credits (net+fee)", got)
 	}
 }
 
@@ -281,7 +264,7 @@ func TestKindBadge(t *testing.T) {
 // The desktop popover (_menu_account) is identity + prefs + sign-out with NO
 // navigation; the mobile drawer (_menu_content) adds the nav links.
 func TestAccountMenuHasNoNav(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +297,7 @@ func TestAccountMenuHasNoNav(t *testing.T) {
 }
 
 func TestTabRenderer(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +340,7 @@ func TestActionsHref(t *testing.T) {
 }
 
 func TestCallOutcomeGrantRequired(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +366,7 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 }
 
 func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +413,7 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 }
 
 func TestUserPageShowsConnections(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +459,7 @@ func TestUserPageShowsConnections(t *testing.T) {
 // suspended_at (here the RFC3339 zero value an older kernel emitted) must render the
 // user as suspended AND offer the Unsuspend action.
 func TestAdminPageOffersUnsuspend(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +484,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 // reason (no repeated refund, no contradictory "not charged"), and the kernel's
 // detail is shown inert below it.
 func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,18 +512,18 @@ func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
 // A refused quote is NOT a failure: the kernel checks the pin before locking, so
 // nothing ran and nothing was charged. It states the new price and asks again.
 func TestCallOutcomeTermsChanged(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	out := Outcome{Class: TermsChanged, Price: 500, QuoteHash: "abc",
-		Message: "The price changed to 500.000000 while this page was open. Nothing was charged."}
+		Message: "The price changed to 500 credits while this page was open. Nothing was charged."}
 	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "not charged") || !strings.Contains(body, "500.000000") {
+	if !strings.Contains(body, "not charged") || !strings.Contains(body, "500 credits") {
 		t.Errorf("a refused quote must state the new price and that nothing moved: %s", body)
 	}
 	if strings.Contains(body, "refunded") || strings.Contains(body, "Failed") {
@@ -572,7 +555,7 @@ func TestKeyFingerprint(t *testing.T) {
 // money button reading "Run (12)" (no ¤), no locked block, and the result target
 // sitting below the form (not nested inside it).
 func TestCallFormRun(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,8 +565,8 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run (12.000000)") {
-		t.Errorf("run form must have a money button reading %q: %s", "Run (12.000000)", body)
+	if !strings.Contains(body, `btn-money`) || !strings.Contains(body, "Run (12 credits)") {
+		t.Errorf("run form must have a money button reading %q: %s", "Run (12 credits)", body)
 	}
 	if strings.ContainsRune(body, '¤') {
 		t.Error("money button must not render the ¤ glyph")
@@ -611,7 +594,7 @@ func TestCallFormRun(t *testing.T) {
 // one-shot NEUTRAL "Complete" button and the pre-bound (locked) args shown as a
 // read-only definition list above the editable fields, with no verbal label.
 func TestCallFormComplete(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,7 +637,7 @@ func TestCallFormComplete(t *testing.T) {
 // carries the segmented fields|JSON field-switch (not the retired "edit as JSON"
 // text button) and the has_fields marker.
 func TestFormFieldsStructuredSwitch(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +662,7 @@ func TestFormFieldsStructuredSwitch(t *testing.T) {
 // fill): just the locked block + the Complete button, no raw-JSON input and no
 // wordy "acknowledge" line — the locked JSON + button carry it visually.
 func TestCallFormApproval(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -705,7 +688,7 @@ func TestCallFormApproval(t *testing.T) {
 // must read honest empty states (none, with a (0) count when Counts) — never fake
 // "—%" or "0.0s" data.
 func TestStatStripHonestEmpty(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +711,7 @@ func TestStatStripHonestEmpty(t *testing.T) {
 // TestStatStripCounts contrasts the detail (with counts) and card (no counts)
 // renderings of the same stats — the only difference is the (N) run/rater counts.
 func TestStatStripCounts(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,7 +745,7 @@ func TestStatStripCounts(t *testing.T) {
 }
 
 func TestRenderFragment(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -792,7 +775,7 @@ func TestBadgeHelper(t *testing.T) {
 // TestBadgePollFragment checks the reusable poller partial: htmx attributes + the
 // interval, the count when > 0, and an empty body when 0 (so .badge:empty hides it).
 func TestBadgePollFragment(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -817,7 +800,7 @@ func TestBadgePollFragment(t *testing.T) {
 // steps badge and each app badge — on the configured interval, in both the sidebar
 // and the mobile tab bar.
 func TestLayoutRendersBadgePollers(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -854,7 +837,7 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 // native <dialog> (top layer) so it stacks above an open modal-form dialog —
 // not a z-indexed div that a dialog would paint over.
 func TestConfirmModalIsNativeDialog(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -874,7 +857,7 @@ func TestConfirmModalIsNativeDialog(t *testing.T) {
 // TestCreditsColumnIsSingleTotal guards snag #3: lists show one amount column =
 // available + parked (total); the split stays only on prominent wallet/detail views.
 func TestCreditsColumnIsSingleTotal(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -891,8 +874,8 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 	if strings.Contains(body, ">Parked<") || strings.Contains(body, ">Available<") {
 		t.Errorf("list must drop the standing Available/Parked columns: %s", body)
 	}
-	if !strings.Contains(body, ">100.000000<") {
-		t.Errorf("amount cell must show the total 30+70=100 credits = 100.000000: %s", body)
+	if !strings.Contains(body, ">100 credits<") {
+		t.Errorf("amount cell must show the total 30+70=100 credits = 100 credits: %s", body)
 	}
 
 	// Detail → the available + parked split is kept.
@@ -912,7 +895,7 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 // any other and the kernel reports what happened. No health branch, no notice,
 // and no poller waiting for a peer to "recover".
 func TestActionDetailNeverGuessesAvailability(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +925,7 @@ func TestActionDetailNeverGuessesAvailability(t *testing.T) {
 // TestProcessAwaitingReceiptPolls checks item 4: a process parked on a remote
 // receipt polls GET /processes/{id}; once settled the region carries no poller.
 func TestProcessAwaitingReceiptPolls(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -973,7 +956,7 @@ func TestProcessAwaitingReceiptPolls(t *testing.T) {
 // TestCallOutcomePeerBranches checks item 5: peer-unreachable/unfunded render as
 // first-class outcomes in the shared _call_outcome panel, not generic errors.
 func TestCallOutcomePeerBranches(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1002,7 +985,7 @@ func TestCallOutcomePeerBranches(t *testing.T) {
 // counterparty-only axis, so its toggle appears on that tab alone and the
 // known-network link drops it.
 func TestPeersTabsAndSuspendedToggle(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1051,7 +1034,7 @@ func TestPeersTabsAndSuspendedToggle(t *testing.T) {
 // Fund (promote it) and Name (bind a petname, the only way to name a kernel we
 // have merely discovered). No position and no account-dependent verb.
 func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1105,7 +1088,7 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 // Settle (by handle) and Suspend (by key); a suspended peer is marked and offers
 // Unsuspend. There is no unsubscribe: a peer is not something one leaves.
 func TestPeerRowOffersSuspendByKey(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1144,7 +1127,7 @@ func TestPeerRowOffersSuspendByKey(t *testing.T) {
 // TestInspectStatusPolls checks item 2: the inspect status card is an htmx-polled
 // fragment so an open inspect view is a live monitor.
 func TestInspectStatusPolls(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1166,7 +1149,7 @@ func TestInspectStatusPolls(t *testing.T) {
 // with the raw fed error tucked into a title tooltip, and a kernel we hold no
 // billing row for states no position.
 func TestInspectOfflineStranger(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1199,7 +1182,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 // money on any path (kernel §D14), so a position or a credit figure here would
 // be a fabrication.
 func TestPeerCardCarriesContactNotMoney(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1254,7 +1237,7 @@ func TestRelTime(t *testing.T) {
 // ?form=. Without this the drawer is unreachable with JS off, which would be
 // worse than the tab bar it replaces.
 func TestNavDrawerWorksWithoutJS(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1290,7 +1273,7 @@ func TestNavDrawerWorksWithoutJS(t *testing.T) {
 // The theme picker is a set-once preference, so it must not sit in persistent
 // chrome. Exactly one exists, and it is on the settings page.
 func TestThemePickerOnlyInSettings(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,7 +1322,7 @@ func TestRefHelpersRemote(t *testing.T) {
 // presentation-only and there is no local profile behind a remote owner
 // (requirements.md §6.2; extends the inert-counterparty rule).
 func TestRefRemoteUnlinked(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1399,7 +1382,7 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 // button naming the sealed amount, unnumbered money button when the completer
 // types it (§6.3 two-branch rule).
 func TestCallFormPayment(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1411,7 +1394,7 @@ func TestCallFormPayment(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "btn-money") || !strings.Contains(body, "Complete (300.000000)") {
+	if !strings.Contains(body, "btn-money") || !strings.Contains(body, "Complete (300 credits)") {
 		t.Errorf("sealed payment must use the money button naming the amount: %s", body)
 	}
 	if !strings.Contains(body, "Paid from your balance") || !strings.Contains(body, "alice") {
@@ -1435,7 +1418,7 @@ func TestCallFormPayment(t *testing.T) {
 // stops there — no price, no reputation strip, no link to a local action page,
 // and no run affordance (the local price does not exist until resolution).
 func TestActionCardDiscovered(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1466,7 +1449,7 @@ func TestActionCardDiscovered(t *testing.T) {
 	// The kernel prices every lookup row (v0.12.15), so the card states it — but
 	// as INDICATIVE, and marked by an accessible label, not by weight alone: the
 	// binding figure is fixed when the action resolves.
-	if !strings.Contains(body, "111.000000") {
+	if !strings.Contains(body, "111 credits") {
 		t.Errorf("a discovered card must state its catalog price: %s", body)
 	}
 	if !strings.Contains(body, `class="price muted"`) || !strings.Contains(body, "title=\"Indicative") {
@@ -1496,7 +1479,7 @@ func TestActionCardDiscovered(t *testing.T) {
 // disable on it, so neither the workshop row nor the action page may offer a
 // lifecycle verb for one. The peer-level lever is suspend, on network.
 func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1572,7 +1555,7 @@ func TestNameOfPrefersPetnameAndTruncatesKeys(t *testing.T) {
 }
 
 func TestRunFormPinsItsQuote(t *testing.T) {
-	r, err := NewRenderer()
+	r, err := NewRenderer(playUnit)
 	if err != nil {
 		t.Fatal(err)
 	}

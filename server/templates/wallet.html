@@ -7,7 +7,7 @@
 <div class="balances">
   <div class="balance">
     <div class="amount mono">{{money .Data.Available}}</div>
-    <div class="label">available{{if unit}} · {{unit}}{{end}}</div>
+    <div class="label">available</div>
   </div>
   <div class="balance">
     <div class="amount mono sig-escrow">{{money .Data.Locked}}</div>
@@ -94,8 +94,8 @@
       <input type="hidden" name="id" value="{{.Data.WithdrawalID}}">
       <div class="field">
         <label for="wd-amt">Amount<span class="req">*</span></label>
-        <p class="help">Paid to {{.Data.MyAddress}}{{if unit}} in {{unit}}{{end}}.</p>
-        <input id="wd-amt" name="amount" type="number" min="0" step="0.000001" required class="input-sm">
+        <p class="help">Paid to {{.Data.MyAddress}}.</p>
+        <input id="wd-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
       </div>
       <div class="field"><label for="wd-why">Reason (optional)</label><input id="wd-why" name="reason" type="text"></div>
       <div class="cluster">
