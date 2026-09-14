@@ -19,10 +19,15 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="layout">
+    {{/* The brand names the kernel AND the world it serves. A kernel serves one
+         world for life, and the world decides what the money on every screen is:
+         whether it can leave, and what it is worth. Naming it once, where the
+         interface names itself, is what keeps a rehearsal and a live market from
+         looking alike (§7). Both are the kernel's own /health fields. */}}
     {{if .Handle}}
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/browse"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}</span></a>
+        <a class="brand" href="/browse"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
@@ -84,7 +89,7 @@
       {{if .Handle}}
       <dialog id="nav-drawer" class="drawer" aria-label="Navigation"{{if .MenuOpen}} open{{end}}>
         <div class="modal-head">
-          <span class="brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}</span></span>
+          <span class="brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></span>
           <a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a>
         </div>
         <div class="drawer-body">{{template "_menu_content" .}}</div>

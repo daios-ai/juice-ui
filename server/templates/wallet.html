@@ -16,15 +16,17 @@
 </div>
 {{/* Where money comes in, and where it goes out, differ by world: a world whose
      money has no addresses has nothing to send from a user's side, and the
-     operator records payments instead (kernel §D23). */}}
+     operator records payments instead (kernel §D23). The world is named in the
+     sentence, because that is the fact deciding whether this balance can leave
+     at all — and the one thing a person cannot read off the figure (§7). */}}
 {{if .Data.HasRail}}
-<p class="card-note">Paid in at <span class="mono">{{.Data.KernelAddress}}</span>{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
+<p class="card-note">On {{.KernelNet}}, paid in at <span class="mono">{{.Data.KernelAddress}}</span>{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
 <div class="row control-row">
   {{if .Data.MyAddress}}<a class="btn-quiet" href="/wallet?form=withdraw" data-modal="form-withdraw">+ withdraw</a>{{end}}
   <a class="btn-quiet" href="/wallet?form=address" data-modal="form-address">{{if .Data.MyAddress}}change your address{{else}}+ register your address{{end}}</a>
 </div>
 {{else}}
-<p class="card-note">Deposits are recorded by the operator.</p>
+<p class="card-note">On {{.KernelNet}}, money is recorded by the operator and does not leave.</p>
 {{end}}
 
 <div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>

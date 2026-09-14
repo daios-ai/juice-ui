@@ -133,6 +133,13 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   back to mono; components never assume one or the other — they use the token.)
 - **Scale:** `h1 1.4rem` · `h2 1.1rem` · `h3 1rem` · body `.9rem/14px` ·
   `.small .85rem` · `.tiny .8rem`. Headings carry slight `letter-spacing`.
+- **The brand names the kernel and its world** (`.brand` + `.brand .world`), in
+  both renderings of the nav — sidebar and mobile drawer. A kernel serves one
+  world for life, and the world decides what the money on every screen is:
+  whether it can leave, and what it is worth. The symbol on an amount does not
+  say that — `credits` is not "not redeemable" — so without this a person cannot
+  tell a rehearsal from a live market. Both halves are `/health` fields, stated
+  and not judged: the UI never labels a world play or real, it names it.
 - **Titles are lowercase group nouns** on **both** index and detail pages:
   `browse · inbox · workshop · wallet · you · network · admin`. A **detail** page
   opens with the sticky **crumb** (`← group` back-link + record identity) above

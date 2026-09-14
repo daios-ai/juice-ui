@@ -3,7 +3,15 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** Two invariants the UI already stated were not
+> **What changed in 0.8.0.** The world is named wherever the interface names
+> itself (§7): the brand states the kernel and its world, and the wallet's
+> pay-in sentence names the world whose rule it is stating. A kernel serves
+> one world for life and the world decides whether the money on screen can
+> leave; the symbol does not say that, so without it a rehearsal and a live
+> market look alike. Both facts come from `/health`, and the UI judges
+> neither.
+>
+> Two invariants the UI already stated were not
 > actually held, and both are enforced now. An app that acts on the UI host is
 > an operator surface (§5, apps): `apps/agents` writes the installation's files
 > and spawns a daemon, yet gated only on a session, so any account could edit
@@ -1059,14 +1067,14 @@ symmetry, but because the kernel refuses anything else.
 
 **Rename.**
 
-* One modal on the target's own detail page
-  (`POST /control/users/{target}/rename`, body field `new_name` for both
-  namespaces), reached from `admin`, from a counterparty's name, and from
-  **Name** on a discovered kernel. The detail page MUST render whichever of the
-  two disjoint records the kernel returns — a user carries a handle and
-  balances, a kernel carries the petname model and its sync cache, and holds
-  balances only once it has an account — never one shape padded with the
-  other's empty fields.
+* One modal on the target's own detail page, in the namespace that target
+  belongs to: a user at `POST /v1/admin/users/{handle}/rename`, reached from
+  `admin`; a kernel at `POST /v1/admin/peers/{key}/rename`, reached from the
+  inspect page, from a counterparty's name and from **Name** on a discovered
+  kernel. The body field is `new_name` in both. There is no shared form, because
+  the kernel refuses a target of the other kind and a shared form would have to
+  guess what the kernel declines to guess. Each detail page therefore renders
+  one record shape, never one padded with the other's empty fields.
 * Its disclosure MUST state the consequence beside the field, and the two
   consequences differ: renaming a **user** frees the old handle and carries
   every reference to the new one; naming a **kernel** binds a petname here,
@@ -1128,6 +1136,17 @@ retry affordance, and no successor page — there is no state left to represent.
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
+
+  **The world is named wherever the interface names itself.** The chrome states
+  the kernel's handle and the world it serves, on every page, because a kernel
+  serves one world for life and the world decides what every figure on screen
+  is: whether the money can leave, and what it is worth. A symbol does not carry
+  that — `credits` is not "not redeemable" — so a person who never sees the
+  world cannot tell a rehearsal from a live market, which is the one thing the
+  money surfaces exist to make legible. The balance view names it again in the
+  pay-in sentence, where the consequence is (§6.5). Both the world's name and
+  whether its money has addresses are `/health` facts: the UI states them and
+  judges neither, never labelling a world play or real.
 
   **The unit is the world's, and the kernel renders it.** Every amount on the
   wire is an integer in the base unit of the world this kernel serves, and only
@@ -1371,10 +1390,11 @@ once its prerequisite is confirmed on the running kernel.
   can be named. The name is still bare and carries no owner, so a peer action is
   not an addressable ref and shows no reputation. Evidence `notes` remains
   unverified and unrendered.
-* **Credit position (§6.6).** Confirmed on v0.14.0: `/control/identity` serves
-  `exposure` against `credit_limit`, the three bps rates and the ticket face, the
-  `sys` split, `solvency`, `custody`, `rail_address`, `finalized` and an optional
-  `stop`. The kernel card states them.
+* **Credit position (§6.6).** Re-confirmed on 25c07cd, now at
+  `GET /v1/admin/kernel`: `exposure` against `credit_limit`, the three bps
+  rates, the ticket face and `lottery_max`, the `sys` split, `solvency`,
+  `custody`, `rail_address`, `finalized` and an optional `stop`. The kernel card
+  states them.
 * **Withdrawals and payout addresses (§6.5).** Confirmed on v0.14.0:
   `POST /v1/withdrawals {id, amount}` with a caller-minted UUID (a replay returns
   the same row), `GET /v1/withdrawals`, and `PUT /v1/me/address {address,

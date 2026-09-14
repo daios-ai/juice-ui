@@ -572,3 +572,23 @@ func TestChipsAreOneLetterOrOneIcon(t *testing.T) {
 		}
 	}
 }
+
+// The world is named wherever the interface names itself. A kernel serves one
+// world for life, and the world decides what the money on every screen is:
+// whether it can leave, and what it is worth. The symbol alone does not say it —
+// "credits" is not "not redeemable" — so a person who never sees the world
+// cannot tell a rehearsal from a live market (§7).
+func TestChromeNamesTheWorld(t *testing.T) {
+	b, err := fs.ReadFile(tmplFS, "templates/layout.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	// Both renderings of the one nav model: the sidebar and the mobile drawer.
+	if n := strings.Count(body, "{{.KernelNet}}"); n != 2 {
+		t.Errorf("the brand names the world in both renderings; found %d", n)
+	}
+	if !strings.Contains(body, `<span class="world">`) {
+		t.Error("the world renders through the named class, never ad hoc (§2)")
+	}
+}
