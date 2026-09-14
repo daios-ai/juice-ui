@@ -37,7 +37,7 @@
 <div class="table-scroll">
 <table>
   <thead><tr><th>tx</th><th>action</th><th>role</th><th class="money">amount</th><th>status</th><th>when</th></tr></thead>
-  <tbody>{{range $d.Activity}}{{template "_tx_row" (txrow . $h nil)}}{{end}}</tbody>
+  <tbody>{{range $d.Activity}}{{template "_tx_row" (txrow . $h $d.Actions)}}{{end}}</tbody>
 </table>
 </div>
 {{else}}<p class="muted">Nothing yet.</p>{{end}}

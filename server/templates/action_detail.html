@@ -28,7 +28,9 @@
      beside the button. */}}
 {{if $d.Proposed}}
 <div class="banner banner-info" role="status">Chosen for you. Check it before you run it.</div>
-{{if $d.ProposedMessage}}<pre class="json">{{$d.ProposedMessage}}</pre>{{end}}
+{{/* The model's own words are counterparty prose, not a kernel-vouched fact:
+     ordinary prose, inert, never the provenance face (§3). */}}
+{{if $d.ProposedMessage}}<p class="muted">{{$d.ProposedMessage}}</p>{{end}}
 {{end}}
 
 <h2>Run</h2>

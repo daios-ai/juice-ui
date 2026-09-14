@@ -97,6 +97,17 @@ func (o Outcome) IsTermsChanged() bool { return o.Class == TermsChanged }
 // IsSuccess reports a successful call outcome (template helper).
 func (o Outcome) IsSuccess() bool { return o.Class == Success }
 
+// Reason is why a call did not succeed, in the kernel's own words: its raw
+// message where there is one, else the sentence the UI derived from the class.
+// One definition, because two call sites reading "Detail, else Message" are two
+// chances to disagree about what a failure said.
+func (o Outcome) Reason() string {
+	if o.Detail != "" {
+		return o.Detail
+	}
+	return o.Message
+}
+
 // IsFailed reports a failed-but-refunded call outcome (template helper).
 func (o Outcome) IsFailed() bool { return o.Class == Failed }
 

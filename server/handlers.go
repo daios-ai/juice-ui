@@ -191,24 +191,6 @@ type transactionsView struct {
 	Pager        Pager
 }
 
-// actionsByID fetches each transaction's action once (deduped) so lists can
-// render the full owner/name ref and link it. Deleted actions (404) are simply
-// absent from the map; the row falls back to the bare id.
-func (s *Server) actionsByID(ctx context.Context, tok string, txs []client.Transaction) map[string]client.Action {
-	actions := map[string]client.Action{}
-	seen := map[string]bool{}
-	for _, tx := range txs {
-		if tx.ActionID == "" || seen[tx.ActionID] {
-			continue
-		}
-		seen[tx.ActionID] = true
-		if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
-			actions[tx.ActionID] = a
-		}
-	}
-	return actions
-}
-
 type txView struct {
 	Tx         client.Transaction
 	Action     *client.Action // nil if action not found (soft-deleted)
@@ -770,52 +752,39 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
-			// Price sorts the whole catalog before the page is cut, since it
-			// needs nothing but the rows already in hand. Rating needs stats,
-			// which are one read per row, so it sorts the page — ordering the
-			// whole catalog by it would read the stats of every action to show
-			// twenty.
 			cards := make([]actionCardView, len(cat))
 			for i, a := range cat {
 				cards[i] = actionCardView{Action: a, NeedsConnect: needsConnect(a, granted)}
 			}
-			if order == sortPrice {
-				sortCards(cards, order)
+			// A sort orders the WHOLE catalog, then the page is cut from it.
+			// Ordering only the page would answer a different question than the
+			// one asked — the best-rated action could sit on page two while page
+			// one claimed to be sorted by rating — and nothing on screen would
+			// say so. Rating therefore costs a stats read per row, which is why
+			// it is paid only when that sort is asked for.
+			if order == sortRating {
+				s.fetchStats(ctx, tok, cards)
 			}
+			sortCards(cards, order)
 			start, end, hasNext := pageSlice(len(cards), offset, pageSize)
 			cards = cards[start:end]
 			view.Pager = pageNav(r, offset, pageSize, hasNext)
-			var wg sync.WaitGroup
-			for i := range cards {
-				wg.Add(1)
-				go func(i int, id string) {
-					defer wg.Done()
-					if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
-						cards[i].Stats = &st
-					}
-				}(i, cards[i].Action.ID)
-			}
-			wg.Wait()
-			if order == sortRating {
-				sortCards(cards, order)
-			}
+			s.fetchStats(ctx, tok, cards)
 			view.Catalog = cards
 			return nil
 		}
+		view.CanPropose = s.nativeOffered(ctx, tok, decideRef)
 		// Semantic search runs sys/lookup. A native's price is the OPERATOR's
 		// configuration, not a constant (measured: a kernel booted with
 		// native.lookup.price = 7 serves 7 on the row and charges it), and a
 		// search is a page load — so running it unchecked would make a GET spend,
 		// which §8.2 forbids outright. Read the price first and degrade instead.
-		// The planner is offered only where it is there and free; the price read
-		// is the same guard search makes of its own native (§8.2).
-		if planner, _, e := s.client.ResolveRef(ctx, tok, decideRef); e == nil && planner.Active && planner.Price == 0 {
-			view.CanPropose = true
-		}
-		priced, _ := s.nativeIsPriced(ctx, tok, "sys/lookup")
+		// Only the price is read: whether it works at all is discovered by
+		// running it and reporting what happened, never guessed.
+		priced := s.nativeIsPriced(ctx, tok, lookupRef)
 		var out Outcome
 		if !priced {
-			o, e := s.caller.Run(ctx, tok, "sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}), "")
+			o, e := s.caller.Run(ctx, tok, lookupRef, mustArgs(map[string]any{"query": q, "limit": 20}), "")
 			if e != nil {
 				return e
 			}
@@ -833,10 +802,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			case priced:
 				view.Reason = "Semantic search is priced on this kernel."
 			default:
-				view.Reason = out.Detail
-				if view.Reason == "" {
-					view.Reason = out.Message
-				}
+				view.Reason = out.Reason()
 			}
 			cat, e := s.client.ListActions(ctx, tok, "", "", false, 0, 0)
 			if e != nil {
@@ -912,7 +878,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		// A preview only — the most recent 10; "Full transaction ledger →" links
 		// to the rest. Capped kernel-side via ?limit rather than fetching all.
 		view.Transactions, _ = s.client.ListTransactions(ctx, tok, "", 10)
-		view.Actions = s.actionsByID(ctx, tok, view.Transactions)
+		view.Actions = s.client.ActionsByID(ctx, tok, view.Transactions)
 		procs, _ := s.client.ListProcesses(ctx, tok)
 		view.OpenProcesses = filterStatus(procs, "open", true)
 		return nil
@@ -1225,6 +1191,13 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 		view.Proposed, view.ProposedMessage = true, proposal.Message
 		for i := range view.Form.Fields {
 			view.Form.Fields[i].Value = proposal.Args[view.Form.Fields[i].Name]
+		}
+		// The raw-JSON box carries the proposal too. It is the only input where
+		// the schema is unusable, and it is one toggle away everywhere else — so
+		// filling only the fields would drop the proposal silently for one action
+		// and lose it on a switch for every other.
+		if raw := proposal.Raw(); raw != "" {
+			view.Form.Example = raw
 		}
 	}
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
@@ -1815,7 +1788,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		txs, _ := s.client.ListTransactions(ctx, tok, "", 10)
 		entries, _ := s.client.Ledger(ctx, tok, 10, 0)
 		view.Activity = mergeActivity(txs, entries, 10)
-		view.Actions = s.actionsByID(ctx, tok, txs)
+		view.Actions = s.client.ActionsByID(ctx, tok, txs)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1923,7 +1896,7 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		view.BadgeSecs = s.badgeSecs()
 		if txs, e := s.client.ListTransactions(ctx, tok, id, 0); e == nil {
 			view.Transactions = txs
-			view.Actions = s.actionsByID(ctx, tok, txs)
+			view.Actions = s.client.ActionsByID(ctx, tok, txs)
 		}
 		return nil
 	})
@@ -1974,7 +1947,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		start, end, more := pageSlice(len(all), offset, pageSize)
 		hasNext = more
 		txs = all[start:end]
-		actions = s.actionsByID(ctx, tok, txs)
+		actions = s.client.ActionsByID(ctx, tok, txs)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -2353,21 +2326,29 @@ func signupErrorMessage(err error) string {
 	return "Could not create the account. Please check your details and try again."
 }
 
-// nativeIsPriced reports whether a native the UI runs to POWER A SURFACE costs
-// money on this kernel. Every native's price is operator configuration — the
-// shipped defaults are policy, not contract — so a kernel may price sys/lookup
-// or sys/llm/decide, and a search that ran one unchecked would spend on a page
-// load (§8.2: no spend from a list view or a GET). The price is served on the
-// ordinary action row, so it is read rather than assumed.
-//
-// This governs only the natives the UI runs on a person's behalf without asking.
-// An action a person chooses to run is priced and confirmed like any other.
-func (s *Server) nativeIsPriced(ctx context.Context, token, ref string) (bool, error) {
+// The natives the UI runs on a person's behalf to POWER A SURFACE: search ranks
+// with one, the proposal chooses with another. Both are read before they are
+// run, because every native's price is operator configuration — the shipped
+// defaults are policy, not contract — and one run unasked would spend from a
+// page nobody confirmed (§8.2). An action a person chooses to run is unaffected:
+// it is priced and confirmed like any other.
+const lookupRef = "sys/lookup"
+
+// nativeIsPriced reports that running this native would cost the caller money.
+// A native that cannot be read at all is not reported as priced: whether it
+// works is discovered by running it and reporting what happened.
+func (s *Server) nativeIsPriced(ctx context.Context, token, ref string) bool {
 	a, ok, err := s.client.ResolveRef(ctx, token, ref)
-	if err != nil || !ok {
-		return false, err
-	}
-	return a.Price > 0, nil
+	return err == nil && ok && a.Price > 0
+}
+
+// nativeOffered reports that a command driven by this native may be shown at
+// all: it is here, it is callable, and it is free. The stricter test is for an
+// affordance rather than a fallback — a doomed run is never offered (§5.5), and
+// a priced one would spend without a confirm.
+func (s *Server) nativeOffered(ctx context.Context, token, ref string) bool {
+	a, ok, err := s.client.ResolveRef(ctx, token, ref)
+	return err == nil && ok && a.Active && a.Price == 0
 }
 
 // upstreamAuth builds the write-only credential configuration from the shared
@@ -2437,11 +2418,12 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 	}
 	var chosen, message string
 	var args map[string]string
+	var raws map[string]json.RawMessage
 	err := s.sessions.Do(ctx, func(tok string) error {
 		// The same guard as search: a native the UI runs on a person's behalf is
 		// read for its price first, since a priced one would spend from a page
 		// they did not confirm (§8.2).
-		if priced, _ := s.nativeIsPriced(ctx, tok, decideRef); priced {
+		if s.nativeIsPriced(ctx, tok, decideRef) {
 			return errPricedPlanner
 		}
 		out, e := s.caller.Run(ctx, tok, decideRef, mustArgs(map[string]any{
@@ -2454,9 +2436,9 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 		if !out.IsSuccess() {
 			// The kernel's own reason, not a guess: it may have no model
 			// configured, or the model may have chosen nothing.
-			return fmt.Errorf("%s", firstNonEmpty(out.Detail, out.Message))
+			return fmt.Errorf("%s", out.Reason())
 		}
-		chosen, args, message = parseDecision(out.Result)
+		chosen, args, raws, message = parseDecision(out.Result)
 		return nil
 	})
 	if err != nil {
@@ -2484,19 +2466,34 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", capitalize(userMessage(e))+".")
 		return
 	}
-	s.renderAction(w, r, id, &proposal{Args: args, Message: message})
+	s.renderAction(w, r, id, &proposal{Args: args, Raws: raws, Message: message})
 }
 
 // proposal is the planner's choice as the action page renders it: the arguments
 // it proposes, keyed by field name, and anything it said.
 type proposal struct {
 	Args    map[string]string
+	Raws    map[string]json.RawMessage // the same arguments as the kernel sent them
 	Message string
 }
 
-// decideRef is the kernel's planner native. Naming it here is naming a native to
-// POWER a surface, as search names sys/lookup — never a marketplace action given
-// bespoke treatment, which §6.5 forbids.
+// Raw is the proposed arguments as one pretty JSON object, for the raw input
+// box. Built from what the kernel sent rather than from the flattened form
+// values, so a number stays a number and an object stays an object.
+func (p proposal) Raw() string {
+	if len(p.Raws) == 0 {
+		return ""
+	}
+	b, err := json.MarshalIndent(p.Raws, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// decideRef is the kernel's planner. Naming it, like naming lookupRef above, is
+// naming a native to POWER a surface — never a marketplace action given bespoke
+// treatment, which §6.5 forbids.
 const decideRef = "sys/llm/decide"
 
 // errPricedPlanner is the refusal when an operator has priced the planner: the
@@ -2508,14 +2505,14 @@ var errPricedPlanner = errors.New("choosing an action is priced on this kernel")
 // text into an ordinary field, so a scalar prints as itself and an object or
 // array as its JSON — the person edits and submits it like any other input, and
 // the kernel validates it like any other input.
-func parseDecision(result json.RawMessage) (action string, args map[string]string, message string) {
+func parseDecision(result json.RawMessage) (action string, args map[string]string, raws map[string]json.RawMessage, message string) {
 	var d struct {
 		Action  string                     `json:"action"`
 		Args    map[string]json.RawMessage `json:"args"`
 		Message string                     `json:"message"`
 	}
 	if err := json.Unmarshal(result, &d); err != nil {
-		return "", nil, ""
+		return "", nil, nil, ""
 	}
 	args = make(map[string]string, len(d.Args))
 	for k, v := range d.Args {
@@ -2526,17 +2523,7 @@ func parseDecision(result json.RawMessage) (action string, args map[string]strin
 		}
 		args[k] = strings.TrimSpace(string(v))
 	}
-	return d.Action, args, d.Message
-}
-
-// firstNonEmpty returns the first non-empty string, or "".
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
+	return d.Action, args, d.Args, d.Message
 }
 
 // Sort orders for the catalog and for search results. Relevance is what the
@@ -2620,4 +2607,33 @@ func sortHref(r *http.Request, order string) string {
 		return r.URL.Path
 	}
 	return r.URL.Path + "?" + q.Encode()
+}
+
+// fetchStats fills in each card's stats, concurrently but BOUNDED: a catalog
+// sort reads one row per action, and an unbounded fan-out over a large catalog
+// would open a connection per action and answer slower than a sequential read.
+// A card that already has stats is left alone, so paying for the whole catalog
+// and then rendering a page of it costs one pass, not two.
+func (s *Server) fetchStats(ctx context.Context, tok string, cards []actionCardView) {
+	const workers = 8
+	var wg sync.WaitGroup
+	idx := make(chan int)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range idx {
+				if st, e := s.client.ActionStats(ctx, tok, cards[i].Action.ID); e == nil {
+					cards[i].Stats = &st
+				}
+			}
+		}()
+	}
+	for i := range cards {
+		if cards[i].Stats == nil && cards[i].Action.ID != "" && !cards[i].Discovered {
+			idx <- i
+		}
+	}
+	close(idx)
+	wg.Wait()
 }

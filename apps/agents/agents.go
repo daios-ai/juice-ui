@@ -311,9 +311,11 @@ type detailView struct {
 	// not the UI holding somebody else's credential.
 	Account *client.AdminUser
 	// Activity is what this agent has been party to, as the kernel serves it to
-	// the viewer. It is the point of the section: an operator can raise an agent
-	// and, without this, never see what it spends.
+	// the viewer, and Actions resolves each row's action so it renders as a ref
+	// rather than as "(deleted)". It is the point of the section: an operator can
+	// raise an agent and, without this, never see what it spends.
 	Activity []client.Transaction
+	Actions  map[string]client.Action
 }
 
 type statusView struct {
@@ -378,11 +380,12 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 	_, statErr := os.Stat(filepath.Join(dir, configFile))
 	csrf := a.deps.CSRFField(r)
 	open := r.URL.Query().Get("form")
-	account, activity := a.account(r, handle)
+	account, activity, actions := a.account(r, handle)
 	a.deps.RenderPage(w, r, http.StatusOK, "agent", "agents", detailView{
 		Handle:    handle,
 		Account:   account,
 		Activity:  activity,
+		Actions:   actions,
 		Running:   a.sup.running(handle),
 		Persona:   persona,
 		Knowledge: knowledge,
@@ -536,20 +539,26 @@ func agentBin() string {
 // Nothing is computed here. The balance is the kernel's row for that handle and
 // the rows are the transactions it serves this viewer; the page arranges them
 // and states no figure the kernel did not.
-func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []client.Transaction) {
+func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []client.Transaction, map[string]client.Action) {
 	if a.deps.Sessions == nil || a.deps.Client == nil {
-		return nil, nil // no kernel to ask: the section says there is no account
+		return nil, nil, nil // no kernel to ask: the section says there is no account
 	}
 	ctx := r.Context()
 	var acct *client.AdminUser
 	var rows []client.Transaction
+	var actions map[string]client.Action
 	_ = a.deps.Sessions.Do(ctx, func(tok string) error {
 		u, err := a.deps.Client.AdminGetUser(ctx, tok, handle)
 		if err != nil {
 			return nil // no principal by that name: the section says so
 		}
 		acct = &u
-		txs, err := a.deps.Client.ListTransactions(ctx, tok, "", 200)
+		// The whole history, because the kernel filters transactions by process
+		// and not by party: a bounded read would be the most recent N rows of
+		// the WHOLE kernel, and an idle agent would then be reported as having
+		// done nothing, which is a false statement about money rather than a
+		// short list.
+		txs, err := a.deps.Client.ListTransactions(ctx, tok, "", 0)
 		if err != nil {
 			return nil
 		}
@@ -561,9 +570,12 @@ func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []c
 				break
 			}
 		}
+		// Without this the rows render every action as "(deleted)", which is a
+		// plain untruth about the agent's own history.
+		actions = a.deps.Client.ActionsByID(ctx, tok, rows)
 		return nil
 	})
-	return acct, rows
+	return acct, rows, actions
 }
 
 // agentActivityRows is how much of an agent's history the page shows before

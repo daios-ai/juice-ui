@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/apps"
+	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/session"
 )
 
 // capture records what a handler asked the core to render or flash, so tests
@@ -502,5 +505,53 @@ func TestAgentViewCarriesNoAccountWithoutAKernel(t *testing.T) {
 	}
 	if len(v.Activity) != 0 {
 		t.Errorf("and no activity: %+v", v.Activity)
+	}
+}
+
+// The activity rows must resolve their actions. Without the map every row
+// renders "(deleted)" — a plain untruth about the agent's own history, and one
+// no test would catch from the view model alone.
+func TestAgentActivityResolvesItsActions(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/admin/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"handle":"research","available":3000000,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":"T1","action_id":"A1","owner_handle":"research","caller_handle":"research",
+		 "target_handle":"sys","status":"success","started_at":"2026-09-14T10:00:00Z"}]`))
+	})
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"A1","action":"sys/time","owner_handle":"sys","name":"time","kind":"native","active":true}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+
+	a, _, cap := testApp(t)
+	if err := a.create("research"); err != nil {
+		t.Fatal(err)
+	}
+	cl := client.New(kernel.URL, nil)
+	sm := scs.New()
+	a.deps.Client, a.deps.Sessions = cl, session.NewManager(sm, cl)
+
+	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys", session.Pin{})
+		r.SetPathValue("handle", "research")
+		a.getDetail(w, r)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/agents/research", nil))
+
+	v, ok := cap.data.(detailView)
+	if !ok {
+		t.Fatalf("view = %T", cap.data)
+	}
+	if v.Account == nil || v.Account.Available != 3000000 {
+		t.Fatalf("the agent's account must be read: %+v", v.Account)
+	}
+	if len(v.Activity) != 1 {
+		t.Fatalf("the agent's rows must be found: %+v", v.Activity)
+	}
+	if act, ok := v.Actions["A1"]; !ok || act.ID == "" {
+		t.Errorf("each row's action must be resolved, or it renders as deleted: %+v", v.Actions)
 	}
 }

@@ -1267,3 +1267,28 @@ func RequestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
 	return id
 }
+
+// ActionsByID fetches each transaction's action once, deduped, so a list can
+// render the full owner/name ref and link it rather than a bare id. A deleted
+// action (404) is simply absent from the map, and the row falls back to the id.
+//
+// It lives here because resolving a set of action ids is the client's business,
+// not a handler's: the app modules render transaction rows too, and a second
+// copy of this loop out there would be the place the two drift.
+func (c *Client) ActionsByID(ctx context.Context, token string, txs []Transaction) map[string]Action {
+	actions := map[string]Action{}
+	for _, tx := range txs {
+		if tx.ActionID == "" {
+			continue
+		}
+		if _, seen := actions[tx.ActionID]; seen {
+			continue
+		}
+		if a, err := c.GetAction(ctx, token, tx.ActionID); err == nil {
+			actions[tx.ActionID] = a
+		} else {
+			actions[tx.ActionID] = Action{} // remembered as absent, so it is asked once
+		}
+	}
+	return actions
+}

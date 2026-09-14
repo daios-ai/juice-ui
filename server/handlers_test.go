@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -2969,5 +2970,107 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	// An unknown sort shows the list, not an error.
 	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "alice/cheap") {
 		t.Errorf("an unknown sort falls back to relevance: %s", body)
+	}
+}
+
+// A sort orders the WHOLE catalog and the page is cut from it. Ordering only the
+// page answers a different question than the one asked: the best-rated action
+// could sit on page two while page one claimed to be sorted by rating, and
+// nothing on screen would say so.
+func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
+	const total = 25 // more than one page
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		// The best-rated action is LAST, so it falls on page two of the
+		// unsorted catalog.
+		var rows []string
+		for i := 0; i < total; i++ {
+			rows = append(rows, fmt.Sprintf(
+				`{"id":"A%d","action":"alice/a%02d","owner_handle":"alice","name":"a%02d","kind":"wasm","active":true,"price":0}`, i, i, i))
+		}
+		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+	})
+	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") == fmt.Sprintf("A%d", total-1) {
+			w.Write([]byte(`{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.99}`))
+			return
+		}
+		w.Write([]byte(`{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.10}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/browse?sort=rating")
+	best := fmt.Sprintf("alice/a%02d", total-1)
+	if !strings.Contains(body, best) {
+		t.Errorf("the best-rated action must be on the first page of a rating sort: %s", best)
+	}
+}
+
+// The planner's proposal must reach the raw-JSON input as well as the fields.
+// That box is the ONLY input where an action's schema is unusable, and it is one
+// toggle away everywhere else — so filling only the fields drops the proposal
+// silently for one action and loses it on a switch for every other.
+func TestProposalReachesTheRawInputToo(t *testing.T) {
+	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{"url":"example.com","depth":2}}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys/web"}})
+	defer resp.Body.Close()
+	bb, _ := io.ReadAll(resp.Body)
+	body := string(bb)
+	if !strings.Contains(body, `name="raw_args"`) {
+		t.Fatalf("no raw input rendered: %s", body)
+	}
+	raw := body[strings.Index(body, `name="raw_args"`):]
+	raw = raw[:strings.Index(raw, "</textarea>")]
+	// As the kernel sent them: a number stays a number. Quotes arrive escaped,
+	// which is the point — the box is filled by the template, inert.
+	raw = html.UnescapeString(raw)
+	if !strings.Contains(raw, `"url": "example.com"`) || !strings.Contains(raw, `"depth": 2`) {
+		t.Errorf("the raw box must carry the proposed arguments: %s", raw)
+	}
+}
+
+// What the model said is counterparty prose, not a kernel-vouched fact. The
+// provenance face is reserved for money, ids, hashes, refs and sealed args
+// (grammar §3), so rendering the message in it would dress a claim as evidence.
+func TestProposedMessageIsProseNotProvenance(t *testing.T) {
+	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{},"message":"this fetches a page"}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys/web"}})
+	defer resp.Body.Close()
+	bb, _ := io.ReadAll(resp.Body)
+	body := string(bb)
+	if !strings.Contains(body, "this fetches a page") {
+		t.Fatalf("the message must be shown: %s", body)
+	}
+	if strings.Contains(body, `<pre class="json">this fetches a page`) {
+		t.Error("a model's prose must not render in the provenance face")
 	}
 }
