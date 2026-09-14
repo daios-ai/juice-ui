@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2891,5 +2892,82 @@ func TestPricedPlannerIsNotOffered(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	if page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page"); strings.Contains(page, "/browse/propose") {
 		t.Errorf("a priced planner must not be offered: %s", page)
+	}
+}
+
+// Feedback the UI collects has to come back out somewhere, or it is a number on
+// a card and nothing more. The signals the kernel already publishes — the
+// rating share and the price — order the list, so a buyer can choose by them.
+// This is an arrangement of served rows, never a computation (§6.2).
+func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`[
+		 {"id":"CHEAP","action":"alice/cheap","owner_handle":"alice","name":"cheap","kind":"wasm","active":true,"price":1},
+		 {"id":"LOVED","action":"alice/loved","owner_handle":"alice","name":"loved","kind":"wasm","active":true,"price":50},
+		 {"id":"MEH","action":"alice/meh","owner_handle":"alice","name":"meh","kind":"wasm","active":true,"price":10}]`))
+	})
+	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("id") {
+		case "LOVED":
+			w.Write([]byte(`{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.95}`))
+		case "MEH":
+			w.Write([]byte(`{"uses":9,"successes":4,"rating_count":9,"rating_estimate":0.2}`))
+		default: // CHEAP has said nothing
+			w.Write([]byte(`{}`))
+		}
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	// The switch is offered, through the one tabs component.
+	page := getBody(t, cl, srv.URL+"/browse")
+	for _, want := range []string{"relevance", "?sort=rating", "?sort=price"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("browse must offer the sort %q: %s", want, page)
+		}
+	}
+	order := func(body string) []string {
+		var out []string
+		for _, name := range []string{"alice/cheap", "alice/loved", "alice/meh"} {
+			out = append(out, name)
+		}
+		sort.Slice(out, func(i, j int) bool { return strings.Index(body, out[i]) < strings.Index(body, out[j]) })
+		return out
+	}
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "alice/cheap" || got[2] != "alice/loved" {
+		t.Errorf("price order = %v", got)
+	}
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "alice/loved" {
+		t.Errorf("rating order must put the best-rated first: %v", got)
+	}
+	// A row nobody has rated is not SCORED as a bad one. It sorts into the
+	// unrated block after the rated rows, which says the true thing — it has not
+	// been rated — rather than interleaving silence with measured opinion.
+	rated := getBody(t, cl, srv.URL+"/browse?sort=rating")
+	if strings.Index(rated, "alice/cheap") < strings.Index(rated, "alice/meh") {
+		t.Error("an unrated action belongs after the rated ones, not among them")
+	}
+	// An unknown sort shows the list, not an error.
+	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "alice/cheap") {
+		t.Errorf("an unknown sort falls back to relevance: %s", body)
 	}
 }

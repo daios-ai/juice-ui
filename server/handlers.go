@@ -111,6 +111,19 @@ type discoverView struct {
 	// the planner, simply does not carry the command — an affordance that
 	// cannot work, or that would spend, is not offered (§8.2).
 	CanPropose bool
+	// Sort is the order the rows are arranged in, and Sorts the choices offered.
+	// Relevance is the kernel's own; the others arrange what it served (§6.2).
+	Sort  string
+	Sorts []SortTab
+}
+
+// SortTab is one choice in the sort switch: its label, its URL, and whether it
+// is the current one. The tabs component renders it, as every other in-content
+// list filter is rendered (grammar §5.2).
+type SortTab struct {
+	Label   string
+	Href    string
+	Current bool
 }
 
 type actionView struct {
@@ -729,7 +742,15 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	offset := queryOffset(r)
-	view := discoverView{Query: q, LookupAvailable: true}
+	order := sortOrder(r)
+	view := discoverView{Query: q, LookupAvailable: true, Sort: order}
+	for _, t := range []struct{ label, order string }{
+		{"relevance", sortRelevance}, {"rating", sortRating}, {"price", sortPrice},
+	} {
+		view.Sorts = append(view.Sorts, SortTab{
+			Label: t.label, Href: sortHref(r, t.order), Current: order == t.order,
+		})
+	}
 	var granted map[string]bool
 	var available int64
 	haveMe := false
@@ -749,22 +770,35 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
-			start, end, hasNext := pageSlice(len(cat), offset, pageSize)
-			page := cat[start:end]
-			view.Pager = pageNav(r, offset, pageSize, hasNext)
-			cards := make([]actionCardView, len(page))
-			var wg sync.WaitGroup
-			for i, a := range page {
+			// Price sorts the whole catalog before the page is cut, since it
+			// needs nothing but the rows already in hand. Rating needs stats,
+			// which are one read per row, so it sorts the page — ordering the
+			// whole catalog by it would read the stats of every action to show
+			// twenty.
+			cards := make([]actionCardView, len(cat))
+			for i, a := range cat {
 				cards[i] = actionCardView{Action: a, NeedsConnect: needsConnect(a, granted)}
+			}
+			if order == sortPrice {
+				sortCards(cards, order)
+			}
+			start, end, hasNext := pageSlice(len(cards), offset, pageSize)
+			cards = cards[start:end]
+			view.Pager = pageNav(r, offset, pageSize, hasNext)
+			var wg sync.WaitGroup
+			for i := range cards {
 				wg.Add(1)
 				go func(i int, id string) {
 					defer wg.Done()
 					if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
 						cards[i].Stats = &st
 					}
-				}(i, a.ID)
+				}(i, cards[i].Action.ID)
 			}
 			wg.Wait()
+			if order == sortRating {
+				sortCards(cards, order)
+			}
 			view.Catalog = cards
 			return nil
 		}
@@ -849,6 +883,8 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Results[i].NeedsConnect = needsConnect(view.Results[i].Action, granted)
 		}
+		// Search results are one ranked page, so they sort whole.
+		sortCards(view.Results, order)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -2501,4 +2537,87 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// Sort orders for the catalog and for search results. Relevance is what the
+// kernel served — the lookup ranking, or the catalog's own order — and is the
+// default because it is the only order the kernel itself asserts.
+const (
+	sortRelevance = ""
+	sortRating    = "rating"
+	sortPrice     = "price"
+)
+
+// sortCards arranges served rows by a signal the kernel already publishes. It
+// is an arrangement, never a computation: every number compared here came off
+// the wire, and nothing is inferred about a row that carries none.
+//
+// Under `rating` an UNRATED row — a new action, or a discovered hit, whose
+// stats the discovery cache does not store — sorts into a block after the rated
+// ones, keeping its own relative order. It is not scored as zero: "no ratings"
+// is not a low rating, and interleaving silence with measured opinion would
+// invent a judgement the kernel has not made. Grouping says the true thing —
+// these have not been rated — while still answering the question asked, which
+// was to see the best-rated first. Under relevance they are wherever the kernel
+// put them, which is how a new action is still found.
+func sortCards(cards []actionCardView, order string) {
+	switch order {
+	case sortRating:
+		rated := func(c actionCardView) bool { return c.Stats != nil && c.Stats.RatingCount > 0 }
+		sort.SliceStable(cards, func(i, j int) bool {
+			a, b := cards[i], cards[j]
+			if rated(a) != rated(b) {
+				return rated(a)
+			}
+			if !rated(a) {
+				return false // both unrated: leave them as served
+			}
+			if ra, rb := ratingShare(*a.Stats), ratingShare(*b.Stats); ra != rb {
+				return ra > rb
+			}
+			return a.Stats.RatingCount > b.Stats.RatingCount
+		})
+	case sortPrice:
+		sort.SliceStable(cards, func(i, j int) bool {
+			return cards[i].Action.Price < cards[j].Action.Price
+		})
+	}
+}
+
+// ratingShare is the share of ratings that were positive, as the stat strip
+// already renders it. One definition, so the number a person sorts by is the
+// number they read.
+func ratingShare(s client.Stats) float64 {
+	if s.RatingCount == 0 {
+		return 0
+	}
+	return s.RatingEstimate
+}
+
+// sortOrder reads the requested order, defaulting to relevance. An unknown
+// value is relevance rather than an error: a sort is a view, and a mistyped one
+// should show the list, not a page of prose.
+func sortOrder(r *http.Request) string {
+	switch v := r.URL.Query().Get("sort"); v {
+	case sortRating, sortPrice:
+		return v
+	default:
+		return sortRelevance
+	}
+}
+
+// sortHref builds the URL for one sort order, dropping the offset: a different
+// order starts at its own first page.
+func sortHref(r *http.Request, order string) string {
+	q := r.URL.Query()
+	q.Del("offset")
+	if order == sortRelevance {
+		q.Del("sort")
+	} else {
+		q.Set("sort", order)
+	}
+	if len(q) == 0 {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + q.Encode()
 }

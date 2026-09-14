@@ -3,7 +3,14 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** The kernel's planner reaches the interface (§6.2).
+> **What changed in 0.8.0.** The signals a buyer already has became usable when
+> choosing (§6.2): browse sorts by rating or price, not only by the kernel's
+> relevance. The UI collected feedback and rendered it on a card, and there it
+> stopped — a rating that cannot order a list is a number to look at. An unrated
+> row sorts after the rated ones rather than as a zero, because silence is not a
+> low opinion.
+>
+> The kernel's planner reaches the interface (§6.2).
 > `sys/llm/decide` chooses one action from the candidates on screen and proposes
 > arguments without executing, so browse can ask it and land on the chosen
 > action's own page with the form filled in. That is kernel U46 made visible —
@@ -602,6 +609,28 @@ kernel and world is in use, and keys everything durable by
   form, so the keyboard layer adds no capability unreachable without it.
 
 ### 6.2 run — discovery, action page, run form
+
+**Choosing by what is known.** The kernel serves a success rate, a rating share
+and a price on every local row, and the UI renders them on every card. Those
+signals MUST also be usable when choosing, or the feedback a buyer gives comes
+back only as a number to look at:
+
+* Browse MUST offer a sort switch — **relevance · rating · price** — through the
+  one tabs component (§7), preserving the query and starting a new order at its
+  own first page.
+* **Relevance is the default and is the kernel's own order**: the lookup ranking
+  where a query was made, the catalog's order otherwise. It is the only order
+  the kernel itself asserts, and it is how a new action is still found.
+* Rating and price **arrange served rows**; nothing is computed. The rating
+  compared is the one the card shows, so the number a person sorts by is the
+  number they read.
+* An **unrated** row — new, or discovered, since the discovery cache stores no
+  stats — sorts into a block **after** the rated ones under `rating`, keeping
+  its own order. It MUST NOT be scored as zero: "no ratings" is not a low
+  rating, and interleaving silence with measured opinion would state a judgement
+  the kernel has not made.
+* An unknown sort value renders the list under relevance. A mistyped view is a
+  view, not an error.
 
 **Proposal.** The kernel ships a planner (`sys/llm/decide`) that selects one
 action from typed candidates and proposes valid arguments **without executing

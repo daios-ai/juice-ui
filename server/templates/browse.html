@@ -13,6 +13,13 @@
 
 {{$cards := .Data.Catalog}}{{if $q}}{{$cards = .Data.Results}}{{end}}
 {{if $cards}}
+{{/* The signals a buyer already has, made usable when choosing. Relevance is
+     the kernel's own order; rating and price arrange what it served, and
+     nothing here is computed (§6.2). An unrated row sorts into its own block
+     after the rated ones — "no ratings" is not a low rating. */}}
+<nav class="tabs" aria-label="Sort">
+  {{range .Data.Sorts}}{{template "_tab" (tab .Label .Href .Current)}}{{end}}
+</nav>
 <div class="grid">
   {{range $cards}}{{template "_action_card" .}}{{end}}
 </div>
