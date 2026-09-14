@@ -3,7 +3,15 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** The kernel moved its whole operator surface from
+> **What changed in 0.8.0.** The client records dropped contexts for
+> `handle@kernel` logins, so a UI that named a context could not start. It names
+> a **kernel** now (`kernel` / `JUICE_KERNEL`), resolved straight from the
+> `kernels` half of the shared records, and the retired key is refused by name
+> rather than left to fail as a parse error (§2). One process serves one kernel.
+> §5 states, once, why this UI reads no credential file: it is a service that
+> authenticates browser people, not an operator's personal client.
+>
+> The kernel moved its whole operator surface from
 > `/control/*` to `/v1/admin/*` and split the one target namespace in two: a
 > user is reached under `users`, a kernel under `peers`, and each route refuses
 > a target of the other kind. The UI follows (§3.1, §6.6), which removes rather
@@ -324,19 +332,24 @@ detectable.
   one if needed; clean up after).
 * Configuration loads from an optional JSON config file overlaid by environment
   variables (env wins), over safe local defaults. At minimum: the kernel — named
-  by a **client context** (`context` / `JUICE_CONTEXT`), resolved from
-  `$JUICE_HOME/client/config.json` to the recorded endpoint, public key and
-  network, or else a bare URL (default `http://127.0.0.1:4040`) — the UI listen
-  address, and a session secret. Commit no secrets. Reject invalid startup
-  configuration clearly, including a context the records do not hold.
-* **The UI knows which kernel it is for before it starts.** Under a context that
-  is the recorded key; under a bare URL the kernel is identified once at startup
-  and a kernel that cannot be identified is a startup error. Every `/health`
-  answer is held to that key: an address presenting another kernel is not this
-  kernel, and nothing is trusted from it. Everything durable the UI keeps for
-  its apps is keyed by that kernel's public key, never by a name or an address
-  (ecosystem-standard §4), so state provisioned on one kernel is never replayed
-  on another. The chrome names the context in use.
+  by the **name it is recorded under** (`kernel` / `JUICE_KERNEL`), resolved
+  from the `kernels` half of `$JUICE_HOME/client/config.json` to the recorded
+  endpoint, public key and network, or else a bare URL (default
+  `http://127.0.0.1:4040`) — the UI listen address, and a session secret. Commit
+  no secrets. Reject invalid startup configuration clearly, including a kernel
+  name the records do not hold. A configuration key the records retired MUST be
+  refused **by name**, naming its replacement: the remedy is not guessable from
+  an unknown-field parse error.
+* **The UI knows which kernel it is for before it starts.** Under a named kernel
+  that is the recorded key; under a bare URL the kernel is identified once at
+  startup and a kernel that cannot be identified is a startup error. Every
+  `/health` answer is held to that key: an address presenting another kernel is
+  not this kernel, and nothing is trusted from it. Everything durable the UI
+  keeps for its apps is keyed by that kernel's public key, never by a name or an
+  address (ecosystem-standard §4), so state provisioned on one kernel is never
+  replayed on another. **One process serves one kernel**, as one
+  `juice kernel serve` process serves one kernel home; two kernels are two
+  processes. The chrome names the kernel and the world it serves.
 * Technology stack (standard-library-first; dependencies only where hand-rolling
   would be a correctness or security risk):
   * **Routing:** stdlib `net/http` ServeMux (Go 1.22+ method/pattern routing,
@@ -447,6 +460,26 @@ detectable.
   input is `{}`.
 
 ## 5. Authentication and session
+
+**Whose logins these are.** `ecosystem-standard.md` §6 says an interface "is a
+client like any other… reads the same logins, shows which one is in use". That
+describes a **personal** interface: one operator, one terminal, one installation.
+This UI runs in **service** mode — it authenticates browser people over the
+network and holds each one's kernel tokens in its own server-side session — and
+the two are not the same client.
+
+So the UI reads the `kernels` half of the client records and **never reads or
+writes `client/credentials/`**. Two consequences make this a rule rather than a
+preference. An installation is one operating-system user's state (§1 of that
+document), so tokens placed there are the operator's; a service that wrote its
+visitors' sessions into that store would let every visitor act as the operator's
+logins. And two programs logged in as one account share one session (§4), so a
+browser sign-out would revoke the operator's own command-line session.
+
+What the standard asks for observably, the UI does: it names its kernel from the
+shared records, refuses a `/health` that is not the recorded key, shows which
+kernel and world is in use, and keys everything durable by
+`(network digest, kernel public key, principal id)`.
 
 * Browser login uses authorization-code with PKCE. The BFF renders the login
   form, generates the verifier/challenge (verifier kept server-side), calls

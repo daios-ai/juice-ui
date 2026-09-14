@@ -19,11 +19,11 @@ import (
 // systemd override needs no file edit). No secrets are committed.
 type Config struct {
 	KernelBaseURL string
-	// Context is the client context this UI names (ecosystem-standard §4): the
-	// kernel it works on is then read from $JUICE_HOME/client/config.json rather
-	// than from an address, and KernelPublicKey/KernelNetwork are what that record
-	// says the kernel is. Empty when the UI is pointed at a bare URL instead.
-	Context         string
+	// Kernel is the name this UI's kernel is recorded under in the shared client
+	// records (ecosystem-standard §4): its endpoint, public key and network are
+	// then read from $JUICE_HOME/client/config.json rather than taken from an
+	// address. Empty when the UI is pointed at a bare URL instead.
+	Kernel          string
 	KernelPublicKey string
 	KernelNetwork   string
 	ListenAddr      string
@@ -45,6 +45,10 @@ type Config struct {
 // key is optional; a pointer or zero value means "not set, keep the lower layer".
 // It is distinct from state.json, which is machine-written app state.
 type fileConfig struct {
+	Kernel string `json:"kernel"`
+	// Context is retired, and is decoded only so its presence can be REFUSED by
+	// name. The decoder rejects unknown fields, so without this a stale file
+	// would fail with a parse error naming no remedy.
 	Context              string   `json:"context"`
 	KernelURL            string   `json:"kernel_url"`
 	Addr                 string   `json:"addr"`
@@ -78,7 +82,11 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	}
 	if fc != nil {
 		if v := strings.TrimSpace(fc.Context); v != "" {
-			cfg.Context = v
+			return Config{}, fmt.Errorf("config key %q is retired: name the kernel instead, "+
+				`as "kernel": "<name>" — one of the kernels in %s`, "context", filepath.Join(root, "client", "config.json"))
+		}
+		if v := strings.TrimSpace(fc.Kernel); v != "" {
+			cfg.Kernel = v
 		}
 		if v := strings.TrimSpace(fc.KernelURL); v != "" {
 			cfg.KernelBaseURL = v
@@ -101,8 +109,8 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 	}
 
 	// 3. environment (wins)
-	if v := strings.TrimSpace(getenv("JUICE_CONTEXT")); v != "" {
-		cfg.Context = v
+	if v := strings.TrimSpace(getenv("JUICE_KERNEL")); v != "" {
+		cfg.Kernel = v
 	}
 	if v := strings.TrimSpace(getenv("JUICE_KERNEL_URL")); v != "" {
 		cfg.KernelBaseURL = v
@@ -124,17 +132,17 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 		cfg.BadgeInterval = 5 * time.Second
 	}
 
-	// A named context is the kernel: its recorded endpoint, key and network come
+	// A named kernel is THE kernel: its recorded endpoint, key and network come
 	// from the client records every juice program shares, and a bare address
 	// given beside it is ignored — what a server says about itself is a claim,
-	// what the record says is what was verified when the context was made.
-	if cfg.Context != "" {
-		rec, err := contextRecord(root, cfg.Context, readFile)
+	// what the record says is what was verified when the kernel was registered.
+	if cfg.Kernel != "" {
+		rec, err := kernelRecordFor(root, cfg.Kernel, readFile)
 		if err != nil {
 			return Config{}, err
 		}
 		if fromURL := strings.TrimSpace(fc.kernelURL()) != "" || strings.TrimSpace(getenv("JUICE_KERNEL_URL")) != ""; fromURL {
-			cfg.Notices = append(cfg.Notices, "kernel_url is ignored: context "+cfg.Context+" names the kernel")
+			cfg.Notices = append(cfg.Notices, "kernel_url is ignored: this UI names kernel "+cfg.Kernel)
 		}
 		cfg.KernelBaseURL, cfg.KernelPublicKey, cfg.KernelNetwork = rec.Endpoint, rec.PublicKey, rec.Network
 	}
@@ -169,8 +177,8 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 // juiceRoot is the installation root every juice program shares: $JUICE_HOME,
 // else ~/.juice (fixed, never cwd-relative — ecosystem-standard §1 — except a
 // last-resort cwd fallback when the home directory cannot be determined at all).
-// The UI's own state lives under <root>/ui; the client records it reads a
-// context from live under <root>/client. JUICE_HOME is the only path knob.
+// The UI's own state lives under <root>/ui; the client records it reads its
+// kernel from live under <root>/client. JUICE_HOME is the only path knob.
 func juiceRoot(getenv func(string) string) string {
 	root := strings.TrimSpace(getenv("JUICE_HOME"))
 	if root != "" {
@@ -199,35 +207,37 @@ type kernelRecord struct {
 }
 
 // clientConfig is the shape of $JUICE_HOME/client/config.json: the kernels this
-// client knows and the contexts naming one kernel and one login on it. Only the
-// kernel half is read here — the UI serves many browser users, each with their
-// own session, so a context tells it WHICH kernel and never WHOSE login.
+// client knows, and which login is selected. Only the kernels are read here.
+//
+// The logins are deliberately NOT read. This UI is a multi-principal service:
+// it authenticates browser people and holds each one's kernel tokens in its own
+// server-side session, never in the operator's 0600 credential store. Reading
+// that store would make every browser visitor act as the operator's logins, and
+// a browser sign-out would end the operator's own session, since two programs
+// logged in as one account share it (ecosystem-standard §4). So a name here
+// tells the UI WHICH KERNEL, and never whose login.
 type clientConfig struct {
-	Kernels  map[string]kernelRecord `json:"kernels"`
-	Contexts map[string]struct {
-		Kernel string `json:"kernel"`
-	} `json:"contexts"`
+	Kernels map[string]kernelRecord `json:"kernels"`
 }
 
-// contextRecord resolves a context name to its kernel record. Every failure is a
-// hard startup error: a UI that cannot name its kernel must not guess one.
-func contextRecord(root, name string, readFile func(string) ([]byte, error)) (kernelRecord, error) {
+// kernelRecordFor resolves a kernel name to its record. Every failure is a hard
+// startup error: a UI that cannot name its kernel must not guess one.
+func kernelRecordFor(root, name string, readFile func(string) ([]byte, error)) (kernelRecord, error) {
 	path := filepath.Join(root, "client", "config.json")
 	b, err := readFile(path)
 	if err != nil {
-		return kernelRecord{}, fmt.Errorf("context %q: read %s: %w (run `juice use %s --endpoint URL` first)", name, path, err, name)
+		return kernelRecord{}, fmt.Errorf("kernel %q: read %s: %w (run `juice kernel add URL %s` first)", name, path, err, name)
 	}
 	var cc clientConfig
 	if err := json.Unmarshal(b, &cc); err != nil {
-		return kernelRecord{}, fmt.Errorf("context %q: parse %s: %w", name, path, err)
+		return kernelRecord{}, fmt.Errorf("kernel %q: parse %s: %w", name, path, err)
 	}
-	c, ok := cc.Contexts[name]
+	rec, ok := cc.Kernels[name]
 	if !ok {
-		return kernelRecord{}, fmt.Errorf("context %q is not in %s", name, path)
+		return kernelRecord{}, fmt.Errorf("kernel %q is not in %s (run `juice kernel add URL %s`)", name, path, name)
 	}
-	rec, ok := cc.Kernels[c.Kernel]
-	if !ok || rec.Endpoint == "" || rec.PublicKey == "" {
-		return kernelRecord{}, fmt.Errorf("context %q names kernel %q, which %s does not record", name, c.Kernel, path)
+	if rec.Endpoint == "" || rec.PublicKey == "" {
+		return kernelRecord{}, fmt.Errorf("kernel %q in %s records no endpoint or public key", name, path)
 	}
 	return rec, nil
 }

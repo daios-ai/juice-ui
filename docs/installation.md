@@ -7,16 +7,20 @@ suite backs up or relocates as a unit.
 ```
 $JUICE_HOME                       (default ~/.juice; env-overridable, same on macOS)
 ├── kernels/<instance>/   one kernel: juice.db, config.json, the rail key, serve.lock
-├── client/               config.json (the kernels and contexts this client knows),
-│                         credentials/<context>.json (one session each, 0600)
+├── client/               config.json (the kernels this client knows, and which
+│                         login is selected), credentials/<handle@kernel>.json
+│                         (one session each, 0600)
 ├── ui/                   config.json, state.json (+ chat.db)
 ├── agents/<name>/        one agent's configuration, persona, memory
 └── services/<name>/      one installed service
 ```
 
 This is the layout `juicedocs/ecosystem-standard.md` binds every juice program
-to. The UI keeps only `ui/`; it *reads* `client/config.json` to name its kernel
-by context, and touches nothing else.
+to. The UI keeps only `ui/`; it *reads* the `kernels` half of
+`client/config.json` to resolve the kernel it names, and touches nothing else.
+In particular it never reads or writes `client/credentials/`: those are the
+operator's own logins, and this UI authenticates browser people and holds each
+one's tokens in its own server-side session.
 
 ```
 $PREFIX/bin/   the binaries (PREFIX ?= ~/.local)

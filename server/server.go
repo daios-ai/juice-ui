@@ -41,26 +41,26 @@ type Options struct {
 	// money unit. It also keys the app state, so what an app provisioned on one
 	// kernel is never replayed on another (§4).
 	Identity *KernelIdentity
-	// KernelContext is the client context's name, shown so a person can see which
+	// KernelName is the name this kernel is recorded under, shown so a person can see which
 	// kernel the interface is on (ecosystem-standard §6); "" when a bare URL.
-	KernelContext string
+	KernelName string
 }
 
 // Server holds dependencies and serves the BFF.
 type Server struct {
-	client    *client.Client
-	sessions  *session.Manager
-	caller    *Caller
-	render    *Renderer
-	log       *slog.Logger
-	secure    bool
-	publicURL string // configured absolute base URL; "" → derive from the request
-	apps      []apps.App
-	appStore  *appStore       // per-app persisted state (state.json), keyed by kernel
-	home      string          // component home dir handed to apps
-	badgeTTL  time.Duration   // nav-badge poll interval + steps-badge cache TTL
-	identity  *KernelIdentity // which kernel this UI is for, and its money unit
-	context   string          // the client context's name, for the chrome
+	client     *client.Client
+	sessions   *session.Manager
+	caller     *Caller
+	render     *Renderer
+	log        *slog.Logger
+	secure     bool
+	publicURL  string // configured absolute base URL; "" → derive from the request
+	apps       []apps.App
+	appStore   *appStore       // per-app persisted state (state.json), keyed by kernel
+	home       string          // component home dir handed to apps
+	badgeTTL   time.Duration   // nav-badge poll interval + steps-badge cache TTL
+	identity   *KernelIdentity // which kernel this UI is for, and its money unit
+	kernelName string          // the kernel's name in the client records, for the chrome
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
@@ -80,7 +80,7 @@ type KernelIdentity struct {
 }
 
 // NewKernelIdentity binds this UI to one kernel. recorded is its public key —
-// from the named client context, or from AwaitKernel when a bare address was
+// from the named kernel's record, or from AwaitKernel when a bare address was
 // given — and is fixed from here: an address that later answers with another key
 // is another kernel, not a change of mind.
 func NewKernelIdentity(c *client.Client, recorded string, ttl time.Duration, log *slog.Logger) *KernelIdentity {
@@ -95,7 +95,7 @@ func NewKernelIdentity(c *client.Client, recorded string, ttl time.Duration, log
 
 // AwaitKernel reads /health until the server answers or the timeout passes. It
 // is how a UI given a bare address learns which kernel that is, before anything
-// is keyed on it; a UI given a context already knows and never calls this.
+// is keyed on it; a UI that names a kernel already knows and never calls this.
 func AwaitKernel(c *client.Client, timeout time.Duration) (client.Health, error) {
 	deadline := time.Now().Add(timeout)
 	var last error
@@ -214,18 +214,18 @@ func New(o Options) (http.Handler, error) {
 		badgeTTL = 30 * time.Second
 	}
 	s := &Server{
-		client:    o.Client,
-		sessions:  o.Sessions,
-		caller:    NewCaller(o.Client),
-		render:    o.Renderer,
-		log:       o.Logger,
-		secure:    o.Secure,
-		publicURL: strings.TrimRight(o.PublicURL, "/"),
-		apps:      o.Apps,
-		home:      o.Home,
-		badgeTTL:  badgeTTL,
-		identity:  o.Identity,
-		context:   o.KernelContext,
+		client:     o.Client,
+		sessions:   o.Sessions,
+		caller:     NewCaller(o.Client),
+		render:     o.Renderer,
+		log:        o.Logger,
+		secure:     o.Secure,
+		publicURL:  strings.TrimRight(o.PublicURL, "/"),
+		apps:       o.Apps,
+		home:       o.Home,
+		badgeTTL:   badgeTTL,
+		identity:   o.Identity,
+		kernelName: o.KernelName,
 	}
 	as, err := newAppStore(o.StatePath, o.Identity.recorded)
 	if err != nil {
@@ -722,26 +722,26 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		// ?menu=open is the no-JS route into the mobile nav: the drawer is
 		// server-rendered [open] and falls back to an in-flow card, exactly as
 		// ?form= does for modals (§6.1). With JS, data-modal intercepts first.
-		MenuOpen:      r.URL.Query().Get("menu") == "open",
-		Theme:         themeFromRequest(r),
-		Sidebar:       sidebarFromRequest(r),
-		Active:        active,
-		Nav:           s.buildNav(r, active),
-		Handle:        s.sessions.Handle(r.Context()),
-		KernelHandle:  kernelID.Handle,
-		KernelFP:      keyFingerprint(kernelID.PublicKey),
-		KernelNet:     kernelID.Network,
-		KernelContext: s.context,
-		IsSuperuser:   super,
-		Themes:        ThemeList(),
-		CSRFField:     csrf.TemplateField(r),
-		CSRFToken:     csrf.Token(r),
-		Commands:      template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
-		Flash:         flash,
-		FlashKind:     flashKind,
-		AppNav:        s.appNav(r),
-		BadgeSecs:     int(s.badgeTTL / time.Second),
-		Data:          data,
+		MenuOpen:     r.URL.Query().Get("menu") == "open",
+		Theme:        themeFromRequest(r),
+		Sidebar:      sidebarFromRequest(r),
+		Active:       active,
+		Nav:          s.buildNav(r, active),
+		Handle:       s.sessions.Handle(r.Context()),
+		KernelHandle: kernelID.Handle,
+		KernelFP:     keyFingerprint(kernelID.PublicKey),
+		KernelNet:    kernelID.Network,
+		KernelName:   s.kernelName,
+		IsSuperuser:  super,
+		Themes:       ThemeList(),
+		CSRFField:    csrf.TemplateField(r),
+		CSRFToken:    csrf.Token(r),
+		Commands:     template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
+		Flash:        flash,
+		FlashKind:    flashKind,
+		AppNav:       s.appNav(r),
+		BadgeSecs:    int(s.badgeTTL / time.Second),
+		Data:         data,
 	}
 }
 

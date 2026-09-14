@@ -126,7 +126,7 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		Home:           cfg.Home,
 		BadgeInterval:  cfg.BadgeInterval,
 		Identity:       identity,
-		KernelContext:  cfg.Context,
+		KernelName:     cfg.Kernel,
 	})
 }
 

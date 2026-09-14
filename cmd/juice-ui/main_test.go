@@ -128,17 +128,17 @@ func fakeKernel(t *testing.T) *httptest.Server {
 }
 
 // A UI that cannot identify its kernel does not start: it would otherwise key
-// app state under a guess. A named context supplies the identity offline.
+// app state under a guess. A named kernel supplies the identity offline.
 func TestBuildRefusesAnUnidentifiableKernel(t *testing.T) {
 	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": "http://127.0.0.1:1", "JUICE_UI_SESSION_SECRET": "s"}), noFiles)
 	cfg.StatePath = ""
 	if _, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
 		t.Fatal("build must refuse a kernel it cannot identify")
 	}
-	// With a context the identity is on record, and no probe is needed to start.
-	cfg.Context, cfg.KernelPublicKey = "alpha", "KEYA"
+	// With a named kernel the identity is on record, and no probe is needed.
+	cfg.Kernel, cfg.KernelPublicKey = "alpha", "KEYA"
 	if _, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
-		t.Fatalf("a named context must let the UI start with the kernel down: %v", err)
+		t.Fatalf("a named kernel must let the UI start with the kernel down: %v", err)
 	}
 }
 

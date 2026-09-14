@@ -134,42 +134,61 @@ func TestNoLegacyPaths(t *testing.T) {
 	}
 }
 
-// A named context is the kernel (ecosystem-standard §4): its endpoint, key and
+// A named kernel IS the kernel (ecosystem-standard §4): its endpoint, key and
 // network come from the client records every juice program shares, and a bare
 // address given beside it is ignored — the record is what was verified when the
-// context was made, the address is only a claim.
-func TestContextNamesTheKernelFromClientRecords(t *testing.T) {
+// kernel was registered, the address is only a claim.
+func TestKernelNameResolvesFromClientRecords(t *testing.T) {
 	client := filepath.Join("/j", "client", "config.json")
-	records := `{"current":"alpha","kernels":{"alpha":{"endpoint":"http://127.0.0.1:4141","public_key":"KEYA","world_digest":"D1","network":"play"}},
-	 "contexts":{"alpha":{"kernel":"alpha","handle":"sys","principal_id":"u1"}}}`
+	// The records the current CLI writes: kernels, and the selected login. There
+	// is no contexts map any more (docs/kernel-v0.15-verification.md §7).
+	records := `{"current":"ana@alpha","kernels":{"alpha":{"endpoint":"http://127.0.0.1:4141","public_key":"KEYA","world_digest":"D1","network":"play","decimals":6,"symbol":"credits"}}}`
 	uiCfg := filepath.Join("/j", "ui", "config.json")
 	cfg, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL_URL": "http://elsewhere:1"}),
-		files(map[string]string{client: records, uiCfg: `{"context":"alpha"}`}))
+		files(map[string]string{client: records, uiCfg: `{"kernel":"alpha"}`}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Context != "alpha" || cfg.KernelBaseURL != "http://127.0.0.1:4141" || cfg.KernelPublicKey != "KEYA" || cfg.KernelNetwork != "play" {
-		t.Errorf("context not resolved from the client records: %+v", cfg)
+	if cfg.Kernel != "alpha" || cfg.KernelBaseURL != "http://127.0.0.1:4141" || cfg.KernelPublicKey != "KEYA" || cfg.KernelNetwork != "play" {
+		t.Errorf("kernel not resolved from the client records: %+v", cfg)
 	}
 	if len(cfg.Notices) != 1 || !contains(cfg.Notices[0], "kernel_url is ignored") {
-		t.Errorf("a bare address beside a context must be reported as ignored: %v", cfg.Notices)
+		t.Errorf("a bare address beside a named kernel must be reported as ignored: %v", cfg.Notices)
 	}
-	// The environment names a context too, and wins over the file.
-	cfg2, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_CONTEXT": "alpha"}), files(map[string]string{client: records}))
+	// The environment names a kernel too, and wins over the file.
+	cfg2, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "alpha"}), files(map[string]string{client: records}))
 	if err != nil || cfg2.KernelPublicKey != "KEYA" {
-		t.Errorf("JUICE_CONTEXT must resolve: %+v %v", cfg2, err)
+		t.Errorf("JUICE_KERNEL must resolve: %+v %v", cfg2, err)
 	}
 }
 
-// A UI that cannot name its kernel must not guess one: an unknown context, or
+// A UI that cannot name its kernel must not guess one: an unknown name, or
 // records that do not exist, are hard startup errors.
-func TestUnknownContextIsAStartupError(t *testing.T) {
+func TestUnknownKernelIsAStartupError(t *testing.T) {
 	client := filepath.Join("/j", "client", "config.json")
-	records := `{"kernels":{"alpha":{"endpoint":"http://k","public_key":"KEYA","network":"play"}},"contexts":{"alpha":{"kernel":"alpha"}}}`
-	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_CONTEXT": "nope"}), files(map[string]string{client: records})); err == nil {
-		t.Error("an unknown context must refuse to start")
+	records := `{"kernels":{"alpha":{"endpoint":"http://k","public_key":"KEYA","network":"play"}}}`
+	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "nope"}), files(map[string]string{client: records})); err == nil {
+		t.Error("an unknown kernel name must refuse to start")
 	}
-	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_CONTEXT": "alpha"}), noFiles); err == nil {
-		t.Error("a context with no client records must refuse to start")
+	if _, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j", "JUICE_KERNEL": "alpha"}), noFiles); err == nil {
+		t.Error("a named kernel with no client records must refuse to start")
+	}
+}
+
+// The client records dropped contexts for handle@kernel logins, so a UI
+// configured with the old key names something that cannot exist. It is refused
+// BY NAME rather than left to fail as an unknown-field parse error, because the
+// remedy — name the kernel instead — is not guessable from that.
+func TestRetiredContextKeyIsRefusedByName(t *testing.T) {
+	client := filepath.Join("/j", "client", "config.json")
+	records := `{"kernels":{"alpha":{"endpoint":"http://k","public_key":"KEYA","network":"play"}}}`
+	uiCfg := filepath.Join("/j", "ui", "config.json")
+	_, err := LoadConfig(env(map[string]string{"JUICE_HOME": "/j"}),
+		files(map[string]string{client: records, uiCfg: `{"context":"alpha"}`}))
+	if err == nil {
+		t.Fatal("a retired context key must refuse to start")
+	}
+	if !contains(err.Error(), "context") || !contains(err.Error(), "kernel") {
+		t.Errorf("the refusal must name both the retired key and its replacement: %v", err)
 	}
 }

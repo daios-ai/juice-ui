@@ -17,7 +17,7 @@ startup error, so a typo surfaces loudly.
 
 ```json
 {
-  "context": "alpha",
+  "kernel": "alpha",
   "kernel_url": "http://127.0.0.1:4040",
   "addr": "127.0.0.1:8080",
   "session_secret": "…",
@@ -30,13 +30,24 @@ startup error, so a typo surfaces loudly.
 
 Every key is optional:
 
-- **`context`** — the client context this UI is on (ecosystem-standard §4). The
-  kernel is then read from `$JUICE_HOME/client/config.json`, the record every
-  juice program shares: its endpoint, the key it must present, and its network.
-  Make one with `juice use NAME --endpoint URL`. When set, `kernel_url` is
-  ignored and reported as such. The UI names its context explicitly and never
-  follows the CLI's `current`, so switching contexts in a terminal cannot move a
-  running interface onto another kernel.
+- **`kernel`** — the name this UI's kernel is recorded under in
+  `$JUICE_HOME/client/config.json`, the record every juice program shares: its
+  endpoint, the key it must present, and its network. Register one with
+  `juice kernel add URL NAME`. When set, `kernel_url` is ignored and reported as
+  such. The UI names its kernel explicitly and never follows the CLI's selected
+  login, so `juice auth use` in a terminal cannot move a running interface onto
+  another kernel.
+
+  One UI process serves one kernel, as one `juice kernel serve` process serves
+  one kernel home. To offer two, run two.
+
+  The UI reads only the `kernels` half of that file. It never reads or writes
+  `client/credentials/`: it authenticates browser people and holds each one's
+  tokens in its own server-side session, so the operator's logins stay the
+  operator's. A browser sign-out ends that browser session and nothing else.
+
+  (`context` was the key before the client records held logins. It is refused by
+  name, with the remedy, rather than silently ignored.)
 - **`kernel_url`** — a bare address, for a machine with no client records. The
   kernel is then identified once at startup from its `/health`; a kernel that
   cannot be identified within ten seconds is a startup error, because the UI
@@ -60,8 +71,8 @@ current kernel once, and rewritten keyed.
 | Variable | Overrides | Notes |
 |---|---|---|
 | `JUICE_HOME` | the whole home | relocates `$JUICE_HOME/ui/` (config, state, data); default `~/.juice`. The only path knob. |
-| `JUICE_CONTEXT` | `context` | the same variable the CLI reads for one command |
-| `JUICE_KERNEL_URL` | `kernel_url` | http(s) URL; default `http://127.0.0.1:4040`; ignored under a context |
+| `JUICE_KERNEL` | `kernel` | a kernel name from `client/config.json` |
+| `JUICE_KERNEL_URL` | `kernel_url` | http(s) URL; default `http://127.0.0.1:4040`; ignored when `kernel` names one |
 | `JUICE_UI_ADDR` | `addr` | default `127.0.0.1:8080` |
 | `JUICE_UI_SESSION_SECRET` | `session_secret` | absent ⇒ ephemeral key (sessions reset on restart) |
 | `JUICE_UI_SECURE` | `secure` | `true` sets Secure cookies (behind HTTPS) |
