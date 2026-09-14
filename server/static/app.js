@@ -201,16 +201,18 @@ for (const sel of document.querySelectorAll('select[name="auth_scheme"]')) {
   update();
 }
 
-// Kind: reveal the http-only fields (method, params) only for kind=http.
-// Inputs in the hidden section are disabled so they are not submitted and the
-// param_name/param_in rows stay index-aligned for server-side pairing.
+// Kind: reveal the fields that belong to the selected kind — method and params
+// for http, the compiled artifact for wasm. One attribute names the kind a
+// section belongs to, so a third kind needs markup and no script. Inputs in a
+// hidden section are disabled so they are not submitted and the param_name/
+// param_in rows stay index-aligned for server-side pairing.
 for (const sel of document.querySelectorAll('select[name="kind"]')) {
   const form = sel.closest('form');
   function update() {
-    const show = sel.value === 'http';
-    for (const sec of form.querySelectorAll('[data-http-only]')) {
+    for (const sec of form.querySelectorAll('[data-kind]')) {
+      const show = sec.dataset.kind === sel.value;
       sec.hidden = !show;
-      for (const el of sec.querySelectorAll('input, select')) el.disabled = !show;
+      for (const el of sec.querySelectorAll('input, select, textarea')) el.disabled = !show;
     }
   }
   sel.addEventListener('change', update);

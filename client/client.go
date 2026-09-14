@@ -211,6 +211,10 @@ type CreateActionInput struct {
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 	Auth         json.RawMessage `json:"auth,omitempty"`
+	// WasmArtifact is the compiled module, base64, for kind=wasm. It is what
+	// sys/tinygo/compile returns, and without it a person can compile in the UI
+	// and then have nowhere to put the result.
+	WasmArtifact string `json:"wasm_artifact,omitempty"`
 }
 
 // UpdateActionInput is the body for PUT /v1/actions/{id}. All fields optional.
@@ -228,6 +232,8 @@ type UpdateActionInput struct {
 	// Replaces the old boolean `public`.
 	Visibility *string         `json:"visibility,omitempty"`
 	Auth       json.RawMessage `json:"auth,omitempty"`
+	// WasmArtifact replaces the compiled module of a kind=wasm action.
+	WasmArtifact string `json:"wasm_artifact,omitempty"`
 }
 
 // Process is a funded computation lifetime. Processes are auto-created by run.
@@ -641,12 +647,18 @@ func (c *Client) StartGrant(ctx context.Context, token, selector, provider, redi
 
 // CompleteGrant exchanges the provider code for the group's grants. state must be
 // the value from StartGrant. Returns the actions that were granted.
-func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) ([]string, error) {
+// It answers `{status:"granted", actions}` when the exchange completed, and
+// `{status:"pending"}` when it has not yet — the device flow polls, and a code
+// flow may also answer so. Pending is reported as such: treating it as granted
+// would tell a person an account is connected when the next call will still
+// answer grant_required.
+func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) ([]string, bool, error) {
 	var resp struct {
+		Status  string   `json:"status"`
 		Actions []string `json:"actions"`
 	}
 	err := c.do(ctx, http.MethodPost, "/v1/grants/complete", token, map[string]string{"state": state, "code": code}, &resp)
-	return resp.Actions, err
+	return resp.Actions, resp.Status == "pending", err
 }
 
 // ConnectGrant attaches a static per-caller token to a delegated_bearer selector's
@@ -760,10 +772,30 @@ func (c *Client) Withdraw(ctx context.Context, token, id string, amount int64, r
 }
 
 // ListWithdrawals lists the caller's own withdrawals and where each stands.
+//
+// It pages to exhaustion. Every kernel list endpoint pages (default 50, ceiling
+// 200, §R6), withdrawals included — measured: with four rows, ?limit=2&offset=2
+// answers the third and fourth. An unpaged read would silently lose a person's
+// fifty-first withdrawal, and a wallet that hides money is worse than one that
+// takes a second request to show it.
 func (c *Client) ListWithdrawals(ctx context.Context, token string) ([]Withdrawal, error) {
+	const page = 200 // server ceiling
 	var out []Withdrawal
-	err := c.do(ctx, http.MethodGet, "/v1/withdrawals", token, nil, &out)
-	return out, err
+	for offset := 0; ; offset += page {
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(page))
+		if offset > 0 {
+			q.Set("offset", strconv.Itoa(offset))
+		}
+		var batch []Withdrawal
+		if err := c.do(ctx, http.MethodGet, "/v1/withdrawals?"+q.Encode(), token, nil, &batch); err != nil {
+			return out, err
+		}
+		out = append(out, batch...)
+		if len(batch) < page {
+			return out, nil
+		}
+	}
 }
 
 // AddressResult is the outcome of registering a payout address: the canonical
@@ -938,10 +970,18 @@ func (c *Client) DeleteAction(ctx context.Context, token, target string) ([]Acti
 // recorded document and reconciles it, keeping each action's id, history,
 // credentials and any price the owner set. There is no unimport: an application
 // is switched off or removed with the ordinary verbs over its path.
-func (c *Client) ImportOpenAPI(ctx context.Context, token, name, specURL string) (ImportResult, error) {
-	body := map[string]string{"name": name}
+// auth is the upstream credential configuration for the WHOLE application, set
+// at import (API.md: `POST /v1/actions/import {name[, spec_url, auth]}`). Without
+// it an imported application that needs a credential cannot be given one from
+// here at all, since auth is write-only and every later `PUT` would have to name
+// the subtree by hand. Nil sends no auth, which is the ordinary case.
+func (c *Client) ImportOpenAPI(ctx context.Context, token, name, specURL string, auth json.RawMessage) (ImportResult, error) {
+	body := map[string]any{"name": name}
 	if specURL != "" {
 		body["spec_url"] = specURL
+	}
+	if len(auth) > 0 {
+		body["auth"] = auth
 	}
 	var r ImportResult
 	err := c.do(ctx, http.MethodPost, "/v1/actions/import", token, body, &r)

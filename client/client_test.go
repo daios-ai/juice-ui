@@ -226,13 +226,20 @@ func TestGrantMethods(t *testing.T) {
 		t.Fatalf("instant-granted start: granted=%v err=%v", granted, err)
 	}
 
-	f.reply = `{"actions":["sys/gmail"]}`
-	acts, err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE")
-	if err != nil || len(acts) != 1 || acts[0] != "sys/gmail" {
-		t.Fatalf("complete = %v %v", acts, err)
+	f.reply = `{"status":"granted","actions":["sys/gmail"]}`
+	acts, pending, err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE")
+	if err != nil || len(acts) != 1 || acts[0] != "sys/gmail" || pending {
+		t.Fatalf("complete = %v pending=%v %v", acts, pending, err)
 	}
 	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) {
 		t.Errorf("complete body = %s", f.lastBody)
+	}
+	// The exchange may not have completed. Reading that as granted would tell a
+	// person an account is connected while the next run still answers
+	// grant_required.
+	f.reply = `{"status":"pending"}`
+	if _, pending, err = f.client().CompleteGrant(context.Background(), "tok", "S1", ""); err != nil || !pending {
+		t.Errorf("a pending exchange must be reported as pending: pending=%v err=%v", pending, err)
 	}
 
 	// DeleteGrant revokes by selector; DeleteConnection deletes by provider_key.
@@ -418,12 +425,25 @@ func TestImportInstallsAnApplicationByName(t *testing.T) {
 	defer f.close()
 	f.reply = `{"created":[{"id":"a1","name":"pets/index"}],"updated":[],"unchanged":[],"deactivated":[],
 	 "rejected":[{"key":"noDesc","reason":"missing description and summary"}]}`
-	res, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "http://spec")
+	res, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "http://spec", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(f.lastBody), `"name":"pets"`) || !strings.Contains(string(f.lastBody), `"spec_url":"http://spec"`) {
 		t.Errorf("import body = %s", f.lastBody)
+	}
+	if strings.Contains(string(f.lastBody), "auth") {
+		t.Errorf("no auth means no auth field: %s", f.lastBody)
+	}
+	// One credential for the whole application, set at import. An auth is
+	// write-only, so an application not given one here cannot be given one
+	// afterwards without naming its subtree by hand.
+	if _, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "",
+		json.RawMessage(`{"scheme":"bearer","secrets":{"token":"t"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(f.lastBody), `"auth":{"scheme":"bearer"`) {
+		t.Errorf("import must carry the credential configuration: %s", f.lastBody)
 	}
 	if len(res.Created) != 1 || res.Created[0].ID != "a1" {
 		t.Fatalf("import result = %+v", res)
@@ -432,7 +452,7 @@ func TestImportInstallsAnApplicationByName(t *testing.T) {
 		t.Errorf("a rejected operation must be carried with its reason: %+v", res.Rejected)
 	}
 	// Re-import by name alone: the kernel re-reads the document it recorded.
-	if _, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", ""); err != nil {
+	if _, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(f.lastBody), "spec_url") {

@@ -533,11 +533,20 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/settings", "error", "Connection was cancelled or denied.")
 		return
 	}
+	var pending bool
 	err := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.CompleteGrant(ctx, tok, state, code)
+		_, p, e := s.client.CompleteGrant(ctx, tok, state, code)
+		pending = p
 		return e
 	})
 	if s.handleErr(w, r, err) {
+		return
+	}
+	// The kernel may answer that the exchange has not completed. Saying
+	// "connected" then would be a claim the next run contradicts with
+	// grant_required, so the person is told where it stands instead.
+	if pending {
+		s.flashRedirect(w, r, "/settings", "info", "Connection to "+action+" is still pending.")
 		return
 	}
 	s.flashRedirect(w, r, "/settings", "success", "Connected "+action+".")
@@ -1386,45 +1395,20 @@ func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 		Description: r.FormValue("description"),
 		Price:       price,
 	}
-	if in.Kind == "http" {
+	switch in.Kind {
+	case "http":
 		in.Method = strings.TrimSpace(r.FormValue("method"))
 		in.Params = parseHTTPParams(r)
+	case "wasm":
+		// The compiled module, base64, as sys/tinygo/compile returns it. The
+		// kernel validates it; the UI carries it.
+		in.WasmArtifact = strings.TrimSpace(r.FormValue("wasm_artifact"))
 	}
 	if !s.applySchemas(w, r, "/workshop", &in.InputSchema, &in.OutputSchema) {
 		return
 	}
 
-	if scheme := r.FormValue("auth_scheme"); scheme != "" {
-		var authJSON []byte
-		switch scheme {
-		case "bearer":
-			token := strings.TrimSpace(r.FormValue("auth_bearer_token"))
-			authJSON, _ = json.Marshal(map[string]any{
-				"scheme":  "bearer",
-				"secrets": map[string]string{"token": token},
-			})
-		case "basic":
-			authJSON, _ = json.Marshal(map[string]any{
-				"scheme":  "basic",
-				"secrets": map[string]string{"username": r.FormValue("auth_basic_username"), "password": r.FormValue("auth_basic_password")},
-			})
-		case "header":
-			authJSON, _ = json.Marshal(map[string]any{
-				"scheme":  "header",
-				"config":  map[string]string{"name": strings.TrimSpace(r.FormValue("auth_param_name"))},
-				"secrets": map[string]string{"value": r.FormValue("auth_param_value")},
-			})
-		case "query":
-			authJSON, _ = json.Marshal(map[string]any{
-				"scheme":  "query",
-				"config":  map[string]string{"name": strings.TrimSpace(r.FormValue("auth_param_name"))},
-				"secrets": map[string]string{"value": r.FormValue("auth_param_value")},
-			})
-		}
-		if len(authJSON) > 0 {
-			in.Auth = json.RawMessage(authJSON)
-		}
-	}
+	in.Auth = upstreamAuth(r)
 
 	var created client.Action
 	err = s.sessions.Do(ctx, func(tok string) error {
@@ -1443,9 +1427,13 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/workshop", "error", "Name the application to install.")
 		return
 	}
+	// One credential configuration for the whole application, set at import. An
+	// auth is write-only, so an application that needs one and does not get it
+	// here cannot be given one without naming its subtree by hand afterwards.
+	auth := upstreamAuth(r)
 	var res client.ImportResult
 	err := s.sessions.Do(ctx, func(tok string) error {
-		v, e := s.client.ImportOpenAPI(ctx, tok, name, specURL)
+		v, e := s.client.ImportOpenAPI(ctx, tok, name, specURL, auth)
 		res = v
 		return e
 	})
@@ -2311,4 +2299,42 @@ func (s *Server) nativeIsPriced(ctx context.Context, token, ref string) (bool, e
 		return false, err
 	}
 	return a.Price > 0, nil
+}
+
+// upstreamAuth builds the write-only credential configuration from the shared
+// auth panel's fields, or nil when no scheme was chosen. One definition serves
+// action creation and OpenAPI import, which post the same fields: the kernel
+// takes the same {scheme, config, secrets} object in both bodies, and two
+// copies of this switch would drift the moment a scheme is added.
+//
+// The delegated schemes are absent by construction: they hold no secret here,
+// each caller supplying their own through the Grants surface (§6.4).
+func upstreamAuth(r *http.Request) json.RawMessage {
+	scheme := r.FormValue("auth_scheme")
+	if scheme == "" {
+		return nil
+	}
+	var out []byte
+	switch scheme {
+	case "bearer":
+		out, _ = json.Marshal(map[string]any{
+			"scheme":  "bearer",
+			"secrets": map[string]string{"token": strings.TrimSpace(r.FormValue("auth_bearer_token"))},
+		})
+	case "basic":
+		out, _ = json.Marshal(map[string]any{
+			"scheme":  "basic",
+			"secrets": map[string]string{"username": r.FormValue("auth_basic_username"), "password": r.FormValue("auth_basic_password")},
+		})
+	case "header", "query":
+		out, _ = json.Marshal(map[string]any{
+			"scheme":  scheme,
+			"config":  map[string]string{"name": strings.TrimSpace(r.FormValue("auth_param_name"))},
+			"secrets": map[string]string{"value": r.FormValue("auth_param_value")},
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return json.RawMessage(out)
 }

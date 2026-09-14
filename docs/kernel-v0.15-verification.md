@@ -175,3 +175,67 @@ writes:
 and `client/credentials/ana@alpha.json` = `{token, refresh_token, principal_id}`.
 There is no `contexts` map. A UI configured with `JUICE_CONTEXT` refuses to
 start: `context "alpha" is not in …/client/config.json`.
+
+## 8. A chain world, and what only one can show
+
+Rig: `anvil --chain-id 31337 --slots-in-an-epoch 1`, juice-rail's compiled
+`MockUSDT0` and `MockRouter`, a generated world file naming them, one kernel
+(`delta` :4174) serving it with `rail_rpc`.
+
+```json
+{"decimals":6,"handle":"delta","network":"anvil","network_digest":"1f6a1102…",
+ "rail_address":"0x1dbfeae017bcda47333c56563d1572f79a369e0a","status":"ok","symbol":"USDC"}
+```
+
+`symbol` comes from the **world file**, not the token contract: the deployed
+mock answers `symbol() = "USDT0"` while the world names `USDC`, and `/health`
+serves the world's. A world file without a `symbol` serves `""`, and adding one
+does **not** change `network_digest` — it is an operational field, not part of
+the world's defining `{name, chain_id, token}`.
+
+**Withdrawals page.** Four rows, paid to a registered address:
+
+```
+GET /v1/withdrawals                 → 4 rows
+GET /v1/withdrawals?limit=2         → 2
+GET /v1/withdrawals?limit=2&offset=2 → 2   (the third and fourth)
+GET /v1/withdrawals?limit=3&offset=3 → 1   (the fourth)
+```
+
+So an unpaged read truncates at the kernel's default of 50, and the client must
+page to exhaustion.
+
+**The rail halts on its own.** A payout with no native currency in the vault
+books `status:"blocked"` with a reason naming the shortfall, and every later
+money verb answers `503 rail_stopped` until the vault is topped up:
+
+```
+"native currency too low, top up: holding 0.00, a refill costs 0.001500018504
+ — send native currency to 0x1DBFEae017bcdA47333C56563d1572F79A369e0a"
+```
+
+`GET /v1/admin/kernel` carries the same text under `stop`, which is what the
+network page's banner states.
+
+## 9. `wasm_artifact`, end to end
+
+`sys/tinygo/compile` wraps the submitted source: it supplies `main` and expects
+a `Handle` function, so source declaring its own `main` fails with
+`undefined: Handle` and `main redeclared`. Source that declares only
+
+```go
+func Handle(in map[string]any) (map[string]any, error) { … }
+```
+
+compiles: `{status:"success", artifact:<1 389 036 chars base64>, artifact_hash,
+diagnostics:[]}`, charged 5.
+
+`POST /v1/actions {kind:"wasm", wasm_artifact:<that>}` creates the action, the
+detail read carries `artifact_hash` and the artifact back, `enable` then
+succeeds, and the action runs. Without the field, `enable` refuses with
+`409 "cannot activate action with no source"` — which is what the UI produced
+before, since it had nowhere to put a compiled module.
+
+`POST /v1/actions/import` accepts `auth` for the whole application: an import
+with `{"scheme":"bearer","secrets":{"token":…}}` lands
+`ana/pets/index` carrying `auth_scheme: bearer`.

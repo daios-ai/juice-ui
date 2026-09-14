@@ -3,7 +3,14 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** The world is named wherever the interface names
+> **What changed in 0.8.0.** Four things the kernel offers and the UI could not
+> reach now work (§6.4, §6.5): a compiled `kind=wasm` artifact can be given to
+> an action, so `sys/tinygo/compile` has somewhere to go; an OpenAPI import
+> carries one upstream credential for the whole application; a pending consent
+> exchange is reported as pending rather than as granted; and the withdrawals
+> list is read to exhaustion, since it pages like every other list.
+>
+> The world is named wherever the interface names
 > itself (§7): the brand states the kernel and its world, and the wallet's
 > pay-in sentence names the world whose rule it is stating. A kernel serves
 > one world for life and the world decides whether the money on screen can
@@ -1355,11 +1362,25 @@ once its prerequisite is confirmed on the running kernel.
   `422 {"code":"invalid_input","error":"create account: already exists"}`
   (verified on v0.12.16), and the kernel enforces the ≥8-character minimum
   itself. The BFF keys on the code, not the message.
-* **Action synthesis — dropped.** `sys/make` is not a kernel action; the
-  workshop offers manual creation and OpenAPI import only (§6.4). The kernel's
-  own path is `sys/tinygo/compile` → `POST /v1/actions {kind:"wasm",
-  wasm_artifact}`; designing a UI for it is future work, not a gap in this
-  version.
+* **Action synthesis — dropped; the compiled path is open (§6.4).** `sys/make`
+  is not a kernel action, and the workshop offers no synthesis affordance. The
+  kernel's own path — `sys/tinygo/compile` → `POST /v1/actions {kind:"wasm",
+  wasm_artifact}` — is now reachable: the create form takes the compiled
+  artifact for `kind=wasm`, verified end to end (compile, create, enable, run).
+  Before it, a person could compile in the UI and had nowhere to put the result,
+  and `enable` refused with "cannot activate action with no source". The
+  artifact is **pasted**, never gestured from a result: a control keyed to the
+  shape of a result payload is what §8.1 forbids.
+* **Upstream credentials on import (§6.4).** `POST /v1/actions/import` takes
+  `auth` for the whole application, and the import form now sends it through the
+  same panel action creation uses. Verified: an import carrying a bearer
+  configuration lands its actions with `auth_scheme: bearer`. An auth is
+  write-only, so an application not given one at import cannot be given one
+  afterwards without naming its subtree by hand.
+* **A pending consent exchange (§6.4).** `POST /v1/grants/complete` may answer
+  `{status:"pending"}` rather than granted. The UI reports it as pending;
+  reading it as granted would claim an account is connected while the next run
+  still answers `grant_required`.
 * **Trace tree (Wallet receipt page).** No trace-read HTTP route is confirmed.
   Until one is, the Engine-room trace tree stays conditional; receipt
   verification is confirmed and mandatory.
@@ -1395,9 +1416,15 @@ once its prerequisite is confirmed on the running kernel.
   rates, the ticket face and `lottery_max`, the `sys` split, `solvency`,
   `custody`, `rail_address`, `finalized` and an optional `stop`. The kernel card
   states them.
-* **Withdrawals and payout addresses (§6.5).** Confirmed on v0.14.0:
+* **Withdrawals and payout addresses (§6.5).** Re-confirmed on a chain world at
+  25c07cd. `GET /v1/withdrawals` **pages** like every other list — with four
+  rows, `?limit=2&offset=2` answers the third and fourth — so the UI reads it to
+  exhaustion rather than losing a fifty-first withdrawal. A payout with no
+  native currency in the vault books `blocked` and halts the rail, and `stop`
+  carries the shortfall as text, which the network page states. Confirmed on
+  v0.14.0 and still true:
   `POST /v1/withdrawals {id, amount}` with a caller-minted UUID (a replay returns
-  the same row), `GET /v1/withdrawals`, and `PUT /v1/me/address {address,
+  the same row), and `PUT /v1/me/address {address,
   signature}`. On a world without payment addresses both refuse (409), and while
   a rail payment is blocked every money verb answers `503 rail_stopped`.
 * **Held deposits — resolved (§6.6).** Verified on a local chain (anvil,

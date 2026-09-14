@@ -1,3 +1,41 @@
+{{/* _form_auth — the upstream credential panel, shared by action creation and
+     OpenAPI import. The kernel takes the same write-only {scheme, config,
+     secrets} object in both bodies, so one panel serves both and cannot drift.
+     The root is an id prefix, since two forms on one page may not share input
+     ids. The delegated schemes are absent by construction: they hold no secret
+     here, each caller supplying their own through Grants (§6.4). */}}
+{{define "_form_auth"}}
+<details class="auth-panel">
+  <summary>Upstream authentication (optional)</summary>
+  <div class="field">
+    <label for="{{.}}-auth-scheme">Scheme</label>
+    <select id="{{.}}-auth-scheme" name="auth_scheme">
+      <option value="">none</option>
+      <option value="bearer">bearer</option>
+      <option value="basic">basic</option>
+      <option value="header">header</option>
+      <option value="query">query</option>
+    </select>
+  </div>
+  <div data-auth-scheme="bearer" hidden>
+    <div class="field flush"><label for="{{.}}-auth-bearer">Bearer token</label><input id="{{.}}-auth-bearer" name="auth_bearer_token" type="password" autocomplete="off"></div>
+  </div>
+  <div data-auth-scheme="basic" hidden>
+    <div class="field"><label for="{{.}}-auth-user">Username</label><input id="{{.}}-auth-user" name="auth_basic_username" type="text" autocomplete="off"></div>
+    <div class="field flush"><label for="{{.}}-auth-pass">Password</label><input id="{{.}}-auth-pass" name="auth_basic_password" type="password" autocomplete="off"></div>
+  </div>
+  <div data-auth-scheme="header" hidden>
+    <div class="field"><label for="{{.}}-auth-hname">Header name</label><input id="{{.}}-auth-hname" name="auth_param_name" type="text" autocomplete="off"></div>
+    <div class="field flush"><label for="{{.}}-auth-hval">Header value</label><input id="{{.}}-auth-hval" name="auth_param_value" type="password" autocomplete="off"></div>
+  </div>
+  <div data-auth-scheme="query" hidden>
+    <div class="field"><label for="{{.}}-auth-qname">Query name</label><input id="{{.}}-auth-qname" name="auth_param_name" type="text" autocomplete="off"></div>
+    <div class="field flush"><label for="{{.}}-auth-qval">Query value</label><input id="{{.}}-auth-qval" name="auth_param_value" type="password" autocomplete="off"></div>
+  </div>
+  <p class="help muted">Secrets are write-only — stored encrypted, never shown again.</p>
+</details>
+{{end}}
+
 {{/*
   Floating modal forms. Each is a native <dialog> rendered closed; a trigger
   anchor (href="?form=NAME" data-modal="form-NAME") opens it — with JS via
@@ -28,7 +66,7 @@
         <p class="help">For http: the endpoint URL. For wasm: a base64 artifact from sys/tinygo/compile.</p>
         <input id="c-source" name="source" type="text" placeholder="https://api.example.com/v1/thing">
       </div>
-      <div data-http-only>
+      <div data-kind="http">
         <div class="field">
           <label for="c-method">Method</label>
           <select id="c-method" name="method">
@@ -50,35 +88,19 @@
           </div>
           <button type="button" class="btn" data-param-add>Add parameter</button>
         </div>
-        <details class="auth-panel">
-          <summary>Upstream authentication (optional)</summary>
-          <div class="field">
-            <label for="c-auth-scheme">Scheme</label>
-            <select id="c-auth-scheme" name="auth_scheme">
-              <option value="">none</option>
-              <option value="bearer">bearer</option>
-              <option value="basic">basic</option>
-              <option value="header">header</option>
-              <option value="query">query</option>
-            </select>
-          </div>
-          <div data-auth-scheme="bearer" hidden>
-            <div class="field flush"><label for="c-auth-bearer">Bearer token</label><input id="c-auth-bearer" name="auth_bearer_token" type="password" autocomplete="off"></div>
-          </div>
-          <div data-auth-scheme="basic" hidden>
-            <div class="field"><label for="c-auth-user">Username</label><input id="c-auth-user" name="auth_basic_username" type="text" autocomplete="off"></div>
-            <div class="field flush"><label for="c-auth-pass">Password</label><input id="c-auth-pass" name="auth_basic_password" type="password" autocomplete="off"></div>
-          </div>
-          <div data-auth-scheme="header" hidden>
-            <div class="field"><label for="c-auth-hname">Header name</label><input id="c-auth-hname" name="auth_param_name" type="text" autocomplete="off"></div>
-            <div class="field flush"><label for="c-auth-hval">Header value</label><input id="c-auth-hval" name="auth_param_value" type="password" autocomplete="off"></div>
-          </div>
-          <div data-auth-scheme="query" hidden>
-            <div class="field"><label for="c-auth-qname">Query name</label><input id="c-auth-qname" name="auth_param_name" type="text" autocomplete="off"></div>
-            <div class="field flush"><label for="c-auth-qval">Query value</label><input id="c-auth-qval" name="auth_param_value" type="password" autocomplete="off"></div>
-          </div>
-          <p class="help muted">Secrets are write-only — stored encrypted, never shown again.</p>
-        </details>
+        {{template "_form_auth" "c"}}
+      </div>
+      {{/* A kind=wasm action is its compiled module. sys/tinygo/compile returns
+           one, and without somewhere to put it a person can compile in the UI
+           and have nowhere to go (§6.4). Pasted rather than gestured from a
+           result: keying a control off the shape of a result payload is what
+           §8.1 forbids. */}}
+      <div data-kind="wasm" hidden>
+        <div class="field">
+          <label for="c-artifact">Compiled artifact</label>
+          <p class="help">Base64, as sys/tinygo/compile returns it.</p>
+          <textarea id="c-artifact" name="wasm_artifact" rows="1" class="mono"></textarea>
+        </div>
       </div>
       <div class="field">
         <label for="c-desc">Description</label>
@@ -122,6 +144,10 @@
         <p class="help">Given once; later imports re-read the recorded document.</p>
         <input id="i-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json">
       </div>
+      {{/* One credential for the whole application: an auth is write-only, so
+           an application not given one here cannot be given one afterwards
+           without naming its subtree by hand (§6.4). */}}
+      {{template "_form_auth" "i"}}
       <div class="cluster">
         <button class="btn" type="submit">Import</button>
         <a class="btn" href="/workshop" data-modal-close>Cancel</a>
