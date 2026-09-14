@@ -2706,3 +2706,54 @@ func TestRemoteTransactionBreakdownNamesTheObligation(t *testing.T) {
 		t.Error("that caption describes a local settlement, not a cross-kernel one")
 	}
 }
+
+// A native's price is the OPERATOR's configuration, not a constant: a kernel
+// booted with native.lookup.price = 7 serves 7 on the action row and charges it
+// (measured, docs/kernel-v0.15-verification.md §4). Semantic search is a page
+// load, so running it unchecked would make a GET spend the person's money —
+// §8.2 forbids that outright. The UI reads the price first and degrades to
+// catalog search, saying so in its own words, because the kernel said nothing.
+func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
+	var ran bool
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") == "sys/lookup" {
+			w.Write([]byte(`[{"id":"L","action":"sys/lookup","owner_handle":"sys","name":"lookup","kind":"native","active":true,"price":7}]`))
+			return
+		}
+		w.Write([]byte(`[{"id":"A1","action":"alice/hello","owner_handle":"alice","name":"hello","kind":"wasm","active":true,"price":0,"description":"says hello"}]`))
+	})
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		ran = true
+		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
+	})
+	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) })
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	body := getBody(t, cl, srv.URL+"/browse?q=hello")
+	if ran {
+		t.Error("a page load must not run a priced native: that is a spend from a GET (§8.2)")
+	}
+	if !strings.Contains(body, "Semantic search unavailable") || !strings.Contains(body, "priced on this kernel") {
+		t.Errorf("the page must say why it fell back, in our own words: %s", body)
+	}
+	// And it still answers the query, from the catalog.
+	if !strings.Contains(body, "alice/hello") {
+		t.Errorf("catalog fallback must still search: %s", body)
+	}
+}

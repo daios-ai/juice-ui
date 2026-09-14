@@ -95,9 +95,12 @@ func New() *Agents { return &Agents{} }
 func (a *Agents) Slug() string { return "agents" }
 
 // Nav contributes the "agents" sidebar entry (no badge — this app has no async
-// attention signal). Self-gated on a signed-in user, like apps/chat.
+// attention signal), to the operator alone. Everything this app does happens on
+// the UI host — it writes the installation's files and spawns a long-lived
+// daemon — so it is an operator surface, and an entry a non-superuser could not
+// use would be an invitation to a 403.
 func (a *Agents) Nav(handle string, superuser bool) []apps.NavEntry {
-	if handle == "" {
+	if handle == "" || !superuser {
 		return nil
 	}
 	return []apps.NavEntry{{Slug: "agents", Label: "agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
@@ -105,16 +108,23 @@ func (a *Agents) Nav(handle string, superuser bool) []apps.NavEntry {
 
 func (a *Agents) Templates() fs.FS { return tmplFS }
 
+// Mount gates every route on the SUPERUSER, not merely on a session. The
+// authority exercised here is the operator's machine: these handlers scaffold
+// and delete directories under the installation root, write the files a daemon
+// reads, and spawn that daemon as a child of this process. A kernel account
+// confers none of that, and while any signed-in user could reach them, one
+// account could edit and stop another's agent, and anyone could start a process
+// on the host.
 func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	a.deps = d
-	mux.HandleFunc("GET /agents", d.RequireAuth(a.getIndex))
-	mux.HandleFunc("POST /agents", d.RequireAuth(a.postCreate))
-	mux.HandleFunc("GET /agents/{handle}", d.RequireAuth(a.getDetail))
-	mux.HandleFunc("GET /agents/{handle}/status", d.RequireAuth(a.getStatus))
-	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireAuth(a.postSaveFile))
-	mux.HandleFunc("POST /agents/{handle}/start", d.RequireAuth(a.postStart))
-	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireAuth(a.postStop))
-	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireAuth(a.postDelete))
+	mux.HandleFunc("GET /agents", d.RequireSuperuser(a.getIndex))
+	mux.HandleFunc("POST /agents", d.RequireSuperuser(a.postCreate))
+	mux.HandleFunc("GET /agents/{handle}", d.RequireSuperuser(a.getDetail))
+	mux.HandleFunc("GET /agents/{handle}/status", d.RequireSuperuser(a.getStatus))
+	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireSuperuser(a.postSaveFile))
+	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
+	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
+	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
 }
 
 // Start resolves the agent root (sibling of the UI home) and the supervisor. Both

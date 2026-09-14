@@ -598,6 +598,7 @@ func (s *Server) appDeps() apps.Deps {
 		IsHTMX:            isHTMX,
 		Handle:            func(r *http.Request) string { return s.sessions.Handle(r.Context()) },
 		RequireAuth:       s.requireAuth,
+		RequireSuperuser:  s.requireSuperuser,
 		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
 		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
 		PublicURL:         s.publicURL,

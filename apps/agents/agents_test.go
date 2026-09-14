@@ -404,12 +404,20 @@ func TestPostDeleteStopsAndRemoves(t *testing.T) {
 
 // ---- seam identity ----
 
-func TestNavGatedOnAuth(t *testing.T) {
+// This app acts on the UI HOST — it writes the installation's files and spawns a
+// daemon — so it is an operator surface and offers itself to nobody else. An
+// entry an ordinary account could not use would be an invitation to a 403, and
+// an app that merely hid its entry while serving the routes would be hiding a
+// privilege rather than withholding one (the routes are gated too, in Mount).
+func TestNavIsOperatorOnly(t *testing.T) {
 	a := New()
 	if a.Nav("", false) != nil {
 		t.Fatal("anonymous nav must be nil")
 	}
-	entries := a.Nav("alice", false)
+	if a.Nav("alice", false) != nil {
+		t.Fatal("an ordinary account must not be offered a host-acting app")
+	}
+	entries := a.Nav("sys", true)
 	if len(entries) != 1 || entries[0].Href != "/agents" || entries[0].BadgeURL != "" {
 		t.Fatalf("nav = %+v", entries)
 	}
@@ -440,5 +448,31 @@ func TestDefaultRoot(t *testing.T) {
 	}
 	if got := juiceRoot(filepath.FromSlash("/home/u/.juice/agent/agents")); got != filepath.FromSlash("/home/u/.juice") {
 		t.Fatalf("juiceRoot = %q", got)
+	}
+}
+
+// Every route this app serves acts on the UI host, so Mount MUST gate each one
+// on the operator rather than on any signed-in session. The wrapper is recorded
+// per route: a handler that slipped through RequireAuth would let one account
+// edit and stop another's agent, and let anyone spawn a process on the machine
+// the interface runs on.
+func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
+	var superuser, auth []string
+	d := apps.Deps{
+		RequireSuperuser: func(h http.HandlerFunc) http.HandlerFunc {
+			superuser = append(superuser, "x")
+			return h
+		},
+		RequireAuth: func(h http.HandlerFunc) http.HandlerFunc {
+			auth = append(auth, "x")
+			return h
+		},
+	}
+	New().Mount(http.NewServeMux(), d)
+	if len(auth) != 0 {
+		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
+	}
+	if len(superuser) != 8 {
+		t.Errorf("every route must be gated: %d of 8", len(superuser))
 	}
 }

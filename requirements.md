@@ -3,7 +3,17 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** The client records dropped contexts for
+> **What changed in 0.8.0.** Two invariants the UI already stated were not
+> actually held, and both are enforced now. An app that acts on the UI host is
+> an operator surface (§5, apps): `apps/agents` writes the installation's files
+> and spawns a daemon, yet gated only on a session, so any account could edit
+> or stop another's agent and start a process on the machine. And no spend may
+> be reached by a GET (§8.2): search ran `sys/lookup` assuming it is free, but a
+> native's price is the operator's configuration — measured on a kernel that
+> prices it at 7 and charges for it — so the UI reads the price first and
+> degrades.
+>
+> The client records dropped contexts for
 > `handle@kernel` logins, so a UI that named a context could not start. It names
 > a **kernel** now (`kernel` / `JUICE_KERNEL`), resolved straight from the
 > `kernels` half of the shared records, and the retired key is refused by name
@@ -533,6 +543,14 @@ kernel and world is in use, and keys everything durable by
   elsewhere. The closed affordance MUST carry the step badge, so the sole core
   attention signal survives the drawer being shut. (The core rule that money moves
   only through a named confirm is unaffected by which surface hosts a screen.)
+* **An app that acts on the UI host is an operator surface.** Most apps are
+  ordinary kernel clients and gate on a session. One whose handlers act on the
+  machine the interface runs on — spawning a process, writing the installation's
+  files — MUST gate every route on the superuser and MUST contribute no nav
+  entry to anyone else. That authority is the operator's machine, which no
+  kernel account confers: on a shared root, an ordinary session could otherwise
+  edit and stop another person's agent, and anyone signed in could start a
+  process on the host.
 * The step badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting steps for the signed-in user, sourced from
@@ -1224,6 +1242,14 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    button names the amount or refund. An ordinary step completion moves none of
    the completer's money and stays neutral (§6.3, the single statement). No
    spend MUST be reachable from a list view or by a GET.
+
+   This binds the natives the UI runs **on a person's behalf, unasked**, to
+   power a surface — `sys/lookup` behind search, and any successor. Every
+   native's price is the operator's own configuration and the shipped figures
+   are policy, not contract, so a kernel may price one; the UI MUST read that
+   price from the action row before running it, and where it is non-zero MUST
+   degrade the surface rather than spend. An action a person chooses to run is
+   unaffected: it is priced and confirmed like any other.
 3. Parse `owner/name` by the first-slash rule everywhere (§4, including the
    remote `owner@kernel/name` form); render the owner segment distinguished, in
    a confusable-distinct monospace face, with the owner profile one click away
@@ -1294,7 +1320,11 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * access control of owner-only UI affordances (Studio surfaces shown only to the
   owner);
 * security invariants: counterparty content renders inert; trust affordances key
-  on kernel fields, not payload shape; no spend reachable by GET;
+  on kernel fields, not payload shape; no spend reachable by GET — including
+  that a search on a kernel which prices `sys/lookup` degrades instead of
+  charging (§8.2);
+* an app that acts on the UI host is reachable by the operator alone: every
+  route gated, and no nav entry offered to anyone else (§5, apps);
 * the single `aria-live` feedback region and the absence of any notification feed.
 
 ## 10. Open items / kernel prerequisites

@@ -118,6 +118,13 @@ type Deps struct {
 	// with a session.
 	RequireAuth func(http.HandlerFunc) http.HandlerFunc
 
+	// RequireSuperuser wraps a handler so only the operator (`sys`) reaches it.
+	// An app whose acts run on the UI HOST — spawning a process, writing the
+	// installation's files — MUST gate on this rather than on RequireAuth: that
+	// authority is the operator's machine, which no ordinary kernel account
+	// confers. Such an app also contributes no nav entry to a non-superuser.
+	RequireSuperuser func(http.HandlerFunc) http.HandlerFunc
+
 	// LoadAppState returns this app's persisted state blob (nil if none), and
 	// SaveAppState persists it — both namespaced by the app's Slug() in the
 	// component's state.json. Apps use these to provision and remember their own

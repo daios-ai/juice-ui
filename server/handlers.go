@@ -745,21 +745,36 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			view.Catalog = cards
 			return nil
 		}
-		// Semantic search via sys/lookup (price 0; run creates and closes process).
-		out, e := s.caller.Run(ctx, tok, "sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}), "")
-		if e != nil {
-			return e
+		// Semantic search runs sys/lookup. A native's price is the OPERATOR's
+		// configuration, not a constant (measured: a kernel booted with
+		// native.lookup.price = 7 serves 7 on the row and charges it), and a
+		// search is a page load — so running it unchecked would make a GET spend,
+		// which §8.2 forbids outright. Read the price first and degrade instead.
+		priced, _ := s.nativeIsPriced(ctx, tok, "sys/lookup")
+		var out Outcome
+		if !priced {
+			o, e := s.caller.Run(ctx, tok, "sys/lookup", mustArgs(map[string]any{"query": q, "limit": 20}), "")
+			if e != nil {
+				return e
+			}
+			out = o
 		}
 		if out.IsSuccess() {
 			view.Results = parseLookup(out.Result)
 		} else {
-			// Degrade honestly to catalog search (R6.2.4). Surface the kernel's own
-			// reason rather than guessing the cause (it may be a missing embedder,
-			// or sys/lookup failing for another reason).
+			// Degrade honestly to catalog search (R6.2.4). The reason is the
+			// kernel's own where it ran and failed — it may be a missing embedder,
+			// or something else — and ours where we declined to run it, since the
+			// kernel said nothing.
 			view.LookupAvailable = false
-			view.Reason = out.Detail
-			if view.Reason == "" {
-				view.Reason = out.Message
+			switch {
+			case priced:
+				view.Reason = "Semantic search is priced on this kernel."
+			default:
+				view.Reason = out.Detail
+				if view.Reason == "" {
+					view.Reason = out.Message
+				}
 			}
 			cat, e := s.client.ListActions(ctx, tok, "", "", false, 0, 0)
 			if e != nil {
@@ -2279,4 +2294,21 @@ func signupErrorMessage(err error) string {
 		}
 	}
 	return "Could not create the account. Please check your details and try again."
+}
+
+// nativeIsPriced reports whether a native the UI runs to POWER A SURFACE costs
+// money on this kernel. Every native's price is operator configuration — the
+// shipped defaults are policy, not contract — so a kernel may price sys/lookup
+// or sys/llm/decide, and a search that ran one unchecked would spend on a page
+// load (§8.2: no spend from a list view or a GET). The price is served on the
+// ordinary action row, so it is read rather than assumed.
+//
+// This governs only the natives the UI runs on a person's behalf without asking.
+// An action a person chooses to run is priced and confirmed like any other.
+func (s *Server) nativeIsPriced(ctx context.Context, token, ref string) (bool, error) {
+	a, ok, err := s.client.ResolveRef(ctx, token, ref)
+	if err != nil || !ok {
+		return false, err
+	}
+	return a.Price > 0, nil
 }
