@@ -3,7 +3,14 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** Work a peer is holding for this kernel is now
+> **What changed in 0.8.0.** The kernel's planner reaches the interface (§6.2).
+> `sys/llm/decide` chooses one action from the candidates on screen and proposes
+> arguments without executing, so browse can ask it and land on the chosen
+> action's own page with the form filled in. That is kernel U46 made visible —
+> planning and spending are separate decisions — and it adds no way to spend:
+> the same confirm, naming the same amount, still has to be pressed.
+>
+> Work a peer is holding for this kernel is now
 > visible and doable (§6.6). The kernel serves those steps on the inspection and
 > completes one when the peer is named in the body — the query form 404s, which
 > is what made this conditional before. It is an operator act, since the request
@@ -596,6 +603,34 @@ kernel and world is in use, and keys everything durable by
 
 ### 6.2 run — discovery, action page, run form
 
+**Proposal.** The kernel ships a planner (`sys/llm/decide`) that selects one
+action from typed candidates and proposes valid arguments **without executing
+anything** — kernel U46, where planning and spending are named as separate
+decisions. The UI MUST expose it, and MUST NOT let it become a second way to
+spend:
+
+* The command sits with the results it acts on, offered only when the planner is
+  present and **free**: a priced native run on a person's behalf would spend
+  from a page nobody confirmed (§8.2), so where it is priced the command is
+  absent rather than charged for.
+* The candidates posted are **exactly the refs on screen**. A set assembled
+  server-side would be a claim about what was offered that nobody could check,
+  and the kernel refuses the whole call on a bare ref it does not know, so only
+  refs it served are ever sent back.
+* The reply renders as **the ordinary action page**, with the proposed arguments
+  filled into its ordinary fields and the ordinary confirm unpressed. Nothing
+  about a proposal is privileged: the fields are editable, the kernel validates
+  them as it validates any input, and the money still moves only through the
+  button that names the amount.
+* The page MUST say it is a proposal **whether or not the model said anything**,
+  since a person must know they are reading a choice made for them. Anything the
+  model did say is counterparty prose by construction: inert, and never beside
+  the confirm (§8.1).
+* It MUST NOT be reachable by GET with arguments in the URL: that would be a
+  link that fills a money form for someone.
+* Where the planner is absent or chooses nothing, the UI states the kernel's own
+  reason and the page is unchanged. Nothing is inferred about why.
+
 **Discovery.**
 
 * The omnibox MUST be present on every page — it lives in a **persistent
@@ -934,6 +969,14 @@ open (parked steps), the result MUST say so and link to the Wallet.
   the platform it presents, and it multiplies — one exception invites the next.
   Where behaviour genuinely differs, it MUST key on a kernel-served field the
   action carries (`effect`, `kind`, `requires_grant`), never on a ref.
+
+  The rule bites on how an action **renders and spends**. It does not forbid the
+  UI naming a native to **power a surface** — search runs `sys/lookup`, the
+  proposal runs `sys/llm/decide` — because there the native is the mechanism
+  behind a feature, not a marketplace row given privileges. The distinction is
+  the one the 0.6.1 retraction drew: `sys/transfer` lost its bespoke form
+  because sending money is running an action; search did not lose its native
+  because ranking is not.
 * The transaction list (`GET /v1/transactions`) MUST return rows where the user
   is buyer, caller, or seller. The kernel renders each party as a handle —
   `owner_handle`, `caller_handle`, `target_handle` — and returns no raw user id,
@@ -1409,6 +1452,14 @@ once its prerequisite is confirmed on the running kernel.
   (mandatory); selects semantic ranking versus catalog fallback.
 * **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
   spec; conditional, not assumed. No current UI feature depends on them.
+* **The planner (§6.2).** Confirmed on 25c07cd against a local model:
+  `sys/llm/decide` takes `{messages, actions}` and answers
+  `{action, args, message?}` — `message` optional and usually absent. It selects
+  and never executes. A dead kernel-qualified candidate among live ones is
+  discarded; a **bare unknown** ref refuses the whole call (404), so the UI
+  sends only refs the kernel served. With no model reachable it fails as an
+  ordinary outcome (`execution_failed`, "model did not select an action"), which
+  the existing degrade-honestly path renders as the kernel's own reason.
 * **Settlement — retired (§6.6).** The kernel serves no settle route: every debt
   settles per call on the rail by its own ticket. As of 25c07cd the operator has
   no act in it at all — an obligation closes when its buyer pays, which the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -105,6 +106,11 @@ type discoverView struct {
 	Results         []actionCardView
 	Catalog         []actionCardView
 	Pager           Pager // catalog paging (search results are single-page, ranked)
+	// CanPropose reports that the kernel's planner is there and free, so the
+	// command to ask it is offered. A kernel without a model, or one that prices
+	// the planner, simply does not carry the command — an affordance that
+	// cannot work, or that would spend, is not offered (§8.2).
+	CanPropose bool
 }
 
 type actionView struct {
@@ -120,8 +126,16 @@ type actionView struct {
 	Outcome      *Outcome
 	OpenForm     string
 	Error        string
-	CSRFField    template.HTML // carried so the polled _action_run fragment's form keeps its token
-	BadgeSecs    int
+	// Proposed marks the page as the planner's choice rather than an ordinary
+	// open, and ProposedMessage carries anything the model said — which is often
+	// nothing. The two are separate because a person must know they are looking
+	// at a proposal whether or not the model was talkative. Model-authored prose
+	// is counterparty content by construction, so it renders inert and never
+	// beside the confirm (§6.2, §8.1).
+	Proposed        bool
+	ProposedMessage string
+	CSRFField       template.HTML // carried so the polled _action_run fragment's form keeps its token
+	BadgeSecs       int
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -759,6 +773,11 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		// native.lookup.price = 7 serves 7 on the row and charges it), and a
 		// search is a page load — so running it unchecked would make a GET spend,
 		// which §8.2 forbids outright. Read the price first and degrade instead.
+		// The planner is offered only where it is there and free; the price read
+		// is the same guard search makes of its own native (§8.2).
+		if planner, _, e := s.client.ResolveRef(ctx, tok, decideRef); e == nil && planner.Active && planner.Price == 0 {
+			view.CanPropose = true
+		}
 		priced, _ := s.nativeIsPriced(ctx, tok, "sys/lookup")
 		var out Outcome
 		if !priced {
@@ -1108,7 +1127,15 @@ func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
 // ---- action detail & run ----
 
 func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	s.renderAction(w, r, r.PathValue("id"), nil)
+}
+
+// renderAction renders one action's page. proposed pre-fills the run form's
+// fields and message states who proposed them; both are empty on an ordinary
+// open. The two callers are the action page itself and the proposal (§6.2), and
+// they differ in nothing else: a proposal is the same page, already filled in,
+// and the same confirm still has to be pressed.
+func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string, proposal *proposal) {
 	ctx := r.Context()
 	var view actionView
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -1157,6 +1184,12 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 	})
 	if s.handleErrFragment(w, r, err) {
 		return
+	}
+	if proposal != nil {
+		view.Proposed, view.ProposedMessage = true, proposal.Message
+		for i := range view.Form.Fields {
+			view.Form.Fields[i].Value = proposal.Args[view.Form.Fields[i].Name]
+		}
 	}
 	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
 }
@@ -2337,4 +2370,135 @@ func upstreamAuth(r *http.Request) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(out)
+}
+
+// postPropose asks the kernel's own planner which of the actions on screen fits
+// what the person asked for, and renders its choice as the ordinary action page
+// with the arguments it proposed already filled in.
+//
+// It is the kernel requirement U46 made visible: planning and spending are
+// separate decisions. sys/llm/decide selects and never executes, so nothing has
+// moved when this returns — the person reads the choice, edits any argument,
+// and presses the same confirm that names the amount. There is no second money
+// path, and this adds no authority: it fills a form.
+//
+// The candidate set is exactly the refs the person can see, carried on the
+// results form. That is deliberate and not incidental: a set assembled here in
+// private would be a claim about what was offered that nobody could check. The
+// kernel refuses the whole call on a bare ref it does not know, so only refs it
+// served are ever sent back to it.
+func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if err := r.ParseForm(); err != nil {
+		s.flashRedirect(w, r, "/browse", "error", "Could not read that request.")
+		return
+	}
+	q := strings.TrimSpace(r.FormValue("q"))
+	refs := r.Form["ref"]
+	if q == "" || len(refs) == 0 {
+		s.flashRedirect(w, r, "/browse", "error", "Search first, then ask for a proposal.")
+		return
+	}
+	var chosen, message string
+	var args map[string]string
+	err := s.sessions.Do(ctx, func(tok string) error {
+		// The same guard as search: a native the UI runs on a person's behalf is
+		// read for its price first, since a priced one would spend from a page
+		// they did not confirm (§8.2).
+		if priced, _ := s.nativeIsPriced(ctx, tok, decideRef); priced {
+			return errPricedPlanner
+		}
+		out, e := s.caller.Run(ctx, tok, decideRef, mustArgs(map[string]any{
+			"messages": []map[string]string{{"role": "user", "content": q}},
+			"actions":  refs,
+		}), "")
+		if e != nil {
+			return e
+		}
+		if !out.IsSuccess() {
+			// The kernel's own reason, not a guess: it may have no model
+			// configured, or the model may have chosen nothing.
+			return fmt.Errorf("%s", firstNonEmpty(out.Detail, out.Message))
+		}
+		chosen, args, message = parseDecision(out.Result)
+		return nil
+	})
+	if err != nil {
+		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", capitalize(userMessage(err))+".")
+		return
+	}
+	if chosen == "" {
+		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "info", "No action was chosen for that.")
+		return
+	}
+	// The chosen ref is resolved the way any ref is, so a proposal lands on the
+	// ordinary action page and inherits every rule that page already holds.
+	var id string
+	if e := s.sessions.Do(ctx, func(tok string) error {
+		a, ok, re := s.client.ResolveRef(ctx, tok, chosen)
+		if re != nil {
+			return re
+		}
+		if !ok {
+			return fmt.Errorf("the chosen action could not be opened")
+		}
+		id = a.ID
+		return nil
+	}); e != nil {
+		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", capitalize(userMessage(e))+".")
+		return
+	}
+	s.renderAction(w, r, id, &proposal{Args: args, Message: message})
+}
+
+// proposal is the planner's choice as the action page renders it: the arguments
+// it proposes, keyed by field name, and anything it said.
+type proposal struct {
+	Args    map[string]string
+	Message string
+}
+
+// decideRef is the kernel's planner native. Naming it here is naming a native to
+// POWER a surface, as search names sys/lookup — never a marketplace action given
+// bespoke treatment, which §6.5 forbids.
+const decideRef = "sys/llm/decide"
+
+// errPricedPlanner is the refusal when an operator has priced the planner: the
+// proposal is withheld rather than charged for without a confirm (§8.2).
+var errPricedPlanner = errors.New("choosing an action is priced on this kernel")
+
+// parseDecision reads the planner's reply: the action it chose, the arguments it
+// proposes as form values, and anything it said. Every argument is rendered as
+// text into an ordinary field, so a scalar prints as itself and an object or
+// array as its JSON — the person edits and submits it like any other input, and
+// the kernel validates it like any other input.
+func parseDecision(result json.RawMessage) (action string, args map[string]string, message string) {
+	var d struct {
+		Action  string                     `json:"action"`
+		Args    map[string]json.RawMessage `json:"args"`
+		Message string                     `json:"message"`
+	}
+	if err := json.Unmarshal(result, &d); err != nil {
+		return "", nil, ""
+	}
+	args = make(map[string]string, len(d.Args))
+	for k, v := range d.Args {
+		var str string
+		if json.Unmarshal(v, &str) == nil {
+			args[k] = str
+			continue
+		}
+		args[k] = strings.TrimSpace(string(v))
+	}
+	return d.Action, args, d.Message
+}
+
+// firstNonEmpty returns the first non-empty string, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

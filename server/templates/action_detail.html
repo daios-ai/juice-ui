@@ -21,6 +21,16 @@
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
+{{/* A proposal: the kernel's planner chose this action and filled the form
+     below. It selected and did not execute, so nothing has moved — the person
+     reads it, edits anything, and presses the same confirm as always (§6.2).
+     What the model said is counterparty prose by construction: inert, and never
+     beside the button. */}}
+{{if $d.Proposed}}
+<div class="banner banner-info" role="status">Chosen for you. Check it before you run it.</div>
+{{if $d.ProposedMessage}}<pre class="json">{{$d.ProposedMessage}}</pre>{{end}}
+{{end}}
+
 <h2>Run</h2>
 {{template "_action_run" $d}}
 

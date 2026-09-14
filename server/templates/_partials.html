@@ -373,18 +373,22 @@
     <label for="f_{{.Name}}">{{.Name}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</label>
     {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
     <input type="hidden" name="t_{{.Name}}" value="{{.Type}}">
+    {{/* Value pre-fills a field where something already proposed an argument
+         (§6.2). A pre-filled field is an ordinary field: editable, submitted
+         like any other, and trusted no more than one typed by hand. */}}
+    {{$v := .Value}}
     {{if .Enum}}
     <select id="f_{{.Name}}" name="f_{{.Name}}">
-      {{range .Enum}}<option value="{{.}}">{{.}}</option>{{end}}
+      {{range .Enum}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
     </select>
     {{else if eq .Type "boolean"}}
-    <select id="f_{{.Name}}" name="f_{{.Name}}"><option value="false">false</option><option value="true">true</option></select>
+    <select id="f_{{.Name}}" name="f_{{.Name}}"><option value="false">false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
     {{else if or (eq .Type "integer") (eq .Type "number")}}
-    <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" {{if eq .Type "integer"}}step="1"{{end}}>
+    <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" {{if eq .Type "integer"}}step="1"{{end}} value="{{$v}}">
     {{else if or (eq .Type "object") (eq .Type "array")}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}" rows="1">{{.Example}}</textarea>
+    <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}" rows="1">{{if $v}}{{$v}}{{else}}{{.Example}}{{end}}</textarea>
     {{else}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}" rows="1"></textarea>
+    <textarea id="f_{{.Name}}" name="f_{{.Name}}" rows="1">{{$v}}</textarea>
     {{end}}
   </div>
   {{end}}

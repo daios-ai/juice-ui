@@ -14,6 +14,11 @@ type Field struct {
 	Description string
 	Enum        []string
 	Example     string // for object/array fields: a pretty-printed JSON skeleton
+	// Value pre-fills the input. It is used where something already proposed an
+	// argument — the model's selection (§6.2) — and is empty otherwise. A
+	// pre-filled field is still an ordinary field: it is editable, it is
+	// submitted like any other, and nothing about it is trusted.
+	Value string
 }
 
 // FormModel is the server-side model the run form is rendered from (R6.5.4). The

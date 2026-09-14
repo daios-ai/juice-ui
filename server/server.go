@@ -280,6 +280,7 @@ func New(o Options) (http.Handler, error) {
 
 	// Browse — discovery, catalog, and execution.
 	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))
+	mux.HandleFunc("POST /browse/propose", s.requireAuth(s.postPropose))
 
 	// Workshop — the provider surface (own actions, earnings, creation).
 	mux.HandleFunc("GET /workshop", s.requireAuth(s.getWorkshop))

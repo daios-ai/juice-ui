@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -2763,5 +2764,132 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 	// And it still answers the query, from the catalog.
 	if !strings.Contains(body, "alice/hello") {
 		t.Errorf("catalog fallback must still search: %s", body)
+	}
+}
+
+// proposalKernel serves the planner: sys/lookup ranks, sys/llm/decide chooses.
+// decidePrice makes the planner cost money, which must withdraw the command
+// rather than spend without a confirm.
+func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) })
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"WEB","action":"sys/web","owner_handle":"sys","name":"web","kind":"http","active":true,"price":0,
+		 "description":"Fetch a public web page","input_schema":{"type":"object","properties":{"url":{"type":"string","description":"the page"}},"required":["url"]}}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("ref") {
+		case "sys/llm/decide":
+			fmt.Fprintf(w, `[{"id":"D","action":"sys/llm/decide","owner_handle":"sys","name":"decide","kind":"native","active":true,"price":%d}]`, decidePrice)
+		case "sys/web":
+			w.Write([]byte(`[{"id":"WEB","action":"sys/web","owner_handle":"sys","name":"web","kind":"http","active":true,"price":0,
+			 "input_schema":{"type":"object","properties":{"url":{"type":"string","description":"the page"}},"required":["url"]}}]`))
+		case "sys/lookup":
+			w.Write([]byte(`[{"id":"L","action":"sys/lookup","owner_handle":"sys","name":"lookup","kind":"native","active":true,"price":0}]`))
+		default:
+			w.Write([]byte(`[]`))
+		}
+	})
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Action string `json:"action"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &in)
+		if in.Action == "sys/llm/decide" {
+			lastDecide = string(b)
+			fmt.Fprintf(w, `{"result":%s,"tx_id":"T1"}`, decision)
+			return
+		}
+		w.Write([]byte(`{"result":{"results":[{"action_id":"WEB","action":"sys/web","description":"Fetch a public web page","price":0}]},"tx_id":"T0"}`))
+	})
+	return httptest.NewServer(mux)
+}
+
+var lastDecide string
+
+// The kernel ships a planner that selects an action and proposes arguments
+// WITHOUT executing (U46: planning and spending are separate decisions). The UI
+// renders its choice as the ordinary action page with the form filled in, so
+// the spend does not move: the same confirm still has to be pressed.
+func TestProposalFillsTheFormAndSpendsNothing(t *testing.T) {
+	lastDecide = ""
+	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{"url":"example.com"},"message":"this fetches a page"}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	// The command is offered beside the results it acts on.
+	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
+	if !strings.Contains(page, `action="/browse/propose"`) || !strings.Contains(page, `name="ref" value="sys/web"`) {
+		t.Fatalf("browse must offer the planner, carrying the refs on screen: %s", page)
+	}
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{
+		"q": {"fetch the front page of example.com"}, "ref": {"sys/web"},
+	})
+	defer resp.Body.Close()
+	bb, _ := io.ReadAll(resp.Body)
+	body := string(bb)
+	// The candidate set sent is the one the person could see — not one assembled
+	// in private, which would be a claim about what was offered that nobody
+	// could check.
+	if !strings.Contains(lastDecide, `"actions":["sys/web"]`) {
+		t.Errorf("the planner must be given the visible candidates: %s", lastDecide)
+	}
+	if !strings.Contains(body, "Chosen for you") {
+		t.Errorf("a proposal must say it is one: %s", body)
+	}
+	if !strings.Contains(body, `name="f_url" rows="1">example.com`) {
+		t.Errorf("the proposed argument must fill the ordinary field: %s", body)
+	}
+	// Nothing ran, and the spend is where it always was: behind the run form's
+	// own confirm on the action's own page.
+	if !strings.Contains(body, `action="/actions/WEB/run"`) {
+		t.Errorf("the proposal lands on the action's ordinary run form: %s", body)
+	}
+}
+
+// A proposal announces itself even when the model says nothing, which is the
+// common case: a person must know they are reading a choice made for them.
+func TestProposalAnnouncesItselfWithoutAMessage(t *testing.T) {
+	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{"url":"example.com"}}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys/web"}})
+	defer resp.Body.Close()
+	bb, _ := io.ReadAll(resp.Body)
+	if body := string(bb); !strings.Contains(body, "Chosen for you") {
+		t.Errorf("a silent model still produced a proposal: %s", body)
+	}
+}
+
+// An operator may price the planner. Then the command is not offered at all: an
+// affordance that would spend from a page nobody confirmed is not an affordance
+// (§8.2).
+func TestPricedPlannerIsNotOffered(t *testing.T) {
+	kernel := proposalKernel(t, 9, `{"action":"sys/web","args":{}}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	if page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page"); strings.Contains(page, "/browse/propose") {
+		t.Errorf("a priced planner must not be offered: %s", page)
 	}
 }
