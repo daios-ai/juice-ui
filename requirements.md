@@ -3,89 +3,69 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** An agent's account reaches its page (§5, apps). An
-> agent is a user — it holds its own principal and spends it — and the app that
-> manages one showed a persona, a config and a run switch, so a person could
-> raise something that spends and never see what it spent. It now shows the
-> balance, what is parked, and recent activity, all read with the operator's own
-> token, which is honest because that app is the operator's alone.
->
-> The signals a buyer already has became usable when
-> choosing (§6.2): browse sorts by rating or price, not only by the kernel's
-> relevance. The UI collected feedback and rendered it on a card, and there it
-> stopped — a rating that cannot order a list is a number to look at. An unrated
-> row sorts after the rated ones rather than as a zero, because silence is not a
-> low opinion.
->
-> The kernel's planner reaches the interface (§6.2).
-> `sys/llm/decide` chooses one action from the candidates on screen and proposes
-> arguments without executing, so browse can ask it and land on the chosen
-> action's own page with the form filled in. That is kernel U46 made visible —
-> planning and spending are separate decisions — and it adds no way to spend:
-> the same confirm, naming the same amount, still has to be pressed.
->
-> Work a peer is holding for this kernel is now
-> visible and doable (§6.6). The kernel serves those steps on the inspection and
-> completes one when the peer is named in the body — the query form 404s, which
-> is what made this conditional before. It is an operator act, since the request
-> leaves signed with this kernel's own identity, so it lives on the peer's page
-> rather than in anybody's inbox.
->
-> Four things the kernel offers and the UI could not
-> reach now work (§6.4, §6.5): a compiled `kind=wasm` artifact can be given to
-> an action, so `sys/tinygo/compile` has somewhere to go; an OpenAPI import
-> carries one upstream credential for the whole application; a pending consent
-> exchange is reported as pending rather than as granted; and the withdrawals
-> list is read to exhaustion, since it pages like every other list.
->
-> The world is named wherever the interface names
-> itself (§7): the brand states the kernel and its world, and the wallet's
-> pay-in sentence names the world whose rule it is stating. A kernel serves
-> one world for life and the world decides whether the money on screen can
-> leave; the symbol does not say that, so without it a rehearsal and a live
-> market look alike. Both facts come from `/health`, and the UI judges
-> neither.
->
-> Two invariants the UI already stated were not
-> actually held, and both are enforced now. An app that acts on the UI host is
-> an operator surface (§5, apps): `apps/agents` writes the installation's files
-> and spawns a daemon, yet gated only on a session, so any account could edit
-> or stop another's agent and start a process on the machine. And no spend may
-> be reached by a GET (§8.2): search ran `sys/lookup` assuming it is free, but a
-> native's price is the operator's configuration — measured on a kernel that
-> prices it at 7 and charges for it — so the UI reads the price first and
-> degrades.
->
-> The client records dropped contexts for
-> `handle@kernel` logins, so a UI that named a context could not start. It names
-> a **kernel** now (`kernel` / `JUICE_KERNEL`), resolved straight from the
-> `kernels` half of the shared records, and the retired key is refused by name
-> rather than left to fail as a parse error (§2). One process serves one kernel.
-> §5 states, once, why this UI reads no credential file: it is a service that
-> authenticates browser people, not an operator's personal client.
->
-> The kernel moved its whole operator surface from
+> **What changed in 0.8.0.** The kernel moved its whole operator surface from
 > `/control/*` to `/v1/admin/*` and split the one target namespace in two: a
 > user is reached under `users`, a kernel under `peers`, and each route refuses
 > a target of the other kind. The UI follows (§3.1, §6.6), which removes rather
 > than adds — one record shape where there were two, one rename form per
-> namespace where one form served both, and no code left that guesses which
-> kind of account a name denotes.
+> namespace where one served both, and no code left that guesses which kind of
+> account a name denotes. Two gestures go with it, because the kernel retired
+> what backed them: **a peer is never credited**, so the Fund link is gone and
+> the deposit dialog is user-only; and **an obligation closes when its buyer
+> pays**, so the money confirm on each owed row is gone and "Owed to us" is
+> exposure itemised. A row whose buyer has not answered says it is awaiting
+> them rather than printing a figure nobody decided.
 >
-> Two gestures go with it, because the kernel retired what backed them. **A peer
-> is never credited**: there is no route that does it, so the Fund link on a
-> discovered kernel is gone. **An obligation closes when its buyer pays** — the
-> chain payment where the world has addresses, the buyer's own signed reveal
-> where it has none, recorded by the seller's kernel with no operator act — so
-> the money confirm on each owed row is gone, and "Owed to us" is now exposure
-> itemised: a reading, not a worklist. A row whose buyer has not yet answered
-> arrives with an empty status and a zero amount, and the UI states that it is
-> awaiting the buyer rather than printing a figure nobody has decided.
+> The client records dropped contexts for `handle@kernel` logins, so a UI that
+> named a context could not start. It names a **kernel** now (`kernel` /
+> `JUICE_KERNEL`), resolved from the shared records, and the retired key is
+> refused by name (§2). One process serves one kernel. §5 states, once, why this
+> UI reads no credential file: it is a service that authenticates browser
+> people, not an operator's personal client.
 >
-> The kernel card also names `lottery_max`, the largest ticket this kernel will
-> take from a buyer. All of it measured on a throwaway pair first
-> (`docs/kernel-v0.15-verification.md`).
-
+> **Two invariants the UI already stated were not held**, and both are enforced.
+> An app that acts on the UI host is an operator surface (§5, apps):
+> `apps/agents` writes the installation's files and spawns a daemon, yet gated
+> only on a session, so any account could edit or stop another's agent and start
+> a process on the machine. And no spend may be reached by a GET (§8.2): search
+> ran `sys/lookup` assuming it is free, but a native's price is the operator's
+> configuration — measured on a kernel that prices it at 7 and charges — so the
+> UI reads the price first and degrades.
+>
+> **The world is named wherever the interface names itself** (§7). The brand
+> states the kernel and its world, and the wallet's pay-in sentence names the
+> world whose rule it is stating. A kernel serves one world for life and the
+> world decides whether the money on screen can leave; the symbol does not say
+> that, so without it a rehearsal and a live market look alike. Both facts come
+> from `/health`, and the UI judges neither.
+>
+> **Six things the kernel offers that the UI could not reach** now work. A
+> compiled `kind=wasm` artifact can be given to an action, so
+> `sys/tinygo/compile` has somewhere to go; an OpenAPI import carries one
+> upstream credential for the whole application; a pending consent exchange is
+> reported as pending rather than granted; the withdrawals list is read to
+> exhaustion, since it pages like every other list (§6.4, §6.5); work a peer is
+> holding for this kernel is listed and completable, the peer named in the body
+> (§6.6); and the kernel's planner reaches the interface (§6.2) —
+> `sys/llm/decide` chooses one action from the candidates on screen and proposes
+> arguments without executing, so browse can ask it and land on the chosen
+> action's own page with the form filled in. That last is kernel U46 made
+> visible, planning and spending as separate decisions, and it adds no way to
+> spend: the same confirm, naming the same amount, still has to be pressed.
+>
+> **Two surfaces close loops the UI had left open.** The signals a buyer already
+> has became usable when choosing (§6.2): browse sorts by rating or price, not
+> only by the kernel's relevance, since a rating that cannot order a list is a
+> number to look at. An unrated row sorts after the rated ones rather than as a
+> zero, because silence is not a low opinion. And an agent's account reaches its
+> page (§5, apps): an agent is a user that holds its own principal and spends
+> it, and the app managing one showed a persona and a run switch and no money at
+> all, so a person could raise something that spends and never see what it
+> spent.
+>
+> All of it measured on throwaway kernels first, including an anvil chain world
+> and a local model, and recorded in `docs/kernel-v0.15-verification.md`.
+>
 > **What changed in 0.7.1.** The kernel published a money rendering and gave each
 > world a `symbol`, so the UI stops rendering its own (§7): amounts read the way
 > every juice client reads them — trailing zeros trimmed to a two-digit floor, no
@@ -1497,6 +1477,13 @@ once its prerequisite is confirmed on the running kernel.
   (mandatory); selects semantic ranking versus catalog fallback.
 * **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
   spec; conditional, not assumed. No current UI feature depends on them.
+* **The agents app's home path — deviates, and not ours to move.** The UI
+  scaffolds `$JUICE_HOME/agent/agents/<handle>/`, which is what the juice-agent
+  daemon's own specification (§11 there) says it reads, while
+  `ecosystem-standard.md` §2 gives components `$JUICE_HOME/agents/<name>/`. The
+  UI writes the files a daemon reads, so it must follow that daemon and cannot
+  lead it: the move belongs to the agent's repository first, and this line
+  stands until it happens.
 * **The planner (§6.2).** Confirmed on 25c07cd against a local model:
   `sys/llm/decide` takes `{messages, actions}` and answers
   `{action, args, message?}` — `message` optional and usually absent. It selects
