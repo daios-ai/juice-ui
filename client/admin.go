@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -141,7 +142,20 @@ type PeerAccount struct {
 	Suspended bool `json:"suspended"`
 }
 
-// Inspection is GET /control/peers/inspect?key= — a remote kernel's identity, its
+// PeerStep is one step a peer holds whose required caller is THIS kernel, as the
+// inspection and GET /v1/steps?peer= serve it. The row is thinner than an
+// ordinary step (verified live, docs/kernel-v0.15-verification.md §6): it
+// carries no action and no creator, because the work is described by what the
+// peer already sealed into PartialArgs and by what AllowedInput still admits.
+type PeerStep struct {
+	ID           string          `json:"id"`
+	PartialArgs  json.RawMessage `json:"partial_args"`
+	AllowedInput json.RawMessage `json:"allowed_input"`
+	Price        int64           `json:"price"`
+	CreatedAt    string          `json:"created_at"`
+}
+
+// Inspection is GET /v1/admin/peers/{key}/inspect — a remote kernel's identity, its
 // About (the peer's sys description), the public actions it serves, the evidence
 // this kernel retains about it, and our account with it, plus reachability.
 // Online and Source are top-level fields (verified live): Online is true only
@@ -149,8 +163,7 @@ type PeerAccount struct {
 // online=false) | "none" (a well-formed key this kernel has never learned — a
 // usable page, not an error). The transacted-peers list ("friends") is GONE as
 // of v0.12 — endorsement by association is replaced by signed, per-issuer
-// Evidence. The wire also carries the `steps` this peer holds for us, which has
-// no UI surface yet (ROADMAP).
+// Evidence. The wire also carries the `steps` this peer holds for us (PeerStep).
 type Inspection struct {
 	Petname      string       `json:"petname"`  // bound here; resolves; "" until bound
 	Nickname     string       `json:"nickname"` // self-asserted by the remote; never resolves
@@ -162,6 +175,11 @@ type Inspection struct {
 	Online       bool         `json:"online"`
 	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
 	Reachability Reachability `json:"reachability"`
+
+	// Steps this peer holds for us, and whether it had more than it sent. The
+	// work is addressed to this kernel as a whole, so only its operator can do it.
+	Steps          []PeerStep `json:"steps"`
+	StepsTruncated bool       `json:"steps_truncated"`
 }
 
 // Discovered reports that this kernel is known through the discovery loop but
@@ -516,6 +534,23 @@ func (c *Client) AdminUnsuspendPeer(ctx context.Context, token, key string) erro
 // discovered (§13).
 func (c *Client) AdminRenamePeer(ctx context.Context, token, key, petname string) error {
 	return c.do(ctx, http.MethodPost, "/v1/admin/peers/"+url.PathEscape(key)+"/rename", token, renameBody(petname), nil)
+}
+
+// CompletePeerStep completes a step a PEER holds whose required caller is this
+// kernel: POST /v1/steps/{id}/complete with the peer named IN THE BODY. The
+// query form answers 404 (both verified live, §6 of the v0.15 record).
+//
+// It is a superuser act by construction, not by convention: the request leaves
+// signed with this kernel's own federation identity, so completing one acts as
+// the whole kernel rather than as the person who pressed it.
+func (c *Client) CompletePeerStep(ctx context.Context, token, id, peerKey string, args json.RawMessage) (StepCompleteReply, error) {
+	body := struct {
+		Args json.RawMessage `json:"args"`
+		Peer string          `json:"peer"`
+	}{Args: emptyArgs(args), Peer: peerKey}
+	var r StepCompleteReply
+	err := c.do(ctx, http.MethodPost, "/v1/steps/"+url.PathEscape(id)+"/complete", token, body, &r)
+	return r, err
 }
 
 // AdminInspect inspects a remote kernel (GET /v1/admin/peers/{key}/inspect).

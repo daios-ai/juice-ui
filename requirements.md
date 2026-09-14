@@ -3,7 +3,14 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** Four things the kernel offers and the UI could not
+> **What changed in 0.8.0.** Work a peer is holding for this kernel is now
+> visible and doable (§6.6). The kernel serves those steps on the inspection and
+> completes one when the peer is named in the body — the query form 404s, which
+> is what made this conditional before. It is an operator act, since the request
+> leaves signed with this kernel's own identity, so it lives on the peer's page
+> rather than in anybody's inbox.
+>
+> Four things the kernel offers and the UI could not
 > reach now work (§6.4, §6.5): a compiled `kind=wasm` artifact can be given to
 > an action, so `sys/tinygo/compile` has somewhere to go; an OpenAPI import
 > carries one upstream credential for the whole application; a pending consent
@@ -1043,6 +1050,16 @@ symmetry, but because the kernel refuses anything else.
   unbound kernel has no name to key on, and advertised names collide. A user is
   renamed on the user page. The two forms are separate because the kernel's two
   routes are, and a single form would have to guess which namespace was meant.
+* **Work a peer is holding for this kernel.** The inspection carries the steps
+  whose required caller is this kernel rather than any person on it, and the
+  page MUST list them with what the peer sealed into each one — a peer step
+  carries no action and no creator, so the sealed args are what say what the
+  work is. Completing one leaves signed with this kernel's own federation
+  identity, so it acts as the whole kernel: an operator act, which is why it
+  lives here and never in a person's inbox. The control is **neutral and names
+  no amount** (§6.3): the completer is doing requested work, and the funds were
+  reserved by whoever created the step. Where the peer had more than it sent,
+  the page says so rather than implying the list is whole.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the
   subject issued about itself, and **counterparty experience** from the rest,
@@ -1406,6 +1423,14 @@ once its prerequisite is confirmed on the running kernel.
 * **Crediting a peer — gone (§6.6).** There is no `/v1/admin/peers/{key}/deposit`
   route, and a peer key on the user deposit route answers `404 "… is not a user
   here"`. A peer account is provisioned by its first signed call alone.
+* **Peer-held steps — resolved (§6.6).** Confirmed on 25c07cd: the inspection
+  carries `steps` and `steps_truncated`, `GET /v1/steps?peer=` serves the same
+  rows (the superuser sees every step this kernel may complete, an ordinary user
+  only those addressed to them), and completion is
+  `POST /v1/steps/{id}/complete` with the peer **in the body** — the `?peer=`
+  query form answers 404, which is what made this conditional on v0.14.0.
+  Verified end to end through the UI: a step parked on a peer for this kernel is
+  listed, completed, and gone.
 * **Inspect action identity (§6.6).** `admin inspect` serves each action with an
   `action_id` again, plus an `indicative` all-in price, so an evidence subject
   can be named. The name is still bare and carries no owner, so a peer action is

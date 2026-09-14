@@ -347,6 +347,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/rename", s.requireSuperuser(s.postAdminPeerRename))
+	mux.HandleFunc("POST /admin/peers/{key}/steps/{id}/complete", s.requireSuperuser(s.postAdminPeerStepComplete))
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only

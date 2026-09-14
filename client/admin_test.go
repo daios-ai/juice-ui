@@ -412,3 +412,44 @@ func TestAdminDepositIsUserOnly(t *testing.T) {
 		t.Errorf("the target reaches the kernel unchanged, in the path: %q", f.lastPath)
 	}
 }
+
+// Work a peer holds for THIS kernel. The row is thinner than an ordinary step —
+// no action, no creator — because what it is comes from the args the peer
+// sealed (docs/kernel-v0.15-verification.md §6).
+func TestInspectionCarriesPeerHeldSteps(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"public_key":"PKEY","online":true,"source":"live","account":{"suspended":false},
+	 "actions":[],"evidence":[],"reachability":{"path":"direct"},
+	 "steps":[{"id":"S1","partial_args":{"message":"ping"},"allowed_input":{"type":"object"},
+	           "price":0,"created_at":"2026-09-14T10:43:26Z"}],"steps_truncated":true}`
+	insp, err := f.client().AdminInspect(context.Background(), "tok", "PKEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(insp.Steps) != 1 || insp.Steps[0].ID != "S1" || !insp.StepsTruncated {
+		t.Fatalf("peer steps not decoded: %+v truncated=%v", insp.Steps, insp.StepsTruncated)
+	}
+	if !strings.Contains(string(insp.Steps[0].PartialArgs), "ping") {
+		t.Errorf("the sealed args are what say what the work is: %s", insp.Steps[0].PartialArgs)
+	}
+}
+
+// Completing one names the peer IN THE BODY. The query form answers 404 on this
+// kernel, so a client that guessed would silently fail the operator's one way
+// of doing work another kernel is waiting on.
+func TestCompletePeerStepNamesThePeerInTheBody(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"result":{},"tx_id":"T1","trace_id":"TR1","step_id":"S1"}`
+	if _, err := f.client().CompletePeerStep(context.Background(), "tok", "S1", "PKEY", nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "POST" || f.lastPath != "/v1/steps/S1/complete" {
+		t.Errorf("complete = %s %s (the peer is not a query parameter)", f.lastMethod, f.lastPath)
+	}
+	body := string(f.lastBody)
+	if !strings.Contains(body, `"peer":"PKEY"`) || !strings.Contains(body, `"args":{}`) {
+		t.Errorf("body must carry the peer and normalise empty args: %s", body)
+	}
+}

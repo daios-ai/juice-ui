@@ -770,3 +770,34 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 		t.Error("a discovery-only row carries last_seen and states it")
 	}
 }
+
+// Work a peer is holding for THIS kernel. Completing one leaves signed with the
+// kernel's own federation identity, so it acts as the whole kernel rather than
+// as the person who pressed it — an operator act, which is why it lives on the
+// peer's page behind requireSuperuser and not in anybody's inbox (§6.6).
+func TestPeerHeldStepsAreListedAndCompletable(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	page := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
+	if !strings.Contains(page, "Waiting for this kernel") || !strings.Contains(page, "please confirm the shipment") {
+		t.Errorf("the peer's held steps must be listed with what they ask: %s", page)
+	}
+	// Neutral, never a money button: the completer is doing requested work and
+	// the funds were reserved by whoever created the step (§6.3).
+	if strings.Contains(page, "btn-money") {
+		t.Error("completing a step addressed to the kernel spends none of our money")
+	}
+	resp := postTo(t, cl, srv.URL+"/admin/peers/KEYB/steps/PS1/complete", page, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("complete = %d, want a redirect", resp.StatusCode)
+	}
+	// The peer travels in the BODY: the query form answers 404 on the kernel.
+	if !strings.HasPrefix(lastPeerComplete, "PS1 ") || !strings.Contains(lastPeerComplete, `"peer":"KEYB"`) {
+		t.Errorf("completion must name the peer in the body: %q", lastPeerComplete)
+	}
+}

@@ -43,13 +43,3 @@ each carry an image, as first-class metadata analogous to `description`
   image near the confirm.
 * Operational note: images raise federation moderation stakes (an operator
   imports pictures, not just strings); suspension remains the enforcement tool.
-
-## Peer-held steps (operator surface)
-
-`GET /control/peers/inspect?key=` carries the `steps` that peer holds whose
-required caller is *this* kernel. Completing one is `step complete <id> --peer
-<key>`: a superuser act, because the request is signed with this kernel's own
-federation identity and so acts as the whole kernel — and the kernel serves no
-HTTP route for it (verified on v0.14.0: `?peer=` on complete is a 404). That
-makes it a distinct feature from the ordinary inbox, wanting its own §6.6 clause
-before anything is built. The client decodes past the field today.

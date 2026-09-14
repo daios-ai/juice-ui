@@ -25,8 +25,9 @@ import (
 // kernel serves users and peers on separate routes. Tests in this package are
 // sequential (no t.Parallel), so one recorder each is enough.
 var (
-	lastRename  string
-	lastDeposit string
+	lastRename       string
+	lastDeposit      string
+	lastPeerComplete string
 )
 
 // fakeHealth gives a fake kernel the identity banner every login pins: its key,
@@ -48,7 +49,7 @@ func fakeHealth(mux *http.ServeMux) {
 }
 
 func authKernel() *httptest.Server {
-	lastRename, lastDeposit = "", ""
+	lastRename, lastDeposit, lastPeerComplete = "", "", ""
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -319,6 +320,9 @@ func authKernel() *httptest.Server {
 		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
 		    "corroborated_uses":1,"avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 		 "online":true,"source":"live",
+		 "steps":[{"id":"PS1","partial_args":{"message":"please confirm the shipment"},
+		   "allowed_input":{"type":"object"},"price":0,"created_at":"2026-09-14T10:43:26Z"}],
+		 "steps_truncated":false,
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
 	mux.HandleFunc("GET /v1/admin/kernel", func(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +338,10 @@ func authKernel() *httptest.Server {
 		 "fee_bps":2000,"remote_bps":500,"import_bps":500}`))
 	})
 	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+		// One route serves both completions: the ordinary one, and a peer's,
+		// which is the same route with the peer named in the body.
+		b, _ := io.ReadAll(r.Body)
+		lastPeerComplete = r.PathValue("id") + " " + string(b)
 		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","step_id":"` + r.PathValue("id") + `"}`))
 	})
 	return httptest.NewServer(mux)
