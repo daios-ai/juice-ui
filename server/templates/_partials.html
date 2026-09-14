@@ -465,28 +465,28 @@
      one last failed. Both are muted text, never a status pill: the kernel
      states neither as a verdict, and a peer is called and the outcome reported
      rather than pre-judged (§6.6). Each is omitted until it has happened. */}}
-{{/* One debt owed to this kernel, and the gesture that closes it. The buyer has
-     paid and named the payment; the operator confirms the money arrived, which
-     credits the seller. The amount to pay is the draw's, and may exceed what the
-     call owed (kernel §P10) — both are shown, neither is computed here. The form
-     keys on the peer's public key and the ticket id, never on a displayed name. */}}
+{{/* One debt owed to this kernel — a fact, with no gesture. An obligation
+     closes when its buyer pays: the chain payment where the world has one, the
+     buyer's own signed reveal where it has none, recorded by this kernel itself
+     (kernel §D23/§P10). There is nothing here for an operator to do.
+
+     Until the buyer says how the draw came out, the kernel sends an empty
+     status and a zero amount. Those are absent fields, so the cells state that
+     and show no figure: a "0" here would name an amount nobody has decided. The
+     drawn amount may exceed what the call owed, and both are shown. */}}
 {{define "_obligation_row"}}
 <tr>
   <td><span class="mono" title="{{.Peer.Title}}">{{.Peer.Text}}</span></td>
   <td class="mono" title="{{.O.ID}}">{{truncate 8 .O.ID}}…</td>
   <td class="money">{{money .O.Obligation}}</td>
+  {{if .O.Answered}}
   <td class="money">{{money .O.Amount}}</td>
   <td><span class="pill status-escrow">{{.O.Status}}</span></td>
+  {{else}}
+  <td class="money"></td>
+  <td class="muted">awaiting the buyer</td>
+  {{end}}
   <td class="muted">{{shortTime .O.CreatedAt}}</td>
-  <td>
-    <form method="post" action="/admin/deposit" data-confirm="Confirm {{money .O.Amount}} received for this ticket? The seller is credited.">
-      {{.CSRFField}}
-      <input type="hidden" name="handle" value="{{.O.Peer}}">
-      <input type="hidden" name="ref" value="{{.O.ID}}">
-      <input type="hidden" name="back" value="/admin/peers">
-      <button class="btn-money" type="submit">Confirm ({{money .O.Amount}})</button>
-    </form>
-  </td>
 </tr>
 {{end}}
 
@@ -511,7 +511,7 @@
       <div class="row">
         {{/* The petname resolves and links; the nickname is the kernel's own
              claim, so it trails in parentheses, inert. */}}
-        <b class="ref mono grow"><a class="owner" href="/admin/users/{{.PublicKey}}?form=admin-rename" title="{{$n.Title}}">{{$n.Text}}</a>{{if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}</b>
+        <b class="ref mono grow"><a class="owner" href="/admin/peers/{{.PublicKey}}?form=admin-rename" title="{{$n.Title}}">{{$n.Text}}</a>{{if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}</b>
         {{if $known}}<span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
       </div>
@@ -520,14 +520,11 @@
       <div class="small muted">{{.Actions}} actions{{template "_peer_contact" .}}</div>
       <div class="step-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{/* A real ?form= link, never data-modal: the key is prefilled
-             server-side, and a data-modal trigger would open the empty dialog. */}}
-        <a class="btn-quiet" href="/admin/peers?form=admin-deposit&amp;fund_key={{.PublicKey}}">Fund</a>
         {{/* Binding a petname is the only way to name a kernel merely
              discovered — the kernel binds one automatically only on our own
-             first outbound use (§13). One rename form serves both namespaces,
-             so this opens that one, keyed on the public key. */}}
-        <a class="btn-quiet" href="/admin/users/{{.PublicKey}}?form=admin-rename">Name</a>
+             first outbound use (§13). The peer's own page carries that form,
+             keyed on the public key. */}}
+        <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>
       </div>
       {{else}}
       {{/* A peer holds no money here: a foreign call is funded by the serving
@@ -552,7 +549,7 @@
   {{end}}
 </div>
 {{else if .Known}}<p class="muted">No kernels discovered yet.</p>
-{{else}}<p class="muted">No counterparties yet. Fund a kernel by key, or a first call creates one.</p>{{end}}
+{{else}}<p class="muted">No counterparties yet. A first call creates one.</p>{{end}}
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect

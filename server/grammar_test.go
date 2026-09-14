@@ -157,16 +157,21 @@ func TestMoneyGrammar(t *testing.T) {
 	}
 }
 
-// The kernel retired a whole vocabulary in v0.14: a peer holds no money, so
-// there is no position to settle and no queue of unresolved transfers; an
-// application is switched off by path rather than unimported; withdrawing is a
-// user's own verb. A guard, because a template or handler outliving its endpoint
-// fails only when someone clicks it.
+// The kernel retired a whole vocabulary in v0.14, and more of it at 25c07cd: a
+// peer holds no money, so there is no position to settle, no queue of
+// unresolved transfers, and no way to fund one; an obligation closes when its
+// buyer pays, so no operator confirms it; the admin surface left /control/*
+// entirely. An application is switched off by path rather than unimported, and
+// withdrawing is a user's own verb. A guard, because a template or handler
+// outliving its endpoint fails only when someone clicks it.
 func TestNoRetiredSurfaces(t *testing.T) {
 	retired := map[string]string{
 		"/admin/peers/settle": "settlement is per call on the rail, by ticket (§6.6)",
 		"/admin/withdraw":     "withdrawing is a user's verb (§6.5)",
-		"/control/transfers":  "the value-transfer queue is gone (§6.6)",
+		"admin-withdraw":      "withdrawing is a user's verb (§6.5)",
+		"/control/":           "the admin surface is /v1/admin/* (§3.1)",
+		"fund_key":            "a peer is never credited (§6.6)",
+		"FundKey":             "a peer is never credited (§6.6)",
 		"/actions/unimport":   "an application is disabled or deleted by path (§6.4)",
 		"positionText":        "a peer holds no money (§6.6)",
 		"peer_credit":         "a peer holds no money (§6.6)",

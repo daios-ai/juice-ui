@@ -18,11 +18,14 @@ import (
 // (deposit/withdraw), access (suspend), and federation trust (peers, settlement).
 
 // depositForm carries the shared deposit dialog's per-page state. Every view
-// that renders _form_admin_deposit embeds it: FundKey prefills the recipient and
-// FundRef the payment being named — neither a 43-character key nor a
-// transaction hash is retyped — and Back names the page the operator came from.
+// that renders _form_admin_deposit embeds it: FundRef prefills the payment
+// being named, so a transaction hash is never retyped, and Back names the page
+// the operator came from.
+//
+// There is no recipient prefill, because there is no gesture that starts from
+// one: a deposit credits a user the operator names, and the only prefilled
+// form is attributing a held payment, which starts from the payment.
 type depositForm struct {
-	FundKey string
 	FundRef string
 	Back    string
 }
@@ -84,10 +87,10 @@ func peersHref(tab string, all bool) string {
 
 // adminInspectView carries the inspected kernel. The billing account arrives
 // inline on the inspection itself (client.Inspection.Account), so the page needs
-// no roster scan: a nil account is a kernel that holds none here, which is what
-// offers the fund gesture instead of a position.
+// no roster scan: a nil account is a kernel that holds none here, which is a
+// fact about the peer and no longer an opening for a gesture — a peer is never
+// credited (§6.6). The one verb here is naming it.
 type adminInspectView struct {
-	depositForm
 	Key        string
 	Inspection client.Inspection
 	OpenForm   string
@@ -143,11 +146,7 @@ func (s *Server) getAdminUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.OpenForm = openForm(r, "admin-user")
-	title := "User " + handle
-	if view.User.IsKernel() {
-		title = nameOf(view.User.Petname, view.User.PublicKey).Text
-	}
-	s.renderPage(w, r, http.StatusOK, "admin_user", title, view)
+	s.renderPage(w, r, http.StatusOK, "admin_user", "User "+handle, view)
 }
 
 // postAdminUserOp handles the per-user operator verbs, dispatched on the path's
@@ -170,33 +169,46 @@ func (s *Server) postAdminUserOp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renameUser renames one target. A USER target rebinds its handle, freeing the
-// old one so every reference follows the account; a KERNEL target binds its
-// petname — the only way to name a kernel this node has merely discovered
-// (§13). The kernel resolves which by the target's shape, so one form and one
-// handler serve both. The new name is taken verbatim — a sigiled one is the
-// kernel's to reject, not ours to rewrite (requirements.md §4).
+// renameUser rebinds a local account's handle, freeing the old one so every
+// reference follows the account. The new name is taken verbatim — a sigiled one
+// is the kernel's to reject, not ours to rewrite (requirements.md §4). The
+// redirect lands on the new handle, which is the page that then exists.
 //
-// A kernel is addressed by its PUBLIC KEY, never by the name on screen: an
-// unbound kernel has no name to key on, and advertised names collide. So the
-// success redirect returns to the key for a kernel and to the new handle for a
-// user, each being the page that then exists.
-func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, target string) {
-	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(target)
+// A kernel is renamed on its own page by renamePeer: the two namespaces are
+// separate routes on the kernel now, and a route that guessed which one was
+// meant would be guessing what the kernel refuses to guess (§6.6).
+func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, handle string) {
+	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(handle)
 	newName := strings.TrimSpace(r.FormValue("new_name"))
 	if newName == "" {
 		s.flashRedirect(w, r, back, "error", "Enter a new name.")
 		return
 	}
-	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRename(ctx, tok, target, newName) }); err != nil {
+	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRenameUser(ctx, tok, handle, newName) }); err != nil {
 		s.flashRedirect(w, r, back, "error", userMessage(err))
 		return
 	}
-	to := "/admin/users/" + url.PathEscape(newName)
-	if looksLikeKey(target) {
-		to = back
+	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newName), "success", handle+" is now "+newName+".")
+}
+
+// postAdminPeerRename binds a kernel's petname, keyed on the public key — an
+// unbound kernel has no name to key on, and advertised names collide across
+// kernels (§6.6). The redirect returns to the key, which is the address the
+// page keeps whatever it is called.
+func (s *Server) postAdminPeerRename(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	key := strings.TrimSpace(r.FormValue("key"))
+	back := "/admin/peers/" + url.PathEscape(key)
+	newName := strings.TrimSpace(r.FormValue("new_name"))
+	if key == "" || newName == "" {
+		s.flashRedirect(w, r, back, "error", "Enter a new name.")
+		return
 	}
-	s.flashRedirect(w, r, to, "success", target+" is now "+newName+".")
+	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRenamePeer(ctx, tok, key, newName) }); err != nil {
+		s.flashRedirect(w, r, back, "error", userMessage(err))
+		return
+	}
+	s.flashRedirect(w, r, back, "success", "Named "+newName+".")
 }
 
 // adjustBack resolves the page a deposit/withdraw returns to. The set is closed:
@@ -260,7 +272,6 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		OpenForm: openForm(r, "admin"), Tab: tab, ShowSuspended: showSuspended,
 		CSRFField: csrf.TemplateField(r),
 		depositForm: depositForm{
-			FundKey: r.URL.Query().Get("fund_key"),
 			// A held payment is attributed from its own row, so the reference it
 			// is named by rides into the form rather than being retyped.
 			FundRef: r.URL.Query().Get("ref"),
@@ -311,8 +322,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx := r.Context()
 	view := adminInspectView{
-		Key: key, OpenForm: openForm(r, "admin"), CSRFField: csrf.TemplateField(r),
-		depositForm: depositForm{Back: "/admin/peers"},
+		Key: key, OpenForm: openForm(r, "admin-peer"), CSRFField: csrf.TemplateField(r),
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		insp, e := s.client.AdminInspect(ctx, tok, key)

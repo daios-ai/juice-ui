@@ -2054,8 +2054,9 @@ var formWhitelist = map[string]map[string]bool{
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
 	"wallet":        {"withdraw": true, "address": true},
-	"admin":         {"admin-deposit": true, "admin-withdraw": true, "admin-inspect": true, "settle-cash": true},
+	"admin":         {"admin-deposit": true, "admin-inspect": true},
 	"admin-user":    {"admin-rename": true},
+	"admin-peer":    {"admin-rename": true},
 }
 
 // openForm returns the requested ?form value if it is whitelisted for the page

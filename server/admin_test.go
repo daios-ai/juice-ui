@@ -104,10 +104,14 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if strings.Contains(body, `class="toolbar"`) || strings.Contains(body, "btn-primary") {
 		t.Error("/admin must not carry a page-head toolbar or btn-primary")
 	}
-	for _, form := range []string{"admin-deposit", "admin-withdraw"} {
-		if !strings.Contains(body, "?form="+form) {
-			t.Errorf("/admin must offer the %q command inline", form)
-		}
+	if !strings.Contains(body, "?form=admin-deposit") {
+		t.Error("/admin must offer the deposit command inline")
+	}
+	// admin withdraw was retired with the settle surface in 0.7.0: the kernel
+	// serves no such verb, and a palette entry for one opens a dialog that does
+	// not exist.
+	if strings.Contains(body, "admin-withdraw") {
+		t.Error("/admin must not offer a retired admin withdraw")
 	}
 
 	// The peers page carries "This kernel" and highlights the peers nav entry.
@@ -444,15 +448,23 @@ func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 			t.Errorf("a peer holds no money here: found %q", gone)
 		}
 	}
-	// One obligation, closed by confirming the payment that pays it.
+	// The obligations are exposure itemised: a reading, with no gesture. An
+	// obligation closes when its buyer pays, and the kernel records that itself
+	// (docs/kernel-v0.15-verification.md §3) — there is nothing here to press.
 	if !strings.Contains(body, "Owed to us") || !strings.Contains(body, "TICKET1") {
 		t.Errorf("the obligations section must list the owed ticket: %s", body)
 	}
-	if !strings.Contains(body, `value="KEYB"`) || !strings.Contains(body, `name="ref" value="TICKET1"`) {
-		t.Error("the confirm must post the peer's key and the ticket id")
+	if strings.Contains(body, "Confirm (") || strings.Contains(body, `name="ref" value="TICKET1"`) {
+		t.Error("an obligation carries no operator gesture: it closes when its buyer pays")
 	}
-	if !strings.Contains(body, "Confirm (10 credits)") || !strings.Contains(body, "data-confirm") {
-		t.Error("recording a payment is a money act: it names the amount behind a confirm")
+	// A row whose buyer has not spoken carries an empty status and a zero amount.
+	// Both are absent fields: rendering "0 credits" would name an amount nobody
+	// has decided, and an empty pill would show a status nobody has stated.
+	if !strings.Contains(body, "awaiting the buyer") {
+		t.Errorf("an unanswered obligation must say so rather than show an empty badge: %s", body)
+	}
+	if strings.Contains(body, `<span class="pill status-escrow"></span>`) {
+		t.Error("an absent status must not render as an empty pill")
 	}
 	// A payment whose sender nobody has registered waits for the operator to say
 	// whose it is. The address it came from is the fact that decides, and the
@@ -492,10 +504,11 @@ func TestNoTransferQueueSurface(t *testing.T) {
 	}
 }
 
-// The peers page sends the operator to the deposit form to fund a peer, so that
-// form must accept a key — the kernel disambiguates handle / key / id by shape,
-// and a deposit to an unknown key provisions the peer account.
-func TestDepositFormAcceptsPeerKey(t *testing.T) {
+// A deposit credits a USER and nothing else. The kernel serves it under the
+// users namespace and refuses a peer key there, so the form must not invite one:
+// a peer account is identity, not a wallet, and what a peer owes closes when it
+// pays (docs/kernel-v0.15-verification.md §2).
+func TestDepositFormIsUserOnly(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -503,8 +516,17 @@ func TestDepositFormAcceptsPeerKey(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin")
-	if !strings.Contains(body, "handle or kernel key") {
-		t.Errorf("the deposit form must say it takes a key: %s", body)
+	if strings.Contains(body, "handle or kernel key") || strings.Contains(body, "ticket id") {
+		t.Errorf("the deposit form must not invite a peer or a ticket: %s", body)
+	}
+	// And the request it makes names the account in the path.
+	page := getBody(t, cl, srv.URL+"/admin")
+	resp := postTo(t, cl, srv.URL+"/admin/deposit", page, url.Values{
+		"handle": {"alice"}, "ref": {"R1"}, "amount": {"100"}, "back": {"/admin"},
+	})
+	resp.Body.Close()
+	if lastDeposit != "alice" {
+		t.Errorf("deposit named %q; the kernel takes the user in the path", lastDeposit)
 	}
 }
 
@@ -607,11 +629,13 @@ func TestPeerAliasLinksToRename(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(body, `/admin/users/KEYB?form=admin-rename`) {
-		t.Errorf("the peer alias must link to the rename modal: %s", body)
+	if !strings.Contains(body, `/admin/peers/KEYB?form=admin-rename`) {
+		t.Errorf("the peer alias must link to the rename modal on the peer's page: %s", body)
 	}
-	if strings.Contains(body, `action="/admin/peers/rename"`) {
-		t.Error("rename must not become a peer-card command")
+	// The kernel serves users and peers on separate routes and refuses a target
+	// of the other kind, so the UI must never send a key to the users route.
+	if strings.Contains(body, `/admin/users/KEYB`) {
+		t.Error("a peer is never addressed through the users namespace")
 	}
 }
 
@@ -667,9 +691,9 @@ func TestAdminDepositBackAllowlist(t *testing.T) {
 		resp.Body.Close()
 		return resp.Header.Get("Location")
 	}
-	// Funding a kernel lands on the roster, where the promoted row now appears.
+	// Attributing a held payment happens on the network page, and returns there.
 	if loc := post("/admin/peers"); loc != "/admin/peers" {
-		t.Errorf("funding from the network page must return there, got %q", loc)
+		t.Errorf("a deposit from the network page must return there, got %q", loc)
 	}
 	for _, hostile := range []string{"https://evil.example/x", "//evil.example", "/admin/peers/KEYT1", ""} {
 		if loc := post(hostile); loc != "/admin" {
@@ -691,7 +715,6 @@ func TestDepositDialogClosesToItsOwnPage(t *testing.T) {
 	for _, tc := range []struct{ url, back string }{
 		{"/admin?form=admin-deposit", "/admin"},
 		{"/admin/peers?form=admin-deposit", "/admin/peers"},
-		{"/admin/peers/KEYT1?form=admin-deposit", "/admin/peers"},
 	} {
 		body := getBody(t, cl, srv.URL+tc.url)
 		dlg := body[strings.Index(body, `id="form-admin-deposit"`):]

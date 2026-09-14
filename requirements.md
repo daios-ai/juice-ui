@@ -1,7 +1,29 @@
 # Juice Web UI Requirements
 
-Version: 0.7.1
+Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.8.0.** The kernel moved its whole operator surface from
+> `/control/*` to `/v1/admin/*` and split the one target namespace in two: a
+> user is reached under `users`, a kernel under `peers`, and each route refuses
+> a target of the other kind. The UI follows (§3.1, §6.6), which removes rather
+> than adds — one record shape where there were two, one rename form per
+> namespace where one form served both, and no code left that guesses which
+> kind of account a name denotes.
+>
+> Two gestures go with it, because the kernel retired what backed them. **A peer
+> is never credited**: there is no route that does it, so the Fund link on a
+> discovered kernel is gone. **An obligation closes when its buyer pays** — the
+> chain payment where the world has addresses, the buyer's own signed reveal
+> where it has none, recorded by the seller's kernel with no operator act — so
+> the money confirm on each owed row is gone, and "Owed to us" is now exposure
+> itemised: a reading, not a worklist. A row whose buyer has not yet answered
+> arrives with an empty status and a zero amount, and the UI states that it is
+> awaiting the buyer rather than printing a figure nobody has decided.
+>
+> The kernel card also names `lottery_max`, the largest ticket this kernel will
+> take from a buyer. All of it measured on a throwaway pair first
+> (`docs/kernel-v0.15-verification.md`).
 
 > **What changed in 0.7.1.** The kernel published a money rendering and gave each
 > world a `symbol`, so the UI stops rendering its own (§7): amounts read the way
@@ -364,15 +386,17 @@ detectable.
 *Conditional:* the trace tree on the receipt page.
 
 * **Admin / supervision (superuser only):** the `admin` group, visible only to
-  `sys`, covers user list/show, suspend/unsuspend, rename (§6.6), credit
-  deposits and withdrawals, federation trust (peers — provisioned by use or by deposit-by-key,
-  inspect, suspend/unsuspend, this kernel's identity), and the obligations owed
-  to this kernel (§6.6). The kernel serves these over HTTP on
-  `/control/*`, gated by an `IsSuperuser` check on the `sys` bearer (API.md
-  C13); the UI is an ordinary client of that surface. Superuser **scope** on
-  the normal list pages (a `sys` session sees all actions/processes/tx/steps)
-  is indicated quietly on those pages, not duplicated as separate admin
-  listings.
+  `sys`, covers user list/show/suspend/unsuspend/rename and crediting a user
+  (§6.6); federation trust in a namespace of its own — peers, provisioned by
+  use alone, with show/inspect/suspend/unsuspend/rename — this kernel's
+  identity, and the obligations owed to it (§6.6). The kernel serves these over
+  HTTP on `/v1/admin/*`, gated by an `IsSuperuser` check on the `sys` bearer
+  (API.md C13); the UI is an ordinary client of that surface. **The route says
+  which kind of target it takes** and a target of the other kind is refused, so
+  the UI addresses users and peers on separate routes and never sends a public
+  key to a user route. Superuser **scope** on the normal list pages (a `sys`
+  session sees all actions/processes/tx/steps) is indicated quietly on those
+  pages, not duplicated as separate admin listings.
 
 ### 3.2 Out of scope (no user-facing flow)
 
@@ -865,12 +889,21 @@ open (parked steps), the result MUST say so and link to the Wallet.
 
 ### 6.6 network & admin — federation money
 
-Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
+Superuser-only (`sys`), an ordinary client of the kernel's `/v1/admin/*` surface
 (§3.1). Two concerns live here: the roster, and the money owed to this kernel.
+
+**Two namespaces, never guessed between.** The kernel serves users and peers on
+separate routes and refuses a target of the other kind, so a petname that
+happens to equal a handle never decides which account is acted on. The UI MUST
+therefore know which namespace it is addressing before it dials: a user is
+reached under `/admin/users/{handle}`, a kernel under `/admin/peers/{key}`, and
+no page sends a public key to the user routes. This is why the two pages, the
+two rename forms and the two suspend verbs are separate here — not for
+symmetry, but because the kernel refuses anything else.
 
 **Peers.**
 
-* **The roster is the whole known network.** `/control/peers` merges by public
+* **The roster is the whole known network.** `/v1/admin/peers` merges by public
   key, excluding this kernel, **counterparties** (`has_account`, a bilateral
   position) and **discovered peers** (a catalog: action count).
   Both render as the same `.kernel-card` under a `.tabs` filter
@@ -898,17 +931,19 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
 * **This kernel's own credit position is the money fact on this page.** The
   identity card states what this kernel has delivered to foreign buyers and not
   been paid for, against the limit it set (`exposure` of `credit_limit`); the
-  rates it serves under (`fee_bps`, `remote_bps`, `import_bps`) and its ticket
-  face; the operator split of `sys` into earnings and money in transit; and the
+  rates it serves under (`fee_bps`, `remote_bps`, `import_bps`), its ticket face
+  and the largest ticket it will take from a buyer (`lottery_max`, above which a
+  call is refused with a signed rejection); the operator split of `sys` into earnings and money in transit; and the
   solvency identity, whose `gap` MUST carry a danger pill when it is non-zero.
   A rail halt (`stop`) MUST render as a banner naming its reason, on this page
   because the money verbs it refuses are here.
 * **There is no subscription.** A peer row comes into being by use — a first
   inbound call, or an outbound call that resolves and caches a proxy (peering is
   handshake-free). The page therefore offers **no subscribe or unsubscribe
-  affordance**, and no funding gesture: a deposit naming a peer is refused unless
-  it names the obligation its payment closes. The durable lever is suspend, and a
-  peer no longer called lapses through the kernel's retention.
+  affordance**, and **no funding gesture at all**: a deposit credits a user, the
+  kernel serves no route that credits a peer, and a peer key sent to the user
+  route is refused as not a user. The durable lever is suspend, and a peer no
+  longer called lapses through the kernel's retention.
 * **Naming is a petname system** (kernel §13, after Stiegler). A kernel has
   three names and they are not interchangeable, so the UI MUST keep them apart:
   * its **public key** — global, self-certifying, unreadable. The only thing
@@ -929,22 +964,19 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
     name that resolves. It renders whole, in the provenance face.
   An unbound kernel therefore shows its truncated key and stays callable by it;
   it MUST NOT borrow the nickname to fill the gap.
-* **Name is the gesture a discovered card carries**, through a real `?form=`
-  link with the key prefilled — never a `data-modal` trigger, which would open
-  the empty in-page dialog. It binds a petname: the kernel binds one
+* **Name is the gesture a discovered card carries**, as a link to the kernel's
+  own page with the form open. It binds a petname: the kernel binds one
   automatically only on this kernel's own first outbound use, so an explicit
   bind is the only way to name a kernel merely discovered, and without it the
   operator is left typing a key. It is not account-dependent, while `suspend` on
   an account-less key is refused, so that verb stays off the card. **Inspect a
   kernel by key** remains the way in for a key learned elsewhere (verified live:
   an unknown key still returns a usable page).
-* **One rename form serves both namespaces.** A user target rebinds its handle;
-  a kernel target binds its petname, exactly, refusing an occupied name. The
-  form is reached from the displayed name on a counterparty card and from
-  **Name** on a discovered one, and both open the same modal on the same
-  handler — the card's own verbs stay inspect and suspend. It MUST key
-  on the public key for a kernel: an unbound kernel has no name to key on, and
-  advertised names collide.
+* **A kernel is named on its own page.** The petname form lives on the inspect
+  page, which is where a kernel is shown, and posts the **public key** — an
+  unbound kernel has no name to key on, and advertised names collide. A user is
+  renamed on the user page. The two forms are separate because the kernel's two
+  routes are, and a single form would have to guess which namespace was meant.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the
   subject issued about itself, and **counterparty experience** from the rest,
@@ -993,28 +1025,33 @@ Superuser-only (`sys`), an ordinary client of the kernel's `/control/*` surface
   refuses `sys` and any sigiled name, and the UI shows that reason.
 
 **What this kernel is owed.** Every cross-kernel debt settles on its own, per
-call, by a ticket both kernels name (kernel §P10): the buyer pays on the rail and
-says so, and the seller's operator confirms the money arrived, which is what
-closes the debt and credits the seller. There is no bilateral settlement to
-initiate, and the kernel serves no settle route.
+call, by a ticket both kernels name (kernel §P10), and it closes **without an
+operator act**: the chain payment where the world has addresses, and the buyer's
+own signed reveal where it has none, recorded by this kernel itself. There is no
+bilateral settlement to initiate, no settle route, and nothing here to press.
 
 * The page MUST list the obligations owed to this kernel from
-  `GET /control/deposits`, each row naming the debtor (by petname where one is
-  bound, else its truncated key), the ticket, what the call owed, and what the
-  draw decided must actually be paid — the two figures differ, and neither is
-  computed here.
-* Each row MUST carry one gesture: a **money confirm** naming the amount, posting
-  the peer's public key and the ticket id to `POST /control/deposit`. Recording a
-  payment moves real money to the seller, so it is never a bare click, and the
-  key is what is posted — a displayed name is presentation only.
+  `GET /v1/admin/kernel/deposits`, each row naming the debtor (by petname where
+  one is bound, else its truncated key), the ticket, and what the call owed.
+  This list is **`exposure` itemised** — a reading of what the kernel is
+  carrying, not a worklist.
+* A row whose buyer has answered also states the **status** and what the **draw
+  decided** must be paid; the two money figures differ, and neither is computed
+  here. A row whose buyer has said nothing carries an empty status and a zero
+  amount, which are **absent fields**: the UI MUST state that it is awaiting the
+  buyer and show no figure. Rendering `0` would name an amount nobody has
+  decided, and an empty pill would show a status nobody has stated.
+* Each row MUST carry **no gesture**. An obligation is not closed from here, and
+  a control that appeared to close one would misdescribe who settles it.
 * Payments the rail has witnessed whose sender no account has registered MUST be
   listed too, each naming the **address it came from** — the fact that decides
   whose it is — with an attribute link that prefills the transaction naming it.
-* The deposit dialog serves the kernel's three forms by which fields are filled:
-  a user with an amount and a reference; a user with a reference alone, to
-  attribute a payment already received; a peer with a ticket reference, to close
-  what it owes. **The reference is mandatory** — the kernel credits nothing it
-  cannot name — and an amount is optional, because the draw already decided one.
+  This is the one money act left on the page, and it credits a user.
+* The deposit dialog serves the kernel's **two** forms: a user with an amount and
+  a reference, and a user with a reference alone, to attribute a payment already
+  received. **The reference is mandatory** — the kernel credits nothing it cannot
+  name — and the account is named in the route, not the body. It offers no peer
+  field: a peer is not a user, and the kernel refuses one here.
 
 **No value-transfer queue.** The kernel served one while value could cross a
 kernel boundary and a buyer-side transfer could sit unresolved. Value is now
@@ -1207,10 +1244,13 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * a cross-kernel transaction's breakdown names paid, import fee and obligation,
   and its ticket — never "fee on value added" (§6.5);
 * a peer row carries no money, and the network page states this kernel's own
-  credit position and the obligations owed to it, each closed by a money confirm
-  posting the peer's key and the ticket (§6.6);
+  credit position and the obligations owed to it — each a fact with no gesture,
+  one awaiting its buyer rendering no figure and no empty badge (§6.6);
+* the two admin namespaces: a user verb reaches `/admin/users/…` and a peer verb
+  `/admin/peers/…`, and no page sends a public key to a user route (§3.1, §6.6);
 * the retired surfaces stay gone: settle, admin withdraw, unimport, the transfer
-  queue, a peer's balance (drift guard);
+  queue, a peer's balance, funding a peer, confirming an obligation, and the
+  whole `/control/` prefix (drift guard);
 * the call-outcome classes, rendered distinctly — including that a parked
   (`timeout`) outcome names the reserved amount and claims no refund, that a
   `meta.retry="refresh"` refusal offers the re-pinned retry while a bare
@@ -1249,10 +1289,20 @@ once its prerequisite is confirmed on the running kernel.
   (mandatory); selects semantic ranking versus catalog fallback.
 * **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
   spec; conditional, not assumed. No current UI feature depends on them.
-* **Settlement — retired (§6.6).** v0.14.0 serves no settle route: every debt
-  settles per call on the rail by its own ticket, and the operator's act is
-  confirming the payment that closes one. `admin withdraw` is gone with it;
-  withdrawing is a user's own verb (§6.5).
+* **Settlement — retired (§6.6).** The kernel serves no settle route: every debt
+  settles per call on the rail by its own ticket. As of 25c07cd the operator has
+  no act in it at all — an obligation closes when its buyer pays, which the
+  seller's kernel records itself (measured: an obligation appeared and cleared
+  in five seconds with nothing pressed, `docs/kernel-v0.15-verification.md` §3).
+  `admin withdraw` is gone with it; withdrawing is a user's own verb (§6.5).
+* **The admin surface — moved and split (§3.1, §6.6).** Confirmed on 25c07cd:
+  every `/control/*` route answers 404, and `/v1/admin/{users,peers,kernel}`
+  serves in its place with the two namespaces refusing each other's targets.
+  The rename body field is still `new_name`; suspend and unsuspend now answer
+  with the row rather than 204. `GET /v1/admin/kernel` gained `lottery_max`.
+* **Crediting a peer — gone (§6.6).** There is no `/v1/admin/peers/{key}/deposit`
+  route, and a peer key on the user deposit route answers `404 "… is not a user
+  here"`. A peer account is provisioned by its first signed call alone.
 * **Inspect action identity (§6.6).** `admin inspect` serves each action with an
   `action_id` again, plus an `indicative` all-in price, so an evidence subject
   can be named. The name is still bare and carries no owner, so a peer action is

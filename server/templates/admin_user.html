@@ -1,60 +1,41 @@
 {{define "content"}}
 {{$u := .Data.User}}
-{{/* One page, two disjoint records (client.AdminUser): a local USER carries a
-     handle and balances; a KERNEL carries the petname model and its sync cache
-     and no money at all, since a peer account is identity and moderation state
-     rather than a wallet (kernel §D14). A kernel is addressed by its PUBLIC KEY
-     throughout — an unbound one has no name to key on, and advertised names
-     collide (§6.6). */}}
-{{$target := $u.Handle}}{{if $u.IsKernel}}{{$target = $u.PublicKey}}{{end}}
-{{$n := nameOf $u.Petname $u.PublicKey}}
-<nav class="crumb"><a href="{{if $u.IsKernel}}/admin/peers{{else}}/admin{{end}}">← {{if $u.IsKernel}}peers{{else}}admin{{end}}</a></nav>
-<h1{{if $u.IsKernel}} title="{{$n.Title}}"{{end}}>{{if $u.IsKernel}}{{$n.Text}}{{else}}{{$u.Handle}}{{end}}</h1>
+{{/* One local account (client.AdminUser). The users route answers 404 for a
+     peer key, so there is one record shape here and no discrimination to do: a
+     kernel is read on its own page, under /admin/peers (§6.6). */}}
+<nav class="crumb"><a href="/admin">← admin</a></nav>
+<h1>{{$u.Handle}}</h1>
 <div class="card">
   <dl class="locked-args">
-    {{if $u.IsKernel}}
-    {{/* The petname resolves; the nickname is the kernel's claim about itself
-         and never does, so it is stated as a claim and never linked. */}}
-    <dt>Petname</dt><dd class="mono">{{if $u.Petname}}{{$u.Petname}}{{else}}<span class="muted">—</span>{{end}}</dd>
-    <dt>Nickname</dt><dd>{{if $u.Nickname}}“{{$u.Nickname}}”{{else}}<span class="muted">—</span>{{end}}</dd>
-    <dt>Key</dt><dd class="mono hash">{{$u.PublicKey}}</dd>
-    {{if $u.About}}<dt>About</dt><dd>{{$u.About}}</dd>{{end}}
-    {{if $u.LastSeen}}<dt>Catalog</dt><dd class="muted">verified {{relTime $u.LastSeen}}</dd>{{end}}
-    {{else}}
     <dt>Handle</dt><dd class="mono">{{$u.Handle}}</dd>
     {{if $u.Description}}<dt>About</dt><dd>{{$u.Description}}</dd>{{end}}
-    {{end}}
-    {{if $u.IsKernel}}
-    {{if $u.RailAddress}}<dt>Paid at</dt><dd class="mono">{{$u.RailAddress}}</dd>{{end}}
-    {{else}}
     <dt>Available</dt><dd class="money">{{money $u.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $u.Locked}}</dd>
-    {{end}}
     <dt>State</dt><dd>{{if $u.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
   </dl>
   <div class="cluster">
     {{if $u.Suspended}}
-    <form method="post" action="/admin/users/{{$target}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
+    <form method="post" action="/admin/users/{{$u.Handle}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
     {{else}}
-    <form method="post" action="/admin/users/{{$target}}/suspend" data-confirm="Suspend {{$n.Text}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
+    <form method="post" action="/admin/users/{{$u.Handle}}/suspend" data-confirm="Suspend {{$u.Handle}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
     {{end}}
-    <a class="btn-quiet" href="/admin/users/{{$target}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
+    <a class="btn-quiet" href="/admin/users/{{$u.Handle}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
   </div>
 </div>
 
 <dialog id="form-admin-rename" class="modal-form"{{if eq .Data.OpenForm "admin-rename"}} open{{end}} aria-label="Rename">
-  <div class="modal-head"><h2>Rename {{$n.Text}}</h2><a class="modal-close" href="/admin/users/{{$target}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Rename {{$u.Handle}}</h2><a class="modal-close" href="/admin/users/{{$u.Handle}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/admin/users/{{$target}}/rename">
+    <form class="stack" method="post" action="/admin/users/{{$u.Handle}}/rename">
       {{$.CSRFField}}
       <div class="field">
-        <label for="ar-name">{{if $u.IsKernel}}Petname{{else}}New handle{{end}}<span class="req">*</span></label>
-        <p class="help">{{if $u.IsKernel}}Names this kernel here; an occupied name is refused.{{else}}Frees the old handle; references use the new one.{{end}}</p>
+        <label for="ar-name">New handle<span class="req">*</span></label>
+        <p class="help">Frees the old handle; references use the new one.</p>
         <input id="ar-name" name="new_name" type="text" required>
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Rename</button>
-        <a class="btn-quiet" href="/admin/users/{{$target}}" data-modal-close>Cancel</a>
+        <a class="btn-quiet" href="/admin/users/{{$u.Handle}}" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>

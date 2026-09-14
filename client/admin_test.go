@@ -15,7 +15,7 @@ func TestAdminListUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "GET" || !strings.HasPrefix(f.lastPath, "/control/users?") || !strings.Contains(f.lastPath, "limit=200") {
+	if f.lastMethod != "GET" || !strings.HasPrefix(f.lastPath, "/v1/admin/users?") || !strings.Contains(f.lastPath, "limit=200") {
 		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
 	}
 	if f.lastAuth != "Bearer tok" {
@@ -34,7 +34,7 @@ func TestAdminGetUserAndSuspended(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/users/alice" {
+	if f.lastPath != "/v1/admin/users/alice" {
 		t.Errorf("path = %q", f.lastPath)
 	}
 	if !u.Suspended() {
@@ -56,13 +56,13 @@ func TestAdminSuspendUnsuspend(t *testing.T) {
 	if err := f.client().AdminSuspendUser(context.Background(), "tok", "bob"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "POST" || f.lastPath != "/control/users/bob/suspend" {
+	if f.lastMethod != "POST" || f.lastPath != "/v1/admin/users/bob/suspend" {
 		t.Errorf("suspend request = %s %s", f.lastMethod, f.lastPath)
 	}
 	if err := f.client().AdminUnsuspendUser(context.Background(), "tok", "bob"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/users/bob/unsuspend" {
+	if f.lastPath != "/v1/admin/users/bob/unsuspend" {
 		t.Errorf("unsuspend path = %q", f.lastPath)
 	}
 }
@@ -75,11 +75,15 @@ func TestAdminDepositNamesThePayment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "POST" || f.lastPath != "/control/deposit" {
+	if f.lastMethod != "POST" || f.lastPath != "/v1/admin/users/alice/deposit" {
 		t.Errorf("deposit request = %s %s", f.lastMethod, f.lastPath)
 	}
 	body := string(f.lastBody)
-	for _, want := range []string{`"handle":"alice"`, `"amount":100`, `"ref":"pay-1"`, `"reason":"grant"`} {
+	// The account is in the PATH now, so it is not in the body at all.
+	if strings.Contains(body, `"handle"`) {
+		t.Errorf("the account is named by the route, not the body: %s", body)
+	}
+	for _, want := range []string{`"amount":100`, `"ref":"pay-1"`, `"reason":"grant"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("deposit body missing %s: %s", want, body)
 		}
@@ -87,17 +91,17 @@ func TestAdminDepositNamesThePayment(t *testing.T) {
 	if e.Amount != 100 || e.ToHandle != "alice" {
 		t.Errorf("the deposit answers with the ledger entry it wrote: %+v", e)
 	}
-	// The two amount-less forms — attributing a received payment, and closing a
-	// peer's ticket — send no amount at all, so the kernel uses the one the draw
-	// decided rather than one we made up.
-	if _, err := f.client().AdminDeposit(context.Background(), "tok", "KEYB", 0, "TICKET1", ""); err != nil {
+	// The amount-less form — attributing a payment already received whose sender
+	// was unknown — sends no amount at all, so the kernel credits what the
+	// payment actually carried rather than a figure we made up.
+	if _, err := f.client().AdminDeposit(context.Background(), "tok", "alice", 0, "rail:0xabc:0", ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(f.lastBody), "amount") || strings.Contains(string(f.lastBody), "reason") {
 		t.Errorf("a zero amount and an empty reason are omitted: %s", f.lastBody)
 	}
-	if !strings.Contains(string(f.lastBody), `"ref":"TICKET1"`) {
-		t.Errorf("the ticket is what closes an obligation: %s", f.lastBody)
+	if !strings.Contains(string(f.lastBody), `"ref":"rail:0xabc:0"`) {
+		t.Errorf("the held payment's own id is what attributes it: %s", f.lastBody)
 	}
 }
 
@@ -107,21 +111,32 @@ func TestAdminListDeposits(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"deposits":[],"owed":[{"id":"TICKET1","obligation":8,"amount":10,"tx_hash":"manual:TICKET1",
-	 "status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"}]}`
+	 "status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"},
+	 {"id":"TICKET2","obligation":126,"amount":0,"tx_hash":"","status":"","created_at":"2026-09-14T01:13:39Z","peer":"KEYD"}]}`
 	d, err := f.client().AdminListDeposits(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/deposits" {
+	if f.lastPath != "/v1/admin/kernel/deposits" {
 		t.Errorf("deposits path = %q", f.lastPath)
 	}
-	if len(d.Owed) != 1 || d.Owed[0].ID != "TICKET1" || d.Owed[0].Peer != "KEYB" {
+	if len(d.Owed) != 2 || d.Owed[0].ID != "TICKET1" || d.Owed[0].Peer != "KEYB" {
 		t.Errorf("obligation decode wrong: %+v", d.Owed)
 	}
 	// What was owed and what must be paid are different numbers: the draw pays a
 	// larger amount with the probability that makes the expectation the debt.
 	if d.Owed[0].Obligation != 8 || d.Owed[0].Amount != 10 {
 		t.Errorf("the draw's amount and the debt are both carried: %+v", d.Owed[0])
+	}
+	// Answered separates a row the buyer has spoken for from one it has not. The
+	// second row's empty status and zero amount are ABSENT fields, and a caller
+	// that read them as values would state an amount nobody has decided
+	// (docs/kernel-v0.15-verification.md §3).
+	if !d.Owed[0].Answered() {
+		t.Error("a row with a status is answered")
+	}
+	if d.Owed[1].Answered() {
+		t.Errorf("an empty status means the buyer has said nothing: %+v", d.Owed[1])
 	}
 }
 
@@ -137,7 +152,7 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(f.lastPath, "/control/peers?") || !strings.Contains(f.lastPath, "limit=200") {
+	if !strings.HasPrefix(f.lastPath, "/v1/admin/peers?") || !strings.Contains(f.lastPath, "limit=200") {
 		t.Errorf("peers path = %q (the roster is unbounded and must page)", f.lastPath)
 	}
 	if len(p) != 2 || p[0].Petname != "peerb" {
@@ -222,12 +237,20 @@ func TestAdminListPeersPagesToExhaustion(t *testing.T) {
 func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	// Peer suspend uses the unified user route with the RAW key (no @ prefix).
+	// Peer verbs live in the PEER namespace: the kernel refuses a peer target on
+	// the users route and vice versa, so the client may never mix them. The key
+	// travels raw (no @ prefix).
 	if err := f.client().AdminSuspendPeer(context.Background(), "tok", "PKEY"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/users/PKEY/suspend" {
+	if f.lastPath != "/v1/admin/peers/PKEY/suspend" {
 		t.Errorf("peer suspend path = %q (key must not be @-normalized)", f.lastPath)
+	}
+	if err := f.client().AdminRenamePeer(context.Background(), "tok", "PKEY", "twin"); err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/v1/admin/peers/PKEY/rename" || !strings.Contains(string(f.lastBody), `"new_name":"twin"`) {
+		t.Errorf("peer rename = %s %s", f.lastPath, f.lastBody)
 	}
 	// online/source are TOP-LEVEL fields of the inspection; reachability holds the
 	// transport diagnostics (path/rtt/protocols/error). Decoding online from inside
@@ -244,7 +267,7 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "GET" || f.lastPath != "/control/peers/inspect?key=PKEY" {
+	if f.lastMethod != "GET" || f.lastPath != "/v1/admin/peers/PKEY/inspect" {
 		t.Errorf("inspect request = %s %s", f.lastMethod, f.lastPath)
 	}
 	if !insp.Online || insp.Source != "live" {
@@ -367,23 +390,25 @@ func TestHandleIsSentVerbatim(t *testing.T) {
 	if _, err := f.client().AdminGetUser(context.Background(), "tok", "@alice"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastPath != "/control/users/@alice" {
+	if f.lastPath != "/v1/admin/users/@alice" {
 		t.Errorf("handle must reach the kernel verbatim: %q", f.lastPath)
 	}
 }
 
-// A peer is provisioned by funding its key: the deposit body must carry the raw
-// base64url key untouched, since the kernel disambiguates handle / key / id by
-// shape and an @-normalized key would name nothing.
-func TestAdminDepositByPeerKey(t *testing.T) {
+// A deposit credits a user and only a user. The kernel serves it under the
+// users namespace, where a peer key is not a user — so there is no peer form to
+// send, and a peer account is provisioned by its first signed call instead
+// (docs/kernel-v0.15-verification.md §2).
+func TestAdminDepositIsUserOnly(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	const key = "tETeglMY_o_yysBZ7oa2wc4-yHDRKw5uHruHcQZT2cA"
-	f.reply = `{"direction":"credit","amount":100,"operator_handle":"sys","target_handle":"k-tETeglMY"}`
-	if _, err := f.client().AdminDeposit(context.Background(), "tok", key, 100, "", ""); err != nil {
-		t.Fatal(err)
+	f.status, f.reply = 404, `{"code":"not_found","error":"`+key+` is not a user here"}`
+	_, err := f.client().AdminDeposit(context.Background(), "tok", key, 100, "r", "")
+	if err == nil {
+		t.Fatal("depositing to a peer key must fail")
 	}
-	if !strings.Contains(string(f.lastBody), `"handle":"`+key+`"`) {
-		t.Errorf("peer key must reach the kernel unchanged: %s", f.lastBody)
+	if f.lastPath != "/v1/admin/users/"+key+"/deposit" {
+		t.Errorf("the target reaches the kernel unchanged, in the path: %q", f.lastPath)
 	}
 }

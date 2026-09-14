@@ -720,13 +720,13 @@ func TestLedger(t *testing.T) {
 	}
 }
 
-func TestAdminRename(t *testing.T) {
+func TestAdminRenameUser(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	if err := f.client().AdminRename(context.Background(), "tok", "old", "new"); err != nil {
+	if err := f.client().AdminRenameUser(context.Background(), "tok", "old", "new"); err != nil {
 		t.Fatal(err)
 	}
-	if f.lastMethod != "POST" || f.lastPath != "/control/users/old/rename" {
+	if f.lastMethod != "POST" || f.lastPath != "/v1/admin/users/old/rename" {
 		t.Errorf("rename hit %s %s", f.lastMethod, f.lastPath)
 	}
 	if !strings.Contains(string(f.lastBody), `"new_name":"new"`) {

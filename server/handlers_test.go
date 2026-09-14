@@ -19,10 +19,15 @@ import (
 
 // authKernel is a fake kernel sufficient to drive the PKCE login flow and a few
 // authenticated reads. The signed-in user is "U1" / "alice".
-// lastRename records the rename the fake kernel last served ("<handle> <body>"),
-// so a test can assert what the BFF actually sent. Tests in this package are
-// sequential (no t.Parallel), so one recorder is enough.
-var lastRename string
+// lastRename records the rename the fake kernel last served ("<target> <body>"),
+// and lastDeposit the account a deposit named, so a test can assert what the
+// BFF actually sent — in particular which NAMESPACE it addressed, now that the
+// kernel serves users and peers on separate routes. Tests in this package are
+// sequential (no t.Parallel), so one recorder each is enough.
+var (
+	lastRename  string
+	lastDeposit string
+)
 
 // fakeHealth gives a fake kernel the identity banner every login pins: its key,
 // the network digest, and the decimals that scale every amount (§5, §7).
@@ -43,7 +48,7 @@ func fakeHealth(mux *http.ServeMux) {
 }
 
 func authKernel() *httptest.Server {
-	lastRename = ""
+	lastRename, lastDeposit = "", ""
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -188,28 +193,42 @@ func authKernel() *httptest.Server {
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"id":"U9","handle":"new","email":"new@test.com","available":0,"locked":0}`))
 	})
-	mux.HandleFunc("GET /control/users", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/admin/users", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"id":"U1","handle":"alice","email":"alice@test.com","available":500,"locked":0}]`))
 	})
-	mux.HandleFunc("GET /control/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
-		// The target resolves in either namespace and the two records are
-		// DISJOINT (verified live v0.12.16): a kernel answers with the petname
-		// model and no balances until it holds an account; a user answers with a
-		// handle and balances. A 43-char target is key-shaped.
+	mux.HandleFunc("GET /v1/admin/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
+		// The users route serves USERS. A peer key is refused here, exactly as
+		// the real kernel refuses it (verified live, §2 of the v0.15 record):
+		// the route says which namespace it takes, so a name that exists in the
+		// other one is simply not found.
 		h := r.PathValue("handle")
 		if len(h) >= 43 {
-			w.Write([]byte(`{"public_key":"` + h + `","petname":"","nickname":"twin","about":"a kernel","last_seen":"2026-08-06T00:04:34Z","peer_credit":null}`))
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"code":"not_found","error":"` + h + ` is not a user here"}`))
 			return
 		}
 		w.Write([]byte(`{"id":"U1","handle":"` + h + `","description":"x","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("POST /control/users/{handle}/suspend", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+	mux.HandleFunc("POST /v1/admin/users/{handle}/suspend", func(w http.ResponseWriter, r *http.Request) {
+		// Every roster verb answers with the target as show renders it (R5).
+		w.Write([]byte(`{"handle":"` + r.PathValue("handle") + `","available":500,"locked":0,"suspended_at":"2026-09-14T01:12:27Z"}`))
 	})
-	mux.HandleFunc("POST /control/users/{handle}/unsuspend", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+	mux.HandleFunc("POST /v1/admin/users/{handle}/unsuspend", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"handle":"` + r.PathValue("handle") + `","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("POST /control/users/{handle}/rename", func(w http.ResponseWriter, r *http.Request) {
+	// The peer namespace: the same verbs, refusing a user target.
+	mux.HandleFunc("POST /v1/admin/peers/{key}/suspend", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"public_key":"` + r.PathValue("key") + `","petname":"peerb","suspended_at":"2026-09-14T01:14:24Z"}`))
+	})
+	mux.HandleFunc("POST /v1/admin/peers/{key}/unsuspend", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"public_key":"` + r.PathValue("key") + `","petname":"peerb"}`))
+	})
+	mux.HandleFunc("POST /v1/admin/peers/{key}/rename", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		lastRename = r.PathValue("key") + " " + string(b)
+		w.Write([]byte(`{"public_key":"` + r.PathValue("key") + `","petname":"renamed"}`))
+	})
+	mux.HandleFunc("POST /v1/admin/users/{handle}/rename", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		lastRename = r.PathValue("handle") + " " + string(b)
 		if strings.Contains(string(b), `"new_name":"sys"`) {
@@ -219,9 +238,17 @@ func authKernel() *httptest.Server {
 		}
 		w.Write([]byte(`{"handle":"renamed"}`))
 	})
-	mux.HandleFunc("POST /control/deposit", func(w http.ResponseWriter, r *http.Request) {
-		// A deposit answers with the ledger entry it wrote; a replay returns that
-		// same entry (verified live on v0.14.0). Ledger entries carry no id.
+	mux.HandleFunc("POST /v1/admin/users/{handle}/deposit", func(w http.ResponseWriter, r *http.Request) {
+		// A deposit credits a USER, named in the path, and answers with the
+		// ledger entry it wrote; a replay returns that same entry. Ledger
+		// entries carry no id. A peer key here is not a user (§2).
+		h := r.PathValue("handle")
+		if len(h) >= 43 {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"code":"not_found","error":"` + h + ` is not a user here"}`))
+			return
+		}
+		lastDeposit = h
 		var body struct{ Ref string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.Ref == "" {
@@ -229,20 +256,24 @@ func authKernel() *httptest.Server {
 			w.Write([]byte(`{"code":"invalid_input","error":"a deposit must name the payment it records (--ref)"}`))
 			return
 		}
-		w.Write([]byte(`{"amount":100,"external_key":"attr:rail:ref:` + body.Ref + `","operator_handle":"sys","from_handle":"sys","to_handle":"alice"}`))
+		w.Write([]byte(`{"amount":100,"external_key":"attr:rail:ref:` + body.Ref + `","operator_handle":"sys","from_handle":"sys","to_handle":"` + h + `"}`))
 	})
-	mux.HandleFunc("GET /control/deposits", func(w http.ResponseWriter, r *http.Request) {
-		// One obligation a buyer says it paid, whose money has not arrived. Amount
-		// is the draw's and exceeds what the call owed (kernel §P10).
-		// One obligation, and one payment whose sender no account has registered —
-		// the held row's shape verified live on a chain world (anvil, decimals 6).
+	mux.HandleFunc("GET /v1/admin/kernel/deposits", func(w http.ResponseWriter, r *http.Request) {
+		// Two obligations and one held payment. TICKET1's buyer has said how the
+		// draw came out, so it carries a status and the drawn amount, which
+		// exceeds what the call owed (kernel §P10). TICKET2's buyer has said
+		// nothing: empty status, zero amount — absent fields, exactly as the
+		// live kernel sends them (docs/kernel-v0.15-verification.md §3). The
+		// held row's shape was verified on a chain world (anvil, decimals 6).
 		w.Write([]byte(`{"deposits":[{"id":"rail:0xabc:0","kind":"deposit","amount":5000000,"credit":5000000,
 		  "status":"held","tx_hash":"0xabc","created_at":"2026-09-09T15:22:32Z",
 		  "party_handle":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}],
 		 "owed":[{"id":"TICKET1","obligation":8,"amount":10,
-		 "tx_hash":"manual:TICKET1","status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"}]}`))
+		 "tx_hash":"manual:TICKET1","status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"},
+		 {"id":"TICKET2","obligation":126,"amount":0,"tx_hash":"","status":"",
+		  "created_at":"2026-09-14T01:13:39Z","peer":"KEYD"}]}`))
 	})
-	mux.HandleFunc("GET /control/peers", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/admin/peers", func(w http.ResponseWriter, r *http.Request) {
 		// The merged roster (verified live 2026-08-06): counterparties
 		// (has_account) and discovered kernels in one list keyed by public key,
 		// this kernel excluded. A discovered row carries a catalog and a last_seen
@@ -260,13 +291,13 @@ func authKernel() *httptest.Server {
 		// 2026-08-05 — an envelope here would silently render zero peers).
 		w.Write([]byte(`[` + rows + `]`))
 	})
-	mux.HandleFunc("GET /control/peers/inspect", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/admin/peers/{key}/inspect", func(w http.ResponseWriter, r *http.Request) {
 		// online/source are TOP-LEVEL in the real response; reachability holds only
 		// the transport diagnostics. As of v0.12.8 an action is {name, description,
 		// price} only, the account arrives inline, and evidence carries both legs:
 		// the subject's own rows (issuer == public_key) and a third party's, whose
 		// corroborated_uses is the two-kernel link. Shapes captured live 2026-08-06.
-		key := r.URL.Query().Get("key")
+		key := r.PathValue("key")
 		// account is null for a kernel that holds none here: KEYT* are discovered
 		// (source live), KEYNONE is a stranger key the kernel has never learned.
 		account := `{"suspended":false}`
@@ -290,7 +321,7 @@ func authKernel() *httptest.Server {
 		 "online":true,"source":"live",
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
-	mux.HandleFunc("GET /control/identity", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/admin/kernel", func(w http.ResponseWriter, r *http.Request) {
 		// v0.14: the kernel's identity, the money rules it serves under, its rail
 		// position, and its credit position — what it has delivered unpaid against
 		// the limit it set (kernel §D14). `stop` is absent unless the rail halts.

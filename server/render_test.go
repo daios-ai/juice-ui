@@ -1061,9 +1061,9 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 			t.Errorf("discovered card must not carry %q (it holds no account here)", gone)
 		}
 	}
-	// Naming it IS available — and keys on the public key, since an unbound
-	// kernel has no name to key on (§6.6).
-	if !strings.Contains(body, `href="/admin/users/KT1?form=admin-rename"`) {
+	// Naming it IS available — on the peer's own page, and keyed on the public
+	// key, since an unbound kernel has no name to key on (§6.6).
+	if !strings.Contains(body, `href="/admin/peers/KT1?form=admin-rename"`) {
 		t.Errorf("discovered card must offer Name, keyed on the public key: %s", body)
 	}
 	// last_seen is catalog freshness, not liveness: muted text, never a status pill.
@@ -1074,13 +1074,12 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 	if strings.Count(body, `class="chip" title="Discovered`) != 2 || !strings.Contains(body, "KT1") || !strings.Contains(body, "KT2") {
 		t.Errorf("colliding advertised handles must stay two rows: %s", body)
 	}
-	// Fund prefills the key, so it must be a real ?form= link: a data-modal trigger
-	// would open the empty in-page dialog instead (app.js preventDefaults it).
-	if !strings.Contains(body, `href="/admin/peers?form=admin-deposit&amp;fund_key=KT1"`) {
-		t.Errorf("fund opener must carry the key: %s", body)
-	}
-	if strings.Contains(body, `fund_key=KT1" data-modal`) {
-		t.Error("the prefilled fund opener must not be a data-modal trigger")
+	// There is no Fund. A peer holds no balance and the kernel serves no route
+	// that credits one: a peer account is identity, and a foreign call is funded
+	// by the serving kernel (kernel §D14). A discovered kernel is promoted by a
+	// first call, not by a payment.
+	if strings.Contains(body, "fund_key") || strings.Contains(body, ">Fund<") {
+		t.Errorf("a peer is never credited, so no card offers to fund one: %s", body)
 	}
 }
 

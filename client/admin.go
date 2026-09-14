@@ -8,19 +8,22 @@ import (
 )
 
 // Admin (superuser) operations. The kernel serves these on the same TCP API as
-// everything else, under /control/*, gated by an IsSuperuser check on the sys
+// everything else, under /v1/admin/*, gated by an IsSuperuser check on the sys
 // bearer token (API.md C13). A non-superuser bearer is rejected 403
-// ("superuser required") → KindUnauthorized. Routes and shapes verified live
-// (2026-07-06; re-gated against the v0.12 kernel 2026-08-03). These never touch
-// the kernel DB directly; the BFF is an ordinary HTTP client of the control
-// surface.
+// ("superuser required") → KindUnauthorized. These never touch the kernel DB
+// directly; the BFF is an ordinary HTTP client of the admin surface.
+//
+// The route says which kind of target it takes, and a target of the other kind
+// is refused (verified live, docs/kernel-v0.15-verification.md §2): `users`
+// takes a handle or account id, `peers` a petname or public key. So a caller
+// must know which namespace it is addressing BEFORE it dials — which the UI
+// does, since its own routes are already split the same way. There is no route
+// by which a peer is credited.
 
-// AdminUser is one account as the operator sees it (GET /control/users/{target}).
-// The target resolves in EITHER namespace, and the two records are disjoint
-// (verified live on v0.12.16): a local user answers with handle/id/description
-// and balances; a KERNEL answers with petname/nickname/about/public_key and its
-// sync cache, and carries balances only once it holds an account here. IsKernel
-// discriminates, so neither is rendered as a half-empty version of the other.
+// AdminUser is one local account as the operator sees it
+// (GET /v1/admin/users/{handle}). It is a user and nothing else: the kernel
+// answers 404 "… is not a user here" for a peer key, so there is no second
+// record shape to discriminate.
 type AdminUser struct {
 	ID          string `json:"id"`
 	Handle      string `json:"handle"`
@@ -30,20 +33,7 @@ type AdminUser struct {
 	SuspendedAt string `json:"suspended_at,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
-
-	// Kernel half (§13 petname model): present only when the target is a kernel.
-	PublicKey   string `json:"public_key"`
-	Petname     string `json:"petname"`
-	Nickname    string `json:"nickname"`
-	About       string `json:"about"`
-	LastSeen    string `json:"last_seen"`
-	RailAddress string `json:"rail_address"`
 }
-
-// IsKernel reports that this record is a remote kernel rather than a local
-// user. A kernel account holds no handle by construction (the schema forbids it
-// one, §3), so the public key is the discriminator.
-func (u AdminUser) IsKernel() bool { return u.PublicKey != "" }
 
 // Suspended reports whether the user is currently suspended. Detection is by
 // presence: the kernel omits suspended_at when active and sends the suspension
@@ -241,9 +231,11 @@ type IssuerEvidence struct {
 //
 // Exposure is what this kernel has delivered to foreign buyers and not been paid
 // for, against the CreditLimit it set — one number for the whole kernel, so
-// minting identities cannot multiply it (kernel §D14). Lottery is the largest
-// ticket this kernel writes, and the three bps rates are the money rules it
-// serves under.
+// minting identities cannot multiply it (kernel §D14). Lottery is the ticket
+// this kernel writes and LotteryMax the largest it will accept from a buyer —
+// a call drawing above it is refused with a signed rejection, since no retry
+// changes it (kernel §P10). The three bps rates are the money rules it serves
+// under.
 type Identity struct {
 	Handle        string   `json:"handle"`
 	PublicKey     string   `json:"public_key"`
@@ -260,6 +252,7 @@ type Identity struct {
 	Stop      *RailStop     `json:"stop"` // nil unless outgoing rail work is halted
 
 	Lottery     int64 `json:"lottery"`
+	LotteryMax  int64 `json:"lottery_max"`
 	CreditLimit int64 `json:"credit_limit"`
 	Exposure    int64 `json:"exposure"`
 	FeeBps      int64 `json:"fee_bps"`
@@ -307,10 +300,11 @@ type RailStop struct {
 	Since  string `json:"since"`
 }
 
-// Deposits is GET /control/deposits: the money awaiting the operator. Held are
-// payments whose sender nobody has registered; Owed are obligations a buyer says
-// it has paid whose money this kernel has not yet seen. Each Owed row is closed
-// by recording its payment against the ticket id (§6.6).
+// Deposits is GET /v1/admin/kernel/deposits: what this kernel is waiting on.
+// Held are payments whose sender nobody has registered, and the operator
+// attributes one to a user. Owed is every open obligation — exposure itemised —
+// and carries no operator act at all: an obligation closes when its buyer pays
+// (§6.6).
 type Deposits struct {
 	Held []HeldDeposit `json:"deposits"`
 	Owed []Obligation  `json:"owed"`
@@ -333,11 +327,16 @@ type HeldDeposit struct {
 }
 
 // Obligation is one cross-kernel debt owed TO this kernel: the ticket both
-// kernels know it by, what the call owed, and what the draw decided must
-// actually be paid — Amount is a face value that may exceed Obligation, since a
-// small debt pays a larger amount with the probability that makes the expected
-// payment the debt (kernel §P10). Peer is the buyer's public key, and TxHash the
-// payment the buyer named.
+// kernels know it by, and what the call owed. Once its buyer has said how the
+// draw came out it also carries Status, the Amount drawn — a face value that
+// may exceed Obligation, since a small debt pays a larger amount with the
+// probability that makes the expected payment the debt (kernel §P10) — and the
+// TxHash named. Peer is the buyer's public key.
+//
+// A buyer that has said nothing yet is listed with an EMPTY Status and a ZERO
+// Amount (verified live, docs/kernel-v0.15-verification.md §3). Those are absent
+// fields, not values: rendering them as an empty badge and "0" would state two
+// things the kernel has not said.
 type Obligation struct {
 	ID         string `json:"id"`
 	Obligation int64  `json:"obligation"`
@@ -348,10 +347,14 @@ type Obligation struct {
 	Peer       string `json:"peer"`
 }
 
-// AdminListUsers returns every user (GET /control/users). The kernel pages every
-// list endpoint (default 50, ceiling 200, §R6), so we page through with offset —
-// a single unpaged call would silently truncate at 50, and the admin roster must
-// be sorted and paginated over the full set.
+// Answered reports that the buyer has said how the draw came out, which is what
+// gives this row a status, an amount and a transaction to name.
+func (o Obligation) Answered() bool { return o.Status != "" }
+
+// AdminListUsers returns every user (GET /v1/admin/users). The kernel pages
+// every list endpoint (default 50, ceiling 200, §R6), so we page through with
+// offset — a single unpaged call would silently truncate at 50, and the admin
+// roster must be sorted and paginated over the full set.
 func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser, error) {
 	const page = 200 // server ceiling
 	var out []AdminUser
@@ -362,7 +365,7 @@ func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser,
 			q.Set("offset", strconv.Itoa(offset))
 		}
 		var batch []AdminUser
-		if err := c.do(ctx, http.MethodGet, "/control/users?"+q.Encode(), token, nil, &batch); err != nil {
+		if err := c.do(ctx, http.MethodGet, "/v1/admin/users?"+q.Encode(), token, nil, &batch); err != nil {
 			return out, err
 		}
 		out = append(out, batch...)
@@ -372,55 +375,53 @@ func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser,
 	}
 }
 
-// AdminGetUser returns one user by handle (GET /control/users/{handle}).
+// AdminGetUser returns one user by handle (GET /v1/admin/users/{handle}).
 func (c *Client) AdminGetUser(ctx context.Context, token, handle string) (AdminUser, error) {
 	var u AdminUser
-	err := c.do(ctx, http.MethodGet, "/control/users/"+url.PathEscape(handle), token, nil, &u)
+	err := c.do(ctx, http.MethodGet, "/v1/admin/users/"+url.PathEscape(handle), token, nil, &u)
 	return u, err
 }
 
-// AdminSuspendUser suspends a user (POST /control/users/{handle}/suspend).
+// AdminSuspendUser suspends a user (POST /v1/admin/users/{handle}/suspend).
+// The kernel answers with the row it wrote (R5); the UI re-reads its page, so
+// the body is discarded.
 func (c *Client) AdminSuspendUser(ctx context.Context, token, handle string) error {
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/suspend", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/suspend", token, nil, nil)
 }
 
-// AdminUnsuspendUser lifts a suspension (POST /control/users/{handle}/unsuspend).
+// AdminUnsuspendUser lifts a suspension (POST /v1/admin/users/{handle}/unsuspend).
 func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) error {
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(handle)+"/unsuspend", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/unsuspend", token, nil, nil)
 }
 
-// AdminRename renames one target (POST /control/users/{target}/rename). The
-// target is a user handle, or a kernel's public key — the two namespaces are
-// disjoint, so the kernel resolves by shape and refuses an ambiguous bare name.
-// A user target renames the handle, freeing the old one and rebinding every
-// reference; a kernel target binds its PETNAME, exactly, and is the only way to
-// name a kernel this node has merely discovered (§13). The kernel rejects
-// renaming sys.
+// AdminRenameUser renames a local account
+// (POST /v1/admin/users/{handle}/rename), freeing the old handle so every
+// reference follows the account. The kernel rejects renaming sys.
 //
-// The body field is new_name for BOTH targets. It was new_handle up to
-// v0.12.13 and renamed in v0.12.14 (verified live); a wrong field name is
-// rejected with a message naming a third field, so this is not guessable from
-// the error.
-func (c *Client) AdminRename(ctx context.Context, token, target, newName string) error {
-	body := struct {
-		NewName string `json:"new_name"`
-	}{newName}
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(target)+"/rename", token, body, nil)
+// The body field is new_name. It was new_handle up to v0.12.13 and renamed in
+// v0.12.14; a wrong field name is rejected with a message naming a third field
+// ("handle is required"), so this is not guessable from the error and is
+// re-verified on each kernel (docs/kernel-v0.15-verification.md §2).
+func (c *Client) AdminRenameUser(ctx context.Context, token, handle, newName string) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/rename", token, renameBody(newName), nil)
 }
 
-// AdminDeposit records a payment made outside the system (POST /control/deposit).
-// Ref names that payment — the operator's own record of it where the world has no
-// chain, the transaction that carried it where it has, or, when the target is a
-// PEER, the ticket id of the obligation the payment closes. It is mandatory: the
-// kernel credits nothing it cannot name, a second use of the same fact moves no
-// money, and the same fact on other terms is refused.
+// AdminDeposit records a payment made outside the system, crediting one USER
+// (POST /v1/admin/users/{handle}/deposit). Ref names that payment — the
+// operator's own record of it where the world has no chain, or the transaction
+// that carried it where it has. It is mandatory: the kernel credits nothing it
+// cannot name, a second use of the same fact moves no money, and the same fact
+// on other terms is refused.
 //
-// Amount is omitted when zero, which is how the two amount-less forms are sent:
-// attributing a payment already received, and closing a peer's obligation for the
-// amount the draw decided. A peer's payment reaches the seller it is owed to — a
-// peer account is identity, never a wallet (kernel §D14).
+// Amount is omitted when zero, which is the amount-less form: attributing a
+// payment already received whose sender was unknown.
+//
+// There is no peer form. A peer account is identity, not a wallet, and what a
+// peer owes closes when it pays — the chain payment where the world has one,
+// the buyer's own signed reveal where it has none, recorded by the seller's
+// kernel itself with no operator act (kernel §D23/§P10).
 func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, ref, reason string) (LedgerEntry, error) {
-	body := map[string]any{"handle": handle, "ref": ref}
+	body := map[string]any{"ref": ref}
 	if amount > 0 {
 		body["amount"] = amount
 	}
@@ -428,21 +429,30 @@ func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount 
 		body["reason"] = reason
 	}
 	var e LedgerEntry
-	err := c.do(ctx, http.MethodPost, "/control/deposit", token, body, &e)
+	err := c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/deposit", token, body, &e)
 	return e, err
 }
 
-// AdminListDeposits returns the money awaiting the operator: payments held for a
-// sender nobody has registered, and obligations a buyer says it has paid whose
-// money this kernel has not yet seen (GET /control/deposits).
+// AdminListDeposits returns what this kernel is waiting on
+// (GET /v1/admin/kernel/deposits): payments held for a sender nobody has
+// registered, and every obligation still open — the work delivered to foreign
+// buyers and not paid for, which is what `exposure` is made of, itemised.
 func (c *Client) AdminListDeposits(ctx context.Context, token string) (Deposits, error) {
 	var d Deposits
-	err := c.do(ctx, http.MethodGet, "/control/deposits", token, nil, &d)
+	err := c.do(ctx, http.MethodGet, "/v1/admin/kernel/deposits", token, nil, &d)
 	return d, err
 }
 
+// renameBody is the one rename payload, shared by both namespaces so the field
+// name has a single definition.
+func renameBody(newName string) any {
+	return struct {
+		NewName string `json:"new_name"`
+	}{newName}
+}
+
 // AdminListPeers returns the whole merged roster, optionally including suspended
-// counterparties — GET /control/peers[?all=1]. The kernel requires the literal
+// counterparties — GET /v1/admin/peers[?all=1]. The kernel requires the literal
 // value "1" ("true" is read as false), so the flag is emitted as "1" or omitted.
 //
 // It pages to exhaustion like AdminListUsers: the roster is no longer bounded by
@@ -461,7 +471,7 @@ func (c *Client) AdminListPeers(ctx context.Context, token string, all bool) ([]
 			q.Set("all", "1")
 		}
 		var batch []Peer
-		if err := c.do(ctx, http.MethodGet, "/control/peers?"+q.Encode(), token, nil, &batch); err != nil {
+		if err := c.do(ctx, http.MethodGet, "/v1/admin/peers?"+q.Encode(), token, nil, &batch); err != nil {
 			return out, err
 		}
 		out = append(out, batch...)
@@ -471,35 +481,46 @@ func (c *Client) AdminListPeers(ctx context.Context, token string, all bool) ([]
 	}
 }
 
-// AdminIdentity returns this kernel's federation identity (GET /control/identity).
+// AdminIdentity returns this kernel's own identity, rail position and money
+// rules (GET /v1/admin/kernel).
 func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, error) {
 	var id Identity
-	err := c.do(ctx, http.MethodGet, "/control/identity", token, nil, &id)
+	err := c.do(ctx, http.MethodGet, "/v1/admin/kernel", token, nil, &id)
 	return id, err
 }
 
 // There is no subscribe/unsubscribe: consuming a peer's actions needs no
 // relationship, and a proxy row is filled by resolve-on-use alone (juicedocs
-// §13). A peer account is provisioned by its first signed call or by
-// AdminDeposit addressed to its public key; the durable lever is suspend, and
-// an uncalled peer lapses through the kernel's retention.
+// §13). A peer account is provisioned by its first signed call — never by a
+// deposit, which credits only users — and the durable lever is suspend; an
+// uncalled peer lapses through the kernel's retention.
+//
+// Every peer verb below takes a petname or a public key, and refuses a user.
+// The UI passes the public key throughout: it is the only global name, and an
+// unbound kernel has no petname to pass.
 
-// AdminSuspendPeer freezes a peer's inbound calls (POST /control/users/{key}/suspend).
-// The moderation route is unified with users (v0.9): the three account forms are
-// disjoint syntactic productions (bare handle / base64url key / UUID), so the
-// key is passed through untouched and the kernel disambiguates by shape.
+// AdminSuspendPeer freezes a peer's inbound calls
+// (POST /v1/admin/peers/{key}/suspend).
 func (c *Client) AdminSuspendPeer(ctx context.Context, token, key string) error {
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(key)+"/suspend", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/v1/admin/peers/"+url.PathEscape(key)+"/suspend", token, nil, nil)
 }
 
-// AdminUnsuspendPeer lifts a peer suspension (POST /control/users/{key}/unsuspend).
+// AdminUnsuspendPeer lifts a peer suspension (POST /v1/admin/peers/{key}/unsuspend).
 func (c *Client) AdminUnsuspendPeer(ctx context.Context, token, key string) error {
-	return c.do(ctx, http.MethodPost, "/control/users/"+url.PathEscape(key)+"/unsuspend", token, nil, nil)
+	return c.do(ctx, http.MethodPost, "/v1/admin/peers/"+url.PathEscape(key)+"/unsuspend", token, nil, nil)
 }
 
-// AdminInspect inspects a remote kernel by key (GET /control/peers/inspect?key=).
+// AdminRenamePeer binds a kernel's PETNAME, exactly
+// (POST /v1/admin/peers/{key}/rename), rejecting an occupied name rather than
+// suffixing it. This is the only way to name a kernel this node has merely
+// discovered (§13).
+func (c *Client) AdminRenamePeer(ctx context.Context, token, key, petname string) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/peers/"+url.PathEscape(key)+"/rename", token, renameBody(petname), nil)
+}
+
+// AdminInspect inspects a remote kernel (GET /v1/admin/peers/{key}/inspect).
 func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspection, error) {
 	var out Inspection
-	err := c.do(ctx, http.MethodGet, "/control/peers/inspect?key="+url.QueryEscape(key), token, nil, &out)
+	err := c.do(ctx, http.MethodGet, "/v1/admin/peers/"+url.PathEscape(key)+"/inspect", token, nil, &out)
 	return out, err
 }
