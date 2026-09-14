@@ -3,7 +3,14 @@
 Version: 0.8.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.8.0.** The signals a buyer already has became usable when
+> **What changed in 0.8.0.** An agent's account reaches its page (§5, apps). An
+> agent is a user — it holds its own principal and spends it — and the app that
+> manages one showed a persona, a config and a run switch, so a person could
+> raise something that spends and never see what it spent. It now shows the
+> balance, what is parked, and recent activity, all read with the operator's own
+> token, which is honest because that app is the operator's alone.
+>
+> The signals a buyer already has became usable when
 > choosing (§6.2): browse sorts by rating or price, not only by the kernel's
 > relevance. The UI collected feedback and rendered it on a card, and there it
 > stopped — a rating that cannot order a list is a number to look at. An unrated
@@ -579,6 +586,15 @@ kernel and world is in use, and keys everything durable by
   elsewhere. The closed affordance MUST carry the step badge, so the sole core
   attention signal survives the drawer being shut. (The core rule that money moves
   only through a named confirm is unaffected by which surface hosts a screen.)
+* **An app that presents a kernel principal presents its account.** An agent is
+  a user: it holds its own principal, is funded like anybody's, and spends it
+  (ecosystem-standard §6). An app that manages one MUST therefore show that
+  account — its balance, what is parked, and what it has lately been party to —
+  or a person can raise something that spends and never see what it spent. Every
+  figure MUST be read with the **viewer's own token** and stated as served; a
+  home with no principal says so rather than rendering a zero, and there is no
+  funding gesture, because sending money is running an action on its own page
+  (§6.5).
 * **An app that acts on the UI host is an operator surface.** Most apps are
   ordinary kernel clients and gate on a session. One whose handlers act on the
   machine the interface runs on — spawning a process, writing the installation's

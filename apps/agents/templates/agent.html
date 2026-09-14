@@ -13,6 +13,38 @@
   {{template "_agent_status" $d}}
 </div>
 
+{{/* An agent IS a user: it holds its own principal on this kernel, funded like
+     anybody's, and spends it (ecosystem-standard §6). Without this section a
+     person could raise an economic actor and never see its economy — the one
+     fact an operator most needs about something spending on their machine.
+
+     Every figure here is the kernel's, read with the viewer's own token: the
+     account row for that handle, and the transactions it serves. A home with no
+     principal says so rather than showing a zero, and there is no funding
+     gesture — sending money is running an action, on its own page (§6.5). */}}
+<h2>Account</h2>
+{{if $d.Account}}
+<div class="card">
+  <dl class="locked-args">
+    <dt>Handle</dt><dd class="mono"><a href="/users/{{$h}}">{{$h}}</a></dd>
+    <dt>Available</dt><dd class="money">{{money $d.Account.Available}}</dd>
+    <dt>Parked</dt><dd class="money">{{money $d.Account.Locked}}</dd>
+    <dt>State</dt><dd>{{if $d.Account.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
+  </dl>
+</div>
+{{if $d.Activity}}
+<div class="subhead"><h3>Recent activity</h3><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>tx</th><th>action</th><th>role</th><th class="money">amount</th><th>status</th><th>when</th></tr></thead>
+  <tbody>{{range $d.Activity}}{{template "_tx_row" (txrow . $h nil)}}{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="muted">Nothing yet.</p>{{end}}
+{{else}}
+<p class="muted">No account on this kernel yet.</p>
+{{end}}
+
 <h2>Persona</h2>
 <div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=persona" data-modal="form-persona">Edit</a></div>
 {{if $d.Persona}}<pre class="json">{{$d.Persona}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}

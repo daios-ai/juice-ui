@@ -299,6 +299,21 @@ type detailView struct {
 	OpenForm  string        // the ?form= value; selects which dialog renders [open]
 	CSRF      template.HTML // for the status fragment rendered inline (no Page envelope)
 	Start     startForm     // the shared Start modal
+
+	// An agent IS a user: it holds its own principal on this kernel, funded like
+	// anybody's, and spends it (ecosystem-standard §6). Account is that account
+	// as the operator reads it, and nil when this home has no kernel account yet
+	// — a scaffolded agent that has never been created is a directory, not a
+	// principal, and saying so is better than showing a zero.
+	//
+	// This is read with the VIEWER's own token. The app is the operator's (they
+	// alone reach it), so the read is an ordinary superuser read of a user row,
+	// not the UI holding somebody else's credential.
+	Account *client.AdminUser
+	// Activity is what this agent has been party to, as the kernel serves it to
+	// the viewer. It is the point of the section: an operator can raise an agent
+	// and, without this, never see what it spends.
+	Activity []client.Transaction
 }
 
 type statusView struct {
@@ -363,8 +378,11 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 	_, statErr := os.Stat(filepath.Join(dir, configFile))
 	csrf := a.deps.CSRFField(r)
 	open := r.URL.Query().Get("form")
+	account, activity := a.account(r, handle)
 	a.deps.RenderPage(w, r, http.StatusOK, "agent", "agents", detailView{
 		Handle:    handle,
+		Account:   account,
+		Activity:  activity,
 		Running:   a.sup.running(handle),
 		Persona:   persona,
 		Knowledge: knowledge,
@@ -509,3 +527,45 @@ func agentBin() string {
 	}
 	return ""
 }
+
+// account reads the agent's kernel account and what it has been party to, with
+// the viewer's own token. Both are best-effort decoration: an agent home is a
+// directory on this machine and may name no principal at all — never created,
+// or created on another kernel — and the page must still render.
+//
+// Nothing is computed here. The balance is the kernel's row for that handle and
+// the rows are the transactions it serves this viewer; the page arranges them
+// and states no figure the kernel did not.
+func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []client.Transaction) {
+	if a.deps.Sessions == nil || a.deps.Client == nil {
+		return nil, nil // no kernel to ask: the section says there is no account
+	}
+	ctx := r.Context()
+	var acct *client.AdminUser
+	var rows []client.Transaction
+	_ = a.deps.Sessions.Do(ctx, func(tok string) error {
+		u, err := a.deps.Client.AdminGetUser(ctx, tok, handle)
+		if err != nil {
+			return nil // no principal by that name: the section says so
+		}
+		acct = &u
+		txs, err := a.deps.Client.ListTransactions(ctx, tok, "", 200)
+		if err != nil {
+			return nil
+		}
+		for _, t := range txs {
+			if t.OwnerHandle == handle || t.CallerHandle == handle || t.TargetHandle == handle {
+				rows = append(rows, t)
+			}
+			if len(rows) == agentActivityRows {
+				break
+			}
+		}
+		return nil
+	})
+	return acct, rows
+}
+
+// agentActivityRows is how much of an agent's history the page shows before
+// sending the reader to the ledger that holds all of it.
+const agentActivityRows = 10

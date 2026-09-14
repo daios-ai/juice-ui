@@ -476,3 +476,31 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 		t.Errorf("every route must be gated: %d of 8", len(superuser))
 	}
 }
+
+// An agent IS a user: it holds its own principal, is funded like anybody's, and
+// spends it. Without its account on this page an operator can raise an economic
+// actor and never see its economy, which is the one fact they most need about
+// something spending on their machine.
+//
+// With no kernel to ask, the view carries no account at all — and the template
+// then says there is none, rather than rendering a zero balance. A scaffolded
+// home is a directory, not a principal.
+func TestAgentViewCarriesNoAccountWithoutAKernel(t *testing.T) {
+	a, _, cap := testApp(t)
+	if err := a.create("research"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/agents/research", nil)
+	req.SetPathValue("handle", "research")
+	a.getDetail(httptest.NewRecorder(), req)
+	v, ok := cap.data.(detailView)
+	if !ok {
+		t.Fatalf("view = %T", cap.data)
+	}
+	if v.Account != nil {
+		t.Errorf("no kernel means no account read, not an invented one: %+v", v.Account)
+	}
+	if len(v.Activity) != 0 {
+		t.Errorf("and no activity: %+v", v.Activity)
+	}
+}
