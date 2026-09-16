@@ -26,6 +26,8 @@
 
 - Follow the visual UI grammar. Never implement inline styling,
   always focus on reusable components.
+
+- Never add a Claude-Session trailer or any session identifier to commit messages.
   
 
 Answering questions
