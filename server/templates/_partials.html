@@ -43,7 +43,7 @@
     {{- if not .Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span> {{end -}}
     {{.Action.Description}}
   </p>
-  {{template "_stat_strip" (statStrip .Action.Price .Stats false false)}}
+  {{template "_stat_strip" (statStrip .Action.Price .Action.Experience false false)}}
 </article>
 {{end}}
 {{end}}
@@ -88,11 +88,13 @@
 </div>
 {{else if .IsFailed}}
 {{/* The sentence is ours: the kernel answers a failure CLASS now, and printing
-     "execution_failed" to a buyer explains nothing (§6.2). */}}
+     "execution_failed" to a buyer explains nothing (§6.2). Sub-work already
+     delivered stays paid, so a non-zero charge is named rather than a refund
+     claimed. */}}
 <div class="outcome failed" role="status">
-  <strong>Failed — fully refunded.</strong>
+  <strong>{{if .Charged}}Failed — {{money .Charged}} charged.{{else}}Failed — fully refunded.{{end}}</strong>
   <p>{{.Message}}</p>
-  <p><a href="/settings">View your ledger →</a></p>
+  {{if .TxID}}<p><a href="/transactions/{{.TxID}}">View the receipt →</a></p>{{end}}
 </div>
 {{else if .IsParked}}
 {{/* Dispatched, unsettled: the funds are RESERVED, not refunded (§6.2). The
@@ -102,7 +104,6 @@
 <div class="outcome parked" role="status">
   <strong class="sig-escrow">◷ Result pending{{if .Reserved}} — {{money .Reserved}} reserved{{end}}.</strong>
   <p>{{.Message}}</p>
-  {{if .RefundEligibleDate}}<p class="muted">Refunds in full from {{.RefundEligibleDate}} if it stays unconfirmed.</p>{{end}}
   {{if .ProcessID}}<p><a href="/processes/{{.ProcessID}}">Follow the reserved funds →</a></p>{{end}}
 </div>
 {{else if .IsRefreshed}}
@@ -139,7 +140,7 @@
 </div>
 {{else if .IsPeerUnfunded}}
 <div class="outcome rejected" role="status">
-  <strong>Peer credit exhausted — you were not charged.</strong>
+  <strong>Not served on credit — you were not charged.</strong>
   <p>{{.Message}}</p>
 </div>
 {{else}}
@@ -168,7 +169,7 @@
 
 {{define "_process_row"}}
 <tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
-  <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+  <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}</a></td>
   <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">◷ awaiting</span>{{end}}</td>
   <td class="money">{{money (sum .Available .Locked)}}</td>
 </tr>
@@ -182,8 +183,8 @@
 {{define "_tx_row"}}
 {{$tx := .Tx}}
 <tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
-  <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}…</a></td>
-  <td>{{if .Ref}}{{template "_ref" (ref .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
+  <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}</a></td>
+  <td>{{if .Ref}}{{template "_ref" (ref .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}} (deleted)</span>{{end}}</td>
   <td class="muted small">{{if eq .Viewer $tx.TargetHandle}}seller{{else if eq .Viewer $tx.OwnerHandle}}buyer{{else if eq .Viewer $tx.CallerHandle}}caller{{else}}—{{end}}</td>
   <td class="money">{{txAmount $tx .Viewer}}</td>
   <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
@@ -191,31 +192,15 @@
 </tr>
 {{end}}
 
-{{/* _activity_call / _activity_entry — the two row shapes of the wallet's one
-     activity list (§6.5). Same columns, so a call and a direct movement read as
-     one sequence: what · role · amount · status · when. */}}
-{{define "_activity_call"}}
-{{$tx := .Tx}}
-<tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
-  <td>{{if .Ref}}{{template "_ref" (ref .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}}… (deleted)</span>{{end}}</td>
-  <td class="muted small">{{if eq .Viewer $tx.TargetHandle}}seller{{else if eq .Viewer $tx.OwnerHandle}}buyer{{else if eq .Viewer $tx.CallerHandle}}caller{{else}}—{{end}}</td>
-  <td class="money">{{txAmount $tx .Viewer}}</td>
-  <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
-  <td class="muted">{{shortTime $tx.StartedAt}}</td>
-</tr>
-{{end}}
-
-{{/* A movement row is the bank-statement shape: what moved, which way, when.
-     `reason` is not shown — on a value movement the kernel sets it to the
-     settling transaction's id (kernel §D18), which is an id, not a reason a
-     person wrote. */}}
+{{/* _activity_entry — one row of the wallet's activity: a ledger entry, what
+     moved between the viewer and one other account, and why (§6.5). The reason
+     is a transaction's id, linked to its receipt, or the text the kernel gave. */}}
 {{define "_activity_entry"}}
 {{$e := .Entry}}
 <tr>
-  <td>{{.Label}}</td>
-  <td class="muted small">—</td>
+  <td>{{if .Credited}}from{{else}}to{{end}} {{if .Counterpart}}{{.Counterpart}}{{else}}<span class="muted">—</span>{{end}}</td>
+  <td class="mono">{{if .TxID}}<a href="/transactions/{{.TxID}}">{{truncate 8 .TxID}}</a>{{else if .Note}}<span class="muted" title="{{.Note}}">{{.Note}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
   <td class="money">{{if .Credited}}<span class="sig-credited">+{{money $e.Amount}}</span>{{else}}−{{money $e.Amount}}{{end}}</td>
-  <td class="muted small">—</td>
   <td class="muted">{{shortTime $e.CreatedAt}}</td>
 </tr>
 {{end}}
@@ -325,22 +310,23 @@
 </div>
 {{end}}
 
-{{/* _evidence renders one block of retained evidence about the inspected kernel.
-     Input: client.IssuerEvidence — .Self marks the subject's own execution rows
-     (never folded with what others report about it), which also decides the
-     corroborated column: only a third party's rows can be corroborated by the
-     subject's. A subject is named by its full action id — the kernel serves no
-     id on its action list to join against, and a truncated id would link
+{{/* _evidence renders one block of retained evidence, on a peer's inspection
+     and on an action's page. Input: client.IssuerEvidence — .Self marks the
+     provider's report about its own actions (never folded with what others
+     report), which also decides the corroborated column: only a third party's
+     rows can be corroborated by the provider's. A subject is named by its full
+     action id — the id on the provider's kernel, and a truncated id would link
      nowhere. Ratings are stated in two counts, never averaged together:
-     trade-backed (the two-kernel receipt link holds) and unverified. Evidence
-     proves attribution, not honesty, so it carries no status colour and never
-     joins an action's own reputation strip. */}}
+     trade-backed (the two-kernel receipt link holds) and unverified. A trade
+     the issuer told two stories about counts for nothing and is stated as
+     contradicted. Evidence proves attribution, not honesty, so it carries no
+     status colour and never joins an action's own reputation strip. */}}
 {{define "_evidence"}}
-{{if .Self}}<h3 class="flush">as executed here</h3>
-{{else}}<h3 class="flush">issued by <span class="mono hash">{{truncate 12 .Issuer}}…</span></h3>{{end}}
+{{if .Self}}<h3 class="flush">reported by the provider</h3>
+{{else}}<h3 class="flush">issued by <span class="mono hash">{{truncate 12 .Issuer}}</span></h3>{{end}}
 <div class="table-scroll">
 <table class="stats-table">
-  <thead><tr><th>action</th><th class="money">uses</th><th class="money">failures</th>{{if not .Self}}<th class="money">corroborated</th>{{end}}<th>ratings</th></tr></thead>
+  <thead><tr><th>action</th><th class="money">uses</th><th class="money">failures</th>{{if not .Self}}<th class="money">corroborated</th>{{end}}<th class="money">contradicted</th><th>ratings</th></tr></thead>
   <tbody>
   {{$self := .Self}}
   {{range .Rows}}
@@ -349,6 +335,7 @@
     <td class="money">{{.Uses}}</td>
     <td class="money">{{.Failures}}</td>
     {{if not $self}}<td class="money">{{.CorroboratedUses}}</td>{{end}}
+    <td class="money">{{.Contradictions}}</td>
     <td class="muted small">{{.RatingCount}} trade-backed{{if gt .RatingCount 0}} · {{ratingPct .RatingMean .RatingCount}}%{{end}} · {{.UnverifiedRating}} unverified</td>
   </tr>
   {{end}}
@@ -481,7 +468,7 @@
 {{define "_obligation_row"}}
 <tr>
   <td><span class="mono" title="{{.Peer.Title}}">{{.Peer.Text}}</span></td>
-  <td class="mono" title="{{.O.ID}}">{{truncate 8 .O.ID}}…</td>
+  <td class="mono" title="{{.O.ID}}">{{truncate 8 .O.ID}}</td>
   <td class="money">{{money .O.Obligation}}</td>
   {{if .O.Answered}}
   <td class="money">{{money .O.Amount}}</td>
@@ -519,7 +506,7 @@
         {{if $known}}<span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}
         {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
       </div>
-      <div class="fingerprint">{{truncate 16 .PublicKey}}…</div>
+      <div class="fingerprint">{{truncate 16 .PublicKey}}</div>
       {{if $known}}
       <div class="small muted">{{.Actions}} actions{{template "_peer_contact" .}}</div>
       <div class="step-foot">

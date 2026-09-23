@@ -74,16 +74,16 @@ type studioEarnings struct {
 }
 
 type actionCardView struct {
-	Action       client.Action
-	Stats        *client.Stats
-	NeedsConnect bool   // demands a per-caller grant the viewer hasn't connected
-	Earned       int64  // net earned by this action (folded from transactions), workshop table
-	LastFailure  string // reason of the latest failed call, a quiet peek
+	Action       client.Action // a detail read, so it carries the evidence block
+	NeedsConnect bool          // demands a per-caller grant the viewer hasn't connected
+	Earned       int64         // net earned by this action (folded from transactions), workshop table
+	LastFailure  string        // reason of the latest failed call, a quiet peek
 	// Discovered marks a lookup hit this kernel has only learned of through
-	// gossip: no local row backs it, so it carries no stats and its page is built
-	// from the lookup row alone (requirements.md §6.2). It is decided by whether
-	// the action_id resolves locally, NOT by the ref's shape — once resolved, a
-	// proxy keeps its kernel-qualified ref and gains a local row with real stats.
+	// gossip: no local row backs it, so it carries no experience of this kernel's
+	// and its page is built from the lookup row alone (requirements.md §6.2). It
+	// is decided by whether the action_id resolves locally, NOT by the ref's
+	// shape — once resolved, a proxy keeps its kernel-qualified ref and gains a
+	// local row with a record of its own.
 	Discovered bool
 	// ObservedAt is the kernel's own freshness stamp on a remote-backed row (a
 	// gossip observation or a proxy's reconcile); empty on a local action.
@@ -128,7 +128,6 @@ type SortTab struct {
 
 type actionView struct {
 	Action       client.Action
-	Stats        *client.Stats // nil until the action has usage
 	Ratings      []client.Rating
 	RatingsPager Pager
 	Form         FormModel
@@ -408,18 +407,10 @@ func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		cards := make([]actionCardView, len(acts))
-		var wg sync.WaitGroup
 		for i, a := range acts {
 			cards[i] = actionCardView{Action: a}
-			wg.Add(1)
-			go func(i int, id string) {
-				defer wg.Done()
-				if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
-					cards[i].Stats = &st
-				}
-			}(i, a.ID)
 		}
-		wg.Wait()
+		s.fetchEvidence(ctx, tok, cards)
 		view.Cards = cards
 		return nil
 	})
@@ -760,16 +751,16 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			// Ordering only the page would answer a different question than the
 			// one asked — the best-rated action could sit on page two while page
 			// one claimed to be sorted by rating — and nothing on screen would
-			// say so. Rating therefore costs a stats read per row, which is why
+			// say so. Rating therefore costs a detail read per row, which is why
 			// it is paid only when that sort is asked for.
 			if order == sortRating {
-				s.fetchStats(ctx, tok, cards)
+				s.fetchEvidence(ctx, tok, cards)
 			}
 			sortCards(cards, order)
 			start, end, hasNext := pageSlice(len(cards), offset, pageSize)
 			cards = cards[start:end]
 			view.Pager = pageNav(r, offset, pageSize, hasNext)
-			s.fetchStats(ctx, tok, cards)
+			s.fetchEvidence(ctx, tok, cards)
 			view.Catalog = cards
 			return nil
 		}
@@ -810,8 +801,8 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Results = catalogAsResults(cat, q)
 		}
-		// Fetch each hit's full action row and stats concurrently. The read is
-		// also what DECIDES the card's class: a lookup row whose action_id names
+		// Fetch each hit's full action row concurrently. The read is also what
+		// DECIDES the card's class: a lookup row whose action_id names
 		// no local action is a discovered one, rendered from the row alone. The
 		// ref's shape cannot decide it — a resolved proxy keeps its kernel-
 		// qualified ref while having a perfectly readable local row, and reading
@@ -831,12 +822,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				view.Results[i].Discovered = false
-				if view.Results[i].Action.Kind == "" {
-					view.Results[i].Action = a
-				}
-				if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
-					view.Results[i].Stats = &st
-				}
+				view.Results[i].Action = a
 			}(i, view.Results[i].Action.ID)
 		}
 		wg.Wait()
@@ -1159,9 +1145,6 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 			CSRFField:    csrf.TemplateField(r),
 			BadgeSecs:    s.badgeSecs(),
 		}
-		if st, e := s.client.ActionStats(ctx, tok, id); e == nil {
-			view.Stats = &st
-		}
 		// Ratings: fetch all, slice one page here (uniform with the other lists).
 		ratingsOffset := queryOffset(r)
 		if all, e := s.client.ActionRatings(ctx, tok, id, 0, 0); e == nil {
@@ -1336,9 +1319,8 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 		scope = ""
 	}
 	view := actionsView{Filter: filter, Scope: scope, Superuser: super, OpenForm: openForm(r, "action")}
-	var mine []client.Action
+	var mine []actionCardView
 	var txs []client.Transaction
-	actionStats := map[string]client.Stats{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.Me(ctx, tok)
 		if e != nil {
@@ -1353,13 +1335,12 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		mine = a
-		txs, _ = s.client.ListTransactions(ctx, tok, "", 0)
-		for _, action := range mine {
-			if st, e := s.client.ActionStats(ctx, tok, action.ID); e == nil {
-				actionStats[action.ID] = st
-			}
+		mine = make([]actionCardView, len(a))
+		for i := range a {
+			mine[i] = actionCardView{Action: a[i]}
 		}
+		s.fetchEvidence(ctx, tok, mine)
+		txs, _ = s.client.ListTransactions(ctx, tok, "", 0)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1396,23 +1377,16 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, a := range mine {
-		if filter == "active" && !a.Active {
+	for _, c := range mine {
+		if filter == "active" && !c.Action.Active {
 			continue
 		}
-		if filter == "inactive" && a.Active {
+		if filter == "inactive" && c.Action.Active {
 			continue
 		}
-		var st *client.Stats
-		if sv, ok := actionStats[a.ID]; ok && (sv.Uses > 0 || sv.RatingCount > 0) {
-			cp := sv
-			st = &cp
-		}
-		view.Mine = append(view.Mine, actionCardView{
-			Action: a, Stats: st,
-			Earned:      perActionEarned[a.ID],
-			LastFailure: perActionFailure[a.ID],
-		})
+		c.Earned = perActionEarned[c.Action.ID]
+		c.LastFailure = perActionFailure[c.Action.ID]
+		view.Mine = append(view.Mine, c)
 	}
 	// Page the (filtered) management table; earnings tiles above still reflect the
 	// full fold, not the visible page.
@@ -1690,82 +1664,43 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 
 // ---- processes ----
 
-// walletView backs the wallet page: balances, open processes (each force-endable),
-// and the activity list. It composes the same data the processes and transactions
-// pages show, in one money-focused screen.
+// walletView backs the wallet page: balances, open processes (each force-endable
+// unless it awaits a peer's receipt), and the activity list.
 type walletView struct {
 	Available int64
 	Locked    int64
 	Open      []client.Process
-	Activity  []activityRow
-	Actions   map[string]client.Action
-	MyHandle  string
+	Activity  []entryRow
 	Superuser bool
 	OpenForm  string
-	// The rail surface. KernelAddress is where this kernel is paid, and is empty
-	// on a world whose money has no addresses — where the operator records
-	// payments instead and there is nothing to send from a user's side (kernel
-	// §D23). MyAddress is the caller's own registered payout address, empty until
-	// they prove one. WithdrawalID is minted per render so a double submit
-	// replays to the same row rather than paying twice.
+	// The rail surface. KernelAddress is where this kernel is paid and Token the
+	// contract that money is; both are empty on a world whose money has no
+	// addresses, where the operator records money in and out (kernel §D23).
+	// MyAddress is the caller's own registered payout address, empty until they
+	// prove one. WithdrawalID is minted per render so a double submit replays to
+	// the same row rather than paying twice.
 	KernelAddress string
+	Token         string
 	MyAddress     string
 	Withdrawals   []client.Withdrawal
 	WithdrawalID  string
 }
 
-// HasRail reports a world whose money has addresses: only there can a user
-// register one and withdraw to it (template helper).
-func (v walletView) HasRail() bool { return v.KernelAddress != "" }
+// HasAddresses reports a world whose money has addresses: only there does a
+// user register one to be paid at (template helper).
+func (v walletView) HasAddresses() bool { return v.KernelAddress != "" }
 
-// activityRow is one line of the wallet's activity list. Money leaves a balance
-// through two kernel records that share no log — a transaction (every call,
-// including a `sys/transfer` run) and a ledger entry (deposits, withdrawals, and
-// direct transfers) — and a `sys/transfer` writes only the former (verified
-// live). Listing them separately therefore lets a send appear in neither table,
-// so the wallet folds both into one time-ordered list (requirements.md §6.5).
-// Exactly one of Tx and Entry is set; this is an arrangement of served rows,
-// never a recomputation of kernel settlement.
-type activityRow struct {
-	When  string // RFC 3339; the sort key and the displayed time
-	Tx    *client.Transaction
-	Entry *client.LedgerEntry
-}
-
-// IsCall reports a row backed by a transaction (template helper).
-func (a activityRow) IsCall() bool { return a.Tx != nil }
-
-// CallRow and EntryRow build the render structs the two row partials take, so
-// the template picks a shape and never assembles one (template helpers).
-func (a activityRow) CallRow(viewer string, actions map[string]client.Action) txRow {
-	return txRowOf(*a.Tx, viewer, actions)
-}
-
-func (a activityRow) EntryRow(viewer string) entryRow { return entryRowOf(*a.Entry, viewer) }
-
-// mergeActivity folds transactions and ledger entries into one list, newest
-// first, capped at limit. Both kernel lists arrive newest-first already; this
-// merges them on their timestamps without reordering within either.
-func mergeActivity(txs []client.Transaction, entries []client.LedgerEntry, limit int) []activityRow {
-	rows := make([]activityRow, 0, len(txs)+len(entries))
-	for i := range txs {
-		rows = append(rows, activityRow{When: txs[i].StartedAt, Tx: &txs[i]})
-	}
-	for i := range entries {
-		rows = append(rows, activityRow{When: entries[i].CreatedAt, Entry: &entries[i]})
-	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].When > rows[j].When })
-	if limit > 0 && len(rows) > limit {
-		rows = rows[:limit]
-	}
-	return rows
-}
+// CanWithdraw reports that a withdrawal has somewhere to go: every world pays
+// out, but one with addresses pays only to a registered one (template helper).
+func (v walletView) CanWithdraw() bool { return !v.HasAddresses() || v.MyAddress != "" }
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	id := s.kernelIdentity(ctx)
 	view := walletView{
 		OpenForm:      openForm(r, "wallet"),
-		KernelAddress: s.kernelIdentity(ctx).RailAddress,
+		KernelAddress: id.RailAddress,
+		Token:         id.Token,
 		WithdrawalID:  newUUID(),
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -1773,22 +1708,20 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view.Available, view.Locked, view.MyHandle = me.Available, me.Locked, me.Handle
-		view.MyAddress = me.RailAddress
-		if view.HasRail() {
-			view.Withdrawals, _ = s.client.ListWithdrawals(ctx, tok)
-		}
+		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.RailAddress
+		view.Withdrawals, _ = s.client.ListWithdrawals(ctx, tok)
 		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
 			view.Open = filterStatus(procs, "open", true)
 		}
-		// A preview only — the most recent 10 of the merged activity; "all
-		// transactions →" links to the paginated ledger. Each source is capped
-		// kernel-side, then folded and re-capped so one busy source cannot crowd
-		// the other out of the preview.
-		txs, _ := s.client.ListTransactions(ctx, tok, "", 10)
+		// The ledger journals every movement between accounts — deposits,
+		// withdrawals, transfers, delivered value, and what each settlement paid
+		// (kernel §D4) — so it alone is the activity. A preview only, the most
+		// recent 10; each row names the transaction that caused it.
 		entries, _ := s.client.Ledger(ctx, tok, 10, 0)
-		view.Activity = mergeActivity(txs, entries, 10)
-		view.Actions = s.client.ActionsByID(ctx, tok, txs)
+		view.Activity = make([]entryRow, len(entries))
+		for i, e := range entries {
+			view.Activity[i] = entryRowOf(e, me.Handle)
+		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1798,9 +1731,6 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
 }
 
-// postWithdraw pays credits out to the address the caller registered. The id is
-// minted server-side and rides the form, so a double submit replays to the same
-// row rather than paying twice (kernel §D23).
 func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	amount, err := s.parseAmount(r.FormValue("amount"))
@@ -2550,7 +2480,10 @@ const (
 func sortCards(cards []actionCardView, order string) {
 	switch order {
 	case sortRating:
-		rated := func(c actionCardView) bool { return c.Stats != nil && c.Stats.RatingCount > 0 }
+		rated := func(c actionCardView) bool {
+			st := c.Action.Experience()
+			return st != nil && st.RatingCount > 0
+		}
 		sort.SliceStable(cards, func(i, j int) bool {
 			a, b := cards[i], cards[j]
 			if rated(a) != rated(b) {
@@ -2559,10 +2492,11 @@ func sortCards(cards []actionCardView, order string) {
 			if !rated(a) {
 				return false // both unrated: leave them as served
 			}
-			if ra, rb := ratingShare(*a.Stats), ratingShare(*b.Stats); ra != rb {
+			sa, sb := a.Action.Experience(), b.Action.Experience()
+			if ra, rb := ratingShare(*sa), ratingShare(*sb); ra != rb {
 				return ra > rb
 			}
-			return a.Stats.RatingCount > b.Stats.RatingCount
+			return sa.RatingCount > sb.RatingCount
 		})
 	case sortPrice:
 		sort.SliceStable(cards, func(i, j int) bool {
@@ -2609,12 +2543,14 @@ func sortHref(r *http.Request, order string) string {
 	return r.URL.Path + "?" + q.Encode()
 }
 
-// fetchStats fills in each card's stats, concurrently but BOUNDED: a catalog
-// sort reads one row per action, and an unbounded fan-out over a large catalog
-// would open a connection per action and answer slower than a sequential read.
-// A card that already has stats is left alone, so paying for the whole catalog
-// and then rendering a page of it costs one pass, not two.
-func (s *Server) fetchStats(ctx context.Context, tok string, cards []actionCardView) {
+// fetchEvidence replaces each card's list row with the action's detail read,
+// which is the same row plus its evidence block — a list row carries none. It
+// runs concurrently but BOUNDED: a catalog sort reads one row per action, and an
+// unbounded fan-out over a large catalog would open a connection per action and
+// answer slower than a sequential read. A card that already carries evidence is
+// left alone, so paying for the whole catalog and then rendering a page of it
+// costs one pass, not two.
+func (s *Server) fetchEvidence(ctx context.Context, tok string, cards []actionCardView) {
 	const workers = 8
 	var wg sync.WaitGroup
 	idx := make(chan int)
@@ -2623,14 +2559,14 @@ func (s *Server) fetchStats(ctx context.Context, tok string, cards []actionCardV
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				if st, e := s.client.ActionStats(ctx, tok, cards[i].Action.ID); e == nil {
-					cards[i].Stats = &st
+				if a, e := s.client.GetAction(ctx, tok, cards[i].Action.ID); e == nil {
+					cards[i].Action = a
 				}
 			}
 		}()
 	}
 	for i := range cards {
-		if cards[i].Stats == nil && cards[i].Action.ID != "" && !cards[i].Discovered {
+		if cards[i].Action.Evidence == nil && cards[i].Action.ID != "" && !cards[i].Discovered {
 			idx <- i
 		}
 	}

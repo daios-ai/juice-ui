@@ -16,18 +16,18 @@
 </div>
 {{/* Where money comes in, and where it goes out, differ by world: a world whose
      money has no addresses has nothing to send from a user's side, and the
-     operator records payments instead (kernel §D23). The world is named in the
-     sentence, because that is the fact deciding whether this balance can leave
-     at all — and the one thing a person cannot read off the figure (§7). */}}
-{{if .Data.HasRail}}
-<p class="card-note">On {{.KernelNet}}, paid in at <span class="mono">{{.Data.KernelAddress}}</span>{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
-<div class="row control-row">
-  {{if .Data.MyAddress}}<a class="btn-quiet" href="/wallet?form=withdraw" data-modal="form-withdraw">+ withdraw</a>{{end}}
-  <a class="btn-quiet" href="/wallet?form=address" data-modal="form-address">{{if .Data.MyAddress}}change your address{{else}}+ register your address{{end}}</a>
-</div>
+     operator records payments in and out instead (kernel §D23). The world is
+     named in the sentence, because that is the fact deciding how this balance
+     moves — and the one thing a person cannot read off the figure (§7). */}}
+{{if .Data.HasAddresses}}
+<p class="card-note">On {{.KernelNet}}, paid in at <span class="mono">{{.Data.KernelAddress}}</span>{{if .Data.Token}} in token <span class="mono">{{.Data.Token}}</span>{{end}}{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
 {{else}}
-<p class="card-note">On {{.KernelNet}}, money is recorded by the operator and does not leave.</p>
+<p class="card-note">On {{.KernelNet}}, the operator records money in and out.</p>
 {{end}}
+<div class="row control-row">
+  {{if .Data.CanWithdraw}}<a class="btn-quiet" href="/wallet?form=withdraw" data-modal="form-withdraw">+ withdraw</a>{{end}}
+  {{if .Data.HasAddresses}}<a class="btn-quiet" href="/wallet?form=address" data-modal="form-address">{{if .Data.MyAddress}}change your address{{else}}+ register your address{{end}}</a>{{end}}
+</div>
 
 <div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
 {{if .Data.Open}}
@@ -35,23 +35,21 @@
   {{range .Data.Open}}
   <div class="card row">
     <div class="stretch">
-      <a class="mono" href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a>
+      <a class="mono" href="/processes/{{.ID}}">{{truncate 8 .ID}}</a>
       <div class="small muted">
         <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
       </div>
     </div>
+    {{if .Endable}}
     <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
       {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
     </form>
+    {{end}}
   </div>
   {{end}}
 </div>
 {{else}}<p class="muted">No open sessions.</p>{{end}}
 
-{{/* One activity list, folded from the two records the kernel keeps: calls
-     (transactions) and direct movements (ledger entries). Running sys/transfer
-     writes only the former, so separate tables would let a send appear in
-     neither (requirements.md §6.5). */}}
 {{if .Data.Withdrawals}}
 <h2>Withdrawals</h2>
 <div class="table-scroll">
@@ -60,10 +58,10 @@
   <tbody>
   {{range .Data.Withdrawals}}
   <tr>
-    <td class="mono" title="{{.ID}}">{{truncate 8 .ID}}…</td>
+    <td class="mono" title="{{.ID}}">{{truncate 8 .ID}}</td>
     <td class="money">{{money .Amount}}</td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
-    <td class="mono muted">{{if .TxHash}}<span title="{{.TxHash}}">{{truncate 12 .TxHash}}…</span>{{else}}—{{end}}</td>
+    <td class="mono muted">{{if .TxHash}}<span title="{{.TxHash}}">{{truncate 12 .TxHash}}</span>{{else}}—{{end}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>
   </tr>
   {{end}}
@@ -72,31 +70,30 @@
 </div>
 {{end}}
 
+{{/* The ledger journals every movement between accounts, settlement
+     included, so it alone is the activity (requirements.md §6.5). */}}
 <div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
 {{if .Data.Activity}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>What</th><th>Role</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
+  <thead><tr><th>Party</th><th>Reason</th><th class="money">Amount</th><th>When</th></tr></thead>
   <tbody>
-  {{range .Data.Activity}}
-  {{if .IsCall}}{{template "_activity_call" (.CallRow $.Data.MyHandle $.Data.Actions)}}
-  {{else}}{{template "_activity_entry" (.EntryRow $.Data.MyHandle)}}{{end}}
-  {{end}}
+  {{range .Data.Activity}}{{template "_activity_entry" .}}{{end}}
   </tbody>
 </table>
 </div>
 {{else}}<p class="muted">No activity yet.</p>{{end}}
 
-{{if .Data.MyAddress}}
+{{if .Data.CanWithdraw}}
 <dialog id="form-withdraw" class="modal-form"{{if eq .Data.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">
   <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/wallet/withdraw" data-confirm="Withdraw to your registered address? A withdrawal keeps the destination it was made with.">
+    <form class="stack" method="post" action="/wallet/withdraw" data-confirm="{{if .Data.MyAddress}}Withdraw to your registered address? A withdrawal keeps the destination it was made with.{{else}}Withdraw? The operator records the payment out.{{end}}">
       {{.CSRFField}}
       <input type="hidden" name="id" value="{{.Data.WithdrawalID}}">
       <div class="field">
         <label for="wd-amt">Amount<span class="req">*</span></label>
-        <p class="help">Paid to {{.Data.MyAddress}}.</p>
+        {{if .Data.MyAddress}}<p class="help">Paid to {{.Data.MyAddress}}.</p>{{end}}
         <input id="wd-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
       </div>
       <div class="field"><label for="wd-why">Reason (optional)</label><input id="wd-why" name="reason" type="text"></div>
@@ -109,7 +106,7 @@
 </dialog>
 {{end}}
 
-{{if .Data.HasRail}}
+{{if .Data.HasAddresses}}
 <dialog id="form-address" class="modal-form"{{if eq .Data.OpenForm "address"}} open{{end}} aria-label="Register your address">
   <div class="modal-head"><h2>Your address</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">

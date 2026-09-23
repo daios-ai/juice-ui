@@ -178,6 +178,11 @@ func TestNoRetiredSurfaces(t *testing.T) {
 		"dollarsInput":        "amounts scale by the world's decimals (§7)",
 		"parseDollars":        "amounts scale by the world's decimals (§7)",
 		"settlement_id":       "there is no bilateral settlement to record (§6.6)",
+		"/v1/stats":           "what is known about an action is read where it is read (§6.2)",
+		"ActionStats":         "what is known about an action is read where it is read (§6.2)",
+		"refund_eligible":     "a parked call settles on the peer's answer; no age expires it (§6.2)",
+		"RefundEligible":      "a parked call settles on the peer's answer; no age expires it (§6.2)",
+		"mergeActivity":       "the ledger journals every movement; it alone is the activity (§6.5)",
 	}
 	var files []string
 	for _, pat := range []string{"templates/*.html", "*.go"} {
@@ -590,5 +595,27 @@ func TestChromeNamesTheWorld(t *testing.T) {
 	}
 	if !strings.Contains(body, `<span class="world">`) {
 		t.Error("the world renders through the named class, never ad hoc (§2)")
+	}
+}
+
+// The truncate helper owns the ellipsis that marks a shortened id, so a
+// template never writes a second one after it (it rendered "451333e4……").
+func TestTruncateOwnsItsEllipsis(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	twice := regexp.MustCompile(`\{\{truncate [^}]*\}\}…`)
+	for _, f := range core {
+		if m := twice.FindString(string(mustRead(t, f))); m != "" {
+			t.Errorf("%s: %q adds a second ellipsis", f, m)
+		}
+	}
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m := twice.FindString(string(b)); m != "" {
+			t.Errorf("%s: %q adds a second ellipsis", f, m)
+		}
 	}
 }

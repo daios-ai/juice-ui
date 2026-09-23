@@ -51,6 +51,15 @@ func fakeHealth(mux *http.ServeMux) {
 	})
 }
 
+// ledgerTx is the transaction a fake ledger entry names as its cause.
+const ledgerTx = "67753356-bfa3-4c11-9b70-299334ed67c3"
+
+// withEvidence is an action row as its detail read serves it: the list row plus
+// the evidence block, whose local_experience is this kernel's own record.
+func withEvidence(row, experience string) string {
+	return strings.TrimSuffix(row, "}") + `,"evidence":{"local_experience":` + experience + `,"provider_reported":null,"observed_by_others":[],"retained_cap":200}}`
+}
+
 func authKernel() *httptest.Server {
 	lastRename, lastDeposit, lastPeerComplete = "", "", ""
 	mux := http.NewServeMux()
@@ -101,16 +110,15 @@ func authKernel() *httptest.Server {
 			{"id":"T2","action_id":"owned","owner_handle":"bob","target_handle":"alice","caller_handle":"bob","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
 		]`))
 	})
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"action_id":"x"}`))
-	})
-	// The journal: an operator deposit, and the value a transfer-effect call
-	// delivered. The kernel sets the value entry's reason to the settling
-	// transaction's id (v0.12.24, verified live) — an id, not prose.
+	// The journal, in the d59742b shape (verified live): every movement between
+	// two accounts, settlement included. alice's fee and her payout to bob name
+	// the settling transaction; an obligation names its ticket; the operator's
+	// deposit names sys as its sender.
 	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[
-			{"amount":300,"reason":"T1","created_at":"2024-01-02T12:00:00Z","operator_handle":"alice","from_handle":"alice","to_handle":"bob"},
-			{"amount":5000,"reason":"","created_at":"2024-01-01T00:00:00Z","operator_handle":"sys","to_handle":"alice"}
+			{"amount":300,"reason":"` + ledgerTx + `","created_at":"2024-01-02T12:00:00Z","operator_handle":"alice","from_handle":"alice","to_handle":"bob"},
+			{"amount":9,"reason":"obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b","created_at":"2024-01-02T11:00:00Z","operator_handle":"sys","from_handle":"alice","to_handle":"sys"},
+			{"amount":5000,"reason":"","created_at":"2024-01-01T00:00:00Z","operator_handle":"sys","from_handle":"sys","to_handle":"alice"}
 		]`))
 	})
 	// The kernel's public ratings projection: value/note/time and nothing else
@@ -118,40 +126,41 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"value":1,"note":"worked well","created_at":"2024-01-03T00:00:00Z"}]`))
 	})
+	// One row per action, served by both reads: a detail read is the list row
+	// plus its evidence block, which a list row never carries (verified live).
+	schemas := `"input_schema":{"type":"object","properties":{}},"output_schema":{"type":"object"}`
+	rows := map[string]string{
+		"A1": `{"id":"A1","action":"alice/hello","owner_handle":"alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0,` + schemas + `}`,
+		"A3": `{"id":"A3","action":"alice/draft","owner_handle":"alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0,` + schemas + `}`,
+		// Two delegated actions: /v1/me grants sys/gmail-send (AG) but not
+		// sys/gmail-read (AN) — the needs-account chip must split them.
+		"AG": `{"id":"AG","action":"sys/gmail-send","owner_handle":"sys","name":"gmail-send","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
+		"AN": `{"id":"AN","action":"sys/gmail-read","owner_handle":"sys","name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
+	}
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		// The kernel returns active rows by default; the inactive/private draft
 		// (A3) appears only with ?all=1 — so tests that see the draft prove the UI
 		// threads all=1 for the owner's own list.
-		a1 := `{"id":"A1","action":"alice/hello","owner_handle":"alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0}`
-		a3 := `{"id":"A3","action":"alice/draft","owner_handle":"alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0}`
-		// Two delegated actions: /v1/me grants sys/gmail-send (AG) but not
-		// sys/gmail-read (AN) — the needs-account chip must split them.
-		ag := `{"id":"AG","action":"sys/gmail-send","owner_handle":"sys","name":"gmail-send","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true}`
-		an := `{"id":"AN","action":"sys/gmail-read","owner_handle":"sys","name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true}`
 		if r.URL.Query().Get("all") == "1" {
-			w.Write([]byte("[" + a1 + "," + a3 + "]"))
+			w.Write([]byte("[" + rows["A1"] + "," + rows["A3"] + "]"))
 		} else {
-			w.Write([]byte("[" + a1 + "," + ag + "," + an + "]"))
+			w.Write([]byte("[" + rows["A1"] + "," + rows["AG"] + "," + rows["AN"] + "]"))
 		}
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		// AG/AN are the delegated pair (granted / ungranted, see GET /v1/actions);
-		// "owned"/"A1" belong to alice (the signed-in user); anything else to bob.
-		owner := "bob"
-		name := "x"
-		grant := ""
-		switch r.PathValue("id") {
-		case "owned", "A1":
-			owner = "alice"
-		case "AG":
-			owner, name, grant = "sys", "gmail-send", `"auth_scheme":"oauth_delegated","requires_grant":true,`
-		case "AN":
-			owner, name, grant = "sys", "gmail-read", `"auth_scheme":"oauth_delegated","requires_grant":true,`
+		// A listed action reads back as its row; "owned" belongs to alice (the
+		// signed-in user), and anything else is bob's.
+		id := r.PathValue("id")
+		row, ok := rows[id]
+		if !ok {
+			owner := "bob"
+			if id == "owned" {
+				owner = "alice"
+			}
+			row = `{"id":"` + id + `","action":"` + owner + `/x","owner_handle":"` + owner + `","name":"x","kind":"http",` +
+				`"active":true,"public":true,"price":0,` + schemas + `}`
 		}
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","action":"` + owner + `/` + name +
-			`","owner_handle":"` + owner + `","name":"` + name + `","kind":"http",` +
-			`"active":true,"public":true,"price":0,` + grant +
-			`"input_schema":{"type":"object","properties":{}},"output_schema":{"type":"object"}}`))
+		w.Write([]byte(withEvidence(row, `{"action_id":"`+id+`"}`)))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{"status":"success","action_id":"A2","action_name":"synthesized","diagnostics":[]},"tx_id":"TX1","trace_id":"TR1"}`))
@@ -746,24 +755,24 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	}
 }
 
-// The user ledger and the tx index share _tx_row, so the ledger now carries the
-// action ref (previously missing) and the same signed amounts.
-func TestUserLedgerUsesUnifiedRow(t *testing.T) {
+// The call history renders through _tx_row: the action ref linked, and the
+// signed perspective amounts rather than the raw gross.
+func TestCallHistoryUsesUnifiedRow(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/wallet")
+	body := getBody(t, cl, srv.URL+"/transactions")
 	if !strings.Contains(body, `href="/actions/owned"`) {
-		t.Error("user ledger must link the action ref (was missing before)")
+		t.Error("the call history must link the action ref")
 	}
 	if !strings.Contains(body, "-100 credits") || !strings.Contains(body, "+45 credits") {
-		t.Error("user ledger must show the signed perspective amounts")
+		t.Error("the call history must show the signed perspective amounts")
 	}
 	if strings.Contains(body, "<th>Gross</th>") {
-		t.Error("user ledger must not carry the Gross column")
+		t.Error("the call history must not carry the Gross column")
 	}
 }
 
@@ -785,9 +794,10 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 	}
 }
 
-// How money comes in, and whether it can go out, are facts about the world this
-// kernel serves: a world without payment addresses has nothing a user can send
-// from, and the operator records payments instead (kernel §D23).
+// How money comes in and goes out is a fact about the world this kernel serves:
+// a world without payment addresses has no address to register, and the
+// operator records payments in and out — so a withdrawal is offered, and the
+// address form is not (kernel §D23, verified live on d59742b).
 func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -800,13 +810,14 @@ func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 	if !strings.Contains(body, "500") {
 		t.Error("wallet should show available balance")
 	}
-	if !strings.Contains(body, "recorded by the operator") {
+	if !strings.Contains(body, "the operator records money in and out") {
 		t.Error("without addresses, the wallet must say who records a payment")
 	}
-	for _, gone := range []string{"form=withdraw", "form=address"} {
-		if strings.Contains(body, gone) {
-			t.Errorf("a world without addresses offers no %q", gone)
-		}
+	if !strings.Contains(body, "form=withdraw") {
+		t.Error("every world pays out, so a withdrawal is offered")
+	}
+	if strings.Contains(body, "form=address") {
+		t.Error("a world without addresses offers no address to register")
 	}
 }
 
@@ -1625,12 +1636,10 @@ func TestWalletShowsLedger(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/wallet")
-	// Ledger must show both transactions from authKernel.
-	if !strings.Contains(body, "T1") && !strings.Contains(body, "/transactions/T1") {
-		t.Error("wallet ledger must link to transaction T1")
-	}
-	if !strings.Contains(body, "T2") && !strings.Contains(body, "/transactions/T2") {
-		t.Error("wallet ledger must link to transaction T2")
+	// The activity is the ledger: each movement links to the transaction that
+	// caused it.
+	if !strings.Contains(body, `href="/transactions/`+ledgerTx+`"`) {
+		t.Error("a ledger entry must link to the transaction its reason names")
 	}
 	// Each row encodes the viewer's role by the signed amount: as seller (T2, payee)
 	// alice sees a credited +net; as buyer (T1, payer) she sees a −gross debit.
@@ -2437,64 +2446,31 @@ func TestNoActionGetsABespokeSurface(t *testing.T) {
 	}
 }
 
-// §6.5: the wallet's activity list folds BOTH kernel records. Money leaves a
-// balance through a transaction (every call, including a sys/transfer run) and
-// through a ledger entry (deposits, withdrawals, direct transfers), and a
-// sys/transfer writes only the former — verified live. Two separate tables let
-// a send appear in neither, so the fold is what makes the wallet complete.
-func TestMergeActivityInterleavesBothRecords(t *testing.T) {
-	txs := []client.Transaction{
-		{ID: "tx-new", StartedAt: "2026-08-18T12:00:00Z"},
-		{ID: "tx-old", StartedAt: "2026-08-16T12:00:00Z"},
-	}
-	// A ledger entry carries no id (the kernel serves none), so it is identified
-	// here by what it says: an amount and a time.
-	entries := []client.LedgerEntry{
-		{Amount: 50, Reason: "gift", CreatedAt: "2026-08-17T12:00:00Z"},
-	}
-	rows := mergeActivity(txs, entries, 10)
-	if len(rows) != 3 {
-		t.Fatalf("expected all three records, got %d", len(rows))
-	}
-	// Newest first, regardless of which source a row came from.
-	if !rows[0].IsCall() || rows[0].Tx.ID != "tx-new" {
-		t.Errorf("row 0 = %+v, want tx-new", rows[0])
-	}
-	if rows[1].IsCall() || rows[1].Entry.Reason != "gift" {
-		t.Errorf("row 1 = %+v, want the ledger entry between the two calls", rows[1])
-	}
-	if !rows[2].IsCall() || rows[2].Tx.ID != "tx-old" {
-		t.Errorf("row 2 = %+v, want tx-old", rows[2])
-	}
-	// Exactly one record backs each row.
-	for i, r := range rows {
-		if (r.Tx == nil) == (r.Entry == nil) {
-			t.Errorf("row %d must hold exactly one record", i)
-		}
-	}
-	if got := mergeActivity(txs, entries, 2); len(got) != 2 {
-		t.Errorf("limit must cap the folded list, got %d", len(got))
-	}
-}
-
-// The ledger half of the activity list reads its direction from the kernel's own
-// from/to projection, never from a guess.
-func TestEntryRowLabelsAndSign(t *testing.T) {
+// The activity list reads each movement from the kernel's own from/to
+// projection, never from a guess: the viewer is one side and the counterpart
+// the other, a deposit included (the kernel names sys as its sender). A reason
+// that is a transaction id links to its receipt; any other reason — an
+// obligation's ticket, a transfer's note — is the text it is.
+func TestEntryRowPartySignAndReason(t *testing.T) {
+	const tx = "67753356-bfa3-4c11-9b70-299334ed67c3"
 	cases := []struct {
-		name     string
-		entry    client.LedgerEntry
-		label    string
-		credited bool
+		name        string
+		entry       client.LedgerEntry
+		counterpart string
+		credited    bool
+		txID, note  string
 	}{
-		{"deposit", client.LedgerEntry{ToHandle: "bob", Amount: 100}, "deposit", true},
-		{"withdrawal", client.LedgerEntry{FromHandle: "bob", Amount: 100}, "withdrawal", false},
-		{"sent", client.LedgerEntry{FromHandle: "bob", ToHandle: "alice", Amount: 25}, "transfer to alice", false},
-		{"received", client.LedgerEntry{FromHandle: "alice", ToHandle: "bob", Amount: 25}, "transfer from alice", true},
+		{"deposit", client.LedgerEntry{FromHandle: "sys", ToHandle: "bob", Amount: 100}, "sys", true, "", ""},
+		{"withdrawal", client.LedgerEntry{FromHandle: "bob", ToHandle: "sys", Amount: 100}, "sys", false, "", ""},
+		{"payout", client.LedgerEntry{FromHandle: "alice", ToHandle: "bob", Amount: 25, Reason: tx}, "alice", true, tx, ""},
+		{"fee", client.LedgerEntry{FromHandle: "bob", ToHandle: "sys", Amount: 5, Reason: tx}, "sys", false, tx, ""},
+		{"obligation", client.LedgerEntry{FromHandle: "bob", ToHandle: "sys", Amount: 9, Reason: "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"}, "sys", false, "", "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"},
+		{"crossing in", client.LedgerEntry{ToHandle: "bob", Amount: 7}, "", true, "", ""},
 	}
 	for _, c := range cases {
 		got := entryRowOf(c.entry, "bob")
-		if got.Label != c.label || got.Credited != c.credited {
-			t.Errorf("%s: label=%q credited=%v, want %q/%v", c.name, got.Label, got.Credited, c.label, c.credited)
+		if got.Counterpart != c.counterpart || got.Credited != c.credited || got.TxID != c.txID || got.Note != c.note {
+			t.Errorf("%s: got %+v", c.name, got)
 		}
 	}
 }
@@ -2559,10 +2535,8 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 			w.Write([]byte(`{"code":"not_found","error":"action not found"}`))
 			return
 		}
-		w.Write([]byte(`{"id":"proxy-local","action":"vendor@bravo/bought","owner_handle":"bravo","name":"vendor/bought","kind":"remote_proxy","active":true,"visibility":"local","price":111}`))
-	})
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"action_id":"proxy-local","uses":4,"successes":4}`))
+		w.Write([]byte(withEvidence(`{"id":"proxy-local","action":"vendor@bravo/bought","owner_handle":"bravo","name":"vendor/bought","kind":"remote_proxy","active":true,"visibility":"local","price":111}`,
+			`{"action_id":"proxy-local","uses":4,"successes":4}`)))
 	})
 	kernel := httptest.NewServer(mux)
 	defer kernel.Close()
@@ -2611,12 +2585,12 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 		w.Write([]byte(`{"id":"P1","action":"vendor@bravo/slow","owner_handle":"bravo","name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
 		 "input_schema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"output_schema":{"type":"object"}}`))
 	})
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) })
 	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	// The live v0.12.23 shape: dispatched, unsettled, funds locked.
+	// The live d59742b shape: dispatched, unsettled, funds locked, and no date
+	// by which anything expires.
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusGatewayTimeout)
-		w.Write([]byte(`{"code":"timeout","error":"remote receipt pending","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"proc-7","refund_eligible_at":"2026-08-19T17:01:54Z"}}`))
+		w.Write([]byte(`{"code":"timeout","error":"remote receipt pending","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"proc-7"}}`))
 	})
 	kernel := httptest.NewServer(mux)
 	defer kernel.Close()
@@ -2630,25 +2604,25 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	body := string(raw)
-	for _, want := range []string{"Result pending", "111 credits", "/processes/proc-7", "19 August 2026"} {
+	for _, want := range []string{"Result pending", "111 credits", "/processes/proc-7"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("parked outcome missing %q:\n%s", want, body)
 		}
 	}
 	// The whole point: no refund is claimed, and it is not dressed as a failure.
-	for _, banned := range []string{"fully refunded", "Failed —"} {
+	for _, banned := range []string{"fully refunded", "Failed —", "Refunds in full from"} {
 		if strings.Contains(body, banned) {
 			t.Errorf("parked outcome must not say %q — the funds are still locked", banned)
 		}
 	}
 }
 
-// §6.5: a value movement renders as a bank-statement row — what moved, which
-// way, when. Its `reason` is the settling transaction's id (kernel §D18), so it
-// is NOT rendered: an id is not a reason a person wrote. The call that caused
-// it is a separate row, because an action whose effect is a money movement is
-// an ordinary action that produces both records.
-func TestWalletValueMovementRendersWithoutTheTransactionID(t *testing.T) {
+// §6.5: the activity is the ledger, one row per movement — which way, with
+// whom, why, how much. The kernel journals every movement between accounts,
+// settlement included (verified live on d59742b), so no call needs a row of its
+// own beside the money it moved. A reason that is a transaction id links to the
+// receipt; any other reason is the text the kernel gave.
+func TestWalletActivityIsTheLedger(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -2657,20 +2631,19 @@ func TestWalletValueMovementRendersWithoutTheTransactionID(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/wallet")
 	activity := body[strings.Index(body, "Recent activity"):]
-	if !strings.Contains(activity, "transfer to bob") {
-		t.Error("the movement must name its direction and counterparty")
+	for _, want := range []string{"to bob", "−300 credits", "from sys", "+5000 credits",
+		"obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b", `href="/transactions/` + ledgerTx + `"`} {
+		if !strings.Contains(activity, want) {
+			t.Errorf("activity missing %q:\n%s", want, activity)
+		}
 	}
-	if !strings.Contains(activity, "−300 credits") {
-		t.Errorf("the movement must state the amount that left the balance:\n%s", activity)
+	// The id is the link, never prose.
+	if strings.Contains(activity, ">"+ledgerTx+"<") {
+		t.Error("a transaction id must render as a truncated link, not as text")
 	}
-	// The id belongs to the transaction row, which links to the receipt; the
-	// movement row must not print it as prose.
-	if strings.Contains(activity, `small">T1<`) {
-		t.Error("a ledger entry's reason (a transaction id) must not render as text")
-	}
-	// Both records are present: the call and the movement.
-	if !strings.Contains(activity, "/transactions/T1") {
-		t.Error("the call itself still renders as its own row, linking to the receipt")
+	// A call is not a second row: the wallet reads no transactions.
+	if strings.Contains(activity, "<th>Role</th>") || strings.Contains(activity, "/transactions/T1") {
+		t.Error("the activity must be the ledger alone")
 	}
 }
 
@@ -2749,7 +2722,6 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 		ran = true
 		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
 	})
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) })
 	kernel := httptest.NewServer(mux)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -2786,7 +2758,6 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) })
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"WEB","action":"sys/web","owner_handle":"sys","name":"web","kind":"http","active":true,"price":0,
@@ -2901,6 +2872,11 @@ func TestPricedPlannerIsNotOffered(t *testing.T) {
 // rating share and the price — order the list, so a buyer can choose by them.
 // This is an arrangement of served rows, never a computation (§6.2).
 func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
+	rows := map[string]string{
+		"CHEAP": `{"id":"CHEAP","action":"alice/cheap","owner_handle":"alice","name":"cheap","kind":"wasm","active":true,"price":1}`,
+		"LOVED": `{"id":"LOVED","action":"alice/loved","owner_handle":"alice","name":"loved","kind":"wasm","active":true,"price":50}`,
+		"MEH":   `{"id":"MEH","action":"alice/meh","owner_handle":"alice","name":"meh","kind":"wasm","active":true,"price":10}`,
+	}
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -2918,19 +2894,17 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 			w.Write([]byte(`[]`))
 			return
 		}
-		w.Write([]byte(`[
-		 {"id":"CHEAP","action":"alice/cheap","owner_handle":"alice","name":"cheap","kind":"wasm","active":true,"price":1},
-		 {"id":"LOVED","action":"alice/loved","owner_handle":"alice","name":"loved","kind":"wasm","active":true,"price":50},
-		 {"id":"MEH","action":"alice/meh","owner_handle":"alice","name":"meh","kind":"wasm","active":true,"price":10}]`))
+		w.Write([]byte("[" + rows["CHEAP"] + "," + rows["LOVED"] + "," + rows["MEH"] + "]"))
 	})
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
-		switch r.PathValue("id") {
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		switch id {
 		case "LOVED":
-			w.Write([]byte(`{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.95}`))
+			w.Write([]byte(withEvidence(rows[id], `{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.95}`)))
 		case "MEH":
-			w.Write([]byte(`{"uses":9,"successes":4,"rating_count":9,"rating_estimate":0.2}`))
+			w.Write([]byte(withEvidence(rows[id], `{"uses":9,"successes":4,"rating_count":9,"rating_estimate":0.2}`)))
 		default: // CHEAP has said nothing
-			w.Write([]byte(`{}`))
+			w.Write([]byte(withEvidence(rows[id], `{}`)))
 		}
 	})
 	kernel := httptest.NewServer(mux)
@@ -2979,6 +2953,9 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 // nothing on screen would say so.
 func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	const total = 25 // more than one page
+	row := func(i int) string {
+		return fmt.Sprintf(`{"id":"A%d","action":"alice/a%02d","owner_handle":"alice","name":"a%02d","kind":"wasm","active":true,"price":0}`, i, i, i)
+	}
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -3000,17 +2977,18 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 		// unsorted catalog.
 		var rows []string
 		for i := 0; i < total; i++ {
-			rows = append(rows, fmt.Sprintf(
-				`{"id":"A%d","action":"alice/a%02d","owner_handle":"alice","name":"a%02d","kind":"wasm","active":true,"price":0}`, i, i, i))
+			rows = append(rows, row(i))
 		}
 		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
-	mux.HandleFunc("GET /v1/stats/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("id") == fmt.Sprintf("A%d", total-1) {
-			w.Write([]byte(`{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.99}`))
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var i int
+		fmt.Sscanf(r.PathValue("id"), "A%d", &i)
+		if i == total-1 {
+			w.Write([]byte(withEvidence(row(i), `{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.99}`)))
 			return
 		}
-		w.Write([]byte(`{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.10}`))
+		w.Write([]byte(withEvidence(row(i), `{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.10}`)))
 	})
 	kernel := httptest.NewServer(mux)
 	defer kernel.Close()

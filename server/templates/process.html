@@ -11,7 +11,7 @@
     <div class="balance"><div class="amount"><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></div><div class="label">status</div></div>
   </div>
   {{template "_process_await" $d}}
-  {{if eq $d.Process.Status "open"}}
+  {{if $d.Process.Endable}}
   <div class="row">
     <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="Force-end this process? Waiting steps are cancelled and their parked prices refunded to you.">
       {{.CSRFField}}<button class="btn-danger" type="submit">Force-end</button>

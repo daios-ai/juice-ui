@@ -12,7 +12,7 @@
   <div class="row">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
     {{if $d.Action}}{{template "_ref" (ref $d.Action.Ref $d.Action.ID)}}
-    {{else}}<span class="muted mono">{{truncate 8 $d.Tx.ActionID}}… (deleted)</span>{{end}}
+    {{else}}<span class="muted mono">{{truncate 8 $d.Tx.ActionID}} (deleted)</span>{{end}}
   </div>
 
   {{/* Parties — kernel-captured handles; the viewer's own role emphasized */}}
@@ -33,7 +33,7 @@
   {{if not $d.Tx.IsRemote}}<p class="cost-note muted">Fee is charged on value added.</p>{{end}}
   {{/* Both kernels know a cross-kernel call by the same ticket, so either party
        can follow it — the buyer owes it, the seller is paid by it. */}}
-  {{if $d.Tx.TicketID}}<p class="cost-note muted">Settles on the rail as ticket <span class="mono" title="{{$d.Tx.TicketID}}">{{truncate 8 $d.Tx.TicketID}}…</span>.</p>{{end}}
+  {{if $d.Tx.TicketID}}<p class="cost-note muted">Settles on the rail as ticket <span class="mono" title="{{$d.Tx.TicketID}}">{{truncate 8 $d.Tx.TicketID}}</span>.</p>{{end}}
   {{else}}
   <div class="outcome failed"><strong>Failed — fully refunded.</strong>{{if $d.Tx.Reason}}<p>{{$d.Tx.Reason}}</p>{{end}}</div>
   {{end}}

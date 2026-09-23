@@ -144,10 +144,11 @@ func TestUserMessageSurfacesKernelDetailForInput(t *testing.T) {
 }
 
 // A parked call is NOT a refund. The kernel answers 504 with the process still
-// holding the funds (verified live on v0.12.23: available fell, locked rose by
-// the same amount), so the message must not claim money came back.
+// holding the funds until the peer's signed answer settles it, and no age
+// expires it (verified live on d59742b: the meta names the process and when it
+// started, and no refund date), so the message must not claim money came back.
 func TestTimeoutMessageNeverClaimsARefund(t *testing.T) {
-	body := []byte(`{"code":"timeout","error":"remote receipt pending; result confirmation is pending — funds remain reserved on process P1 and the call retries automatically","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"P1","refund_eligible_at":"2026-08-19T17:01:54Z"}}`)
+	body := []byte(`{"code":"timeout","error":"remote receipt pending; result confirmation is pending — funds remain reserved on process P1 and the call retries automatically","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"P1"}}`)
 	err := classify(504, body)
 	ke, _ := AsKernelError(err)
 	if ke.Kind != KindTimeout {
@@ -161,9 +162,6 @@ func TestTimeoutMessageNeverClaimsARefund(t *testing.T) {
 	}
 	if ke.MetaString("process_id") != "P1" {
 		t.Errorf("process_id = %q", ke.MetaString("process_id"))
-	}
-	if ke.MetaString("refund_eligible_at") != "2026-08-19T17:01:54Z" {
-		t.Errorf("refund_eligible_at = %q", ke.MetaString("refund_eligible_at"))
 	}
 }
 

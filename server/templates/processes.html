@@ -13,13 +13,15 @@
   <tbody>
   {{range $d.Open}}
   <tr class="rowable" tabindex="-1" data-href="/processes/{{.ID}}">
-    <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}…</a></td>
+    <td class="id mono"><a href="/processes/{{.ID}}">{{truncate 8 .ID}}</a></td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">awaiting</span>{{end}}</td>
     <td class="money">{{money (sum .Available .Locked)}}</td>
     <td>
+      {{if .Endable}}
       <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
         {{$d.CSRFField}}<button class="btn-danger small" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
       </form>
+      {{end}}
     </td>
   </tr>
   {{end}}

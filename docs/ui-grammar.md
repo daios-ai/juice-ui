@@ -466,12 +466,14 @@ key — an unbound kernel has no name to key on, and advertised names collide.
 
 **Inspect** (`/admin/peers/{key}`) shows reachability (direct/relayed + rtt), the
 kernel's public actions, and **evidence** in **two blocks**, in the same
-grouped-block grammar as the action stats table: the subject's own **execution
-summary**, then **counterparty experience** per issuer with its corroborated
-count. Each row names its subject action and states uses/successes/failures with
-the two rating counts as text — `N trade-backed · M unverified`. Evidence carries
-**no colour and no fill**: it is a trust fact, not a status, and never joins the
-first-party reputation strip.
+grouped-block grammar as the action stats table: the provider's own **report**
+("reported by the provider"), then **counterparty experience** per issuer with
+its corroborated count. Each row names its subject action and states
+uses/failures/contradicted with the two rating counts as text —
+`N trade-backed · M unverified`. The **one `_evidence` partial** also renders
+what other kernels report on an **action's page**, below its ratings, the
+provider's block first. Evidence carries **no colour and no fill**: it is a
+trust fact, not a status, and never joins the first-party reputation strip.
 
 **Obligations** sit between the identity card and the roster: every cross-kernel
 debt settles per call on the rail by a ticket both kernels name, so each row is

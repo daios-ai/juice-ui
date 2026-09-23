@@ -322,12 +322,13 @@ func TestRunTermsChangedCarriesNewTerms(t *testing.T) {
 }
 
 // A dispatched call awaiting a signed outcome is PARKED, not failed and not
-// refunded: the kernel keeps the funds locked and retries. Wire shape verified
-// live on v0.12.23.
+// refunded: the kernel keeps the funds locked and retries until the peer's
+// signed answer arrives, and no age expires it. Wire shape verified live on
+// d59742b: the meta names the process and the start, and no refund date.
 func TestRunParkedCarriesTheReservedFundsNotARefund(t *testing.T) {
 	f := &fakeKernel{
 		runStatus: http.StatusGatewayTimeout,
-		runBody:   `{"code":"timeout","error":"remote receipt pending","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"proc-7","refund_eligible_at":"2026-08-19T17:01:54Z"}}`,
+		runBody:   `{"code":"timeout","error":"remote receipt pending","meta":{"pending_since":"2026-08-18T17:01:54Z","process_id":"proc-7"}}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
@@ -347,12 +348,39 @@ func TestRunParkedCarriesTheReservedFundsNotARefund(t *testing.T) {
 	if strings.Contains(strings.ToLower(out.Message), "refund") {
 		t.Errorf("parked message must not claim a refund: %q", out.Message)
 	}
-	if got := out.RefundEligibleDate(); got != "19 August 2026" {
-		t.Errorf("RefundEligibleDate = %q want 19 August 2026", got)
-	}
-	// An unparseable stamp renders empty so the clause is simply omitted.
-	if (Outcome{RefundEligibleAt: "soon"}).RefundEligibleDate() != "" {
-		t.Error("an unparseable eligibility stamp must render empty, never raw")
+}
+
+// A failed call names what it drew: sub-work already delivered stays paid, so a
+// non-zero meta.charge is stated and never read as a full refund, and the
+// failure transaction the kernel recorded is carried for its receipt link.
+// Wire shape verified live on d59742b.
+func TestRunFailedCarriesItsCharge(t *testing.T) {
+	for _, c := range []struct {
+		name, charge string
+		want         int64
+		refunded     bool
+	}{
+		{"nothing delivered", "0", 0, true},
+		{"sub-work delivered", "700", 700, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeKernel{
+				runStatus: http.StatusInternalServerError,
+				runBody:   `{"code":"execution_failed","error":"upstream returned status 500","meta":{"charge":"` + c.charge + `","tx_id":"tx-9"}}`,
+			}
+			kc, stop := f.start(t)
+			defer stop()
+			out, err := NewCaller(kc).Run(context.Background(), "tok", "vendor/fail", nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !out.IsFailed() || out.TxID != "tx-9" || out.Charged != c.want {
+				t.Fatalf("got class %v tx %q charged %d", out.Class, out.TxID, out.Charged)
+			}
+			if got := strings.Contains(out.Message, "refunded in full"); got != c.refunded {
+				t.Errorf("message %q: full-refund claim = %v, want %v", out.Message, got, c.refunded)
+			}
+		})
 	}
 }
 

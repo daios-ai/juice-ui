@@ -1,6 +1,7 @@
 BINARY  := juice-ui
 PKG     := github.com/daios-ai/juice-ui/cmd/juice-ui
-PREFIX  ?= $(HOME)/.local
+# The family's executables live in $JUICE_HOME/bin (ecosystem-standard §2).
+PREFIX  ?= $(or $(JUICE_HOME),$(HOME)/.juice)
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"

@@ -555,3 +555,28 @@ func TestAgentActivityResolvesItsActions(t *testing.T) {
 		t.Errorf("each row's action must be resolved, or it renders as deleted: %+v", v.Actions)
 	}
 }
+
+// The daemon is found where the installer puts the family's programs,
+// $JUICE_HOME/bin, before PATH; the explicit override still wins.
+func TestAgentBinResolvesTheInstallationBinFirst(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(binEnv, "")
+	t.Setenv("PATH", t.TempDir())
+	if got := agentBin(home); got != "" {
+		t.Fatalf("nothing installed, got %q", got)
+	}
+	bin := filepath.Join(home, "bin", "juice-agent")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentBin(home); got != bin {
+		t.Errorf("agentBin = %q, want the installation's %q", got, bin)
+	}
+	t.Setenv(binEnv, "/opt/juice-agent")
+	if got := agentBin(home); got != "/opt/juice-agent" {
+		t.Errorf("the override must win, got %q", got)
+	}
+}

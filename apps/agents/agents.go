@@ -46,7 +46,8 @@ import (
 //go:embed templates/*.html
 var tmplFS embed.FS
 
-// binEnv overrides the juice-agent binary path (otherwise resolved on PATH).
+// binEnv overrides the juice-agent binary path (otherwise resolved from
+// $JUICE_HOME/bin, then PATH).
 const binEnv = "JUICE_AGENT_BIN"
 
 // The fixed per-agent files (agent requirements.md §11). memory.md is learned by
@@ -134,7 +135,8 @@ func (a *Agents) Start(ctx context.Context) error {
 		a.root = defaultRoot(a.deps.Home)
 	}
 	if a.sup == nil {
-		a.sup = newSupervisor(osLauncher{bin: agentBin(), home: juiceRoot(a.root)})
+		home := juiceRoot(a.root)
+		a.sup = newSupervisor(osLauncher{bin: agentBin(home), home: home})
 	}
 	return nil
 }
@@ -521,8 +523,15 @@ func defaultRoot(home string) string {
 // agents root ($JUICE_HOME/agent/agents -> $JUICE_HOME).
 func juiceRoot(root string) string { return filepath.Dir(filepath.Dir(root)) }
 
-func agentBin() string {
+// agentBin resolves the juice-agent executable: the explicit override, else
+// the installation's own bin/, which is where the installer puts the family's
+// programs and where a component looks for a sibling (ecosystem-standard §4),
+// else PATH.
+func agentBin(juiceHome string) string {
 	if p := os.Getenv(binEnv); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath(filepath.Join(juiceHome, "bin", "juice-agent")); err == nil {
 		return p
 	}
 	if p, err := exec.LookPath("juice-agent"); err == nil {

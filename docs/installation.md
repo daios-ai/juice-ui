@@ -6,7 +6,10 @@ suite backs up or relocates as a unit.
 
 ```
 $JUICE_HOME                       (default ~/.juice; env-overridable, same on macOS)
-├── kernels/<instance>/   one kernel: juice.db, config.json, the rail key, serve.lock
+├── bin/                  the family's executables, where the installer puts them
+├── worlds/<world>.json   one network's definition: its money, and its seeds
+├── kernels/<world>/      one kernel per world: juice.db, config.json, the rail
+│                         key and its records, serve.lock, cache/
 ├── client/               config.json (the kernels this client knows, and which
 │                         login is selected), credentials/<handle@kernel>.json
 │                         (one session each, 0600)
@@ -22,9 +25,10 @@ In particular it never reads or writes `client/credentials/`: those are the
 operator's own logins, and this UI authenticates browser people and holds each
 one's tokens in its own server-side session.
 
-```
-$PREFIX/bin/   the binaries (PREFIX ?= ~/.local)
-```
+`bin/` holds no state: the programs are replaceable, so an installer
+overwrites them and a person deletes them without losing anything. A component
+looks for a sibling program there; the agents app finds `juice-agent` in
+`$JUICE_HOME/bin` before `PATH` (`JUICE_AGENT_BIN` overrides both).
 
 Rules each repo follows:
 
@@ -33,8 +37,8 @@ Rules each repo follows:
 2. **Fixed default, never cwd-relative** — attach to the same state wherever
    launched.
 3. The binary `MkdirAll`s its own subdir (`0700`) before first write.
-4. The installer touches only `$PREFIX/bin` (`mkdir -p` + `install`, plus
-   `uninstall`); never `$JUICE_HOME`.
+4. The installer touches only the executables in `bin/` (`mkdir -p` +
+   `install`, plus `uninstall`); never a component's state.
 5. **Same role → same filename across every component** (the subdir is the
    namespace): `config.json` (operator, hand-written), `state.json` (machine
    state), `tokens/` — never a component-prefixed name like `juice.json` or
@@ -45,8 +49,9 @@ Rules each repo follows:
 Single home (Geth/IPFS/Cargo lineage) over the XDG split: this state is precious,
 not purgeable, and one relocatable root beats three scattered trees.
 
-**juice-ui** is conformant (`$JUICE_HOME/ui/`, creates its own dir, fixed default,
-`mkdir -p` + `uninstall`). An existing deployment keeps working untouched — a legacy
+**juice-ui** is conformant (`$JUICE_HOME/ui/`, creates its own dir, fixed default;
+`make install` puts the binary in `$JUICE_HOME/bin`, and `uninstall` removes it
+alone). An existing deployment keeps working untouched — a legacy
 cwd `juice-ui.json` or `~/.config|.local/share/juice-ui/chat.db` is read in place and
 logged; migrate deliberately:
 
@@ -57,7 +62,3 @@ mv juice-ui.json ~/.juice/ui/state.json
 mv ~/.config/juice-ui/chat.db{,-wal,-shm} ~/.juice/ui/   # -wal/-shm may not exist
 # restart
 ```
-
-**Open (kernel side):** confirm `JUICE_HOME`/`~/.juice`, and whether the kernel
-migrates its files from `~/.juice/` into `~/.juice/kernel/` (recommended, symmetric)
-or stays at the root.

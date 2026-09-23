@@ -96,12 +96,14 @@ type PeerAction struct {
 }
 
 // Evidence is one derived metric row from the local evidence cache: what a
-// single issuer's signed receipts say about one action of the inspected kernel
-// (juicedocs §13). RatingCount/RatingMean count only TRADE-BACKED ratings — the
+// single issuer's signed receipts say about one action (juicedocs §D16) — on a
+// peer's inspection, and in an action read's evidence block. RatingCount/RatingMean count only TRADE-BACKED ratings — the
 // two-kernel receipt link holds — while UnverifiedRatings counts those retained
 // without that link. Equivocating ratings are excluded by the kernel. This
 // proves attribution, never honesty, so it is displayed as evidence beside its
-// issuer and never folded into an action's first-party Stats.
+// issuer and never folded into an action's first-party Stats. Contradictions
+// counts the trades this issuer told two stories about, which count for nothing
+// else.
 //
 // CorroboratedUses is the same two-kernel link applied to uses rather than
 // ratings: how many of this issuer's interactions the subject's own evidence
@@ -122,6 +124,7 @@ type Evidence struct {
 	RatingCount      int64   `json:"rating_count"`
 	RatingMean       float64 `json:"rating_mean"`
 	UnverifiedRating int64   `json:"unverified_ratings"`
+	Contradictions   int64   `json:"contradictions"`
 }
 
 // Reachability holds the transport diagnostics only. Online/Source are NOT here —
@@ -227,8 +230,8 @@ func (i Inspection) CounterpartyEvidence() []IssuerEvidence {
 	return out
 }
 
-// IssuerEvidence is one issuer's block of evidence rows about the inspected
-// kernel. Self marks the block the subject issued about itself.
+// IssuerEvidence is one issuer's block of evidence rows. Self marks the block
+// the provider issued about its own actions.
 type IssuerEvidence struct {
 	Issuer string
 	Self   bool

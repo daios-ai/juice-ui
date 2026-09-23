@@ -31,7 +31,7 @@ const (
 	KindInternal               // 500 (kernel bug / unrecoverable)
 	KindGrantRequired          // 403 code="grant_required": needs a delegated OAuth grant
 	KindPeerUnreachable        // 502 code="peer_unreachable": remote peer offline; call refunded
-	KindPeerUnfunded           // 402 code="peer_unfunded": the serving kernel's exposure cap is exhausted (v0.12 §13)
+	KindPeerUnfunded           // 402 code="peer_unfunded": the serving kernel will not serve this one on credit (kernel §D14)
 	KindTermsChanged           // 409 code="terms_changed": the pinned quote moved; refused BEFORE locking, zero charge (v0.12.16)
 	KindRailStopped            // 503 code="rail_stopped": a blocked payment halts outgoing rail work
 	KindUnavailable            // transport failure: the kernel gave no HTTP response (down/restarting)
@@ -292,12 +292,17 @@ func (e *KernelError) UserMessage() string {
 		// Otherwise the kernel answers a CLASS, not prose (v0.12.14: a remote
 		// failure reads "remote call failed", and the stored reason is the bare
 		// "execution_failed"), so the sentence is ours to write. Never echo it.
+		// Sub-work already delivered stays paid, and the kernel says how much
+		// the call drew in meta.charge; only a zero draw is a full refund.
+		if c, _ := e.MetaInt64("charge"); c > 0 {
+			return "The action failed to run. Work it had already delivered was charged; the rest was refunded."
+		}
 		return "The action failed to run. You were refunded in full."
 	case KindTimeout:
 		// NOT a refund: the call was dispatched, has no signed outcome yet, and
-		// the kernel keeps the funds locked while it retries (verified live —
-		// the balance moves available→locked). The server words the reserved
-		// amount and the eligibility date, which it can format as money.
+		// the kernel keeps the funds locked while it retries until the peer's
+		// signed answer arrives; no age expires it. The server words the
+		// reserved amount, which it can format as money.
 		return "Result pending — your funds stay reserved until this settles."
 	case KindRateLimited:
 		return "Too many attempts. Please wait a moment and try again."
@@ -313,13 +318,13 @@ func (e *KernelError) UserMessage() string {
 		}
 		return "This action runs on another kernel that's currently unreachable. Your funds were not spent — try again when it's back."
 	case KindPeerUnfunded:
-		// The serving kernel has delivered us more than it will carry unpaid: its
-		// operator records our payments before it serves us again (kernel §D14).
-		// Never the buyer's own balance.
+		// The serving kernel will not serve this kernel on credit: its limit is
+		// reached, or its own provider cannot fund the work (kernel §D14). An
+		// operator condition, never the buyer's own balance.
 		if p := e.PeerDisplay(); p != "" {
-			return "Kernel " + p + " has used up the credit it extends to this kernel. Its operator settles that, not you."
+			return "Kernel " + p + " cannot serve this call on credit right now. That is between the kernels' operators, not your balance."
 		}
-		return "The kernel serving this action has used up the credit it extends to this kernel. Its operator settles that, not you."
+		return "The kernel serving this action cannot serve this call on credit right now. That is between the kernels' operators, not your balance."
 	case KindRailStopped:
 		return "Payments out are paused while a rail payment is blocked. Deposits and calls continue."
 	case KindUnavailable:

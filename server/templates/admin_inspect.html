@@ -48,7 +48,7 @@
   <form class="card stack" method="post" action="/admin/peers/{{$d.Key}}/steps/{{$st.ID}}/complete">
     {{$.CSRFField}}
     <div class="row">
-      <span class="mono grow" title="{{$st.ID}}">{{truncate 8 $st.ID}}…</span>
+      <span class="mono grow" title="{{$st.ID}}">{{truncate 8 $st.ID}}</span>
       <span class="muted small">{{shortTime $st.CreatedAt}}</span>
     </div>
     <pre class="json">{{json $st.PartialArgs}}</pre>

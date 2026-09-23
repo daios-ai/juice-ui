@@ -164,8 +164,48 @@ type Action struct {
 	// it hashes the STABLE id, a discovered hit and the proxy it resolves to
 	// hash identically, which is what lets a first cross-kernel call bind.
 	QuoteHash string `json:"quote_hash,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	// Evidence is what is known about the action, carried on a detail read and
+	// on every sys/lookup row — never on a list row (verified live).
+	Evidence  *ActionEvidence `json:"evidence,omitempty"`
+	CreatedAt string          `json:"created_at"`
+	UpdatedAt string          `json:"updated_at"`
+}
+
+// ActionEvidence is the evidence block of an action read: this kernel's own
+// record, the provider's gossiped report (absent when the provider is this
+// kernel), and every other kernel's report. The three are labelled by
+// provenance and never summed (kernel §D16, U39).
+type ActionEvidence struct {
+	LocalExperience  *Stats     `json:"local_experience"`
+	ProviderReported *Evidence  `json:"provider_reported"`
+	ObservedByOthers []Evidence `json:"observed_by_others"`
+	RetainedCap      int        `json:"retained_cap"`
+}
+
+// Experience is this kernel's own record of the action, nil where it holds none
+// (a list row, or a discovered action nothing local backs).
+func (a Action) Experience() *Stats {
+	if a.Evidence == nil {
+		return nil
+	}
+	return a.Evidence.LocalExperience
+}
+
+// Reports groups what kernels other than this one say about the action, each
+// report under its issuer — the provider's own first — for the _evidence
+// partial. Empty on an action no one else has reported on.
+func (a Action) Reports() []IssuerEvidence {
+	if a.Evidence == nil {
+		return nil
+	}
+	var out []IssuerEvidence
+	if p := a.Evidence.ProviderReported; p != nil {
+		out = append(out, IssuerEvidence{Issuer: p.IssuerPublicKey, Self: true, Rows: []Evidence{*p}})
+	}
+	for _, e := range a.Evidence.ObservedByOthers {
+		out = append(out, IssuerEvidence{Issuer: e.IssuerPublicKey, Rows: []Evidence{e}})
+	}
+	return out
 }
 
 // IsTransfer reports whether this action bears the value-transfer effect —
@@ -251,6 +291,11 @@ type Process struct {
 	EndedAt              string `json:"ended_at"`
 }
 
+// Endable reports a process its owner may force-end: open, and not awaiting a
+// peer's receipt, which the kernel refuses to cancel since the peer may already
+// have earned it (kernel §D19).
+func (p Process) Endable() bool { return p.Status == "open" && !p.AwaitingReceipt }
+
 // RunRequest is the body for POST /v1/run.
 type RunRequest struct {
 	Action    string          `json:"action"`
@@ -319,7 +364,8 @@ type ReceiptVerification struct {
 	Checks json.RawMessage `json:"checks"`
 }
 
-// Stats is GET /v1/stats/{action_id}.
+// Stats is this kernel's own record of an action: the evidence block's
+// local_experience.
 type Stats struct {
 	ActionID        string  `json:"action_id"`
 	Uses            int64   `json:"uses"`
@@ -402,7 +448,7 @@ type ImportRejection struct {
 // trusts a server (API C13). Beyond naming the kernel it fixes the money unit —
 // Decimals is the world's base-unit scale and Symbol what that money is called,
 // "credits" or "USDC" — and, on a world whose money has addresses, RailAddress
-// is where this kernel is paid.
+// is where this kernel is paid and Token the contract that money is.
 type Health struct {
 	Status        string `json:"status"`
 	Handle        string `json:"handle"`
@@ -411,6 +457,7 @@ type Health struct {
 	NetworkDigest string `json:"network_digest"`
 	Decimals      int    `json:"decimals"`
 	Symbol        string `json:"symbol"`
+	Token         string `json:"token"`
 	RailAddress   string `json:"rail_address"`
 }
 
@@ -729,9 +776,12 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 	return u, err
 }
 
-// LedgerEntry is one direct balance movement (deposit, withdrawal, or transfer)
-// from GET /v1/ledger. from_handle is absent on a deposit, to_handle on a
-// withdrawal; operator_handle is sys for admin ops and the sender for a transfer.
+// LedgerEntry is one movement between two accounts, from GET /v1/ledger: a
+// deposit, a withdrawal, a transfer, delivered value, and what settlement moved —
+// a provider's payout, the operator's fee, an obligation (kernel §D4). An account's
+// balance is the sum of its entries. A side is absent only where money crosses
+// the rail; Reason names the transaction that caused the movement, or the
+// obligation it settles.
 type LedgerEntry struct {
 	Amount         int64  `json:"amount"`
 	Reason         string `json:"reason,omitempty"`
@@ -986,12 +1036,6 @@ func (c *Client) ImportOpenAPI(ctx context.Context, token, name, specURL string,
 	var r ImportResult
 	err := c.do(ctx, http.MethodPost, "/v1/actions/import", token, body, &r)
 	return r, err
-}
-
-func (c *Client) ActionStats(ctx context.Context, token, actionID string) (Stats, error) {
-	var s Stats
-	err := c.do(ctx, http.MethodGet, "/v1/stats/"+url.PathEscape(actionID), token, nil, &s)
-	return s, err
 }
 
 // ActionRatings lists an action's ratings (newest first). limit>0 fetches a

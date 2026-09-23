@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -829,27 +830,32 @@ func txRowOf(tx client.Transaction, viewer string, actions map[string]client.Act
 }
 
 // entryRow bundles a ledger entry with the viewer's perspective, so the
-// activity list renders a direct movement (deposit, withdrawal, transfer) beside
-// a call without the template deciding sign or wording.
+// activity list renders a movement without the template deciding sign or party.
 type entryRow struct {
-	Entry    client.LedgerEntry
-	Label    string // "deposit" | "withdrawal" | "transfer to bob" | "transfer from alice"
-	Credited bool   // the amount arrived in the viewer's balance
+	Entry       client.LedgerEntry
+	Credited    bool   // the amount arrived in the viewer's balance
+	Counterpart string // the other side's handle; "" where the money crossed the rail
+	// TxID is the reason when it names a transaction, the link to its receipt;
+	// Note is any other reason (an obligation's ticket, a transfer's note),
+	// rendered as the text it is.
+	TxID string
+	Note string
 }
 
-// entryRowOf reads the movement from the kernel's own from/to projection: a
-// deposit has no from-side, a withdrawal no to-side, a transfer both.
+// idShape is the kernel's resource-id production (kernel §D15): a hex UUID.
+var idShape = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// entryRowOf reads the movement from the kernel's own from/to projection: the
+// viewer is on one side, and the counterpart is the other.
 func entryRowOf(e client.LedgerEntry, viewer string) entryRow {
-	r := entryRow{Entry: e, Credited: e.ToHandle == viewer}
-	switch {
-	case e.FromHandle == "":
-		r.Label = "deposit"
-	case e.ToHandle == "":
-		r.Label = "withdrawal"
-	case r.Credited:
-		r.Label = "transfer from " + e.FromHandle
-	default:
-		r.Label = "transfer to " + e.ToHandle
+	r := entryRow{Entry: e, Credited: e.ToHandle == viewer, Counterpart: e.ToHandle}
+	if r.Credited {
+		r.Counterpart = e.FromHandle
+	}
+	if idShape.MatchString(e.Reason) {
+		r.TxID = e.Reason
+	} else {
+		r.Note = e.Reason
 	}
 	return r
 }

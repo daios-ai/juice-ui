@@ -15,7 +15,7 @@
       </span>
     </div>
     {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-    {{template "_stat_strip" (statStrip $d.Action.Price $d.Stats true true)}}
+    {{template "_stat_strip" (statStrip $d.Action.Price $d.Action.Experience true true)}}
   </div>
 </div>
 
@@ -51,6 +51,16 @@
 {{end}}
 </div>
 {{template "_pager" $d.RatingsPager}}
+{{end}}
+
+{{/* What other kernels report about this action, each under its issuer and
+     the provider's own report first. Labelled by provenance, never summed into
+     the strip above, which is this kernel's own record (kernel §D16). */}}
+{{with $d.Action.Reports}}
+<h2>Evidence</h2>
+<div class="stack roster-stats">
+  {{range .}}<div>{{template "_evidence" .}}</div>{{end}}
+</div>
 {{end}}
 
 {{/* A cached remote proxy is kernel-managed state, not an action one owns here:

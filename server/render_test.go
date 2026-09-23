@@ -100,7 +100,7 @@ func TestMoneyRefusesAnUnknownUnit(t *testing.T) {
 	}
 	// And it renders that way through a real page, not only in isolation.
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "me", Data: walletView{Available: 500, MyHandle: "me"}}
+	p := Page{Handle: "me", Data: walletView{Available: 500}}
 	if err := r.Render(rec, 200, "wallet", p); err != nil {
 		t.Fatal(err)
 	}
@@ -965,7 +965,7 @@ func TestCallOutcomePeerBranches(t *testing.T) {
 		want  string
 	}{
 		{PeerUnreachable, "Peer unreachable"},
-		{PeerUnfunded, "Peer credit exhausted"},
+		{PeerUnfunded, "Not served on credit"},
 	} {
 		rec := httptest.NewRecorder()
 		out := Outcome{Class: tc.class, Message: "explanatory copy"}
@@ -1574,5 +1574,93 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 	}
 	if strings.Contains(rec2.Body.String(), "quote_hash") {
 		t.Error("no quote means no pin field, not an empty one")
+	}
+}
+
+// A session awaiting a peer's receipt is not offered a force-end: the kernel
+// refuses it (409, verified live on d59742b), and a doomed act is never offered.
+// An ordinary open session keeps the control.
+func TestWalletWithholdsForceEndWhileAwaitingAReceipt(t *testing.T) {
+	r, err := NewRenderer(playUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(p client.Process) string {
+		rec := httptest.NewRecorder()
+		if err := r.Render(rec, 200, "wallet", Page{Handle: "me", Data: walletView{Open: []client.Process{p}}}); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	if !strings.Contains(render(client.Process{ID: "P1", Status: "open", Locked: 5}), "/processes/P1/end") {
+		t.Error("an open session is force-endable")
+	}
+	awaiting := render(client.Process{ID: "P2", Status: "open", Locked: 5, AwaitingReceipt: true})
+	if strings.Contains(awaiting, "/processes/P2/end") {
+		t.Error("a session awaiting a receipt must not offer force-end")
+	}
+	if !strings.Contains(awaiting, "awaiting a remote receipt") {
+		t.Error("the awaiting state is still stated")
+	}
+}
+
+// On a world whose money has addresses the pay-in disclosure names the token
+// contract money is paid in, and a withdrawal waits for a registered address.
+func TestWalletNamesTheTokenOnAnAddressedWorld(t *testing.T) {
+	r, err := NewRenderer(playUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	v := walletView{KernelAddress: "0xvault", Token: "0xtoken"}
+	if err := r.Render(rec, 200, "wallet", Page{Handle: "me", Data: v}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"0xvault", "0xtoken", "form=address"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("wallet missing %q", want)
+		}
+	}
+	if strings.Contains(body, "form=withdraw") {
+		t.Error("with addresses, a withdrawal needs a registered one first")
+	}
+}
+
+// What other kernels report about an action renders on its page, each under
+// its issuer and the provider's own report first — beside, never inside, this
+// kernel's own reputation strip (kernel §D16, U39).
+func TestActionPageRendersOthersReports(t *testing.T) {
+	r, err := NewRenderer(playUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := client.Action{ID: "P", Action: "seller@k-4lnq/greet", Kind: "remote_proxy", Active: true, Evidence: &client.ActionEvidence{
+		LocalExperience:  &client.Stats{Uses: 2, Successes: 1},
+		ProviderReported: &client.Evidence{IssuerPublicKey: "PROVIDERKEY0000", SubjectActionID: "R1", Uses: 1},
+		ObservedByOthers: []client.Evidence{{IssuerPublicKey: "OTHERKEY0000000", SubjectActionID: "R1", Uses: 3, CorroboratedUses: 2, Contradictions: 1}},
+	}}
+	rec := httptest.NewRecorder()
+	if err := r.Render(rec, 200, "action_detail", Page{Handle: "me", Data: actionView{Action: a}}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	ev := body[strings.Index(body, "<h2>Evidence</h2>"):]
+	if strings.Index(ev, "reported by the provider") > strings.Index(ev, "issued by") {
+		t.Error("the provider's own report comes first")
+	}
+	for _, want := range []string{"reported by the provider", "issued by", "OTHERKEY0000", "contradicted", "corroborated"} {
+		if !strings.Contains(ev, want) {
+			t.Errorf("evidence missing %q", want)
+		}
+	}
+	// An action no one else has reported on has no section at all.
+	rec = httptest.NewRecorder()
+	a.Evidence = &client.ActionEvidence{LocalExperience: &client.Stats{}}
+	if err := r.Render(rec, 200, "action_detail", Page{Handle: "me", Data: actionView{Action: a}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Body.String(), "<h2>Evidence</h2>") {
+		t.Error("no reports, no evidence section")
 	}
 }

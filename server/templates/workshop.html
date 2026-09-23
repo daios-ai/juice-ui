@@ -53,7 +53,7 @@
   <thead><tr><th>action</th><th>state</th><th class="money">price</th><th class="money">runs</th><th>success</th><th>rating</th><th class="money">earned</th><th></th></tr></thead>
   <tbody>
   {{range $d.Mine}}
-  {{$a := .Action}}
+  {{$a := .Action}}{{$st := $a.Experience}}
   <tr class="rowable{{if not $a.Active}} dim{{end}}" tabindex="-1" data-href="/actions/{{$a.ID}}">
     <td>
       {{template "_ref" (ref $a.Ref $a.ID)}}
@@ -62,9 +62,9 @@
     </td>
     <td>{{if $a.Active}}<span class="pill status-credited">active</span>{{else}}<span class="pill inactive">inactive</span>{{end}}</td>
     <td class="money">{{template "_price" (price $a.Price false)}}</td>
-    <td class="money">{{if .Stats}}{{.Stats.Uses}}{{else}}0{{end}}</td>
-    <td>{{if and .Stats (gt .Stats.Uses 0)}}{{pct .Stats.Successes .Stats.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
-    <td>{{if and .Stats (gt .Stats.RatingCount 0)}}{{ratingPct .Stats.RatingEstimate .Stats.RatingCount}}% <span class="muted mono">({{.Stats.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="money">{{if $st}}{{$st.Uses}}{{else}}0{{end}}</td>
+    <td>{{if and $st (gt $st.Uses 0)}}{{pct $st.Successes $st.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
+    <td>{{if and $st (gt $st.RatingCount 0)}}{{ratingPct $st.RatingEstimate $st.RatingCount}}% <span class="muted mono">({{$st.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>
     <td class="money">{{if gt .Earned 0}}<span class="sig-credited">+{{money .Earned}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
     {{/* A cached remote proxy has no lifecycle here: the kernel owns its active
          bit (enable/disable is refused), and the lever over a peer's actions is

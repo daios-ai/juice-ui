@@ -61,7 +61,7 @@ Or build and run the binary yourself, or install it to your `PATH`:
 make build            # → ./juice-ui
 ./juice-ui
 
-make install          # → ~/.local/bin/juice-ui  (override PREFIX=/usr/local, etc.)
+make install          # → $JUICE_HOME/bin/juice-ui  (default ~/.juice; override PREFIX=…)
 ```
 
 ## Configuration
@@ -121,7 +121,7 @@ never a concrete app). The litmus test: delete the plugin and the daemon still r
 |---|---|
 | `make build` | compile `./juice-ui` (version stamped from `git describe`) |
 | `make run` | build and run with local dev defaults |
-| `make install` | install the binary to `$(PREFIX)/bin` (`PREFIX ?= ~/.local`) |
+| `make install` | install the binary to `$(PREFIX)/bin` (`PREFIX ?= $JUICE_HOME`, default `~/.juice`) |
 | `make test` | `go test ./...` |
 | `make check` | the CI gate: `gofmt` check + `go vet` + `go test` |
 | `make fmt` / `make vet` | format / vet |

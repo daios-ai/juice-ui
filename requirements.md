@@ -1,7 +1,36 @@
 # Juice Web UI Requirements
 
-Version: 0.8.0
+Version: 0.9.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.9.0.** The kernel (d59742b) retired its stats route and
+> started journalling settlement, and the UI follows both, which removes more
+> than it adds. **What is known about an action is read where the action is
+> read** (§6.2): the reputation strip is the detail read's own
+> `local_experience`, and what other kernels report — the provider's own account
+> and every other kernel's — renders on the action's page under its issuer,
+> through the evidence partial the peer inspection already used. **The ledger is
+> the activity** (§6.5): every movement between two accounts is now an entry,
+> a provider's payout, the operator's fee and an obligation included, so the
+> wallet lists entries alone and the fold of transactions into it is gone.
+>
+> Three outcomes now state what the kernel states (§6.2). A failed call names
+> what it drew, because sub-work already delivered stays paid and "fully
+> refunded" was false whenever it had. A parked call names no refund date,
+> because no age expires it. And a session awaiting a peer's receipt is not
+> offered a force-end, which the kernel refuses. A world without addresses pays
+> out through its operator, so a withdrawal is offered on every world and only
+> the address form depends on the world (§6.5). The pay-in disclosure names the
+> token contract on a chain world.
+>
+> One defect the measurement exposed is fixed across the UI: every truncated id
+> rendered two ellipses, because the helper adds one and every template added a
+> second. A drift guard keeps the helper the only author. The agents app finds
+> its daemon in `$JUICE_HOME/bin` before `PATH`, where the ecosystem standard
+> now puts the family's programs.
+>
+> Measured on two throwaway kernels and recorded in
+> `docs/kernel-v0.16-verification.md`.
 
 > **What changed in 0.8.0.** The kernel moved its whole operator surface from
 > `/control/*` to `/v1/admin/*` and split the one target namespace in two: a
@@ -416,8 +445,8 @@ detectable.
 * **browse / workshop** — catalog browse plus owner action management: create,
   list/show (including inactive, via `GET /v1/actions?owner=<self>`), update,
   enable, disable, delete; three-way `visibility` (private/local/public);
-  OpenAPI import by name; stats; ratings list; earnings folded from the owner's
-  transactions.
+  OpenAPI import by name; the evidence an action read carries; ratings list;
+  earnings folded from the owner's transactions.
 * **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
   surfacing parked funds and awaiting-receipt state.
 * **tx** — the immutable ledger: transactions list/show/rate; receipt
@@ -425,9 +454,9 @@ detectable.
 * **step** — steps: list/show/complete. Step creation is API and app-module
   surface only (§6.3).
 * **user** — self profile, balances (`GET /v1/me`, `available`/`locked`), and
-  update (`PUT /v1/me`); the ledger of the user's own transactions; and, on a
-  world whose money has addresses, the payout address (`PUT /v1/me/address`) and
-  withdrawals (`POST`/`GET /v1/withdrawals`).
+  update (`PUT /v1/me`); the user's own ledger (`GET /v1/ledger`); withdrawals
+  (`POST`/`GET /v1/withdrawals`) on every world; and, on a world whose money has
+  addresses, the payout address (`PUT /v1/me/address`).
 
 *Conditional:* the trace tree on the receipt page.
 
@@ -729,7 +758,18 @@ spend:
   required, description), with raw JSON behind a toggle.
 * The reputation strip MUST show four metrics — runs, success rate, rating, mean
   latency — each with an icon, value, and a tooltip that is also the icon's
-  `aria-label`. The rating MUST show mean and count.
+  `aria-label`. The rating MUST show mean and count. The strip is this kernel's
+  own record, the detail read's `evidence.local_experience`; the kernel serves
+  no separate stats route, and a list row carries no evidence, so a card reads
+  its action's detail.
+* **What other kernels report renders beside it, never inside it.** The same
+  evidence block carries `provider_reported` (the provider's own account,
+  absent when the provider is this kernel) and `observed_by_others`. The page
+  MUST render each under its issuer, the provider first, through the one
+  evidence partial the peer inspection uses (§6.6): uses, failures,
+  corroborated, contradicted, and ratings as trade-backed and unverified counts.
+  Nothing is summed, scored or coloured, and a page with no reports has no
+  section.
 * Ratings MUST render as reviews (0/1 value, `note`, newest first, paginated),
   labeled as ratings from paid calls.
 * The owner segment of `owner/name` MUST be visually emphasized and link to an
@@ -801,8 +841,10 @@ one question — what happened to the money — so no two may share a sentence:
 
 * input-schema rejection → "Not sent. You were not charged"; field-level errors
   inline on the sheet; no receipt.
-* failure → "Failed — fully refunded"; the refund reflected in the balance; a
-  link to the failure receipt. **The sentence is the UI's, never the kernel's
+* failure → "Failed — fully refunded" when the call drew nothing, and
+  "Failed — N charged" when it drew something: sub-work already delivered stays
+  paid, and the kernel states the draw in `meta.charge` beside the failure
+  transaction in `meta.tx_id`. The card links that receipt. **The sentence is the UI's, never the kernel's
   string:** since v0.12.14 the kernel classifies rather than narrates (a remote
   failure answers `execution_failed`), and a class explains nothing to a buyer.
   Each error class maps to exactly one sentence, in one place; a raw class MUST
@@ -810,12 +852,12 @@ one question — what happened to the money — so no two may share a sentence:
 * **parked** (`timeout`) → "Result pending — $N reserved". A call that was
   dispatched but has no signed outcome yet is **not** a failure and **not** a
   refund: the kernel keeps the funds locked and retries. Verified live — the
-  balance moves from available to locked, and `meta` carries `process_id`,
-  `pending_since`, and `refund_eligible_at`. The card MUST therefore carry the
-  escrow-pending signal (§7), name the reserved amount through the money helper,
-  link to the process it names, and state the date from which the automatic full
-  refund applies — as eligibility, never as a promise of settlement. It MUST NOT
-  claim a refund has happened, and MUST NOT poll the peer (§6.6).
+  balance moves from available to locked, and `meta` carries `process_id` and
+  `pending_since`. Only the peer's signed answer settles it; no age expires it,
+  so no date is stated. The card MUST carry the escrow-pending signal (§7), name
+  the reserved amount through the money helper, and link to the process it
+  names. It MUST NOT claim a refund has happened or will, and MUST NOT poll the
+  peer (§6.6).
 * **refreshed** (`execution_failed` with `meta.retry = "refresh"`) → "The
   provider changed this action — you were not charged". Nothing ran and nothing
   moved, so it is a refusal, not a failure. The UI re-reads the action and
@@ -946,40 +988,48 @@ open (parked steps), the result MUST say so and link to the Wallet.
   them, each with a force-end control naming its consequence — cancels waiting
   steps, refunds parked prices — via `POST /v1/processes/{id}/end`). "locked" is not
   a user-facing label.
+* **A session awaiting a peer's receipt is not force-endable.** The kernel
+  refuses to end it (409), because the peer may already have earned the funds,
+  so the control MUST be withheld wherever it appears — the wallet, the sessions
+  page and the process page — keyed on the kernel's `awaiting_receipt`. A
+  doomed act is never offered.
 * The wallet MUST link to the full **sessions** page (`GET /v1/processes`, open +
-  closed), which itself MUST offer the same force-end control on each open row and
-  paginate (§7). A session awaiting a remote receipt MUST show that state and its
-  age from the kernel's `awaiting_receipt`/`awaiting_receipt_since` — the standing
-  evidence behind a parked run (§6.2).
-* **Activity is one list, folded from both records the kernel keeps.** Money
-  leaves a user's balance through two surfaces that do not share a log: the
-  ledger (`GET /v1/ledger` — deposits, withdrawals, direct transfers, and value
-  delivered by a `transfer`-effect call) and transactions
-  (`GET /v1/transactions` — every call). Neither is a superset: a plain run
-  appears only in the second, a deposit and an incoming transfer only in the
-  first. The BFF MUST therefore merge both into a single time-ordered activity
-  list — an arrangement of served rows, never a recomputation — each row
-  linking to its receipt or ledger entry. The wallet shows the most recent 10
-  and links to the paginated ledger.
-* **A value-bearing call is two records, and renders as two rows.** Settling a
-  `transfer`-effect call writes a ledger entry from the immediate caller to the
-  beneficiary alongside the ordinary transaction (verified live on v0.12.24;
-  the entry's `reason` is the settling transaction's id). The transaction states
-  what the *call* cost — zero for a price-0 action — and the entry states what
-  *moved*. The UI MUST NOT fold them into one row or reconcile one against the
-  other: an action whose effect is a money movement is an ordinary action that
-  produces both records, and the activity list shows each as what it is. The
-  journal is also the only surface the recipient has, since the beneficiary is
-  no party to the transaction and cannot read it.
-  The `reason` MUST NOT render as prose: it is an id, not a sentence a person
-  wrote. The UI MUST still NOT manufacture a money figure out of a
-  transaction's `args` — a displayed amount is a kernel-vouched fact or it is
-  not displayed (§7); the entry is now that fact. Where the kernel additionally
-  serves `value`/`value_to` on a transaction, they render as breakdown rows,
-  zero-suppressed, and the payer named beside them is the transaction's
-  **`caller_handle`** — the immediate caller, whose balance the value actually
-  leaves — never the `owner_handle` that pays for execution. The two differ
-  exactly when a payment step settles inside someone else's process (§6.3).
+  closed), which itself MUST offer the same force-end control on each endable
+  row and paginate (§7). A session awaiting a remote receipt MUST show that
+  state and its age from the kernel's `awaiting_receipt`/`awaiting_receipt_since`
+  — the standing evidence behind a parked run (§6.2).
+* **The ledger is the activity.** The kernel journals every movement between
+  two accounts (`GET /v1/ledger`): deposits, withdrawals, transfers, value
+  delivered by a `transfer`-effect call, and what each settlement moved — the
+  provider's payout, the operator's fee, and an obligation (verified live on
+  d59742b). An account's balance is the sum of its entries, so the entries alone
+  are the account's activity. Each row states the counterpart from the viewer's
+  side (`to vendor`, `from sys`), the signed amount, and the time; an absent
+  side is the rail and renders as an em dash. The wallet shows the most recent
+  10; the call history is the transactions page.
+* **A reason is an id or it is text, and never prose the UI writes.** An
+  entry's `reason` names the transaction that caused it — linked to its
+  receipt, truncated — or, for an obligation, the ticket it settles
+  (`obligation <ticket>`), or a transfer's own note; anything that is not
+  id-shaped renders as the inert text it is. A movement caused by a call to
+  which the viewer is no party (a value transfer's beneficiary) links to a
+  receipt the kernel may refuse them; the kernel decides.
+* **A value-bearing call is two records.** The transaction states what the
+  *call* cost — zero for a price-0 action — and the entry states what *moved*.
+  The UI MUST NOT reconcile one against the other, and MUST NOT manufacture a
+  money figure out of a transaction's `args` — a displayed amount is a
+  kernel-vouched fact or it is not displayed (§7); the entry is that fact.
+  Where the kernel additionally serves `value`/`value_to` on a transaction,
+  they render as breakdown rows, zero-suppressed, and the payer named beside
+  them is the transaction's **`caller_handle`** — the immediate caller, whose
+  balance the value actually leaves — never the `owner_handle` that pays for
+  execution. The two differ exactly when a payment step settles inside someone
+  else's process (§6.3).
+* **Every world pays out.** A withdrawal is offered wherever it has somewhere
+  to go: on a world without addresses the operator records it (it lands
+  `confirmed`, `tx_hash` `manual:<id>`), and on a world with addresses it waits
+  for the user's registered address. Only the address form depends on the
+  world. The withdrawals table is read on every world, to exhaustion.
 * **Sending money is running an action; it gets no surface of its own.** The
   kernel moves value through `sys/transfer`, an ordinary priced action with no
   special privileges (kernel §9: any provider could have supplied an equivalent),
@@ -1144,9 +1194,10 @@ symmetry, but because the kernel refuses anything else.
   UI MUST NOT offer lifecycle verbs — enable/disable, visibility, delete — on a
   proxy row anywhere it lists actions, including the superuser-scoped workshop.
   The peer-level lever is suspend, on this page.
-* `peer_unfunded` on a run means **the serving kernel has used up the credit it
-  extends to this kernel — its operator's to settle** — and MUST NOT be rendered
-  as the caller's own insufficient funds (§10 error mapping).
+* `peer_unfunded` on a run means **the serving kernel will not serve this one on
+  credit** — its limit is reached, or its own provider cannot fund the work, a
+  foreign call running on the seller's money — and MUST NOT be rendered as the
+  caller's own insufficient funds (§10 error mapping).
 * **Availability is never guessed.** The kernel withdrew the `peer_state` hint
   (v0.12.14), and the UI MUST NOT reconstruct one: a remote action is offered
   like any other, the call is attempted, and the kernel reports the outcome.
@@ -1409,8 +1460,16 @@ Every production `.go` file has a `_test.go` file with independent tests.
   the UI reports the rows returned, not a predicted state (§6.4);
 * a discovered action resolves on open and lands on the ordinary action page;
   there is no by-ref run surface (§6.2);
-* the wallet's world: pay-in copy, the withdraw and address forms and the
-  withdrawals table appear only where the world has addresses (§6.5);
+* the wallet's world: the pay-in copy and the address form follow whether the
+  world has addresses, a withdrawal is offered on every world that has somewhere
+  to pay it, and the token is named where the world has one (§6.5);
+* the activity is the ledger: each entry states its counterpart, sign and
+  reason, a transaction id linking to its receipt and any other reason inert
+  text (§6.5);
+* what is known about an action comes from its detail read: the strip is
+  `local_experience`, other kernels' reports render under their issuers with
+  the provider first, and nothing reads a stats route (§6.2);
+* no force-end is offered on a session awaiting a peer's receipt (§6.5);
 * a cross-kernel transaction's breakdown names paid, import fee and obligation,
   and its ticket — never "fee on value added" (§6.5);
 * a peer row carries no money, and the network page states this kernel's own
@@ -1419,10 +1478,14 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * the two admin namespaces: a user verb reaches `/admin/users/…` and a peer verb
   `/admin/peers/…`, and no page sends a public key to a user route (§3.1, §6.6);
 * the retired surfaces stay gone: settle, admin withdraw, unimport, the transfer
-  queue, a peer's balance, funding a peer, confirming an obligation, and the
-  whole `/control/` prefix (drift guard);
+  queue, a peer's balance, funding a peer, confirming an obligation, the
+  whole `/control/` prefix, the stats route, a parked call's refund date, and
+  the fold of transactions into the activity (drift guard);
+* the truncate helper is the only author of the ellipsis on a shortened id
+  (drift guard);
 * the call-outcome classes, rendered distinctly — including that a parked
-  (`timeout`) outcome names the reserved amount and claims no refund, that a
+  (`timeout`) outcome names the reserved amount and claims no refund or refund
+  date, that a failure names a non-zero charge rather than a full refund, that a
   `meta.retry="refresh"` refusal offers the re-pinned retry while a bare
   `execution_failed` offers none, and that a peer's refusal names the peer;
 * discovery: lookup path and catalog fallback on `ErrInvalidState`;
@@ -1533,8 +1596,11 @@ once its prerequisite is confirmed on the running kernel.
   v0.14.0 and still true:
   `POST /v1/withdrawals {id, amount}` with a caller-minted UUID (a replay returns
   the same row), and `PUT /v1/me/address {address,
-  signature}`. On a world without payment addresses both refuse (409), and while
-  a rail payment is blocked every money verb answers `503 rail_stopped`.
+  signature}`. While a rail payment is blocked every money verb answers
+  `503 rail_stopped`. As of d59742b a world without payment addresses refuses
+  only the address (409, "this world has no payment addresses"); a withdrawal
+  there lands `confirmed` at once with `tx_hash` `manual:<id>`, the operator
+  recording it (`docs/kernel-v0.16-verification.md` §6).
 * **Held deposits — resolved (§6.6).** Verified on a local chain (anvil,
   decimals 6): a payment to the vault from an address no account has registered
   is listed with the sender under `party_handle`, and the operator attributes it
@@ -1543,6 +1609,14 @@ once its prerequisite is confirmed on the running kernel.
   now work.)
 * **The money unit above six decimals (§7) — closed.** `Unit.Format` now carries
   every digit the world declares, so nothing is truncated at any scale.
+* **Settlement is journalled — resolved (§6.5).** As of d59742b every movement
+  between two accounts is a ledger entry: a local call's payout (buyer→provider)
+  and fee (buyer→`sys`), each `reason` the transaction; a cross-kernel buy's
+  import fee (`reason` the transaction) and obligation (`reason`
+  `obligation <ticket>`), the seller's provider credited under the same
+  ticket; and a deposit now names `sys` as its sender
+  (`docs/kernel-v0.16-verification.md` §3). The wallet's fold of transactions
+  into its activity is therefore retired.
 * **A moved amount — resolved (§6.5).** v0.12.24 journals it (re-confirmed on
   v0.14.0): settling a
   `transfer`-effect call writes a ledger entry from the immediate caller to the
@@ -1553,10 +1627,22 @@ once its prerequisite is confirmed on the running kernel.
   the breakdown rows stay zero-suppressed and would render those if a kernel
   ever serves them. Remote-proxy transactions may carry them in the remote
   receipt JSON.
-* **Parked-run metadata (§6.2).** Confirmed on v0.12.23: a dispatched call with
-  no signed outcome answers `504 timeout` with `meta.process_id`,
-  `meta.pending_since`, and `meta.refund_eligible_at` (24 h out), and the funds
-  move from `available` into `locked` — measured, not inferred.
+* **Parked-run metadata (§6.2).** Re-confirmed on d59742b: a dispatched call with
+  no signed outcome answers `504 timeout` with `meta.process_id` and
+  `meta.pending_since`, and the funds move from `available` into `locked`.
+  `refund_eligible_at` is gone: only the peer's signed answer settles the call,
+  and no age expires it. Ending that process answers
+  `409 invalid_state`, naming how long the receipt has been awaited
+  (`docs/kernel-v0.16-verification.md` §5).
+* **What a failed call drew (§6.2).** Confirmed on d59742b: an executed failure
+  carries `meta.tx_id` and `meta.charge` (a base-unit string). A composing call
+  whose sub-work was delivered before it failed drew that sub-work
+  (`charge` 1500000 in the measurement), so the failure card names it.
+* **Stats — retired; evidence on the read (§6.2).** `GET /v1/stats/{id}` answers
+  404 on d59742b. The detail read and every `sys/lookup` row carry `evidence`
+  `{local_experience, provider_reported, observed_by_others, retained_cap}`,
+  `local_experience` holding the old stats fields; a list row carries none
+  (`docs/kernel-v0.16-verification.md` §2).
 * **Contract-drift and peer-refusal markers (§6.2).** Re-confirmed on v0.12.24:
   drift answers `500 execution_failed` with `meta.retry = "refresh"` and charges
   nothing (the immediate retry succeeds); a peer that has suspended this kernel
@@ -1590,8 +1676,8 @@ once its prerequisite is confirmed on the running kernel.
   import fee retained here. As of v0.14.2 the **seller's row carries the same
   ticket**, so either party can follow the obligation and both pages name it; the
   seller's `net`/`fee` remain its own economics, which is why the captions key on
-  `remote_receipt_hash` and not on the ticket. It still names its buyer by raw
-  public key, which is the only name it has for a peer.
+  `remote_receipt_hash` and not on the ticket. As of d59742b the peer is named by
+  the petname bound on first use (`k-4lnqDq15`) on both books.
 * **The remote step caller — resolved (§6.3).** As of v0.14.2 a step parked for a
   principal on a peer renders `required_caller_handle` as `vendor@bravo` — the
   handle it went by when the step was made, beneath the peer's local name — with
@@ -1625,19 +1711,19 @@ rail payment is blocked, and deposits, calls and reads continue;
 `peer_unreachable` → the peer was offline, the call refunded, retry later (the
 kernel sends no `meta` here, so the UI names the peer from the ref it submitted
 or names none);
-`peer_unfunded` → the serving kernel has used up the credit it extends to this
-kernel; its operator records our payments before it serves us again, and this is
-never the caller's own balance (§6.6);
+`peer_unfunded` → the serving kernel will not serve this one on credit — its limit
+is reached, or its provider cannot fund the work — nothing was charged, and this
+is never the caller's own balance (§6.6);
 `ErrUnauthorized` **with `meta.peer`** → the peer refused this call (§6.2), which
 must never read as the user's own lack of permission — plain `ErrUnauthorized`
 keeps the not-permitted message;
 `ErrExecutionFailed` → "the action failed and your funds were fully refunded,"
-with the failure transaction linked when the kernel records one — **except** with
+or, when `meta.charge` is non-zero, that the work already delivered was charged
+and the rest refunded, with the failure transaction linked — **except** with
 `meta.retry = "refresh"`, which is the provider's contract change: nothing ran,
 nothing was charged, and the buyer is re-quoted (§6.2);
 `ErrTimeout` → **not** a refund: the call is parked with its funds reserved, and
-the message names the reserved amount, the process, and `refund_eligible_at`
-(§6.2);
+the message names the reserved amount and the process (§6.2);
 `ErrInternal`. Raw status codes are never shown; diagnostic detail goes to logs
 only and never includes tokens or secrets.
 

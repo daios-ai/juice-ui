@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"html/template"
-	"time"
 
 	"github.com/daios-ai/juice-ui/client"
 )
@@ -15,8 +14,8 @@ type OutcomeClass int
 const (
 	// Rejected: input-schema rejection before any charge — no transaction.
 	Rejected OutcomeClass = iota
-	// Failed: execution, output-schema, timeout, or service-state failure —
-	// fully refunded, with a failure transaction normally recorded.
+	// Failed: execution or output-schema failure — refunded except for sub-work
+	// already delivered (Charged), with a failure transaction normally recorded.
 	Failed
 	// Success: result plus a gross/fee/net cost breakdown.
 	Success
@@ -26,8 +25,9 @@ const (
 	// PeerUnreachable: a remote-proxy call whose first dispatch provably never
 	// reached the peer — settled locally as a full refund (retry when it is back).
 	PeerUnreachable
-	// PeerUnfunded: the serving kernel's global exposure cap is exhausted — an
-	// operator settlement condition, never the caller's own balance; not charged.
+	// PeerUnfunded: the serving kernel will not serve this kernel on credit —
+	// its limit is reached, or its provider cannot fund the work. An operator
+	// condition, never the caller's own balance; not charged.
 	PeerUnfunded
 	// TermsChanged: the quote pinned on the run had moved, so the kernel refused
 	// BEFORE locking funds — nothing ran and nothing was charged. It is a
@@ -36,8 +36,9 @@ const (
 	TermsChanged
 	// Parked: the call was dispatched to a peer and has no signed outcome yet.
 	// The funds are RESERVED, not refunded — the kernel keeps them locked and
-	// retries until a receipt arrives or the refund becomes eligible. Rendering
-	// this as a refund would state a movement that has not happened (§6.2).
+	// retries until the peer's signed answer settles it; no age expires it.
+	// Rendering this as a refund would state a movement that has not happened
+	// (§6.2).
 	Parked
 	// Refreshed: the provider changed the action's contract, so the peer refused
 	// the dispatch and the kernel discarded the cached copy — nothing ran and
@@ -79,13 +80,14 @@ type Outcome struct {
 	// re-reading.
 	Price     int64
 	QuoteHash string
-	// Reserved, ProcessID and RefundEligibleAt describe a Parked outcome: the
-	// amount still locked, the process holding it (so the wallet can be reached
-	// from the result), and the date from which the automatic full refund
-	// applies — an eligibility, never a settlement promise.
-	Reserved         int64
-	ProcessID        string
-	RefundEligibleAt string
+	// Reserved and ProcessID describe a Parked outcome: the amount still locked,
+	// and the process holding it, so the wallet can be reached from the result.
+	Reserved  int64
+	ProcessID string
+	// Charged is what a Failed call drew from the caller — the sub-work already
+	// delivered, which stays paid (kernel §D2). Zero is a full refund. TxID names
+	// the failure transaction the kernel recorded.
+	Charged int64
 	// Peer names the kernel that refused a PeerRefused outcome, ready to print
 	// (a public key arrives abbreviated). Display only: nothing keys on it.
 	Peer string
@@ -108,7 +110,7 @@ func (o Outcome) Reason() string {
 	return o.Message
 }
 
-// IsFailed reports a failed-but-refunded call outcome (template helper).
+// IsFailed reports a call that executed and failed (template helper).
 func (o Outcome) IsFailed() bool { return o.Class == Failed }
 
 // IsRejected reports an input-rejected, not-charged outcome (template helper).
@@ -122,9 +124,9 @@ func (o Outcome) IsGrantRequired() bool { return o.Class == GrantRequired }
 // fully refunded, retry when the peer is back (template helper).
 func (o Outcome) IsPeerUnreachable() bool { return o.Class == PeerUnreachable }
 
-// IsPeerUnfunded reports a remote-proxy call refused because the serving
-// kernel's global exposure cap is exhausted — an operator settlement matter,
-// not the caller's balance, not charged (template helper).
+// IsPeerUnfunded reports a remote-proxy call the serving kernel would not
+// serve on credit — an operator matter, not the caller's balance, not charged
+// (template helper).
 func (o Outcome) IsPeerUnfunded() bool { return o.Class == PeerUnfunded }
 
 // IsParked reports a dispatched call awaiting a signed outcome, with the funds
@@ -138,17 +140,6 @@ func (o Outcome) IsRefreshed() bool { return o.Class == Refreshed }
 // IsPeerRefused reports a call the serving kernel refused outright (template
 // helper).
 func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
-
-// RefundEligibleDate renders the parked refund-eligibility instant as a plain
-// date. The kernel sends RFC 3339; an unparseable value renders empty so the
-// template simply omits the clause rather than printing a raw timestamp.
-func (o Outcome) RefundEligibleDate() string {
-	t, err := time.Parse(time.RFC3339, o.RefundEligibleAt)
-	if err != nil {
-		return ""
-	}
-	return t.UTC().Format("2 January 2006")
-}
 
 // CallForm drives the shared _call_form partial for both running an action and
 // completing a step — conceptually the same act (execute an action). Locked
@@ -294,22 +285,25 @@ func classifyErr(err error) (Outcome, error) {
 		}
 		// Otherwise the kernel answers a failure CLASS, not prose, so the
 		// sentence is ours and the class is never shown: Detail would print
-		// "execution_failed" to a buyer.
+		// "execution_failed" to a buyer. What the call drew and the transaction
+		// it recorded ride in meta.
+		charged, _ := ke.MetaInt64("charge")
 		return Outcome{
 			Class:   Failed,
 			Message: ke.UserMessage(),
+			TxID:    ke.MetaString("tx_id"),
+			Charged: charged,
 		}, nil
 	case client.KindTimeout:
-		// Dispatched, unsettled: the funds are LOCKED, not returned. The metadata
-		// is what makes the sentence honest — the process still holding them and
-		// the date the automatic refund becomes eligible. The reserved AMOUNT is
-		// not in the metadata; `run` parks exactly the action's price, so the
-		// handler fills it from the quote the buyer was shown.
+		// Dispatched, unsettled: the funds are LOCKED, not returned, until the
+		// peer's signed answer settles the call. The metadata names the process
+		// still holding them. The reserved AMOUNT is not in the metadata; `run`
+		// parks exactly the action's price, so the handler fills it from the
+		// quote the buyer was shown.
 		return Outcome{
-			Class:            Parked,
-			Message:          ke.UserMessage(),
-			ProcessID:        ke.MetaString("process_id"),
-			RefundEligibleAt: ke.MetaString("refund_eligible_at"),
+			Class:     Parked,
+			Message:   ke.UserMessage(),
+			ProcessID: ke.MetaString("process_id"),
 		}, nil
 	case client.KindUnauthorized:
 		// Only a peer's refusal is an outcome; an ordinary 403 stays an error for

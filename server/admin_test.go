@@ -311,14 +311,14 @@ func TestAdminInspectRenders(t *testing.T) {
 	if !strings.Contains(body, "Evidence") || strings.Contains(body, "Transacted peers") {
 		t.Error("inspect must render Evidence, not the retired transacted-peers list")
 	}
-	for _, want := range []string{"as executed here", "issued by", "a2", "corroborated", "trade-backed", "unverified"} {
+	for _, want := range []string{"reported by the provider", "issued by", "a2", "corroborated", "trade-backed", "unverified"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("evidence block missing %q", want)
 		}
 	}
 	// One self block and one third-party block — never merged into one score, and
 	// the self block carries no corroborated column (nothing can corroborate it).
-	if n := strings.Count(body, "as executed here"); n != 1 {
+	if n := strings.Count(body, "reported by the provider"); n != 1 {
 		t.Errorf("the execution summary must be exactly one block, got %d", n)
 	}
 	if n := strings.Count(body, "issued by"); n != 1 {
