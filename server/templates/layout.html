@@ -24,7 +24,7 @@
          whether it can leave, and what it is worth. Naming it once, where the
          interface names itself, is what keeps a rehearsal and a live market from
          looking alike (§7). Both are the kernel's own /health fields. */}}
-    {{if .Handle}}
+    {{if .Me}}
     <aside class="sidebar">
       <div class="sidebar-top">
         <a class="brand" href="/browse"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>
@@ -44,9 +44,9 @@
 
       <div class="profile-menu">
         <button class="profile-trigger" data-menu="profile-popup" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu" title="Account menu">
-          <span class="avatar" aria-hidden="true">{{initial .Handle}}</span>
+          <span class="avatar" aria-hidden="true">{{initial .Me}}</span>
           <span class="who">
-            <span class="handle mono lbl">{{.Handle}}</span>
+            <span class="handle mono lbl">{{.Me}}</span>
             <span class="bal mono lbl">{{money .Available}}</span>
           </span>
         </button>
@@ -58,7 +58,7 @@
     {{end}}
 
     <div class="main-area">
-      {{if .Handle}}
+      {{if .Me}}
       <header class="topbar">
         {{/* Mobile nav trigger: top-left, opening the sidebar as a left panel.
              It is a real anchored link so the drawer stays reachable with JS off
@@ -86,7 +86,7 @@
            it in the top layer regardless, but the no-JS in-flow fallback renders
            where it stands, and that must be under the topbar rather than at the
            foot of a long page. */}}
-      {{if .Handle}}
+      {{if .Me}}
       <dialog id="nav-drawer" class="drawer" aria-label="Navigation"{{if .MenuOpen}} open{{end}}>
         <div class="modal-head">
           <span class="brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></span>
@@ -107,7 +107,7 @@
 
   <div aria-live="polite" aria-atomic="true" id="live-region" class="live-region"></div>
 
-  {{if .Handle}}
+  {{if .Me}}
   <!-- Keyboard command palette (Ctrl/Cmd+K). Registry is inert JSON data (CSP-safe). -->
   <script type="application/json" id="command-registry">{{.Commands}}</script>
   <dialog id="palette" class="palette" aria-label="Command palette">
@@ -130,7 +130,7 @@
   </dialog>
   {{end}}
 
-  {{if .Handle}}<div hidden aria-hidden="true" hx-get="/health" hx-trigger="every {{.BadgeSecs}}s" hx-swap="none"></div>{{end}}
+  {{if .Me}}<div hidden aria-hidden="true" hx-get="/health" hx-trigger="every {{.BadgeSecs}}s" hx-swap="none"></div>{{end}}
   <dialog id="modal-backdrop" class="modal-confirm" aria-labelledby="modal-msg">
     <div class="modal-box">
       <p id="modal-msg" class="modal-msg"></p>

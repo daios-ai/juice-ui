@@ -3,6 +3,7 @@ package apps
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,7 @@ type fakeAuth struct {
 	creates, authorizes, refreshes int
 	authStatus                     int    // authorize response status (200 = ok)
 	authBody                       string // body when authStatus != 200
+	signedInAs                     string // the handle field of the last authorize
 	nextTok                        int
 }
 
@@ -38,8 +40,13 @@ func newFakeAuth() *fakeAuth {
 		_, _ = w.Write([]byte(`{}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Handle string `json:"handle"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
 		f.mu.Lock()
 		f.authorizes++
+		f.signedInAs = in.Handle
 		st, body := f.authStatus, f.authBody
 		f.mu.Unlock()
 		if st == 200 {
@@ -103,7 +110,7 @@ func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(
 
 func newSA(t *testing.T, f *fakeAuth, buf *syncBuf) *ServiceAccount {
 	t.Helper()
-	deps := Deps{Client: client.New(f.srv.URL, nil)}
+	deps := Deps{Client: client.New(f.srv.URL, nil), Address: func(h string) string { return h + "@testnet" }}
 	if buf != nil {
 		deps.Logger = slog.New(slog.NewTextHandler(buf, nil))
 	}
@@ -151,6 +158,11 @@ func TestServiceAccountProvisionsAndBecomesReady(t *testing.T) {
 	}
 	if authorizes != 1 {
 		t.Errorf("authorize called %d times, want 1 (loop authenticated once; Do reused the token)", authorizes)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.signedInAs != "svc@testnet" {
+		t.Errorf("the account signs in by its address on this kernel, got %q", f.signedInAs)
 	}
 }
 

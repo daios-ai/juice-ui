@@ -33,9 +33,10 @@ type App interface {
 	Slug() string
 
 	// Nav returns the sidebar entries this module contributes for the signed-in
-	// user. The module self-gates (e.g. superuser-only apps return nil for a
-	// non-superuser). Most apps return a single entry.
-	Nav(handle string, superuser bool) []NavEntry
+	// user, named by address ("" when signed out). The module self-gates (e.g.
+	// superuser-only apps return nil for a non-superuser). Most apps return a
+	// single entry.
+	Nav(me string, superuser bool) []NavEntry
 
 	// Mount registers the module's HTTP routes on the shared mux. Deps carries
 	// everything the module needs from the core; the module never reaches into
@@ -110,8 +111,14 @@ type Deps struct {
 	// IsHTMX reports whether the request came from htmx.
 	IsHTMX func(r *http.Request) bool
 
-	// Handle returns the signed-in user's handle.
-	Handle func(r *http.Request) string
+	// Me returns the signed-in user's address, handle@kernel.
+	Me func(r *http.Request) string
+
+	// Address composes this kernel's address for a handle, handle@kernel — the
+	// one composition site, so an app names its service account and its own
+	// actions exactly as the core names the natives. "" while the kernel's name
+	// is unknown; the kernel refuses that, so an app retries rather than guesses.
+	Address func(handle string) string
 
 	// RequireAuth wraps a handler so unauthenticated requests are redirected to
 	// login. A module wraps each of its routes with this so a handler always runs

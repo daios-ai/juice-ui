@@ -42,7 +42,7 @@
     <td>{{if .Action}}{{template "_ref" (ref .Action .ActionID)}}{{else}}<span class="muted mono">{{truncate 8 .ActionID}}</span>{{end}}</td>
     <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{.Status}}</span></td>
     <td class="money">{{template "_price" (price .Price false)}}</td>
-    <td class="mono muted">{{.RequiredCallerHandle}}</td>
+    <td class="mono muted">{{.RequiredCaller}}</td>
   </tr>
   {{end}}
   </tbody>

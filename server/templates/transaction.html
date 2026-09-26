@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$d := .Data}}
-{{$me := $d.Me.Handle}}
+{{$me := $d.Me.Address}}
 <nav class="crumb"><a href="/transactions">← transactions</a></nav>
 <h1>tx</h1>
 <p class="subtitle id mono">{{$d.Tx.ID}}</p>
@@ -11,18 +11,17 @@
 
   <div class="row">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
-    {{if $d.Action}}{{template "_ref" (ref $d.Action.Ref $d.Action.ID)}}
-    {{else}}<span class="muted mono">{{truncate 8 $d.Tx.ActionID}} (deleted)</span>{{end}}
+    {{template "_ref" (ref $d.Tx.Action $d.Tx.ActionID)}}
   </div>
 
-  {{/* Parties — kernel-captured handles; the viewer's own role emphasized */}}
+  {{/* Parties — kernel-captured addresses; the viewer's own role emphasized */}}
   <div>
     <h3>Parties</h3>
     <div class="table-scroll">
     <table class="parties">
-      <tr><th>Buyer</th><td class="mono">{{$d.Tx.OwnerHandle}}{{if eq $d.Tx.OwnerHandle $me}} <span class="pill">you</span>{{end}}</td></tr>
-      <tr><th>Caller</th><td class="mono">{{$d.Tx.CallerHandle}}{{if eq $d.Tx.CallerHandle $me}} <span class="pill">you</span>{{end}}</td></tr>
-      <tr><th>Seller</th><td class="mono">{{$d.Tx.TargetHandle}}{{if eq $d.Tx.TargetHandle $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
+      <tr><th>Buyer</th><td class="mono">{{$d.Tx.Owner}}{{if eq $d.Tx.Owner $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Caller</th><td class="mono">{{$d.Tx.Caller}}{{if eq $d.Tx.Caller $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Seller</th><td class="mono">{{$d.Tx.Target}}{{if eq $d.Tx.Target $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
     </table>
     </div>
   </div>

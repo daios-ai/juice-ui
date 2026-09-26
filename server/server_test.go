@@ -37,7 +37,7 @@ func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) h
 	c := client.New(kernelURL, nil)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	identity := NewKernelIdentity(c, w.recordedKey, w.badge, log)
-	r, err := NewRenderer(identity.Unit)
+	r, err := NewRenderer(identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestSessionRefusesADifferentKernel(t *testing.T) {
 	var swapped atomic.Bool
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" && swapped.Load() {
-			w.Write([]byte(`{"status":"ok","handle":"other","public_key":"OTHERKEY","network":"play","network_digest":"D2","decimals":0}`))
+			w.Write([]byte(`{"status":"ok","handle":"other","public_key":"OTHERKEY","network":"play","network_fingerprint":"D2","decimals":0}`))
 			return
 		}
 		base.Config.Handler.ServeHTTP(w, r)
@@ -282,5 +282,30 @@ func TestRecordedKeyRefusesAnotherKernel(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "Sign in") {
 		t.Errorf("login against a mismatched kernel must be refused: %s", body)
+	}
+}
+
+// The UI composes one address — handle@<this kernel> — and reads one fact off
+// an action address: whether its kernel segment is this kernel's name. Both
+// fail closed while the kernel's name is unknown.
+func TestKernelIdentityAddressAndLocal(t *testing.T) {
+	k := &KernelIdentity{id: client.Health{Handle: "alpha"}, fetched: time.Now(), ttl: time.Hour}
+	if got := k.Address("ana"); got != "ana@alpha" {
+		t.Errorf("Address = %q", got)
+	}
+	for ref, want := range map[string]bool{
+		"sys@alpha/llm/chat": true,
+		"ana@alpha/echo":     true,
+		"seller@bravo/greet": false,
+		"eve@alphabet/x":     false,
+		"bare/name":          false,
+	} {
+		if got := k.Local(ref); got != want {
+			t.Errorf("Local(%q) = %v, want %v", ref, got, want)
+		}
+	}
+	unknown := &KernelIdentity{}
+	if unknown.Address("ana") != "" || unknown.Local("ana@/x") {
+		t.Error("an unknown kernel composes nothing and owns nothing")
 	}
 }

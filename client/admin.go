@@ -16,18 +16,19 @@ import (
 //
 // The route says which kind of target it takes, and a target of the other kind
 // is refused (verified live, docs/kernel-v0.15-verification.md §2): `users`
-// takes a handle or account id, `peers` a petname or public key. So a caller
+// takes an address (handle@kernel, the `@` unescaped) or account id, `peers` a
+// petname or public key. So a caller
 // must know which namespace it is addressing BEFORE it dials — which the UI
 // does, since its own routes are already split the same way. There is no route
 // by which a peer is credited.
 
 // AdminUser is one local account as the operator sees it
-// (GET /v1/admin/users/{handle}). It is a user and nothing else: the kernel
+// (GET /v1/admin/users/{address}). It is a user and nothing else: the kernel
 // answers 404 "… is not a user here" for a peer key, so there is no second
 // record shape to discriminate.
 type AdminUser struct {
 	ID          string `json:"id"`
-	Handle      string `json:"handle"`
+	Address     string `json:"address"`
 	Description string `json:"description"`
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
@@ -258,13 +259,13 @@ type IssuerEvidence struct {
 // changes it (kernel §P10). The three bps rates are the money rules it serves
 // under.
 type Identity struct {
-	Handle        string   `json:"handle"`
-	PublicKey     string   `json:"public_key"`
-	About         string   `json:"about"` // sys's description — what the network reads about us
-	Addrs         []string `json:"addrs"`
-	Network       string   `json:"network"`
-	NetworkDigest string   `json:"network_digest"`
-	RailAddress   string   `json:"rail_address"` // where this kernel is paid; "" on a world without addresses
+	Handle             string   `json:"handle"`
+	PublicKey          string   `json:"public_key"`
+	About              string   `json:"about"` // sys's description — what the network reads about us
+	Addrs              []string `json:"addrs"`
+	Network            string   `json:"network"`
+	NetworkFingerprint string   `json:"network_fingerprint"`
+	BlockchainAddress  string   `json:"blockchain_address"` // where this kernel is paid; "" on a world without addresses
 
 	Finalized *RailHoldings `json:"finalized"` // nil until a chain rail has read a block
 	Sys       SysFunds      `json:"sys"`
@@ -333,18 +334,18 @@ type Deposits struct {
 
 // HeldDeposit is a payment the rail has witnessed whose sender no account has
 // registered, so the kernel cannot decide whose it is and holds it on sys until
-// the operator says (kernel §D23). PartyHandle is the sending address — the fact
+// the operator says (kernel §D23). Party is the sending address — the fact
 // the operator reads to decide, and ID is what names the payment when attributing
 // it. Shape and both acts verified live on a chain world (anvil, decimals 6).
 type HeldDeposit struct {
-	ID          string `json:"id"`
-	Kind        string `json:"kind"`
-	Amount      int64  `json:"amount"`
-	Credit      int64  `json:"credit"`
-	Status      string `json:"status"`
-	TxHash      string `json:"tx_hash"`
-	CreatedAt   string `json:"created_at"`
-	PartyHandle string `json:"party_handle"`
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Amount    int64  `json:"amount"`
+	Credit    int64  `json:"credit"`
+	Status    string `json:"status"`
+	TxHash    string `json:"tx_hash"`
+	CreatedAt string `json:"created_at"`
+	Party     string `json:"party"`
 }
 
 // Obligation is one cross-kernel debt owed TO this kernel: the ticket both
@@ -396,39 +397,39 @@ func (c *Client) AdminListUsers(ctx context.Context, token string) ([]AdminUser,
 	}
 }
 
-// AdminGetUser returns one user by handle (GET /v1/admin/users/{handle}).
-func (c *Client) AdminGetUser(ctx context.Context, token, handle string) (AdminUser, error) {
+// AdminGetUser returns one user by address (GET /v1/admin/users/{address}).
+func (c *Client) AdminGetUser(ctx context.Context, token, address string) (AdminUser, error) {
 	var u AdminUser
-	err := c.do(ctx, http.MethodGet, "/v1/admin/users/"+url.PathEscape(handle), token, nil, &u)
+	err := c.do(ctx, http.MethodGet, "/v1/admin/users/"+url.PathEscape(address), token, nil, &u)
 	return u, err
 }
 
-// AdminSuspendUser suspends a user (POST /v1/admin/users/{handle}/suspend).
+// AdminSuspendUser suspends a user (POST /v1/admin/users/{address}/suspend).
 // The kernel answers with the row it wrote (R5); the UI re-reads its page, so
 // the body is discarded.
-func (c *Client) AdminSuspendUser(ctx context.Context, token, handle string) error {
-	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/suspend", token, nil, nil)
+func (c *Client) AdminSuspendUser(ctx context.Context, token, address string) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(address)+"/suspend", token, nil, nil)
 }
 
-// AdminUnsuspendUser lifts a suspension (POST /v1/admin/users/{handle}/unsuspend).
-func (c *Client) AdminUnsuspendUser(ctx context.Context, token, handle string) error {
-	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/unsuspend", token, nil, nil)
+// AdminUnsuspendUser lifts a suspension (POST /v1/admin/users/{address}/unsuspend).
+func (c *Client) AdminUnsuspendUser(ctx context.Context, token, address string) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(address)+"/unsuspend", token, nil, nil)
 }
 
 // AdminRenameUser renames a local account
-// (POST /v1/admin/users/{handle}/rename), freeing the old handle so every
+// (POST /v1/admin/users/{address}/rename), freeing the old address so every
 // reference follows the account. The kernel rejects renaming sys.
 //
 // The body field is new_name. It was new_handle up to v0.12.13 and renamed in
 // v0.12.14; a wrong field name is rejected with a message naming a third field
 // ("handle is required"), so this is not guessable from the error and is
 // re-verified on each kernel (docs/kernel-v0.15-verification.md §2).
-func (c *Client) AdminRenameUser(ctx context.Context, token, handle, newName string) error {
-	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/rename", token, renameBody(newName), nil)
+func (c *Client) AdminRenameUser(ctx context.Context, token, address, newName string) error {
+	return c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(address)+"/rename", token, renameBody(newName), nil)
 }
 
 // AdminDeposit records a payment made outside the system, crediting one USER
-// (POST /v1/admin/users/{handle}/deposit). Ref names that payment — the
+// (POST /v1/admin/users/{address}/deposit). Ref names that payment — the
 // operator's own record of it where the world has no chain, or the transaction
 // that carried it where it has. It is mandatory: the kernel credits nothing it
 // cannot name, a second use of the same fact moves no money, and the same fact
@@ -441,7 +442,7 @@ func (c *Client) AdminRenameUser(ctx context.Context, token, handle, newName str
 // peer owes closes when it pays — the chain payment where the world has one,
 // the buyer's own signed reveal where it has none, recorded by the seller's
 // kernel itself with no operator act (kernel §D23/§P10).
-func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount int64, ref, reason string) (LedgerEntry, error) {
+func (c *Client) AdminDeposit(ctx context.Context, token, address string, amount int64, ref, reason string) (LedgerEntry, error) {
 	body := map[string]any{"ref": ref}
 	if amount > 0 {
 		body["amount"] = amount
@@ -450,7 +451,7 @@ func (c *Client) AdminDeposit(ctx context.Context, token, handle string, amount 
 		body["reason"] = reason
 	}
 	var e LedgerEntry
-	err := c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(handle)+"/deposit", token, body, &e)
+	err := c.do(ctx, http.MethodPost, "/v1/admin/users/"+url.PathEscape(address)+"/deposit", token, body, &e)
 	return e, err
 }
 

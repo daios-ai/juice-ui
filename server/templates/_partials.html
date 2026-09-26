@@ -5,7 +5,7 @@
 
 {{/* _media — the 16:9 image slot (§5.13). A kernel image later (ROADMAP);
      the deterministic cardArt fallback until then. Takes an Action. */}}
-{{define "_media"}}<span class="media">{{cardArt .ID .OwnerHandle .Name .Kind}}</span>{{end}}
+{{define "_media"}}<span class="media">{{cardArt .ID .Action .Kind}}</span>{{end}}
 
 {{/* A DISCOVERED card is the unresolved counterpart of an ordinary one: the
      kernel has only heard of the action through gossip, so nothing local backs
@@ -176,16 +176,16 @@
 {{end}}
 
 {{/* _tx_row — one row for every transaction list (tx index, user ledger,
-     process detail). Input: a txRow (via the `txrow` helper) carrying the tx,
-     the viewer handle, and the resolved action ref. The truncated id links to
-     the record; the action ref links to the action; the amount is signed from
+     process detail). Input: a txRow (via the `txrow` helper) carrying the tx
+     and the viewer's address. The truncated id links to the record; the
+     action's address, captured with the call, links to the action; the amount is signed from
      the viewer's perspective (see txAmount). Gross/fee/parties → detail page. */}}
 {{define "_tx_row"}}
 {{$tx := .Tx}}
 <tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
   <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}</a></td>
-  <td>{{if .Ref}}{{template "_ref" (ref .Ref $tx.ActionID)}}{{else}}<span class="muted mono">{{truncate 8 $tx.ActionID}} (deleted)</span>{{end}}</td>
-  <td class="muted small">{{if eq .Viewer $tx.TargetHandle}}seller{{else if eq .Viewer $tx.OwnerHandle}}buyer{{else if eq .Viewer $tx.CallerHandle}}caller{{else}}—{{end}}</td>
+  <td>{{template "_ref" (ref $tx.Action $tx.ActionID)}}</td>
+  <td class="muted small">{{if eq .Viewer $tx.Target}}seller{{else if eq .Viewer $tx.Owner}}buyer{{else if eq .Viewer $tx.Caller}}caller{{else}}—{{end}}</td>
   <td class="money">{{txAmount $tx .Viewer}}</td>
   <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
   <td class="muted">{{shortTime $tx.StartedAt}}</td>
@@ -397,7 +397,7 @@
 {{/* _menu_account — identity, preferences and sign-out; NO navigation. Used by
      the desktop profile popover (nav lives in the sidebar). */}}
 {{define "_menu_account"}}
-<div class="menu-caption mono">{{.Handle}}</div>
+<div class="menu-caption mono">{{.Me}}</div>
 <div class="menu-caption money">{{money .Available}}</div>
 <div class="menu-divider"></div>
 <form method="post" action="/logout">
@@ -493,7 +493,7 @@
   {{range .Peers}}
   {{$n := nameOf .Petname .PublicKey}}
   <div class="kernel-card{{if .Suspended}} inactive{{end}}">
-    <span class="media wide">{{cardArt .PublicKey $n.Text "" "kernel"}}</span>
+    <span class="media wide">{{cardArt .PublicKey $n.Text "kernel"}}</span>
     <div class="kernel-body">
       {{/* The name that RESOLVES is the petname; an unbound kernel shows its
            truncated key and stays callable by it. The rename link keys on the

@@ -19,14 +19,14 @@
      fact an operator most needs about something spending on their machine.
 
      Every figure here is the kernel's, read with the viewer's own token: the
-     account row for that handle, and the transactions it serves. A home with no
+     account row for that handle's address, and the transactions it serves. A home with no
      principal says so rather than showing a zero, and there is no funding
      gesture — sending money is running an action, on its own page (§6.5). */}}
 <h2>Account</h2>
 {{if $d.Account}}
 <div class="card">
   <dl class="locked-args">
-    <dt>Handle</dt><dd class="mono"><a href="/users/{{$h}}">{{$h}}</a></dd>
+    <dt>Address</dt><dd class="mono"><a href="/users/{{$d.Account.Address}}">{{$d.Account.Address}}</a></dd>
     <dt>Available</dt><dd class="money">{{money $d.Account.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $d.Account.Locked}}</dd>
     <dt>State</dt><dd>{{if $d.Account.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
@@ -37,7 +37,7 @@
 <div class="table-scroll">
 <table>
   <thead><tr><th>tx</th><th>action</th><th>role</th><th class="money">amount</th><th>status</th><th>when</th></tr></thead>
-  <tbody>{{range $d.Activity}}{{template "_tx_row" (txrow . $h $d.Actions)}}{{end}}</tbody>
+  <tbody>{{range $d.Activity}}{{template "_tx_row" (txrow . $d.Account.Address)}}{{end}}</tbody>
 </table>
 </div>
 {{else}}<p class="muted">Nothing yet.</p>{{end}}

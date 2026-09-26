@@ -57,15 +57,17 @@ var kindGlyph = map[string]string{
 // defaultGlyph is the last resort: a neutral mark that claims nothing.
 const defaultGlyph = "widgets"
 
-// CardArt returns the fallback media SVG for an action. The hue is keyed on
-// owner (the provider's identity) and the glyph on name (the operation); id is
-// accepted so a partial record still draws, and kind selects the fallback glyph.
-func CardArt(id, owner, name, kind string) template.HTML {
-	hue := artHues[hashOf(hueSeed(owner, id, kind))%uint32(len(artHues))]
+// CardArt returns the fallback media SVG for an action. ref is the action's
+// address (owner@kernel/name), or a bare name for a card with no operation (a
+// kernel, an agent). The hue is keyed on the owner (the provider's identity)
+// and the glyph on the whole address (the operation); id is accepted so a
+// partial record still draws, and kind selects the fallback glyph.
+func CardArt(id, ref, kind string) template.HTML {
+	hue := artHues[hashOf(hueSeed(refOwner(ref), id, kind))%uint32(len(artHues))]
 
 	glyph := ""
-	if name != "" {
-		if m, ok := icons.Pick(owner + "/" + name); ok {
+	if refName(ref) != "" {
+		if m, ok := icons.Pick(ref); ok {
 			glyph = m.Name
 		}
 	}
@@ -82,7 +84,7 @@ func CardArt(id, owner, name, kind string) template.HTML {
 	// reads as shading on one colour rather than as two colours. The gradient id
 	// is derived from the card's own identity so several cards on a page cannot
 	// collide on it.
-	gid := "ag" + strconv.FormatUint(uint64(hashOf(id+"|"+owner+"|"+name+"|"+kind)), 36)
+	gid := "ag" + strconv.FormatUint(uint64(hashOf(id+"|"+ref+"|"+kind)), 36)
 
 	var b strings.Builder
 	b.WriteString(`<svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice" role="img" aria-hidden="true">`)

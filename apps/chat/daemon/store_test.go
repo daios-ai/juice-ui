@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -392,5 +393,34 @@ func TestTokenReconnectRotatesKey(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("active key rows for ana = %d, want exactly 1", n)
+	}
+}
+
+// Rows stored before principals were addresses are qualified once on this
+// kernel: bare handles gain "@kernel", a member stored under both forms
+// collapses to one, addresses are untouched, and a second pass changes nothing.
+func TestQualifyStoredHandles(t *testing.T) {
+	s := newStore(t)
+	room, err := s.CreateRoom("alice", "general", []string{"bob", "bob@k", "carol@peer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PostMessage("alice", room.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.Qualify("k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, msgs, err := s.Room("alice@k", room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Creator != "alice@k" || len(msgs) != 1 || msgs[0].From != "alice@k" {
+		t.Errorf("creator and sender qualified: %+v %+v", r, msgs)
+	}
+	if got := strings.Join(r.Members, " "); got != "alice@k bob@k carol@peer" {
+		t.Errorf("members = %q", got)
 	}
 }

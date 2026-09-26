@@ -166,23 +166,33 @@ func TestMoneyGrammar(t *testing.T) {
 // outliving its endpoint fails only when someone clicks it.
 func TestNoRetiredSurfaces(t *testing.T) {
 	retired := map[string]string{
-		"/admin/peers/settle": "settlement is per call on the rail, by ticket (§6.6)",
-		"/admin/withdraw":     "withdrawing is a user's verb (§6.5)",
-		"admin-withdraw":      "withdrawing is a user's verb (§6.5)",
-		"/control/":           "the admin surface is /v1/admin/* (§3.1)",
-		"fund_key":            "a peer is never credited (§6.6)",
-		"FundKey":             "a peer is never credited (§6.6)",
-		"/actions/unimport":   "an application is disabled or deleted by path (§6.4)",
-		"positionText":        "a peer holds no money (§6.6)",
-		"peer_credit":         "a peer holds no money (§6.6)",
-		"dollarsInput":        "amounts scale by the world's decimals (§7)",
-		"parseDollars":        "amounts scale by the world's decimals (§7)",
-		"settlement_id":       "there is no bilateral settlement to record (§6.6)",
-		"/v1/stats":           "what is known about an action is read where it is read (§6.2)",
-		"ActionStats":         "what is known about an action is read where it is read (§6.2)",
-		"refund_eligible":     "a parked call settles on the peer's answer; no age expires it (§6.2)",
-		"RefundEligible":      "a parked call settles on the peer's answer; no age expires it (§6.2)",
-		"mergeActivity":       "the ledger journals every movement; it alone is the activity (§6.5)",
+		"/admin/peers/settle":    "settlement is per call on the rail, by ticket (§6.6)",
+		"/admin/withdraw":        "withdrawing is a user's verb (§6.5)",
+		"admin-withdraw":         "withdrawing is a user's verb (§6.5)",
+		"/control/":              "the admin surface is /v1/admin/* (§3.1)",
+		"fund_key":               "a peer is never credited (§6.6)",
+		"FundKey":                "a peer is never credited (§6.6)",
+		"/actions/unimport":      "an application is disabled or deleted by path (§6.4)",
+		"positionText":           "a peer holds no money (§6.6)",
+		"peer_credit":            "a peer holds no money (§6.6)",
+		"dollarsInput":           "amounts scale by the world's decimals (§7)",
+		"parseDollars":           "amounts scale by the world's decimals (§7)",
+		"settlement_id":          "there is no bilateral settlement to record (§6.6)",
+		"/v1/stats":              "what is known about an action is read where it is read (§6.2)",
+		"ActionStats":            "what is known about an action is read where it is read (§6.2)",
+		"refund_eligible":        "a parked call settles on the peer's answer; no age expires it (§6.2)",
+		"RefundEligible":         "a parked call settles on the peer's answer; no age expires it (§6.2)",
+		"mergeActivity":          "the ledger journals every movement; it alone is the activity (§6.5)",
+		"owner_handle":           "every party is an address, named for its role (§4)",
+		"caller_handle":          "every party is an address, named for its role (§4)",
+		"target_handle":          "every party is an address, named for its role (§4)",
+		"required_caller_handle": "every party is an address, named for its role (§4)",
+		"operator_handle":        "every party is an address, named for its role (§4)",
+		"party_handle":           "every party is an address, named for its role (§4)",
+		"network_digest":         "the kernel pins a network fingerprint (§5)",
+		"rail_address":           "the kernel names a blockchain address (§6.5)",
+		"ActionsByID":            "a transaction carries its action's address (§6.5)",
+		"refIsRemote":            "an action is local iff its kernel segment is this kernel's name (§4)",
 	}
 	var files []string
 	for _, pat := range []string{"templates/*.html", "*.go"} {
@@ -453,20 +463,18 @@ func TestAppTemplatesFollowGrammar(t *testing.T) {
 }
 
 // sigilRe finds an "@" used as a sigil on a name: one that does not join to a
-// preceding name character. The remote-action form owner@kernel/name (§4) joins
-// the "@" to the owner segment — a literal one, or a template action's "}}" —
-// and is the only legitimate "@" a template may carry.
+// preceding name character. An address — handle@kernel, owner@kernel/name (§4) —
+// joins its "@" to the handle, a literal one or a template action's "}}", and
+// is the only legitimate "@" a template may carry.
 var sigilRe = regexp.MustCompile(`(^|[^A-Za-z0-9_}])@[A-Za-z{]`)
 
-// TestTemplatesEmitBareNames is the drift guard for requirements.md §4: a handle
-// is bare ("sys", "alice") and the UI emits it as it is, never decorated. The
-// agents app rendered "@{{.Handle}}" on every card, heading, and confirm, which
-// made the UI disagree with the platform it presents — "@x" names a *kernel* in
-// this grammar, not a user — and forced a matching strip on input, so the two
-// defects held each other up. It also taught the wrong convention to the code
-// that spawned the agent daemon, whose "@handle serve" argv the daemon had
-// already stopped accepting. A sigil in a template is a defect, not a style.
-func TestTemplatesEmitBareNames(t *testing.T) {
+// TestTemplatesNeverDecorateNames is the drift guard for requirements.md §4:
+// every name is an address the kernel served, and the UI renders it as it is,
+// never decorated. The agents app once rendered "@{{.Handle}}" on every card,
+// heading, and confirm, which made the UI disagree with the platform it
+// presents and forced a matching strip on input, so the two defects held each
+// other up. A sigil in a template is a defect, not a style.
+func TestTemplatesNeverDecorateNames(t *testing.T) {
 	core, err := fs.Glob(tmplFS, "templates/*.html")
 	if err != nil {
 		t.Fatal(err)
@@ -490,7 +498,7 @@ func TestTemplatesEmitBareNames(t *testing.T) {
 		}
 		src := string(b)
 		for _, loc := range sigilRe.FindAllStringIndex(src, -1) {
-			t.Errorf("%s: a name carries an @ sigil — handles and refs are bare (§4); only owner@kernel/name joins an @: …%s…", f, snippet(src, loc[0]))
+			t.Errorf("%s: a name carries an @ sigil — names are addresses rendered as served (§4); an @ only joins handle@kernel: …%s…", f, snippet(src, loc[0]))
 		}
 	}
 }

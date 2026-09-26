@@ -8,15 +8,15 @@ import (
 // TestCardArtDeterministic: the art is a pure function of identity, so a card is
 // stable across renders and reproducible here.
 func TestCardArtDeterministic(t *testing.T) {
-	a := CardArt("act-1", "lena", "ocr-translate", "http")
-	if a != CardArt("act-1", "lena", "ocr-translate", "http") {
+	a := CardArt("act-1", "lena@t/ocr-translate", "http")
+	if a != CardArt("act-1", "lena@t/ocr-translate", "http") {
 		t.Error("CardArt must be deterministic for the same inputs")
 	}
-	if a == CardArt("act-1", "lena", "pdf-extract", "http") {
+	if a == CardArt("act-1", "lena@t/pdf-extract", "http") {
 		t.Error("a different operation must draw a different glyph")
 	}
 	// Falls back to id, then kind, when owner is absent (partial records).
-	if CardArt("id-x", "", "", "wasm") == CardArt("id-y", "", "", "wasm") {
+	if CardArt("id-x", "", "wasm") == CardArt("id-y", "", "wasm") {
 		t.Error("hue must vary by id when owner is absent")
 	}
 }
@@ -32,8 +32,8 @@ func TestCardArtHueIsPerOwner(t *testing.T) {
 		h, _, _ := strings.Cut(rest, ")")
 		return h
 	}
-	a := hue(string(CardArt("1", "chat", "inbox", "http")))
-	b := hue(string(CardArt("2", "chat", "output", "http")))
+	a := hue(string(CardArt("1", "chat@t/inbox", "http")))
+	b := hue(string(CardArt("2", "chat@t/output", "http")))
 	if a != b {
 		t.Errorf("same owner must share a hue: %s vs %s", a, b)
 	}
@@ -41,7 +41,7 @@ func TestCardArtHueIsPerOwner(t *testing.T) {
 	// (twelve hues collide), so assert over a spread of handles instead.
 	seen := map[string]bool{}
 	for _, o := range []string{"a", "b", "c", "lena", "kai", "sys", "mail", "vera"} {
-		seen[hue(string(CardArt("x", o, "run", "http")))] = true
+		seen[hue(string(CardArt("x", o+"@t/run", "http")))] = true
 	}
 	if len(seen) < 3 {
 		t.Errorf("owners collapsed onto %d hues, expected a spread", len(seen))
@@ -51,12 +51,12 @@ func TestCardArtHueIsPerOwner(t *testing.T) {
 // The glyph says what it does: a name carrying an obvious operation word must
 // reach the matching icon, and one carrying none must still draw something.
 func TestCardArtGlyph(t *testing.T) {
-	if art := string(CardArt("1", "chat", "inbox", "http")); !strings.Contains(art, `<g transform=`) {
+	if art := string(CardArt("1", "chat@t/inbox", "http")); !strings.Contains(art, `<g transform=`) {
 		t.Error("a matched name must draw a glyph")
 	}
 	// No name at all: falls back to the kind glyph, never to nothing.
 	for _, kind := range []string{"http", "wasm", "native", "remote_proxy", "kernel", "agent", "unknown"} {
-		if art := string(CardArt("1", "x", "", kind)); !strings.Contains(art, `<g transform=`) {
+		if art := string(CardArt("1", "x", kind)); !strings.Contains(art, `<g transform=`) {
 			t.Errorf("kind %q drew no glyph", kind)
 		}
 	}
@@ -67,8 +67,8 @@ func TestCardArtGlyph(t *testing.T) {
 func TestCardArtCSPSafe(t *testing.T) {
 	// Cover the glyph path too: corpus artwork is inlined, so it is under test.
 	for _, art := range []string{
-		string(CardArt("act-1", "lena", "ocr-translate", "http")),
-		string(CardArt("act-2", "kai", "", "wasm")),
+		string(CardArt("act-1", "lena@t/ocr-translate", "http")),
+		string(CardArt("act-2", "kai", "wasm")),
 	} {
 		if strings.Contains(art, "style=") {
 			t.Error("CardArt must not use inline style= (CSP / grammar)")
@@ -127,16 +127,16 @@ func TestCardArtGradientIDsUnique(t *testing.T) {
 		{"5", "sys", "make", "native"}, {"6", "sys", "lookup", "native"},
 		{"7", "kai", "", "wasm"}, {"8", "lena", "ocr-translate", "http"},
 	} {
-		ref := c.owner + "/" + c.name
-		g := gid(string(CardArt(c.id, c.owner, c.name, c.kind)))
+		ref := c.owner + "@t/" + c.name
+		g := gid(string(CardArt(c.id, ref, c.kind)))
 		if prev, dup := seen[g]; dup {
 			t.Errorf("gradient id %q shared by %s and %s", g, prev, ref)
 		}
 		seen[g] = ref
 	}
 	// And it stays stable for the same card, or the art would not be deterministic.
-	if gid(string(CardArt("1", "chat", "inbox", "http"))) !=
-		gid(string(CardArt("1", "chat", "inbox", "http"))) {
+	if gid(string(CardArt("1", "chat@t/inbox", "http"))) !=
+		gid(string(CardArt("1", "chat@t/inbox", "http"))) {
 		t.Error("gradient id must be deterministic")
 	}
 }

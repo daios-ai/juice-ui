@@ -11,16 +11,23 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 )
 
-// playUnit is the world a render test renders in: whole credits, as the shipped
-// `play` world serves. A test asserting formatted money should say which world
-// it is in rather than lean on a default.
-func playUnit() (Unit, bool) { return Unit{Decimals: 0, Symbol: "credits"}, true }
+// testKernel is a kernel whose /health has been read: the identity a render test
+// renders against, without a server to ask.
+func testKernel(h client.Health) *KernelIdentity {
+	return &KernelIdentity{id: h, fetched: time.Now(), ttl: time.Hour}
+}
 
-// noUnit is a kernel that has not said what its money is.
-func noUnit() (Unit, bool) { return Unit{}, false }
+// playKernel is the kernel a render test renders in: named testnet, serving
+// whole credits, as the shipped `play` world does. A test asserting formatted
+// money or a local address should say which kernel it is in rather than lean on
+// a default.
+var playKernel = testKernel(client.Health{Handle: "testnet", Decimals: 0, Symbol: "credits"})
+
+// unknownKernel is a kernel that has not said who it is or what its money is.
+var unknownKernel = testKernel(client.Health{})
 
 func TestNewRendererParsesAllTemplates(t *testing.T) {
-	if _, err := NewRenderer(playUnit); err != nil {
+	if _, err := NewRenderer(playKernel); err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
 }
@@ -85,7 +92,7 @@ func TestUnitInputAndStepMatchTheWorld(t *testing.T) {
 // scaling by an assumed unit would put a number in front of someone that they
 // did not type and the kernel did not quote (§7).
 func TestMoneyRefusesAnUnknownUnit(t *testing.T) {
-	r, err := NewRenderer(noUnit)
+	r, err := NewRenderer(unknownKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +107,7 @@ func TestMoneyRefusesAnUnknownUnit(t *testing.T) {
 	}
 	// And it renders that way through a real page, not only in isolation.
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "me", Data: walletView{Available: 500}}
+	p := Page{Me: "me@testnet", Data: walletView{Available: 500}}
 	if err := r.Render(rec, 200, "wallet", p); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +205,7 @@ func TestTxAmount(t *testing.T) {
 	// occupying several roles sees the sum. gross = net + fee, so the three
 	// viewpoints of a settled call sum to zero.
 	mk := func(status string, gross, net, fee int64) client.Transaction {
-		return client.Transaction{OwnerHandle: "buyer", TargetHandle: "seller", Status: status, Gross: gross, Net: net, Fee: fee}
+		return client.Transaction{Owner: "buyer", Target: "seller", Status: status, Gross: gross, Net: net, Fee: fee}
 	}
 	cases := []struct {
 		name, viewer string
@@ -207,13 +214,13 @@ func TestTxAmount(t *testing.T) {
 	}{
 		{"buyer pays gross", "buyer", mk("success", 100, 90, 10), []string{"-100 credits"}},
 		{"seller earns net", "seller", mk("success", 100, 90, 10), []string{"sig-credited", "+90 credits"}},
-		{"platform earns fee", superuserHandle, mk("success", 100, 90, 10), []string{"sig-credited", "+10 credits"}},
+		{"platform earns fee", "sys@testnet", mk("success", 100, 90, 10), []string{"sig-credited", "+10 credits"}},
 		{"no stake shows dash", "bystander", mk("success", 100, 90, 10), []string{"—"}},
 		{"failed refunds buyer", "buyer", mk("failure", 100, 0, 0), []string{"sig-refunded", "↩", "100 credits"}},
 		{"failed non-buyer dash", "seller", mk("failure", 100, 0, 0), []string{"—"}},
 		{"open parks buyer", "buyer", mk("open", 100, 0, 0), []string{"sig-escrow", "◷", "100 credits"}},
 	}
-	r := &Renderer{unit: playUnit}
+	r := &Renderer{identity: playKernel}
 	for _, c := range cases {
 		got := string(r.txAmount(c.tx, c.viewer))
 		for _, w := range c.want {
@@ -224,13 +231,13 @@ func TestTxAmount(t *testing.T) {
 	}
 
 	// Self-call by a normal user (buyer == seller): nets to −fee.
-	self := client.Transaction{OwnerHandle: "a", TargetHandle: "a", Status: "success", Gross: 100, Net: 90, Fee: 10}
+	self := client.Transaction{Owner: "a", Target: "a", Status: "success", Gross: 100, Net: 90, Fee: 10}
 	if got := string(r.txAmount(self, "a")); !strings.Contains(got, "-10 credits") {
 		t.Errorf("self-call = %q, want -10 credits (the fee)", got)
 	}
 	// sys as the seller collects net + fee = gross.
-	sysSell := client.Transaction{OwnerHandle: "a", TargetHandle: superuserHandle, Status: "success", Gross: 100, Net: 90, Fee: 10}
-	if got := string(r.txAmount(sysSell, superuserHandle)); !strings.Contains(got, "+100 credits") {
+	sysSell := client.Transaction{Owner: "a", Target: "sys@testnet", Status: "success", Gross: 100, Net: 90, Fee: 10}
+	if got := string(r.txAmount(sysSell, "sys@testnet")); !strings.Contains(got, "+100 credits") {
 		t.Errorf("sys-as-seller = %q, want +100 credits (net+fee)", got)
 	}
 }
@@ -264,13 +271,13 @@ func TestKindBadge(t *testing.T) {
 // The desktop popover (_menu_account) is identity + prefs + sign-out with NO
 // navigation; the mobile drawer (_menu_content) adds the nav links.
 func TestAccountMenuHasNoNav(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The drawer renders whatever the nav model holds — it no longer hard-codes
 	// its own links — so the fixture supplies the nav the sidebar would get.
-	data := Page{Handle: "sys", IsSuperuser: true, Themes: ThemeList(), Nav: []NavItem{
+	data := Page{Me: "sys@testnet", IsSuperuser: true, Themes: ThemeList(), Nav: []NavItem{
 		{Slug: "browse", Label: "browse", Href: "/browse"},
 		{Slug: "settings", Label: "settings", Href: "/settings"},
 		{Slug: "network", Label: "network", Href: "/admin/peers"},
@@ -297,7 +304,7 @@ func TestAccountMenuHasNoNav(t *testing.T) {
 }
 
 func TestTabRenderer(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,21 +347,21 @@ func TestActionsHref(t *testing.T) {
 }
 
 func TestCallOutcomeGrantRequired(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	out := Outcome{Class: GrantRequired, ActionRef: "sys/gmail-send", Message: "needs a connected account"}
+	out := Outcome{Class: GrantRequired, ActionRef: "sys@testnet/gmail-send", Message: "needs a connected account"}
 	if err := r.Fragment(rec, 200, "_call_outcome", out); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
 	// The affordance links to the consent-plan page for the action's FOLDER
-	// selector (sys, not the bare sys/gmail-send) — one gesture connects the
+	// selector (sys@testnet, not the action address) — one gesture connects the
 	// whole provider group; the per-scheme consent forms live on that page
-	// (v0.7 §14 delta display).
-	if !strings.Contains(body, `href="/grants/connect?selector=sys"`) {
+	// (v0.7 §14 delta display). The query escapes the address's "@".
+	if !strings.Contains(body, `href="/grants/connect?selector=sys%40testnet"`) {
 		t.Errorf("grant_required outcome must link to the folder connect plan: %s", body)
 	}
 	if strings.Contains(body, "gmail-send") {
@@ -366,7 +373,7 @@ func TestCallOutcomeGrantRequired(t *testing.T) {
 }
 
 func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +387,7 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 		},
 		SkippedUncallable: 2,
 	}
-	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "acme", Plan: plan}}
+	p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: grantConnectView{Selector: "acme", Plan: plan}}
 	if err := r.Render(rec, 200, "grant_connect", p); err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -413,13 +420,13 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 }
 
 func TestUserPageShowsConnections(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: userView{
-		User: client.User{Handle: "me",
+	p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: userView{
+		User: client.User{Address: "me@testnet",
 			Connectors: []client.Connector{{
 				Directory:   "chat",
 				Connections: []client.Connection{{Provider: "127.0.0.1:8080", ProviderKey: "bearer:h"}},
@@ -459,13 +466,13 @@ func TestUserPageShowsConnections(t *testing.T) {
 // suspended_at (here the RFC3339 zero value an older kernel emitted) must render the
 // user as suspended AND offer the Unsuspend action.
 func TestAdminPageOffersUnsuspend(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
-		Users: []client.AdminUser{{Handle: "victim", SuspendedAt: "0001-01-01T00:00:00Z"}},
+	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
+		Users: []client.AdminUser{{Address: "victim@testnet", SuspendedAt: "0001-01-01T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -474,7 +481,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 	if !strings.Contains(body, "suspended") {
 		t.Errorf("zero-value suspended_at must render the suspended pill: %s", body)
 	}
-	if !strings.Contains(body, "/admin/users/victim/unsuspend") {
+	if !strings.Contains(body, "/admin/users/victim@testnet/unsuspend") {
 		t.Errorf("suspended user must offer the Unsuspend action: %s", body)
 	}
 }
@@ -484,7 +491,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 // reason (no repeated refund, no contradictory "not charged"), and the kernel's
 // detail is shown inert below it.
 func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +519,7 @@ func TestCallOutcomeFailedStatesRefundOnce(t *testing.T) {
 // A refused quote is NOT a failure: the kernel checks the pin before locking, so
 // nothing ran and nothing was charged. It states the new price and asks again.
 func TestCallOutcomeTermsChanged(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +562,7 @@ func TestKeyFingerprint(t *testing.T) {
 // money button reading "Run (12)" (no ¤), no locked block, and the result target
 // sitting below the form (not nested inside it).
 func TestCallFormRun(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +601,7 @@ func TestCallFormRun(t *testing.T) {
 // one-shot NEUTRAL "Complete" button and the pre-bound (locked) args shown as a
 // read-only definition list above the editable fields, with no verbal label.
 func TestCallFormComplete(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +644,7 @@ func TestCallFormComplete(t *testing.T) {
 // carries the segmented fields|JSON field-switch (not the retired "edit as JSON"
 // text button) and the has_fields marker.
 func TestFormFieldsStructuredSwitch(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -662,7 +669,7 @@ func TestFormFieldsStructuredSwitch(t *testing.T) {
 // fill): just the locked block + the Complete button, no raw-JSON input and no
 // wordy "acknowledge" line — the locked JSON + button carry it visually.
 func TestCallFormApproval(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +695,7 @@ func TestCallFormApproval(t *testing.T) {
 // must read honest empty states (none, with a (0) count when Counts) — never fake
 // "—%" or "0.0s" data.
 func TestStatStripHonestEmpty(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +718,7 @@ func TestStatStripHonestEmpty(t *testing.T) {
 // TestStatStripCounts contrasts the detail (with counts) and card (no counts)
 // renderings of the same stats — the only difference is the (N) run/rater counts.
 func TestStatStripCounts(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +752,7 @@ func TestStatStripCounts(t *testing.T) {
 }
 
 func TestRenderFragment(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -775,7 +782,7 @@ func TestBadgeHelper(t *testing.T) {
 // TestBadgePollFragment checks the reusable poller partial: htmx attributes + the
 // interval, the count when > 0, and an empty body when 0 (so .badge:empty hides it).
 func TestBadgePollFragment(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -800,13 +807,13 @@ func TestBadgePollFragment(t *testing.T) {
 // steps badge and each app badge — on the configured interval, in both the sidebar
 // and the mobile tab bar.
 func TestLayoutRendersBadgePollers(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	p := Page{
-		Handle:    "me",
+		Me:        "me@testnet",
 		BadgeSecs: 15,
 		Nav: []NavItem{
 			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), BadgeURL: "/inbox/badge"},
@@ -837,12 +844,12 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 // native <dialog> (top layer) so it stacks above an open modal-form dialog —
 // not a z-indexed div that a dialog would paint over.
 func TestConfirmModalIsNativeDialog(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Render(rec, 200, "error", Page{Handle: "me", Data: struct{ Message string }{"x"}}); err != nil {
+	if err := r.Render(rec, 200, "error", Page{Me: "me@testnet", Data: struct{ Message string }{"x"}}); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
@@ -857,13 +864,13 @@ func TestConfirmModalIsNativeDialog(t *testing.T) {
 // TestCreditsColumnIsSingleTotal guards snag #3: lists show one amount column =
 // available + parked (total); the split stays only on prominent wallet/detail views.
 func TestCreditsColumnIsSingleTotal(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// List → a single amount column showing the total.
 	rec := httptest.NewRecorder()
-	list := Page{Handle: "me", Data: processesView{Open: []client.Process{{ID: "p1", Status: "open", Available: 30, Locked: 70}}}}
+	list := Page{Me: "me@testnet", Data: processesView{Open: []client.Process{{ID: "p1", Status: "open", Available: 30, Locked: 70}}}}
 	if err := r.Render(rec, 200, "processes", list); err != nil {
 		t.Fatalf("render processes: %v", err)
 	}
@@ -880,7 +887,7 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 
 	// Detail → the available + parked split is kept.
 	rec = httptest.NewRecorder()
-	detail := Page{Handle: "me", CSRFField: template.HTML("<input>"),
+	detail := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"),
 		Data: processView{Process: client.Process{ID: "p1", Status: "open", Available: 30, Locked: 70}}}
 	if err := r.Render(rec, 200, "process", detail); err != nil {
 		t.Fatalf("render process: %v", err)
@@ -895,12 +902,12 @@ func TestCreditsColumnIsSingleTotal(t *testing.T) {
 // any other and the kernel reports what happened. No health branch, no notice,
 // and no poller waiting for a peer to "recover".
 func TestActionDetailNeverGuessesAvailability(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: actionView{
+	p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: actionView{
 		Action:    client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10},
 		Form:      BuildForm(nil),
 		BadgeSecs: 15,
@@ -925,13 +932,13 @@ func TestActionDetailNeverGuessesAvailability(t *testing.T) {
 // TestProcessAwaitingReceiptPolls checks item 4: a process parked on a remote
 // receipt polls GET /processes/{id}; once settled the region carries no poller.
 func TestProcessAwaitingReceiptPolls(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	render := func(awaiting bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "me", CSRFField: template.HTML("<input>"), Data: processView{
+		p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: processView{
 			Process:   client.Process{ID: "p1", Status: "open", AwaitingReceipt: awaiting, AwaitingReceiptSince: "2026-07-12T00:00:00Z"},
 			BadgeSecs: 15,
 		}}
@@ -956,7 +963,7 @@ func TestProcessAwaitingReceiptPolls(t *testing.T) {
 // TestCallOutcomePeerBranches checks item 5: peer-unreachable/unfunded render as
 // first-class outcomes in the shared _call_outcome panel, not generic errors.
 func TestCallOutcomePeerBranches(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -985,13 +992,13 @@ func TestCallOutcomePeerBranches(t *testing.T) {
 // counterparty-only axis, so its toggle appears on that tab alone and the
 // known-network link drops it.
 func TestPeersTabsAndSuspendedToggle(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	renderPeers := func(tab string, showSuspended bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 			Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
 			Peers:         []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, LastSeen: "2026-07-12T00:00:00Z"}},
 			Tab:           tab,
@@ -1034,12 +1041,12 @@ func TestPeersTabsAndSuspendedToggle(t *testing.T) {
 // Fund (promote it) and Name (bind a petname, the only way to name a kernel we
 // have merely discovered). No position and no account-dependent verb.
 func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
 		Tab:      tabKnown,
 		Peers: []client.Peer{
@@ -1087,12 +1094,12 @@ func TestDiscoveredKernelCardHasNoAccountVerbs(t *testing.T) {
 // Settle (by handle) and Suspend (by key); a suspended peer is marked and offers
 // Unsuspend. There is no unsubscribe: a peer is not something one leaves.
 func TestPeerRowOffersSuspendByKey(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+	p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 		Identity:      client.Identity{Handle: "me", PublicKey: "PK"},
 		ShowSuspended: true,
 		Peers: []client.Peer{
@@ -1126,12 +1133,12 @@ func TestPeerRowOffersSuspendByKey(t *testing.T) {
 // TestInspectStatusPolls checks item 2: the inspect status card is an htmx-polled
 // fragment so an open inspect view is a live monitor.
 func TestInspectStatusPolls(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+	p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key:        "KEYC",
 		Inspection: client.Inspection{Petname: "kernelc", Online: true, Source: "live", Reachability: client.Reachability{Path: "direct"}},
 	}}
@@ -1148,12 +1155,12 @@ func TestInspectStatusPolls(t *testing.T) {
 // with the raw fed error tucked into a title tooltip, and a kernel we hold no
 // billing row for states no position.
 func TestInspectOfflineStranger(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+	p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key: "KDOWN",
 		Inspection: client.Inspection{Petname: "", Online: false, Source: "none",
 			Reachability: client.Reachability{Path: "unreachable", Error: "fed: cannot resolve peer 12D3KooW…: routing: not found"}},
@@ -1181,12 +1188,12 @@ func TestInspectOfflineStranger(t *testing.T) {
 // money on any path (kernel §D14), so a position or a credit figure here would
 // be a fabrication.
 func TestPeerCardCarriesContactNotMoney(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
 		Identity: client.Identity{Handle: "me", PublicKey: "PK"},
 		Peers:    []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, LastSeen: "2026-07-12T00:00:00Z"}},
 	}}
@@ -1236,14 +1243,14 @@ func TestRelTime(t *testing.T) {
 // ?form=. Without this the drawer is unreachable with JS off, which would be
 // worse than the tab bar it replaces.
 func TestNavDrawerWorksWithoutJS(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nav := []NavItem{{Slug: "browse", Label: "browse", Href: "/browse"}}
 	render := func(open bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Handle: "me", Nav: nav, MenuOpen: open, Path: "/browse",
+		p := Page{Me: "me@testnet", Nav: nav, MenuOpen: open, Path: "/browse",
 			Data: struct{ Message string }{"x"}}
 		if err := r.Render(rec, 200, "error", p); err != nil {
 			t.Fatalf("render: %v", err)
@@ -1272,12 +1279,12 @@ func TestNavDrawerWorksWithoutJS(t *testing.T) {
 // The theme picker is a set-once preference, so it must not sit in persistent
 // chrome. Exactly one exists, and it is on the settings page.
 func TestThemePickerOnlyInSettings(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "me", Themes: ThemeList(), Nav: []NavItem{{Slug: "browse", Href: "/browse"}},
+	p := Page{Me: "me@testnet", Themes: ThemeList(), Nav: []NavItem{{Slug: "browse", Href: "/browse"}},
 		Data: struct{ Message string }{"x"}}
 	if err := r.Render(rec, 200, "error", p); err != nil {
 		t.Fatal(err)
@@ -1287,71 +1294,61 @@ func TestThemePickerOnlyInSettings(t *testing.T) {
 	}
 }
 
-// v0.12 refs: bare owner/name splits on the first slash and a remote ref's owner
-// segment carries the kernel alias after "@". Refs rendered here come from the
-// kernel and are bare; nothing is stripped (requirements.md §4).
-func TestRefHelpersRemote(t *testing.T) {
+// An action address splits on the first slash into its owner and its name, and
+// it is LOCAL iff its kernel segment is this kernel's own name — never because
+// it lacks an "@", which every address carries (requirements.md §4).
+func TestRefSplitsAndDecidesLocality(t *testing.T) {
+	r := &Renderer{identity: playKernel}
 	cases := []struct {
-		ref, owner, kernel, name string
-		remote                   bool
+		ref, owner, name string
+		local            bool
 	}{
-		{"sys/llm/chat", "sys", "", "llm/chat", false},
-		{"lena/ocr-translate", "lena", "", "ocr-translate", false},
-		{"alice@B/greet", "alice@B", "B", "greet", true},
-		{"tom@acme2/brief/daily", "tom@acme2", "acme2", "brief/daily", true},
+		{"sys@testnet/llm/chat", "sys@testnet", "llm/chat", true},
+		{"lena@testnet/ocr-translate", "lena@testnet", "ocr-translate", true},
+		{"alice@B/greet", "alice@B", "greet", false},
+		{"tom@acme2/brief/daily", "tom@acme2", "brief/daily", false},
+		{"eve@testnet2/x", "eve@testnet2", "x", false}, // a suffix of another name is not ours
 	}
 	for _, c := range cases {
-		v := refOf(c.ref, "")
-		if v.Owner.Text != c.owner {
-			t.Errorf("ref(%q).Owner=%q want %q", c.ref, v.Owner.Text, c.owner)
+		v := r.refOf(c.ref, "")
+		if v.Owner.Text != c.owner || v.Name != c.name || v.Local != c.local {
+			t.Errorf("ref(%q) = %+v, want owner %q name %q local %v", c.ref, v, c.owner, c.name, c.local)
 		}
-		if v.Name != c.name {
-			t.Errorf("ref(%q).Name=%q want %q", c.ref, v.Name, c.name)
-		}
-		if v.Local == c.remote {
-			t.Errorf("ref(%q).Local=%v want %v", c.ref, v.Local, !c.remote)
-		}
-		if got := refKernel(c.ref); got != c.kernel {
-			t.Errorf("refKernel(%q)=%q want %q", c.ref, got, c.kernel)
-		}
+	}
+	// An unknown kernel owns nothing: every address renders as someone else's.
+	if (&Renderer{identity: unknownKernel}).refOf("sys@testnet/time", "").Local {
+		t.Error("with the kernel's name unknown, no address is local")
 	}
 }
 
-// A remote owner segment renders emphasized but UNLINKED: the kernel alias is
-// presentation-only and there is no local profile behind a remote owner
-// (requirements.md §6.2; extends the inert-counterparty rule).
+// A remote owner renders emphasized but UNLINKED: there is no local profile
+// behind another kernel's user (requirements.md §6.2; extends the
+// inert-counterparty rule). A local owner links to its owner page by address.
 func TestRefRemoteUnlinked(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_ref", refOf("alice@B/greet", "")); err != nil {
-		t.Fatal(err)
+	render := func(ref, id string) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_ref", r.refOf(ref, id)); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
 	}
-	body := rec.Body.String()
+	body := render("alice@B/greet", "")
 	if !strings.Contains(body, "alice@B") || !strings.Contains(body, `class="owner"`) {
 		t.Errorf("remote owner segment must render emphasized: %s", body)
 	}
 	if strings.Contains(body, "/users/") || strings.Contains(body, "<a ") {
 		t.Errorf("remote owner must not link anywhere: %s", body)
 	}
-	// A local ref keeps its owner-page link.
-	rec2 := httptest.NewRecorder()
-	if err := r.Fragment(rec2, 200, "_ref", refOf("lena/greet", "")); err != nil {
-		t.Fatal(err)
+	if body := render("lena@testnet/greet", ""); !strings.Contains(body, `href="/users/lena@testnet"`) {
+		t.Errorf("local owner must link to its owner page: %s", body)
 	}
-	if !strings.Contains(rec2.Body.String(), `href="/users/lena"`) {
-		t.Errorf("local owner must link to its owner page: %s", rec2.Body.String())
-	}
-	// Passing an id makes the NAME the action link — the case _reflink used to
-	// serve, now the same partial with one more argument.
-	rec3 := httptest.NewRecorder()
-	if err := r.Fragment(rec3, 200, "_ref", refOf("lena/greet", "A1")); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(rec3.Body.String(), `href="/actions/A1"`) {
-		t.Errorf("an id must link the name to the action: %s", rec3.Body.String())
+	// Passing an id makes the NAME the action link.
+	if body := render("lena@testnet/greet", "A1"); !strings.Contains(body, `href="/actions/A1"`) {
+		t.Errorf("an id must link the name to the action: %s", body)
 	}
 }
 
@@ -1361,7 +1358,8 @@ func TestRefRemoteUnlinked(t *testing.T) {
 // card uses, and the whole segment survives in the title.
 func TestRefTruncatesRawKernelKeys(t *testing.T) {
 	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I"
-	v := refOf("sys@"+key+"/llm/embed", "")
+	r := &Renderer{identity: playKernel}
+	v := r.refOf("sys@"+key+"/llm/embed", "")
 	if v.Owner.Text != "sys@"+key[:keyLen]+"…" {
 		t.Errorf("owner segment = %q, want the key truncated", v.Owner.Text)
 	}
@@ -1372,7 +1370,7 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 		t.Errorf("split wrong: %+v", v)
 	}
 	// A bound petname is not key-shaped and renders whole.
-	if b := refOf("sys@daios/llm/embed", ""); b.Owner.Text != "sys@daios" || b.Owner.IsKey {
+	if b := r.refOf("sys@daios/llm/embed", ""); b.Owner.Text != "sys@daios" || b.Owner.IsKey {
 		t.Errorf("a petname-qualified ref must render whole: %+v", b)
 	}
 }
@@ -1381,7 +1379,7 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 // button naming the sealed amount, unnumbered money button when the completer
 // types it (§6.3 two-branch rule).
 func TestCallFormPayment(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1417,7 +1415,7 @@ func TestCallFormPayment(t *testing.T) {
 // stops there — no price, no reputation strip, no link to a local action page,
 // and no run affordance (the local price does not exist until resolution).
 func TestActionCardDiscovered(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1478,7 +1476,7 @@ func TestActionCardDiscovered(t *testing.T) {
 // disable on it, so neither the workshop row nor the action page may offer a
 // lifecycle verb for one. The peer-level lever is suspend, on network.
 func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1486,7 +1484,7 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 	own := client.Action{ID: "A1", Action: "me/thing", Kind: "wasm", Active: true, Price: 3}
 
 	rec := httptest.NewRecorder()
-	p := Page{Handle: "sys", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: actionsView{
+	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: actionsView{
 		Mine: []actionCardView{{Action: proxy}, {Action: own}}, Superuser: true, Scope: "all",
 	}}
 	if err := r.Render(rec, 200, "workshop", p); err != nil {
@@ -1504,7 +1502,7 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 	}
 
 	rec2 := httptest.NewRecorder()
-	p2 := Page{Handle: "sys", CSRFField: template.HTML("<input>"), Data: actionView{
+	p2 := Page{Me: "sys@testnet", CSRFField: template.HTML("<input>"), Data: actionView{
 		Action: proxy, IsOwner: true, Form: BuildForm(nil),
 	}}
 	if err := r.Render(rec2, 200, "action_detail", p2); err != nil {
@@ -1554,7 +1552,7 @@ func TestNameOfPrefersPetnameAndTruncatesKeys(t *testing.T) {
 }
 
 func TestRunFormPinsItsQuote(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1581,13 +1579,13 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 // refuses it (409, verified live on d59742b), and a doomed act is never offered.
 // An ordinary open session keeps the control.
 func TestWalletWithholdsForceEndWhileAwaitingAReceipt(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	render := func(p client.Process) string {
 		rec := httptest.NewRecorder()
-		if err := r.Render(rec, 200, "wallet", Page{Handle: "me", Data: walletView{Open: []client.Process{p}}}); err != nil {
+		if err := r.Render(rec, 200, "wallet", Page{Me: "me@testnet", Data: walletView{Open: []client.Process{p}}}); err != nil {
 			t.Fatal(err)
 		}
 		return rec.Body.String()
@@ -1607,13 +1605,13 @@ func TestWalletWithholdsForceEndWhileAwaitingAReceipt(t *testing.T) {
 // On a world whose money has addresses the pay-in disclosure names the token
 // contract money is paid in, and a withdrawal waits for a registered address.
 func TestWalletNamesTheTokenOnAnAddressedWorld(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	v := walletView{KernelAddress: "0xvault", Token: "0xtoken"}
-	if err := r.Render(rec, 200, "wallet", Page{Handle: "me", Data: v}); err != nil {
+	if err := r.Render(rec, 200, "wallet", Page{Me: "me@testnet", Data: v}); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
@@ -1631,7 +1629,7 @@ func TestWalletNamesTheTokenOnAnAddressedWorld(t *testing.T) {
 // its issuer and the provider's own report first — beside, never inside, this
 // kernel's own reputation strip (kernel §D16, U39).
 func TestActionPageRendersOthersReports(t *testing.T) {
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1641,7 +1639,7 @@ func TestActionPageRendersOthersReports(t *testing.T) {
 		ObservedByOthers: []client.Evidence{{IssuerPublicKey: "OTHERKEY0000000", SubjectActionID: "R1", Uses: 3, CorroboratedUses: 2, Contradictions: 1}},
 	}}
 	rec := httptest.NewRecorder()
-	if err := r.Render(rec, 200, "action_detail", Page{Handle: "me", Data: actionView{Action: a}}); err != nil {
+	if err := r.Render(rec, 200, "action_detail", Page{Me: "me@testnet", Data: actionView{Action: a}}); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
@@ -1657,7 +1655,7 @@ func TestActionPageRendersOthersReports(t *testing.T) {
 	// An action no one else has reported on has no section at all.
 	rec = httptest.NewRecorder()
 	a.Evidence = &client.ActionEvidence{LocalExperience: &client.Stats{}}
-	if err := r.Render(rec, 200, "action_detail", Page{Handle: "me", Data: actionView{Action: a}}); err != nil {
+	if err := r.Render(rec, 200, "action_detail", Page{Me: "me@testnet", Data: actionView{Action: a}}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(rec.Body.String(), "<h2>Evidence</h2>") {

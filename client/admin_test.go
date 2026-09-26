@@ -10,7 +10,7 @@ import (
 func TestAdminListUsers(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `[{"id":"U1","handle":"alice","email":"a@x","available":230,"locked":0}]`
+	f.reply = `[{"id":"U1","address":"alice@k","available":230,"locked":0}]`
 	users, err := f.client().AdminListUsers(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +21,7 @@ func TestAdminListUsers(t *testing.T) {
 	if f.lastAuth != "Bearer tok" {
 		t.Errorf("missing bearer, got %q", f.lastAuth)
 	}
-	if len(users) != 1 || users[0].Handle != "alice" || users[0].Available != 230 {
+	if len(users) != 1 || users[0].Address != "alice@k" || users[0].Available != 230 {
 		t.Errorf("decoded users wrong: %+v", users)
 	}
 }
@@ -29,7 +29,7 @@ func TestAdminListUsers(t *testing.T) {
 func TestAdminGetUserAndSuspended(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","handle":"alice","suspended_at":"2026-07-05T00:00:00Z"}`
+	f.reply = `{"id":"U1","address":"alice@k","suspended_at":"2026-07-05T00:00:00Z"}`
 	u, err := f.client().AdminGetUser(context.Background(), "tok", "alice")
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestAdminSuspendUnsuspend(t *testing.T) {
 func TestAdminDepositNamesThePayment(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"amount":100,"external_key":"attr:rail:ref:pay-1","operator_handle":"sys","from_handle":"sys","to_handle":"alice"}`
+	f.reply = `{"amount":100,"external_key":"attr:rail:ref:pay-1","operator":"sys","from":"sys","to":"alice"}`
 	e, err := f.client().AdminDeposit(context.Background(), "tok", "alice", 100, "pay-1", "grant")
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestAdminDepositNamesThePayment(t *testing.T) {
 			t.Errorf("deposit body missing %s: %s", want, body)
 		}
 	}
-	if e.Amount != 100 || e.ToHandle != "alice" {
+	if e.Amount != 100 || e.To != "alice" {
 		t.Errorf("the deposit answers with the ledger entry it wrote: %+v", e)
 	}
 	// The amount-less form — attributing a payment already received whose sender
@@ -353,8 +353,8 @@ func TestEvidenceViews(t *testing.T) {
 func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"network":"play","network_digest":"ef1f",
-	 "rail_address":"","finalized":null,
+	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"network":"play","network_fingerprint":"ef1f",
+	 "blockchain_address":"","finalized":null,
 	 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
 	 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
 	 "custody":{"checked":false,"difference":0,"ok":false},
@@ -379,19 +379,21 @@ func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	}
 }
 
-// The client never rewrites a handle: "@" now separates a kernel, so a sigiled
-// handle is ill-formed input the kernel rejects (verified live 2026-08-05), not
-// a spelling of the bare one. Passing it through verbatim is what makes the
-// browser and a headless call answer alike (requirements.md §4).
-func TestHandleIsSentVerbatim(t *testing.T) {
+// The client never rewrites a name: an address reaches the kernel's path as
+// written, its "@" unescaped — the kernel refuses "%40" in a path (verified
+// live 2026-09-26) — and a bare handle is passed through for the kernel to
+// refuse, so the browser and a headless call answer alike (requirements.md §4).
+func TestAddressIsSentVerbatim(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","handle":"alice"}`
-	if _, err := f.client().AdminGetUser(context.Background(), "tok", "@alice"); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastPath != "/v1/admin/users/@alice" {
-		t.Errorf("handle must reach the kernel verbatim: %q", f.lastPath)
+	f.reply = `{"id":"U1","address":"alice@k"}`
+	for _, name := range []string{"alice@k", "alice"} {
+		if _, err := f.client().AdminGetUser(context.Background(), "tok", name); err != nil {
+			t.Fatal(err)
+		}
+		if f.lastPath != "/v1/admin/users/"+name {
+			t.Errorf("%q must reach the kernel verbatim: %q", name, f.lastPath)
+		}
 	}
 }
 

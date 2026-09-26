@@ -56,12 +56,12 @@ type Page struct {
 	Sidebar      string          // "collapsed" | "" (expanded); stamped to avoid flash
 	Active       string          // active nav group ("browse"|"inbox"|…) for aria-current
 	Nav          []NavItem       // the single nav model (sidebar + drawer + palette)
-	Handle       string          // signed-in handle for the nav, or "" when anonymous
-	KernelHandle string          // this kernel's own handle (from /health), or "" if unknown
+	Me           string          // signed-in address for the nav, or "" when anonymous
+	KernelHandle string          // this kernel's own name (from /health), or "" if unknown
 	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
 	KernelNet    string          // the network this kernel serves, named on the login page
 	KernelName   string          // the name this kernel is recorded under, when the UI names one
-	IsSuperuser  bool            // handle == "sys": show the admin group and admin scope
+	IsSuperuser  bool            // Me == sys@<kernel>: show the admin group and admin scope
 	Available    int64           // signed-in user's available balance; 0 when unknown
 	Themes       []ANSIPalette   // selectable terminal themes for the picker
 	CSRFField    template.HTML   // hidden CSRF input for no-JS forms
@@ -81,7 +81,7 @@ type Page struct {
 type Renderer struct {
 	pages    map[string]*template.Template
 	partials *template.Template
-	unit     func() (Unit, bool) // the kernel's money unit, given at construction
+	identity *KernelIdentity // the kernel's money unit and name, given at construction
 }
 
 // Unit is the money unit of the world this kernel serves: how many decimal
@@ -195,11 +195,12 @@ func allDigits(s string) bool {
 // with "_") are merged into the shared base set; its pages are cloned from that
 // base, so a app page renders through the same layout, partials, and helpers
 // as a core page.
-// unit is the money unit of the world the kernel serves, and whether it is known
-// (server.KernelIdentity.Unit). The renderer is built before the server, so the
-// source arrives here rather than being set afterwards.
-func NewRenderer(unit func() (Unit, bool), appTemplates ...fs.FS) (*Renderer, error) {
-	r := &Renderer{unit: unit}
+// identity is the kernel this UI is for: the money unit of its world, and the
+// name that decides which action addresses are local. The renderer is built
+// before the server, so the source arrives here rather than being set
+// afterwards.
+func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, error) {
+	r := &Renderer{identity: identity}
 	funcs := template.FuncMap{
 		"money":        r.money,
 		"amountInput":  r.amountInput,
@@ -217,7 +218,7 @@ func NewRenderer(unit func() (Unit, bool), appTemplates ...fs.FS) (*Renderer, er
 		"refFolder":    refFolder,
 		"nameOf":       nameOf,
 		"obligation":   obligation,
-		"ref":          refOf,
+		"ref":          r.refOf,
 		"price":        priceOf,
 		"shortTime":    shortTime,
 		"relTime":      relTime,
@@ -289,7 +290,7 @@ const noAmount = "—"
 // money formats a base-unit amount — the single source of truth for every amount
 // the UI shows (§7) — or refuses when the unit is unknown.
 func (r *Renderer) money(n int64) string {
-	u, ok := r.unit()
+	u, ok := r.identity.Unit()
 	if !ok {
 		return noAmount
 	}
@@ -299,7 +300,7 @@ func (r *Renderer) money(n int64) string {
 // amountInput formats a base-unit amount as an HTML number input's value; empty
 // when the unit is unknown, so the field offers no figure to submit.
 func (r *Renderer) amountInput(n int64) string {
-	u, ok := r.unit()
+	u, ok := r.identity.Unit()
 	if !ok {
 		return ""
 	}
@@ -308,7 +309,7 @@ func (r *Renderer) amountInput(n int64) string {
 
 // amountStep is the step attribute for an amount input.
 func (r *Renderer) amountStep() string {
-	u, ok := r.unit()
+	u, ok := r.identity.Unit()
 	if !ok {
 		return "any"
 	}
@@ -492,12 +493,11 @@ func nameOf(petname, key string) Name {
 	return keyDisplay(key)
 }
 
-// refOwner returns the owner segment of "owner/name", split on the first
-// slash — names may contain slashes (e.g. sys/llm/chat), but handles never do,
-// so the first slash is unambiguous (requirements.md §4). For a remote ref
-// (owner@kernel/name) the whole "owner@kernel" segment is returned. The owner
-// segment is emphasized in the UI; a LOCAL owner links to its owner page, a
-// remote one renders unlinked (the kernel alias is presentation-only).
+// refOwner returns the owner of an action address, owner@kernel/name: the
+// segment before the first slash — names may contain slashes (sys@k/llm/chat),
+// but an owner's address never does, so the first slash is unambiguous
+// (requirements.md §4). The owner is emphasized in the UI; a LOCAL owner links
+// to its owner page, a remote one renders unlinked.
 func refOwner(ref string) string {
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[:i]
@@ -505,32 +505,15 @@ func refOwner(ref string) string {
 	return ref
 }
 
-// refKernel returns the kernel-alias half of a remote owner segment
-// ("alice@B/greet" → "B"), or "" for a local ref. The alias is presentation
-// only — renamable and collision-suffixed on this kernel — so nothing may key
-// or link on it (requirements.md §4).
-func refKernel(ref string) string {
-	owner := refOwner(ref)
-	if i := strings.IndexByte(owner, '@'); i >= 0 {
-		return owner[i+1:]
-	}
-	return ""
-}
-
-// refIsRemote reports whether ref names an action on a peer kernel
-// (owner@kernel/name). Remote owners have no local owner page: the _ref
-// partials render them unlinked.
-func refIsRemote(ref string) bool { return refKernel(ref) != "" }
-
 // RefView is a rendered action reference: the owner segment, the name half, and
 // the id the name links to when one exists. THE one place a ref is split, so a
 // key never renders whole in one template and truncated in another.
 //
-// Owner is a Name because a remote owner segment carries a kernel that may be a
-// raw public key (owner@<43 chars>) — unreadable as a card title, and truncated
-// here through the same primitive that renders a kernel card (§13 petname
-// model). Local reports that the owner has a profile page here; a remote owner
-// never links, the kernel half being presentation-only (requirements.md §4).
+// Owner is a Name because a remote owner's kernel segment may be a raw public
+// key (owner@<43 chars>) — unreadable as a card title, and truncated here
+// through the same primitive that renders a kernel card (§13 petname model).
+// Local reports that the owner has a profile page here: its kernel segment is
+// this kernel's own name (KernelIdentity.Local).
 type RefView struct {
 	Owner Name
 	Name  string
@@ -538,25 +521,25 @@ type RefView struct {
 	Local bool
 }
 
-// refOf splits a ref for rendering. Split on the FIRST slash: names may contain
-// slashes (sys/llm/chat) but handles never do, so the first is unambiguous.
-func refOf(ref, id string) RefView {
-	owner, name := refOwner(ref), refName(ref)
-	v := RefView{Name: name, ID: id, Local: !refIsRemote(ref)}
-	if v.Local {
+// refOf splits an action address for rendering. Split on the FIRST slash:
+// names may contain slashes (sys@k/llm/chat) but an owner never does.
+func (r *Renderer) refOf(ref, id string) RefView {
+	owner := refOwner(ref)
+	v := RefView{Name: refName(ref), ID: id, Local: r.identity.Local(ref)}
+	at := strings.IndexByte(owner, '@')
+	if v.Local || at < 0 {
 		v.Owner = Name{Text: owner, Title: owner}
 		return v
 	}
-	// owner@kernel: the kernel half alone is truncated when it is a raw key, so
-	// the owner stays readable and the whole segment survives in the title.
-	at := strings.IndexByte(owner, '@')
+	// A remote kernel segment is truncated only when it is a raw key, so the
+	// owner stays readable and the whole segment survives in the title.
 	k := keyDisplay(owner[at+1:])
 	v.Owner = Name{Text: owner[:at+1] + k.Text, Title: owner, IsKey: k.IsKey}
 	return v
 }
 
-// refName returns the name segment of "owner/name" (everything after the first
-// slash), or "" if there is no slash.
+// refName returns the name segment of an action address (everything after the
+// first slash), or "" if there is no slash.
 func refName(ref string) string {
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[i+1:]
@@ -810,31 +793,22 @@ func agoUnit(n int, unit string) string {
 	return fmt.Sprintf("%d %ss ago", n, unit)
 }
 
-// txRow bundles a transaction with the viewer's handle and the resolved action
-// ref, so one partial (_tx_row) renders every transaction list identically.
-// Built in-template via the `txrow` helper.
+// txRow pairs a transaction with the viewer's address, so one partial
+// (_tx_row) renders every transaction list identically. Built in-template via
+// the `txrow` helper; the action's address is the transaction's own.
 type txRow struct {
 	Tx     client.Transaction
 	Viewer string
-	Ref    string // full "owner/name" when the action is known, else ""
 }
 
-// txRowOf resolves the action ref (via the actions map, keyed by action id) and
-// pairs the transaction with the viewer handle.
-func txRowOf(tx client.Transaction, viewer string, actions map[string]client.Action) txRow {
-	ref := ""
-	if a, ok := actions[tx.ActionID]; ok && a.ID != "" {
-		ref = a.Ref()
-	}
-	return txRow{Tx: tx, Viewer: viewer, Ref: ref}
-}
+func txRowOf(tx client.Transaction, viewer string) txRow { return txRow{Tx: tx, Viewer: viewer} }
 
 // entryRow bundles a ledger entry with the viewer's perspective, so the
 // activity list renders a movement without the template deciding sign or party.
 type entryRow struct {
 	Entry       client.LedgerEntry
 	Credited    bool   // the amount arrived in the viewer's balance
-	Counterpart string // the other side's handle; "" where the money crossed the rail
+	Counterpart string // the other side's address; "" where the money crossed the rail
 	// TxID is the reason when it names a transaction, the link to its receipt;
 	// Note is any other reason (an obligation's ticket, a transfer's note),
 	// rendered as the text it is.
@@ -848,9 +822,9 @@ var idShape = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 // entryRowOf reads the movement from the kernel's own from/to projection: the
 // viewer is on one side, and the counterpart is the other.
 func entryRowOf(e client.LedgerEntry, viewer string) entryRow {
-	r := entryRow{Entry: e, Credited: e.ToHandle == viewer, Counterpart: e.ToHandle}
+	r := entryRow{Entry: e, Credited: e.To == viewer, Counterpart: e.To}
 	if r.Credited {
-		r.Counterpart = e.FromHandle
+		r.Counterpart = e.From
 	}
 	if idShape.MatchString(e.Reason) {
 		r.TxID = e.Reason
@@ -873,24 +847,24 @@ const amountDash = template.HTML(`<span class="muted">—</span>`)
 func (r *Renderer) txAmount(tx client.Transaction, viewer string) template.HTML {
 	switch tx.Status {
 	case "failure":
-		if viewer == tx.OwnerHandle {
+		if viewer == tx.Owner {
 			return r.sigAmount("sig-refunded", "↩ ", tx.Gross)
 		}
 		return amountDash
 	case "open":
-		if viewer == tx.OwnerHandle {
+		if viewer == tx.Owner {
 			return r.sigAmount("sig-escrow", "◷ ", tx.Gross)
 		}
 		return amountDash
 	default: // success / settled
 		var amt int64
-		if viewer == tx.OwnerHandle {
+		if viewer == tx.Owner {
 			amt -= tx.Gross
 		}
-		if viewer == tx.TargetHandle {
+		if viewer == tx.Target {
 			amt += tx.Net
 		}
-		if viewer == superuserHandle {
+		if viewer == r.identity.Address(superuserHandle) {
 			amt += tx.Fee
 		}
 		switch {

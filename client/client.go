@@ -8,9 +8,11 @@
 // errors.go). docs/API.md is the design contract; where the live kernel
 // diverges, the verified behavior is recorded here and is authoritative.
 //
-// Names are bare (requirements.md §4) and this client never rewrites one: "@"
-// separates a kernel, so a sigiled handle, ref, or selector is input the kernel
-// rejects (verified live 2026-08-05) and that typed error is the validation.
+// Every name is an address (requirements.md §4): a user is handle@kernel and an
+// action owner@kernel/name, on this kernel too. This client passes names through
+// verbatim and never composes, strips, or rewrites one; a bare name is input the
+// kernel refuses (verified live 2026-09-26), and that typed error is the
+// validation.
 package client
 
 import (
@@ -57,14 +59,14 @@ type Tokens struct {
 // integer credits. The kernel retired email in v0.9; Description is the free-text
 // "about" an account may set (empty until set).
 type User struct {
-	ID          string       `json:"id"`
-	Handle      string       `json:"handle"`
-	Description string       `json:"description"`
-	Available   int64        `json:"available"`
-	Locked      int64        `json:"locked"`
-	RailAddress string       `json:"rail_address,omitempty"` // the caller's registered payout address
-	Connectors  []Connector  `json:"connectors"`             // directory-grouped consent tree (§8)
-	Connections []Connection `json:"connections"`            // full upstream-account inventory
+	ID                string       `json:"id"`
+	Address           string       `json:"address"` // handle@kernel
+	Description       string       `json:"description"`
+	Available         int64        `json:"available"`
+	Locked            int64        `json:"locked"`
+	BlockchainAddress string       `json:"blockchain_address,omitempty"` // the caller's registered payout address
+	Connectors        []Connector  `json:"connectors"`                   // directory-grouped consent tree (§8)
+	Connections       []Connection `json:"connections"`                  // full upstream-account inventory
 }
 
 // Connector is one node of the directory-grouped consent tree in GET /v1/me: a
@@ -81,7 +83,7 @@ type Connector struct {
 // a consent record only — never any token material. ProviderKey is the opaque key
 // of the backing Connection (omitted on an unbackfilled legacy grant).
 type Grant struct {
-	Action      string   `json:"action"` // owner/name of the granted action
+	Action      string   `json:"action"` // the granted action's address
 	Scopes      []string `json:"scopes"`
 	ProviderKey string   `json:"provider_key,omitempty"`
 	CreatedAt   string   `json:"created_at"`
@@ -120,19 +122,18 @@ type HTTPSpec struct {
 	Params []HTTPParam `json:"params,omitempty"`
 }
 
-// Action carries both id (for management) and action ("owner/name", for
-// calling) per R8. For kind=http, Source is a JSON-encoded descriptor string
+// Action carries both id (for management) and action (its address,
+// owner@kernel/name, for calling) per R8. For kind=http, Source is a JSON-encoded descriptor string
 // (present on single reads, omitted on list reads); do not interpret it for
 // display. Instead, kind=http reads carry a decomposed HTTP object (absent for
-// other kinds), which is the structured view the UI renders. Identity is by
-// handle: the kernel returns owner_handle (not a user id) on every read.
+// other kinds), which is the structured view the UI renders. The owner is the
+// address's first segment; the kernel serves no separate owner field.
 type Action struct {
-	ID          string `json:"id"`
-	Action      string `json:"action"`
-	OwnerHandle string `json:"owner_handle"`
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	Active      bool   `json:"active"`
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Active bool   `json:"active"`
 	// Visibility is the kernel's three-way caller-scope: "private" (owner only),
 	// "local" (any local caller of this kernel, never peers), or "public" (anyone,
 	// and the only value served in manifests/gossip). It replaces the old boolean
@@ -212,16 +213,8 @@ func (a Action) Reports() []IssuerEvidence {
 // the payment-step and wallet-send signal (requirements.md §6.3, §6.5).
 func (a Action) IsTransfer() bool { return a.Effect == "transfer" }
 
-// Ref returns "owner/name" for this action (a remote proxy resolves as
-// "owner@kernel/name" in the kernel-computed field). The kernel populates the
-// computed Action field, but we derive from OwnerHandle + Name so a partial
-// record (e.g. a lookup result without the computed field) still resolves.
-func (a Action) Ref() string {
-	if a.Action != "" {
-		return a.Action
-	}
-	return a.OwnerHandle + "/" + a.Name
-}
+// Ref returns the action's address, owner@kernel/name, as the kernel serves it.
+func (a Action) Ref() string { return a.Action }
 
 // Vis returns the normalized visibility ("private", "local", or "public"),
 // defaulting an empty value (legacy kernel) to "private" — the kernel default.
@@ -277,11 +270,11 @@ type UpdateActionInput struct {
 }
 
 // Process is a funded computation lifetime. Processes are auto-created by run.
-// The kernel identifies the owner by handle and flags a process parked on a
+// The kernel identifies the owner by address and flags a process parked on a
 // remote receipt (funds locked on a possibly-offline peer) via AwaitingReceipt.
 type Process struct {
 	ID                   string `json:"id"`
-	OwnerHandle          string `json:"owner_handle"`
+	Owner                string `json:"owner"`
 	Available            int64  `json:"available"`
 	Locked               int64  `json:"locked"`
 	Status               string `json:"status"`
@@ -319,18 +312,19 @@ type TransactionRating struct {
 
 // Transaction is the settled record of a call. gross/net/fee/refund are integer
 // credits. result is null on failure; reason is set on failure. Parties are
-// identified by handle (owner=payer, caller=requester, target=payee); the kernel
-// never returns raw user ids.
+// identified by address (owner=payer, caller=requester, target=payee; a peer
+// kernel as a party is its name alone), and the action by its address as it
+// was when the call was made; the kernel never returns raw user ids.
 type Transaction struct {
 	ID            string             `json:"id"`
 	ProcessID     string             `json:"process_id"`
 	TraceID       string             `json:"trace_id"`
 	ParentTraceID string             `json:"parent_trace_id"`
-	OwnerHandle   string             `json:"owner_handle"`
-	CallerHandle  string             `json:"caller_handle"`
-	TargetHandle  string             `json:"target_handle"`
+	Owner         string             `json:"owner"`
+	Caller        string             `json:"caller"`
+	Target        string             `json:"target"`
 	ActionID      string             `json:"action_id"`
-	ActionName    string             `json:"action_name"`
+	Action        string             `json:"action"`
 	Args          json.RawMessage    `json:"args"`
 	Result        json.RawMessage    `json:"result"`
 	Status        string             `json:"status"`
@@ -389,23 +383,23 @@ type Rating struct {
 
 // Step is a suspended computation boundary: a pre-baked future Call that a
 // designated caller completes by supplying the remaining input. The required
-// caller is identified by handle; the computed action ("owner/name") is present
+// caller is identified by address; the computed action address is present
 // on both list and single reads. WaitingOnPeer flags a waiting step whose caller
 // is a federation peer (work parked on a possibly-offline kernel).
 type Step struct {
-	ID                   string          `json:"id"`
-	ParentTraceID        string          `json:"parent_trace_id"`
-	RequiredCallerHandle string          `json:"required_caller_handle"`
-	OwnerHandle          string          `json:"owner_handle"` // process owner/payer; chat doorbells carry chat
-	ActionID             string          `json:"action_id"`
-	Action               string          `json:"action"`
-	Price                int64           `json:"price"`
-	PartialArgs          json.RawMessage `json:"partial_args"`
-	Status               string          `json:"status"` // waiting|running|done|cancelled
-	WaitingOnPeer        bool            `json:"waiting_on_peer"`
-	TxID                 string          `json:"tx_id"`
-	CreatedAt            string          `json:"created_at"`
-	CreatedBy            string          `json:"created_by"` // creating action owner/name (from the parent trace)
+	ID             string          `json:"id"`
+	ParentTraceID  string          `json:"parent_trace_id"`
+	RequiredCaller string          `json:"required_caller"` // the completer's address; a peer kernel's name alone
+	Owner          string          `json:"owner"`           // process owner/payer; chat doorbells carry chat
+	ActionID       string          `json:"action_id"`
+	Action         string          `json:"action"`
+	Price          int64           `json:"price"`
+	PartialArgs    json.RawMessage `json:"partial_args"`
+	Status         string          `json:"status"` // waiting|running|done|cancelled
+	WaitingOnPeer  bool            `json:"waiting_on_peer"`
+	TxID           string          `json:"tx_id"`
+	CreatedAt      string          `json:"created_at"`
+	CreatedBy      string          `json:"created_by"` // the creating action's address (from the parent trace)
 	// AllowedInput is the kernel-derived completion schema on a waiting step
 	// (action.input_schema minus the keys sealed in partial_args), served so the
 	// completer never needs to read the target action — which may be private and
@@ -414,7 +408,7 @@ type Step struct {
 	AllowedInput json.RawMessage `json:"allowed_input,omitempty"`
 }
 
-// Ref returns "owner/name" for this step's next action.
+// Ref returns the address of this step's next action.
 func (s Step) Ref() string { return s.Action }
 
 // StepCompleteReply is the response of POST /v1/steps/{id}/complete.
@@ -447,18 +441,20 @@ type ImportRejection struct {
 // Health is GET /health (open): the identity banner a client pins before it
 // trusts a server (API C13). Beyond naming the kernel it fixes the money unit —
 // Decimals is the world's base-unit scale and Symbol what that money is called,
-// "credits" or "USDC" — and, on a world whose money has addresses, RailAddress
-// is where this kernel is paid and Token the contract that money is.
+// "credits" or "USDC" — and, on a world whose money has addresses,
+// BlockchainAddress is where this kernel is paid and Token the contract that
+// money is. Handle is the kernel's own name: the kernel segment of every local
+// address.
 type Health struct {
-	Status        string `json:"status"`
-	Handle        string `json:"handle"`
-	PublicKey     string `json:"public_key"`
-	Network       string `json:"network"`
-	NetworkDigest string `json:"network_digest"`
-	Decimals      int    `json:"decimals"`
-	Symbol        string `json:"symbol"`
-	Token         string `json:"token"`
-	RailAddress   string `json:"rail_address"`
+	Status             string `json:"status"`
+	Handle             string `json:"handle"`
+	PublicKey          string `json:"public_key"`
+	Network            string `json:"network"`
+	NetworkFingerprint string `json:"network_fingerprint"`
+	Decimals           int    `json:"decimals"`
+	Symbol             string `json:"symbol"`
+	Token              string `json:"token"`
+	BlockchainAddress  string `json:"blockchain_address"`
 }
 
 // KeyLen is the length of a kernel's public key: 32 bytes, base64url-encoded.
@@ -661,8 +657,8 @@ type GrantPlanAction struct {
 	Granted  bool   `json:"granted"`
 }
 
-// PlanGrants returns the consent plan for a selector (owner, owner/path, or a
-// full owner/name). Authenticated as the caller whose coverage is planned.
+// PlanGrants returns the consent plan for a selector (owner@kernel,
+// owner@kernel/path, or a full action address). Authenticated as the caller whose coverage is planned.
 func (c *Client) PlanGrants(ctx context.Context, token, selector string) (GrantPlan, error) {
 	q := url.Values{"selector": {selector}}
 	var p GrantPlan
@@ -783,13 +779,13 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 // the rail; Reason names the transaction that caused the movement, or the
 // obligation it settles.
 type LedgerEntry struct {
-	Amount         int64  `json:"amount"`
-	Reason         string `json:"reason,omitempty"`
-	ExternalKey    string `json:"external_key,omitempty"`
-	OperatorHandle string `json:"operator_handle,omitempty"`
-	FromHandle     string `json:"from_handle,omitempty"`
-	ToHandle       string `json:"to_handle,omitempty"`
-	CreatedAt      string `json:"created_at"`
+	Amount      int64  `json:"amount"`
+	Reason      string `json:"reason,omitempty"`
+	ExternalKey string `json:"external_key,omitempty"`
+	Operator    string `json:"operator,omitempty"`
+	From        string `json:"from,omitempty"`
+	To          string `json:"to,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // Withdrawal is one payout of the caller's own credits. The id is minted by the
@@ -806,7 +802,7 @@ type Withdrawal struct {
 	Reason      string `json:"reason,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	FinalizedAt string `json:"finalized_at,omitempty"`
-	PartyHandle string `json:"party_handle,omitempty"`
+	Party       string `json:"party,omitempty"`
 }
 
 // Withdraw pays credits out to the address the caller registered. The id is the
@@ -1207,7 +1203,7 @@ func (c *Client) GetStep(ctx context.Context, token, id string) (Step, error) {
 
 // CreateStepInput is the body for POST /v1/steps: a waiting step is a funded
 // continuation bound to the funding trace, addressed to a required caller.
-// Action is the completion target as "owner/name" or a raw id, exactly as
+// Action is the completion target as an address or a raw id, exactly as
 // /v1/run takes it — the kernel rejects the older action_id field outright
 // (verified live 2026-08-05: "action is required").
 type CreateStepInput struct {
@@ -1310,29 +1306,4 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 func RequestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
 	return id
-}
-
-// ActionsByID fetches each transaction's action once, deduped, so a list can
-// render the full owner/name ref and link it rather than a bare id. A deleted
-// action (404) is simply absent from the map, and the row falls back to the id.
-//
-// It lives here because resolving a set of action ids is the client's business,
-// not a handler's: the app modules render transaction rows too, and a second
-// copy of this loop out there would be the place the two drift.
-func (c *Client) ActionsByID(ctx context.Context, token string, txs []Transaction) map[string]Action {
-	actions := map[string]Action{}
-	for _, tx := range txs {
-		if tx.ActionID == "" {
-			continue
-		}
-		if _, seen := actions[tx.ActionID]; seen {
-			continue
-		}
-		if a, err := c.GetAction(ctx, token, tx.ActionID); err == nil {
-			actions[tx.ActionID] = a
-		} else {
-			actions[tx.ActionID] = Action{} // remembered as absent, so it is asked once
-		}
-	}
-	return actions
 }

@@ -45,7 +45,7 @@ func postKernel(t *testing.T, d *Daemon, path, caller, body string) (int, map[st
 
 func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	d := newDaemon(t)
-	alice, bob, carol := "alice", "bob", "carol"
+	alice, bob, carol := "alice@k", "bob@k", "carol@k"
 
 	// unauthenticated caller → 401, no state change.
 	if code, _ := postKernel(t, d, "/msg/create-room", "", `{"name":"x"}`); code != http.StatusUnauthorized {
@@ -53,7 +53,7 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	}
 
 	// alice creates a room with bob → 200 + room_id.
-	code, body := postKernel(t, d, "/msg/create-room", alice, `{"name":"general","members":["bob"]}`)
+	code, body := postKernel(t, d, "/msg/create-room", alice, `{"name":"general","members":["bob@k"]}`)
 	if code != http.StatusOK || body["ok"] != true {
 		t.Fatalf("create-room status=%d body=%v", code, body)
 	}
@@ -66,7 +66,7 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 	if code, body := postKernel(t, d, "/msg/message", bob, `{"room":"`+room+`","text":"hi"}`); code != http.StatusOK || body["message_id"] == "" {
 		t.Fatalf("member post status=%d body=%v", code, body)
 	}
-	if _, msgs, _ := d.store.Room("bob", room); len(msgs) != 1 || msgs[0].From != "bob" {
+	if _, msgs, _ := d.store.Room("bob@k", room); len(msgs) != 1 || msgs[0].From != "bob@k" {
 		t.Fatalf("message not attributed to bob: %+v", msgs)
 	}
 
@@ -79,7 +79,7 @@ func TestKernelWriteIdentifiesCallerAndAuthorizes(t *testing.T) {
 		t.Fatalf("post to missing room status=%d, want 404", code)
 	}
 	// bob (non-creator) adds a member → 403 (creator-only, enforced on the kernel surface).
-	if code, _ := postKernel(t, d, "/msg/add-member", bob, `{"room":"`+room+`","member":"dave"}`); code != http.StatusForbidden {
+	if code, _ := postKernel(t, d, "/msg/add-member", bob, `{"room":"`+room+`","member":"dave@k"}`); code != http.StatusForbidden {
 		t.Fatalf("non-creator add-member status=%d, want 403", code)
 	}
 }
@@ -147,17 +147,17 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 	d := New(s, "s3cret", "vs3cret", testAuth, func(ev NotifyEvent) { got = append(got, ev) })
 	t.Cleanup(func() { _ = d.Close() })
 
-	_, body := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["bob"]}`)
+	_, body := postKernel(t, d, "/msg/create-room", "alice@k", `{"name":"general","members":["bob@k"]}`)
 	room := body["room_id"].(string)
 
 	// A successful post fires exactly one event with the room, sender, and members
 	// (sender included — the plugin excludes it).
-	postKernel(t, d, "/msg/message", "alice", `{"room":"`+room+`","text":"hi"}`)
+	postKernel(t, d, "/msg/message", "alice@k", `{"room":"`+room+`","text":"hi"}`)
 	if len(got) != 1 {
 		t.Fatalf("events after post = %d, want 1", len(got))
 	}
 	ev := got[0]
-	if ev.RoomID != room || ev.Sender != "alice" || ev.RoomName != "general" {
+	if ev.RoomID != room || ev.Sender != "alice@k" || ev.RoomName != "general" {
 		t.Errorf("event = %+v", ev)
 	}
 	if len(ev.Members) != 2 {
@@ -165,7 +165,7 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 	}
 
 	// A rejected post (non-member) fires no event.
-	postKernel(t, d, "/msg/message", "carol", `{"room":"`+room+`","text":"nope"}`)
+	postKernel(t, d, "/msg/message", "carol@k", `{"room":"`+room+`","text":"nope"}`)
 	if len(got) != 1 {
 		t.Errorf("events after rejected post = %d, want still 1", len(got))
 	}
@@ -173,16 +173,16 @@ func TestNotifierFiresOnPostOnly(t *testing.T) {
 
 func TestReadRoute(t *testing.T) {
 	d := newDaemon(t)
-	_, body := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["bob"]}`)
+	_, body := postKernel(t, d, "/msg/create-room", "alice@k", `{"name":"general","members":["bob@k"]}`)
 	room := body["room_id"].(string)
-	postKernel(t, d, "/msg/message", "alice", `{"room":"`+room+`","text":"hi bob"}`)
+	postKernel(t, d, "/msg/message", "alice@k", `{"room":"`+room+`","text":"hi bob"}`)
 
 	// unauthenticated → 401
 	if code, _ := postKernel(t, d, "/msg/read", "", `{"room":"`+room+`"}`); code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated read status=%d, want 401", code)
 	}
 	// member reads the message
-	code, in := postKernel(t, d, "/msg/read", "bob", `{"room":"`+room+`"}`)
+	code, in := postKernel(t, d, "/msg/read", "bob@k", `{"room":"`+room+`"}`)
 	if code != http.StatusOK || in["ok"] != true {
 		t.Fatalf("read status=%d body=%v", code, in)
 	}
@@ -190,11 +190,11 @@ func TestReadRoute(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("read messages = %d, want 1: %v", len(msgs), in["messages"])
 	}
-	if m0, _ := msgs[0].(map[string]any); m0["from"] != "alice" || m0["text"] != "hi bob" {
+	if m0, _ := msgs[0].(map[string]any); m0["from"] != "alice@k" || m0["text"] != "hi bob" {
 		t.Errorf("read message = %v", msgs[0])
 	}
 	// non-member → 403
-	if code, _ := postKernel(t, d, "/msg/read", "carol", `{"room":"`+room+`"}`); code != http.StatusForbidden {
+	if code, _ := postKernel(t, d, "/msg/read", "carol@k", `{"room":"`+room+`"}`); code != http.StatusForbidden {
 		t.Errorf("non-member read status=%d, want 403", code)
 	}
 }
@@ -241,48 +241,38 @@ func TestValidateUserActivatesToken(t *testing.T) {
 	}
 }
 
-// Handles are bare and the daemon never rewrites one, so a sigiled handle is bad
-// input wherever it arrives — the browser form and a headless action call get the
-// same answer. Rewriting it would make "@bob" silently mean "bob" here while "@"
-// separates a kernel everywhere else (requirements.md §4).
-func TestSigiledHandleRejectedAtWriteBoundary(t *testing.T) {
+// Every principal is an address and the daemon never composes or rewrites
+// one, so a bare handle is bad input wherever it arrives — the browser form and
+// a headless action call get the same answer. Reading "bob" as bob@<some
+// kernel> here would name a principal the kernel never did (requirements.md §4).
+func TestBareHandleRejectedAtWriteBoundary(t *testing.T) {
 	d := newDaemon(t)
 
-	// A member list carrying a sigil (the create-room path).
-	status, body := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["@bob"]}`)
+	// A member list carrying a bare handle (the create-room path).
+	status, body := postKernel(t, d, "/msg/create-room", "alice@k", `{"name":"general","members":["bob"]}`)
 	if status != http.StatusBadRequest {
-		t.Errorf("create-room with @bob = %d, want 400", status)
+		t.Errorf("create-room with bob = %d, want 400", status)
 	}
-	if msg, _ := body["error"].(string); !strings.Contains(msg, "must be bare") {
-		t.Errorf("error = %v, want a bare-handle rejection", body["error"])
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "not an address") {
+		t.Errorf("error = %v, want a not-an-address refusal", body["error"])
 	}
 
 	// The same on the single-member path (add-member), which is what a headless
 	// chat/msg/add-member call reaches.
-	status, _ = postKernel(t, d, "/msg/add-member", "alice", `{"room":"r1","member":"@bob"}`)
+	status, _ = postKernel(t, d, "/msg/add-member", "alice@k", `{"room":"r1","member":"bob"}`)
 	if status != http.StatusBadRequest {
-		t.Errorf("add-member with @bob = %d, want 400", status)
+		t.Errorf("add-member with bob = %d, want 400", status)
 	}
 
-	// And a sigiled CALLER (a stale identity token) is refused rather than quietly
-	// canonicalized into someone's account.
-	status, _ = postKernel(t, d, "/msg/create-room", "@alice", `{"name":"general"}`)
+	// And a bare CALLER (a pre-address identity token) is refused rather than
+	// quietly placed on some kernel.
+	status, _ = postKernel(t, d, "/msg/create-room", "alice", `{"name":"general"}`)
 	if status != http.StatusBadRequest {
-		t.Errorf("sigiled caller = %d, want 400", status)
+		t.Errorf("bare caller = %d, want 400", status)
 	}
 
-	// Bare handles still work.
-	if status, _ := postKernel(t, d, "/msg/create-room", "alice", `{"name":"general","members":["bob"]}`); status != http.StatusOK {
-		t.Errorf("bare handles = %d, want 200", status)
-	}
-}
-
-// The action schemas an agent reads must teach bare handles: they are the only
-// instruction a headless caller gets.
-func TestActionSchemasTeachBareHandles(t *testing.T) {
-	for _, op := range Ops {
-		if strings.Contains(string(op.InputSchema), "@bob") || strings.Contains(string(op.InputSchema), "@carol") {
-			t.Errorf("%s input schema still teaches a sigiled handle", op.Name)
-		}
+	// Addresses work.
+	if status, _ := postKernel(t, d, "/msg/create-room", "alice@k", `{"name":"general","members":["bob@k"]}`); status != http.StatusOK {
+		t.Errorf("addresses = %d, want 200", status)
 	}
 }

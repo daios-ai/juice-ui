@@ -25,7 +25,7 @@
 <div class="table-scroll">
 <table>
   <thead><tr><th>ID</th><th>Action</th><th>Role</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
-  <tbody>{{range $d.Transactions}}{{template "_tx_row" (txrow . $d.MyHandle $d.Actions)}}{{end}}</tbody>
+  <tbody>{{range $d.Transactions}}{{template "_tx_row" (txrow . $d.Me)}}{{end}}</tbody>
 </table>
 </div>
 {{else}}<p class="muted">No transactions.</p>{{end}}

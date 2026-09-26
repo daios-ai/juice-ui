@@ -10,7 +10,7 @@
 <table>
   <thead><tr><th>ID</th><th>Action</th><th>Role</th><th class="money">Amount</th><th>Status</th><th>When</th></tr></thead>
   <tbody>
-  {{range .Data.Transactions}}{{template "_tx_row" (txrow . $.Data.MyHandle $.Data.Actions)}}{{end}}
+  {{range .Data.Transactions}}{{template "_tx_row" (txrow . $.Data.Me)}}{{end}}
   </tbody>
 </table>
 </div>

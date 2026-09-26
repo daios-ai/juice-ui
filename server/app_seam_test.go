@@ -40,7 +40,7 @@ func (f *seamFake) Stop(ctx context.Context) error  { return nil }
 // shared base set, so app pages can reference them.
 func TestAppSeamMerges(t *testing.T) {
 	fake := &seamFake{}
-	r, err := NewRenderer(playUnit, fake.Templates())
+	r, err := NewRenderer(playKernel, fake.Templates())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestAppSeamMerges(t *testing.T) {
 // unauthenticated; a missing route would 404).
 func TestAppSeamMountsAndStarts(t *testing.T) {
 	fake := &seamFake{}
-	r, err := NewRenderer(playUnit, fake.Templates())
+	r, err := NewRenderer(playKernel, fake.Templates())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,32 @@
 # Juice Web UI Requirements
 
-Version: 0.9.0
+Version: 0.10.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.10.0.** The kernel (9705b3b) names every principal by
+> address: a user is `handle@kernel` and an action `owner@kernel/name`, on the
+> user's own kernel too, as input and output alike, and a bare name is refused
+> everywhere (§4). The UI therefore **stops interpreting names**. Every served
+> name is passed through and compared verbatim; the party fields are renamed for
+> their role (`owner`, `caller`, `target`, `from`, `to`, `required_caller`,
+> `party`) and hold addresses; the session holds the signed-in address. Two
+> readings remain, each in one place: an action address splits at its first `/`
+> into owner and name, and it is **local iff its kernel segment is this
+> kernel's own name** — never because it lacks an `@`, which every address now
+> carries. One composition remains, `handle@<this kernel>` from `/health`: the
+> entry screen (which already names the kernel, so a person types only the
+> handle), the natives the UI runs to power a surface, the superuser, and an
+> app's service account (§5).
+>
+> Less code follows. A transaction carries its action's address, so the per-row
+> action read (`ActionsByID`) and the "(deleted)" fallbacks are gone; an action
+> row carries no owner, so the ref's `owner/name` join is gone; the settings
+> page stops fetching transactions and processes it never rendered. The chat
+> app's store qualifies the bare names it held once, and its boundary now
+> refuses a bare name as it once refused a sigil. The agents app keeps its
+> bare-handle homes, which the daemon names, and reads the account by address.
+> `network_digest` and `rail_address` are `network_fingerprint` and
+> `blockchain_address`. Measured in `docs/kernel-v0.17-verification.md`.
 
 > **What changed in 0.9.0.** The kernel (d59742b) retired its stats route and
 > started journalling settlement, and the UI follows both, which removes more
@@ -499,21 +524,25 @@ detectable.
   fields.
 * Structured fields (`args`, `result`) are inline JSON objects, not
   double-encoded strings.
-* Action identity is bare `owner/name`, parsed by a **single split on the first
-  `/`** — owner segment before, name (the remainder) after. Never split on every
-  `/`: names may contain `/` (e.g. `sys/llm/chat`), and the rule is unambiguous
-  because handles cannot contain `/`. If the owner segment contains `@`, the
-  part after it names a **kernel**: `owner@kernel/name` is a remote action,
-  `kernel` a presentation-only local alias for a peer key — never an identity
-  and never a key for anything in the UI. Handles are bare (`sys`, `alice`); the
-  UI **emits** bare names everywhere and **MUST NOT rewrite** a name on input.
-  The migration period is over: `@` separates a kernel, so a sigiled handle,
-  ref, or selector is ill-formed input the kernel rejects — the UI passes it
-  through and surfaces that typed error, because silently reading `@alice/greet`
-  as `alice/greet` would make a UI-only dialect of a grammar the CLI and kernel
-  share. In a URL, `owner/name` is percent-encoded.
+* **Every name is an address** (kernel §D15): a user is `handle@kernel`, an
+  action `owner@kernel/name`, and the kernel segment is this kernel's own name
+  (`/health.handle`) for its own principals, a petname or public key for a
+  peer's. A bare `handle` or `owner/name` is refused by the kernel at every
+  input. The UI **renders and sends names exactly as served** — it never
+  strips, decorates, or rewrites one — and its only readings of an address are
+  two, each defined once: the owner is the segment before the first `/`
+  (names may hold `/`, an owner never does), and an action is **local iff its
+  kernel segment is this kernel's name**. A local owner links to its owner page
+  (`/users/{address}`); another kernel's does not, since no local profile backs
+  it. The UI composes exactly one address shape, `handle@<this kernel>`, and
+  only where it names this kernel's own principal from a handle: the entry
+  screen (§5), the natives that power a surface (§6.2), the superuser `sys`,
+  and an app's service account. In a URL path an address is written with its
+  `@` literal (the kernel refuses `%40` there); in a query it is
+  percent-encoded like any value. A peer kernel as a party is its name alone.
 * Action read/list responses carry both `id` (UUID, for management) and a
-  computed `action` (`owner/name`, for calling). The UI uses `action` directly
+  computed `action` (the address, for calling); an action row carries no owner
+  field — the owner is the address's first segment. The UI uses `action` directly
   in call requests and never asks the user to type a UUID.
 * State-mutating responses return the updated resource; the UI re-renders from
   that response. Destructive operations and `end` return 204.
@@ -541,8 +570,14 @@ browser sign-out would revoke the operator's own command-line session.
 What the standard asks for observably, the UI does: it names its kernel from the
 shared records, refuses a `/health` that is not the recorded key, shows which
 kernel and world is in use, and keys everything durable by
-`(network digest, kernel public key, principal id)`.
+`(network fingerprint, kernel public key, principal id)`.
 
+* The entry screen (sign in, create account, recover) takes a **handle**: the
+  screen names the kernel it signs in to, so the account is that handle's
+  address here, `handle@<kernel>`, composed from `/health`. The session holds
+  that address, and it is what every "is this me" comparison uses; the
+  superuser is `sys@<kernel>`. A session from before addresses carries no
+  fingerprint pin and is signed out by the ordinary kernel check.
 * Browser login uses authorization-code with PKCE. The BFF renders the login
   form, generates the verifier/challenge (verifier kept server-side), calls
   `POST /v1/auth/authorize`, extracts the `code` from the returned redirect, and
@@ -709,18 +744,20 @@ spend:
 * Price MUST appear on each card. Sort and filter by price MUST be available.
 * **Discovered results.** `sys/lookup` fuses the gossip discovery cache for an
   authenticated local caller, so results MAY name a remote action this kernel has
-  not resolved: the ref is kernel-qualified (`owner@<kernel-key>/name`) and the
-  `action_id` is the **remote** id, which resolves to nothing locally. Such a card
-  MUST be rendered from the lookup row alone, and MUST show the kernel-qualified
-  ref (owner segment unlinked, §6.2 refs), the description, and a quiet chip
+  not resolved: its address names another kernel (`owner@<kernel-key>/name`) and
+  the `action_id` is the **remote** id, which resolves to nothing locally. Such a
+  card MUST be rendered from the lookup row alone, and MUST show the address
+  (owner segment unlinked, §6.2 refs), the description, and a quiet chip
   marking it as discovered, distinct from the remote-proxy chip. It MUST NOT show
   a reputation strip (the discovery cache stores none). Its link is the resolve
   entry, not a page built from the row.
   **A row is discovered iff its `action_id` names no local action** — the UI
-  attempts the ordinary read and falls back when it 404s. A kernel-qualified ref
-  MUST NOT be the test: once resolved, a proxy keeps its remote ref *and* gains a
-  local row with real stats, so reading discovery off the ref would strip a card
-  the buyer has already paid for down to a stranger's.
+  attempts the ordinary read and falls back when it 404s; a row that fails the
+  read is discovered iff its address is another kernel's. The address alone
+  MUST NOT be the test: once resolved, a proxy keeps its remote address *and*
+  gains a local row with a record of its own, so reading discovery off the
+  address would strip a card the buyer has already paid for down to a
+  stranger's.
 * **`observed_at` marks a remote-backed row.** The kernel serves it on any row
   whose terms were last verified against their home kernel — a gossip
   observation, or a proxy's reconcile — and omits it on a local action. Where a
@@ -772,13 +809,13 @@ spend:
   section.
 * Ratings MUST render as reviews (0/1 value, `note`, newest first, paginated),
   labeled as ratings from paid calls.
-* The owner segment of `owner/name` MUST be visually emphasized and link to an
-  owner profile (public actions, aggregate stats, account age). A **remote** ref
-  (`owner@kernel/name`) renders the whole owner segment in the same emphasized
-  monospace but MUST NOT link it anywhere: the kernel alias is presentation-only
-  and there is no local profile behind a remote owner (§4; extends §8's inert
-  counterparty rule). Card-art hue keys off the owner segment string; the 0.4.0
-  de-sigiling reshuffles it once, and no compatibility shim is permitted.
+* The owner of an action address MUST be visually emphasized and, when the
+  action is local (§4), link to the owner's profile at `/users/{address}`
+  (public actions, aggregate stats, account age). Another kernel's owner renders
+  in the same emphasized monospace but MUST NOT link anywhere: there is no local
+  profile behind it (§4; extends §8's inert counterparty rule). Card-art hue
+  keys off the owner's address; 0.10.0 reshuffles it once, and no compatibility
+  shim is permitted.
 
 **Run form.**
 
@@ -1021,8 +1058,8 @@ open (parked steps), the result MUST say so and link to the Wallet.
   kernel-vouched fact or it is not displayed (§7); the entry is that fact.
   Where the kernel additionally serves `value`/`value_to` on a transaction,
   they render as breakdown rows, zero-suppressed, and the payer named beside
-  them is the transaction's **`caller_handle`** — the immediate caller, whose
-  balance the value actually leaves — never the `owner_handle` that pays for
+  them is the transaction's **`caller`** — the immediate caller, whose
+  balance the value actually leaves — never the `owner` that pays for
   execution. The two differ exactly when a payment step settles inside someone
   else's process (§6.3).
 * **Every world pays out.** A withdrawal is offered wherever it has somewhere
@@ -1053,11 +1090,11 @@ open (parked steps), the result MUST say so and link to the Wallet.
   because sending money is running an action; search did not lose its native
   because ranking is not.
 * The transaction list (`GET /v1/transactions`) MUST return rows where the user
-  is buyer, caller, or seller. The kernel renders each party as a handle —
-  `owner_handle`, `caller_handle`, `target_handle` — and returns no raw user id,
-  so the UI compares handles. Each row MUST show the user's role, the action
-  (`owner/name`, linked via `GET /v1/actions/{action_id}`; a truncated ID if the
-  action was since deleted), status, and cost breakdown.
+  is buyer, caller, or seller. The kernel renders each party as an address —
+  `owner`, `caller`, `target` — and returns no raw user id, so the UI compares
+  addresses. Each row MUST show the user's role, the action (the transaction's
+  own `action` address, captured with the call, so no action is re-read and a
+  deleted one still names itself), status, and cost breakdown.
 * The receipt page MUST show parties (buyer/seller, viewer's role highlighted),
   action ref, inline args and result, gross/fee/net (fee captioned "on value
   added"), failure `reason` when present, and the buyer's rating block.
@@ -1219,12 +1256,13 @@ symmetry, but because the kernel refuses anything else.
   guess what the kernel declines to guess. Each detail page therefore renders
   one record shape, never one padded with the other's empty fields.
 * Its disclosure MUST state the consequence beside the field, and the two
-  consequences differ: renaming a **user** frees the old handle and carries
+  consequences differ: renaming a **user** frees the old address and carries
   every reference to the new one; naming a **kernel** binds a petname here,
   exactly, and an occupied name is refused. Success MUST land on the page that
-  then exists — the new handle for a user, the unchanged key for a kernel — and
-  a rejection MUST stay put. The new name is sent as typed (§4): the kernel
-  refuses `sys` and any sigiled name, and the UI shows that reason.
+  then exists — the new address for a user, the unchanged key for a kernel — and
+  a rejection MUST stay put. The new address is sent as typed (§4): the kernel
+  refuses `sys`, a bare handle, and another kernel's name, and the UI shows
+  that reason.
 
 **What this kernel is owed.** Every cross-kernel debt settles on its own, per
 call, by a ticket both kernels name (kernel §P10), and it closes **without an
@@ -1412,11 +1450,10 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    price from the action row before running it, and where it is non-zero MUST
    degrade the surface rather than spend. An action a person chooses to run is
    unaffected: it is priced and confirmed like any other.
-3. Parse `owner/name` by the first-slash rule everywhere (§4, including the
-   remote `owner@kernel/name` form); render the owner segment distinguished, in
-   a confusable-distinct monospace face, with the owner profile one click away
-   for a local owner and no link for a remote one; show a first-time-payee hint
-   on the run form.
+3. Split an action address by the first-slash rule everywhere (§4); render the
+   owner distinguished, in a confusable-distinct monospace face, with the owner
+   profile one click away for a local owner and no link for another kernel's;
+   show a first-time-payee hint on the run form.
 4. Show, on a payment-step card before the confirm, whose funds move, how much,
    and the sealed `partial_args`; an ordinary step card shows the sealed
    `partial_args` and who asks (§6.3).
@@ -1445,15 +1482,18 @@ Every production `.go` file has a `_test.go` file with independent tests.
   force-end;
 * no action is special-cased: no bespoke form, route, command, or price helper
   keyed to a single ref anywhere in the UI (§6.5);
-* bare-handle auth (login, register, recover) with sigiled input refused, never
-  rewritten — at every boundary that reads a name (§4);
-* no surface emits a sigiled name: no template decorates a handle or ref with
-  `@`, and the only `@` a template may carry is the `owner@kernel/name` join
-  (§4), enforced by a drift guard over the core and app templates;
+* the entry screen (login, register, recover) takes a handle and signs in by
+  its address on this kernel; every other name is sent and rendered as served,
+  never rewritten (§4, §5);
+* locality: an action is local iff its kernel segment is this kernel's name,
+  and only a local owner links (§4);
+* no surface decorates a name: no template puts an `@` before a name, and the
+  only `@` a template may carry joins an address (§4), enforced by a drift
+  guard over the core and app templates;
 * the money unit: amounts scale by the world's `decimals` and always show six
   fraction digits; an amount finer than the base unit is refused, not rounded;
   and no template renders a currency symbol (§7, drift guard);
-* the session pin: a login records the kernel's key and network digest, an
+* the session pin: a login records the kernel's key and network fingerprint, an
   address that answers for another kernel ends the session, and a kernel that
   cannot identify itself cannot be signed in to (§5);
 * target-based mutations: enable/disable/update/delete name an id or a path and
@@ -1585,7 +1625,8 @@ once its prerequisite is confirmed on the running kernel.
 * **Credit position (§6.6).** Re-confirmed on 25c07cd, now at
   `GET /v1/admin/kernel`: `exposure` against `credit_limit`, the three bps
   rates, the ticket face and `lottery_max`, the `sys` split, `solvency`,
-  `custody`, `rail_address`, `finalized` and an optional `stop`. The kernel card
+  `custody`, `blockchain_address` (was `rail_address`), `finalized` and an
+  optional `stop`. The kernel card
   states them.
 * **Withdrawals and payout addresses (§6.5).** Re-confirmed on a chain world at
   25c07cd. `GET /v1/withdrawals` **pages** like every other list — with four
@@ -1603,7 +1644,7 @@ once its prerequisite is confirmed on the running kernel.
   recording it (`docs/kernel-v0.16-verification.md` §6).
 * **Held deposits — resolved (§6.6).** Verified on a local chain (anvil,
   decimals 6): a payment to the vault from an address no account has registered
-  is listed with the sender under `party_handle`, and the operator attributes it
+  is listed with the sender under `party` (was `party_handle`), and the operator attributes it
   to a user by the row's own `id`, as the contract says. (v0.14.0 refused that
   id, accepting only the bare transaction hash; fixed in v0.14.1, and both forms
   now work.)
@@ -1679,9 +1720,11 @@ once its prerequisite is confirmed on the running kernel.
   `remote_receipt_hash` and not on the ticket. As of d59742b the peer is named by
   the petname bound on first use (`k-4lnqDq15`) on both books.
 * **The remote step caller — resolved (§6.3).** As of v0.14.2 a step parked for a
-  principal on a peer renders `required_caller_handle` as `vendor@bravo` — the
+  principal on a peer renders its `required_caller` as `vendor@bravo` — the
   handle it went by when the step was made, beneath the peer's local name — with
-  the stable id still beside it. The raw-id rendering is gone.
+  the stable id still beside it. As of 9705b3b every party is served this way,
+  local ones included (`ana@alpha`), and a step addressed to the peer kernel
+  itself names it alone.
 * **The world's symbol (§7).** Confirmed on v0.14.2: `/health` carries `symbol`,
   and the kernel publishes the rendering the UI now follows.
 * **`allowed_input` on `/v1/steps` (§6.3).** Confirmed on the running kernel
@@ -1699,6 +1742,25 @@ once its prerequisite is confirmed on the running kernel.
   fields, so nothing can be collected; **no `properties` key at all** is an
   unconstrained object, where the raw editor is correct and the collapse instead
   follows from every key being sealed in `partial_args`.
+
+* **Names are addresses — resolved (§4, §5).** Confirmed on 9705b3b: every
+  input refuses a bare name (`"sys/time" is not an address: name the user as
+  handle@kernel, an action as handle@kernel/name`) — run, `?ref=`, `?owner=`, a
+  mutation target, a grant selector, a transfer recipient, `sys/message.to`,
+  sign-in, sign-up, recovery, and `/v1/admin/users/{x}`, which takes the
+  literal `ana@alpha` and refuses `%40`. Party fields are `owner`, `caller`,
+  `target`, `from`, `to`, `operator`, `required_caller`, `party`; `/v1/me` and
+  the admin user list serve `address`; a transaction serves `action` and no
+  `action_name`; an action row serves no owner field; `network_digest` and
+  `rail_address` are `network_fingerprint` and `blockchain_address`
+  (`docs/kernel-v0.17-verification.md`).
+* **Chat's doorbells — blocked (apps).** The kernel refuses to park a step on a
+  trace that has settled (`create step: the call has already settled`, 409 on
+  9705b3b), and chat mints its verification step and every doorbell off the
+  outbox seed trace, which settles when the seed call returns. Registration,
+  and so the rooms gate, fail on this kernel until chat holds a trace that is
+  still live when it mints; the address change is otherwise complete in chat
+  and its store migration verified live.
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;

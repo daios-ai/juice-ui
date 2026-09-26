@@ -31,10 +31,11 @@ var (
 	lastRename       string
 	lastDeposit      string
 	lastPeerComplete string
+	lastSignIn       string // the account an authorize named
 )
 
 // fakeHealth gives a fake kernel the identity banner every login pins: its key,
-// the network digest, and the decimals that scale every amount (§5, §7).
+// the network fingerprint, and the decimals that scale every amount (§5, §7).
 // mutationTarget reads the target an action mutation names.
 func mutationTarget(r *http.Request) string {
 	var in struct {
@@ -47,7 +48,7 @@ func mutationTarget(r *http.Request) string {
 func fakeHealth(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd",
-		 "network":"play","network_digest":"D1","decimals":0,"symbol":"credits","rail_address":""}`))
+		 "network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits","blockchain_address":""}`))
 	})
 }
 
@@ -61,26 +62,29 @@ func withEvidence(row, experience string) string {
 }
 
 func authKernel() *httptest.Server {
-	lastRename, lastDeposit, lastPeerComplete = "", "", ""
+	lastRename, lastDeposit, lastPeerComplete, lastSignIn = "", "", "", ""
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Handle string }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		lastSignIn = in.Handle
 		w.Write([]byte(`{"redirect":"?code=CODE"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","description":"","available":500,"locked":0,
-		 "connectors":[{"directory":"sys","connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}],
-		   "actions":[{"action":"sys/gmail-send","scopes":["send"],"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}],
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","description":"","available":500,"locked":0,
+		 "connectors":[{"directory":"sys@testnet","connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}],
+		   "actions":[{"action":"sys@testnet/gmail-send","scopes":["send"],"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}],
 		 "connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}]}`))
 	})
 	mux.HandleFunc("POST /v1/grants/start", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"state":"ST1","authorize_url":"https://provider.test/auth?client_id=cid&state=ST1"}`))
 	})
 	mux.HandleFunc("GET /v1/grants/plan", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"groups":[{"provider_key":"bearer:api.lena.dev","provider":"api.lena.dev","scheme":"delegated_bearer","scopes":[],"connected":true,"covered":true,"actions":[{"action_id":"AL","action":"lena/api","granted":true}]}],"skipped_loginless":0,"skipped_uncallable":0}`))
+		w.Write([]byte(`{"groups":[{"provider_key":"bearer:api.lena.dev","provider":"api.lena.dev","scheme":"delegated_bearer","scopes":[],"connected":true,"covered":true,"actions":[{"action_id":"AL","action":"lena@testnet/api","granted":true}]}],"skipped_loginless":0,"skipped_uncallable":0}`))
 	})
 	mux.HandleFunc("PUT /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		var inp struct {
@@ -92,7 +96,7 @@ func authKernel() *httptest.Server {
 			w.Write([]byte(`{"error":"invalid current password"}`))
 			return
 		}
-		w.Write([]byte(`{"id":"U1","handle":"alice","description":"about me","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","description":"about me","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("POST /v1/auth/recover/start", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"nonce":"NONCE1","expires_in_seconds":600}`))
@@ -106,8 +110,8 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
 		// T1: alice is buyer; T2: alice is seller. Both reference action "owned".
 		w.Write([]byte(`[
-			{"id":"T1","action_id":"owned","owner_handle":"alice","target_handle":"bob","caller_handle":"alice","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
-			{"id":"T2","action_id":"owned","owner_handle":"bob","target_handle":"alice","caller_handle":"bob","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
+			{"id":"T1","action_id":"owned","action":"alice@testnet/x","owner":"alice@testnet","target":"bob@testnet","caller":"alice@testnet","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"},
+			{"id":"T2","action_id":"owned","action":"alice@testnet/x","owner":"bob@testnet","target":"alice@testnet","caller":"bob@testnet","status":"success","gross":50,"fee":5,"net":45,"started_at":"2024-01-02T00:00:00Z"}
 		]`))
 	})
 	// The journal, in the d59742b shape (verified live): every movement between
@@ -116,9 +120,9 @@ func authKernel() *httptest.Server {
 	// deposit names sys as its sender.
 	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[
-			{"amount":300,"reason":"` + ledgerTx + `","created_at":"2024-01-02T12:00:00Z","operator_handle":"alice","from_handle":"alice","to_handle":"bob"},
-			{"amount":9,"reason":"obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b","created_at":"2024-01-02T11:00:00Z","operator_handle":"sys","from_handle":"alice","to_handle":"sys"},
-			{"amount":5000,"reason":"","created_at":"2024-01-01T00:00:00Z","operator_handle":"sys","from_handle":"sys","to_handle":"alice"}
+			{"amount":300,"reason":"` + ledgerTx + `","created_at":"2024-01-02T12:00:00Z","operator":"alice@testnet","from":"alice@testnet","to":"bob@testnet"},
+			{"amount":9,"reason":"obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b","created_at":"2024-01-02T11:00:00Z","operator":"sys@testnet","from":"alice@testnet","to":"sys@testnet"},
+			{"amount":5000,"reason":"","created_at":"2024-01-01T00:00:00Z","operator":"sys@testnet","from":"sys@testnet","to":"alice@testnet"}
 		]`))
 	})
 	// The kernel's public ratings projection: value/note/time and nothing else
@@ -130,12 +134,12 @@ func authKernel() *httptest.Server {
 	// plus its evidence block, which a list row never carries (verified live).
 	schemas := `"input_schema":{"type":"object","properties":{}},"output_schema":{"type":"object"}`
 	rows := map[string]string{
-		"A1": `{"id":"A1","action":"alice/hello","owner_handle":"alice","name":"hello","kind":"wasm","active":true,"public":true,"price":0,` + schemas + `}`,
-		"A3": `{"id":"A3","action":"alice/draft","owner_handle":"alice","name":"draft","kind":"wasm","active":false,"public":false,"price":0,` + schemas + `}`,
+		"A1": `{"id":"A1","action":"alice@testnet/hello","name":"hello","kind":"wasm","active":true,"public":true,"price":0,` + schemas + `}`,
+		"A3": `{"id":"A3","action":"alice@testnet/draft","name":"draft","kind":"wasm","active":false,"public":false,"price":0,` + schemas + `}`,
 		// Two delegated actions: /v1/me grants sys/gmail-send (AG) but not
 		// sys/gmail-read (AN) — the needs-account chip must split them.
-		"AG": `{"id":"AG","action":"sys/gmail-send","owner_handle":"sys","name":"gmail-send","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
-		"AN": `{"id":"AN","action":"sys/gmail-read","owner_handle":"sys","name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
+		"AG": `{"id":"AG","action":"sys@testnet/gmail-send","name":"gmail-send","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
+		"AN": `{"id":"AN","action":"sys@testnet/gmail-read","name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
 	}
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		// The kernel returns active rows by default; the inactive/private draft
@@ -153,11 +157,11 @@ func authKernel() *httptest.Server {
 		id := r.PathValue("id")
 		row, ok := rows[id]
 		if !ok {
-			owner := "bob"
+			owner := "bob@testnet"
 			if id == "owned" {
-				owner = "alice"
+				owner = "alice@testnet"
 			}
-			row = `{"id":"` + id + `","action":"` + owner + `/x","owner_handle":"` + owner + `","name":"x","kind":"http",` +
+			row = `{"id":"` + id + `","action":"` + owner + `/x","name":"x","kind":"http",` +
 				`"active":true,"public":true,"price":0,` + schemas + `}`
 		}
 		w.Write([]byte(withEvidence(row, `{"action_id":"`+id+`"}`)))
@@ -166,7 +170,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"result":{"status":"success","action_id":"A2","action_name":"synthesized","diagnostics":[]},"tx_id":"TX1","trace_id":"TR1"}`))
 	})
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"T1","action_id":"owned","owner_handle":"alice","target_handle":"bob","caller_handle":"alice","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
+		w.Write([]byte(`{"id":"T1","action_id":"owned","action":"alice@testnet/x","owner":"alice@testnet","target":"bob@testnet","caller":"alice@testnet","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
 	})
 	// A mutation names a target and answers with the rows it wrote, in name order
 	// — one target may name a whole application (kernel v0.14.0).
@@ -177,7 +181,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","active":false}]`))
 	})
 	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","action":"alice/x","owner_handle":"alice","name":"x","kind":"http","active":true,"price":0}]`))
+		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","action":"alice@testnet/x","name":"x","kind":"http","active":true,"price":0}]`))
 	})
 	mux.HandleFunc("DELETE /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"id":"` + r.URL.Query().Get("target") + `"}]`))
@@ -186,12 +190,12 @@ func authKernel() *httptest.Server {
 		// Two waiting steps spawned by the same creating action (sys/make) — the
 		// common case: one process fans out several steps sharing one created_by.
 		w.Write([]byte(`[
-			{"id":"S1","required_caller_handle":"alice","action":"alice/hello","action_id":"A1","price":5,"status":"waiting","created_by":"sys/make","created_at":"2026-01-01T00:00:00Z"},
-			{"id":"S2","required_caller_handle":"alice","action":"alice/hello","action_id":"A1","price":3,"status":"waiting","created_by":"sys/make","created_at":"2026-01-02T00:00:00Z"}
+			{"id":"S1","required_caller":"alice@testnet","action":"alice@testnet/hello","action_id":"A1","price":5,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-01T00:00:00Z"},
+			{"id":"S2","required_caller":"alice@testnet","action":"alice@testnet/hello","action_id":"A1","price":3,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-02T00:00:00Z"}
 		]`))
 	})
 	mux.HandleFunc("GET /v1/steps/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller_handle":"alice","action":"alice/hello","action_id":"A1","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller":"alice@testnet","action":"alice@testnet/hello","action_id":"A1","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {
 		// A taken handle is TYPED as of v0.12.14 (verified live): 422
@@ -204,10 +208,10 @@ func authKernel() *httptest.Server {
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":"U9","handle":"new","email":"new@test.com","available":0,"locked":0}`))
+		w.Write([]byte(`{"id":"U9","address":"new@testnet","email":"new@test.com","available":0,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/admin/users", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"U1","handle":"alice","email":"alice@test.com","available":500,"locked":0}]`))
+		w.Write([]byte(`[{"id":"U1","address":"alice@testnet","email":"alice@test.com","available":500,"locked":0}]`))
 	})
 	mux.HandleFunc("GET /v1/admin/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
 		// The users route serves USERS. A peer key is refused here, exactly as
@@ -249,7 +253,7 @@ func authKernel() *httptest.Server {
 			w.Write([]byte(`{"code":"invalid_input","error":"the superuser handle cannot be renamed"}`))
 			return
 		}
-		w.Write([]byte(`{"handle":"renamed"}`))
+		w.Write([]byte(`{"address":"renamed@testnet"}`))
 	})
 	mux.HandleFunc("POST /v1/admin/users/{handle}/deposit", func(w http.ResponseWriter, r *http.Request) {
 		// A deposit credits a USER, named in the path, and answers with the
@@ -269,7 +273,7 @@ func authKernel() *httptest.Server {
 			w.Write([]byte(`{"code":"invalid_input","error":"a deposit must name the payment it records (--ref)"}`))
 			return
 		}
-		w.Write([]byte(`{"amount":100,"external_key":"attr:rail:ref:` + body.Ref + `","operator_handle":"sys","from_handle":"sys","to_handle":"` + h + `"}`))
+		w.Write([]byte(`{"amount":100,"external_key":"attr:rail:ref:` + body.Ref + `","operator":"sys@testnet","from":"sys@testnet","to":"` + h + `"}`))
 	})
 	mux.HandleFunc("GET /v1/admin/kernel/deposits", func(w http.ResponseWriter, r *http.Request) {
 		// Two obligations and one held payment. TICKET1's buyer has said how the
@@ -280,7 +284,7 @@ func authKernel() *httptest.Server {
 		// held row's shape was verified on a chain world (anvil, decimals 6).
 		w.Write([]byte(`{"deposits":[{"id":"rail:0xabc:0","kind":"deposit","amount":5000000,"credit":5000000,
 		  "status":"held","tx_hash":"0xabc","created_at":"2026-09-09T15:22:32Z",
-		  "party_handle":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}],
+		  "party":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}],
 		 "owed":[{"id":"TICKET1","obligation":8,"amount":10,
 		 "tx_hash":"manual:TICKET1","status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"},
 		 {"id":"TICKET2","obligation":126,"amount":0,"tx_hash":"","status":"",
@@ -342,7 +346,7 @@ func authKernel() *httptest.Server {
 		// position, and its credit position — what it has delivered unpaid against
 		// the limit it set (kernel §D14). `stop` is absent unless the rail halts.
 		w.Write([]byte(`{"handle":"kernel","public_key":"KEY","about":"our test kernel","addrs":[],
-		 "network":"play","network_digest":"ef1f","rail_address":"","finalized":null,
+		 "network":"play","network_fingerprint":"ef1f","blockchain_address":"","finalized":null,
 		 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
 		 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
 		 "custody":{"checked":false,"difference":0,"ok":false},
@@ -642,7 +646,7 @@ func TestOwnerPageShowsVisibleSetAcrossLevels(t *testing.T) {
 
 	// Your own page: A3 is alice's inactive/private draft — it must appear (and
 	// self-labels via the card's inactive/lock chips).
-	own := getBody(t, cl, srv.URL+"/users/alice")
+	own := getBody(t, cl, srv.URL+"/users/alice@testnet")
 	if !strings.Contains(own, "alice") || !strings.Contains(own, `class="action-card`) {
 		t.Error("owner page must show the handle and action cards")
 	}
@@ -654,7 +658,7 @@ func TestOwnerPageShowsVisibleSetAcrossLevels(t *testing.T) {
 	}
 
 	// Someone else's page: caller-visible active set only (all=0) — no private/inactive.
-	if strings.Contains(getBody(t, cl, srv.URL+"/users/bob"), "draft") {
+	if strings.Contains(getBody(t, cl, srv.URL+"/users/bob@testnet"), "draft") {
 		t.Error("another owner's page must not surface inactive/private actions")
 	}
 }
@@ -746,7 +750,7 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("action name must link to the action")
 	}
-	if !strings.Contains(body, `href="/users/alice"`) {
+	if !strings.Contains(body, `href="/users/alice@testnet"`) {
 		t.Error("action owner must link to its owner page")
 	}
 	// The Amount column is right-aligned, so its header is too (class="money").
@@ -785,7 +789,7 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/transactions/T1")
 	// Action ref: owner links to its owner page.
-	if !strings.Contains(body, `href="/users/alice"`) {
+	if !strings.Contains(body, `href="/users/alice@testnet"`) {
 		t.Error("transaction detail must show the action ref with a linked owner")
 	}
 	// Buyer: current user (alice) is the buyer party
@@ -826,7 +830,7 @@ func TestWalletPayInAndWithdrawalFollowTheWorld(t *testing.T) {
 func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"test","network_digest":"D9","decimals":6,"symbol":"USDC","rail_address":"0xKERNEL"}`))
+		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL"}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"redirect":"?code=C"}`))
@@ -835,7 +839,7 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":5000000,"locked":0,"rail_address":"0xALICE"}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":5000000,"locked":0,"blockchain_address":"0xALICE"}`))
 	})
 	mux.HandleFunc("GET /v1/withdrawals", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"id":"W1","kind":"payout","amount":10,"status":"confirmed","tx_hash":"manual:W1","created_at":"2026-09-09T09:17:26Z"}]`))
@@ -933,7 +937,7 @@ func TestUserShowsConnectors(t *testing.T) {
 		t.Error("/you must offer an account-level disconnect (account=provider_key)")
 	}
 	// …and each contained grant offers a per-action disconnect (action=selector).
-	if !strings.Contains(body, `name="action" value="sys/gmail-send"`) {
+	if !strings.Contains(body, `name="action" value="sys@testnet/gmail-send"`) {
 		t.Error("/you grant tree must offer per-action disconnect")
 	}
 }
@@ -965,7 +969,7 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/settings"))
-	form := url.Values{"action": {"lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
+	form := url.Values{"action": {"lena@testnet/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Referer", srv.URL+"/actions/abc") // connected from an action page
@@ -985,7 +989,7 @@ func TestGrantConnectPostsToken(t *testing.T) {
 	got := gotBody
 	mu.Unlock()
 	// The legacy `action` form field is mapped to the v0.7 `selector`.
-	if !strings.Contains(got, `"selector":"lena/api"`) || !strings.Contains(got, `"token":"PAT-123"`) {
+	if !strings.Contains(got, `"selector":"lena@testnet/api"`) || !strings.Contains(got, `"token":"PAT-123"`) {
 		t.Errorf("kernel /v1/grants body = %s", got)
 	}
 }
@@ -1005,7 +1009,7 @@ func TestCreateActionParsesTypedPrice(t *testing.T) {
 			gotBody = string(b)
 			mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{"id":"A9","action":"alice/priced","owner_handle":"alice","name":"priced","kind":"http","price":12}`))
+			w.Write([]byte(`{"id":"A9","action":"alice@testnet/priced","name":"priced","kind":"http","price":12}`))
 			return
 		}
 		base.Config.Handler.ServeHTTP(w, r)
@@ -1098,7 +1102,7 @@ func TestGrantConnectReturnsToConsentPage(t *testing.T) {
 	defer base.Close()
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/grants" {
-			w.Write([]byte(`{"status":"connected","actions":["lena/api"]}`))
+			w.Write([]byte(`{"status":"connected","actions":["lena@testnet/api"]}`))
 			return
 		}
 		base.Config.Handler.ServeHTTP(w, r)
@@ -1111,7 +1115,7 @@ func TestGrantConnectReturnsToConsentPage(t *testing.T) {
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/settings"))
-	form := url.Values{"selector": {"lena/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
+	form := url.Values{"selector": {"lena@testnet/api"}, "token": {"PAT-123"}, "gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/grants/connect", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Referer", srv.URL+"/grants/connect?selector=%40lena%2Fapi")
@@ -1251,7 +1255,7 @@ func TestActionCardChips(t *testing.T) {
 	if !strings.Contains(browse, `href="/actions/A1"`) {
 		t.Error("browse card name must link to the action")
 	}
-	if !strings.Contains(browse, `href="/users/alice"`) {
+	if !strings.Contains(browse, `href="/users/alice@testnet"`) {
 		t.Error("browse card owner must link to its owner page")
 	}
 	if strings.Contains(browse, `title="WebAssembly action">W`) {
@@ -1340,11 +1344,11 @@ func TestRunFormGatedOnNeedsConnect(t *testing.T) {
 	if strings.Contains(gated, `hx-post="/actions/AN/run"`) {
 		t.Error("ungranted action page must not offer the doomed run form")
 	}
-	// The connect link must target the action's FOLDER (sys), not the degenerate
-	// single-action selector (sys/gmail-read) — one paste then connects the whole
-	// provider group, per the kernel's directory grouping.
-	if sel := connectSelector(t, gated); sel != "sys" {
-		t.Errorf("connect link selector = %q, want the folder sys (not the bare action ref)", sel)
+	// The connect link must target the action's FOLDER (sys@testnet), not the
+	// degenerate single-action selector (sys@testnet/gmail-read) — one paste then
+	// connects the whole provider group, per the kernel's directory grouping.
+	if sel := connectSelector(t, gated); sel != "sys@testnet" {
+		t.Errorf("connect link selector = %q, want the folder sys@testnet (not the action address)", sel)
 	}
 
 	open := getBody(t, cl, srv.URL+"/actions/AG")
@@ -1368,7 +1372,7 @@ func TestRunGrantRequiredConnectsFolder(t *testing.T) {
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/run" {
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"code":"grant_required","meta":{"action":"sys/gmail-read"},"error":"grant required"}`))
+			w.Write([]byte(`{"code":"grant_required","meta":{"action":"sys@testnet/gmail-read"},"error":"grant required"}`))
 			return
 		}
 		base.Config.Handler.ServeHTTP(w, r) // login/action/me reads via authKernel
@@ -1394,8 +1398,8 @@ func TestRunGrantRequiredConnectsFolder(t *testing.T) {
 	if !strings.Contains(string(body), "Connect an account to run this.") {
 		t.Fatalf("run outcome did not render the grant-required connect affordance: %s", body)
 	}
-	if sel := connectSelector(t, string(body)); sel != "sys" {
-		t.Errorf("run-outcome connect selector = %q, want the folder sys (not the bare action ref)", sel)
+	if sel := connectSelector(t, string(body)); sel != "sys@testnet" {
+		t.Errorf("run-outcome connect selector = %q, want the folder sys@testnet (not the action address)", sel)
 	}
 }
 
@@ -1712,7 +1716,7 @@ func actionDetailKernel(actionJSON string) *http.ServeMux {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -1723,7 +1727,7 @@ func actionDetailKernel(actionJSON string) *http.ServeMux {
 
 func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 	kernel := httptest.NewServer(actionDetailKernel(
-		`{"id":"A1","owner_user_id":"U1","owner_handle":"alice","name":"weather","kind":"http",` +
+		`{"id":"A1","owner_user_id":"U1","action":"alice@testnet/weather","name":"weather","kind":"http",` +
 			`"active":true,"public":true,"price":0,"description":"Weather lookup",` +
 			`"input_schema":{"type":"object"},"output_schema":{"type":"string"},` +
 			`"http":{"method":"GET","url":"https://api.x/{city}","params":[{"name":"city","in":"path"},{"name":"units","in":"query"}]}}`))
@@ -1784,7 +1788,7 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 
 func TestActionDetailWasmEditFormHasSchemasNoHTTP(t *testing.T) {
 	kernel := httptest.NewServer(actionDetailKernel(
-		`{"id":"A1","owner_user_id":"U1","owner_handle":"alice","name":"calc","kind":"wasm",` +
+		`{"id":"A1","owner_user_id":"U1","action":"alice@testnet/calc","name":"calc","kind":"wasm",` +
 			`"active":true,"public":true,"price":0,"input_schema":{"type":"object"}}`))
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -1876,15 +1880,15 @@ func TestSettingsPage(t *testing.T) {
 func TestParseLookup(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{
 		"results": []map[string]any{
-			{"action_id": "A1", "name": "hello", "owner_handle": "alice", "description": "greet", "score": 0.9},
-			{"action_id": "A2", "name": "bye", "owner_handle": "bob", "description": "", "score": 0.5},
+			{"action_id": "A1", "action": "alice@testnet/hello", "name": "hello", "description": "greet", "score": 0.9},
+			{"action_id": "A2", "action": "bob@testnet/bye", "name": "bye", "description": "", "score": 0.5},
 		},
 	})
 	got := parseLookup(raw)
 	if len(got) != 2 {
 		t.Fatalf("want 2 results, got %d", len(got))
 	}
-	if got[0].Action.ID != "A1" || got[0].Action.Name != "hello" || got[0].Action.OwnerHandle != "alice" {
+	if got[0].Action.ID != "A1" || got[0].Action.Name != "hello" || got[0].Action.Ref() != "alice@testnet/hello" {
 		t.Errorf("first result fields wrong: %+v", got[0].Action)
 	}
 	if got[0].Action.Kind != "" {
@@ -1894,8 +1898,8 @@ func TestParseLookup(t *testing.T) {
 
 func TestCatalogAsResults(t *testing.T) {
 	actions := []client.Action{
-		{ID: "A1", Name: "hello", OwnerHandle: "alice", Kind: "wasm", Active: true, Visibility: "public", Price: 50},
-		{ID: "A2", Name: "goodbye", OwnerHandle: "bob", Kind: "ai", Active: true, Visibility: "public", Price: 0},
+		{ID: "A1", Action: "alice@testnet/hello", Name: "hello", Kind: "wasm", Active: true, Visibility: "public", Price: 50},
+		{ID: "A2", Action: "bob@testnet/goodbye", Name: "goodbye", Kind: "ai", Active: true, Visibility: "public", Price: 0},
 	}
 	got := catalogAsResults(actions, "hello")
 	if len(got) != 1 {
@@ -2001,7 +2005,7 @@ func TestCreateActionAuth(t *testing.T) {
 				w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 			})
 			mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-				w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+				w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 			})
 			mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`[]`))
@@ -2012,7 +2016,7 @@ func TestCreateActionAuth(t *testing.T) {
 			mux.HandleFunc("POST /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 				gotBody, _ = io.ReadAll(r.Body)
 				w.WriteHeader(http.StatusCreated)
-				w.Write([]byte(`{"id":"A9","owner_user_id":"U1","owner_handle":"alice","name":"act","kind":"http","active":false,"public":false,"price":0}`))
+				w.Write([]byte(`{"id":"A9","owner_user_id":"U1","action":"alice@testnet/act","name":"act","kind":"http","active":false,"public":false,"price":0}`))
 			})
 			kernel := httptest.NewServer(mux)
 			defer kernel.Close()
@@ -2087,14 +2091,14 @@ func actionCreateKernel(gotBody *[]byte) *http.ServeMux {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("POST /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		*gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":"A9","owner_user_id":"U1","owner_handle":"alice","name":"act","kind":"http"}`))
+		w.Write([]byte(`{"id":"A9","owner_user_id":"U1","action":"alice@testnet/act","name":"act","kind":"http"}`))
 	})
 	return mux
 }
@@ -2180,13 +2184,13 @@ func updateActionKernel(gotBody *[]byte) *http.ServeMux {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		*gotBody, _ = io.ReadAll(r.Body)
-		w.Write([]byte(`[{"id":"A1","owner_handle":"alice","name":"weather","kind":"http","active":false}]`))
+		w.Write([]byte(`[{"id":"A1","action":"alice@testnet/weather","name":"weather","kind":"http","active":false}]`))
 	})
 	return mux
 }
@@ -2288,22 +2292,22 @@ func paymentKernel() *httptest.Server {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U2","handle":"bob","available":700,"locked":0}`))
+		w.Write([]byte(`{"id":"U2","address":"bob@testnet","available":700,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[
-		 {"id":"SP","required_caller_handle":"bob","owner_handle":"alice","action":"sys/transfer","action_id":"AT",
-		  "price":0,"status":"waiting","created_by":"sys/message","created_at":"2026-08-01T00:00:00Z",
-		  "partial_args":{"target":"alice","amount":300},
+		 {"id":"SP","required_caller":"bob@testnet","owner":"alice@testnet","action":"sys@testnet/transfer","action_id":"AT",
+		  "price":0,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-01T00:00:00Z",
+		  "partial_args":{"target":"alice@testnet","amount":300},
 		  "allowed_input":{"type":"object","properties":{}}},
-		 {"id":"SO","required_caller_handle":"bob","owner_handle":"alice","action":"alice/private-work","action_id":"AP",
-		  "price":5,"status":"waiting","created_by":"sys/message","created_at":"2026-08-02T00:00:00Z",
+		 {"id":"SO","required_caller":"bob@testnet","owner":"alice@testnet","action":"alice@testnet/private-work","action_id":"AP",
+		  "price":5,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-02T00:00:00Z",
 		  "partial_args":{"context":"sealed"},
 		  "allowed_input":{"type":"object","properties":{"answer":{"type":"string","description":"Your answer"}},"required":["answer"]}}
 		]`))
 	})
 	mux.HandleFunc("GET /v1/actions/AT", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"AT","action":"sys/transfer","owner_handle":"sys","name":"transfer","kind":"native",
+		w.Write([]byte(`{"id":"AT","action":"sys@testnet/transfer","name":"transfer","kind":"native",
 		 "active":true,"visibility":"public","price":0,"effect":"transfer",
 		 "input_schema":{"type":"object","properties":{"target":{"type":"string"},"amount":{"type":"integer"}}}}`))
 	})
@@ -2460,12 +2464,12 @@ func TestEntryRowPartySignAndReason(t *testing.T) {
 		credited    bool
 		txID, note  string
 	}{
-		{"deposit", client.LedgerEntry{FromHandle: "sys", ToHandle: "bob", Amount: 100}, "sys", true, "", ""},
-		{"withdrawal", client.LedgerEntry{FromHandle: "bob", ToHandle: "sys", Amount: 100}, "sys", false, "", ""},
-		{"payout", client.LedgerEntry{FromHandle: "alice", ToHandle: "bob", Amount: 25, Reason: tx}, "alice", true, tx, ""},
-		{"fee", client.LedgerEntry{FromHandle: "bob", ToHandle: "sys", Amount: 5, Reason: tx}, "sys", false, tx, ""},
-		{"obligation", client.LedgerEntry{FromHandle: "bob", ToHandle: "sys", Amount: 9, Reason: "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"}, "sys", false, "", "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"},
-		{"crossing in", client.LedgerEntry{ToHandle: "bob", Amount: 7}, "", true, "", ""},
+		{"deposit", client.LedgerEntry{From: "sys", To: "bob", Amount: 100}, "sys", true, "", ""},
+		{"withdrawal", client.LedgerEntry{From: "bob", To: "sys", Amount: 100}, "sys", false, "", ""},
+		{"payout", client.LedgerEntry{From: "alice", To: "bob", Amount: 25, Reason: tx}, "alice", true, tx, ""},
+		{"fee", client.LedgerEntry{From: "bob", To: "sys", Amount: 5, Reason: tx}, "sys", false, tx, ""},
+		{"obligation", client.LedgerEntry{From: "bob", To: "sys", Amount: 9, Reason: "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"}, "sys", false, "", "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"},
+		{"crossing in", client.LedgerEntry{To: "bob", Amount: 7}, "", true, "", ""},
 	}
 	for _, c := range cases {
 		got := entryRowOf(c.entry, "bob")
@@ -2481,7 +2485,7 @@ func TestEntryRowPartySignAndReason(t *testing.T) {
 // already paid for down to a stranger's.
 func TestLookupRowsCarryObservedAt(t *testing.T) {
 	result := json.RawMessage(`{"results":[
-		{"action_id":"local-1","action":"alice/echo","price":50},
+		{"action_id":"local-1","action":"alice@testnet/echo","price":50},
 		{"action_id":"remote-1","action":"vendor@bravo/fast","price":111,"observed_at":"2026-08-18T17:00:10Z"}
 	]}`)
 	cards := parseLookup(result)
@@ -2494,9 +2498,10 @@ func TestLookupRowsCarryObservedAt(t *testing.T) {
 	if !cards[1].Observed() || cards[1].ObservedAgo() == "" {
 		t.Errorf("a remote-backed row states its freshness: %+v", cards[1])
 	}
-	// The ref only makes the discovered flag PROVISIONAL; the read settles it.
-	if cards[1].Discovered != true {
-		t.Error("a kernel-qualified ref starts out provisionally discovered")
+	// Whether a row is discovered is never read off its shape: the local read
+	// in getBrowse settles it.
+	if cards[1].Discovered {
+		t.Error("parseLookup must not decide discovery from the row")
 	}
 }
 
@@ -2516,7 +2521,7 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -2535,7 +2540,7 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 			w.Write([]byte(`{"code":"not_found","error":"action not found"}`))
 			return
 		}
-		w.Write([]byte(withEvidence(`{"id":"proxy-local","action":"vendor@bravo/bought","owner_handle":"bravo","name":"vendor/bought","kind":"remote_proxy","active":true,"visibility":"local","price":111}`,
+		w.Write([]byte(withEvidence(`{"id":"proxy-local","action":"vendor@bravo/bought","name":"vendor/bought","kind":"remote_proxy","active":true,"visibility":"local","price":111}`,
 			`{"action_id":"proxy-local","uses":4,"successes":4}`)))
 	})
 	kernel := httptest.NewServer(mux)
@@ -2577,12 +2582,12 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"P1","action":"vendor@bravo/slow","owner_handle":"bravo","name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
+		w.Write([]byte(`{"id":"P1","action":"vendor@bravo/slow","name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
 		 "input_schema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"output_schema":{"type":"object"}}`))
 	})
 	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -2661,7 +2666,7 @@ func TestRemoteTransactionBreakdownNamesTheObligation(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -2669,8 +2674,8 @@ func TestRemoteTransactionBreakdownNamesTheObligation(t *testing.T) {
 		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
 	})
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"TX9","action_id":"PX","action_name":"vendor/echo/index","status":"success",
-		 "gross":133,"net":126,"fee":7,"owner_handle":"alice","caller_handle":"alice","target_handle":"bravo",
+		w.Write([]byte(`{"id":"TX9","action_id":"PX","action":"vendor@bravo/echo/index","status":"success",
+		 "gross":133,"net":126,"fee":7,"owner":"alice@testnet","caller":"alice@testnet","target":"bravo@testnet",
 		 "remote_receipt_hash":"H","remote_signer_key":"KEYB","ticket_id":"TICKET1",
 		 "started_at":"2026-09-09T09:20:29Z"}`))
 	})
@@ -2708,15 +2713,15 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("ref") == "sys/lookup" {
-			w.Write([]byte(`[{"id":"L","action":"sys/lookup","owner_handle":"sys","name":"lookup","kind":"native","active":true,"price":7}]`))
+		if r.URL.Query().Get("ref") == "sys@testnet/lookup" {
+			w.Write([]byte(`[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":7}]`))
 			return
 		}
-		w.Write([]byte(`[{"id":"A1","action":"alice/hello","owner_handle":"alice","name":"hello","kind":"wasm","active":true,"price":0,"description":"says hello"}]`))
+		w.Write([]byte(`[{"id":"A1","action":"alice@testnet/hello","name":"hello","kind":"wasm","active":true,"price":0,"description":"says hello"}]`))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		ran = true
@@ -2736,7 +2741,7 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 		t.Errorf("the page must say why it fell back, in our own words: %s", body)
 	}
 	// And it still answers the query, from the catalog.
-	if !strings.Contains(body, "alice/hello") {
+	if !strings.Contains(body, "alice@testnet/hello") {
 		t.Errorf("catalog fallback must still search: %s", body)
 	}
 }
@@ -2755,23 +2760,23 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"WEB","action":"sys/web","owner_handle":"sys","name":"web","kind":"http","active":true,"price":0,
+		w.Write([]byte(`{"id":"WEB","action":"sys@testnet/web","name":"web","kind":"http","active":true,"price":0,
 		 "description":"Fetch a public web page","input_schema":{"type":"object","properties":{"url":{"type":"string","description":"the page"}},"required":["url"]}}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("ref") {
-		case "sys/llm/decide":
-			fmt.Fprintf(w, `[{"id":"D","action":"sys/llm/decide","owner_handle":"sys","name":"decide","kind":"native","active":true,"price":%d}]`, decidePrice)
-		case "sys/web":
-			w.Write([]byte(`[{"id":"WEB","action":"sys/web","owner_handle":"sys","name":"web","kind":"http","active":true,"price":0,
+		case "sys@testnet/llm/decide":
+			fmt.Fprintf(w, `[{"id":"D","action":"sys@testnet/llm/decide","name":"decide","kind":"native","active":true,"price":%d}]`, decidePrice)
+		case "sys@testnet/web":
+			w.Write([]byte(`[{"id":"WEB","action":"sys@testnet/web","name":"web","kind":"http","active":true,"price":0,
 			 "input_schema":{"type":"object","properties":{"url":{"type":"string","description":"the page"}},"required":["url"]}}]`))
-		case "sys/lookup":
-			w.Write([]byte(`[{"id":"L","action":"sys/lookup","owner_handle":"sys","name":"lookup","kind":"native","active":true,"price":0}]`))
+		case "sys@testnet/lookup":
+			w.Write([]byte(`[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":0}]`))
 		default:
 			w.Write([]byte(`[]`))
 		}
@@ -2782,12 +2787,12 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 		}
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &in)
-		if in.Action == "sys/llm/decide" {
+		if in.Action == "sys@testnet/llm/decide" {
 			lastDecide = string(b)
 			fmt.Fprintf(w, `{"result":%s,"tx_id":"T1"}`, decision)
 			return
 		}
-		w.Write([]byte(`{"result":{"results":[{"action_id":"WEB","action":"sys/web","description":"Fetch a public web page","price":0}]},"tx_id":"T0"}`))
+		w.Write([]byte(`{"result":{"results":[{"action_id":"WEB","action":"sys@testnet/web","description":"Fetch a public web page","price":0}]},"tx_id":"T0"}`))
 	})
 	return httptest.NewServer(mux)
 }
@@ -2800,7 +2805,7 @@ var lastDecide string
 // the spend does not move: the same confirm still has to be pressed.
 func TestProposalFillsTheFormAndSpendsNothing(t *testing.T) {
 	lastDecide = ""
-	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{"url":"example.com"},"message":"this fetches a page"}`)
+	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{"url":"example.com"},"message":"this fetches a page"}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
@@ -2808,11 +2813,11 @@ func TestProposalFillsTheFormAndSpendsNothing(t *testing.T) {
 
 	// The command is offered beside the results it acts on.
 	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
-	if !strings.Contains(page, `action="/browse/propose"`) || !strings.Contains(page, `name="ref" value="sys/web"`) {
+	if !strings.Contains(page, `action="/browse/propose"`) || !strings.Contains(page, `name="ref" value="sys@testnet/web"`) {
 		t.Fatalf("browse must offer the planner, carrying the refs on screen: %s", page)
 	}
 	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{
-		"q": {"fetch the front page of example.com"}, "ref": {"sys/web"},
+		"q": {"fetch the front page of example.com"}, "ref": {"sys@testnet/web"},
 	})
 	defer resp.Body.Close()
 	bb, _ := io.ReadAll(resp.Body)
@@ -2820,7 +2825,7 @@ func TestProposalFillsTheFormAndSpendsNothing(t *testing.T) {
 	// The candidate set sent is the one the person could see — not one assembled
 	// in private, which would be a claim about what was offered that nobody
 	// could check.
-	if !strings.Contains(lastDecide, `"actions":["sys/web"]`) {
+	if !strings.Contains(lastDecide, `"actions":["sys@testnet/web"]`) {
 		t.Errorf("the planner must be given the visible candidates: %s", lastDecide)
 	}
 	if !strings.Contains(body, "Chosen for you") {
@@ -2839,13 +2844,13 @@ func TestProposalFillsTheFormAndSpendsNothing(t *testing.T) {
 // A proposal announces itself even when the model says nothing, which is the
 // common case: a person must know they are reading a choice made for them.
 func TestProposalAnnouncesItselfWithoutAMessage(t *testing.T) {
-	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{"url":"example.com"}}`)
+	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{"url":"example.com"}}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
-	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys/web"}})
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys@testnet/web"}})
 	defer resp.Body.Close()
 	bb, _ := io.ReadAll(resp.Body)
 	if body := string(bb); !strings.Contains(body, "Chosen for you") {
@@ -2857,7 +2862,7 @@ func TestProposalAnnouncesItselfWithoutAMessage(t *testing.T) {
 // affordance that would spend from a page nobody confirmed is not an affordance
 // (§8.2).
 func TestPricedPlannerIsNotOffered(t *testing.T) {
-	kernel := proposalKernel(t, 9, `{"action":"sys/web","args":{}}`)
+	kernel := proposalKernel(t, 9, `{"action":"sys@testnet/web","args":{}}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
@@ -2873,9 +2878,9 @@ func TestPricedPlannerIsNotOffered(t *testing.T) {
 // This is an arrangement of served rows, never a computation (§6.2).
 func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	rows := map[string]string{
-		"CHEAP": `{"id":"CHEAP","action":"alice/cheap","owner_handle":"alice","name":"cheap","kind":"wasm","active":true,"price":1}`,
-		"LOVED": `{"id":"LOVED","action":"alice/loved","owner_handle":"alice","name":"loved","kind":"wasm","active":true,"price":50}`,
-		"MEH":   `{"id":"MEH","action":"alice/meh","owner_handle":"alice","name":"meh","kind":"wasm","active":true,"price":10}`,
+		"CHEAP": `{"id":"CHEAP","action":"alice@testnet/cheap","name":"cheap","kind":"wasm","active":true,"price":1}`,
+		"LOVED": `{"id":"LOVED","action":"alice@testnet/loved","name":"loved","kind":"wasm","active":true,"price":50}`,
+		"MEH":   `{"id":"MEH","action":"alice@testnet/meh","name":"meh","kind":"wasm","active":true,"price":10}`,
 	}
 	mux := http.NewServeMux()
 	fakeHealth(mux)
@@ -2886,7 +2891,7 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
@@ -2922,27 +2927,27 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	}
 	order := func(body string) []string {
 		var out []string
-		for _, name := range []string{"alice/cheap", "alice/loved", "alice/meh"} {
+		for _, name := range []string{"alice@testnet/cheap", "alice@testnet/loved", "alice@testnet/meh"} {
 			out = append(out, name)
 		}
 		sort.Slice(out, func(i, j int) bool { return strings.Index(body, out[i]) < strings.Index(body, out[j]) })
 		return out
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "alice/cheap" || got[2] != "alice/loved" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "alice@testnet/cheap" || got[2] != "alice@testnet/loved" {
 		t.Errorf("price order = %v", got)
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "alice/loved" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "alice@testnet/loved" {
 		t.Errorf("rating order must put the best-rated first: %v", got)
 	}
 	// A row nobody has rated is not SCORED as a bad one. It sorts into the
 	// unrated block after the rated rows, which says the true thing — it has not
 	// been rated — rather than interleaving silence with measured opinion.
 	rated := getBody(t, cl, srv.URL+"/browse?sort=rating")
-	if strings.Index(rated, "alice/cheap") < strings.Index(rated, "alice/meh") {
+	if strings.Index(rated, "alice@testnet/cheap") < strings.Index(rated, "alice@testnet/meh") {
 		t.Error("an unrated action belongs after the rated ones, not among them")
 	}
 	// An unknown sort shows the list, not an error.
-	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "alice/cheap") {
+	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "alice@testnet/cheap") {
 		t.Errorf("an unknown sort falls back to relevance: %s", body)
 	}
 }
@@ -2954,7 +2959,7 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	const total = 25 // more than one page
 	row := func(i int) string {
-		return fmt.Sprintf(`{"id":"A%d","action":"alice/a%02d","owner_handle":"alice","name":"a%02d","kind":"wasm","active":true,"price":0}`, i, i, i)
+		return fmt.Sprintf(`{"id":"A%d","action":"alice@testnet/a%02d","name":"a%02d","kind":"wasm","active":true,"price":0}`, i, i, i)
 	}
 	mux := http.NewServeMux()
 	fakeHealth(mux)
@@ -2965,7 +2970,7 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"U1","handle":"alice","available":500,"locked":0}`))
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
@@ -2997,7 +3002,7 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/browse?sort=rating")
-	best := fmt.Sprintf("alice/a%02d", total-1)
+	best := fmt.Sprintf("alice@testnet/a%02d", total-1)
 	if !strings.Contains(body, best) {
 		t.Errorf("the best-rated action must be on the first page of a rating sort: %s", best)
 	}
@@ -3008,13 +3013,13 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 // toggle away everywhere else — so filling only the fields drops the proposal
 // silently for one action and loses it on a switch for every other.
 func TestProposalReachesTheRawInputToo(t *testing.T) {
-	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{"url":"example.com","depth":2}}`)
+	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{"url":"example.com","depth":2}}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
-	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys/web"}})
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys@testnet/web"}})
 	defer resp.Body.Close()
 	bb, _ := io.ReadAll(resp.Body)
 	body := string(bb)
@@ -3035,13 +3040,13 @@ func TestProposalReachesTheRawInputToo(t *testing.T) {
 // provenance face is reserved for money, ids, hashes, refs and sealed args
 // (grammar §3), so rendering the message in it would dress a claim as evidence.
 func TestProposedMessageIsProseNotProvenance(t *testing.T) {
-	kernel := proposalKernel(t, 0, `{"action":"sys/web","args":{},"message":"this fetches a page"}`)
+	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{},"message":"this fetches a page"}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
-	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys/web"}})
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"x"}, "ref": {"sys@testnet/web"}})
 	defer resp.Body.Close()
 	bb, _ := io.ReadAll(resp.Body)
 	body := string(bb)
@@ -3050,5 +3055,23 @@ func TestProposedMessageIsProseNotProvenance(t *testing.T) {
 	}
 	if strings.Contains(body, `<pre class="json">this fetches a page`) {
 		t.Error("a model's prose must not render in the provenance face")
+	}
+}
+
+// The entry screen names the kernel it signs in to, so a person types only the
+// handle; the account the kernel is asked for is that handle's address here,
+// composed once from /health (requirements.md §5). The session then holds the
+// address, which is what the superuser gate compares.
+func TestLoginSignsInByAddress(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	loginClient(t, srv.URL)
+	if lastSignIn != "alice@testnet" {
+		t.Errorf("authorize named %q, want alice@testnet", lastSignIn)
+	}
+	if body := getBody(t, loginClientAs(t, srv.URL, "sys"), srv.URL+"/browse"); !strings.Contains(body, `href="/admin"`) {
+		t.Error("sys@testnet is the superuser")
 	}
 }

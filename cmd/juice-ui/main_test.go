@@ -120,7 +120,7 @@ func fakeKernel(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"KEYTEST","network":"play","network_digest":"D1","decimals":0,"symbol":"credits"}`))
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"KEYTEST","network":"play","network_fingerprint":"D1","decimals":0,"symbol":"credits"}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

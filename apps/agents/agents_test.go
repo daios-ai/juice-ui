@@ -33,7 +33,8 @@ func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 	a := &Agents{root: t.TempDir(), sup: newSupervisor(fl)}
 	cap := &capture{}
 	a.deps = apps.Deps{
-		Handle:    func(r *http.Request) string { return "alice" },
+		Me:        func(r *http.Request) string { return "sys@testnet" },
+		Address:   func(h string) string { return h + "@testnet" },
 		CSRFField: func(r *http.Request) template.HTML { return template.HTML("<input name=csrf>") },
 		RenderPage: func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
 			cap.page, cap.title, cap.status, cap.data = page, title, status, data
@@ -508,20 +509,21 @@ func TestAgentViewCarriesNoAccountWithoutAKernel(t *testing.T) {
 	}
 }
 
-// The activity rows must resolve their actions. Without the map every row
-// renders "(deleted)" — a plain untruth about the agent's own history, and one
-// no test would catch from the view model alone.
-func TestAgentActivityResolvesItsActions(t *testing.T) {
+// The agent's home is named by its bare handle; its principal is that handle's
+// address on this kernel, and that address is what the account read and the
+// activity rows key on — a row names its own action, so none is re-read.
+func TestAgentActivityIsReadByAddress(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/admin/users/{handle}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"handle":"research","available":3000000,"locked":0}`))
+	var asked string
+	mux.HandleFunc("GET /v1/admin/users/{address}", func(w http.ResponseWriter, r *http.Request) {
+		asked = r.PathValue("address")
+		w.Write([]byte(`{"address":"research@testnet","available":3000000,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"T1","action_id":"A1","owner_handle":"research","caller_handle":"research",
-		 "target_handle":"sys","status":"success","started_at":"2026-09-14T10:00:00Z"}]`))
-	})
-	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"A1","action":"sys/time","owner_handle":"sys","name":"time","kind":"native","active":true}`))
+		w.Write([]byte(`[{"id":"T1","action_id":"A1","action":"sys@testnet/time","owner":"research@testnet",
+		 "caller":"research@testnet","target":"sys@testnet","status":"success","started_at":"2026-09-14T10:00:00Z"},
+		 {"id":"T2","action_id":"A1","action":"sys@testnet/time","owner":"research@elsewhere",
+		 "caller":"research@elsewhere","target":"sys@testnet","status":"success","started_at":"2026-09-14T10:00:00Z"}]`))
 	})
 	kernel := httptest.NewServer(mux)
 	defer kernel.Close()
@@ -535,7 +537,7 @@ func TestAgentActivityResolvesItsActions(t *testing.T) {
 	a.deps.Client, a.deps.Sessions = cl, session.NewManager(sm, cl)
 
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys", session.Pin{})
+		_ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys@testnet", session.Pin{})
 		r.SetPathValue("handle", "research")
 		a.getDetail(w, r)
 	}))
@@ -545,14 +547,14 @@ func TestAgentActivityResolvesItsActions(t *testing.T) {
 	if !ok {
 		t.Fatalf("view = %T", cap.data)
 	}
+	if asked != "research@testnet" {
+		t.Errorf("the account is read by address, got %q", asked)
+	}
 	if v.Account == nil || v.Account.Available != 3000000 {
 		t.Fatalf("the agent's account must be read: %+v", v.Account)
 	}
-	if len(v.Activity) != 1 {
-		t.Fatalf("the agent's rows must be found: %+v", v.Activity)
-	}
-	if act, ok := v.Actions["A1"]; !ok || act.ID == "" {
-		t.Errorf("each row's action must be resolved, or it renders as deleted: %+v", v.Actions)
+	if len(v.Activity) != 1 || v.Activity[0].ID != "T1" {
+		t.Fatalf("only the agent's own rows, by address: %+v", v.Activity)
 	}
 }
 

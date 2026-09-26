@@ -55,7 +55,7 @@ const (
 		`"messages":{"type":"array","description":"The room's recent messages, oldest first.","items":{"type":"object","properties":{` +
 		`"id":{"type":"string","description":"Id of the message."},` +
 		`"seq":{"type":"integer","description":"Per-room sequence number; pass the largest one back as ` + "`after`" + ` to fetch only newer messages next time."},` +
-		`"from":{"type":"string","description":"Handle of the sender."},` +
+		`"from":{"type":"string","description":"Address of the sender."},` +
 		`"text":{"type":"string","description":"The message text."},` +
 		`"at":{"type":"string","description":"RFC 3339 timestamp when it was posted."}}}}}}`
 )
@@ -67,7 +67,7 @@ var Ops = []Op{
 	{
 		Name:         "msg/create-room",
 		Description:  "Create a chat room — a named conversation the caller owns — and add the given members alongside the caller. Returns the new room's id.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Handles of users to add as members besides the caller, for example bob and carol. Handles are bare — no @ prefix. May be empty."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Addresses of users to add as members besides the caller, for example bob@alpha and carol@alpha. May be empty."}}}`),
 		OutputSchema: json.RawMessage(outRoom),
 	},
 	{
@@ -79,13 +79,13 @@ var Ops = []Op{
 	{
 		Name:         "msg/add-member",
 		Description:  "Add a user to a chat room. Only the room's owner may add members.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Handle of the user to add, for example bob. Handles are bare — no @ prefix."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Address of the user to add, for example bob@alpha."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "msg/remove-member",
 		Description:  "Remove a member from a chat room. Only the room's owner may remove members, and the owner cannot remove themselves.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Handle of the member to remove."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Address of the member to remove."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
@@ -247,15 +247,16 @@ func (d *Daemon) fireNotify(sender, roomID string) {
 
 // ---- kernel-facing writes ----
 
-// checkHandles rejects any sigiled handle at the write boundary. Handles are
-// bare (requirements.md §4) and the daemon never rewrites one, so a browser
-// form and a headless action call behave identically: "@bob" is bad input on
-// both, not a handle silently meaning "bob". Historical rows were migrated bare
-// once at store.Open — that is persistence, not input.
-func checkHandles(hs ...string) error {
+// CheckAddresses refuses any principal that is not an address, handle@kernel
+// (requirements.md §4), at the write boundary. The daemon never composes or
+// rewrites one, so a browser form and a headless action call behave
+// identically: "bob" is bad input on both, not a name silently meaning
+// "bob@<some kernel>". Historical bare rows were qualified once
+// (Store.Qualify) — that is persistence, not input.
+func CheckAddresses(hs ...string) error {
 	for _, h := range hs {
-		if strings.HasPrefix(strings.TrimSpace(h), "@") {
-			return fmt.Errorf("%w: handle %q must be bare (no @)", ErrBadInput, h)
+		if h != "" && !strings.Contains(h, "@") {
+			return fmt.Errorf("%w: %q is not an address (handle@kernel)", ErrBadInput, h)
 		}
 	}
 	return nil
@@ -276,7 +277,7 @@ func (d *Daemon) write(op func(caller string, a kargs) (map[string]any, error)) 
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad request body"})
 			return
 		}
-		if err := checkHandles(append(a.Members, a.Member, caller)...); err != nil {
+		if err := CheckAddresses(append(a.Members, a.Member, caller)...); err != nil {
 			writeJSON(w, statusFor(err), map[string]any{"ok": false, "error": err.Error()})
 			return
 		}

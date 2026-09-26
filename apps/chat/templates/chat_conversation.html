@@ -46,8 +46,8 @@
     <form class="stack" method="post" action="/chat/room/{{$rid}}/add-member">
       {{.CSRFField}}
       <div class="field">
-        <label for="add-member-handle">Handle</label>
-        <input id="add-member-handle" type="text" name="member" placeholder="handle" required>
+        <label for="add-member-address">Address</label>
+        <input id="add-member-address" type="text" name="member" class="mono" placeholder="handle@kernel" required>
       </div>
       <button class="btn" type="submit">Add member</button>
     </form>

@@ -83,7 +83,7 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		t.Error("superuser /admin must list users from /control/users")
 	}
 	// The user handle is a doorway to that user's admin page.
-	if !strings.Contains(body, `href="/admin/users/alice"`) {
+	if !strings.Contains(body, `href="/admin/users/alice@testnet"`) {
 		t.Error("/admin user handle must link to the user's detail page")
 	}
 	// Admin and Peers are now separate top-level sidebar entries (not a sub-nav).
@@ -522,10 +522,10 @@ func TestDepositFormIsUserOnly(t *testing.T) {
 	// And the request it makes names the account in the path.
 	page := getBody(t, cl, srv.URL+"/admin")
 	resp := postTo(t, cl, srv.URL+"/admin/deposit", page, url.Values{
-		"handle": {"alice"}, "ref": {"R1"}, "amount": {"100"}, "back": {"/admin"},
+		"address": {"alice@testnet"}, "ref": {"R1"}, "amount": {"100"}, "back": {"/admin"},
 	})
 	resp.Body.Close()
-	if lastDeposit != "alice" {
+	if lastDeposit != "alice@testnet" {
 		t.Errorf("deposit named %q; the kernel takes the user in the path", lastDeposit)
 	}
 }
@@ -547,9 +547,9 @@ func postTo(t *testing.T, cl *http.Client, urlStr, page string, form url.Values)
 	return resp
 }
 
-// Rename is one modal on the user's own detail page: it frees the old handle and
-// carries every reference to the new one, so success lands on the NEW handle's
-// page and failure stays on the old one (requirements.md §6.6).
+// Rename is one modal on the user's own detail page: it frees the old address
+// and carries every reference to the new one, so success lands on the NEW
+// address's page and failure stays on the old one (requirements.md §6.6).
 func TestAdminRenameUser(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -557,20 +557,20 @@ func TestAdminRenameUser(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	page := getBody(t, cl, srv.URL+"/admin/users/alice")
+	page := getBody(t, cl, srv.URL+"/admin/users/alice@testnet")
 	if !strings.Contains(page, `?form=admin-rename`) || !strings.Contains(page, `id="form-admin-rename"`) {
 		t.Error("the user page must carry the rename opener and its modal")
 	}
-	if !strings.Contains(page, "Frees the old handle; references use the new one.") {
+	if !strings.Contains(page, "Frees the old address; references use the new one.") {
 		t.Error("rename must disclose that references follow the account")
 	}
 
-	resp := postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_name": {"alicia"}})
+	resp := postTo(t, cl, srv.URL+"/admin/users/alice@testnet/rename", page, url.Values{"new_name": {"alicia@testnet"}})
 	resp.Body.Close()
-	if got := resp.Header.Get("Location"); got != "/admin/users/alicia" {
-		t.Errorf("success must land on the new handle's page, got %q", got)
+	if got := resp.Header.Get("Location"); got != "/admin/users/alicia@testnet" {
+		t.Errorf("success must land on the new address's page, got %q", got)
 	}
-	if lastRename != `alice {"new_name":"alicia"}` {
+	if lastRename != `alice@testnet {"new_name":"alicia@testnet"}` {
 		t.Errorf("kernel saw %q", lastRename)
 	}
 }
@@ -584,16 +584,16 @@ func TestAdminRenameFailureStaysOnOldHandle(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	page := getBody(t, cl, srv.URL+"/admin/users/sys")
-	resp := postTo(t, cl, srv.URL+"/admin/users/sys/rename", page, url.Values{"new_name": {"sys"}})
+	page := getBody(t, cl, srv.URL+"/admin/users/sys@testnet")
+	resp := postTo(t, cl, srv.URL+"/admin/users/sys@testnet/rename", page, url.Values{"new_name": {"sys"}})
 	resp.Body.Close()
-	if got := resp.Header.Get("Location"); got != "/admin/users/sys" {
+	if got := resp.Header.Get("Location"); got != "/admin/users/sys@testnet" {
 		t.Errorf("failure must stay on the old handle, got %q", got)
 	}
 
 	// An empty handle never reaches the kernel.
 	lastRename = ""
-	resp = postTo(t, cl, srv.URL+"/admin/users/alice/rename", page, url.Values{"new_name": {"  "}})
+	resp = postTo(t, cl, srv.URL+"/admin/users/alice@testnet/rename", page, url.Values{"new_name": {"  "}})
 	resp.Body.Close()
 	if lastRename != "" {
 		t.Errorf("empty new_name must not reach the kernel, got %q", lastRename)
@@ -609,9 +609,9 @@ func TestAdminUnknownUserOpIs404(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	page := getBody(t, cl, srv.URL+"/admin/users/alice")
+	page := getBody(t, cl, srv.URL+"/admin/users/alice@testnet")
 	// The route pattern only admits the three verbs; anything else never routes.
-	resp := postTo(t, cl, srv.URL+"/admin/users/alice/vaporize", page, url.Values{})
+	resp := postTo(t, cl, srv.URL+"/admin/users/alice@testnet/vaporize", page, url.Values{})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown user op = %d, want 404", resp.StatusCode)

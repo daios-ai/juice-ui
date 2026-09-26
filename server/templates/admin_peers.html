@@ -11,12 +11,12 @@
 
 <h2>This kernel</h2>
 <div class="kernel-card">
-  <span class="media wide">{{cardArt $d.Identity.PublicKey $d.Identity.Handle "" "kernel"}}</span>
+  <span class="media wide">{{cardArt $d.Identity.PublicKey $d.Identity.Handle "kernel"}}</span>
   <div class="kernel-body">
     <div class="mono"><b>{{$d.Identity.Handle}}</b>{{if $d.Identity.Network}} <span class="muted small">{{$d.Identity.Network}}</span>{{end}}</div>
     <div class="fingerprint">{{$d.Identity.PublicKey}}</div>
     {{if $d.Identity.About}}<div class="small muted">{{$d.Identity.About}}</div>{{end}}
-    {{if $d.Identity.RailAddress}}<div class="small muted">paid at <span class="mono">{{$d.Identity.RailAddress}}</span></div>{{end}}
+    {{if $d.Identity.BlockchainAddress}}<div class="small muted">paid at <span class="mono">{{$d.Identity.BlockchainAddress}}</span></div>{{end}}
     {{/* What this kernel has delivered to foreign buyers and not been paid for,
          against the limit it set — one number for the whole kernel (§D14). */}}
     <div class="small muted">owed to us <span class="mono">{{money $d.Identity.Exposure}}</span> of <span class="mono">{{money $d.Identity.CreditLimit}}</span> limit · ticket <span class="mono">{{money $d.Identity.Lottery}}</span>{{if $d.Identity.LotteryMax}}, taking up to <span class="mono">{{money $d.Identity.LotteryMax}}</span>{{end}}</div>
@@ -60,7 +60,7 @@
   <tbody>
   {{range $d.Deposits.Held}}
   <tr>
-    <td class="mono" title="{{.PartyHandle}}">{{truncate 14 .PartyHandle}}</td>
+    <td class="mono" title="{{.Party}}">{{truncate 14 .Party}}</td>
     <td class="money">{{money .Amount}}</td>
     <td class="mono muted" title="{{.TxHash}}">{{truncate 12 .TxHash}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>

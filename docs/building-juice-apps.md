@@ -64,14 +64,14 @@ An app extends the kernel by **owning actions**. Two facts make this idiomatic a
 cheap, and both surprised us on the first app:
 
 - **You don't know the prices, and you don't need to.** The prices of the kernel's
-  standard actions (`@sys/*`) are **policy each operator sets** — not constants, not
+  standard actions (`sys@<kernel>/*`) are **policy each operator sets** — not constants, not
   knowable at design time; `native.message.price` may be 0 on your laptop and 10 in
   production. Since a price is what *others* pay you, **calling your own action costs
   you nothing.** So never build on a shared *priced* action and assume it's cheap (a
   0-balance service account 402s the moment an operator prices it); instead **create
   your own private, price-0, owner-only action** that does the same thing. You control
-  your actions' prices; you do not control `@sys/*`'s. (`@chat/outbox` replaced a
-  per-deployment `@sys/message` toll exactly this way.)
+  your actions' prices; you do not control `sys@<kernel>/*`'s. (`chat@<kernel>/outbox` replaced a
+  per-deployment `sys@<kernel>/message` toll exactly this way.)
 
 - **Actions can be private.** An action you own but never publish is callable only by
   you — perfect for an app's internal machinery. Create it, `enable` it, and simply
@@ -157,7 +157,7 @@ The running kernel does not always match `juicedocs/`. Treat the docs as the
 *intended* contract and the running kernel as *ground truth*; when they differ, encode
 the live behavior in the client and record it (see the project's
 `kernel-contract-deviations` notes). Point-in-time example that cost real time:
-`GET /v1/actions/{ref}` resolves only a **UUID**, not an `@owner/name` ref (404) —
+`GET /v1/actions/{ref}` resolves only a **UUID**, not an `owner@kernel/name` address (404) —
 so resolve refs via the **list** endpoint, or read the id off a step/tx that already
 carries it. Assume every "this should just work" kernel call is worth one live check.
 

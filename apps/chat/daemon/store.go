@@ -39,7 +39,7 @@ var (
 type Room struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Creator   string   `json:"creator"` // handle
+	Creator   string   `json:"creator"` // address
 	Members   []string `json:"members"`
 	CreatedAt string   `json:"created_at"`
 	Unread    int      `json:"unread"`
@@ -118,23 +118,36 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("chat store schema: %w", err)
 	}
-	// One-time v0.12 canonicalization: handles are bare (no "@" sigil) on the
-	// kernel and at the daemon boundary, so stored sigiled rows from pre-0.4
-	// databases are stripped once, idempotently. OR IGNORE + DELETE handles the
-	// (room, "@h")/(room, "h") duplicate under the members primary key; other
-	// tables have no handle uniqueness to collide on. Data is migrated, never
-	// dropped.
-	const desigil = `
-UPDATE rooms SET creator = substr(creator, 2) WHERE creator LIKE '@%';
-UPDATE OR IGNORE members SET handle = substr(handle, 2) WHERE handle LIKE '@%';
-DELETE FROM members WHERE handle LIKE '@%';
-UPDATE messages SET sender = substr(sender, 2) WHERE sender LIKE '@%';
-UPDATE tokens SET username = substr(username, 2) WHERE username LIKE '@%';`
-	if _, err := db.Exec(desigil); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("chat store desigil: %w", err)
-	}
 	return &Store{db: db}, nil
+}
+
+// Qualify rewrites every stored bare handle to its address on this kernel,
+// handle@kernel, once: the kernel names every principal by address
+// (requirements.md §4), so a room made before that could not otherwise match
+// its members. The kernel's name is known only once it has answered, so this
+// runs after the service account signs in rather than at Open. It is
+// idempotent — an address already carries "@" — and data is qualified, never
+// dropped: OR IGNORE + DELETE settles a member stored under both forms.
+func (s *Store) Qualify(kernel string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, q := range []string{
+		`UPDATE rooms SET creator = creator || ? WHERE instr(creator, '@') = 0`,
+		`UPDATE OR IGNORE members SET handle = handle || ? WHERE instr(handle, '@') = 0`,
+		`UPDATE messages SET sender = sender || ? WHERE instr(sender, '@') = 0`,
+		`UPDATE tokens SET username = username || ? WHERE instr(username, '@') = 0`,
+	} {
+		if _, err := tx.Exec(q, "@"+kernel); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM members WHERE instr(handle, '@') = 0`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Close releases the database.

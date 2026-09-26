@@ -10,9 +10,9 @@
 {{/* Identity only — no balance. The wallet owns money evidence; repeating it
      here is what made this page a hub instead of a settings surface. */}}
 <div class="you-head" role="group" aria-label="Identity">
-  <span class="avatar lg" aria-hidden="true">{{initial $d.User.Handle}}</span>
+  <span class="avatar lg" aria-hidden="true">{{initial $d.User.Address}}</span>
   <div class="stretch">
-    <div class="mono"><b>{{$d.User.Handle}}</b></div>
+    <div class="mono"><b>{{$d.User.Address}}</b></div>
     {{if $d.User.Description}}<div class="muted small">{{$d.User.Description}}</div>{{end}}
   </div>
 </div>

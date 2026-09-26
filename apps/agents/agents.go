@@ -100,8 +100,8 @@ func (a *Agents) Slug() string { return "agents" }
 // the UI host — it writes the installation's files and spawns a long-lived
 // daemon — so it is an operator surface, and an entry a non-superuser could not
 // use would be an invitation to a 403.
-func (a *Agents) Nav(handle string, superuser bool) []apps.NavEntry {
-	if handle == "" || !superuser {
+func (a *Agents) Nav(me string, superuser bool) []apps.NavEntry {
+	if me == "" || !superuser {
 		return nil
 	}
 	return []apps.NavEntry{{Slug: "agents", Label: "agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
@@ -313,11 +313,9 @@ type detailView struct {
 	// not the UI holding somebody else's credential.
 	Account *client.AdminUser
 	// Activity is what this agent has been party to, as the kernel serves it to
-	// the viewer, and Actions resolves each row's action so it renders as a ref
-	// rather than as "(deleted)". It is the point of the section: an operator can
-	// raise an agent and, without this, never see what it spends.
+	// the viewer. It is the point of the section: an operator can raise an agent
+	// and, without this, never see what it spends.
 	Activity []client.Transaction
-	Actions  map[string]client.Action
 }
 
 type statusView struct {
@@ -382,12 +380,11 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 	_, statErr := os.Stat(filepath.Join(dir, configFile))
 	csrf := a.deps.CSRFField(r)
 	open := r.URL.Query().Get("form")
-	account, activity, actions := a.account(r, handle)
+	account, activity := a.account(r, handle)
 	a.deps.RenderPage(w, r, http.StatusOK, "agent", "agents", detailView{
 		Handle:    handle,
 		Account:   account,
 		Activity:  activity,
-		Actions:   actions,
 		Running:   a.sup.running(handle),
 		Persona:   persona,
 		Knowledge: knowledge,
@@ -545,19 +542,21 @@ func agentBin(juiceHome string) string {
 // directory on this machine and may name no principal at all — never created,
 // or created on another kernel — and the page must still render.
 //
-// Nothing is computed here. The balance is the kernel's row for that handle and
-// the rows are the transactions it serves this viewer; the page arranges them
-// and states no figure the kernel did not.
-func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []client.Transaction, map[string]client.Action) {
+// The home is named by the agent's bare handle, as the juice-agent daemon names
+// it; the principal is that handle's address on this kernel. Nothing is computed
+// here. The balance is the kernel's row for that address and the rows are the
+// transactions it serves this viewer; the page arranges them and states no
+// figure the kernel did not.
+func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []client.Transaction) {
 	if a.deps.Sessions == nil || a.deps.Client == nil {
-		return nil, nil, nil // no kernel to ask: the section says there is no account
+		return nil, nil // no kernel to ask: the section says there is no account
 	}
 	ctx := r.Context()
+	address := a.deps.Address(handle)
 	var acct *client.AdminUser
 	var rows []client.Transaction
-	var actions map[string]client.Action
 	_ = a.deps.Sessions.Do(ctx, func(tok string) error {
-		u, err := a.deps.Client.AdminGetUser(ctx, tok, handle)
+		u, err := a.deps.Client.AdminGetUser(ctx, tok, address)
 		if err != nil {
 			return nil // no principal by that name: the section says so
 		}
@@ -572,19 +571,16 @@ func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []c
 			return nil
 		}
 		for _, t := range txs {
-			if t.OwnerHandle == handle || t.CallerHandle == handle || t.TargetHandle == handle {
+			if t.Owner == address || t.Caller == address || t.Target == address {
 				rows = append(rows, t)
 			}
 			if len(rows) == agentActivityRows {
 				break
 			}
 		}
-		// Without this the rows render every action as "(deleted)", which is a
-		// plain untruth about the agent's own history.
-		actions = a.deps.Client.ActionsByID(ctx, tok, rows)
 		return nil
 	})
-	return acct, rows, actions
+	return acct, rows
 }
 
 // agentActivityRows is how much of an agent's history the page shows before

@@ -86,7 +86,7 @@ func TestOriginAllowlist(t *testing.T) {
 
 func mustRenderer(t *testing.T) *Renderer {
 	t.Helper()
-	r, err := NewRenderer(playUnit)
+	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}

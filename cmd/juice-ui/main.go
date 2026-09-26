@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -59,12 +60,16 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	if kernelKey == "" {
 		id, err := server.AwaitKernel(kernel, 10*time.Second)
 		if err != nil {
-			return nil, fmt.Errorf("kernel at %s could not be identified (%w); name a context with JUICE_CONTEXT or `context` in config.json, or start the kernel", cfg.KernelBaseURL, err)
+			return nil, fmt.Errorf("kernel at %s could not be identified (%w); name a kernel with JUICE_KERNEL or `kernel` in config.json, or start the kernel", cfg.KernelBaseURL, err)
 		}
 		kernelKey = id.PublicKey
 		log.Info("kernel identified", "handle", id.Handle, "network", id.Network, "key", client.ShortKey(id.PublicKey))
 	}
 	identity := server.NewKernelIdentity(kernel, kernelKey, cfg.BadgeInterval, log)
+	// Read /health now, so the kernel's name is known before any app composes
+	// an address with it; a kernel that is down is read again on the next
+	// request, and an app's own retry waits for that.
+	identity.Get(context.Background())
 
 	sm := scs.New()
 	sm.Lifetime = 24 * time.Hour
@@ -94,7 +99,7 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 
 	// The renderer must include each enabled app's templates so its pages
 	// render in the shared layout.
-	renderer, err := server.NewRenderer(identity.Unit, appTemplates...)
+	renderer, err := server.NewRenderer(identity, appTemplates...)
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
 	}

@@ -119,14 +119,14 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	// Active users first, then alphabetical by handle within each block, so the
+	// Active users first, then alphabetical by address within each block, so the
 	// operator sees the live roster before the suspended tail.
 	sort.SliceStable(view.Users, func(i, j int) bool {
 		a, b := view.Users[i], view.Users[j]
 		if a.Suspended() != b.Suspended() {
 			return !a.Suspended() // active (not suspended) sorts first
 		}
-		return strings.ToLower(a.Handle) < strings.ToLower(b.Handle)
+		return strings.ToLower(a.Address) < strings.ToLower(b.Address)
 	})
 	offset := queryOffset(r)
 	start, end, hasNext := pageSlice(len(view.Users), offset, pageSize)
@@ -136,11 +136,11 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getAdminUser(w http.ResponseWriter, r *http.Request) {
-	handle := r.PathValue("handle")
+	address := r.PathValue("address")
 	ctx := r.Context()
 	var view adminUserView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.AdminGetUser(ctx, tok, handle)
+		u, e := s.client.AdminGetUser(ctx, tok, address)
 		if e != nil {
 			return e
 		}
@@ -151,49 +151,50 @@ func (s *Server) getAdminUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.OpenForm = openForm(r, "admin-user")
-	s.renderPage(w, r, http.StatusOK, "admin_user", "User "+handle, view)
+	s.renderPage(w, r, http.StatusOK, "admin_user", "User "+address, view)
 }
 
-// postAdminUserOp handles the per-user operator verbs, dispatched on the path's
+// postAdminUserOp addresss the per-user operator verbs, dispatched on the path's
 // last segment. The switch is exhaustive on purpose: an unrecognised segment is
 // a 404, never a fallthrough into a destructive verb.
 func (s *Server) postAdminUserOp(w http.ResponseWriter, r *http.Request) {
-	handle := r.PathValue("handle")
+	address := r.PathValue("address")
 	ctx := r.Context()
 	switch lastSegment(r.URL.Path) {
 	case "suspend":
-		err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminSuspendUser(ctx, tok, handle) })
-		s.flashResult(w, r, err, "/admin", "User "+handle+" suspended.")
+		err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminSuspendUser(ctx, tok, address) })
+		s.flashResult(w, r, err, "/admin", "User "+address+" suspended.")
 	case "unsuspend":
-		err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnsuspendUser(ctx, tok, handle) })
-		s.flashResult(w, r, err, "/admin", "User "+handle+" unsuspended.")
+		err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminUnsuspendUser(ctx, tok, address) })
+		s.flashResult(w, r, err, "/admin", "User "+address+" unsuspended.")
 	case "rename":
-		s.renameUser(w, r, handle)
+		s.renameUser(w, r, address)
 	default:
 		s.renderPage(w, r, http.StatusNotFound, "error", "Not found", errorView{Message: "Page not found."})
 	}
 }
 
-// renameUser rebinds a local account's handle, freeing the old one so every
-// reference follows the account. The new name is taken verbatim — a sigiled one
-// is the kernel's to reject, not ours to rewrite (requirements.md §4). The
-// redirect lands on the new handle, which is the page that then exists.
+// renameUser rebinds a local account's address, freeing the old one so every
+// reference follows the account. The new address is taken verbatim — one the
+// kernel will not accept is the kernel's to refuse, not ours to rewrite
+// (requirements.md §4). The redirect lands on the new address, which is the
+// page that then exists.
 //
 // A kernel is renamed on its own page by renamePeer: the two namespaces are
 // separate routes on the kernel now, and a route that guessed which one was
 // meant would be guessing what the kernel refuses to guess (§6.6).
-func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, handle string) {
-	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(handle)
+func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, address string) {
+	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(address)
 	newName := strings.TrimSpace(r.FormValue("new_name"))
 	if newName == "" {
-		s.flashRedirect(w, r, back, "error", "Enter a new name.")
+		s.flashRedirect(w, r, back, "error", "Enter a new address.")
 		return
 	}
-	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRenameUser(ctx, tok, handle, newName) }); err != nil {
+	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRenameUser(ctx, tok, address, newName) }); err != nil {
 		s.flashRedirect(w, r, back, "error", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newName), "success", handle+" is now "+newName+".")
+	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newName), "success", address+" is now "+newName+".")
 }
 
 // postAdminPeerRename binds a kernel's petname, keyed on the public key — an
@@ -234,7 +235,7 @@ func adjustBack(v string) string {
 // received, or closes a peer's obligation for the amount its draw decided.
 func (s *Server) postAdminDeposit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	handle := strings.TrimSpace(r.FormValue("handle"))
+	address := strings.TrimSpace(r.FormValue("address"))
 	ref := strings.TrimSpace(r.FormValue("ref"))
 	reason := strings.TrimSpace(r.FormValue("reason"))
 	back := adjustBack(strings.TrimSpace(r.FormValue("back")))
@@ -243,17 +244,17 @@ func (s *Server) postAdminDeposit(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
-	if handle == "" || ref == "" {
+	if address == "" || ref == "" {
 		s.flashRedirect(w, r, back, "error", "An account and the payment it records are both required.")
 		return
 	}
 	err = s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.AdminDeposit(ctx, tok, handle, amount, ref, reason)
+		_, e := s.client.AdminDeposit(ctx, tok, address, amount, ref, reason)
 		return e
 	})
-	msg := "Recorded " + ref + " · " + handle + "."
+	msg := "Recorded " + ref + " · " + address + "."
 	if amount > 0 {
-		msg = "Recorded " + s.render.money(amount) + " · " + handle + "."
+		msg = "Recorded " + s.render.money(amount) + " · " + address + "."
 	}
 	s.flashResult(w, r, err, back, msg)
 }

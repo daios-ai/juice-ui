@@ -160,6 +160,33 @@ func (k *KernelIdentity) Unit() (Unit, bool) {
 	return Unit{Decimals: k.id.Decimals, Symbol: k.id.Symbol}, true
 }
 
+// name is this kernel's own name, the kernel segment of every local address,
+// or "" while it is unknown.
+func (k *KernelIdentity) name() string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.id.Handle
+}
+
+// Address composes this kernel's address for a handle, handle@kernel. It is
+// the UI's one composition site — the entry screen, the natives, the
+// superuser, an app's service account — and "" while the kernel's name is
+// unknown, so every comparison fails closed and the kernel refuses the call.
+func (k *KernelIdentity) Address(handle string) string {
+	if n := k.name(); n != "" {
+		return handle + "@" + n
+	}
+	return ""
+}
+
+// Local reports whether an action address (owner@kernel/name) names an action
+// of this kernel: its kernel segment is this kernel's own name. It is the UI's
+// one reading of an address; everything else passes names through verbatim.
+func (k *KernelIdentity) Local(ref string) bool {
+	n := k.name()
+	return n != "" && strings.HasSuffix(refOwner(ref), "@"+n)
+}
+
 // kernelIdentity is the kernel's banner for this request, or a zero Health when
 // it is not known.
 func (s *Server) kernelIdentity(ctx context.Context) client.Health {
@@ -322,8 +349,8 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /settings", s.requireAuth(s.getSettings))
 	mux.HandleFunc("POST /settings", s.requireAuth(s.postSettings))
 
-	// Owner page — a handle's public actions (like a channel).
-	mux.HandleFunc("GET /users/{handle}", s.requireAuth(s.getOwner))
+	// Owner page — an address's public actions (like a channel).
+	mux.HandleFunc("GET /users/{address}", s.requireAuth(s.getOwner))
 
 	// Grants (connect an upstream account to an action): the oauth_delegated
 	// browser flow (start/callback) and the delegated_bearer static-token path.
@@ -335,10 +362,10 @@ func New(o Options) (http.Handler, error) {
 
 	// Admin — superuser-only supervision (money, access, federation trust).
 	mux.HandleFunc("GET /admin", s.requireSuperuser(s.getAdmin))
-	mux.HandleFunc("GET /admin/users/{handle}", s.requireSuperuser(s.getAdminUser))
-	mux.HandleFunc("POST /admin/users/{handle}/suspend", s.requireSuperuser(s.postAdminUserOp))
-	mux.HandleFunc("POST /admin/users/{handle}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
-	mux.HandleFunc("POST /admin/users/{handle}/rename", s.requireSuperuser(s.postAdminUserOp))
+	mux.HandleFunc("GET /admin/users/{address}", s.requireSuperuser(s.getAdminUser))
+	mux.HandleFunc("POST /admin/users/{address}/suspend", s.requireSuperuser(s.postAdminUserOp))
+	mux.HandleFunc("POST /admin/users/{address}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
+	mux.HandleFunc("POST /admin/users/{address}/rename", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/deposit", s.requireSuperuser(s.postAdminDeposit))
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a
@@ -528,7 +555,7 @@ func (s *Server) kernelChanged(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	pin := s.sessions.Pin(r.Context())
-	if pin.PublicKey == id.PublicKey && pin.NetworkDigest == id.NetworkDigest {
+	if pin.PublicKey == id.PublicKey && pin.NetworkFingerprint == id.NetworkFingerprint {
 		return false
 	}
 	_ = s.sessions.Logout(r.Context())
@@ -537,16 +564,16 @@ func (s *Server) kernelChanged(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // superuserHandle is the fixed superuser identity (kernel requirements §12); the
-// UI shows the admin group and superuser scope to this handle only. The kernel
+// UI shows the admin group and superuser scope to its address only. The kernel
 // remains authoritative — an admin call always re-checks the bearer.
 const superuserHandle = "sys"
 
-// isSuperuser reports whether the session belongs to the superuser. Handles are
-// bare (requirements.md §4), so this is a plain comparison — the gate fails
-// CLOSED (the admin nav silently disappears) if a session ever holds anything
-// else, which is the safe direction.
+// isSuperuser reports whether the session belongs to the superuser: its address
+// is sys@<this kernel>. The gate fails CLOSED (the admin nav silently
+// disappears) while the kernel's name is unknown, which is the safe direction.
 func (s *Server) isSuperuser(r *http.Request) bool {
-	return s.sessions.Handle(r.Context()) == superuserHandle
+	sys := s.identity.Address(superuserHandle)
+	return sys != "" && s.sessions.Address(r.Context()) == sys
 }
 
 // requireSuperuser gates admin routes. A non-superuser (or anonymous) request
@@ -598,7 +625,8 @@ func (s *Server) appDeps() apps.Deps {
 		FlashRedirect:     s.flashRedirect,
 		CSRFField:         func(r *http.Request) template.HTML { return csrf.TemplateField(r) },
 		IsHTMX:            isHTMX,
-		Handle:            func(r *http.Request) string { return s.sessions.Handle(r.Context()) },
+		Me:                func(r *http.Request) string { return s.sessions.Address(r.Context()) },
+		Address:           s.identity.Address,
 		RequireAuth:       s.requireAuth,
 		RequireSuperuser:  s.requireSuperuser,
 		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
@@ -649,11 +677,11 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 		{Slug: "settings", Label: "settings", Href: "/settings", Icon: iconYou},
 	}
 	// App entries (chat, agents) fold in after the core groups.
-	handle := s.sessions.Handle(r.Context())
+	me := s.sessions.Address(r.Context())
 	super := s.isSuperuser(r)
 	firstApp := true
 	for _, f := range s.apps {
-		for _, e := range f.Nav(handle, super) {
+		for _, e := range f.Nav(me, super) {
 			nav = append(nav, NavItem{
 				Slug:     e.Slug,
 				Label:    e.Label,
@@ -689,11 +717,11 @@ func (s *Server) appNav(r *http.Request) []apps.NavEntry {
 	if len(s.apps) == 0 {
 		return nil
 	}
-	handle := s.sessions.Handle(r.Context())
+	me := s.sessions.Address(r.Context())
 	super := s.isSuperuser(r)
 	var out []apps.NavEntry
 	for _, f := range s.apps {
-		for _, e := range f.Nav(handle, super) {
+		for _, e := range f.Nav(me, super) {
 			e.Active = e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match)
 			out = append(out, e)
 		}
@@ -730,7 +758,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Sidebar:      sidebarFromRequest(r),
 		Active:       active,
 		Nav:          s.buildNav(r, active),
-		Handle:       s.sessions.Handle(r.Context()),
+		Me:           s.sessions.Address(r.Context()),
 		KernelHandle: kernelID.Handle,
 		KernelFP:     keyFingerprint(kernelID.PublicKey),
 		KernelNet:    kernelID.Network,
@@ -786,7 +814,7 @@ func activeGroup(path string) string {
 // handler already fetched the user.
 func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, name, title string, data any, available ...int64) {
 	p := s.page(r, title, data)
-	if p.Handle != "" {
+	if p.Me != "" {
 		if len(available) > 0 {
 			p.Available = available[0]
 		} else {

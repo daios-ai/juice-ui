@@ -23,21 +23,19 @@ import (
 	"github.com/daios-ai/juice-ui/session"
 )
 
-// Handles are bare and never rewritten: every non-empty token is passed through
-// as typed, so a sigiled one reaches the daemon and is rejected there — the same
-// answer a headless action call gets (requirements.md §4).
-func TestParseHandles(t *testing.T) {
-	got := parseHandles("bob, carol\n@dave  plainword @eve")
-	want := []string{"bob", "carol", "@dave", "plainword", "@eve"}
-	if len(got) != len(want) {
-		t.Fatalf("parseHandles = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("parseHandles[%d] = %q, want %q", i, got[i], want[i])
-		}
+// Members are addresses passed through as typed: every non-empty token reaches
+// the daemon verbatim, so a bare handle is refused there — the same answer a
+// headless action call gets (requirements.md §4).
+func TestParseMembers(t *testing.T) {
+	got := parseMembers("bob@k, carol@k\n@dave  plainword ")
+	want := []string{"bob@k", "carol@k", "@dave", "plainword"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("parseMembers = %v, want %v", got, want)
 	}
 }
+
+// testAddress composes an address on the test kernel, as Deps.Address does.
+func testAddress(h string) string { return h + "@testnet" }
 
 func TestRoomName(t *testing.T) {
 	if roomName("  general  ") != "general" {
@@ -117,6 +115,7 @@ func TestStartProvisionsCredentialsAndReuses(t *testing.T) {
 	store := map[string]json.RawMessage{}
 	db := filepath.Join(t.TempDir(), "chat.db")
 	deps := apps.Deps{
+		Address:      testAddress,
 		Client:       client.New("http://127.0.0.1:0", nil),
 		PublicURL:    "http://localhost:8080",
 		LoadAppState: func(slug string) (json.RawMessage, error) { return store[slug], nil },
@@ -160,7 +159,8 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 	c.daemon = daemon.New(mustStore(t), "s", "vs", noAuth, nil)
 	c.dc = daemon.NewClient(c.daemon)
 	c.deps = apps.Deps{
-		Handle:    func(r *http.Request) string { return "alice" },
+		Address:   testAddress,
+		Me:        func(r *http.Request) string { return "alice@testnet" },
 		CSRFField: func(r *http.Request) template.HTML { return template.HTML("<input>") },
 		RenderFragment: func(w http.ResponseWriter, status int, name string, data any) error {
 			gotName, gotData = name, data
@@ -175,7 +175,7 @@ func TestGetMessagesRendersFragment(t *testing.T) {
 		t.Fatalf("fragment name = %q, want _chat_poll", gotName)
 	}
 	mv, ok := gotData.(msgsView)
-	if !ok || mv.RoomID != "r1" || mv.Me != "alice" {
+	if !ok || mv.RoomID != "r1" || mv.Me != "alice@testnet" {
 		t.Fatalf("fragment data = %+v (ok=%v)", gotData, ok)
 	}
 }
@@ -195,7 +195,8 @@ func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
 	sm := scs.New()
 	var fragment string
 	c.deps = apps.Deps{
-		Handle:         func(*http.Request) string { return "alice" },
+		Address:        testAddress,
+		Me:             func(*http.Request) string { return "alice@testnet" },
 		CSRFField:      func(*http.Request) template.HTML { return "" },
 		RenderFragment: func(_ http.ResponseWriter, _ int, name string, _ any) error { fragment = name; return nil },
 		HandleErr:      func(http.ResponseWriter, *http.Request, error) bool { return false },
@@ -211,7 +212,7 @@ func TestPostMessageHTMXAppendsInsteadOfRedirect(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
 			c.postMessage(w, req)
 		})).ServeHTTP(rec, req)
 		return rec
@@ -237,7 +238,8 @@ func TestPostDeleteMessageHTMX(t *testing.T) {
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{
-		Handle:    func(*http.Request) string { return "alice" },
+		Address:   testAddress,
+		Me:        func(*http.Request) string { return "alice@testnet" },
 		HandleErr: func(http.ResponseWriter, *http.Request, error) bool { return false },
 		Client:    cl,
 		Sessions:  session.NewManager(sm, cl),
@@ -251,7 +253,7 @@ func TestPostDeleteMessageHTMX(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
 			c.postDeleteMessage(w, req)
 		})).ServeHTTP(rec, req)
 		return rec
@@ -286,8 +288,9 @@ func TestEnsureActionsCreatesAndMigrates(t *testing.T) {
 		URL: "http://localhost:8080/_kernel/chat/ack"}) // stale source from the old version
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = authRev() // auth already current — isolate the source-drift migration
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
@@ -316,8 +319,9 @@ func TestEnsureActionsLeavesCorrectAlone(t *testing.T) {
 	f := newFakeKernel(seed...)
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = authRev() // auth already current — steady state
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
@@ -346,10 +350,12 @@ func TestEnsureActionsForcesOnAuthRevChange(t *testing.T) {
 	var saved []byte
 	c := New()
 	c.deps = apps.Deps{
-		Client: client.New(f.url, nil), PublicURL: "http://localhost:8080",
+		Address: testAddress,
+		Client:  client.New(f.url, nil), PublicURL: "http://localhost:8080",
 		SaveAppState: func(_ string, b json.RawMessage) error { saved = b; return nil },
 	}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = "stale-header-rev" // pushed by an earlier build under the old header
 
 	if err := c.ensureActions(context.Background()); err != nil {
@@ -398,8 +404,9 @@ func TestEnsureActionsReconcilesStaleSchema(t *testing.T) {
 	f := newFakeKernel(stale)
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = authRev() // auth already current — isolate the schema drift
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
@@ -420,8 +427,9 @@ func TestEnsureActionsRetiresOrphans(t *testing.T) {
 		URL: "http://localhost:8080/_kernel/chat/rename-room"})
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = authRev()
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
@@ -453,10 +461,12 @@ func TestEnsureActionsIsResilient(t *testing.T) {
 	var saved []byte
 	c := New()
 	c.deps = apps.Deps{
-		Client: client.New(f.url, nil), PublicURL: "http://localhost:8080",
+		Address: testAddress,
+		Client:  client.New(f.url, nil), PublicURL: "http://localhost:8080",
 		SaveAppState: func(_ string, b json.RawMessage) error { saved = b; return nil },
 	}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = "stale" // force a full re-push (update+enable every op)
 
 	if err := c.ensureActions(context.Background()); err == nil {
@@ -638,10 +648,10 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		w.Write([]byte(`[{"active":false}]`))
 	})
-	// Seed/outbox stubs: ensureSeed resolves sys/sink and opens an outbox trace via
+	// Seed/outbox stubs: ensureSeed resolves sys@testnet/sink and opens an outbox trace via
 	// a self sys/message; some tests may re-check the sentinel via ListSteps.
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"sink","action":"sys/sink","active":true}`))
+		w.Write([]byte(`{"id":"sink","action":"sys@testnet/sink","active":true}`))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		body := string(mustRead(r))
@@ -650,14 +660,14 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Unlock()
 		// chat/register returns a pending key + verification step; the seed run (the
 		// private chat/outbox) returns the sentinel step id.
-		if strings.Contains(body, chatHandle+"/"+registerName) {
+		if strings.Contains(body, testAddress(chatHandle)+"/"+registerName) {
 			w.Write([]byte(`{"trace_id":"t","result":{"ok":true,"api_key":"KEY-abc","step_id":"vstep-1"}}`))
 			return
 		}
 		w.Write([]byte(`{"trace_id":"seed-trace-1","result":{"step_id":"sentinel-1"}}`))
 	})
 	// /v1/me for the connector gate; /v1/grants for connect.
-	f.meJSON = `{"handle":"alice","connectors":[]}`
+	f.meJSON = `{"address":"alice@testnet","connectors":[]}`
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		body := f.meJSON
@@ -672,12 +682,12 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Lock()
 		f.grants = append(f.grants, in.Selector)
 		f.mu.Unlock()
-		w.Write([]byte(`{"actions":["chat/msg/message"],"status":"connected"}`))
+		w.Write([]byte(`{"actions":["chat@testnet/msg/message"],"status":"connected"}`))
 	})
 	// Default: the seed's sentinel step (action_id sys/sink, which ensureSeed reads
 	// as the doorbells' onward id). Tests that exercise the doorbell badge/room-list
 	// override f.stepsJSON with chat-owned doorbell steps.
-	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"ack","action":"chat/ack"}]`
+	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"ack","action":"chat@testnet/ack"}]`
 	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		var out []map[string]any
@@ -712,9 +722,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		// Surface the minted step as an chat-owned waiting doorbell so ListSteps-based
 		// coalescing/dismiss see it (mirrors the real kernel).
 		f.doorbells = append(f.doorbells, map[string]any{
-			"id": id, "status": "waiting", "owner_handle": "chat",
-			"required_caller_handle": in.RequiredCaller,
-			"partial_args":           map[string]any{"room": pa.Room},
+			"id": id, "status": "waiting", "owner": testAddress(chatHandle),
+			"required_caller": in.RequiredCaller,
+			"partial_args":    map[string]any{"room": pa.Room},
 		})
 		f.mu.Unlock()
 		w.WriteHeader(201)
@@ -775,18 +785,18 @@ func TestGetBadge(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	f.stepsJSON = `[
-	  {"id":"d1","status":"waiting","owner_handle":"chat","partial_args":{"room":"r1"}},
-	  {"id":"d2","status":"waiting","owner_handle":"chat","partial_args":{"room":"r2"}},
-	  {"id":"x","status":"waiting","owner_handle":"someone","partial_args":{}}]`
+	  {"id":"d1","status":"waiting","owner":"chat@testnet","partial_args":{"room":"r1"}},
+	  {"id":"d2","status":"waiting","owner":"chat@testnet","partial_args":{"room":"r2"}},
+	  {"id":"x","status":"waiting","owner":"someone@testnet","partial_args":{}}]`
 	c := New()
 	cl := client.New(f.url, nil)
 	sm := scs.New()
-	c.deps = apps.Deps{Client: cl, Sessions: session.NewManager(sm, cl)}
+	c.deps = apps.Deps{Address: testAddress, Client: cl, Sessions: session.NewManager(sm, cl)}
 
 	body := func() string {
 		rec := httptest.NewRecorder()
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
 			c.getBadge(w, r)
 		}))
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
@@ -817,7 +827,8 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{
-		Handle:         func(*http.Request) string { return "alice" },
+		Address:        testAddress,
+		Me:             func(*http.Request) string { return "alice@testnet" },
 		CSRFField:      func(*http.Request) template.HTML { return "" },
 		RenderFragment: func(http.ResponseWriter, int, string, any) error { return nil },
 		Client:         cl,
@@ -825,7 +836,7 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 	}
 	// alice holds an outstanding chat doorbell for the room (a waiting kernel step).
 	f.mu.Lock()
-	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"chat","required_caller_handle":"alice","partial_args":{"room":"` + r.ID + `"}}]`
+	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner":"chat@testnet","required_caller":"alice@testnet","partial_args":{"room":"` + r.ID + `"}}]`
 	f.mu.Unlock()
 	poll := func(visible string) {
 		outer := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
@@ -834,7 +845,7 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 			outer.Header.Set("X-Visible", visible)
 		}
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
 			c.getMessages(w, req)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), outer)
@@ -862,7 +873,7 @@ func TestDBPathCanonicalOnly(t *testing.T) {
 
 	home := filepath.Join(tmp, "juice", "ui") // the component home
 	c := New()
-	c.deps = apps.Deps{StatePath: filepath.Join(home, "state.json"), Home: home}
+	c.deps = apps.Deps{Address: testAddress, StatePath: filepath.Join(home, "state.json"), Home: home}
 	want := filepath.Join(home, chatDBName)
 
 	// Even with legacy stores present under BOTH the config dir and the XDG data dir,
@@ -904,22 +915,23 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.seedTrace, c.ackID = "seed-1", "ack" // seed already established; onward = chat/ack
 
-	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "alice",
-		Members: []string{"alice", "bob", "carol"}}
+	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "alice@testnet",
+		Members: []string{"alice@testnet", "bob@testnet", "carol@testnet"}}
 	c.notify(ev)
 	// One doorbell per member EXCEPT the sender.
 	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 2 })
 	f.mu.Lock()
 	bodies := strings.Join(f.mints, "|")
 	f.mu.Unlock()
-	if strings.Contains(bodies, `"required_caller":"alice"`) {
+	if strings.Contains(bodies, `"required_caller":"alice@testnet"`) {
 		t.Error("minted a doorbell for the sender")
 	}
-	if !strings.Contains(bodies, `"required_caller":"bob"`) || !strings.Contains(bodies, `"required_caller":"carol"`) {
+	if !strings.Contains(bodies, `"required_caller":"bob@testnet"`) || !strings.Contains(bodies, `"required_caller":"carol@testnet"`) {
 		t.Errorf("missing per-member doorbells: %s", bodies)
 	}
 	if !strings.Contains(bodies, `"room":"r1"`) {
@@ -949,8 +961,9 @@ func TestNotifyReRingsAfterCompletion(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil)}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil)}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.seedTrace, c.ackID = "seed-1", "ack"
 
 	ev := daemon.NotifyEvent{RoomID: "r1", RoomName: "general", Sender: "alice", Members: []string{"alice", "bob"}}
@@ -972,11 +985,11 @@ func TestDismissCompletesDoorbellFromSteps(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	// A doorbell is outstanding for (bob, r1): a waiting chat step bob must complete.
-	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner_handle":"chat","required_caller_handle":"bob","partial_args":{"room":"r1"}}]`
+	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner":"chat@testnet","required_caller":"bob@testnet","partial_args":{"room":"r1"}}]`
 	c := New()
 	cl := client.New(f.url, nil)
 	sm := scs.New()
-	c.deps = apps.Deps{Client: cl, Sessions: session.NewManager(sm, cl)}
+	c.deps = apps.Deps{Address: testAddress, Client: cl, Sessions: session.NewManager(sm, cl)}
 
 	// Drive dismiss inside a loaded, logged-in (bob) session, so completion runs
 	// under bob's own token (only the required_caller may complete).
@@ -997,8 +1010,9 @@ func TestEnsureActionsEstablishesSeed(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.st.AuthRev = authRev()
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
@@ -1047,7 +1061,7 @@ func TestServeOutboxCreatesSentinelViaCapability(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c := New()
-	c.deps = apps.Deps{Client: client.New(f.url, nil)}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil)}
 	c.ackID = "ack"
 
 	call := func(withCap bool) (string, int) {
@@ -1094,13 +1108,18 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	defer f.close()
 	c := New()
 	c.store = mustStore(t)
-	c.deps = apps.Deps{Client: client.New(f.url, nil)}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil)}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
 	c.seedTrace, c.validateID = "seed-1", "validate-act-id"
 	c.st.RegisterSecret = "regsec"
 
-	call := func(auth string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/"+registerName, strings.NewReader(`{"username":"agent"}`))
+	call := func(auth string, username ...string) *httptest.ResponseRecorder {
+		body := `{"username":"agent@testnet"}`
+		if len(username) > 0 {
+			body = `{"username":"` + username[0] + `"}`
+		}
+		req := httptest.NewRequest(http.MethodPost, "/"+registerName, strings.NewReader(body))
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
@@ -1110,6 +1129,10 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	}
 	if rec := call("Bearer nope"); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("bad-secret register status=%d, want 401", rec.Code)
+	}
+	// A bare handle is not an address: refused before a key is stored for it.
+	if rec := call("Bearer regsec", "agent"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bare-handle register status=%d, want 400", rec.Code)
 	}
 	rec := call("Bearer regsec")
 	if rec.Code != http.StatusOK {
@@ -1123,16 +1146,16 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	if res.APIKey == "" || res.StepID == "" {
 		t.Fatalf("register result = %s", rec.Body.String())
 	}
-	// The key resolves to the handle but is inactive until the step is completed.
-	if u, active, _ := c.store.ResolveToken(res.APIKey); u != "agent" || active {
-		t.Errorf("token = (%q,%v), want (agent,false)", u, active)
+	// The key resolves to the address but is inactive until the step is completed.
+	if u, active, _ := c.store.ResolveToken(res.APIKey); u != "agent@testnet" || active {
+		t.Errorf("token = (%q,%v), want (agent@testnet,false)", u, active)
 	}
 	// Exactly one verification step, to agent, onward validate-user, carrying reg_id.
 	if len(f.mints) != 1 {
 		t.Fatalf("mints = %d, want 1 verification step", len(f.mints))
 	}
 	body := f.mints[0]
-	if !strings.Contains(body, `"required_caller":"agent"`) ||
+	if !strings.Contains(body, `"required_caller":"agent@testnet"`) ||
 		!strings.Contains(body, `"action":"validate-act-id"`) ||
 		!strings.Contains(body, "reg_id") {
 		t.Errorf("verification step = %s", body)
@@ -1149,16 +1172,17 @@ func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	cl := client.New(f.url, nil)
 	sm := scs.New()
 	c.deps = apps.Deps{
+		Address:  testAddress,
 		Client:   cl,
 		Sessions: session.NewManager(sm, cl),
-		Handle:   func(*http.Request) string { return "alice" },
+		Me:       func(*http.Request) string { return "alice@testnet" },
 		FlashRedirect: func(w http.ResponseWriter, r *http.Request, to, kind, msg string) {
 			http.Redirect(w, r, to, http.StatusSeeOther)
 		},
 	}
 	rec := httptest.NewRecorder()
 	h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
+		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
 		c.postConnect(w, r)
 	}))
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/chat/connect", nil))
@@ -1166,8 +1190,8 @@ func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	if len(f.completes) != 1 || f.completes[0] != "vstep-1" {
 		t.Errorf("verification step not completed: completes=%v", f.completes)
 	}
-	if len(f.grants) != 1 || f.grants[0] != msgSelector {
-		t.Errorf("connect selector = %v, want [%s]", f.grants, msgSelector)
+	if len(f.grants) != 1 || f.grants[0] != "chat@testnet/msg" {
+		t.Errorf("connect selector = %v, want [chat@testnet/msg]", f.grants)
 	}
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("connect redirect = %d, want 303", rec.Code)
@@ -1186,9 +1210,10 @@ func TestIndexGateOnConnector(t *testing.T) {
 	sm := scs.New()
 	var got indexView
 	c.deps = apps.Deps{
+		Address:   testAddress,
 		Client:    cl,
 		Sessions:  session.NewManager(sm, cl),
-		Handle:    func(*http.Request) string { return "alice" },
+		Me:        func(*http.Request) string { return "alice@testnet" },
 		CSRFField: func(*http.Request) template.HTML { return "" },
 		HandleErr: func(http.ResponseWriter, *http.Request, error) bool { return false },
 		RenderPage: func(_ http.ResponseWriter, _ *http.Request, _ int, _, _ string, data any) {
@@ -1198,7 +1223,7 @@ func TestIndexGateOnConnector(t *testing.T) {
 	render := func() indexView {
 		got = indexView{}
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice", session.Pin{})
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
 			c.getIndex(w, r)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/chat", nil))
@@ -1208,7 +1233,7 @@ func TestIndexGateOnConnector(t *testing.T) {
 		t.Error("no chat/msg connector, but Connected=true (gate not shown)")
 	}
 	f.mu.Lock()
-	f.meJSON = `{"handle":"alice","connectors":[{"directory":"chat/msg","connections":[],"actions":[{"action":"chat/msg/message"}]}]}`
+	f.meJSON = `{"address":"alice@testnet","connectors":[{"directory":"chat@testnet/msg","connections":[],"actions":[{"action":"chat@testnet/msg/message"}]}]}`
 	f.mu.Unlock()
 	if v := render(); !v.Connected {
 		t.Error("chat/msg connector present, but Connected=false (rooms not shown)")
@@ -1217,7 +1242,7 @@ func TestIndexGateOnConnector(t *testing.T) {
 
 func TestKernelDispatchRoutesOutboxToPlugin(t *testing.T) {
 	c := New()
-	c.deps = apps.Deps{Client: client.New("http://127.0.0.1:1", nil)}
+	c.deps = apps.Deps{Address: testAddress, Client: client.New("http://127.0.0.1:1", nil)}
 	c.ackID = "ack"
 	// c.daemon is nil: if /outbox weren't intercepted, kernelDispatch would 503.
 	req := httptest.NewRequest(http.MethodPost, "/outbox", strings.NewReader("{}")) // path as seen post-StripPrefix

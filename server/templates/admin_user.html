@@ -4,10 +4,10 @@
      peer key, so there is one record shape here and no discrimination to do: a
      kernel is read on its own page, under /admin/peers (§6.6). */}}
 <nav class="crumb"><a href="/admin">← admin</a></nav>
-<h1>{{$u.Handle}}</h1>
+<h1>{{$u.Address}}</h1>
 <div class="card">
   <dl class="locked-args">
-    <dt>Handle</dt><dd class="mono">{{$u.Handle}}</dd>
+    <dt>Address</dt><dd class="mono">{{$u.Address}}</dd>
     {{if $u.Description}}<dt>About</dt><dd>{{$u.Description}}</dd>{{end}}
     <dt>Available</dt><dd class="money">{{money $u.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $u.Locked}}</dd>
@@ -15,27 +15,27 @@
   </dl>
   <div class="cluster">
     {{if $u.Suspended}}
-    <form method="post" action="/admin/users/{{$u.Handle}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
+    <form method="post" action="/admin/users/{{$u.Address}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
     {{else}}
-    <form method="post" action="/admin/users/{{$u.Handle}}/suspend" data-confirm="Suspend {{$u.Handle}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
+    <form method="post" action="/admin/users/{{$u.Address}}/suspend" data-confirm="Suspend {{$u.Address}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
     {{end}}
-    <a class="btn-quiet" href="/admin/users/{{$u.Handle}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
+    <a class="btn-quiet" href="/admin/users/{{$u.Address}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
   </div>
 </div>
 
 <dialog id="form-admin-rename" class="modal-form"{{if eq .Data.OpenForm "admin-rename"}} open{{end}} aria-label="Rename">
-  <div class="modal-head"><h2>Rename {{$u.Handle}}</h2><a class="modal-close" href="/admin/users/{{$u.Handle}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Rename {{$u.Address}}</h2><a class="modal-close" href="/admin/users/{{$u.Address}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/admin/users/{{$u.Handle}}/rename">
+    <form class="stack" method="post" action="/admin/users/{{$u.Address}}/rename">
       {{$.CSRFField}}
       <div class="field">
-        <label for="ar-name">New handle<span class="req">*</span></label>
-        <p class="help">Frees the old handle; references use the new one.</p>
-        <input id="ar-name" name="new_name" type="text" required>
+        <label for="ar-name">New address<span class="req">*</span></label>
+        <p class="help">Frees the old address; references use the new one.</p>
+        <input id="ar-name" name="new_name" type="text" class="mono" placeholder="handle@kernel" required>
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Rename</button>
-        <a class="btn-quiet" href="/admin/users/{{$u.Handle}}" data-modal-close>Cancel</a>
+        <a class="btn-quiet" href="/admin/users/{{$u.Address}}" data-modal-close>Cancel</a>
       </div>
     </form>
   </div>

@@ -83,15 +83,15 @@ func TestLoginLogout(t *testing.T) {
 	if m.IsAuthenticated(ctx) {
 		t.Fatal("should start unauthenticated")
 	}
-	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice", Pin{}); err != nil {
+	if err := m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "alice@testnet", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	toks, ok := m.Tokens(ctx)
 	if !ok || toks.AccessToken != "at" || toks.RefreshToken != "rt" {
 		t.Fatalf("tokens = %+v ok=%v", toks, ok)
 	}
-	if m.Handle(ctx) != "alice" {
-		t.Errorf("handle = %q", m.Handle(ctx))
+	if m.Address(ctx) != "alice@testnet" {
+		t.Errorf("address = %q", m.Address(ctx))
 	}
 	if err := m.Logout(ctx); err != nil {
 		t.Fatal(err)

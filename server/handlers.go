@@ -52,17 +52,11 @@ func loginTab(r *http.Request) string {
 	return "signin"
 }
 
-// userView is the account room: identity, balances, and provider earnings folded
-// from the user's own transactions.
+// userView is the account room: identity and connected accounts.
 type userView struct {
-	User          client.User
-	Transactions  []client.Transaction
-	Actions       map[string]client.Action // action_id → Action for ledger refs
-	MyHandle      string
-	OpenProcesses []client.Process
-	OpenForm      string
-	Error         string
-	Notice        string
+	User     client.User
+	OpenForm string
+	Error    string
 }
 
 // studioEarnings is money that came to the user, folded from their transactions:
@@ -177,22 +171,19 @@ type processesView struct {
 type processView struct {
 	Process      client.Process
 	Transactions []client.Transaction
-	Actions      map[string]client.Action // action_id → Action; missing if deleted
-	MyHandle     string
-	BadgeSecs    int // poll interval for the self-terminating awaiting-receipt poll
+	Me           string // the viewer's address
+	BadgeSecs    int    // poll interval for the self-terminating awaiting-receipt poll
 }
 
 type transactionsView struct {
 	Transactions []client.Transaction
-	Actions      map[string]client.Action // action_id → Action; missing if deleted
-	MyHandle     string
+	Me           string // the viewer's address
 	Superuser    bool
 	Pager        Pager
 }
 
 type txView struct {
 	Tx         client.Transaction
-	Action     *client.Action // nil if action not found (soft-deleted)
 	Me         client.User
 	CanRate    bool
 	Receipt    *client.ReceiptVerification
@@ -221,7 +212,7 @@ type stepGroup struct {
 }
 
 type stepsView struct {
-	MyHandle    string
+	Me          string                   // the viewer's address
 	InboxGroups []stepGroup              // waiting steps that require this user, grouped by created_by
 	History     []client.Step            // completed/running/other steps
 	Actions     map[string]client.Action // action_id → action, for name display
@@ -259,8 +250,7 @@ func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
-	handle, password := r.FormValue("handle"), r.FormValue("password")
-	if err := s.doLogin(r.Context(), handle, password); err != nil {
+	if err := s.doLogin(r.Context(), s.entryAddress(r), r.FormValue("password")); err != nil {
 		s.log.Warn("login failed", "err", err)
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
 		return
@@ -269,7 +259,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
-	handle, password := r.FormValue("handle"), r.FormValue("password")
+	password := r.FormValue("password")
 	ctx := r.Context()
 	// Validate the password locally: confirmation match and minimum length (the
 	// kernel enforces neither). Stay on the create-account tab on error.
@@ -290,7 +280,7 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: "Couldn't set up account recovery. Please try again."})
 		return
 	}
-	if _, err := s.client.CreateUser(ctx, handle, password, recPub); err != nil {
+	if _, err := s.client.CreateUser(ctx, s.entryAddress(r), password, recPub); err != nil {
 		// Stay on the create-account tab so the user sees the error in context.
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: signupErrorMessage(err)})
 		return
@@ -350,13 +340,13 @@ func (s *Server) getRecover(w http.ResponseWriter, r *http.Request) {
 // phrase never reaches the kernel — only the signature does.
 func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	handle := strings.TrimSpace(r.FormValue("handle"))
+	address := s.entryAddress(r)
 	phrase := strings.Join(strings.Fields(r.FormValue("phrase")), " ") // normalize spacing
 	newPw := r.FormValue("password")
 	fail := func(msg string) {
 		s.renderPage(w, r, http.StatusOK, "recover", "Reset password", recoverView{Error: msg})
 	}
-	if handle == "" || phrase == "" {
+	if strings.TrimSpace(r.FormValue("handle")) == "" || phrase == "" {
 		fail("Enter your handle and recovery phrase.")
 		return
 	}
@@ -364,7 +354,7 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 		fail(msg)
 		return
 	}
-	nonce, err := s.client.RecoverStart(ctx, handle)
+	nonce, err := s.client.RecoverStart(ctx, address)
 	if err != nil {
 		fail(recoverErrorMessage(err))
 		return
@@ -374,35 +364,35 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 		fail("That recovery phrase isn't valid — check the words and spacing.")
 		return
 	}
-	if err := s.client.RecoverComplete(ctx, handle, nonce, sig, newPw); err != nil {
+	if err := s.client.RecoverComplete(ctx, address, nonce, sig, newPw); err != nil {
 		fail(recoverErrorMessage(err))
 		return
 	}
 	s.flashRedirect(w, r, "/login", "success", "Password reset — sign in with your new password.")
 }
 
-// ownerView is a handle's action catalogue, shown as the same cards the
+// ownerView is an address's action catalogue, shown as the same cards the
 // marketplace uses. Each card self-labels its visibility (private/local/public)
 // and inactive state via its chips, so the page asserts no single level. The
-// kernel has no public user-profile endpoint, so there is no bio — the handle
+// kernel has no public user-profile endpoint, so there is no bio — the address
 // and its catalogue are the page.
 type ownerView struct {
-	Handle string
-	Cards  []actionCardView
+	Address string
+	Cards   []actionCardView
 }
 
 func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	handle := r.PathValue("handle")
+	address := r.PathValue("address")
 	// Show what the viewer may see across all three visibility levels. For anyone
 	// else's page that is the caller-visible active set (public + local); on your
 	// own page it is everything you own — private and inactive included — so all=1
 	// is passed exactly when the viewer is the owner (the kernel widens ?all only
 	// within the caller's own scope, §14).
-	isOwner := handle == s.sessions.Handle(ctx)
-	view := ownerView{Handle: handle}
+	isOwner := address == s.sessions.Address(ctx)
+	view := ownerView{Address: address}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		acts, e := s.client.ListActions(ctx, tok, handle, "", isOwner, 0, 0)
+		acts, e := s.client.ListActions(ctx, tok, address, "", isOwner, 0, 0)
 		if e != nil {
 			return e
 		}
@@ -417,7 +407,7 @@ func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "owner", handle, view)
+	s.renderPage(w, r, http.StatusOK, "owner", address, view)
 }
 
 // recoverErrorMessage maps a recovery failure to actionable copy without leaking
@@ -436,6 +426,17 @@ func recoverErrorMessage(err error) string {
 	return userMessage(err)
 }
 
+// entryAddress is the account the entry screen names: the handle typed, on
+// this kernel. The screen names the kernel it signs in to, so a person types
+// only the handle; the address is composed here, once, from /health (read now
+// if it has not been, since an entry form may be the first request served).
+func (s *Server) entryAddress(r *http.Request) string {
+	if id := s.kernelIdentity(r.Context()); id.Handle == "" {
+		return ""
+	}
+	return s.identity.Address(strings.TrimSpace(r.FormValue("handle")))
+}
+
 // doLogin runs the PKCE authorization-code flow: the verifier is generated and
 // kept server-side, the challenge is sent to authorize, the returned code is
 // exchanged with the verifier, and the resulting tokens are stored in the
@@ -444,7 +445,7 @@ func recoverErrorMessage(err error) string {
 // The kernel is identified BEFORE the credential is sent: a login is only
 // meaningful against a server we can name, and pinning it after the fact would
 // record whatever answered rather than what was trusted.
-func (s *Server) doLogin(ctx context.Context, handle, password string) error {
+func (s *Server) doLogin(ctx context.Context, address, password string) error {
 	id := s.kernelIdentity(ctx)
 	if id.PublicKey == "" {
 		return client.ErrUnavailable
@@ -453,7 +454,7 @@ func (s *Server) doLogin(ctx context.Context, handle, password string) error {
 	if err != nil {
 		return err
 	}
-	code, err := s.client.Authorize(ctx, handle, password, challenge)
+	code, err := s.client.Authorize(ctx, address, password, challenge)
 	if err != nil {
 		return err
 	}
@@ -465,9 +466,9 @@ func (s *Server) doLogin(ctx context.Context, handle, password string) error {
 	if err != nil {
 		return err
 	}
-	return s.sessions.Login(ctx, tokens, handle, session.Pin{
-		PublicKey:     id.PublicKey,
-		NetworkDigest: id.NetworkDigest,
+	return s.sessions.Login(ctx, tokens, address, session.Pin{
+		PublicKey:          id.PublicKey,
+		NetworkFingerprint: id.NetworkFingerprint,
 	})
 }
 
@@ -764,7 +765,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			view.Catalog = cards
 			return nil
 		}
-		view.CanPropose = s.nativeOffered(ctx, tok, decideRef)
+		view.CanPropose = s.nativeOffered(ctx, tok, s.native(decideNative))
 		// Semantic search runs sys/lookup. A native's price is the OPERATOR's
 		// configuration, not a constant (measured: a kernel booted with
 		// native.lookup.price = 7 serves 7 on the row and charges it), and a
@@ -772,10 +773,10 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		// which §8.2 forbids outright. Read the price first and degrade instead.
 		// Only the price is read: whether it works at all is discovered by
 		// running it and reporting what happened, never guessed.
-		priced := s.nativeIsPriced(ctx, tok, lookupRef)
+		priced := s.nativeIsPriced(ctx, tok, s.native(lookupNative))
 		var out Outcome
 		if !priced {
-			o, e := s.caller.Run(ctx, tok, lookupRef, mustArgs(map[string]any{"query": q, "limit": 20}), "")
+			o, e := s.caller.Run(ctx, tok, s.native(lookupNative), mustArgs(map[string]any{"query": q, "limit": 20}), "")
 			if e != nil {
 				return e
 			}
@@ -815,10 +816,10 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 				defer wg.Done()
 				a, e := s.client.GetAction(ctx, tok, id)
 				if e != nil {
-					// No local row. A kernel-qualified ref means it is discovered;
-					// a local ref that fails to read is a row that has since gone,
-					// and keeps the lookup row's own fields.
-					view.Results[i].Discovered = refIsRemote(view.Results[i].Action.Action)
+					// No local row. Another kernel's address means it is
+					// discovered; a local one that fails to read is a row that has
+					// since gone, and keeps the lookup row's own fields.
+					view.Results[i].Discovered = !s.identity.Local(view.Results[i].Action.Action)
 					return
 				}
 				view.Results[i].Discovered = false
@@ -860,13 +861,6 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.User = u
-		view.MyHandle = u.Handle
-		// A preview only — the most recent 10; "Full transaction ledger →" links
-		// to the rest. Capped kernel-side via ?limit rather than fetching all.
-		view.Transactions, _ = s.client.ListTransactions(ctx, tok, "", 10)
-		view.Actions = s.client.ActionsByID(ctx, tok, view.Transactions)
-		procs, _ := s.client.ListProcesses(ctx, tok)
-		view.OpenProcesses = filterStatus(procs, "open", true)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -941,7 +935,7 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view.MyHandle = me.Handle
+		view.Me = me.Address
 		myAvailable = me.Available
 		steps, e := s.client.ListSteps(ctx, tok, "", filter)
 		if e != nil {
@@ -960,7 +954,7 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if step.Status == "waiting" && step.RequiredCallerHandle == me.Handle {
+			if step.Status == "waiting" && step.RequiredCaller == me.Address {
 				a := view.Actions[step.ActionID]
 				entry := stepEntry{
 					Step: step,
@@ -1003,7 +997,7 @@ func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Step = st
-		view.CanComplete = st.Status == "waiting" && st.RequiredCallerHandle == me.Handle
+		view.CanComplete = st.Status == "waiting" && st.RequiredCaller == me.Address
 		// The action read is best-effort decoration (a private target 403s
 		// normally under the v0.12 binding rule); the completion form derives
 		// from the step's own allowed_input.
@@ -1095,7 +1089,7 @@ func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
 			}
 			n := 0
 			for _, st := range steps {
-				if st.Status == "waiting" && st.RequiredCallerHandle == me.Handle {
+				if st.Status == "waiting" && st.RequiredCaller == me.Address {
 					n++
 				}
 			}
@@ -1138,7 +1132,7 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 		view = actionView{
 			Action:       a,
 			Form:         BuildForm(a.InputSchema),
-			IsOwner:      a.OwnerHandle == me.Handle,
+			IsOwner:      refOwner(a.Action) == me.Address,
 			IsPaid:       a.Price > 0,
 			NeedsConnect: needsConnect(a, grantedRefs(me)),
 			OpenForm:     openForm(r, "action-detail"),
@@ -1154,11 +1148,11 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 		}
 		// First-payee hint on the run form (§8.3): show it unless the viewer has
 		// already transacted with this action's owner. Bounded, best-effort.
-		if a.Price > 0 && a.OwnerHandle != me.Handle {
+		if owner := refOwner(a.Action); a.Price > 0 && owner != me.Address {
 			view.FirstPayee = true
 			if txs, e := s.client.ListTransactions(ctx, tok, "", 200); e == nil {
 				for _, t := range txs {
-					if t.TargetHandle == a.OwnerHandle {
+					if t.Target == owner {
 						view.FirstPayee = false
 						break
 					}
@@ -1238,7 +1232,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: a.OwnerHandle == me.Handle, IsPaid: a.Price > 0, NeedsConnect: needsConnect(a, grantedRefs(me))}
+		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: refOwner(a.Action) == me.Address, IsPaid: a.Price > 0, NeedsConnect: needsConnect(a, grantedRefs(me))}
 		if argErr == nil {
 			// The pin comes from the REQUEST — the terms the buyer was actually
 			// shown — never from the re-read above, which would always match and
@@ -1327,7 +1321,7 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.User = u
-		ownerFilter := u.Handle
+		ownerFilter := u.Address
 		if scope == "all" {
 			ownerFilter = "" // whole catalog; superuser sees all rows
 		}
@@ -1362,7 +1356,7 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var inflow int64
-		if tx.TargetHandle == view.User.Handle {
+		if tx.Target == view.User.Address {
 			inflow += tx.Net // net as the seller
 			perActionEarned[tx.ActionID] += tx.Net
 		}
@@ -1699,7 +1693,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	id := s.kernelIdentity(ctx)
 	view := walletView{
 		OpenForm:      openForm(r, "wallet"),
-		KernelAddress: id.RailAddress,
+		KernelAddress: id.BlockchainAddress,
 		Token:         id.Token,
 		WithdrawalID:  newUUID(),
 	}
@@ -1708,7 +1702,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.RailAddress
+		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.BlockchainAddress
 		view.Withdrawals, _ = s.client.ListWithdrawals(ctx, tok)
 		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
 			view.Open = filterStatus(procs, "open", true)
@@ -1720,7 +1714,7 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		entries, _ := s.client.Ledger(ctx, tok, 10, 0)
 		view.Activity = make([]entryRow, len(entries))
 		for i, e := range entries {
-			view.Activity[i] = entryRowOf(e, me.Handle)
+			view.Activity[i] = entryRowOf(e, me.Address)
 		}
 		return nil
 	})
@@ -1822,12 +1816,9 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Process = p
-		view.MyHandle = s.sessions.Handle(ctx)
+		view.Me = s.sessions.Address(ctx)
 		view.BadgeSecs = s.badgeSecs()
-		if txs, e := s.client.ListTransactions(ctx, tok, id, 0); e == nil {
-			view.Transactions = txs
-			view.Actions = s.client.ActionsByID(ctx, tok, txs)
-		}
+		view.Transactions, _ = s.client.ListTransactions(ctx, tok, id, 0)
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
@@ -1857,16 +1848,14 @@ func (s *Server) postEnd(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var txs []client.Transaction
-	actions := map[string]client.Action{}
-	var myHandle string
+	var me client.User
 	offset := queryOffset(r)
 	hasNext := false
 	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
-		if e != nil {
+		var e error
+		if me, e = s.client.Me(ctx, tok); e != nil {
 			return e
 		}
-		myHandle = me.Handle
 		// Fetch the full ledger and slice one page here: the kernel paginates raw
 		// rows before its party filter, so a server-side page can't page the
 		// viewer's filtered set (see pageSlice).
@@ -1877,22 +1866,21 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		start, end, more := pageSlice(len(all), offset, pageSize)
 		hasNext = more
 		txs = all[start:end]
-		actions = s.client.ActionsByID(ctx, tok, txs)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{
-		Transactions: txs, Actions: actions, MyHandle: myHandle, Superuser: s.isSuperuser(r),
+		Transactions: txs, Me: me.Address, Superuser: s.isSuperuser(r),
 		Pager: pageNav(r, offset, pageSize, hasNext),
 	})
 }
 
-// loadTxView fetches a transaction, the viewer, and (best-effort) the action into
-// a txView — the shared basis of the transaction page and its verify fragment. The
-// action is nil on 404 (a soft-deleted action). CanRate: the buyer may rate a
-// successful, unrated transaction (R6.6.4).
+// loadTxView fetches a transaction and the viewer into a txView — the shared
+// basis of the transaction page and its verify fragment. The action is the
+// transaction's own address, captured when the call was made. CanRate: the
+// buyer may rate a successful, unrated transaction (R6.6.4).
 func (s *Server) loadTxView(ctx context.Context, tok, id string) (txView, error) {
 	tx, e := s.client.GetTransaction(ctx, tok, id)
 	if e != nil {
@@ -1902,11 +1890,7 @@ func (s *Server) loadTxView(ctx context.Context, tok, id string) (txView, error)
 	if e != nil {
 		return txView{}, e
 	}
-	v := txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.OwnerHandle == me.Handle && tx.Rating == nil}
-	if a, ae := s.client.GetAction(ctx, tok, tx.ActionID); ae == nil {
-		v.Action = &a
-	}
-	return v, nil
+	return txView{Tx: tx, Me: me, CanRate: tx.Status == "success" && tx.Owner == me.Address && tx.Rating == nil}, nil
 }
 
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
@@ -2155,56 +2139,27 @@ func coerce(typ, val string) (json.RawMessage, error) {
 	}
 }
 
-// parseLookup converts a sys/lookup result into partial actionCardViews.
-// Kind is left empty; the goroutine in getBrowse fills it via GetAction — except
-// for a DISCOVERED hit, which nothing local backs.
-//
-// A discovered hit is a remote action this kernel has only heard of through
-// gossip: the ref is kernel-qualified ("owner@<kernel-key>/name") and ActionID is
-// the id on THAT kernel, so every local read of it would 404. The kernel-computed
-// `action` field is the only reliable ref here — a discovery row carries no
-// owner_handle/name pair — and its shape is what marks the hit as discovered.
+// parseLookup converts a sys/lookup result into partial actionCardViews. A
+// lookup row is an action read under two other names — action_id for id, and
+// observed_at, the last time its terms were verified against their home kernel
+// (a gossip observation or a proxy's reconcile; absent on a local action, so it
+// is the served fact that marks a row as remote-backed, requirements.md §6.2).
+// Whether a row is DISCOVERED — nothing local backs it — is settled by the
+// local read in getBrowse, never by the row's shape.
 func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {
 		Results []struct {
-			ActionID     string          `json:"action_id"`
-			Action       string          `json:"action"`
-			Name         string          `json:"name"`
-			OwnerHandle  string          `json:"owner_handle"`
-			Description  string          `json:"description"`
-			Price        int64           `json:"price"`
-			QuoteHash    string          `json:"quote_hash"`
-			InputSchema  json.RawMessage `json:"input_schema"`
-			OutputSchema json.RawMessage `json:"output_schema"`
-			Score        float64         `json:"score"`
-			// ObservedAt is the last time these terms were verified against their
-			// home kernel — a gossip observation, or a proxy's reconcile. The
-			// kernel omits it on a local action, so it is the served fact that
-			// marks a row as remote-backed (requirements.md §6.2).
+			client.Action
+			ActionID   string `json:"action_id"`
 			ObservedAt string `json:"observed_at"`
 		} `json:"results"`
 	}
 	_ = json.Unmarshal(result, &lr)
 	out := make([]actionCardView, 0, len(lr.Results))
 	for _, r := range lr.Results {
-		out = append(out, actionCardView{
-			Action: client.Action{
-				ID:           r.ActionID,
-				Action:       r.Action,
-				Name:         r.Name,
-				OwnerHandle:  r.OwnerHandle,
-				Description:  r.Description,
-				Price:        r.Price,
-				QuoteHash:    r.QuoteHash,
-				InputSchema:  r.InputSchema,
-				OutputSchema: r.OutputSchema,
-			},
-			ObservedAt: r.ObservedAt,
-			// Provisional: a kernel-qualified ref MAY be a row this kernel has
-			// never resolved. It is settled by the read below — a resolved proxy
-			// keeps its remote ref but does have a local row.
-			Discovered: refIsRemote(r.Action),
-		})
+		a := r.Action
+		a.ID = r.ActionID
+		out = append(out, actionCardView{Action: a, ObservedAt: r.ObservedAt})
 	}
 	return out
 }
@@ -2262,7 +2217,16 @@ func signupErrorMessage(err error) string {
 // defaults are policy, not contract — and one run unasked would spend from a
 // page nobody confirmed (§8.2). An action a person chooses to run is unaffected:
 // it is priced and confirmed like any other.
-const lookupRef = "sys/lookup"
+//
+// A native is named on this kernel, so its address is composed from the
+// kernel's own name: sys@<kernel>/<name>.
+const (
+	lookupNative = "lookup"
+	decideNative = "llm/decide"
+)
+
+// native is the address of one of this kernel's natives.
+func (s *Server) native(name string) string { return s.identity.Address(superuserHandle) + "/" + name }
 
 // nativeIsPriced reports that running this native would cost the caller money.
 // A native that cannot be read at all is not reported as priced: whether it
@@ -2353,10 +2317,10 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 		// The same guard as search: a native the UI runs on a person's behalf is
 		// read for its price first, since a priced one would spend from a page
 		// they did not confirm (§8.2).
-		if s.nativeIsPriced(ctx, tok, decideRef) {
+		if s.nativeIsPriced(ctx, tok, s.native(decideNative)) {
 			return errPricedPlanner
 		}
-		out, e := s.caller.Run(ctx, tok, decideRef, mustArgs(map[string]any{
+		out, e := s.caller.Run(ctx, tok, s.native(decideNative), mustArgs(map[string]any{
 			"messages": []map[string]string{{"role": "user", "content": q}},
 			"actions":  refs,
 		}), "")
@@ -2420,11 +2384,6 @@ func (p proposal) Raw() string {
 	}
 	return string(b)
 }
-
-// decideRef is the kernel's planner. Naming it, like naming lookupRef above, is
-// naming a native to POWER a surface — never a marketplace action given bespoke
-// treatment, which §6.5 forbids.
-const decideRef = "sys/llm/decide"
 
 // errPricedPlanner is the refusal when an operator has priced the planner: the
 // proposal is withheld rather than charged for without a confirm (§8.2).

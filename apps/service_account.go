@@ -49,7 +49,9 @@ var (
 )
 
 // NewServiceAccount builds a manager for kernel user `handle` with the given
-// password (which the app persists).
+// password (which the app persists). The account is that handle's address on
+// this kernel, composed at each attempt: while the kernel's name is unknown the
+// attempt fails and the backoff retries it.
 func NewServiceAccount(deps Deps, handle, password string) *ServiceAccount {
 	return &ServiceAccount{deps: deps, handle: handle, password: password}
 }
@@ -132,7 +134,7 @@ func (s *ServiceAccount) login(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	code, err := s.deps.Client.Authorize(ctx, s.handle, s.password, session.Challenge(verifier))
+	code, err := s.deps.Client.Authorize(ctx, s.deps.Address(s.handle), s.password, session.Challenge(verifier))
 	if err != nil {
 		// Any definitive auth response (even a rejection) proves the account
 		// exists, so stop trying to create it; a 429 is not definitive.
@@ -166,7 +168,7 @@ func (s *ServiceAccount) ensureAccount(ctx context.Context) error {
 	}
 	// Service accounts are headless: no seed phrase, no recovery key (the password
 	// lives in the app config). Pass an empty recovery key.
-	_, err := s.deps.Client.CreateUser(ctx, s.handle, s.password, "")
+	_, err := s.deps.Client.CreateUser(ctx, s.deps.Address(s.handle), s.password, "")
 	if err == nil || !errors.Is(err, client.ErrRateLimited) {
 		s.mu.Lock()
 		s.ensured = true

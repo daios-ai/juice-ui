@@ -60,7 +60,7 @@ core rotting into a monolith; read them before touching this seam.
 ```go
 type App interface {
     Slug() string
-    Nav(handle string, superuser bool) []NavEntry // self-gated sidebar entries
+    Nav(me string, superuser bool) []NavEntry     // self-gated sidebar entries; me is the signed-in address
     Mount(mux *http.ServeMux, d Deps)             // register routes
     Templates() fs.FS                             // embedded templates/*.html
     Start(ctx context.Context) error              // provision/open resources
@@ -71,7 +71,7 @@ type App interface {
 `Deps` is the core capability surface handed to an app at `Mount` time — the kernel
 `client`, the `session` manager, and helpers as closures over the core server:
 `RenderPage`, `RenderFragment`, `HandleErr`, `HandleErrFragment`, `FlashRedirect`,
-`CSRFField`, `IsHTMX`, `Handle`, `RequireAuth`. An app renders full pages in the
+`CSRFField`, `IsHTMX`, `Me` (the signed-in address), `Address`, `RequireAuth`. An app renders full pages in the
 shared shell and htmx fragments without importing `server`. It also carries:
 
 - **`LoadAppState(slug)` / `SaveAppState(slug, v)`** — a namespaced config store
@@ -83,13 +83,20 @@ shared shell and htmx fragments without importing `server`. It also carries:
   prefix (e.g. `PublicURL + "/_kernel/<slug>/ack"`).
 - **`Logger`** — the core's structured logger, for an app's background work.
 
+**Every name is an address** (requirements.md §4): a user is `handle@kernel`,
+an action `owner@kernel/name`, on this kernel too, and the kernel refuses a bare
+name. An app passes the names it is served through verbatim, and composes one
+only for its own principal on this kernel, through `Deps.Address(handle)` — the
+core's one composition site, `""` while the kernel's name is unknown (the kernel
+refuses that, so the app's retry waits for it).
+
 ## Being a Juice user — `apps.ServiceAccount`
 
-An app that *is* a Juice user (like chat's `@chat`) must not hand-roll the fragile
+An app that *is* a Juice user (like chat's `chat@<kernel>`) must not hand-roll the fragile
 account lifecycle. The seam owns it in one place: `apps.ServiceAccount`.
 
 ```go
-sa := apps.NewServiceAccount(deps, "@myapp", password) // app persists the password
+sa := apps.NewServiceAccount(deps, "myapp", password) // signs in as myapp@<kernel>; the app persists the password
 sa.Start(ctx, app.registerActions)                     // registerActions uses sa.Do
 // ... sa.Do(ctx, func(tok string) error { ... })      // any call as the account
 // app.Stop(): sa.Stop()
@@ -113,7 +120,7 @@ does this statelessly:
 ```go
 id := apps.NewCallerIdentity(signingKey)  // app persists signingKey
 // mint the token to connect as a user's grant:
-client.ConnectGrant(ctx, userTok, "@myapp/do", id.Token(handle))
+client.ConnectGrant(ctx, userTok, deps.Address("myapp")+"/do", id.Token(handle))
 // register the action with delegated_bearer auth on apps.CallerKeyHeader;
 // hand id.Authenticate to the service as its auth hook (it verifies the injected token).
 ```
@@ -197,7 +204,7 @@ server   apps/chat        (the UI plugin; consumes the seam)
   ↑        ↑
 cmd/juice-ui               (wires a []App into server.New)
 
-apps/chat/daemon   ← the @chat application: imports only client, session (not the
+apps/chat/daemon   ← the chat application: imports only client, session (not the
                      seam or server); run in-process by the plugin, testable alone.
 ```
 
@@ -214,7 +221,7 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
 2. **Routes + lifecycle** — for each app `server.New(Options{Apps: …})` calls
    `Mount(mux, deps)` (the app stashes `Deps`), then `Start(ctx)`, before the
    middleware chain; `Stop` runs on shutdown.
-3. **Nav** — the page envelope calls `Nav(handle, superuser)` and marks the entry
+3. **Nav** — the page envelope calls `Nav(me, superuser)` and marks the entry
    whose `Match` prefixes the request path as current. `layout.html` ranges over
    `.AppNav` in both the sidebar and the mobile tab bar.
 
@@ -251,7 +258,7 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
 Chat is the worked example — a real **application on top of Juice** — in two parts,
 both under `apps/chat/`, with **zero chat-specific code in juice-ui core**.
 
-### 1. The @chat daemon (`apps/chat/daemon`)
+### 1. The chat daemon (`apps/chat/daemon`)
 
 A self-contained, **Juice-agnostic REST chat server** — rooms, membership, an
 append-only message log, per-user unread — over a durable SQLite store. It knows
@@ -278,26 +285,26 @@ transport, so the REST contract is exercised without a socket).
 The only Juice- and UI-aware piece; it crosses both boundaries and touches neither
 side's internals.
 
-- **Self-provisions.** On `Start` it loads (or generates + persists) the `@chat`
+- **Self-provisions.** On `Start` it loads (or generates + persists) the `chat@<kernel>`
   account password *and* the daemon admin secret via `LoadAppState`/`SaveAppState`,
   and opens the store beside `state.json` (in-memory when there is no persistent
   config). No chat environment variables — one launch and chat works.
-- **Owns the `@chat` account via `apps.ServiceAccount`.** It hands the seam the
+- **Owns the `chat@<kernel>` account via `apps.ServiceAccount`.** It hands the seam the
   handle, the persisted password, and its action-registration as the `setup`
   callback; the seam does provisioning, auth, backoff, self-heal, and diagnostics
   (see above). None of that lifecycle code lives in the plugin.
-- **Registers the surface** (its `setup`). As `@chat`, it registers each `@chat/*`
+- **Registers the surface** (its `setup`). As `chat@<kernel>`, it registers each `chat@<kernel>/*`
   action with `delegated_bearer` auth, pointing the `source` at the daemon's
   matching write route, and publishes it — reconciling a stale action left by an
   earlier build. It mounts the daemon's write routes under the CSRF-exempt
   `/_kernel/chat/` prefix.
 - **Provisions each user via `apps.CallerIdentity`.** On first chat touch (once per
   run) it connects the user's **deterministic** caller token — `id.Token(handle)` —
-  as a grant on every `@chat` action, *as the user*, silently. Because the token is
+  as a grant on every `chat@<kernel>` action, *as the user*, silently. Because the token is
   a stateless function of the signing key + handle, this can never desync with the
   grant and survives a store loss; it also re-points any stale grant.
 - **Reads** rooms/messages via the daemon's REST `Client`; **writes** by running
-  `@chat/*` as the signed-in user. The kernel dials the daemon synchronously and
+  `chat@<kernel>/*` as the signed-in user. The kernel dials the daemon synchronously and
   injects the caller's token, so the write is applied (or rejected) by the time
   `run` returns — no polling.
 

@@ -14,21 +14,21 @@ const (
 	keyAccess      = "access_token"
 	keyRefresh     = "refresh_token"
 	keyVerifier    = "pkce_verifier"
-	keyHandle      = "handle"          // the signed-in user's handle, for display only
+	keyAddress     = "address"         // the signed-in user's address, handle@kernel
 	keyGrantState  = "grant_state"     // opaque state for an in-flight OAuth grant consent
 	keyGrantAction = "grant_action"    // the action the in-flight grant is for (for the return redirect)
 	keyRecovery    = "recovery_phrase" // one-shot seed phrase to show once after signup
 	keyKernelKey   = "kernel_public_key"
-	keyKernelNet   = "kernel_network_digest"
+	keyKernelNet   = "kernel_network_fingerprint"
 )
 
-// Pin is the kernel this session signed in to: its public key and the digest of
-// the world it serves. A client sends a stored credential only to the server it
+// Pin is the kernel this session signed in to: its public key and the
+// fingerprint of the world it serves. A client sends a stored credential only to the server it
 // recorded (ecosystem-standard §5), so every authenticated request compares this
 // against what the kernel now reports and refuses a server that has changed.
 type Pin struct {
-	PublicKey     string
-	NetworkDigest string
+	PublicKey          string
+	NetworkFingerprint string
 }
 
 // ErrNoSession is returned by Do when no authenticated session is present.
@@ -58,17 +58,17 @@ func NewManager(sm *scs.SessionManager, r Refresher) *Manager {
 // LoadAndSave middleware.
 func (m *Manager) SCS() *scs.SessionManager { return m.sm }
 
-// Login stores a fresh token pair, the user handle and the kernel this login is
-// for, and renews the session token to prevent fixation.
-func (m *Manager) Login(ctx context.Context, t client.Tokens, handle string, pin Pin) error {
+// Login stores a fresh token pair, the user's address and the kernel this login
+// is for, and renews the session token to prevent fixation.
+func (m *Manager) Login(ctx context.Context, t client.Tokens, address string, pin Pin) error {
 	if err := m.sm.RenewToken(ctx); err != nil {
 		return err
 	}
 	m.sm.Put(ctx, keyAccess, t.AccessToken)
 	m.sm.Put(ctx, keyRefresh, t.RefreshToken)
-	m.sm.Put(ctx, keyHandle, handle)
+	m.sm.Put(ctx, keyAddress, address)
 	m.sm.Put(ctx, keyKernelKey, pin.PublicKey)
-	m.sm.Put(ctx, keyKernelNet, pin.NetworkDigest)
+	m.sm.Put(ctx, keyKernelNet, pin.NetworkFingerprint)
 	m.sm.Remove(ctx, keyVerifier)
 	return nil
 }
@@ -78,8 +78,8 @@ func (m *Manager) Login(ctx context.Context, t client.Tokens, handle string, pin
 // kernel we cannot name, and that is exactly what must not be trusted.
 func (m *Manager) Pin(ctx context.Context) Pin {
 	return Pin{
-		PublicKey:     m.sm.GetString(ctx, keyKernelKey),
-		NetworkDigest: m.sm.GetString(ctx, keyKernelNet),
+		PublicKey:          m.sm.GetString(ctx, keyKernelKey),
+		NetworkFingerprint: m.sm.GetString(ctx, keyKernelNet),
 	}
 }
 
@@ -98,9 +98,11 @@ func (m *Manager) Tokens(ctx context.Context) (client.Tokens, bool) {
 	return client.Tokens{AccessToken: at, RefreshToken: rt}, true
 }
 
-// Handle returns the signed-in user's handle for display, or "".
-func (m *Manager) Handle(ctx context.Context) string {
-	return m.sm.GetString(ctx, keyHandle)
+// Address returns the signed-in user's address, handle@kernel, or "". A
+// session that predates addresses holds no pin either, so it is logged out
+// before this is read.
+func (m *Manager) Address(ctx context.Context) string {
+	return m.sm.GetString(ctx, keyAddress)
 }
 
 // IsAuthenticated reports whether a token pair is present.

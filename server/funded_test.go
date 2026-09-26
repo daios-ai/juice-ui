@@ -39,7 +39,7 @@ func TestRunSuccess(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil, "")
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys@testnet/lookup", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestRunInputRejected(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil, "")
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys@testnet/lookup", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestRunExecutionFailed(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil, "")
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys@testnet/lookup", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,19 +95,19 @@ func TestRunExecutionFailed(t *testing.T) {
 func TestRunGrantRequired(t *testing.T) {
 	f := &fakeKernel{
 		runStatus: 403,
-		runBody:   `{"error":"grant required","code":"grant_required","meta":{"action":"sys/gmail-send"}}`,
+		runBody:   `{"error":"grant required","code":"grant_required","meta":{"action":"sys@testnet/gmail-send"}}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "sys/gmail-send", nil, "")
+	out, err := NewCaller(c).Run(context.Background(), "tok", "sys@testnet/gmail-send", nil, "")
 	if err != nil {
 		t.Fatalf("grant_required must be an outcome, not an error: %v", err)
 	}
 	if out.Class != GrantRequired || !out.IsGrantRequired() {
 		t.Fatalf("class = %v want GrantRequired", out.Class)
 	}
-	if out.ActionRef != "sys/gmail-send" {
-		t.Errorf("ActionRef = %q want sys/gmail-send", out.ActionRef)
+	if out.ActionRef != "sys@testnet/gmail-send" {
+		t.Errorf("ActionRef = %q want sys@testnet/gmail-send", out.ActionRef)
 	}
 }
 
@@ -116,8 +116,8 @@ func TestRunGrantRequiredFallsBackToRunRef(t *testing.T) {
 	f := &fakeKernel{runStatus: 403, runBody: `{"error":"grant required","code":"grant_required"}`}
 	c, stop := f.start(t)
 	defer stop()
-	out, _ := NewCaller(c).Run(context.Background(), "tok", "sys/gmail-send", nil, "")
-	if out.ActionRef != "sys/gmail-send" {
+	out, _ := NewCaller(c).Run(context.Background(), "tok", "sys@testnet/gmail-send", nil, "")
+	if out.ActionRef != "sys@testnet/gmail-send" {
 		t.Errorf("ActionRef fallback = %q want sys/gmail-send", out.ActionRef)
 	}
 }
@@ -171,7 +171,7 @@ func TestRunInsufficientFundsIsError(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	_, err := NewCaller(c).Run(context.Background(), "tok", "sys/lookup", nil, "")
+	_, err := NewCaller(c).Run(context.Background(), "tok", "sys@testnet/lookup", nil, "")
 	if !isKind(err, client.KindInsufficientFunds) {
 		t.Errorf("expected insufficient-funds error, got %v", err)
 	}
@@ -274,7 +274,7 @@ func TestRunInvalidStateIsRejectedNotFailed(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "lena/greet", nil, "")
+	out, err := NewCaller(c).Run(context.Background(), "tok", "lena@testnet/greet", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestRunTermsChangedCarriesNewTerms(t *testing.T) {
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).Run(context.Background(), "tok", "lena/greet", nil, "")
+	out, err := NewCaller(c).Run(context.Background(), "tok", "lena@testnet/greet", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestRunFailedCarriesItsCharge(t *testing.T) {
 			}
 			kc, stop := f.start(t)
 			defer stop()
-			out, err := NewCaller(kc).Run(context.Background(), "tok", "vendor/fail", nil, "")
+			out, err := NewCaller(kc).Run(context.Background(), "tok", "vendor@testnet/fail", nil, "")
 			if err != nil {
 				t.Fatal(err)
 			}

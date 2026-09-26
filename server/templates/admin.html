@@ -12,20 +12,20 @@
 {{if $d.Users}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>Handle</th><th>About</th><th class="money">Available</th><th class="money">Parked</th><th>State</th><th></th></tr></thead>
+  <thead><tr><th>Address</th><th>About</th><th class="money">Available</th><th class="money">Parked</th><th>State</th><th></th></tr></thead>
   <tbody>
   {{range $d.Users}}
   <tr>
-    <td class="mono"><a href="/admin/users/{{.Handle}}">{{.Handle}}</a></td>
+    <td class="mono"><a href="/admin/users/{{.Address}}">{{.Address}}</a></td>
     <td class="muted">{{.Description}}</td>
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
     <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>
     <td>
       {{if .Suspended}}
-      <form method="post" action="/admin/users/{{.Handle}}/unsuspend">{{$.CSRFField}}<button class="btn small" type="submit">Unsuspend</button></form>
+      <form method="post" action="/admin/users/{{.Address}}/unsuspend">{{$.CSRFField}}<button class="btn small" type="submit">Unsuspend</button></form>
       {{else}}
-      <form method="post" action="/admin/users/{{.Handle}}/suspend" data-confirm="Suspend {{.Handle}}? They cannot authenticate and their actions become uncallable until unsuspended.">{{$.CSRFField}}<button class="btn-danger small" type="submit">Suspend</button></form>
+      <form method="post" action="/admin/users/{{.Address}}/suspend" data-confirm="Suspend {{.Address}}? They cannot authenticate and their actions become uncallable until unsuspended.">{{$.CSRFField}}<button class="btn-danger small" type="submit">Suspend</button></form>
       {{end}}
     </td>
   </tr>

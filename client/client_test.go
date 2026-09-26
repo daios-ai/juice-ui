@@ -52,7 +52,7 @@ func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	// every amount, and rail_address says where the kernel is paid.
 	f := newFake()
 	defer f.close()
-	f.reply = `{"status":"ok","handle":"alpha","public_key":"abc","network":"play","network_digest":"ef1f","decimals":6,"rail_address":"0xdead"}`
+	f.reply = `{"status":"ok","handle":"alpha","public_key":"abc","network":"play","network_fingerprint":"ef1f","decimals":6,"blockchain_address":"0xdead"}`
 	h, err := f.client().Health(context.Background())
 	if err != nil {
 		t.Fatalf("Health: %v", err)
@@ -60,7 +60,7 @@ func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	if h.Status != "ok" || h.Handle != "alpha" || h.PublicKey != "abc" {
 		t.Errorf("identity = %+v", h)
 	}
-	if h.Network != "play" || h.NetworkDigest != "ef1f" || h.Decimals != 6 || h.RailAddress != "0xdead" {
+	if h.Network != "play" || h.NetworkFingerprint != "ef1f" || h.Decimals != 6 || h.BlockchainAddress != "0xdead" {
 		t.Errorf("world fields = %+v", h)
 	}
 }
@@ -101,7 +101,7 @@ func TestAuthorizeFullURLRedirect(t *testing.T) {
 func TestBearerAndRequestID(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"u1","handle":"alice"}`
+	f.reply = `{"id":"u1","address":"alice@k"}`
 	ctx := WithRequestID(context.Background(), "req-123")
 	if _, err := f.client().Me(ctx, "tok-abc"); err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestMeDecodesConnectors(t *testing.T) {
 	// New /v1/me: a directory-grouped `connectors` tree (each node carries backing
 	// connections + per-action grants with provider_key) plus a `connections`
 	// inventory that carries provider_key and surfaces unused accounts.
-	f.reply = `{"handle":"alice",
+	f.reply = `{"address":"alice@k",
 	 "connectors":[{"directory":"chat","connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}],
 	   "actions":[{"action":"chat/pay","scopes":["pay.write"],"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}]}],
 	 "connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"},
@@ -538,7 +538,7 @@ func TestReceiptVerification(t *testing.T) {
 func TestUpdateMeSendsFields(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","handle":"alice","description":"hi there"}`
+	f.reply = `{"id":"U1","address":"alice@k","description":"hi there"}`
 	desc := "hi there"
 	inp := UpdateMeInput{Description: &desc}
 	u, err := f.client().UpdateMe(context.Background(), "tok", inp)
@@ -727,7 +727,7 @@ func TestCallbackCreateStep(t *testing.T) {
 func TestLedger(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	f.reply = `[{"id":"L1","amount":100,"to_handle":"me","operator_handle":"sys","created_at":"2024-01-01T00:00:00Z"}]`
+	f.reply = `[{"id":"L1","amount":100,"to":"me","operator":"sys","created_at":"2024-01-01T00:00:00Z"}]`
 	out, err := f.client().Ledger(context.Background(), "tok", 20, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -735,7 +735,7 @@ func TestLedger(t *testing.T) {
 	if f.lastMethod != "GET" || f.lastPath != "/v1/ledger?limit=20" {
 		t.Errorf("ledger hit %s %s", f.lastMethod, f.lastPath)
 	}
-	if len(out) != 1 || out[0].Amount != 100 || out[0].ToHandle != "me" {
+	if len(out) != 1 || out[0].Amount != 100 || out[0].To != "me" {
 		t.Errorf("ledger = %+v", out)
 	}
 }

@@ -42,7 +42,7 @@ Three laws underpin everything:
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
-| Ref | `_ref` partial | `owner/name` (remote: `owner@kernel/name`, unlinked) |
+| Ref | `_ref` partial | an action address `owner@kernel/name` (owner linked only when local) |
 
 ---
 
@@ -127,7 +127,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 
 - **Face:** the **proportional system sans stack** (`--font-ui`) for chrome and
   prose — the storefront register. **Monospace (`--font-mono`) is reserved** for
-  the *provenance* set: money, IDs, hashes, `owner/name`, and sealed
+  the *provenance* set: money, IDs, hashes, addresses, and sealed
   `partial_args`. The typeface itself marks kernel-vouched facts apart from
   chrome and from counterparty prose. (The `terminal` theme overrides `--font-ui`
   back to mono; components never assume one or the other — they use the token.)
@@ -144,7 +144,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   `browse · inbox · workshop · wallet · you · network · admin`. A **detail** page
   opens with the sticky **crumb** (`← group` back-link + record identity) above
   the title and shows the resource id/name.
-- **Money, IDs, hashes, `owner/name`:** mono + `tabular-nums`. The **owner
+- **Money, IDs, hashes, addresses:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**
   - *Index* = `page-head` (title + subtitle) → section `<h2>` → a `.tabs` filter
@@ -384,16 +384,17 @@ none float, none are colored.
 
 ### 5.7 Refs
 
-`owner/name` renders via the **one** `_ref` partial, built with the `ref` helper
-(`ref <ref> <id>`; pass `""` for no link): `<span class="ref mono">` with the
-owner in `.owner` (weight-emphasized, confusable-distinct, **not** accent),
-split on the first `/`. Passing an action id makes the **name** the link to the
-action; the owner links to its profile only when it is **local**. A **remote**
-ref (`owner@kernel/name`) renders its owner segment **unlinked**: the kernel half
-is presentation-only (requirements.md §4) and no local route exists behind a
-remote owner — don't invent one.
+An action address, `owner@kernel/name`, renders via the **one** `_ref`
+partial, built with the `ref` helper (`ref <address> <id>`; pass `""` for no
+link): `<span class="ref mono">` with the owner in `.owner` (weight-emphasized,
+confusable-distinct, **not** accent), split on the first `/`. Passing an action
+id makes the **name** the link to the action. The owner links to its profile
+(`/users/{address}`) only when the action is **local** — its kernel segment is
+this kernel's own name (requirements.md §4); another kernel's owner renders
+**unlinked**, since no local route exists behind it — don't invent one. A name
+is rendered as served: never stripped of its kernel, never decorated.
 
-When that kernel half is a **raw public key** — an action discovered but not yet
+When that kernel segment is a **raw public key** — an action discovered but not yet
 resolved is `owner@<43 chars>/name` — it is **truncated** through the same
 primitive a kernel card uses (§5.11), leaving the owner legible and the whole
 segment in the `title`. A bound petname is not key-shaped and renders whole. A
@@ -481,12 +482,11 @@ one debt — the debtor, the ticket, what was owed, what the draw says must be
 paid — and one gesture: a `.btn-money` `Confirm (N)` behind `data-confirm`,
 posting the peer's key and the ticket id. Recording a payment moves real money.
 
-**Rename** is one modal on the admin user detail (`?form=admin-rename`): a
-`.btn-quiet` opener beside Suspend, one field, a neutral `.btn` submit. A
-counterparty's alias is an ordinary handle here, so the **alias itself links into
-that same modal** (`/admin/users/{alias}?form=admin-rename`) — the card's verbs
-stay Inspect · Suspend, and the rename lives where every other per-user
-edit does. One form, one handler, one validation path.
+**Rename** is one modal per namespace. A user is renamed on the admin user
+detail (`/admin/users/{address}?form=admin-rename`): a `.btn-quiet` opener beside
+Suspend, one field taking the new address, a neutral `.btn` submit. A kernel is
+named on its inspect page, keyed on its public key. The two are separate because
+the kernel's two routes are.
 
 A counterparty carries **no money at all**: a peer account is identity and
 moderation state, never a wallet (kernel §D14), so a card states its names, its
