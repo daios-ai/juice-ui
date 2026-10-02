@@ -72,7 +72,7 @@ The frame every page renders into. Defined in `layout.html`.
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the step badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
+| **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
 | **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
@@ -213,8 +213,8 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary step completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the step's creator, so `Complete (N)` would falsely read as "you pay N". A **payment step** (kernel `payment` descriptor, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
-| `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
+| `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 
@@ -247,7 +247,7 @@ hand-writes `class="tab{{if …`; a drift guard enforces it.
 | Use | Renderer | Active |
 |---|---|---|
 | **Entry toggle** | `paneltab` in `.auth-card .tabs` — Sign in / Create account (real `?tab=` links; JS swaps panels **and moves `aria-current`** so only one is lit) | requested tab |
-| **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive`, step `all/done/cancelled` (real query-string links, reload) | selected filter |
+| **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive`, task `all/done/cancelled` (real query-string links, reload) | selected filter |
 
 **Distinct axes get distinct rows, never mixed.** The actions page's *ownership
 scope* (`yours | everyone`, `sys`) is its **own** switch on the heading, not a
@@ -286,12 +286,12 @@ none float, none are colored.
   disable hidden inputs so they aren't submitted. Secrets are masked, write-only,
   never pre-filled.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
-  (action run **and** step completion), always inline (never a modal): optional
-  **locked block** (a step's pre-bound args as a read-only `.locked-args` dl, no
+  (action run **and** task completion), always inline (never a modal): optional
+  **locked block** (a task's pre-bound args as a read-only `.locked-args` dl, no
   verbal label — the sealed half of the form), the **editable input**, **one
-  button** (a paid run's `Run (N)` money button, §5.1; an ordinary step's neutral `Complete`; a payment step's money button, §5.1)
+  button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
-  (`.outcome`, never nested). Steps are **one-shot** (`data-oneshot`); actions repeat.
+  (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the field-switch), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.
@@ -430,7 +430,7 @@ segment in the `title`. A bound petname is not key-shaped and renders whole. A
 | `.banner` (`-info`/`-error`) | inline notice |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
-| `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `step` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact. **Every** nav badge is the `_badge_poll` partial: htmx re-fetches its endpoint on the **one** configured interval (`badge_interval_seconds`, default 30s), body = bare count, **empty when zero** (`.badge:empty` hides it). Rendered identically in the sidebar and the mobile tab bar |
+| `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `inbox` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact. **Every** nav badge is the `_badge_poll` partial: htmx re-fetches its endpoint on the **one** configured interval (`badge_interval_seconds`, default 30s), body = bare count, **empty when zero** (`.badge:empty` hides it). Rendered identically in the sidebar and the mobile tab bar |
 | `.unread` | row modifier for a list row with unseen activity (e.g. a chat room): the primary-cell link is weighted (`tr.unread > td:first-child a`) so the row reads as "new", complementing the count badge |
 
 ### 5.11 Federation (network)
@@ -526,9 +526,9 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   never on links, tab underlines, active nav, or the active mobile tab (those key
   on text weight + surface). Money buttons name the amount as `verb (N)` and carry
   **no credit glyph**; money *display* uses the same scaled form in the mono
-  provenance face (§5.6). **Danger beats money.** An **ordinary step completion is
+  provenance face (§5.6). **Danger beats money.** An **ordinary task completion is
   neutral** (`Complete`, no amount, no accent): the completer is not the payer;
-  a **payment step** completion is a genuine spend and uses the money button
+  a **payment task** completion is a genuine spend and uses the money button
   naming the amount (§5.1, requirements.md §6.3).
 - Counterparty content (names, descriptions, args, results, reasons) renders
   **inert**: escaped, no chrome, no accent, JSON in a code block. Trust
@@ -548,7 +548,7 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   of consequence. Empty states and `help` name the thing, they don't lecture. A
   field caption never restates its label or explains a mechanism. The drift guard
   lints **app** templates (`apps/*/templates/`) for this, identically to the core.
-- One `aria-live` region; the step badge (on `inbox`) is the only async attention
+- One `aria-live` region; the task badge (on `inbox`) is the only async attention
   signal in the core surface (an app MAY add its own app-scoped nav badge, e.g.
   chat unread); no notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;

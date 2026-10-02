@@ -17,9 +17,9 @@ because it is *less* than "the app is a user":
 
 - **Composition needs no identity.** When the kernel dispatches to one of the app's
   actions it hands the endpoint a **trace-capability**; with it the endpoint subcalls
-  and fires/completes steps *as the executing action's owner, within that trace* — no
+  and fires/completes tasks *as the executing action's owner, within that trace* — no
   login, no token, no account. Any HTTP server the kernel dispatches to can "speak
-  Juice" this far. Composition and firing steps are **not** why you need a user.
+  Juice" this far. Composition and firing tasks are **not** why you need a user.
 
 - **Owning the action space is.** Actions are owned by a user. For the app's endpoints
   to *become* callable actions at all — and for the app to register, update, enable,
@@ -42,19 +42,19 @@ per-user read **watermark** in its own store, an app-scoped badge polling that
 watermark, and a hand-rolled `inbox` receive action. All of it duplicated something
 the kernel already provides.
 
-> **The Step is the universal async primitive.** A notification, an inbox item, a
+> **The Task is the universal async primitive.** A notification, an inbox item, a
 > delivery, a request/reply continuation, and an agent's intake are the *same object*
-> — a step addressed to a user (`required_caller`). Do not build a second one.
+> — a task addressed to a user (`required_caller`). Do not build a second one.
 
-Chat's redesign made "unread" mean *a step addressed to you*, the badge mean *the
-core step badge filtered to your app*, and "reading" mean *completing the step*. The
+Chat's redesign made "unread" mean *a task addressed to you*, the badge mean *the
+core task badge filtered to your app*, and "reading" mean *completing the task*. The
 payoff was not elegance — it was **composition**: an autonomous agent could join a
-chat room with *zero* chat-specific code, because the agent already speaks steps. A
+chat room with *zero* chat-specific code, because the agent already speaks tasks. A
 parallel mechanism cannot do that; it is a second source of truth that diverges and
 that nothing else in the ecosystem understands.
 
 **Rule of thumb:** before adding state or a poll or a bespoke endpoint, ask *"which
-kernel primitive is this?"* — a step (attention/delivery/continuation), an action (a
+kernel primitive is this?"* — a task (attention/delivery/continuation), an action (a
 capability), a transaction (an economic event), a process (a lifetime). If it maps to
 one, use that one, even if a local shortcut looks cheaper today.
 
@@ -81,14 +81,14 @@ cheap, and both surprised us on the first app:
 - **A `kind=http` action is not a leaf — it can compose.** On dispatch the kernel
   hands an HTTP action a **trace-scoped capability** (`X-Juice-Capability` header) and
   a callback base (`X-Juice-Callback`). While the call is in flight the endpoint calls
-  back — `POST {callback}/v1/steps`, `/v1/call`, `/v1/steps/{id}/complete` — carrying
+  back — `POST {callback}/v1/tasks`, `/v1/call`, `/v1/tasks/{id}/complete` — carrying
   the capability *as a header, not a bearer*, with **no `trace_id`** (the capability
   *is* the trace). This is how an out-of-kernel service participates in the execution
   graph. See `juicedocs/API.md` §"Composition from a `kind=http` action".
 
 ## 4. The economics *are* the design
 
-There is no free async in Juice, and pretending otherwise produces bugs. Every step:
+There is no free async in Juice, and pretending otherwise produces bugs. Every task:
 
 - **parks funds** (its target action's price) from a trace,
 - **holds a process open** until it is completed or cancelled, and
@@ -97,18 +97,20 @@ There is no free async in Juice, and pretending otherwise produces bugs. Every s
 So "just send a notification" has consequences: ledger rows, accumulating open
 processes, and a funding source. Design with them in view:
 
-- Decide **who owns the process** the steps hang off (the poster? a service account?).
+- Decide **who owns the process** the tasks hang off (the poster? a service account?).
   Owner choice determines whose wallet fills with open processes and whose ledger
   gets the rows. Prefer the service account, so real users' wallets/ledgers stay
   clean.
 - **Coalesce.** One doorbell per (recipient, room) beats one per message — it bounds
   the open-process and ledger cost.
-- **To emit steps at all you need an open, mint-able trace**, and the kernel
-  *auto-closes* a process the moment no steps are outstanding. So you deliberately
-  keep one **never-completed "sentinel" step** to hold a process open — the
-  "seed/outbox" pattern. Authorization to mint off that trace is by **process owner**,
-  not action owner, which is what makes a service account able to hang steps off a
-  trace running someone else's action.
+- **To emit tasks at all you need a live trace.** The kernel refuses a task on a
+  trace that has settled — through a capability (`403 capability expired: call
+  already settled`) and through a token (`409 process is closed`), measured on
+  4dbfedd — so a task is minted *during* the call that funds it, through that
+  call's capability. Holding a process open with a never-completed "sentinel"
+  task does not keep its root trace mint-able: the trace settles when the call
+  returns. Chat's seed/outbox depended on that and is blocked on it
+  (`requirements.md` §10).
 
 ## 5. Identity durability is a correctness concern, not configuration
 
@@ -158,7 +160,7 @@ The running kernel does not always match `juicedocs/`. Treat the docs as the
 the live behavior in the client and record it (see the project's
 `kernel-contract-deviations` notes). Point-in-time example that cost real time:
 `GET /v1/actions/{ref}` resolves only a **UUID**, not an `owner@kernel/name` address (404) —
-so resolve refs via the **list** endpoint, or read the id off a step/tx that already
+so resolve refs via the **list** endpoint, or read the id off a task/tx that already
 carries it. Assume every "this should just work" kernel call is worth one live check.
 
 ---
@@ -171,10 +173,10 @@ Before the checklist in `docs/apps.md`, answer these, because they shape the des
    a dedicated user to *self-manage* them — or would an operator register them for it?
    The user exists for action ownership, nothing more.
 2. **Which of its behaviors are kernel primitives?** Map every async/attention/
-   delivery feature to a **step**; every capability to an **action**; every economic
+   delivery feature to a **task**; every capability to an **action**; every economic
    event to a **transaction**. Reuse; do not shadow.
-3. **Who funds and owns the processes** its steps hang off, and does it need a
-   **seed/outbox** trace? If it emits steps, it does.
+3. **Who funds and owns the processes** its tasks hang off, and does it need a
+   **seed/outbox** trace? If it emits tasks, it does.
 4. **Is its identity stored durably and unambiguously?** One canonical path; derive
    what you can.
 5. **Does it compose with agents/other apps for free?** If a feature only works

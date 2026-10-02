@@ -1,7 +1,26 @@
 # Juice Web UI Requirements
 
-Version: 0.10.0
+Version: 0.11.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.11.0.** The kernel (4dbfedd) calls a step a **task**, and
+> the UI follows it in routes, types and words: the inbox lists tasks, and
+> `/v1/steps` is gone. Four facts follow, each measured live
+> (`docs/kernel-v0.18-verification.md`). A task row names its action by
+> address and no longer by id, so the payment branch reads the action by its
+> address (§6.3). A waiting task can be **declined** by either party the kernel
+> accepts — the one asked, or the one who asked — and its reserved price
+> returns (§6.3). A task held for someone on another kernel is listed in that
+> person's own inbox, so the network page's peer-held list is gone: work
+> addressed to this kernel reaches `sys` like any other (§6.6). Lists answer
+> what is open unless asked for all, so history and the sessions page ask
+> (§6.3, §6.5).
+>
+> Money gains two facts. A transfer reaches a user of any kernel: its receipt
+> states the payment's state as the kernel serves it, and the sender's ledger
+> entry `transfer <tx>` links that receipt (§6.5). Registering a payout address
+> takes the account's password, and a wrong one is a message, not a sign-out
+> (§6.5).
 
 > **What changed in 0.10.0.** The kernel (9705b3b) names every principal by
 > address: a user is `handle@kernel` and an action `owner@kernel/name`, on the
@@ -375,7 +394,7 @@ a marketplace, not a raw command dump. The primary groups are **browse**,
 **inbox**, **workshop**, **wallet**, and **settings**, plus **network** (federation)
 and **admin**, both shown **only to the `sys` superuser**. Each maps to the same
 CLI concepts as before: `browse` is discovery + execution (`run` + the catalog);
-`inbox` is `step` — work addressed to the user, carrying the sole attention badge;
+`inbox` is `task` — work addressed to the user, carrying the sole attention badge;
 `workshop` is the provider surface (`action` management + earnings + creation);
 `wallet` is money evidence (`user` balances + `process` lifetimes + the `tx`
 ledger + receipts); `settings` is account, preferences, and connected accounts;
@@ -476,12 +495,12 @@ detectable.
   surfacing parked funds and awaiting-receipt state.
 * **tx** — the immutable ledger: transactions list/show/rate; receipt
   verification (`GET /v1/transactions/{id}/receipt-verification`), on demand.
-* **step** — steps: list/show/complete. Step creation is API and app-module
-  surface only (§6.3).
+* **task** — tasks: list/show/complete/decline. Task creation is API and
+  app-module surface only (§6.3).
 * **user** — self profile, balances (`GET /v1/me`, `available`/`locked`), and
   update (`PUT /v1/me`); the user's own ledger (`GET /v1/ledger`); withdrawals
   (`POST`/`GET /v1/withdrawals`) on every world; and, on a world whose money has
-  addresses, the payout address (`PUT /v1/me/address`).
+  addresses, the payout address (`PUT /v1/me/blockchain-address`).
 
 *Conditional:* the trace tree on the receipt page.
 
@@ -495,7 +514,7 @@ detectable.
   which kind of target it takes** and a target of the other kind is refused, so
   the UI addresses users and peers on separate routes and never sends a public
   key to a user route. Superuser **scope** on the normal list pages (a `sys`
-  session sees all actions/processes/tx/steps) is indicated quietly on those
+  session sees all actions/processes/tx/tasks) is indicated quietly on those
   pages, not duplicated as separate admin listings.
 
 ### 3.2 Out of scope (no user-facing flow)
@@ -547,7 +566,7 @@ detectable.
 * State-mutating responses return the updated resource; the UI re-renders from
   that response. Destructive operations and `end` return 204.
 * List responses are bare arrays; pagination metadata is in headers.
-* `POST /v1/run` and `POST /v1/steps/{id}/complete` always include `args`; empty
+* `POST /v1/run` and `POST /v1/tasks/{id}/complete` always include `args`; empty
   input is `{}`.
 
 ## 5. Authentication and session
@@ -612,7 +631,7 @@ kernel and world is in use, and keys everything durable by
   (`browse`, `inbox`, `workshop`, `wallet`, `settings`, then `network` and `admin` for
   `sys`), default-expanded with labels, collapsible, with collapse state
   persisted server-side. The active group MUST carry `aria-current`. The `inbox`
-  entry MUST carry its waiting-count step badge in every state — a constraint on
+  entry MUST carry its waiting-count task badge in every state — a constraint on
   the entry wherever it renders, not on any one surface. A single nav model, built
   once server-side, MUST drive the sidebar and the mobile drawer (and the command
   palette), so the three cannot drift.
@@ -627,7 +646,7 @@ kernel and world is in use, and keys everything durable by
   arbitrary and would shift as apps install — unlearnable. One model, two
   renderings: sidebar where there is room, drawer where there is not. The drawer
   MUST be reachable without JavaScript by the same `?form=`-style fallback used
-  elsewhere. The closed affordance MUST carry the step badge, so the sole core
+  elsewhere. The closed affordance MUST carry the task badge, so the sole core
   attention signal survives the drawer being shut. (The core rule that money moves
   only through a named confirm is unaffected by which surface hosts a screen.)
 * **An app that presents a kernel principal presents its account.** An agent is
@@ -647,10 +666,11 @@ kernel and world is in use, and keys everything durable by
   kernel account confers: on a shared root, an ordinary session could otherwise
   edit and stop another person's agent, and anyone signed in could start a
   process on the host.
-* The step badge MUST be the only attention-demanding affordance in the **core**
+* The task badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
-  its nav entry. It MUST reflect waiting steps for the signed-in user, sourced from
-  a single server-side poll of `GET /v1/steps?status=waiting` per session (a
+  its nav entry. It MUST reflect waiting tasks whose `required_caller` is the
+  signed-in user (a superuser lists everyone's), sourced from
+  a single server-side poll of `GET /v1/tasks?status=waiting` per session (a
   per-session cache whose TTL matches the configured badge poll interval), fanned
   out to open tabs — not one polling loop per tab.
 * All create and edit operations MUST open **floating modal forms** — native
@@ -920,60 +940,69 @@ one question — what happened to the money — so no two may share a sentence:
 
 Long-running calls MUST show elapsed time against the action's historical latency
 and MUST NOT show an indefinite spinner. If a call returns with the process still
-open (parked steps), the result MUST say so and link to the Wallet.
+open (parked tasks), the result MUST say so and link to the Wallet.
 
-### 6.3 step — the inbox of work addressed to you
+### 6.3 task — the inbox of work addressed to you
 
-* A waiting step whose `required_caller` is the signed-in user MUST render as a
-  completable card; all other steps MUST go to a history table. Filters by
-  `process_id` and `status` MUST be available (`GET /v1/steps`); a single step is
-  `GET /v1/steps/{id}`, including the computed `action`.
-* The completion form MUST be built from the step's own `allowed_input` (the
-  kernel-derived completion schema on a waiting step), never by reading the
-  target action: a step may be parked on a `private`/`local` action the
-  completer can never read, so a 403 on the target action is a normal state and
-  MUST degrade silently (the action read is decoration, not a dependency).
+* A waiting task whose `required_caller` is the signed-in user MUST render as a
+  completable card; all other tasks MUST go to a history table, read with
+  `?status=` from its tabs or `?all=1` (the kernel lists only open tasks
+  otherwise), to exhaustion. A single task is `GET /v1/tasks/{id}`.
+* **Who asks** is what the row names. A row carries `created_by` (the creating
+  action) and `action` (the completion target) when this kernel holds the task;
+  a task held on another kernel is listed here without them, its `owner` the
+  holding kernel's name, rendered as every kernel name is (§6.6: a petname
+  whole, a key truncated). The card names what the row names and nothing else.
+* The completion form MUST be built from the task's own `allowed_input` (the
+  kernel-derived completion schema on a waiting task), never by reading the
+  target action: a task may be parked on a `private`/`local` action the
+  completer can never read.
 * `partial_args` MUST render read-only; only `allowed_input` fields MUST be
   editable. When none are editable, the card MUST collapse to a single confirm.
 * **Completion is two-branch — this is the single statement of the rule; §7 and
   §8 defer here.**
-  * An **ordinary step** stays **calm and free of funds-mechanics narration** —
+  * An **ordinary task** stays **calm and free of funds-mechanics narration** —
     no "parked," no "you pay N but it's reserved." The completer is doing
     requested work, not authorizing a spend from their own wallet (the money was
-    reserved by whoever created the step), so the completion control is a
+    reserved by whoever created the task), so the completion control is a
     **neutral `Complete`** that names **no** amount — a `verb (N)` money button
-    here actively misleads. The card names only *who asks* and *what* (the
-    creating action, quietly) and shows the sealed `partial_args` as an inert
-    read-only detail.
-  * A **payment step** IS a spend of the completer's own balance. Verified on
-    the running kernel: a step on an `effect="transfer"` action draws the sealed
-    `amount` from the completer at completion; the federation `payment`
-    descriptor exists only on the peer wire, so on `/v1` the signal is the
-    target action's **signed contract field `effect`** (from
-    `GET /v1/actions/{action_id}`), never the action's name. Its confirm MUST
-    be the money button naming the amount — the sealed `partial_args.amount`
-    when bound, else the completer's own typed amount — and the card MUST name
-    the recipient (`partial_args.target`) in the provenance face; the §8 rule
+    here actively misleads. The card names only *who asks* and *what* and shows
+    the sealed `partial_args` as an inert read-only detail.
+  * A **payment task** IS a spend of the completer's own balance: a task on an
+    `effect="transfer"` action draws the `amount` from the completer at
+    completion (verified on 4dbfedd). The signal is the target action's
+    **signed contract field `effect`**, read by the task's `action` address
+    (`GET /v1/actions?ref=`), never the action's name. The read is made only
+    for an address on this kernel — the transfer action is `local`, so a
+    payment task always names one — and never dials a peer. Its confirm MUST be
+    the money button naming the amount — the sealed `partial_args.amount` when
+    bound, else the completer's own typed amount — and the card MUST name the
+    recipient (`partial_args.target`) in the provenance face; the §8 rule
     (whose funds move, how much) applies in full, exactly as on a paid run.
     The two branches MUST NOT blend: a card is one or the other, decided solely
-    by the kernel's `effect` field, never by name or heuristics. (Effect-bearing
-    actions are public natives or `local` proxies by construction, so the
-    completer can always read the field; if a future kernel makes one
-    unreadable, the card falls back to ordinary rendering and the kernel remains
-    the sole funds enforcer.)
-* Completion MUST POST to `/v1/steps/{id}/complete` with `args` (default `{}`)
-  and MUST render `{result, tx_id, trace_id, step_id}` through the run outcome
-  display (§6.2). Completion MUST be offered only to the `required_caller`;
-  duplicate and non-caller attempts MUST map to typed-error messages.
-* Completed and cancelled steps MUST appear in history; cancelled cards MUST
-  state the reason.
-* `sys/message` steps MUST render as a message (sender, text, acknowledge
+    by the kernel's `effect` field, never by name or heuristics. A row that
+    names no action here is an ordinary task.
+* Completion MUST POST to `/v1/tasks/{id}/complete` with `args` (default `{}`)
+  and MUST render `{result, tx_id, trace_id, receipt_id, task_id}` through the
+  run outcome display (§6.2). **A receipt is linked only when the reply names
+  one**: a task held on another kernel completes there, and its reply carries an
+  empty `receipt_id` and that kernel's `tx_id`, which this kernel does not
+  serve. Completion MUST be offered only to the `required_caller`; duplicate and
+  non-caller attempts MUST map to typed-error messages.
+* **A waiting task can be declined** (`POST /v1/tasks/{id}/cancel`) by either
+  party the kernel accepts: its `required_caller`, or its `owner` (the process
+  owner who asked). Declining cancels it and returns its reserved price to the
+  payer; the control is the destructive `Decline` behind a confirm naming that
+  consequence (§7), offered on the inbox card and on the task's own page, never
+  in a list row. The kernel refuses anyone else and any task no longer waiting.
+* Completed and cancelled tasks MUST appear in history.
+* `sys/message` tasks MUST render as a message (sender, text, acknowledge
   button).
-* Step creation MUST NOT be a browser form. `POST /v1/steps` binds a live
+* Task creation MUST NOT be a browser form. `POST /v1/tasks` binds a live
   funding trace, and a trace id is exactly the process bookkeeping this UI keeps
   hidden (§6.5) — a form demanding one is unusable by the person the inbox is
-  for. Steps are composed by actions and app modules through the kernel API; the
-  inbox is work addressed to you: list, read, complete.
+  for. Tasks are composed by actions and app modules through the kernel API; the
+  inbox is work addressed to you: list, read, complete, decline.
 
 ### 6.4 action — catalog and provider workspace
 
@@ -1023,15 +1052,17 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * The Wallet MUST show two balances (credited / escrow-pending signals):
   **available** and **parked** (all locked funds; the open-sessions list itemizes
   them, each with a force-end control naming its consequence — cancels waiting
-  steps, refunds parked prices — via `POST /v1/processes/{id}/end`). "locked" is not
-  a user-facing label.
+  tasks, refunds parked prices — via `POST /v1/processes/{id}/end`). "locked" is not
+  a user-facing label. Parked is the served `locked` whole: it also holds what a
+  call to another kernel stakes on its ticket (kernel P10), which no session
+  itemizes, and the UI states the total rather than computing a remainder.
 * **A session awaiting a peer's receipt is not force-endable.** The kernel
   refuses to end it (409), because the peer may already have earned the funds,
   so the control MUST be withheld wherever it appears — the wallet, the sessions
   page and the process page — keyed on the kernel's `awaiting_receipt`. A
   doomed act is never offered.
-* The wallet MUST link to the full **sessions** page (`GET /v1/processes`, open +
-  closed), which itself MUST offer the same force-end control on each endable
+* The wallet MUST link to the full **sessions** page (`GET /v1/processes?all=1`,
+  open + closed — the kernel lists only open ones otherwise), which itself MUST offer the same force-end control on each endable
   row and paginate (§7). A session awaiting a remote receipt MUST show that
   state and its age from the kernel's `awaiting_receipt`/`awaiting_receipt_since`
   — the standing evidence behind a parked run (§6.2).
@@ -1047,8 +1078,10 @@ open (parked steps), the result MUST say so and link to the Wallet.
 * **A reason is an id or it is text, and never prose the UI writes.** An
   entry's `reason` names the transaction that caused it — linked to its
   receipt, truncated — or, for an obligation, the ticket it settles
-  (`obligation <ticket>`), or a transfer's own note; anything that is not
-  id-shaped renders as the inert text it is. A movement caused by a call to
+  (`obligation <ticket>`), or, for a transfer to or from another kernel, the
+  sender's transaction (`transfer <tx>`), linked only for the account it was
+  debited from: on the receiving kernel the id is the other kernel's. Anything
+  else renders as the inert text it is. A movement caused by a call to
   which the viewer is no party (a value transfer's beneficiary) links to a
   receipt the kernel may refuse them; the kernel decides.
 * **A value-bearing call is two records.** The transaction states what the
@@ -1060,8 +1093,13 @@ open (parked steps), the result MUST say so and link to the Wallet.
   they render as breakdown rows, zero-suppressed, and the payer named beside
   them is the transaction's **`caller`** — the immediate caller, whose
   balance the value actually leaves — never the `owner` that pays for
-  execution. The two differ exactly when a payment step settles inside someone
+  execution. The two differ exactly when a payment task settles inside someone
   else's process (§6.3).
+* **Registering a payout address takes the account's password**
+  (`PUT /v1/me/blockchain-address {blockchain_address, signature,
+  current_password}`), as a password change does. A wrong or missing one is the
+  kernel's 401, checked before anything else; it MUST read as "Current password
+  is incorrect." and MUST NOT end the session, which a 401 elsewhere does.
 * **Every world pays out.** A withdrawal is offered wherever it has somewhere
   to go: on a world without addresses the operator records it (it lands
   `confirmed`, `tx_hash` `manual:<id>`), and on a world with addresses it waits
@@ -1072,9 +1110,11 @@ open (parked steps), the result MUST say so and link to the Wallet.
   special privileges (kernel §9: any provider could have supplied an equivalent),
   so the UI MUST NOT carry a bespoke send form, route, command, or price helper
   for it. It is found, priced, quoted, run, and receipted exactly like every
-  other action, through the surfaces of §6.2. The bare `POST /v1/transfers`
-  endpoint remains outside the UI (fee-less plumbing the kernel keeps for other
-  clients).
+  other action, through the surfaces of §6.2. It reaches a user of any kernel;
+  a transfer to another kernel's user carries `payment` on its transaction —
+  the state of this kernel's payment to that kernel (`pending`, `announced`),
+  which says the money left and never that the recipient was credited — and
+  the receipt states it as served, in a neutral pill.
 
   **No action may be special-cased anywhere in the UI.** A clause keyed to one
   action's name is a defect, not a feature: it makes the interface disagree with
@@ -1205,16 +1245,11 @@ symmetry, but because the kernel refuses anything else.
   unbound kernel has no name to key on, and advertised names collide. A user is
   renamed on the user page. The two forms are separate because the kernel's two
   routes are, and a single form would have to guess which namespace was meant.
-* **Work a peer is holding for this kernel.** The inspection carries the steps
-  whose required caller is this kernel rather than any person on it, and the
-  page MUST list them with what the peer sealed into each one — a peer step
-  carries no action and no creator, so the sealed args are what say what the
-  work is. Completing one leaves signed with this kernel's own federation
-  identity, so it acts as the whole kernel: an operator act, which is why it
-  lives here and never in a person's inbox. The control is **neutral and names
-  no amount** (§6.3): the completer is doing requested work, and the funds were
-  reserved by whoever created the step. Where the peer had more than it sent,
-  the page says so rather than implying the list is whole.
+* **Work addressed to this kernel reaches its operator's inbox.** A peer
+  addresses a task to the kernel as `sys@<kernel>`, and it is listed in `sys`'s
+  inbox and completed there like any other (§6.3); this page lists none. An
+  inspected action is named by its address and renders as every address does
+  (§4), unlinked.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the
   subject issued about itself, and **counterparty experience** from the rest,
@@ -1293,12 +1328,10 @@ bilateral settlement to initiate, no settle route, and nothing here to press.
   name — and the account is named in the route, not the body. It offers no peer
   field: a peer is not a user, and the kernel refuses one here.
 
-**No value-transfer queue.** The kernel served one while value could cross a
-kernel boundary and a buyer-side transfer could sit unresolved. Value is now
-local to a kernel (kernel §D18): what is locked from the caller is exactly what
-the beneficiary receives, in one settlement, so no such record can exist and
-`/control/transfers` is gone (404, verified live). The UI carries no queue, no
-retry affordance, and no successor page — there is no state left to represent.
+**No value-transfer queue.** A transfer to another kernel settles in the
+sender's own call and is paid on the rail like a won ticket (kernel §D18, P11);
+the kernel serves no queue and the UI carries none. Its one visible state is
+the transaction's `payment` (§6.5).
 
 ## 7. Visual language and non-functional requirements
 
@@ -1311,9 +1344,9 @@ retry affordance, and no successor page — there is no state left to represent.
   renders everywhere. Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
-  price. No other button styles exist. (A step completion is two-branch per
+  price. No other button styles exist. (A task completion is two-branch per
   §6.3: an ordinary completion is the neutral `Complete` naming no amount; a
-  **payment step** completion is a genuine spend and uses the money button.)
+  **payment task** completion is a genuine spend and uses the money button.)
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
@@ -1398,7 +1431,7 @@ retry affordance, and no successor page — there is no state left to represent.
   outcomes render in place. The UI MUST provide exactly one polite `aria-live`
   region for ephemeral acknowledgement of the user's own just-completed action
   (e.g. "Action disabled," "Copied," the 429 "slow down"): no history, no
-  stacking, no counterparty text, auto-dismissing. The step badge is the sole
+  stacking, no counterparty text, auto-dismissing. The task badge is the sole
   async attention signal in the core surface; an app MAY add its own app-scoped
   nav badge.
 * **CSS grammar.** All visual decisions MUST live in named CSS classes in
@@ -1435,11 +1468,11 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    a button; result JSON in a non-interpreted code block. The chrome vocabulary
    defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
-   step's `required_caller` and `next_action`), never on payload shape.
+   task's `required_caller` and `action`), never on payload shape.
 2. Route every act that moves the user's own money — run (including a run of a
-   value-bearing action, which is how money is sent, §6.5), payment-step
+   value-bearing action, which is how money is sent, §6.5), payment-task
    completion (§6.3), force-end — through a confirm whose
-   button names the amount or refund. An ordinary step completion moves none of
+   button names the amount or refund. An ordinary task completion moves none of
    the completer's money and stays neutral (§6.3, the single statement). No
    spend MUST be reachable from a list view or by a GET.
 
@@ -1454,8 +1487,8 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    owner distinguished, in a confusable-distinct monospace face, with the owner
    profile one click away for a local owner and no link for another kernel's;
    show a first-time-payee hint on the run form.
-4. Show, on a payment-step card before the confirm, whose funds move, how much,
-   and the sealed `partial_args`; an ordinary step card shows the sealed
+4. Show, on a payment-task card before the confirm, whose funds move, how much,
+   and the sealed `partial_args`; an ordinary task card shows the sealed
    `partial_args` and who asks (§6.3).
 5. Render receipt-verification failures with the failed check named, and MUST NOT
    display `valid` except from the kernel's own per-check response.
@@ -1472,12 +1505,21 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * session lifecycle: PKCE handshake, single-flight refresh rotation, logout
   revocation, suspension → clean logout;
 * CSRF protection on every state-changing route;
-* JSON-Schema-to-form rendering, including `partial_args` lock-out on step cards
+* JSON-Schema-to-form rendering, including `partial_args` lock-out on task cards
   and the `allowed_input`-sourced completion form (target action unreadable →
   form still renders);
-* the two completion branches: ordinary steps neutral (no amount anywhere);
-  payment steps render the money button naming the amount and the beneficiary
-  (§6.3), decided solely by the target action's signed `effect` field;
+* the two completion branches: ordinary tasks neutral (no amount anywhere);
+  payment tasks render the money button naming the amount and the beneficiary
+  (§6.3), decided solely by the target action's signed `effect` field, read by
+  address and only for an address on this kernel;
+* decline: offered to the required caller and the owner of a waiting task and
+  to nobody else; a task held on another kernel names its holder and links no
+  receipt after completion (§6.3);
+* list reads ask for what they show: inbox history and the sessions page send
+  `?all=1` (or the tab's status) and page to exhaustion (§6.3, §6.5);
+* the payout address form sends the password, and a wrong one keeps the session
+  (§6.5); a `transfer <tx>` reason links only for the account debited, and a
+  transaction's `payment` state renders as served (§6.5);
 * the run primitive: cost preview, the priced confirm, process auto-closure, and
   force-end;
 * no action is special-cased: no bespoke form, route, command, or price helper
@@ -1519,8 +1561,9 @@ Every production `.go` file has a `_test.go` file with independent tests.
   `/admin/peers/…`, and no page sends a public key to a user route (§3.1, §6.6);
 * the retired surfaces stay gone: settle, admin withdraw, unimport, the transfer
   queue, a peer's balance, funding a peer, confirming an obligation, the
-  whole `/control/` prefix, the stats route, a parked call's refund date, and
-  the fold of transactions into the activity (drift guard);
+  whole `/control/` prefix, the stats route, a parked call's refund date, the
+  fold of transactions into the activity, `/v1/steps`, `/v1/me/address`,
+  `/v1/transfers`, and the network page's peer-held list (drift guard);
 * the truncate helper is the only author of the ellipsis on a shortened id
   (drift guard);
 * the call-outcome classes, rendered distinctly — including that a parked
@@ -1609,19 +1652,22 @@ once its prerequisite is confirmed on the running kernel.
 * **Crediting a peer — gone (§6.6).** There is no `/v1/admin/peers/{key}/deposit`
   route, and a peer key on the user deposit route answers `404 "… is not a user
   here"`. A peer account is provisioned by its first signed call alone.
-* **Peer-held steps — resolved (§6.6).** Confirmed on 25c07cd: the inspection
-  carries `steps` and `steps_truncated`, `GET /v1/steps?peer=` serves the same
-  rows (the superuser sees every step this kernel may complete, an ordinary user
-  only those addressed to them), and completion is
-  `POST /v1/steps/{id}/complete` with the peer **in the body** — the `?peer=`
-  query form answers 404, which is what made this conditional on v0.14.0.
-  Verified end to end through the UI: a step parked on a peer for this kernel is
-  listed, completed, and gone.
+* **Steps are tasks — resolved (§6.3, §6.6).** Confirmed on 4dbfedd: every
+  `/v1/steps` route answers a plain-text 404 and `/v1/tasks` replaces it. A row
+  carries no `action_id` or `parent_trace_id`; the list answers open tasks
+  unless `?status=` or `?all=1`; `POST /v1/tasks/{id}/cancel` declines, for the
+  required caller or the process owner only (a superuser is refused). A task
+  for a user of another kernel is listed on both kernels under one id — on the
+  addressee's without `action` or `created_by`, `owner` the holding kernel's
+  name — and its completion reply carries `receipt_id: ""` and the holder's
+  `tx_id`. The inspection carries no tasks, and a task for a kernel is
+  addressed to its `sys` (a bare kernel name is refused)
+  (`docs/kernel-v0.18-verification.md` §1–§3).
 * **Inspect action identity (§6.6).** `admin inspect` serves each action with an
   `action_id` again, plus an `indicative` all-in price, so an evidence subject
-  can be named. The name is still bare and carries no owner, so a peer action is
-  not an addressable ref and shows no reputation. Evidence `notes` remains
-  unverified and unrendered.
+  can be named. As of 4dbfedd the name is the action's address
+  (`seller@bee/slow`), rendered as one. Evidence `notes` remains unverified and
+  unrendered.
 * **Credit position (§6.6).** Re-confirmed on 25c07cd, now at
   `GET /v1/admin/kernel`: `exposure` against `credit_limit`, the three bps
   rates, the ticket face and `lottery_max`, the `sys` split, `solvency`,
@@ -1636,8 +1682,10 @@ once its prerequisite is confirmed on the running kernel.
   carries the shortfall as text, which the network page states. Confirmed on
   v0.14.0 and still true:
   `POST /v1/withdrawals {id, amount}` with a caller-minted UUID (a replay returns
-  the same row), and `PUT /v1/me/address {address,
-  signature}`. While a rail payment is blocked every money verb answers
+  the same row). The address route is
+  `PUT /v1/me/blockchain-address {blockchain_address, signature,
+  current_password}` as of 4dbfedd: a missing or wrong password is 401 before
+  the world's 409. While a rail payment is blocked every money verb answers
   `503 rail_stopped`. As of d59742b a world without payment addresses refuses
   only the address (409, "this world has no payment addresses"); a withdrawal
   there lands `confirmed` at once with `tx_hash` `manual:<id>`, the operator
@@ -1719,21 +1767,17 @@ once its prerequisite is confirmed on the running kernel.
   seller's `net`/`fee` remain its own economics, which is why the captions key on
   `remote_receipt_hash` and not on the ticket. As of d59742b the peer is named by
   the petname bound on first use (`k-4lnqDq15`) on both books.
-* **The remote step caller — resolved (§6.3).** As of v0.14.2 a step parked for a
-  principal on a peer renders its `required_caller` as `vendor@bravo` — the
-  handle it went by when the step was made, beneath the peer's local name — with
-  the stable id still beside it. As of 9705b3b every party is served this way,
-  local ones included (`ana@alpha`), and a step addressed to the peer kernel
-  itself names it alone.
+* **The remote task caller — resolved (§6.3).** A task parked for a principal
+  on a peer renders its `required_caller` as `bob@bravo` — the handle it went
+  by when the task was made, beneath the peer's local name. Every party is
+  served this way, local ones included (`ana@alpha`).
 * **The world's symbol (§7).** Confirmed on v0.14.2: `/health` carries `symbol`,
   and the kernel publishes the rendering the UI now follows.
-* **`allowed_input` on `/v1/steps` (§6.3).** Confirmed on the running kernel
-  (waiting steps carry it). The completion form falls back to the target action's
-  `input_schema` where `allowed_input` is absent (older kernels). The federation
-  `payment` descriptor does NOT appear on `/v1` step listings (confirmed);
-  payment steps are detected by the target action's `effect` field, re-confirmed
-  served on v0.12.23 action reads and readable by the completer (§6.3).
-  An approval-only step serves an object with no fields, in either of two shapes
+* **`allowed_input` on `/v1/tasks` (§6.3).** Every waiting task carries it
+  (4dbfedd), and the completion form derives from it alone. Nothing on a task
+  row marks a payment; payment tasks are detected by the target action's
+  `effect` field, read by the row's `action` address (§6.3).
+  An approval-only task serves an object with no fields, in either of two shapes
   observed live — `{"type":"object","properties":{},"required":null}` and
   `{"type":"object"}` — and both MUST collapse to the single confirm of §6.3,
   never to a raw-JSON box, which would ask a human to author `{}`. The two
@@ -1754,13 +1798,18 @@ once its prerequisite is confirmed on the running kernel.
   `action_name`; an action row serves no owner field; `network_digest` and
   `rail_address` are `network_fingerprint` and `blockchain_address`
   (`docs/kernel-v0.17-verification.md`).
-* **Chat's doorbells — blocked (apps).** The kernel refuses to park a step on a
-  trace that has settled (`create step: the call has already settled`, 409 on
-  9705b3b), and chat mints its verification step and every doorbell off the
-  outbox seed trace, which settles when the seed call returns. Registration,
-  and so the rooms gate, fail on this kernel until chat holds a trace that is
-  still live when it mints; the address change is otherwise complete in chat
-  and its store migration verified live.
+* **Chat's doorbells — blocked (apps).** The kernel refuses to park a task on a
+  trace that has settled — re-confirmed on 4dbfedd on both paths: the
+  capability answers `403 capability expired: call already settled`, a token
+  `409 process is closed` — and chat mints its verification task and every
+  doorbell off the outbox seed trace, which settles when the seed call returns.
+  Registration, and so the rooms gate, fail on this kernel until chat holds a
+  trace that is still live when it mints.
+* **Kernel contract defects (informative).** `juicedocs/API.md` still describes
+  a parked call's `refund_eligible_at` and an automatic refund, which 4dbfedd
+  serves neither of; its R6 breaks off mid-sentence; and it says a task
+  addressed to a kernel names it alone, where the kernel refuses a bare name and
+  the operator is `sys@<kernel>`. The UI follows the measured kernel.
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;

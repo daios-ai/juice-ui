@@ -258,7 +258,7 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	// action row is {name, description, price} only and the account arrives inline
 	// — shapes captured live 2026-08-06.
 	f.reply = `{"handle":"k","public_key":"PKEY","about":"a test kernel","online":true,"source":"live",
-	 "actions":[{"name":"greet","price":12,"description":"Greets a person."}],
+	 "actions":[{"name":"seller@bee/greet","price":12,"description":"Greets a person."}],
 	 "account":{"available":5,"locked":0,"suspended":false},
 	 "evidence":[{"issuer_public_key":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
 	   "corroborated_uses":1,"avg_latency_ms":90760.5,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
@@ -276,7 +276,7 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	if insp.Reachability.Path != "direct" || insp.Reachability.RTTMillis != 7 {
 		t.Errorf("reachability diagnostics not decoded: %+v", insp.Reachability)
 	}
-	if len(insp.Actions) != 1 || insp.Actions[0].Name != "greet" || insp.Actions[0].Price != 12 {
+	if len(insp.Actions) != 1 || insp.Actions[0].Name != "seller@bee/greet" || insp.Actions[0].Price != 12 {
 		t.Errorf("peer action not decoded: %+v", insp.Actions)
 	}
 	// The account arrives inline, so the page needs no roster scan. It is
@@ -412,46 +412,5 @@ func TestAdminDepositIsUserOnly(t *testing.T) {
 	}
 	if f.lastPath != "/v1/admin/users/"+key+"/deposit" {
 		t.Errorf("the target reaches the kernel unchanged, in the path: %q", f.lastPath)
-	}
-}
-
-// Work a peer holds for THIS kernel. The row is thinner than an ordinary step —
-// no action, no creator — because what it is comes from the args the peer
-// sealed (docs/kernel-v0.15-verification.md §6).
-func TestInspectionCarriesPeerHeldSteps(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.reply = `{"public_key":"PKEY","online":true,"source":"live","account":{"suspended":false},
-	 "actions":[],"evidence":[],"reachability":{"path":"direct"},
-	 "steps":[{"id":"S1","partial_args":{"message":"ping"},"allowed_input":{"type":"object"},
-	           "price":0,"created_at":"2026-09-14T10:43:26Z"}],"steps_truncated":true}`
-	insp, err := f.client().AdminInspect(context.Background(), "tok", "PKEY")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(insp.Steps) != 1 || insp.Steps[0].ID != "S1" || !insp.StepsTruncated {
-		t.Fatalf("peer steps not decoded: %+v truncated=%v", insp.Steps, insp.StepsTruncated)
-	}
-	if !strings.Contains(string(insp.Steps[0].PartialArgs), "ping") {
-		t.Errorf("the sealed args are what say what the work is: %s", insp.Steps[0].PartialArgs)
-	}
-}
-
-// Completing one names the peer IN THE BODY. The query form answers 404 on this
-// kernel, so a client that guessed would silently fail the operator's one way
-// of doing work another kernel is waiting on.
-func TestCompletePeerStepNamesThePeerInTheBody(t *testing.T) {
-	f := newFake()
-	defer f.close()
-	f.reply = `{"result":{},"tx_id":"T1","trace_id":"TR1","step_id":"S1"}`
-	if _, err := f.client().CompletePeerStep(context.Background(), "tok", "S1", "PKEY", nil); err != nil {
-		t.Fatal(err)
-	}
-	if f.lastMethod != "POST" || f.lastPath != "/v1/steps/S1/complete" {
-		t.Errorf("complete = %s %s (the peer is not a query parameter)", f.lastMethod, f.lastPath)
-	}
-	body := string(f.lastBody)
-	if !strings.Contains(body, `"peer":"PKEY"`) || !strings.Contains(body, `"args":{}`) {
-		t.Errorf("body must carry the peer and normalise empty args: %s", body)
 	}
 }

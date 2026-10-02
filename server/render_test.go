@@ -597,7 +597,7 @@ func TestCallFormRun(t *testing.T) {
 	}
 }
 
-// TestCallFormComplete renders the shared _call_form for a step completion: a
+// TestCallFormComplete renders the shared _call_form for a task completion: a
 // one-shot NEUTRAL "Complete" button and the pre-bound (locked) args shown as a
 // read-only definition list above the editable fields, with no verbal label.
 func TestCallFormComplete(t *testing.T) {
@@ -620,7 +620,7 @@ func TestCallFormComplete(t *testing.T) {
 		t.Errorf("completion button must not name an amount or use the money tier: %s", body)
 	}
 	if !strings.Contains(body, `data-oneshot="true"`) {
-		t.Error("step completion form must be one-shot")
+		t.Error("task completion form must be one-shot")
 	}
 	// Sealed args render as a read-only dl (the completed part), separated from the
 	// editable part — same anatomy as the run form.
@@ -630,13 +630,13 @@ func TestCallFormComplete(t *testing.T) {
 	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
 		t.Error("locked args carry no verbal label — the visual contrast is the signposting")
 	}
-	if !strings.Contains(body, `id="step-result-S1"`) {
-		t.Errorf("completion result target must be step-result-S1: %s", body)
+	if !strings.Contains(body, `id="task-result-S1"`) {
+		t.Errorf("completion result target must be task-result-S1: %s", body)
 	}
-	// A step's price is already parked — the refund disclosure is for the run confirm,
+	// A task's price is already parked — the refund disclosure is for the run confirm,
 	// not the completion, so it must not appear here.
 	if strings.Contains(body, "Refunded in full") {
-		t.Errorf("step completion must not carry the run's refund disclosure: %s", body)
+		t.Errorf("task completion must not carry the run's refund disclosure: %s", body)
 	}
 }
 
@@ -665,7 +665,7 @@ func TestFormFieldsStructuredSwitch(t *testing.T) {
 	}
 }
 
-// TestCallFormApproval renders an approval _call_form (a step with nothing left to
+// TestCallFormApproval renders an approval _call_form (a task with nothing left to
 // fill): just the locked block + the Complete button, no raw-JSON input and no
 // wordy "acknowledge" line — the locked JSON + button carry it visually.
 func TestCallFormApproval(t *testing.T) {
@@ -773,8 +773,8 @@ func TestBadgeHelper(t *testing.T) {
 	if got := badge("/x", "l", 0, 0).Every; got != 30 {
 		t.Errorf("badge interval defaulted to %d, want 30", got)
 	}
-	b := badge("/steps/badge", "Waiting", 4, 15)
-	if b.Every != 15 || b.Count != 4 || b.URL != "/steps/badge" {
+	b := badge("/inbox/badge", "Waiting", 4, 15)
+	if b.Every != 15 || b.Count != 4 || b.URL != "/inbox/badge" {
 		t.Errorf("badge = %+v", b)
 	}
 }
@@ -804,7 +804,7 @@ func TestBadgePollFragment(t *testing.T) {
 }
 
 // TestLayoutRendersBadgePollers proves the layout polls every badge — the core
-// steps badge and each app badge — on the configured interval, in both the sidebar
+// tasks badge and each app badge — on the configured interval, in both the sidebar
 // and the mobile tab bar.
 func TestLayoutRendersBadgePollers(t *testing.T) {
 	r, err := NewRenderer(playKernel)
@@ -826,12 +826,12 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if strings.Count(body, `hx-get="/inbox/badge"`) < 2 {
-		t.Errorf("steps badge poller must appear in sidebar AND drawer: %s", body)
+		t.Errorf("tasks badge poller must appear in sidebar AND drawer: %s", body)
 	}
 	if !strings.Contains(body, `hx-get="/chat/badge"`) {
 		t.Errorf("app badge poller missing: %s", body)
 	}
-	// steps(sidebar+drawer+menu button) + chat(sidebar+drawer) = 5 pollers, all on 15s.
+	// tasks(sidebar+drawer+menu button) + chat(sidebar+drawer) = 5 pollers, all on 15s.
 	if n := strings.Count(body, `every 15s`); n < 5 {
 		t.Errorf("configured interval applied to %d pollers, want >= 5: %s", n, body)
 	}
@@ -1375,7 +1375,7 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 	}
 }
 
-// A payment-step completion is a spend of the completer's own money: money
+// A payment-task completion is a spend of the completer's own money: money
 // button naming the sealed amount, unnumbered money button when the completer
 // types it (§6.3 two-branch rule).
 func TestCallFormPayment(t *testing.T) {

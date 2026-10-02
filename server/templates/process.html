@@ -13,7 +13,7 @@
   {{template "_process_await" $d}}
   {{if $d.Process.Endable}}
   <div class="row">
-    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="Force-end this process? Waiting steps are cancelled and their parked prices refunded to you.">
+    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="Force-end this process? Waiting tasks are cancelled and their parked prices refunded to you.">
       {{.CSRFField}}<button class="btn-danger" type="submit">Force-end</button>
     </form>
   </div>

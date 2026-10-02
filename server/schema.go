@@ -32,7 +32,7 @@ type FormModel struct {
 	// there is no input to collect, so the form is just its confirm button. It is
 	// distinct from UseRawFallback, which means "shape unknown, type it yourself"
 	// — offering a JSON box here would ask a person to author `{}` by hand. The
-	// kernel serves this for an approval-only step in either of two shapes,
+	// kernel serves this for an approval-only task in either of two shapes,
 	// `{"type":"object"}` and `{"type":"object","properties":{}}` (§10).
 	NoFields bool
 	Example  string // a pretty-printed JSON skeleton of the whole input, for the raw editor
@@ -66,7 +66,7 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	// valid, so the completer needs the raw editor. An explicitly EMPTY
 	// `properties` is the opposite claim: this input declares no fields, so
 	// there is nothing to collect and the form is its confirm button alone.
-	// The kernel serves the latter as an approval-only step's allowed_input.
+	// The kernel serves the latter as an approval-only task's allowed_input.
 	if doc.Type != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 {
 		return FormModel{UseRawFallback: true}
 	}
@@ -218,28 +218,28 @@ func enumStrings(raw []json.RawMessage) []string {
 	return out
 }
 
-// LockedField is a pre-filled field from the step's partial_args, shown
+// LockedField is a pre-filled field from the task's partial_args, shown
 // read-only so the completer understands the pre-set context.
 type LockedField struct {
 	Name  string
 	Value string // compact JSON representation of the value
 }
 
-// StepFormModel splits a step's input into what the creator already bound
+// TaskFormModel splits a task's input into what the creator already bound
 // (Locked) and what the required caller must still supply (Editable).
 // IsApproval is true when there are no editable fields and the user only
 // needs to confirm.
-type StepFormModel struct {
+type TaskFormModel struct {
 	Editable   FormModel
 	Locked     []LockedField
 	IsApproval bool
 }
 
-// BuildStepForm derives a completion form from the step's input_schema and
+// BuildTaskForm derives a completion form from the task's allowed_input and
 // partial_args. Fields present in partial_args are moved to Locked; fields
 // absent remain in Editable. Nil or invalid partial_args is treated as empty
 // (all fields editable).
-func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
+func BuildTaskForm(inputSchema, partialArgs json.RawMessage) TaskFormModel {
 	full := BuildForm(inputSchema)
 
 	// Parse partial_args into a map. Any failure → treat as empty.
@@ -251,7 +251,7 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 	if len(bound) == 0 {
 		// An empty-object schema with nothing pre-bound is still an approval: the
 		// kernel is asking for a confirmation, not for input.
-		return StepFormModel{Editable: full, IsApproval: full.NoFields}
+		return TaskFormModel{Editable: full, IsApproval: full.NoFields}
 	}
 
 	// Split schema fields into locked (present in partial_args) and editable.
@@ -285,5 +285,5 @@ func BuildStepForm(inputSchema, partialArgs json.RawMessage) StepFormModel {
 	// locked) — in both cases we show just the acknowledge button, not a dead raw
 	// box. We are inside the len(bound) > 0 branch, so args are already pre-bound.
 	isApproval := len(editFields) == 0
-	return StepFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
+	return TaskFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
 }

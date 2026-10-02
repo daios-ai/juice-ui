@@ -142,29 +142,29 @@ func (o Outcome) IsRefreshed() bool { return o.Class == Refreshed }
 func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
 
 // CallForm drives the shared _call_form partial for both running an action and
-// completing a step — conceptually the same act (execute an action). Locked
-// (a step's pre-bound args) renders through the result renderer; Editable is the
+// completing a task — conceptually the same act (execute an action). Locked
+// (a task's pre-bound args) renders through the result renderer; Editable is the
 // remaining input; the result renders below the form with progress + disable.
 type CallForm struct {
 	CSRFField  template.HTML
 	PostURL    string
 	Verb       string          // "Run" | "Complete"
 	Price      int64           // >0 → money button "Verb (N)"; 0 → plain "Verb"
-	Locked     []LockedField   // a step's pre-bound args, shown read-only above the fields
+	Locked     []LockedField   // a task's pre-bound args, shown read-only above the fields
 	LockedRaw  json.RawMessage // fallback raw pre-bound args when the schema gave no split
 	Editable   FormModel
 	IsApproval bool   // no editable input — just acknowledge
 	ResultID   string // id of the below-form result target
 	Outcome    *Outcome
-	OneShot    bool   // completion is spent once (steps); a run repeats (actions)
+	OneShot    bool   // completion is spent once (tasks); a run repeats (actions)
 	FirstPayee bool   // paid run: the viewer has never paid this owner (anti-phishing hint)
 	PayeeOwner string // owner named in the first-payment hint
-	// IsPayment marks a payment-step completion — a spend of the COMPLETER's
+	// IsPayment marks a payment-task completion — a spend of the COMPLETER's
 	// own balance (the target action bears effect="transfer", §6.3). It flips
 	// the button to money: "Complete ($N)" when Payment names the sealed
 	// amount, bare "Complete" (money, wallet-send pattern) when the completer
 	// types the amount. PayTo is the sealed recipient for the provenance line.
-	// An ordinary step stays the neutral Complete naming no amount.
+	// An ordinary task stays the neutral Complete naming no amount.
 	IsPayment bool
 	Payment   int64
 	PayTo     string
@@ -187,15 +187,15 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 	}
 }
 
-// completeForm builds a CallForm for completing a step (one-shot; the sealed args
-// render read-only above the editable fields). ResultID is per-step so many
+// completeForm builds a CallForm for completing a task (one-shot; the sealed args
+// render read-only above the editable fields). ResultID is per-task so many
 // inbox forms don't collide. locked is the structured split; lockedRaw is the
 // raw fallback when the schema produced no structured fields.
-func completeForm(csrf template.HTML, stepID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string) CallForm {
+func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string) CallForm {
 	return CallForm{
-		CSRFField: csrf, PostURL: "/inbox/" + stepID + "/complete", Verb: "Complete",
+		CSRFField: csrf, PostURL: "/inbox/" + taskID + "/complete", Verb: "Complete",
 		Price: price, Locked: locked, LockedRaw: lockedRaw, Editable: editable, IsApproval: isApproval,
-		ResultID: "step-result-" + stepID, Outcome: outcome, OneShot: true,
+		ResultID: "task-result-" + taskID, Outcome: outcome, OneShot: true,
 		IsPayment: isPayment, Payment: payment, PayTo: payTo,
 	}
 }
@@ -226,34 +226,37 @@ func (k *Caller) Run(ctx context.Context, token, ref string, args json.RawMessag
 		}
 		return out, oerr
 	}
-	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.TraceID), nil
+	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.ReceiptID, reply.TraceID), nil
 }
 
-// CompleteStep completes a waiting step. The outcome classification rules are
+// CompleteTask completes a waiting task. The outcome classification rules are
 // identical to Run: Rejected for input validation failures, Failed for
 // execution errors, Success otherwise.
-func (k *Caller) CompleteStep(ctx context.Context, token, id string, args json.RawMessage) (Outcome, error) {
-	reply, err := k.c.CompleteStep(ctx, token, id, args)
+func (k *Caller) CompleteTask(ctx context.Context, token, id string, args json.RawMessage) (Outcome, error) {
+	reply, err := k.c.CompleteTask(ctx, token, id, args)
 	if err != nil {
 		return classifyErr(err)
 	}
-	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.TraceID), nil
+	return k.successOutcome(ctx, token, reply.Result, reply.TxID, reply.ReceiptID, reply.TraceID), nil
 }
 
-// successOutcome builds a Success outcome and enriches it with transaction cost
-// details when a TxID is available.
-func (k *Caller) successOutcome(ctx context.Context, token string, result json.RawMessage, txID, traceID string) Outcome {
+// successOutcome builds a Success outcome. The receipt is linked — and its cost
+// read — only when the reply names one: a task held on another kernel completes
+// there, and its reply carries that kernel's transaction and no receipt here
+// (requirements.md §6.3), as does a run whose settlement is deferred.
+func (k *Caller) successOutcome(ctx context.Context, token string, result json.RawMessage, txID, receiptID, traceID string) Outcome {
 	out := Outcome{
 		Class:   Success,
 		Result:  result,
-		TxID:    txID,
 		TraceID: traceID,
 		Message: "Success.",
 	}
-	if txID != "" {
-		if tx, e := k.c.GetTransaction(ctx, token, txID); e == nil {
-			out.Cost = &Cost{Gross: tx.Gross, Fee: tx.Fee, Net: tx.Net}
-		}
+	if receiptID == "" {
+		return out
+	}
+	out.TxID = txID
+	if tx, e := k.c.GetTransaction(ctx, token, txID); e == nil {
+		out.Cost = &Cost{Gross: tx.Gross, Fee: tx.Fee, Net: tx.Net}
 	}
 	return out
 }

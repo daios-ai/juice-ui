@@ -282,16 +282,17 @@ func TestAdminInspectRenders(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
-	// The kernel serves an action as {name, description, price}: no owner to
-	// emphasize and no id to link, so the name renders plain. The transport path
-	// (direct) is folded into the single online status line.
-	for _, want := range []string{"kernelc", "direct", "synth/make"} {
+	// The kernel names an inspected action by its address (4dbfedd), which
+	// renders as every address does: the owner emphasized, and unlinked — it is
+	// another kernel's, with no local profile or row behind it. The transport
+	// path (direct) is folded into the single online status line.
+	for _, want := range []string{"kernelc", "direct", `class="owner">synth@kernelc</span>/make`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inspect page missing %q", want)
 		}
 	}
-	if strings.Contains(body, `class="owner">`) {
-		t.Error("a peer action carries no owner segment — none is served")
+	if strings.Contains(body, `href="/users/synth@kernelc"`) {
+		t.Error("another kernel's owner must not link to a local profile")
 	}
 	// online/source are top-level in the response; a reachable peer must show the
 	// "online" pill (regression guard for the always-offline decode bug).
@@ -771,11 +772,9 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 	}
 }
 
-// Work a peer is holding for THIS kernel. Completing one leaves signed with the
-// kernel's own federation identity, so it acts as the whole kernel rather than
-// as the person who pressed it — an operator act, which is why it lives on the
-// peer's page behind requireSuperuser and not in anybody's inbox (§6.6).
-func TestPeerHeldStepsAreListedAndCompletable(t *testing.T) {
+// Work addressed to this kernel reaches its operator's inbox (4dbfedd): the
+// peer's page lists none and serves no completion route (§6.6).
+func TestInspectListsNoPeerHeldTasks(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -783,21 +782,12 @@ func TestPeerHeldStepsAreListedAndCompletable(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	page := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
-	if !strings.Contains(page, "Waiting for this kernel") || !strings.Contains(page, "please confirm the shipment") {
-		t.Errorf("the peer's held steps must be listed with what they ask: %s", page)
-	}
-	// Neutral, never a money button: the completer is doing requested work and
-	// the funds were reserved by whoever created the step (§6.3).
-	if strings.Contains(page, "btn-money") {
-		t.Error("completing a step addressed to the kernel spends none of our money")
+	if strings.Contains(page, "Waiting for this kernel") || strings.Contains(page, "/steps/") {
+		t.Errorf("the peer's page lists no held tasks: %s", page)
 	}
 	resp := postTo(t, cl, srv.URL+"/admin/peers/KEYB/steps/PS1/complete", page, url.Values{})
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("complete = %d, want a redirect", resp.StatusCode)
-	}
-	// The peer travels in the BODY: the query form answers 404 on the kernel.
-	if !strings.HasPrefix(lastPeerComplete, "PS1 ") || !strings.Contains(lastPeerComplete, `"peer":"KEYB"`) {
-		t.Errorf("completion must name the peer in the body: %q", lastPeerComplete)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("the peer-task completion route is gone, got %d", resp.StatusCode)
 	}
 }

@@ -225,11 +225,11 @@
 
 {{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/users/{{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{end}}
 
-{{/* _call_form — THE run/complete form. Running an action and completing a step
-     are the same act, so both render here: locked args (a step's pre-bound input)
+{{/* _call_form — THE run/complete form. Running an action and completing a task
+     are the same act, so both render here: locked args (a task's pre-bound input)
      via the result renderer, the remaining input as fields (with the quiet JSON
      toggle), one money-labeled button with progress, and the result BELOW the
-     form. A step form is one-shot (disabled on success by app.js). */}}
+     form. A task form is one-shot (disabled on success by app.js). */}}
 {{define "_call_form"}}
 <form class="card stack" method="post" action="{{.PostURL}}" data-run-panel {{if .OneShot}}data-oneshot="true"{{end}}
       hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
@@ -239,15 +239,15 @@
        request, never from a fresh read of the action — a pin taken from the
        re-read would always match and silently disable the protection. */}}
   {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
-  {{/* The sealed part (a step's pre-bound args), read-only, above the fields the
+  {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
   {{if .Locked}}<dl class="locked-args flush">{{range .Locked}}<dt>{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{else if .LockedRaw}}<pre class="json">{{json .LockedRaw}}</pre>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="row">
     {{/* Two-branch completion rule (requirements.md §6.3, the single statement):
-         an ORDINARY step completion (OneShot) is NEUTRAL and names NO amount —
+         an ORDINARY task completion (OneShot) is NEUTRAL and names NO amount —
          the completer is doing requested work; the funds were reserved by
-         whoever created the step. A PAYMENT step (IsPayment: the target action
+         whoever created the task. A PAYMENT task (IsPayment: the target action
          bears effect="transfer") IS a spend of the completer's own balance, so
          it gets the money button — "Complete ($N)" for a sealed amount, bare
          money "Complete" when the completer types the amount (wallet-send
@@ -288,12 +288,32 @@
 <div class="banner banner-error" role="alert">{{.}}</div>
 {{end}}
 
+{{/* _task_asker names who asks for a task, from what its row names: the
+     creating action and its target when this kernel holds the task; the
+     holding kernel's name when another kernel holds it (the row then names no
+     action). Input: client.Task. */}}
+{{define "_task_asker"}}{{if .CreatedBy}}{{template "_ref" (ref .CreatedBy "")}} needs {{end}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
+
+{{/* _kernel_name renders a kernel as this kernel names it: a petname whole, a
+     key truncated with the whole key in the title. Input: string. */}}
+{{define "_kernel_name"}}{{$n := kernelName .}}<span class="mono"{{if $n.IsKey}} title="{{$n.Title}}"{{end}}>{{$n.Text}}</span>{{end}}
+
+{{/* _task_decline is the one Decline control: destructive, behind the shared
+     confirm naming the consequence (ui-grammar §5.8). The kernel decides who
+     may decline; the page offers it only to the two parties it accepts.
+     Input: taskDecline. */}}
+{{define "_task_decline"}}
+<form method="post" action="/inbox/{{.ID}}/cancel" data-confirm="Decline this task? Its reserved price returns to the payer.">
+  {{.CSRFField}}
+  <button class="btn-danger small" type="submit">Decline</button>
+</form>
+{{end}}
+
 {{/* _peer_actions renders a federation kernel's public actions. Input:
-     []client.PeerAction — as of v0.12.8 the kernel serves {name, description,
-     price} and nothing else, so there is no owner to emphasize, no id to link,
-     and no reputation to state: the table shows what the kernel serves. The
-     name is that kernel's own; reaching the action takes a resolve from its
-     home kernel, never this string. */}}
+     []client.PeerAction — the name is the action's address as this kernel
+     would call it (4dbfedd), rendered as every address is and unlinked: the
+     row carries no local id, and reaching the action takes a resolve from its
+     home kernel. No reputation is served here. */}}
 {{define "_peer_actions"}}
 <div class="table-scroll">
 <table class="stats-table">
@@ -301,7 +321,7 @@
   <tbody>
   {{range .}}
   <tr>
-    <td><span class="ref mono">{{.Name}}</span>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
+    <td>{{template "_ref" (ref .Name "")}}{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
     <td class="money">{{template "_price" (price .Price false)}}</td>
   </tr>
   {{end}}
@@ -509,7 +529,7 @@
       <div class="fingerprint">{{truncate 16 .PublicKey}}</div>
       {{if $known}}
       <div class="small muted">{{.Actions}} actions{{template "_peer_contact" .}}</div>
-      <div class="step-foot">
+      <div class="row-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{/* Binding a petname is the only way to name a kernel merely
              discovered — the kernel binds one automatically only on our own
@@ -522,7 +542,7 @@
            kernel and settles per call on the rail (kernel §D14/§P10), so a
            counterparty row carries contact facts, not a balance. */}}
       <div class="small muted">{{template "_peer_contact" .}}</div>
-      <div class="step-foot">
+      <div class="row-foot">
         <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{if .Suspended}}
         <form method="post" action="/admin/peers/unsuspend">

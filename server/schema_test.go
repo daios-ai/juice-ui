@@ -136,9 +136,9 @@ func TestSchemaExampleScalars(t *testing.T) {
 	}
 }
 
-func TestBuildStepFormAllEditable(t *testing.T) {
+func TestBuildTaskFormAllEditable(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}},"required":["a"]}`)
-	sfm := BuildStepForm(schema, nil)
+	sfm := BuildTaskForm(schema, nil)
 	if sfm.IsApproval {
 		t.Error("should not be approval")
 	}
@@ -150,10 +150,10 @@ func TestBuildStepFormAllEditable(t *testing.T) {
 	}
 }
 
-func TestBuildStepFormPartialLock(t *testing.T) {
+func TestBuildTaskFormPartialLock(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`)
 	partial := json.RawMessage(`{"a":"hello"}`)
-	sfm := BuildStepForm(schema, partial)
+	sfm := BuildTaskForm(schema, partial)
 	if sfm.IsApproval {
 		t.Error("should not be approval — b is still editable")
 	}
@@ -165,10 +165,10 @@ func TestBuildStepFormPartialLock(t *testing.T) {
 	}
 }
 
-func TestBuildStepFormAllLocked(t *testing.T) {
+func TestBuildTaskFormAllLocked(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`)
 	partial := json.RawMessage(`{"a":"hello","b":42}`)
-	sfm := BuildStepForm(schema, partial)
+	sfm := BuildTaskForm(schema, partial)
 	if !sfm.IsApproval {
 		t.Error("all fields locked → IsApproval should be true")
 	}
@@ -180,10 +180,10 @@ func TestBuildStepFormAllLocked(t *testing.T) {
 	}
 }
 
-func TestBuildStepFormInvalidPartial(t *testing.T) {
+func TestBuildTaskFormInvalidPartial(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"x":{"type":"string"}}}`)
 	for _, bad := range []json.RawMessage{[]byte("not json"), []byte(""), nil} {
-		sfm := BuildStepForm(schema, bad)
+		sfm := BuildTaskForm(schema, bad)
 		if sfm.IsApproval {
 			t.Error("invalid partial_args should produce all-editable form")
 		}
@@ -198,12 +198,12 @@ func TestBuildStepFormInvalidPartial(t *testing.T) {
 
 // A free-form schema (no named fields, e.g. sys/sink) whose payload is already
 // pre-bound leaves nothing for the completer to fill → approval, no raw box.
-func TestBuildStepFormFreeFormLockedIsApproval(t *testing.T) {
+func TestBuildTaskFormFreeFormLockedIsApproval(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`) // free-form → UseRawFallback
 	partial := json.RawMessage(`{"message":"hi there"}`)
-	sfm := BuildStepForm(schema, partial)
+	sfm := BuildTaskForm(schema, partial)
 	if !sfm.IsApproval {
-		t.Error("free-form step with pre-bound payload → IsApproval should be true (just acknowledge, no raw box)")
+		t.Error("free-form task with pre-bound payload → IsApproval should be true (just acknowledge, no raw box)")
 	}
 	if len(sfm.Editable.Fields) != 0 {
 		t.Errorf("free-form approval has no editable fields, got %d", len(sfm.Editable.Fields))
@@ -215,22 +215,22 @@ func TestBuildStepFormFreeFormLockedIsApproval(t *testing.T) {
 
 // A free-form schema with NO pre-bound args still needs input from the completer,
 // so it is not an approval — it shows the raw editor.
-func TestBuildStepFormFreeFormNoLock(t *testing.T) {
+func TestBuildTaskFormFreeFormNoLock(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
-	sfm := BuildStepForm(schema, nil)
+	sfm := BuildTaskForm(schema, nil)
 	if sfm.IsApproval {
-		t.Error("free-form step with no pre-bound args must not be an approval")
+		t.Error("free-form task with no pre-bound args must not be an approval")
 	}
 	if !sfm.Editable.UseRawFallback {
-		t.Error("free-form step with no lock shows the raw editor")
+		t.Error("free-form task with no lock shows the raw editor")
 	}
 }
 
-func TestBuildStepFormExtraKeysInPartial(t *testing.T) {
+func TestBuildTaskFormExtraKeysInPartial(t *testing.T) {
 	// partial_args may contain keys not in the schema (forward-compat).
 	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"}}}`)
 	partial := json.RawMessage(`{"a":"v","extra":true}`)
-	sfm := BuildStepForm(schema, partial)
+	sfm := BuildTaskForm(schema, partial)
 	if !sfm.IsApproval {
 		t.Error("all schema fields locked → IsApproval should be true")
 	}
@@ -239,12 +239,12 @@ func TestBuildStepFormExtraKeysInPartial(t *testing.T) {
 	}
 }
 
-// An approval-only step has nothing to collect, so the form is its confirm
+// An approval-only task has nothing to collect, so the form is its confirm
 // button alone. The kernel expresses that with an EXPLICITLY EMPTY properties
 // map — distinct from an absent one, which is an unconstrained object where the
 // raw editor is right (§10). Both shapes were observed live on v0.12.23.
 func TestEmptyPropertiesMeansNothingToFillNotFreeForm(t *testing.T) {
-	// Shape seen on a payment step's allowed_input.
+	// Shape seen on a payment task's allowed_input.
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{},"required":null}`))
 	if !fm.NoFields {
 		t.Error("explicitly empty properties declares no fields")
@@ -262,20 +262,20 @@ func TestEmptyPropertiesMeansNothingToFillNotFreeForm(t *testing.T) {
 	}
 }
 
-// The step form collapses to a single confirm in both routes: an empty-
+// The task form collapses to a single confirm in both routes: an empty-
 // properties schema with nothing bound, and a free-form schema whose keys are
 // all sealed in partial_args (the sys/message case).
 func TestApprovalCollapsesForBothKernelShapes(t *testing.T) {
-	noFields := BuildStepForm(json.RawMessage(`{"type":"object","properties":{},"required":null}`), nil)
+	noFields := BuildTaskForm(json.RawMessage(`{"type":"object","properties":{},"required":null}`), nil)
 	if !noFields.IsApproval {
 		t.Error("empty-properties + nothing bound is an approval, not a raw box")
 	}
 	if noFields.Editable.UseRawFallback {
 		t.Error("an approval must not fall back to the raw editor")
 	}
-	sealed := BuildStepForm(json.RawMessage(`{"type":"object"}`), json.RawMessage(`{"message":"please review"}`))
+	sealed := BuildTaskForm(json.RawMessage(`{"type":"object"}`), json.RawMessage(`{"message":"please review"}`))
 	if !sealed.IsApproval {
-		t.Error("a free-form step whose payload is sealed is an approval")
+		t.Error("a free-form task whose payload is sealed is an approval")
 	}
 	if len(sealed.Locked) != 1 {
 		t.Errorf("the sealed payload renders read-only, got %d locked", len(sealed.Locked))

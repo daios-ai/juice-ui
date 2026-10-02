@@ -46,7 +46,7 @@ per-app environment variables.
   once, PKCE login, token refresh, self-heal with backoff.
 - **Inbound** (identifying the user who calls a chat action): `chat`'s own **API
   keys**. A caller registers a `handle` and, once its owner accepts a verification
-  step, receives an activated key; the daemon stores only the key's **hash → handle**.
+  task, receives an activated key; the daemon stores only the key's **hash → handle**.
   There is no juice-ui secret involved, so the same path works for a headless agent
   and for a browser user. See "Registration & verification" below.
 
@@ -62,19 +62,19 @@ Three actions, split into folders so one grant selector covers the members:
 
 - **`chat/register`** — *open* (a `bearer` upstream secret, `requires_grant:false`),
   so any kernel-authenticated caller invokes it with **no grant**. It takes a
-  `handle`, mints a **pending** key, and sends that handle a verification **step**
+  `handle`, mints a **pending** key, and sends that handle a verification **task**
   (minted off the outbox seed, so `chat` owns it; its onward is the private
-  `chat/validate-user`). Returns `{api_key, step_id}`. Handled by the *plugin*
-  (`serveRegister`), not a daemon Op, because minting the step is a Juice call.
-- **`chat/validate-user`** — *private*. Reached only as the verification step's
-  onward: only the claimed handle's owner can complete that step (the kernel enforces
+  `chat/validate-user`). Returns `{api_key, task_id}`. Handled by the *plugin*
+  (`serveRegister`), not a daemon Op, because minting the task is a Juice call.
+- **`chat/validate-user`** — *private*. Reached only as the verification task's
+  onward: only the claimed handle's owner can complete that task (the kernel enforces
   `required_caller` — this is the ownership proof, no app logic), and completion runs
   this action, which activates the key.
 - **`chat/msg/*`** — `delegated_bearer` member actions. The caller runs `juice user
   connect chat/msg --token <api_key>` once; the key is then injected on every call.
 
 The **"Connect to chat"** button runs this exact path over the signed-in user's own
-session — `chat/register` → complete the step → `ConnectGrant(chat/msg, key)` — so
+session — `chat/register` → complete the task → `ConnectGrant(chat/msg, key)` — so
 the browser relies on no privileged provisioning path a headless agent lacks. The
 rooms page is gated on the `chat/msg` connector being present in `/v1/me`.
 
@@ -90,10 +90,10 @@ rooms page is gated on the `chat/msg` connector being present in `/v1/me`.
 
   Writes, plus one read — **`msg/read`** (`{room, after?}` → recent messages, oldest
   first; member-gated; stateless). The receive loop for any member, human or agent,
-  is fully kernel-native: **a Juice doorbell step** notifies "room changed" (see
+  is fully kernel-native: **a Juice doorbell task** notifies "room changed" (see
   "Unread & delivery"), **`chat/msg/read`** fetches what was said, and a reply is a
   plain **`chat/msg/message`**. `read` is *stateless* — no watermark, no
-  consume-on-read — because unread lives entirely in the steps; it is the read twin of
+  consume-on-read — because unread lives entirely in the tasks; it is the read twin of
   `message`. `Ops` is the single source of truth: the daemon's routes, the plugin's
   Juice action registration (`chat/<name>`), and each action's public contract.
   Alongside the `Ops` sit the three actions reconciled separately (`register`,
@@ -115,22 +115,22 @@ is auth-gated. `GET /chat` and `GET /chat/room/{id}` are additionally gated on t
 
 ### Unread & delivery
 
-Unread is Juice **steps** — one source of truth, no watermark. When a message is
-posted, the plugin mints a coalesced "doorbell" step (owned/funded by `chat` off
+Unread is Juice **tasks** — one source of truth, no watermark. When a message is
+posted, the plugin mints a coalesced "doorbell" task (owned/funded by `chat` off
 its outbox seed trace) to each other member: `required_caller = the member`, onward
 `sys/sink`, `partial_args` naming the room. At most one waiting doorbell per
 (member, room).
 
 A member's chat unread is therefore exactly their outstanding `chat` doorbells:
 
-- **The bell** (core step badge/inbox) shows **all** the user's waiting steps.
+- **The bell** (core task badge/inbox) shows **all** the user's waiting tasks.
 - **The chat app-badge** (`NavEntry.BadgeURL = /chat/badge`) shows the **subset**
-  owned by `chat` — the bell *filtered to chat*, read from the kernel steps, never a
+  owned by `chat` — the bell *filtered to chat*, read from the kernel tasks, never a
   separate counter.
 - **The room list** bolds and floats-first the rooms with an outstanding doorbell.
 
 Visiting a room **completes** the doorbell (as the member's own token — only the
-`required_caller` may complete a step), clearing it from every surface. The
+`required_caller` may complete a task), clearing it from every surface. The
 conversation poll does this only when the tab is **visible** (`X-Visible` header), so
 a backgrounded tab does not silently clear unread. The `notifications(handle,
 room_id, ref)` store table backs only the doorbell *lifecycle* (coalescing +

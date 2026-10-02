@@ -18,7 +18,7 @@
     <td class="money">{{money (sum .Available .Locked)}}</td>
     <td>
       {{if .Endable}}
-      <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
+      <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting tasks are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
         {{$d.CSRFField}}<button class="btn-danger small" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
       </form>
       {{end}}

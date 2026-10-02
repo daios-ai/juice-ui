@@ -41,7 +41,7 @@
       </div>
     </div>
     {{if .Endable}}
-    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting steps are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
+    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting tasks are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
       {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
     </form>
     {{end}}
@@ -121,6 +121,10 @@
         <label for="ad-sig">Signature<span class="req">*</span></label>
         <p class="help">Sign this kernel's registration message with the wallet holding the address.</p>
         <input id="ad-sig" name="signature" type="text" class="mono" required>
+      </div>
+      <div class="field">
+        <label for="ad-pw">Current password<span class="req">*</span></label>
+        <input id="ad-pw" name="current_password" type="password" autocomplete="current-password" required>
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Register</button>

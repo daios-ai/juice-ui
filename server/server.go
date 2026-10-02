@@ -34,7 +34,7 @@ type Options struct {
 	Apps           []apps.App    // app modules to mount (their templates must already be in Renderer)
 	StatePath      string        // path to state.json for per-app persisted state; "" = in-memory
 	Home           string        // component home dir ($JUICE_HOME/ui) handed to apps; "" = none
-	BadgeInterval  time.Duration // nav-badge poll interval + steps-badge cache TTL; 0 → default 30s
+	BadgeInterval  time.Duration // nav-badge poll interval + task-badge cache TTL; 0 → default 30s
 
 	// Identity is the kernel this UI is for: built once at wiring, held to the key
 	// its records name (ecosystem-standard §5), and the source of the world's
@@ -58,7 +58,7 @@ type Server struct {
 	apps       []apps.App
 	appStore   *appStore       // per-app persisted state (state.json), keyed by kernel
 	home       string          // component home dir handed to apps
-	badgeTTL   time.Duration   // nav-badge poll interval + steps-badge cache TTL
+	badgeTTL   time.Duration   // nav-badge poll interval + task-badge cache TTL
 	identity   *KernelIdentity // which kernel this UI is for, and its money unit
 	kernelName string          // the kernel's name in the client records, for the chrome
 }
@@ -339,11 +339,12 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /transactions/{id}/verify", s.requireAuth(s.getTxVerify))
 	mux.HandleFunc("POST /transactions/{id}/rate", s.requireAuth(s.postRate))
 
-	// Inbox — steps addressed to you.
-	mux.HandleFunc("GET /inbox", s.requireAuth(s.getSteps))
-	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getStepsBadge))
-	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getStep))
-	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteStep))
+	// Inbox — tasks addressed to you.
+	mux.HandleFunc("GET /inbox", s.requireAuth(s.getTasks))
+	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getTasksBadge))
+	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getTask))
+	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteTask))
+	mux.HandleFunc("POST /inbox/{id}/cancel", s.requireAuth(s.postCancelTask))
 
 	// Settings — account, preferences, connected accounts.
 	mux.HandleFunc("GET /settings", s.requireAuth(s.getSettings))
@@ -375,7 +376,6 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/peers/suspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/unsuspend", s.requireSuperuser(s.postAdminPeerSuspend))
 	mux.HandleFunc("POST /admin/peers/rename", s.requireSuperuser(s.postAdminPeerRename))
-	mux.HandleFunc("POST /admin/peers/{key}/steps/{id}/complete", s.requireSuperuser(s.postAdminPeerStepComplete))
 
 	// App modules (chat, and future special apps): each registers its own
 	// routes and opens any module-owned store. The core stays agnostic — it only
@@ -934,7 +934,7 @@ func hxRedirect(w http.ResponseWriter, r *http.Request, to string) {
 // flashResult renders the standard outcome of a write action: an auth error is a
 // clean logout, any other error flashes its user message, and success flashes the
 // given message — all redirecting to dest. It is the shared tail of the POST
-// handlers (admin ops, action/step create-update).
+// handlers (admin ops, action create-update).
 func (s *Server) flashResult(w http.ResponseWriter, r *http.Request, err error, dest, success string) {
 	switch {
 	case isAuthErr(err):

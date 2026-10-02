@@ -15,9 +15,9 @@ document.addEventListener("htmx:configRequest", (e) => {
   e.detail.headers["X-Visible"] = document.visibilityState === "visible" ? "1" : "0";
 });
 
-// A one-shot call form (a step completion) is spent once it succeeds: when its
+// A one-shot call form (a task completion) is spent once it succeeds: when its
 // result swaps in a success outcome, hide the form so only the result remains
-// (a reload moves the step to History). Failures/rejections leave the form up.
+// (a reload moves the task to History). Failures/rejections leave the form up.
 document.body.addEventListener("htmx:afterSwap", (e) => {
   const form = e.target.previousElementSibling;
   if (form && form.dataset?.oneshot === "true" && e.target.querySelector(".outcome.success")) {

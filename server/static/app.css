@@ -512,7 +512,7 @@ button { font-family: inherit; cursor: pointer; }
 .btn-quiet { background: none; border: none; color: var(--text-muted); padding: .25rem .5rem; cursor: pointer; font-family: inherit; font-size: .9rem; }
 .btn-quiet:hover { color: var(--text); text-decoration: underline; }
 .btn-quiet.danger { color: var(--danger); }
-.step-foot { display: flex; align-items: center; gap: .75rem; margin-top: .6rem; }
+.row-foot { display: flex; align-items: center; gap: .75rem; margin-top: .6rem; }
 .fingerprint { font-family: var(--font-mono); font-size: .72rem; color: var(--text-muted); overflow-wrap: anywhere; }
 .btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius-s); padding: .35rem .5rem; color: var(--text); font-size: 1rem; cursor: pointer; }
 .btn-icon .ico { width: 1.05rem; height: 1.05rem; }
@@ -523,7 +523,7 @@ label { display: block; font-weight: 600; margin-bottom: .25rem; }
 /* Input-mode switch (fields | JSON) — the same bare tab-group switch idiom as the
    yours|everyone scope switch, sized down and right-aligned above the fields. It
    is the one way to flip a structured form to raw JSON, identical on action-run
-   and step-complete forms. */
+   and task-complete forms. */
 .field-switch { display: flex; justify-content: flex-end; gap: .25rem; margin-bottom: .35rem; }
 .field-switch .seg {
   background: none; border: none; border-bottom: 2px solid transparent;
@@ -532,12 +532,10 @@ label { display: block; font-weight: 600; margin-bottom: .25rem; }
 }
 .field-switch .seg:hover { color: var(--text); }
 .field-switch .seg[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--text); }
-/* Inbox step cards — calm: who asks + what, then the neutral Complete. */
-.step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
-.step-ask { margin-bottom: .6rem; font-size: .95rem; }
-.step-card .card { border: none; padding: 0; background: none; }
-.inbox-group { color: var(--text-muted); margin: 1.4rem 0 .5rem; }
-.step-item + .step-item { margin-top: 1rem; }
+/* Inbox task cards — calm: who asks + what, then the neutral Complete. */
+.task-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
+.task-ask { margin-bottom: .6rem; font-size: .95rem; }
+.task-card .card { border: none; padding: 0; background: none; }
 .field.inline { margin: 0; }
 .field.flush  { margin: 0; }
 .field .help { color: var(--text-muted); font-size: .85rem; font-weight: 400; margin: .1rem 0 .35rem; }
@@ -570,7 +568,7 @@ textarea {
 .sig-refunded { color: var(--refunded); }
 .sig-escrow   { color: var(--escrow); }
 
-/* The run/step form's sealed args sit read-only above the editable fields,
+/* The run/task form's sealed args sit read-only above the editable fields,
    separated by a hairline so the two halves of the one form read distinctly. */
 .locked-args.flush + [data-fields], form .locked-args { border-bottom: 1px solid var(--border); padding-bottom: .6rem; margin-bottom: .2rem; }
 /* The run result renders as a card attached just below the form. */

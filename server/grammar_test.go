@@ -193,13 +193,25 @@ func TestNoRetiredSurfaces(t *testing.T) {
 		"rail_address":           "the kernel names a blockchain address (§6.5)",
 		"ActionsByID":            "a transaction carries its action's address (§6.5)",
 		"refIsRemote":            "an action is local iff its kernel segment is this kernel's name (§4)",
+		"/v1/steps":              "a step is a task (§6.3)",
+		"/v1/me/address\"":       "the address route is /v1/me/blockchain-address (§6.5)",
+		"/v1/transfers":          "sending money is running the transfer action (§6.5)",
+		"CompletePeerStep":       "work addressed to this kernel reaches its operator's inbox (§6.6)",
+		"steps_truncated":        "the inspection carries no tasks (§6.6)",
+		"step-card":              "a step is a task (§6.3)",
+		"step-result-":           "a step is a task (§6.3)",
 	}
 	var files []string
 	for _, pat := range []string{"templates/*.html", "*.go"} {
 		f, _ := fs.Glob(tmplFS, pat)
 		files = append(files, f...)
 	}
-	goFiles, _ := filepath.Glob("*.go")
+	// The routes live in the client and the apps as much as here.
+	var goFiles []string
+	for _, pat := range []string{"*.go", "../client/*.go", "../apps/*/*.go", "../apps/*/*/*.go"} {
+		f, _ := filepath.Glob(pat)
+		goFiles = append(goFiles, f...)
+	}
 	for _, f := range files {
 		src := string(mustRead(t, f))
 		for token, why := range retired {

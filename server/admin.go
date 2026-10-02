@@ -95,11 +95,6 @@ type adminInspectView struct {
 	Inspection client.Inspection
 	OpenForm   string
 	CSRFField  template.HTML
-	// Forms are the completion forms for the steps this peer holds for us, one
-	// per step, in the same order. A peer step carries no action, so the form is
-	// derived from what the peer still admits (allowed_input) over what it
-	// already sealed (partial_args) — exactly as the inbox does (§6.3).
-	Forms []StepFormModel
 }
 
 func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
@@ -336,10 +331,6 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Inspection = insp
-		view.Forms = make([]StepFormModel, len(insp.Steps))
-		for i, st := range insp.Steps {
-			view.Forms[i] = BuildStepForm(st.AllowedInput, st.PartialArgs)
-		}
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
@@ -388,25 +379,4 @@ func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 		verb = "unsuspended"
 	}
 	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
-}
-
-// postAdminPeerStepComplete completes a step a peer holds whose required caller
-// is this kernel. The request leaves signed with this kernel's own federation
-// identity, so it acts as the whole kernel rather than as the operator who
-// pressed it — which is why it lives here, behind requireSuperuser, and not in
-// the inbox beside a person's own work (§6.6).
-func (s *Server) postAdminPeerStepComplete(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	key, id := r.PathValue("key"), r.PathValue("id")
-	back := "/admin/peers/" + url.PathEscape(key)
-	args, argErr := buildArgs(r)
-	if argErr != nil {
-		s.flashRedirect(w, r, back, "error", "Invalid arguments: "+argErr.Error())
-		return
-	}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.CompletePeerStep(ctx, tok, id, key, args)
-		return e
-	})
-	s.flashResult(w, r, err, back, "Completed on their side.")
 }

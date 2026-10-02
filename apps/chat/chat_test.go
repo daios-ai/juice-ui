@@ -86,7 +86,7 @@ func TestNavGatedOnAuthAndBadge(t *testing.T) {
 		t.Fatalf("anonymous Nav = %v, want nil", n)
 	}
 	// The entry advertises the poll endpoint; the badge itself is filled by the
-	// /chat/badge poll (which counts the user's chat doorbell steps), not computed
+	// /chat/badge poll (which counts the user's chat doorbell tasks), not computed
 	// at render time — so the initial Badge is 0 regardless of unread.
 	n := c.Nav("alice", false)
 	if len(n) != 1 || n[0].Href != "/chat" || n[0].Match != "/chat" || n[0].Icon == "" || n[0].Badge != 0 {
@@ -525,12 +525,12 @@ type fakeKernel struct {
 	seq       int
 	failName  string           // if set, enabling the action of this name returns 500
 	runs      int              // count of POST /v1/run (seed opens via sys/message)
-	mints     []string         // POST /v1/steps bodies (doorbell + verification mints)
-	completes []string         // POST /v1/steps/{id}/complete step ids (doorbell dismissals)
+	mints     []string         // POST /v1/tasks bodies (doorbell + verification mints)
+	completes []string         // POST /v1/tasks/{id}/complete task ids (doorbell dismissals)
 	grants    []string         // POST /v1/grants selectors (connect)
-	doorbells []map[string]any // minted steps, surfaced by GET /v1/steps (coalescing reads them)
-	done      map[string]bool  // completed step ids (dropped from the waiting listing)
-	stepsJSON string           // extra steps GET /v1/steps returns (default: the outbox sentinel)
+	doorbells []map[string]any // minted tasks, surfaced by GET /v1/tasks (coalescing reads them)
+	done      map[string]bool  // completed task ids (dropped from the waiting listing)
+	tasksJSON string           // extra tasks GET /v1/tasks returns (default: the outbox sentinel)
 	meJSON    string           // body returned by GET /v1/me (default: no chat/msg connector)
 }
 
@@ -648,8 +648,8 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		w.Write([]byte(`[{"active":false}]`))
 	})
-	// Seed/outbox stubs: ensureSeed resolves sys@testnet/sink and opens an outbox trace via
-	// a self sys/message; some tests may re-check the sentinel via ListSteps.
+	// Seed/outbox stubs: ensureSeed opens its outbox trace by running the private
+	// chat/outbox; some tests re-check the sentinel via ListTasks.
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"sink","action":"sys@testnet/sink","active":true}`))
 	})
@@ -658,13 +658,13 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Lock()
 		f.runs++
 		f.mu.Unlock()
-		// chat/register returns a pending key + verification step; the seed run (the
-		// private chat/outbox) returns the sentinel step id.
+		// chat/register returns a pending key + verification task; the seed run (the
+		// private chat/outbox) returns the sentinel task id.
 		if strings.Contains(body, testAddress(chatHandle)+"/"+registerName) {
-			w.Write([]byte(`{"trace_id":"t","result":{"ok":true,"api_key":"KEY-abc","step_id":"vstep-1"}}`))
+			w.Write([]byte(`{"trace_id":"t","result":{"ok":true,"api_key":"KEY-abc","task_id":"vtask-1"}}`))
 			return
 		}
-		w.Write([]byte(`{"trace_id":"seed-trace-1","result":{"step_id":"sentinel-1"}}`))
+		w.Write([]byte(`{"trace_id":"seed-trace-1","result":{"task_id":"sentinel-1"}}`))
 	})
 	// /v1/me for the connector gate; /v1/grants for connect.
 	f.meJSON = `{"address":"alice@testnet","connectors":[]}`
@@ -684,14 +684,14 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Unlock()
 		w.Write([]byte(`{"actions":["chat@testnet/msg/message"],"status":"connected"}`))
 	})
-	// Default: the seed's sentinel step (action_id sys/sink, which ensureSeed reads
-	// as the doorbells' onward id). Tests that exercise the doorbell badge/room-list
-	// override f.stepsJSON with chat-owned doorbell steps.
-	f.stepsJSON = `[{"id":"sentinel-1","status":"waiting","action_id":"ack","action":"chat@testnet/ack"}]`
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
+	// Default: the seed's sentinel task, which ensureSeed finds by id to reuse the
+	// seed. Tests that exercise the doorbell badge/room-list
+	// override f.tasksJSON with chat-owned doorbell tasks.
+	f.tasksJSON = `[{"id":"sentinel-1","status":"waiting","action":"chat@testnet/ack"}]`
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		var out []map[string]any
-		_ = json.Unmarshal([]byte(f.stepsJSON), &out)
+		_ = json.Unmarshal([]byte(f.tasksJSON), &out)
 		if out == nil {
 			out = []map[string]any{}
 		}
@@ -704,7 +704,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		b, _ := json.Marshal(out)
 		w.Write(b)
 	})
-	mux.HandleFunc("POST /v1/steps", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		raw := mustRead(r)
 		var in struct {
 			RequiredCaller string          `json:"required_caller"`
@@ -717,9 +717,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		_ = json.Unmarshal(in.PartialArgs, &pa)
 		f.mu.Lock()
 		f.seq++
-		id := "step" + strconv.Itoa(f.seq)
+		id := "task" + strconv.Itoa(f.seq)
 		f.mints = append(f.mints, string(raw))
-		// Surface the minted step as an chat-owned waiting doorbell so ListSteps-based
+		// Surface the minted task as an chat-owned waiting doorbell so ListTasks-based
 		// coalescing/dismiss see it (mirrors the real kernel).
 		f.doorbells = append(f.doorbells, map[string]any{
 			"id": id, "status": "waiting", "owner": testAddress(chatHandle),
@@ -730,7 +730,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.WriteHeader(201)
 		w.Write([]byte(`{"id":"` + id + `","status":"waiting"}`))
 	})
-	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.completes = append(f.completes, r.PathValue("id"))
 		f.done[r.PathValue("id")] = true
@@ -779,12 +779,12 @@ func (f *fakeKernel) updateCount() int  { f.mu.Lock(); defer f.mu.Unlock(); retu
 func (f *fakeKernel) enableCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return len(f.enables) }
 
 // TestGetBadge checks the nav badge fragment: the count of the user's outstanding
-// chat doorbell steps (bare number; empty when zero). It reads the kernel steps —
-// the single source of truth — filtered to chat, ignoring other steps.
+// chat doorbell tasks (bare number; empty when zero). It reads the kernel tasks —
+// the single source of truth — filtered to chat, ignoring other tasks.
 func TestGetBadge(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
-	f.stepsJSON = `[
+	f.tasksJSON = `[
 	  {"id":"d1","status":"waiting","owner":"chat@testnet","partial_args":{"room":"r1"}},
 	  {"id":"d2","status":"waiting","owner":"chat@testnet","partial_args":{"room":"r2"}},
 	  {"id":"x","status":"waiting","owner":"someone@testnet","partial_args":{}}]`
@@ -803,9 +803,9 @@ func TestGetBadge(t *testing.T) {
 		return strings.TrimSpace(rec.Body.String())
 	}
 	if got := body(); got != "2" {
-		t.Errorf("badge = %q, want 2 (two chat doorbell rooms; the someone step ignored)", got)
+		t.Errorf("badge = %q, want 2 (two chat doorbell rooms; the someone task ignored)", got)
 	}
-	f.stepsJSON = `[]` // no doorbells → empty body (hidden by .badge:empty)
+	f.tasksJSON = `[]` // no doorbells → empty body (hidden by .badge:empty)
 	if got := body(); got != "" {
 		t.Errorf("zero badge = %q, want empty", got)
 	}
@@ -834,9 +834,9 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 		Client:         cl,
 		Sessions:       session.NewManager(sm, cl),
 	}
-	// alice holds an outstanding chat doorbell for the room (a waiting kernel step).
+	// alice holds an outstanding chat doorbell for the room (a waiting kernel task).
 	f.mu.Lock()
-	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner":"chat@testnet","required_caller":"alice@testnet","partial_args":{"room":"` + r.ID + `"}}]`
+	f.tasksJSON = `[{"id":"doorbell-1","status":"waiting","owner":"chat@testnet","required_caller":"alice@testnet","partial_args":{"room":"` + r.ID + `"}}]`
 	f.mu.Unlock()
 	poll := func(visible string) {
 		outer := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID+"/messages", nil)
@@ -854,7 +854,7 @@ func TestGetMessagesDismissVisibility(t *testing.T) {
 	if len(f.completes) != 0 {
 		t.Errorf("hidden-tab poll dismissed the doorbell: completes=%v", f.completes)
 	}
-	poll("1") // visible: completes the doorbell step
+	poll("1") // visible: completes the doorbell task
 	if len(f.completes) != 1 || f.completes[0] != "doorbell-1" {
 		t.Errorf("visible poll didn't complete the doorbell: %v", f.completes)
 	}
@@ -942,8 +942,8 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 		t.Errorf("doorbell onward is not chat/ack: %s", bodies)
 	}
 
-	// Coalescing off the steps: a second message, while those doorbells are still
-	// waiting (the fake surfaces them via ListSteps), mints nothing.
+	// Coalescing off the tasks: a second message, while those doorbells are still
+	// waiting (the fake surfaces them via ListTasks), mints nothing.
 	c.notify(ev)
 	time.Sleep(30 * time.Millisecond)
 	f.mu.Lock()
@@ -956,7 +956,7 @@ func TestNotifyMintsCoalescedDoorbells(t *testing.T) {
 
 // TestNotifyReRingsAfterCompletion proves the deadlock fix: once a member completes
 // their doorbell (it drops out of `waiting`), the next message re-rings — for a
-// headless member with no room-visit, purely because coalescing reads the steps.
+// headless member with no room-visit, purely because coalescing reads the tasks.
 func TestNotifyReRingsAfterCompletion(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -974,18 +974,18 @@ func TestNotifyReRingsAfterCompletion(t *testing.T) {
 	f.mu.Lock()
 	id := f.doorbells[0]["id"].(string)
 	f.mu.Unlock()
-	c.deps.Client.CompleteStep(context.Background(), "t", id, nil)
+	c.deps.Client.CompleteTask(context.Background(), "t", id, nil)
 
 	// The next message re-rings: bob no longer holds a waiting chat doorbell for r1.
 	c.notify(ev)
 	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.mints) == 2 })
 }
 
-func TestDismissCompletesDoorbellFromSteps(t *testing.T) {
+func TestDismissCompletesDoorbellFromTasks(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
-	// A doorbell is outstanding for (bob, r1): a waiting chat step bob must complete.
-	f.stepsJSON = `[{"id":"doorbell-1","status":"waiting","owner":"chat@testnet","required_caller":"bob@testnet","partial_args":{"room":"r1"}}]`
+	// A doorbell is outstanding for (bob, r1): a waiting chat task bob must complete.
+	f.tasksJSON = `[{"id":"doorbell-1","status":"waiting","owner":"chat@testnet","required_caller":"bob@testnet","partial_args":{"room":"r1"}}]`
 	c := New()
 	cl := client.New(f.url, nil)
 	sm := scs.New()
@@ -1073,37 +1073,37 @@ func TestServeOutboxCreatesSentinelViaCapability(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c.serveOutbox(rec, req)
 		var out struct {
-			StepID string `json:"step_id"`
+			TaskID string `json:"task_id"`
 		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		f.mu.Lock()
 		n := len(f.mints)
 		f.mu.Unlock()
-		return out.StepID, n
+		return out.TaskID, n
 	}
-	// With the capability the handler calls back and creates a sentinel step.
+	// With the capability the handler calls back and creates a sentinel task.
 	id, mints := call(true)
 	if id == "" {
-		t.Error("no sentinel step_id returned")
+		t.Error("no sentinel task_id returned")
 	}
 	if mints != 1 {
-		t.Errorf("capability callback minted %d steps, want 1", mints)
+		t.Errorf("capability callback minted %d tasks, want 1", mints)
 	}
 	// A leaf dispatch (no capability headers) is a harmless no-op.
 	id2, mints2 := call(false)
 	if id2 != "" {
-		t.Errorf("no-cap dispatch returned step_id %q, want empty", id2)
+		t.Errorf("no-cap dispatch returned task_id %q, want empty", id2)
 	}
 	if mints2 != 1 {
-		t.Errorf("no-cap dispatch minted a step (total %d), want still 1", mints2)
+		t.Errorf("no-cap dispatch minted a task (total %d), want still 1", mints2)
 	}
 }
 
-// TestServeRegisterMintsPendingKeyAndVerificationStep covers the open chat/register
+// TestServeRegisterMintsPendingKeyAndVerificationTask covers the open chat/register
 // handler (reached via kernelDispatch): the register secret gates it; on success it
-// mints a PENDING key and a verification step (onward validate-user, addressed to the
+// mints a PENDING key and a verification task (onward validate-user, addressed to the
 // requested handle, carrying reg_id), minted off the seed so chat owns it.
-func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
+func TestServeRegisterMintsPendingKeyAndVerificationTask(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c := New()
@@ -1140,30 +1140,30 @@ func TestServeRegisterMintsPendingKeyAndVerificationStep(t *testing.T) {
 	}
 	var res struct {
 		APIKey string `json:"api_key"`
-		StepID string `json:"step_id"`
+		TaskID string `json:"task_id"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &res)
-	if res.APIKey == "" || res.StepID == "" {
+	if res.APIKey == "" || res.TaskID == "" {
 		t.Fatalf("register result = %s", rec.Body.String())
 	}
-	// The key resolves to the address but is inactive until the step is completed.
+	// The key resolves to the address but is inactive until the task is completed.
 	if u, active, _ := c.store.ResolveToken(res.APIKey); u != "agent@testnet" || active {
 		t.Errorf("token = (%q,%v), want (agent@testnet,false)", u, active)
 	}
-	// Exactly one verification step, to agent, onward validate-user, carrying reg_id.
+	// Exactly one verification task, to agent, onward validate-user, carrying reg_id.
 	if len(f.mints) != 1 {
-		t.Fatalf("mints = %d, want 1 verification step", len(f.mints))
+		t.Fatalf("mints = %d, want 1 verification task", len(f.mints))
 	}
 	body := f.mints[0]
 	if !strings.Contains(body, `"required_caller":"agent@testnet"`) ||
 		!strings.Contains(body, `"action":"validate-act-id"`) ||
 		!strings.Contains(body, "reg_id") {
-		t.Errorf("verification step = %s", body)
+		t.Errorf("verification task = %s", body)
 	}
 }
 
 // TestConnectRouteRegistersCompletesConnects covers the browser Connect button: as the
-// signed-in user it runs chat/register, completes the returned verification step, and
+// signed-in user it runs chat/register, completes the returned verification task, and
 // connects the key to chat/msg — the identical path a headless agent uses.
 func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	f := newFakeKernel()
@@ -1187,8 +1187,8 @@ func TestConnectRouteRegistersCompletesConnects(t *testing.T) {
 	}))
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/chat/connect", nil))
 
-	if len(f.completes) != 1 || f.completes[0] != "vstep-1" {
-		t.Errorf("verification step not completed: completes=%v", f.completes)
+	if len(f.completes) != 1 || f.completes[0] != "vtask-1" {
+		t.Errorf("verification task not completed: completes=%v", f.completes)
 	}
 	if len(f.grants) != 1 || f.grants[0] != "chat@testnet/msg" {
 		t.Errorf("connect selector = %v, want [chat@testnet/msg]", f.grants)
@@ -1251,7 +1251,7 @@ func TestKernelDispatchRoutesOutboxToPlugin(t *testing.T) {
 	if rec.Code == http.StatusServiceUnavailable {
 		t.Fatal("/outbox not intercepted — fell through to the (nil) daemon")
 	}
-	if !strings.Contains(rec.Body.String(), "step_id") {
+	if !strings.Contains(rec.Body.String(), "task_id") {
 		t.Errorf("outbox not handled by plugin: %s", rec.Body.String())
 	}
 }

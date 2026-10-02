@@ -70,7 +70,7 @@ type Page struct {
 	Flash        string          // transient user message
 	FlashKind    string          // "success" | "error" | "info" | ""
 	AppNav       []apps.NavEntry // sidebar entries contributed by apps
-	BadgeSecs    int             // nav-badge poll interval in seconds (steps + apps)
+	BadgeSecs    int             // nav-badge poll interval in seconds (tasks + apps)
 	Path         string          // current path, for links that must return to it
 	MenuOpen     bool            // ?menu=open: server-render the nav drawer [open] (no-JS path)
 	Data         any             // page-specific view model
@@ -217,7 +217,9 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"ratingPct":    ratingPct,
 		"refFolder":    refFolder,
 		"nameOf":       nameOf,
+		"kernelName":   keyDisplay,
 		"obligation":   obligation,
+		"declineForm":  declineForm,
 		"ref":          r.refOf,
 		"price":        priceOf,
 		"shortTime":    shortTime,
@@ -370,11 +372,11 @@ func jsonEdit(raw json.RawMessage) string   { return indentJSON(raw, "") }
 // financial states use mutually distinct, trust-signal colors (R8.7).
 func statusClass(status string) string {
 	switch status {
-	case "success":
+	case "success", "done":
 		return "status-credited"
-	case "failure":
+	case "failure", "cancelled":
 		return "status-refunded"
-	case "open":
+	case "open", "waiting", "running":
 		return "status-escrow"
 	default:
 		return ""
@@ -484,6 +486,18 @@ type obligationRow struct {
 // obligation builds that pairing (template helper).
 func obligation(o client.Obligation, petnames map[string]string, csrfField template.HTML) obligationRow {
 	return obligationRow{O: o, Peer: nameOf(petnames[o.Peer], o.Peer), CSRFField: csrfField}
+}
+
+// taskDecline is what a Decline confirm posts: the task and the CSRF field, so
+// _task_decline renders from one value wherever a task is shown.
+type taskDecline struct {
+	ID        string
+	CSRFField template.HTML
+}
+
+// declineForm builds that pairing (template helper).
+func declineForm(csrf template.HTML, id string) taskDecline {
+	return taskDecline{ID: id, CSRFField: csrf}
 }
 
 func nameOf(petname, key string) Name {
@@ -809,15 +823,21 @@ type entryRow struct {
 	Entry       client.LedgerEntry
 	Credited    bool   // the amount arrived in the viewer's balance
 	Counterpart string // the other side's address; "" where the money crossed the rail
-	// TxID is the reason when it names a transaction, the link to its receipt;
-	// Note is any other reason (an obligation's ticket, a transfer's note),
-	// rendered as the text it is.
+	// TxID is the reason when it names a transaction of the viewer's, the link
+	// to its receipt; Note is any other reason (an obligation's ticket, the
+	// other kernel's transaction behind a transfer received), rendered as the
+	// text it is.
 	TxID string
 	Note string
 }
 
 // idShape is the kernel's resource-id production (kernel §D15): a hex UUID.
 var idShape = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// transferReason is the reason a transfer to or from another kernel is
+// journalled under: the SENDER's transaction (4dbfedd). It is the viewer's own
+// only on the sending side, where the entry debits them.
+var transferReason = regexp.MustCompile(`^transfer ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
 
 // entryRowOf reads the movement from the kernel's own from/to projection: the
 // viewer is on one side, and the counterpart is the other.
@@ -826,9 +846,12 @@ func entryRowOf(e client.LedgerEntry, viewer string) entryRow {
 	if r.Credited {
 		r.Counterpart = e.From
 	}
-	if idShape.MatchString(e.Reason) {
+	switch m := transferReason.FindStringSubmatch(e.Reason); {
+	case idShape.MatchString(e.Reason):
 		r.TxID = e.Reason
-	} else {
+	case m != nil && !r.Credited:
+		r.TxID = m[1]
+	default:
 		r.Note = e.Reason
 	}
 	return r

@@ -32,35 +32,6 @@
 </div>
 {{else}}<p class="muted">No evidence retained.</p>{{end}}
 
-{{/* Work this peer is holding for US — steps whose required caller is this
-     kernel rather than any person on it. Completing one leaves signed with this
-     kernel's own federation identity, so it acts as the whole kernel: an
-     operator act, and why it is here rather than in anybody's inbox (§6.6).
-
-     The row is thin because the kernel's is: a peer step carries no action and
-     no creator, so what it is comes from the args the peer sealed. Neutral
-     button, never a money one — the completer is doing requested work and the
-     funds were reserved by whoever created the step (§6.3). */}}
-{{if $i.Steps}}
-<h2>Waiting for this kernel</h2>
-<div class="card-list">
-  {{range $n, $st := $i.Steps}}
-  <form class="card stack" method="post" action="/admin/peers/{{$d.Key}}/steps/{{$st.ID}}/complete">
-    {{$.CSRFField}}
-    <div class="row">
-      <span class="mono grow" title="{{$st.ID}}">{{truncate 8 $st.ID}}</span>
-      <span class="muted small">{{shortTime $st.CreatedAt}}</span>
-    </div>
-    <pre class="json">{{json $st.PartialArgs}}</pre>
-    {{$form := index $d.Forms $n}}
-    {{if not $form.IsApproval}}{{template "_form_fields" $form.Editable}}{{end}}
-    <div class="row"><button class="btn" type="submit">Complete</button></div>
-  </form>
-  {{end}}
-</div>
-{{if $i.StepsTruncated}}<p class="muted small">More are waiting than this peer sent.</p>{{end}}
-{{end}}
-
 {{/* Naming is the one thing an operator does to a kernel from here. It binds a
      PETNAME, exactly — the only way to name a kernel this node has merely
      discovered (§13) — and keys on the public key, since an unbound kernel has

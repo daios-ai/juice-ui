@@ -10,10 +10,10 @@
 //
 //   - apps.ServiceAccount — the chat kernel account's own outbound identity
 //     (provision, authenticate, backoff, self-heal), used to register the chat
-//     actions and to mint steps off the outbox seed.
+//     actions and to mint tasks off the outbox seed.
 //   - chat's own API keys — inbound identity. A caller registers an address via the
 //     open chat/register action and receives a pending key; only that address's owner
-//     can complete the verification step (its onward, the private chat/validate-user,
+//     can complete the verification task (its onward, the private chat/validate-user,
 //     activates the key). The key is then connected as the caller's chat/msg grant;
 //     the kernel injects it on every chat/msg/* call and the daemon resolves it to
 //     the address. Only the key's hash is stored, so a store leak exposes nothing.
@@ -64,25 +64,25 @@ var tmplFS embed.FS
 const chatHandle = "chat"
 
 // self is chat's own address, chat@<kernel>: the owner of its actions, the
-// completer of its sentinel step, and the owner of every doorbell it mints.
+// completer of its sentinel task, and the owner of every doorbell it mints.
 func (c *Chat) self() string { return c.deps.Address(chatHandle) }
 
 // outboxName is chat's private, price-0, owner-only action that opens the outbox
 // seed. chat runs it (paying itself 0), and its dispatch handler creates the
-// sentinel step via the trace capability — no sys/message toll, so chat needs no
+// sentinel task via the trace capability — no sys/message toll, so chat needs no
 // credits on any kernel. Its handler is the plugin (not a daemon Op) because the
 // capability callback is a Juice call; the daemon stays Juice-agnostic.
 const outboxName = "outbox"
 
 // registerName is chat's open, no-grant action: a caller registers a handle and
-// receives a pending API key plus a verification step. validateName is the step's
+// receives a pending API key plus a verification task. validateName is the task's
 // private onward that activates the key. Both live outside the msg/ folder so the
 // chat/msg grant selector covers only the member actions.
 const registerName = "register"
 const validateName = "validate-user"
 
 // ackName is chat's private, price-0, no-op action used as the onward of the outbox
-// sentinel and every doorbell step. It must be chat-owned and priced 0 so minting a
+// sentinel and every doorbell task. It must be chat-owned and priced 0 so minting a
 // doorbell parks 0 from chat's wallet — depending on sys/sink here would tie the
 // cost of a notification to an operator-priced action chat does not control.
 const ackName = "ack"
@@ -108,8 +108,8 @@ type Chat struct {
 	st     chatState            // persisted config; written by ensureActions (the SA setup goroutine)
 
 	seedTrace  string // chat's open outbox trace, minted doorbells/verifications hang off it (from st.SeedTrace)
-	ackID      string // chat/ack action id — the price-0 onward of the sentinel and doorbell steps
-	validateID string // chat/validate-user action id, a verification step's onward (resolved at seed setup)
+	ackID      string // chat/ack action id — the price-0 onward of the sentinel and doorbell tasks
+	validateID string // chat/validate-user action id, a verification task's onward (resolved at seed setup)
 }
 
 // New constructs the chat plugin. It needs no configuration — it provisions the
@@ -120,9 +120,9 @@ func New() *Chat { return &Chat{} }
 func (c *Chat) Slug() string { return "chat" }
 
 // Nav contributes the "chat" sidebar entry. Its badge is the count of the user's
-// outstanding chat doorbell steps — the core step badge (all steps) filtered to
+// outstanding chat doorbell tasks — the core task badge (all tasks) filtered to
 // chat, one source of truth. The count is filled by the /chat/badge poll (Nav has
-// no session token to read the kernel steps at render time), so the initial value
+// no session token to read the kernel tasks at render time), so the initial value
 // is 0 and the poll corrects it within the badge interval.
 func (c *Chat) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" {
@@ -168,7 +168,7 @@ func (c *Chat) kernelDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/" + ackName:
 		// The doorbell/sentinel onward: a no-op. Completing a doorbell runs this; there
-		// is nothing to do (unread is the step itself, now completed). It exists only so
+		// is nothing to do (unread is the task itself, now completed). It exists only so
 		// chat owns and prices-0 the onward instead of depending on sys/sink.
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -183,10 +183,10 @@ func (c *Chat) kernelDispatch(w http.ResponseWriter, r *http.Request) {
 
 // serveRegister handles the kernel's dispatch of the open chat/register action: it
 // mints a pending API key for the requested address and sends that address a
-// verification step (onward chat/validate-user) minted off the outbox seed — so the
-// step is owned by chat and its private onward is callable. It returns {api_key,
-// step_id}; the key activates only when the address's owner completes the step. It is a
-// plugin handler (not a daemon Op) because minting the step is a Juice call. The
+// verification task (onward chat/validate-user) minted off the outbox seed — so the
+// task is owned by chat and its private onward is callable. It returns {api_key,
+// task_id}; the key activates only when the address's owner completes the task. It is a
+// plugin handler (not a daemon Op) because minting the task is a Juice call. The
 // register action's own bearer secret (injected by the kernel) gates it, so only the
 // kernel can drive registration.
 func (c *Chat) serveRegister(w http.ResponseWriter, r *http.Request) {
@@ -216,53 +216,53 @@ func (c *Chat) serveRegister(w http.ResponseWriter, r *http.Request) {
 		writeErrJSON(w, http.StatusInternalServerError, "register failed")
 		return
 	}
-	var stepID string
+	var taskID string
 	err = c.sa.Do(r.Context(), func(tok string) error {
-		st, e := c.deps.Client.CreateStep(r.Context(), tok, client.CreateStepInput{
+		st, e := c.deps.Client.CreateTask(r.Context(), tok, client.CreateTaskInput{
 			TraceID:        c.seedTrace,
 			Action:         c.validateID,
 			RequiredCaller: in.Username,
 			PartialArgs:    mustJSON(map[string]any{"reg_id": regID}),
 		})
 		if e == nil {
-			stepID = st.ID
+			taskID = st.ID
 		}
 		return e
 	})
-	if err != nil || stepID == "" {
-		slog.Warn("chat register: verification step mint failed", "username", in.Username, "err", errText(err))
-		writeErrJSON(w, http.StatusInternalServerError, "could not send verification step")
+	if err != nil || taskID == "" {
+		slog.Warn("chat register: verification task mint failed", "username", in.Username, "err", errText(err))
+		writeErrJSON(w, http.StatusInternalServerError, "could not send verification task")
 		return
 	}
-	// Exactly the declared output shape {api_key, step_id} — the kernel validates the
+	// Exactly the declared output shape {api_key, task_id} — the kernel validates the
 	// response against register's output_schema and rejects any undeclared key.
-	_, _ = fmt.Fprintf(w, `{"api_key":%q,"step_id":%q}`, rawKey, stepID)
+	_, _ = fmt.Fprintf(w, `{"api_key":%q,"task_id":%q}`, rawKey, taskID)
 }
 
 // serveOutbox handles the kernel's dispatch of chat/outbox: it reads the injected
-// trace-capability headers and calls back to create the never-completed sentinel step
+// trace-capability headers and calls back to create the never-completed sentinel task
 // that holds the outbox seed process open (the mint-able trace notify() hangs
 // doorbells off). chat pays itself 0 (the action is price 0). Returns the sentinel
-// id as {step_id} so ensureSeed can persist it. A leaf response (no capability) is a
+// id as {task_id} so ensureSeed can persist it. A leaf response (no capability) is a
 // harmless no-op.
 func (c *Chat) serveOutbox(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	cap, cb := r.Header.Get(client.CapabilityHeader), r.Header.Get(client.CallbackHeader)
-	stepID := ""
+	taskID := ""
 	if cap != "" && cb != "" && c.ackID != "" {
-		st, err := c.deps.Client.CallbackCreateStep(r.Context(), cb, cap, client.CreateStepInput{
+		st, err := c.deps.Client.CallbackCreateTask(r.Context(), cb, cap, client.CreateTaskInput{
 			Action:         c.ackID,
 			RequiredCaller: c.self(),
 		})
 		if err != nil {
 			slog.Warn("chat outbox: capability callback failed", "callback", cb, "ack", c.ackID, "err", err.Error())
 		} else {
-			stepID = st.ID
+			taskID = st.ID
 		}
 	} else {
 		slog.Warn("chat outbox: dispatch missing inputs", "cap_present", cap != "", "callback", cb, "ack_present", c.ackID != "")
 	}
-	_, _ = fmt.Fprintf(w, `{"step_id":%q}`, stepID)
+	_, _ = fmt.Fprintf(w, `{"task_id":%q}`, taskID)
 }
 
 // chatState is the plugin's persisted config: the chat account password, the daemon
@@ -279,12 +279,12 @@ type chatState struct {
 	RegisterSecret string `json:"register_secret"`
 	ValidateSecret string `json:"validate_secret"`
 	AuthRev        string `json:"auth_rev"`
-	// SeedTrace / SeedStep identify chat's open "outbox" process — opened by running
-	// the private chat/outbox action, whose never-completed sentinel step (SeedStep)
-	// holds the process open and the trace (SeedTrace) mint-able. Doorbell steps are
+	// SeedTrace / SeedTask identify chat's open "outbox" process — opened by running
+	// the private chat/outbox action, whose never-completed sentinel task (SeedTask)
+	// holds the process open and the trace (SeedTrace) mint-able. Doorbell tasks are
 	// minted off it. Both survive kernel restarts; re-established only when gone.
 	SeedTrace string `json:"seed_trace"`
-	SeedStep  string `json:"seed_step"`
+	SeedTask  string `json:"seed_step"`
 }
 
 // Start provisions credentials (once), opens the durable store, brings up the
@@ -499,7 +499,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 			_ = c.deps.SaveAppState(c.Slug(), b)
 		}
 	}
-	// Ensure chat holds an open outbox trace to mint doorbell steps off. Done after
+	// Ensure chat holds an open outbox trace to mint doorbell tasks off. Done after
 	// action reconciliation and within the same backoff-retried setup, so a briefly
 	// unreachable kernel just retries.
 	return c.sa.Do(ctx, func(tok string) error { return c.ensureSeed(ctx, tok) })
@@ -508,36 +508,36 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 // outbox action schemas — activation requires described properties; it takes none.
 var (
 	outboxInSchema  = json.RawMessage(`{"type":"object","properties":{}}`)
-	outboxOutSchema = json.RawMessage(`{"type":"object","properties":{"step_id":{"type":"string","description":"Id of the sentinel step that holds the outbox process open."}}}`)
+	outboxOutSchema = json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string","description":"Id of the sentinel task that holds the outbox process open."}}}`)
 )
 
-const outboxDesc = "Opens the chat outbox seed by creating a sentinel step via the trace capability; called only by chat."
+const outboxDesc = "Opens the chat outbox seed by creating a sentinel task via the trace capability; called only by chat."
 
 // register / validate-user action contracts. register is public (anyone may request a
 // key for a handle); validate-user is private (reached only as the verification
-// step's onward). Both carry a bearer upstream secret so the daemon/plugin trusts that
+// task's onward). Both carry a bearer upstream secret so the daemon/plugin trusts that
 // the kernel is the caller.
 var (
-	registerInSchema  = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string","description":"The address to issue a chat key for, for example agent@alpha. A verification step is sent to this address."}}}`)
-	registerOutSchema = json.RawMessage(`{"type":"object","properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect chat@<kernel>/msg --token <api_key>. It activates once the address's owner accepts the verification step."},"step_id":{"type":"string","description":"Id of the verification step sent to the address; complete it (as that user) to activate the key."}}}`)
-	validateInSchema  = json.RawMessage(`{"type":"object","properties":{"reg_id":{"type":"string","description":"Registration id carried by the verification step; names which pending key to activate."}}}`)
+	registerInSchema  = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string","description":"The address to issue a chat key for, for example agent@alpha. A verification task is sent to this address."}}}`)
+	registerOutSchema = json.RawMessage(`{"type":"object","properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect chat@<kernel>/msg --token <api_key>. It activates once the address's owner accepts the verification task."},"task_id":{"type":"string","description":"Id of the verification task sent to the address; complete it (as that user) to activate the key."}}}`)
+	validateInSchema  = json.RawMessage(`{"type":"object","properties":{"reg_id":{"type":"string","description":"Registration id carried by the verification task; names which pending key to activate."}}}`)
 	validateOutSchema = json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the key was activated."}}}`)
 )
 
 const (
-	registerDesc = "Request a chat API key for an address. Returns a pending key and sends a verification step to that address; the key activates when its owner accepts. Then connect the key to chat@<kernel>/msg to use chat."
-	validateDesc = "Activate the chat key for a completed registration. Invoked only as the verification step's onward, when the address's owner accepts."
+	registerDesc = "Request a chat API key for an address. Returns a pending key and sends a verification task to that address; the key activates when its owner accepts. Then connect the key to chat@<kernel>/msg to use chat."
+	validateDesc = "Activate the chat key for a completed registration. Invoked only as the verification task's onward, when the address's owner accepts."
 )
 
-// chat/ack is the price-0 no-op onward of the sentinel and doorbell steps. Its input
-// mirrors a doorbell's partial_args ({room, room_name}) so the completed step's merged
+// chat/ack is the price-0 no-op onward of the sentinel and doorbell tasks. Its input
+// mirrors a doorbell's partial_args ({room, room_name}) so the completed task's merged
 // args validate against it.
 var (
 	ackInSchema  = json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the doorbell is for."},"room_name":{"type":"string","description":"Display name of that room."}}}`)
 	ackOutSchema = json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean","description":"Always true; completing a doorbell is a no-op."}}}`)
 )
 
-const ackDesc = "No-op onward for chat doorbell and sentinel steps; completing a doorbell dismisses it and does nothing else. Owned by chat and priced 0."
+const ackDesc = "No-op onward for chat doorbell and sentinel tasks; completing a doorbell dismisses it and does nothing else. Owned by chat and priced 0."
 
 // bearerAuth is the upstream auth config for chat/register and chat/validate-user:
 // the kernel injects Authorization: Bearer <secret> when it dispatches the action, so
@@ -551,7 +551,7 @@ func bearerAuth(secret string) json.RawMessage {
 	return b
 }
 
-// ensureSeed makes sure chat holds an open "outbox" trace to mint doorbell steps off
+// ensureSeed makes sure chat holds an open "outbox" trace to mint doorbell tasks off
 // (see chatState.SeedTrace). It resolves sys/sink's id (the sentinel's and every
 // doorbell's onward), makes the private chat/outbox action exist, then reuses a
 // persisted seed whose sentinel is still waiting — or opens a fresh one by running
@@ -561,11 +561,11 @@ func bearerAuth(secret string) json.RawMessage {
 // credits on any kernel. Idempotent and restart-safe (the seed survives kernel restarts).
 func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 	// The actions reconciled outside the public msg/ loop: the price-0 no-op ack (the
-	// sentinel/doorbell onward — its id is needed to mint those steps), the private
+	// sentinel/doorbell onward — its id is needed to mint those tasks), the private
 	// outbox (seed), the open register, and the private validate-user.
 	if c.ackID == "" {
 		id, err := c.ensureSpecialAction(ctx, tok, specialAction{
-			// local (not private): a doorbell/message step's required_caller is
+			// local (not private): a doorbell/message task's required_caller is
 			// another member, who must be able to call this onward (kernel requirement).
 			name: ackName, vis: "local", in: ackInSchema, out: ackOutSchema, desc: ackDesc,
 		})
@@ -586,7 +586,7 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		return err
 	}
 	vid, err := c.ensureSpecialAction(ctx, tok, specialAction{
-		// local (not private): the verification step's required_caller is the
+		// local (not private): the verification task's required_caller is the
 		// registrant, who must be able to call this onward (kernel requirement).
 		name: validateName, vis: "local", auth: bearerAuth(c.st.ValidateSecret),
 		in: validateInSchema, out: validateOutSchema, desc: validateDesc,
@@ -595,14 +595,14 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		return err
 	}
 	c.validateID = vid
-	// Reuse a live seed: the sentinel step must still be waiting.
-	if c.st.SeedTrace != "" && c.st.SeedStep != "" {
-		steps, err := c.deps.Client.ListSteps(ctx, tok, "", "waiting")
+	// Reuse a live seed: the sentinel task must still be waiting.
+	if c.st.SeedTrace != "" && c.st.SeedTask != "" {
+		tasks, err := c.deps.Client.ListTasks(ctx, tok, "waiting")
 		if err != nil {
 			return err
 		}
-		for _, s := range steps {
-			if s.ID == c.st.SeedStep {
+		for _, s := range tasks {
+			if s.ID == c.st.SeedTask {
 				c.seedTrace = c.st.SeedTrace // sentinel alive — reuse
 				return nil
 			}
@@ -613,15 +613,15 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		return fmt.Errorf("chat: open outbox seed: %w", err)
 	}
 	var res struct {
-		StepID string `json:"step_id"`
+		TaskID string `json:"task_id"`
 	}
 	_ = json.Unmarshal(reply.Result, &res)
-	if res.StepID == "" {
-		return fmt.Errorf("chat: outbox produced no sentinel step (capability callback failed?)")
+	if res.TaskID == "" {
+		return fmt.Errorf("chat: outbox produced no sentinel task (capability callback failed?)")
 	}
 	c.seedTrace = reply.TraceID
 	c.st.SeedTrace = reply.TraceID
-	c.st.SeedStep = res.StepID
+	c.st.SeedTask = res.TaskID
 	if b, e := json.Marshal(c.st); e == nil && c.deps.SaveAppState != nil {
 		_ = c.deps.SaveAppState(c.Slug(), b)
 	}
@@ -636,11 +636,11 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 type specialAction struct {
 	name string
 	// vis is the action's caller-scope: "" derives from public (public→"public",
-	// else "private"). Set "local" for a step ONWARD whose required_caller is an
-	// ordinary user (e.g. validate-user, ack): the kernel requires the step's
+	// else "private"). Set "local" for a task ONWARD whose required_caller is an
+	// ordinary user (e.g. validate-user, ack): the kernel requires the task's
 	// required_caller to be able to call the onward, and a peer never can, so
 	// "local" (any local caller, still bearer-gated) is the minimal scope that lets
-	// the verification/doorbell steps be minted. "private" would 403 the mint.
+	// the verification/doorbell tasks be minted. "private" would 403 the mint.
 	vis     string
 	public  bool
 	auth    json.RawMessage // nil for the no-auth owner-called outbox
@@ -817,8 +817,8 @@ func (c *Chat) connected(r *http.Request) bool {
 
 // postConnect runs the whole onboarding dance as the signed-in user — the identical
 // kernel path a headless agent uses, nothing juice-ui-privileged: (1) run the open
-// chat/register for the user's own handle to get a pending key + verification step;
-// (2) complete the step (the user is its required_caller) to activate the key; (3)
+// chat/register for the user's own handle to get a pending key + verification task;
+// (2) complete the task (the user is its required_caller) to activate the key; (3)
 // connect the key as the chat/msg grant. The key never reaches the browser. On
 // success the rooms page renders; the kernel connector is now the source of truth.
 func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
@@ -829,7 +829,7 @@ func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := c.deps.Me(r)
-	// stage names the step that failed, so a reconnect failure is diagnosable
+	// stage names the stage that failed, so a reconnect failure is diagnosable
 	// instead of collapsing into one opaque flash.
 	stage := "register"
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
@@ -840,16 +840,16 @@ func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
 		}
 		var res struct {
 			APIKey string `json:"api_key"`
-			StepID string `json:"step_id"`
+			TaskID string `json:"task_id"`
 		}
 		if e := json.Unmarshal(reply.Result, &res); e != nil {
 			return e
 		}
-		if res.APIKey == "" || res.StepID == "" {
-			return fmt.Errorf("chat: register returned no key/step")
+		if res.APIKey == "" || res.TaskID == "" {
+			return fmt.Errorf("chat: register returned no key/task")
 		}
 		stage = "verification"
-		if _, e := c.deps.Client.CompleteStep(r.Context(), tok, res.StepID, nil); e != nil {
+		if _, e := c.deps.Client.CompleteTask(r.Context(), tok, res.TaskID, nil); e != nil {
 			return e
 		}
 		stage = "attach"
@@ -944,7 +944,7 @@ func (c *Chat) getIndex(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	// Unread is the doorbell steps, not a watermark: bold the rooms the user has an
+	// Unread is the doorbell tasks, not a watermark: bold the rooms the user has an
 	// outstanding chat doorbell for, and float them to the top (RoomsFor is
 	// recency-ordered; a stable sort keeps that within each group).
 	unread, _ := c.chatUnread(r)
@@ -963,8 +963,8 @@ func (c *Chat) getIndex(w http.ResponseWriter, r *http.Request) {
 
 // getBadge serves the chat nav-badge fragment the core polls: the count of the
 // user's outstanding chat doorbells (bare number, empty when zero — the core
-// steps-badge contract). It is the core step badge filtered to chat — one source
-// of truth (the doorbell steps), never a separate watermark.
+// task-badge contract). It is the core task badge filtered to chat — one source
+// of truth (the doorbell tasks), never a separate watermark.
 func (c *Chat) getBadge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, n := c.chatUnread(r); n > 0 {
@@ -973,21 +973,21 @@ func (c *Chat) getBadge(w http.ResponseWriter, r *http.Request) {
 }
 
 // chatUnread reads the signed-in user's outstanding chat doorbells straight from
-// the kernel steps — the single source of truth for chat unread. A doorbell is a
-// waiting step owned by chat addressed to the user; its partial_args names the
+// the kernel tasks — the single source of truth for chat unread. A doorbell is a
+// waiting task owned by chat addressed to the user; its partial_args names the
 // room. Returns the set of unread rooms and the count. Both the app-badge and the
-// room-list unread are just this: the bell (all waiting steps) filtered to chat.
+// room-list unread are just this: the bell (all waiting tasks) filtered to chat.
 func (c *Chat) chatUnread(r *http.Request) (map[string]bool, int) {
 	rooms := map[string]bool{}
 	if c.deps.Sessions == nil {
 		return rooms, 0
 	}
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
-		steps, e := c.deps.Client.ListSteps(r.Context(), tok, "", "waiting")
+		tasks, e := c.deps.Client.ListTasks(r.Context(), tok, "waiting")
 		if e != nil {
 			return e
 		}
-		for _, s := range steps {
+		for _, s := range tasks {
 			if s.Owner != c.self() {
 				continue // not a chat doorbell
 			}
@@ -1064,11 +1064,11 @@ func (c *Chat) writePoll(w http.ResponseWriter, r *http.Request, me, id string) 
 
 func htmxReq(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
 
-// notify delivers a doorbell — a Juice step addressed to each other member — after a
+// notify delivers a doorbell — a Juice task addressed to each other member — after a
 // message is posted. The doorbell is THE unread signal and the ONLY state: a member's
-// chat unread is exactly their outstanding chat doorbells, surfaced on the core step
+// chat unread is exactly their outstanding chat doorbells, surfaced on the core task
 // badge/inbox and, filtered, on the chat app-badge; an agent bridge is notified by the
-// same step. Coalescing reads that truth directly: a member who already has a waiting
+// same task. Coalescing reads that truth directly: a member who already has a waiting
 // chat doorbell for this room is covered, so we mint only for the rest — no shadow
 // table to desync (completing a doorbell removes it from `waiting`, so the next message
 // re-rings, browser or headless alike). Owned and funded by chat off its outbox seed
@@ -1090,7 +1090,7 @@ func (c *Chat) notify(ev daemon.NotifyEvent) {
 				continue // sender, or already has an outstanding doorbell for this room
 			}
 			_ = c.sa.Do(ctx, func(tok string) error {
-				_, e := c.deps.Client.CreateStep(ctx, tok, client.CreateStepInput{
+				_, e := c.deps.Client.CreateTask(ctx, tok, client.CreateTaskInput{
 					TraceID:        c.seedTrace,
 					Action:         c.ackID,
 					RequiredCaller: member,
@@ -1103,17 +1103,17 @@ func (c *Chat) notify(ev daemon.NotifyEvent) {
 }
 
 // doorbellHolders returns the set of members who currently hold a waiting chat
-// doorbell for roomID, read as chat straight from the kernel steps — the coalescing
-// gate, with no local mirror. A doorbell is a waiting step owned by chat whose
+// doorbell for roomID, read as chat straight from the kernel tasks — the coalescing
+// gate, with no local mirror. A doorbell is a waiting task owned by chat whose
 // partial_args names the room; its required_caller is the notified member.
 func (c *Chat) doorbellHolders(ctx context.Context, roomID string) (map[string]bool, error) {
 	holders := map[string]bool{}
 	err := c.sa.Do(ctx, func(tok string) error {
-		steps, e := c.deps.Client.ListSteps(ctx, tok, "", "waiting")
+		tasks, e := c.deps.Client.ListTasks(ctx, tok, "waiting")
 		if e != nil {
 			return e
 		}
-		for _, s := range steps {
+		for _, s := range tasks {
 			if s.Owner != c.self() {
 				continue
 			}
@@ -1131,21 +1131,21 @@ func (c *Chat) doorbellHolders(ctx context.Context, roomID string) (map[string]b
 }
 
 // dismiss completes the member's outstanding chat doorbell for the room, if any, when
-// they visit it — clearing chat unread everywhere (the completed step drops out of
+// they visit it — clearing chat unread everywhere (the completed task drops out of
 // `waiting`, which the badge, inbox, and room list all read). It finds the doorbell the
-// same way chatUnread does — the member's own waiting chat step for this room — and
+// same way chatUnread does — the member's own waiting chat task for this room — and
 // completes it under the member's OWN token (only the required_caller may complete a
-// step). No bookkeeping: the step is the state.
+// task). No bookkeeping: the task is the state.
 func (c *Chat) dismiss(r *http.Request, me, roomID string) {
 	if c.deps.Sessions == nil {
 		return
 	}
 	_ = c.deps.Sessions.Do(r.Context(), func(tok string) error {
-		steps, e := c.deps.Client.ListSteps(r.Context(), tok, "", "waiting")
+		tasks, e := c.deps.Client.ListTasks(r.Context(), tok, "waiting")
 		if e != nil {
 			return e
 		}
-		for _, s := range steps {
+		for _, s := range tasks {
 			if s.Owner != c.self() {
 				continue
 			}
@@ -1154,7 +1154,7 @@ func (c *Chat) dismiss(r *http.Request, me, roomID string) {
 			}
 			_ = json.Unmarshal(s.PartialArgs, &pa)
 			if pa.Room == roomID {
-				_, _ = c.deps.Client.CompleteStep(r.Context(), tok, s.ID, nil)
+				_, _ = c.deps.Client.CompleteTask(r.Context(), tok, s.ID, nil)
 			}
 		}
 		return nil

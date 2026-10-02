@@ -34,7 +34,7 @@ func (f *fakeKernel) start(t *testing.T) (*client.Client, func()) {
 func TestRunSuccess(t *testing.T) {
 	f := &fakeKernel{
 		runStatus: 200,
-		runBody:   `{"result":{"answer":42},"tx_id":"tx-9","trace_id":"trace-9"}`,
+		runBody:   `{"result":{"answer":42},"tx_id":"tx-9","trace_id":"trace-9","receipt_id":"rc-9"}`,
 		txBody:    `{"id":"tx-9","gross":100,"fee":20,"net":80,"status":"success"}`,
 	}
 	c, stop := f.start(t)
@@ -182,17 +182,17 @@ func isKind(err error, k client.Kind) bool {
 	return ok && ke.Kind == k
 }
 
-// stepKernel is a fakeKernel extended with a step-complete endpoint.
-type stepKernel struct {
+// completeKernel is a fakeKernel extended with a task-complete endpoint.
+type completeKernel struct {
 	completeStatus int
 	completeBody   string
 	txBody         string
 }
 
-func (f *stepKernel) start(t *testing.T) (*client.Client, func()) {
+func (f *completeKernel) start(t *testing.T) (*client.Client, func()) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(f.completeStatus)
 		w.Write([]byte(f.completeBody))
 	})
@@ -203,15 +203,15 @@ func (f *stepKernel) start(t *testing.T) (*client.Client, func()) {
 	return client.New(srv.URL, nil), srv.Close
 }
 
-func TestCompleteStepSuccess(t *testing.T) {
-	f := &stepKernel{
+func TestCompleteTaskSuccess(t *testing.T) {
+	f := &completeKernel{
 		completeStatus: 200,
-		completeBody:   `{"result":{"ok":true},"tx_id":"tx-s1","trace_id":"tr-s1","step_id":"S1"}`,
+		completeBody:   `{"result":{"ok":true},"tx_id":"tx-s1","trace_id":"tr-s1","receipt_id":"rc-s1","task_id":"S1"}`,
 		txBody:         `{"id":"tx-s1","gross":50,"fee":5,"net":45,"status":"success"}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).CompleteStep(context.Background(), "tok", "S1", nil)
+	out, err := NewCaller(c).CompleteTask(context.Background(), "tok", "S1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,14 +226,14 @@ func TestCompleteStepSuccess(t *testing.T) {
 	}
 }
 
-func TestCompleteStepRejected(t *testing.T) {
-	f := &stepKernel{
+func TestCompleteTaskRejected(t *testing.T) {
+	f := &completeKernel{
 		completeStatus: 422,
 		completeBody:   `{"error":"field #.name: required field missing"}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).CompleteStep(context.Background(), "tok", "S1", nil)
+	out, err := NewCaller(c).CompleteTask(context.Background(), "tok", "S1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,14 +245,14 @@ func TestCompleteStepRejected(t *testing.T) {
 	}
 }
 
-func TestCompleteStepFailed(t *testing.T) {
-	f := &stepKernel{
+func TestCompleteTaskFailed(t *testing.T) {
+	f := &completeKernel{
 		completeStatus: 500,
 		completeBody:   `{"code":"execution_failed","error":"remote call failed"}`,
 	}
 	c, stop := f.start(t)
 	defer stop()
-	out, err := NewCaller(c).CompleteStep(context.Background(), "tok", "S1", nil)
+	out, err := NewCaller(c).CompleteTask(context.Background(), "tok", "S1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,5 +480,26 @@ func TestPeerRefusedNamesThePeerExactlyOnce(t *testing.T) {
 	outk, _ := NewCaller(ck).Run(context.Background(), "tok", "vendor@k/fast", nil, "")
 	if outk.Peer != "1MutJi6KXZ…_mq4" {
 		t.Errorf("Peer = %q, want the abbreviated key", outk.Peer)
+	}
+}
+
+// A task held on another kernel completes there: the reply names that kernel's
+// transaction and no receipt here. The outcome then carries no transaction, so
+// no receipt link, rate form or cost renders (requirements.md §6.3) — one rule,
+// keyed on the receipt the reply names, not on where the task lives.
+func TestCompleteTaskWithNoReceiptLinksNone(t *testing.T) {
+	f := &completeKernel{
+		completeStatus: 200,
+		completeBody:   `{"result":{},"tx_id":"their-tx","trace_id":"tr","receipt_id":"","task_id":"S1"}`,
+		txBody:         `{"code":"not_found","error":"no transaction of yours starts with their-tx"}`,
+	}
+	c, stop := f.start(t)
+	defer stop()
+	out, err := NewCaller(c).CompleteTask(context.Background(), "tok", "S1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Class != Success || out.TxID != "" || out.Cost != nil {
+		t.Errorf("outcome = %+v, want success with no transaction", out)
 	}
 }

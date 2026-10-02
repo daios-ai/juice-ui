@@ -154,7 +154,7 @@ type Action struct {
 	// Effect names a privileged execution effect from the action's signed
 	// contract — "transfer" on a value-bearing action (verified live 2026-08-03
 	// on sys/transfer), empty on every ordinary action. It is the ONLY signal
-	// that completing a step on this action spends the completer's own money
+	// that completing a task on this action spends the completer's own money
 	// (requirements.md §6.3): never key on the action's name.
 	Effect string `json:"effect,omitempty"`
 	// QuoteHash fingerprints the terms quoted here — action id, effect,
@@ -210,7 +210,7 @@ func (a Action) Reports() []IssuerEvidence {
 }
 
 // IsTransfer reports whether this action bears the value-transfer effect —
-// the payment-step and wallet-send signal (requirements.md §6.3, §6.5).
+// the payment-task signal (requirements.md §6.3, §6.5).
 func (a Action) IsTransfer() bool { return a.Effect == "transfer" }
 
 // Ref returns the action's address, owner@kernel/name, as the kernel serves it.
@@ -345,6 +345,10 @@ type Transaction struct {
 	RemoteReceiptHash string `json:"remote_receipt_hash,omitempty"`
 	RemoteSignerKey   string `json:"remote_signer_key,omitempty"`
 	TicketID          string `json:"ticket_id,omitempty"`
+	// Payment is set on a transfer to a user of another kernel: the state of this
+	// kernel's payment to that kernel (pending, announced). It says the money
+	// left, never that the recipient was credited.
+	Payment string `json:"payment,omitempty"`
 }
 
 // IsRemote reports a call that crossed a kernel boundary: it settles per call on
@@ -381,43 +385,42 @@ type Rating struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// Step is a suspended computation boundary: a pre-baked future Call that a
-// designated caller completes by supplying the remaining input. The required
-// caller is identified by address; the computed action address is present
-// on both list and single reads. WaitingOnPeer flags a waiting step whose caller
-// is a federation peer (work parked on a possibly-offline kernel).
-type Step struct {
+// Task is a suspended computation boundary: a pre-baked future Call that a
+// designated caller completes by supplying the remaining input. Parties are
+// addresses. A task this kernel holds names its completion target (Action) and
+// the action that created it (CreatedBy); a task held on another kernel for
+// someone here names neither, and its Owner is the holding kernel's name.
+// WaitingOnPeer flags a waiting task whose caller is on another kernel.
+type Task struct {
 	ID             string          `json:"id"`
-	ParentTraceID  string          `json:"parent_trace_id"`
-	RequiredCaller string          `json:"required_caller"` // the completer's address; a peer kernel's name alone
-	Owner          string          `json:"owner"`           // process owner/payer; chat doorbells carry chat
-	ActionID       string          `json:"action_id"`
+	RequiredCaller string          `json:"required_caller"` // the completer's address
+	Owner          string          `json:"owner"`           // who asked: the process owner, or the holding kernel
 	Action         string          `json:"action"`
+	CreatedBy      string          `json:"created_by"`
 	Price          int64           `json:"price"`
 	PartialArgs    json.RawMessage `json:"partial_args"`
 	Status         string          `json:"status"` // waiting|running|done|cancelled
 	WaitingOnPeer  bool            `json:"waiting_on_peer"`
 	TxID           string          `json:"tx_id"`
 	CreatedAt      string          `json:"created_at"`
-	CreatedBy      string          `json:"created_by"` // the creating action's address (from the parent trace)
-	// AllowedInput is the kernel-derived completion schema on a waiting step
+	// AllowedInput is the kernel-derived completion schema on a waiting task
 	// (action.input_schema minus the keys sealed in partial_args), served so the
-	// completer never needs to read the target action — which may be private and
-	// 403 (verified live 2026-08-03; an approval-only step serves an empty
-	// object schema). Absent on non-waiting steps.
+	// completer never needs to read the target action, which may be private.
 	AllowedInput json.RawMessage `json:"allowed_input,omitempty"`
 }
 
-// Ref returns the address of this step's next action.
-func (s Step) Ref() string { return s.Action }
+// Waiting reports a task that can still be completed or declined.
+func (t Task) Waiting() bool { return t.Status == "waiting" }
 
-// StepCompleteReply is the response of POST /v1/steps/{id}/complete.
-// The kernel also returns receipt_id and gross but they are not used by the BFF.
-type StepCompleteReply struct {
-	Result  json.RawMessage `json:"result"`
-	TxID    string          `json:"tx_id"`
-	TraceID string          `json:"trace_id"`
-	StepID  string          `json:"step_id"`
+// TaskCompleteReply is the response of POST /v1/tasks/{id}/complete. A task
+// held on another kernel completes there: ReceiptID is then empty and TxID is
+// that kernel's transaction, which this kernel does not serve.
+type TaskCompleteReply struct {
+	Result    json.RawMessage `json:"result"`
+	TxID      string          `json:"tx_id"`
+	TraceID   string          `json:"trace_id"`
+	ReceiptID string          `json:"receipt_id"`
+	TaskID    string          `json:"task_id"`
 }
 
 // ImportResult is the response of POST /v1/actions/import. Go's JSON decoding is
@@ -825,16 +828,27 @@ func (c *Client) Withdraw(ctx context.Context, token, id string, amount int64, r
 // fifty-first withdrawal, and a wallet that hides money is worse than one that
 // takes a second request to show it.
 func (c *Client) ListWithdrawals(ctx context.Context, token string) ([]Withdrawal, error) {
+	return listAll[Withdrawal](ctx, c, token, "/v1/withdrawals", nil)
+}
+
+// listAll reads a kernel list to exhaustion. Every list endpoint pages (default
+// 50, ceiling 200, §R6), so an unpaged read silently loses the fifty-first row;
+// this asks for full pages until a short one says the list is done. q carries
+// the list's own filters and is not modified.
+func listAll[T any](ctx context.Context, c *Client, token, path string, q url.Values) ([]T, error) {
 	const page = 200 // server ceiling
-	var out []Withdrawal
+	var out []T
 	for offset := 0; ; offset += page {
-		q := url.Values{}
-		q.Set("limit", strconv.Itoa(page))
-		if offset > 0 {
-			q.Set("offset", strconv.Itoa(offset))
+		pq := url.Values{}
+		for k, v := range q {
+			pq[k] = v
 		}
-		var batch []Withdrawal
-		if err := c.do(ctx, http.MethodGet, "/v1/withdrawals?"+q.Encode(), token, nil, &batch); err != nil {
+		pq.Set("limit", strconv.Itoa(page))
+		if offset > 0 {
+			pq.Set("offset", strconv.Itoa(offset))
+		}
+		var batch []T
+		if err := c.do(ctx, http.MethodGet, path+"?"+pq.Encode(), token, nil, &batch); err != nil {
 			return out, err
 		}
 		out = append(out, batch...)
@@ -848,18 +862,23 @@ func (c *Client) ListWithdrawals(ctx context.Context, token string) ([]Withdrawa
 // form the kernel stored, and how many payments already received from that
 // sender it attributed to the caller.
 type AddressResult struct {
-	Address    string `json:"address"`
+	Address    string `json:"blockchain_address"`
 	Attributed int    `json:"attributed"`
 }
 
 // RegisterAddress proves control of a payout address. The signature is over the
 // kernel's own registration message, produced by the wallet holding the address —
 // the kernel credits the finalized sender, never whoever reports a payment, so
-// the proof is what makes a payment yours (kernel §D23).
-func (c *Client) RegisterAddress(ctx context.Context, token, address, signature string) (AddressResult, error) {
+// the proof is what makes a payment yours (kernel §D23). The account's password
+// rides with it, as on a password change: a session alone never decides where
+// withdrawals go, and a wrong one is 401 (kernel §D9).
+func (c *Client) RegisterAddress(ctx context.Context, token, address, signature, currentPassword string) (AddressResult, error) {
 	var out AddressResult
-	err := c.do(ctx, http.MethodPut, "/v1/me/address",
-		token, map[string]string{"address": address, "signature": signature}, &out)
+	err := c.do(ctx, http.MethodPut, "/v1/me/blockchain-address", token, map[string]string{
+		"blockchain_address": address,
+		"signature":          signature,
+		"current_password":   currentPassword,
+	}, &out)
 	return out, err
 }
 
@@ -880,11 +899,6 @@ func (c *Client) Ledger(ctx context.Context, token string, limit, offset int) ([
 	err := c.do(ctx, http.MethodGet, path, token, nil, &out)
 	return out, err
 }
-
-// The bare POST /v1/transfers endpoint is deliberately not wrapped here: the
-// UI's one send-money surface runs the kernel's sys/transfer action through
-// Run, so every user-facing money movement flows through the same receipted
-// call machinery (requirements.md §6.5).
 
 // ---- actions ----
 
@@ -1075,10 +1089,15 @@ func (c *Client) ratingsPage(ctx context.Context, token, id string, limit, offse
 
 // ---- processes ----
 
-func (c *Client) ListProcesses(ctx context.Context, token string) ([]Process, error) {
-	var p []Process
-	err := c.do(ctx, http.MethodGet, "/v1/processes", token, nil, &p)
-	return p, err
+// ListProcesses lists the caller's processes to exhaustion: the open ones, and
+// the closed ones too when all is set — the kernel answers only what is open
+// unless asked (?all=1).
+func (c *Client) ListProcesses(ctx context.Context, token string, all bool) ([]Process, error) {
+	q := url.Values{}
+	if all {
+		q.Set("all", "1")
+	}
+	return listAll[Process](ctx, c, token, "/v1/processes", q)
 }
 
 func (c *Client) GetProcess(ctx context.Context, token, id string) (Process, error) {
@@ -1095,7 +1114,7 @@ func (c *Client) EndProcess(ctx context.Context, token, id string) error {
 
 // Run executes an action via POST /v1/run. The kernel atomically creates a
 // process funded with exactly action.price, issues the call, and closes the
-// process when the root call returns and no steps remain outstanding.
+// process when the root call returns and no tasks remain outstanding.
 // Run executes an action. quoteHash, when non-empty, PINS the terms the caller
 // was shown (kernel §4): the kernel refuses with terms_changed before locking
 // any funds if the price, description or schemas have moved since, so a
@@ -1176,51 +1195,46 @@ func (c *Client) RateTransaction(ctx context.Context, token, id string, rating i
 	return c.do(ctx, http.MethodPost, "/v1/transactions/"+url.PathEscape(id)+"/rate", token, body, nil)
 }
 
-// ---- steps ----
+// ---- tasks ----
 
-func (c *Client) ListSteps(ctx context.Context, token, processID, status string) ([]Step, error) {
+// ListTasks lists the tasks the caller may see, to exhaustion: those with the
+// given status, or every task when status is empty — the kernel answers only
+// open ones (waiting, running) unless asked (?all=1).
+func (c *Client) ListTasks(ctx context.Context, token, status string) ([]Task, error) {
 	q := url.Values{}
-	if processID != "" {
-		q.Set("process_id", processID)
-	}
 	if status != "" {
 		q.Set("status", status)
+	} else {
+		q.Set("all", "1")
 	}
-	path := "/v1/steps"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	var s []Step
-	err := c.do(ctx, http.MethodGet, path, token, nil, &s)
-	return s, err
+	return listAll[Task](ctx, c, token, "/v1/tasks", q)
 }
 
-func (c *Client) GetStep(ctx context.Context, token, id string) (Step, error) {
-	var s Step
-	err := c.do(ctx, http.MethodGet, "/v1/steps/"+url.PathEscape(id), token, nil, &s)
-	return s, err
+func (c *Client) GetTask(ctx context.Context, token, id string) (Task, error) {
+	var t Task
+	err := c.do(ctx, http.MethodGet, "/v1/tasks/"+url.PathEscape(id), token, nil, &t)
+	return t, err
 }
 
-// CreateStepInput is the body for POST /v1/steps: a waiting step is a funded
+// CreateTaskInput is the body for POST /v1/tasks: a waiting task is a funded
 // continuation bound to the funding trace, addressed to a required caller.
 // Action is the completion target as an address or a raw id, exactly as
-// /v1/run takes it — the kernel rejects the older action_id field outright
-// (verified live 2026-08-05: "action is required").
-type CreateStepInput struct {
+// /v1/run takes it.
+type CreateTaskInput struct {
 	TraceID        string          `json:"trace_id"`
 	Action         string          `json:"action"`
 	RequiredCaller string          `json:"required_caller"`
 	PartialArgs    json.RawMessage `json:"partial_args"`
 }
 
-// CreateStep creates a waiting step (POST /v1/steps → 201).
-func (c *Client) CreateStep(ctx context.Context, token string, in CreateStepInput) (Step, error) {
+// CreateTask creates a waiting task (POST /v1/tasks → 201).
+func (c *Client) CreateTask(ctx context.Context, token string, in CreateTaskInput) (Task, error) {
 	if len(in.PartialArgs) == 0 {
 		in.PartialArgs = json.RawMessage(`{}`)
 	}
-	var s Step
-	err := c.do(ctx, http.MethodPost, "/v1/steps", token, in, &s)
-	return s, err
+	var t Task
+	err := c.do(ctx, http.MethodPost, "/v1/tasks", token, in, &t)
+	return t, err
 }
 
 // Capability-callback headers the kernel injects into every kind=http dispatch
@@ -1231,13 +1245,13 @@ const (
 	CallbackHeader   = "X-Juice-Callback"   // base URL to call the composition API back on
 )
 
-// CallbackCreateStep creates a step via the trace-capability the kernel injected into
+// CallbackCreateTask creates a task via the trace-capability the kernel injected into
 // a kind=http dispatch, rather than via a session token. It POSTs to
-// {callbackBase}/v1/steps carrying `capability` in the X-Juice-Capability header (NOT a
+// {callbackBase}/v1/tasks carrying `capability` in the X-Juice-Capability header (NOT a
 // bearer) with NO trace_id — the capability IS the trace. Used by the chat/outbox
-// handler to create the sentinel step that holds the outbox seed open. Valid only while
+// handler to create the sentinel task that holds the outbox seed open. Valid only while
 // the dispatch's trace is unsettled (call it during the dispatch, before returning).
-func (c *Client) CallbackCreateStep(ctx context.Context, callbackBase, capability string, in CreateStepInput) (Step, error) {
+func (c *Client) CallbackCreateTask(ctx context.Context, callbackBase, capability string, in CreateTaskInput) (Task, error) {
 	if len(in.PartialArgs) == 0 {
 		in.PartialArgs = json.RawMessage(`{}`)
 	}
@@ -1247,46 +1261,55 @@ func (c *Client) CallbackCreateStep(ctx context.Context, callbackBase, capabilit
 		"partial_args":    in.PartialArgs,
 	})
 	if err != nil {
-		return Step{}, fmt.Errorf("marshal request: %w", err)
+		return Task{}, fmt.Errorf("marshal request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(callbackBase, "/")+"/v1/steps", bytes.NewReader(body))
+		strings.TrimRight(callbackBase, "/")+"/v1/tasks", bytes.NewReader(body))
 	if err != nil {
-		return Step{}, fmt.Errorf("build request: %w", err)
+		return Task{}, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(CapabilityHeader, capability)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Step{}, &KernelError{Kind: KindUnavailable, KernelMessage: "callback: " + err.Error()}
+		return Task{}, &KernelError{Kind: KindUnavailable, KernelMessage: "callback: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Step{}, fmt.Errorf("read response: %w", err)
+		return Task{}, fmt.Errorf("read response: %w", err)
 	}
 	if cerr := classify(resp.StatusCode, raw); cerr != nil {
-		return Step{}, cerr
+		return Task{}, cerr
 	}
-	var s Step
+	var t Task
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return Step{}, fmt.Errorf("decode response: %w", err)
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return Task{}, fmt.Errorf("decode response: %w", err)
 		}
 	}
-	return s, nil
+	return t, nil
 }
 
-// CompleteStep completes a waiting step. args is always sent in the body (the
+// CompleteTask completes a waiting task. args is always sent in the body (the
 // kernel returns ErrInvalidInput when the field is absent); nil/empty is
 // normalized to {}.
-func (c *Client) CompleteStep(ctx context.Context, token, id string, args json.RawMessage) (StepCompleteReply, error) {
+func (c *Client) CompleteTask(ctx context.Context, token, id string, args json.RawMessage) (TaskCompleteReply, error) {
 	body := struct {
 		Args json.RawMessage `json:"args"`
 	}{Args: emptyArgs(args)}
-	var r StepCompleteReply
-	err := c.do(ctx, http.MethodPost, "/v1/steps/"+url.PathEscape(id)+"/complete", token, body, &r)
+	var r TaskCompleteReply
+	err := c.do(ctx, http.MethodPost, "/v1/tasks/"+url.PathEscape(id)+"/complete", token, body, &r)
 	return r, err
+}
+
+// CancelTask declines a waiting task: it is cancelled and its reserved price
+// returns to the payer. The kernel accepts it from the task's required caller or
+// its process owner, and refuses anyone else and any task no longer waiting.
+func (c *Client) CancelTask(ctx context.Context, token, id string) (Task, error) {
+	var t Task
+	err := c.do(ctx, http.MethodPost, "/v1/tasks/"+url.PathEscape(id)+"/cancel", token, nil, &t)
+	return t, err
 }
 
 // ---- request id propagation ----

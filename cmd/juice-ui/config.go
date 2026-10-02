@@ -35,8 +35,8 @@ type Config struct {
 	StatePath       string   // resolved path to state.json (machine-written app state)
 	Notices         []string // one-line startup notices (e.g. a legacy path in use, to migrate)
 
-	// BadgeInterval is how often every nav badge (steps + each app) is polled, and
-	// also the steps-badge cache TTL. File-only knob (badge_interval_seconds),
+	// BadgeInterval is how often every nav badge (tasks + each app) is polled, and
+	// also the task-badge cache TTL. File-only knob (badge_interval_seconds),
 	// default 30s, clamped to >= 5s so a typo can't hammer the kernel.
 	BadgeInterval time.Duration
 }

@@ -2,7 +2,7 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>inbox</h1>
-  <p class="subtitle">Work addressed to you.{{if $d.Superuser}} <span class="scope-note">superuser scope: all steps</span>{{end}}</p>
+  <p class="subtitle">Work addressed to you.{{if $d.Superuser}} <span class="scope-note">superuser scope: all tasks</span>{{end}}</p>
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
@@ -11,12 +11,12 @@
 {{if $d.InboxGroups}}
 <div class="card-list">
 {{range $d.InboxGroups}}
-  {{$req := .CreatedBy}}
-  {{range .Steps}}
-  {{$step := .Step}}
-  <div class="step-card">
-    <div class="step-ask">{{if $req}}{{template "_ref" (ref $req "")}} needs {{end}}{{template "_ref" (ref $step.Ref "")}}{{if $step.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
-    {{template "_call_form" (completeForm $.CSRFField $step.ID $step.Price .Form.Editable .Form.IsApproval .Form.Locked $step.PartialArgs nil .IsPayment .Payment .PayTo)}}
+  {{range .Tasks}}
+  {{$t := .Task}}
+  <div class="task-card">
+    <div class="task-ask">{{template "_task_asker" $t}}{{if $t.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
+    {{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price .Form.Editable .Form.IsApproval .Form.Locked $t.PartialArgs nil .IsPayment .Payment .PayTo)}}
+    {{if .CanDecline}}{{template "_task_decline" (declineForm $.CSRFField $t.ID)}}{{end}}
   </div>
   {{end}}
 {{end}}
@@ -26,7 +26,7 @@
 {{end}}
 
 <h2>History</h2>
-<nav class="tabs control-tabs" aria-label="Step history">
+<nav class="tabs control-tabs" aria-label="Task history">
   {{template "_tab" (tab "all" "/inbox" (eq $d.Filter ""))}}
   {{template "_tab" (tab "done" "/inbox?status=done" (eq $d.Filter "done"))}}
   {{template "_tab" (tab "cancelled" "/inbox?status=cancelled" (eq $d.Filter "cancelled"))}}
@@ -39,8 +39,8 @@
   {{range $d.History}}
   <tr class="rowable" tabindex="-1" data-href="/inbox/{{.ID}}">
     <td class="id mono"><a href="/inbox/{{.ID}}">{{truncate 8 .ID}}</a></td>
-    <td>{{if .Action}}{{template "_ref" (ref .Action .ActionID)}}{{else}}<span class="muted mono">{{truncate 8 .ActionID}}</span>{{end}}</td>
-    <td><span class="pill {{if eq .Status "done"}}status-credited{{else if eq .Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{.Status}}</span></td>
+    <td>{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}</td>
+    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
     <td class="money">{{template "_price" (price .Price false)}}</td>
     <td class="mono muted">{{.RequiredCaller}}</td>
   </tr>
@@ -48,5 +48,5 @@
   </tbody>
 </table>
 </div>
-{{else}}<p class="muted">No step history yet.</p>{{end}}
+{{else}}<p class="muted">No task history yet.</p>{{end}}
 {{end}}

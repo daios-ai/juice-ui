@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -191,10 +190,12 @@ type txView struct {
 	Error      string
 }
 
-type stepEntry struct {
-	Step client.Step
-	Form StepFormModel
-	// IsPayment marks a payment step: the target action bears the signed
+// taskEntry is one task as the inbox shows it: the row, its completion form,
+// the payment branch, and what the viewer may do with it.
+type taskEntry struct {
+	Task client.Task
+	Form TaskFormModel
+	// IsPayment marks a payment task: the target action bears the signed
 	// effect="transfer", so completing spends the COMPLETER's own money
 	// (requirements.md §6.3). Payment is the sealed amount (0 when the amount
 	// is left to the completer); PayTo the sealed recipient, both from
@@ -202,33 +203,28 @@ type stepEntry struct {
 	IsPayment bool
 	Payment   int64
 	PayTo     string
+	// CanComplete: the task waits on the viewer. CanDecline: the viewer is one
+	// of the two parties the kernel lets decline it — the one asked, or the one
+	// who asked (requirements.md §6.3).
+	CanComplete bool
+	CanDecline  bool
 }
 
-// stepGroup buckets waiting inbox steps by their creating action (created_by).
-// CreatedBy "" is the unattributed bucket (manually-created steps).
-type stepGroup struct {
+// taskGroup buckets waiting inbox tasks by their creating action (created_by).
+// CreatedBy "" holds the tasks whose row names no creator — those held on
+// another kernel, which name their holder instead.
+type taskGroup struct {
 	CreatedBy string
-	Steps     []stepEntry
+	Tasks     []taskEntry
 }
 
-type stepsView struct {
-	Me          string                   // the viewer's address
-	InboxGroups []stepGroup              // waiting steps that require this user, grouped by created_by
-	History     []client.Step            // completed/running/other steps
-	Actions     map[string]client.Action // action_id → action, for name display
-	Filter      string                   // status filter
+type tasksView struct {
+	Me          string        // the viewer's address
+	InboxGroups []taskGroup   // waiting tasks that require this user, grouped by created_by
+	History     []client.Task // every other task the viewer may see
+	Filter      string        // status filter
 	Superuser   bool
 	Error       string
-}
-
-type stepView struct {
-	Step        client.Step
-	Action      *client.Action
-	Form        StepFormModel
-	CanComplete bool
-	IsPayment   bool  // see stepEntry
-	Payment     int64 // sealed amount (0 = completer types it)
-	PayTo       string
 }
 
 type errorView struct{ Message string }
@@ -923,12 +919,12 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/settings", "success", notice)
 }
 
-// ---- steps ----
+// ---- tasks ----
 
-func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("status")
-	view := stepsView{Actions: map[string]client.Action{}, Filter: filter, Superuser: s.isSuperuser(r)}
+	view := tasksView{Filter: filter, Superuser: s.isSuperuser(r)}
 	var myAvailable int64
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
@@ -937,43 +933,25 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Me = me.Address
 		myAvailable = me.Available
-		steps, e := s.client.ListSteps(ctx, tok, "", filter)
+		tasks, e := s.client.ListTasks(ctx, tok, filter)
 		if e != nil {
 			return e
 		}
+		effects := effectReader{s: s, ctx: ctx, tok: tok}
 		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
-		for _, step := range steps {
-			if step.ActionID != "" {
-				if _, ok := view.Actions[step.ActionID]; !ok {
-					// Best-effort decoration: a step may be parked on a private
-					// action the completer cannot read (v0.12 binding rule), so a
-					// 403 here is a NORMAL state — the form derives from the
-					// step's own allowed_input, never from this read.
-					if a, ae := s.client.GetAction(ctx, tok, step.ActionID); ae == nil {
-						view.Actions[step.ActionID] = a
-					}
-				}
+		for _, t := range tasks {
+			if !t.Waiting() || t.RequiredCaller != me.Address {
+				view.History = append(view.History, t)
+				continue
 			}
-			if step.Status == "waiting" && step.RequiredCaller == me.Address {
-				a := view.Actions[step.ActionID]
-				entry := stepEntry{
-					Step: step,
-					Form: BuildStepForm(stepFormSchema(step, a), step.PartialArgs),
-				}
-				if a.IsTransfer() {
-					entry.IsPayment = true
-					entry.Payment, entry.PayTo = paymentFromArgs(step.PartialArgs)
-				}
-				i, ok := groupIdx[step.CreatedBy]
-				if !ok {
-					i = len(view.InboxGroups)
-					groupIdx[step.CreatedBy] = i
-					view.InboxGroups = append(view.InboxGroups, stepGroup{CreatedBy: step.CreatedBy})
-				}
-				view.InboxGroups[i].Steps = append(view.InboxGroups[i].Steps, entry)
-			} else {
-				view.History = append(view.History, step)
+			entry := s.taskEntryOf(t, me.Address, effects.isTransfer(t.Action))
+			i, ok := groupIdx[t.CreatedBy]
+			if !ok {
+				i = len(view.InboxGroups)
+				groupIdx[t.CreatedBy] = i
+				view.InboxGroups = append(view.InboxGroups, taskGroup{CreatedBy: t.CreatedBy})
 			}
+			view.InboxGroups[i].Tasks = append(view.InboxGroups[i].Tasks, entry)
 		}
 		return nil
 	})
@@ -983,12 +961,12 @@ func (s *Server) getSteps(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view, myAvailable)
 }
 
-func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	var view stepView
+	var view taskEntry
 	err := s.sessions.Do(ctx, func(tok string) error {
-		st, e := s.client.GetStep(ctx, tok, id)
+		t, e := s.client.GetTask(ctx, tok, id)
 		if e != nil {
 			return e
 		}
@@ -996,43 +974,67 @@ func (s *Server) getStep(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view.Step = st
-		view.CanComplete = st.Status == "waiting" && st.RequiredCaller == me.Address
-		// The action read is best-effort decoration (a private target 403s
-		// normally under the v0.12 binding rule); the completion form derives
-		// from the step's own allowed_input.
-		var action client.Action
-		if a, ae := s.client.GetAction(ctx, tok, st.ActionID); ae == nil {
-			view.Action = &a
-			action = a
-		}
-		view.Form = BuildStepForm(stepFormSchema(st, action), st.PartialArgs)
-		if action.IsTransfer() {
-			view.IsPayment = true
-			view.Payment, view.PayTo = paymentFromArgs(st.PartialArgs)
-		}
+		effects := effectReader{s: s, ctx: ctx, tok: tok}
+		view = s.taskEntryOf(t, me.Address, effects.isTransfer(t.Action))
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "inbox_detail", "Step", view)
+	s.renderPage(w, r, http.StatusOK, "inbox_detail", "Task", view)
 }
 
-// stepFormSchema picks the schema the completion form derives from: the step's
-// own allowed_input (v0.12 — already minus the sealed keys, served precisely so
-// the completer needn't read a possibly-private target), falling back to the
-// action's input_schema on an older kernel that doesn't serve it.
-func stepFormSchema(st client.Step, a client.Action) json.RawMessage {
-	if len(bytes.TrimSpace(st.AllowedInput)) > 0 {
-		return st.AllowedInput
+// taskEntryOf builds what the inbox shows for one task: the completion form
+// from the task's own allowed_input (never the target action, which may be
+// private), the payment branch when the target bears the transfer effect, and
+// the two gestures the viewer may make.
+func (s *Server) taskEntryOf(t client.Task, me string, isTransfer bool) taskEntry {
+	e := taskEntry{
+		Task:        t,
+		Form:        BuildTaskForm(t.AllowedInput, t.PartialArgs),
+		CanComplete: t.Waiting() && t.RequiredCaller == me,
+		CanDecline:  t.Waiting() && (t.RequiredCaller == me || t.Owner == me),
 	}
-	return a.InputSchema
+	if isTransfer {
+		e.IsPayment = true
+		e.Payment, e.PayTo = paymentFromArgs(t.PartialArgs)
+	}
+	return e
 }
 
-// paymentFromArgs extracts the sealed amount and recipient of a payment step
+// effectReader answers whether a task's target action bears the transfer
+// effect — the one fact the payment branch keys on (requirements.md §6.3). A
+// task row names its action by address, so the action is read by reference,
+// once per address per request. Only an address on this kernel is read: the
+// transfer action is local, so a payment task always names one, and a
+// reference to another kernel would dial it. A row naming no action, or one the
+// viewer may not read, is an ordinary task.
+type effectReader struct {
+	s    *Server
+	ctx  context.Context
+	tok  string
+	seen map[string]bool
+}
+
+func (r *effectReader) isTransfer(ref string) bool {
+	if ref == "" || !r.s.identity.Local(ref) {
+		return false
+	}
+	if v, ok := r.seen[ref]; ok {
+		return v
+	}
+	a, found, err := r.s.client.ResolveRef(r.ctx, r.tok, ref)
+	v := err == nil && found && a.IsTransfer()
+	if r.seen == nil {
+		r.seen = map[string]bool{}
+	}
+	r.seen[ref] = v
+	return v
+}
+
+// paymentFromArgs extracts the sealed amount and recipient of a payment task
 // from its partial_args. A missing amount returns 0 — the completer types it,
-// and the money button stays unnumbered like the wallet send (§6.3, §6.5).
+// and the money button stays unnumbered (§6.3).
 func paymentFromArgs(partial json.RawMessage) (amount int64, target string) {
 	var p struct {
 		Amount int64  `json:"amount"`
@@ -1043,8 +1045,8 @@ func paymentFromArgs(partial json.RawMessage) (amount int64, target string) {
 }
 
 const (
-	sessionKeyBadgeCount = "steps.badge.count"
-	sessionKeyBadgeAt    = "steps.badge.at"
+	sessionKeyBadgeCount = "tasks.badge.count"
+	sessionKeyBadgeAt    = "tasks.badge.at"
 )
 
 // getHealth is juice-ui's own liveness probe and the browser heartbeat target: it
@@ -1069,7 +1071,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("kernel unreachable"))
 }
 
-func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getTasksBadge(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sm := s.sessions.SCS()
 
@@ -1083,13 +1085,14 @@ func (s *Server) getStepsBadge(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
-			steps, e := s.client.ListSteps(ctx, tok, "", "waiting")
+			tasks, e := s.client.ListTasks(ctx, tok, "waiting")
 			if e != nil {
 				return e
 			}
+			// A superuser lists everyone's tasks; the badge counts the viewer's.
 			n := 0
-			for _, st := range steps {
-				if st.Status == "waiting" && st.RequiredCaller == me.Address {
+			for _, t := range tasks {
+				if t.Waiting() && t.RequiredCaller == me.Address {
 					n++
 				}
 			}
@@ -1704,8 +1707,8 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.BlockchainAddress
 		view.Withdrawals, _ = s.client.ListWithdrawals(ctx, tok)
-		if procs, e := s.client.ListProcesses(ctx, tok); e == nil {
-			view.Open = filterStatus(procs, "open", true)
+		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
+			view.Open = procs
 		}
 		// The ledger journals every movement between accounts — deposits,
 		// withdrawals, transfers, delivered value, and what each settlement paid
@@ -1754,28 +1757,44 @@ func (s *Server) postRegisterAddress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	address := strings.TrimSpace(r.FormValue("address"))
 	signature := strings.TrimSpace(r.FormValue("signature"))
-	if address == "" || signature == "" {
-		s.flashRedirect(w, r, "/wallet", "error", "An address and its signature are both required.")
+	password := r.FormValue("current_password")
+	if address == "" || signature == "" || password == "" {
+		s.flashRedirect(w, r, "/wallet", "error", "An address, its signature and your password are all required.")
 		return
 	}
+	// The kernel answers a wrong password with 401, which sessions.Do would read
+	// as an expired session and sign the person out. The kernel's answer is kept
+	// aside instead, exactly as a password change does (postSettings).
 	var res client.AddressResult
-	err := s.sessions.Do(ctx, func(tok string) error {
-		out, e := s.client.RegisterAddress(ctx, tok, address, signature)
-		res = out
-		return e
+	var apiErr error
+	outerErr := s.sessions.Do(ctx, func(tok string) error {
+		res, apiErr = s.client.RegisterAddress(ctx, tok, address, signature, password)
+		return nil
 	})
+	if outerErr != nil {
+		s.flashResult(w, r, outerErr, "/wallet", "")
+		return
+	}
+	if apiErr != nil {
+		msg := userMessage(apiErr)
+		if ke, ok := client.AsKernelError(apiErr); ok && ke.Kind == client.KindUnauthenticated {
+			msg = "Current password is incorrect."
+		}
+		s.flashRedirect(w, r, "/wallet", "error", msg)
+		return
+	}
 	msg := "Address registered."
 	if res.Attributed > 0 {
 		msg = fmt.Sprintf("Address registered; %d earlier payment(s) credited.", res.Attributed)
 	}
-	s.flashResult(w, r, err, "/wallet", msg)
+	s.flashRedirect(w, r, "/wallet", "success", msg)
 }
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var procs []client.Process
 	err := s.sessions.Do(ctx, func(tok string) error {
-		p, e := s.client.ListProcesses(ctx, tok)
+		p, e := s.client.ListProcesses(ctx, tok, true)
 		procs = p
 		return e
 	})
@@ -1964,9 +1983,9 @@ func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/transactions/"+id, "success", "Thanks for rating.")
 }
 
-// ---- step mutation handlers ----
+// ---- task mutation handlers ----
 
-func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postCompleteTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 	args, argErr := buildArgs(r)
@@ -1976,7 +1995,7 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 		if argErr != nil {
 			return nil // handled after sessions.Do
 		}
-		out, e := s.caller.CompleteStep(ctx, tok, id, args)
+		out, e := s.caller.CompleteTask(ctx, tok, id, args)
 		if e != nil {
 			return e
 		}
@@ -2000,7 +2019,20 @@ func (s *Server) postCompleteStep(w http.ResponseWriter, r *http.Request) {
 		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", outcome)
 		return
 	}
-	s.flashRedirect(w, r, "/inbox", "success", "Step completed.")
+	s.flashRedirect(w, r, "/inbox", "success", "Task completed.")
+}
+
+// postCancelTask declines a waiting task. The kernel decides who may (the one
+// asked, or the one who asked) and refuses a task no longer waiting; the
+// outcome comes back as the flash on the inbox (post/redirect/get).
+func (s *Server) postCancelTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+	err := s.sessions.Do(ctx, func(tok string) error {
+		_, e := s.client.CancelTask(ctx, tok, id)
+		return e
+	})
+	s.flashResult(w, r, err, "/inbox", "Task declined.")
 }
 
 // ---- helpers ----

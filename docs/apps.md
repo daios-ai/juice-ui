@@ -1,7 +1,7 @@
 # App Modules
 
 Juice-ui has a small core BFF (the CLI-mirroring surface: `run`, `action`,
-`process`, `tx`, `step`, `user`, `admin`, `peers`) plus **apps** that don't belong
+`process`, `tx`, `task`, `user`, `admin`, `peers`) plus **apps** that don't belong
 in that surface — the first is **chat** (`apps/chat`). An app is a self-contained
 unit that plugs into the core through one seam, so the core never grows an app's
 weight and an app never reaches into the core.
@@ -182,7 +182,7 @@ fragment endpoint (convention `/<slug>/badge`) — and the core polls it on the 
 configured interval (`badge_interval_seconds`, default 30s), keeping the badge live
 without a page reload. **Endpoint contract:** respond `text/html` whose body is the
 bare count, and an **empty** body when zero (`.badge:empty` hides it). This is the
-same contract the core steps badge uses; it is a seam capability, not a chat
+same contract the core tasks badge uses; it is a seam capability, not a chat
 special-case (rule 5).
 
 `Deps.DataDir` is the per-user durable-data directory (`apps.UserDataDir`: XDG data

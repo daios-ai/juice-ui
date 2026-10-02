@@ -53,8 +53,8 @@ Every key is optional:
   cannot be identified within ten seconds is a startup error, because the UI
   keys everything durable on which kernel it is for and will not guess.
 
-- **`badge_interval_seconds`** — how often every nav badge (steps + each app) is
-  polled, and the steps-badge cache TTL. File-only; default 30, clamped to ≥ 5.
+- **`badge_interval_seconds`** — how often every nav badge (tasks + each app) is
+  polled, and the task-badge cache TTL. File-only; default 30, clamped to ≥ 5.
 - **`trusted_origins`** — additive: the listen-addr localhost defaults, plus this
   list, plus `$JUICE_UI_TRUSTED_ORIGINS`. Entries may be URLs or bare hosts.
 - The file may hold `session_secret`, so keep it `0600`.

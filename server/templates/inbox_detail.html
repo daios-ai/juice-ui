@@ -1,30 +1,30 @@
 {{define "content"}}
 {{$d := .Data}}
+{{$t := $d.Task}}
 <nav class="crumb"><a href="/inbox">← inbox</a></nav>
-<h1>step</h1>
-<p class="subtitle id mono">{{$d.Step.ID}}</p>
+<h1>task</h1>
+<p class="subtitle id mono">{{$t.ID}}</p>
 
 <div class="card stack">
   <div class="row">
-    <span class="mono">{{template "_ref" (ref $d.Step.Ref "")}}</span>
-    <span class="pill {{if eq $d.Step.Status "done"}}status-credited{{else if eq $d.Step.Status "cancelled"}}status-refunded{{else}}status-escrow{{end}}">{{$d.Step.Status}}</span>
-    <span class="sig-escrow" title="Parked price">◷ {{template "_price" (price $d.Step.Price false)}}</span>
-    {{if $d.Step.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
+    {{if $t.Action}}<span class="mono">{{template "_ref" (ref $t.Action "")}}</span>{{end}}
+    <span class="pill {{statusClass $t.Status}}">{{$t.Status}}</span>
+    <span class="sig-escrow" title="Parked price">◷ {{template "_price" (price $t.Price false)}}</span>
+    {{if $t.WaitingOnPeer}}<span class="sig-escrow">waiting on peer</span>{{end}}
   </div>
-  {{if $d.Step.CreatedBy}}
   <div>
-    <h3>Created by</h3>
-    <p>{{template "_ref" (ref $d.Step.CreatedBy "")}}</p>
+    <h3>Asked by</h3>
+    <p>{{if $t.CreatedBy}}{{template "_ref" (ref $t.CreatedBy "")}} · <span class="mono">{{$t.Owner}}</span>{{else}}{{template "_kernel_name" $t.Owner}}{{end}}</p>
   </div>
-  {{end}}
   <div>
     <h3>Required caller</h3>
-    <p class="mono">{{$d.Step.RequiredCaller}}</p>
+    <p class="mono">{{$t.RequiredCaller}}</p>
   </div>
 </div>
 
 {{if $d.CanComplete}}
 <h2>Complete</h2>
-{{template "_call_form" (completeForm $.CSRFField $d.Step.ID $d.Step.Price $d.Form.Editable $d.Form.IsApproval $d.Form.Locked $d.Step.PartialArgs nil $d.IsPayment $d.Payment $d.PayTo)}}
+{{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price $d.Form.Editable $d.Form.IsApproval $d.Form.Locked $t.PartialArgs nil $d.IsPayment $d.Payment $d.PayTo)}}
 {{end}}
+{{if $d.CanDecline}}{{template "_task_decline" (declineForm $.CSRFField $t.ID)}}{{end}}
 {{end}}

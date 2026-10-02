@@ -284,16 +284,114 @@ func TestGrantMethods(t *testing.T) {
 	}
 }
 
-func TestStepDecodesCreatedBy(t *testing.T) {
+func TestTaskDecodesItsParties(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"S1","action":"a/target","created_by":"a/maker","status":"waiting"}`
-	st, err := f.client().GetStep(context.Background(), "tok", "S1")
+	f.reply = `{"id":"S1","revision":1,"action":"a@k/target","created_by":"a@k/maker",
+	 "owner":"vendor@k","required_caller":"ana@k","status":"waiting"}`
+	st, err := f.client().GetTask(context.Background(), "tok", "S1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.CreatedBy != "a/maker" {
-		t.Errorf("CreatedBy = %q", st.CreatedBy)
+	if st.CreatedBy != "a@k/maker" || st.Action != "a@k/target" || st.Owner != "vendor@k" || !st.Waiting() {
+		t.Errorf("task = %+v", st)
+	}
+	if f.lastPath != "/v1/tasks/S1" {
+		t.Errorf("path = %s", f.lastPath)
+	}
+}
+
+// The task list is read to exhaustion, and asks for what it shows: a status
+// when one is chosen, every task otherwise — the kernel answers only open
+// tasks unless asked (4dbfedd).
+func TestListTasksAsksForWhatItShowsAndPages(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	var queries []string
+	f.replyFn = func(r *http.Request) string {
+		queries = append(queries, r.URL.RawQuery)
+		if r.URL.Query().Get("offset") == "" {
+			rows := make([]string, 200)
+			for i := range rows {
+				rows[i] = `{"id":"t","status":"done"}`
+			}
+			return "[" + strings.Join(rows, ",") + "]"
+		}
+		return `[{"id":"last","status":"done"}]`
+	}
+	got, err := f.client().ListTasks(context.Background(), "tok", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 201 || got[200].ID != "last" {
+		t.Fatalf("paged %d rows, want 201", len(got))
+	}
+	if len(queries) != 2 || !strings.Contains(queries[0], "all=1") || !strings.Contains(queries[1], "offset=200") {
+		t.Errorf("queries = %v", queries)
+	}
+	f.replyFn = nil
+	f.reply = `[]`
+	if _, err := f.client().ListTasks(context.Background(), "tok", "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.lastPath, "status=waiting") || strings.Contains(f.lastPath, "all=1") {
+		t.Errorf("status list = %s", f.lastPath)
+	}
+}
+
+func TestCancelTaskPostsTheDecline(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"id":"T1","status":"cancelled"}`
+	got, err := f.client().CancelTask(context.Background(), "tok", "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "POST" || f.lastPath != "/v1/tasks/T1/cancel" || got.Status != "cancelled" {
+		t.Errorf("decline = %s %s → %+v", f.lastMethod, f.lastPath, got)
+	}
+}
+
+// Processes are open-only unless asked; the sessions page asks.
+func TestListProcessesAsksForClosedOnesWhenAll(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `[]`
+	if _, err := f.client().ListProcesses(context.Background(), "tok", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(f.lastPath, "/v1/processes?") || !strings.Contains(f.lastPath, "all=1") {
+		t.Errorf("all = %s", f.lastPath)
+	}
+	if _, err := f.client().ListProcesses(context.Background(), "tok", false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.lastPath, "all=1") {
+		t.Errorf("open only = %s", f.lastPath)
+	}
+}
+
+// Registering a payout address sends the account's password with the proof
+// (4dbfedd, kernel §D9), on the blockchain-address route.
+func TestRegisterAddressSendsThePassword(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.reply = `{"blockchain_address":"0xabc","attributed":2}`
+	got, err := f.client().RegisterAddress(context.Background(), "tok", "0xABC", "sig", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastMethod != "PUT" || f.lastPath != "/v1/me/blockchain-address" {
+		t.Errorf("request = %s %s", f.lastMethod, f.lastPath)
+	}
+	body := string(f.lastBody)
+	for _, want := range []string{`"blockchain_address":"0xABC"`, `"signature":"sig"`, `"current_password":"pw"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body %s lacks %s", body, want)
+		}
+	}
+	if got.Address != "0xabc" || got.Attributed != 2 {
+		t.Errorf("result = %+v", got)
 	}
 }
 
@@ -384,36 +482,23 @@ func TestErrorResponseClassified(t *testing.T) {
 	}
 }
 
-func TestCompleteStepAlwaysSendsArgs(t *testing.T) {
+func TestCompleteTaskAlwaysSendsArgs(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"result":{},"tx_id":"t1","trace_id":"tr1","step_id":"s1"}`
+	f.reply = `{"result":{},"tx_id":"t1","trace_id":"tr1","receipt_id":"r1","task_id":"s1"}`
 	// nil args → normalized to {}
-	r, err := f.client().CompleteStep(context.Background(), "tok", "s1", nil)
+	r, err := f.client().CompleteTask(context.Background(), "tok", "s1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TxID != "t1" || r.StepID != "s1" {
+	if r.TxID != "t1" || r.TaskID != "s1" || r.ReceiptID != "r1" {
 		t.Errorf("reply = %+v", r)
 	}
 	if !strings.Contains(string(f.lastBody), `"args":{}`) {
 		t.Errorf("args must always be sent: %s", f.lastBody)
 	}
-	if f.lastPath != "/v1/steps/s1/complete" || f.lastMethod != "POST" {
+	if f.lastPath != "/v1/tasks/s1/complete" || f.lastMethod != "POST" {
 		t.Errorf("unexpected request %s %s", f.lastMethod, f.lastPath)
-	}
-}
-
-func TestStepRef(t *testing.T) {
-	// The kernel returns the bare computed action on list and single reads
-	// (v0.12 de-sigiling), so Ref() is the field itself.
-	s := Step{Action: "sys/lookup"}
-	if got := s.Ref(); got != "sys/lookup" {
-		t.Errorf("Ref() = %q want sys/lookup", got)
-	}
-	// Empty action.
-	if got := (Step{}).Ref(); got != "" {
-		t.Errorf("Ref() empty = %q want empty", got)
 	}
 }
 
@@ -682,7 +767,7 @@ func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 	}
 }
 
-func TestCallbackCreateStep(t *testing.T) {
+func TestCallbackCreateTask(t *testing.T) {
 	var gotCap, gotAuth, gotBody, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -697,16 +782,16 @@ func TestCallbackCreateStep(t *testing.T) {
 
 	// baseURL is deliberately bogus — the callback must target the passed URL, not baseURL.
 	c := New("http://127.0.0.1:1", nil)
-	st, err := c.CallbackCreateStep(context.Background(), srv.URL, "trace-1.sig",
-		CreateStepInput{Action: "chat/sink", RequiredCaller: "chat"})
+	st, err := c.CallbackCreateTask(context.Background(), srv.URL, "trace-1.sig",
+		CreateTaskInput{Action: "chat/sink", RequiredCaller: "chat"})
 	if err != nil {
-		t.Fatalf("CallbackCreateStep: %v", err)
+		t.Fatalf("CallbackCreateTask: %v", err)
 	}
 	if st.ID != "sentinel-1" {
-		t.Errorf("step id = %q, want sentinel-1", st.ID)
+		t.Errorf("task id = %q, want sentinel-1", st.ID)
 	}
-	if gotPath != "/v1/steps" {
-		t.Errorf("path = %q, want /v1/steps", gotPath)
+	if gotPath != "/v1/tasks" {
+		t.Errorf("path = %q, want /v1/tasks", gotPath)
 	}
 	if gotCap != "trace-1.sig" {
 		t.Errorf("X-Juice-Capability = %q, want trace-1.sig", gotCap)
@@ -754,16 +839,16 @@ func TestAdminRenameUser(t *testing.T) {
 	}
 }
 
-// v0.12: a waiting step carries the kernel-derived completion schema
-// (allowed_input), and an action carries its signed effect field — the only
-// payment-step signal (requirements.md §6.3; verified live 2026-08-03).
-func TestStepAllowedInputAndActionEffect(t *testing.T) {
+// A waiting task carries the kernel-derived completion schema (allowed_input),
+// and an action carries its signed effect field — the only payment-task signal
+// (requirements.md §6.3).
+func TestTaskAllowedInputAndActionEffect(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
 	f.reply = `{"id":"S1","action":"sys/transfer","status":"waiting",
 	 "partial_args":{"target":"alice","amount":300},
 	 "allowed_input":{"type":"object","properties":{}}}`
-	st, err := f.client().GetStep(context.Background(), "tok", "S1")
+	st, err := f.client().GetTask(context.Background(), "tok", "S1")
 	if err != nil {
 		t.Fatal(err)
 	}

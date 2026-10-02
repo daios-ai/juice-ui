@@ -28,10 +28,10 @@ import (
 // kernel serves users and peers on separate routes. Tests in this package are
 // sequential (no t.Parallel), so one recorder each is enough.
 var (
-	lastRename       string
-	lastDeposit      string
-	lastPeerComplete string
-	lastSignIn       string // the account an authorize named
+	lastRename         string
+	lastDeposit        string
+	lastSignIn         string // the account an authorize named
+	lastProcessesQuery string // the query the last process listing sent
 )
 
 // fakeHealth gives a fake kernel the identity banner every login pins: its key,
@@ -62,7 +62,7 @@ func withEvidence(row, experience string) string {
 }
 
 func authKernel() *httptest.Server {
-	lastRename, lastDeposit, lastPeerComplete, lastSignIn = "", "", "", ""
+	lastRename, lastDeposit, lastSignIn, lastProcessesQuery = "", "", "", ""
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +105,7 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
+		lastProcessesQuery = r.URL.RawQuery
 		w.Write([]byte(`[]`))
 	})
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
@@ -186,16 +187,16 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("DELETE /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"id":"` + r.URL.Query().Get("target") + `"}]`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
-		// Two waiting steps spawned by the same creating action (sys/make) — the
-		// common case: one process fans out several steps sharing one created_by.
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		// Two waiting tasks spawned by the same creating action (sys/make) — the
+		// common case: one process fans out several tasks sharing one created_by.
 		w.Write([]byte(`[
-			{"id":"S1","required_caller":"alice@testnet","action":"alice@testnet/hello","action_id":"A1","price":5,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-01T00:00:00Z"},
-			{"id":"S2","required_caller":"alice@testnet","action":"alice@testnet/hello","action_id":"A1","price":3,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-02T00:00:00Z"}
+			{"id":"S1","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":5,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-01T00:00:00Z"},
+			{"id":"S2","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":3,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-02T00:00:00Z"}
 		]`))
 	})
-	mux.HandleFunc("GET /v1/steps/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller":"alice@testnet","action":"alice@testnet/hello","action_id":"A1","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
+	mux.HandleFunc("GET /v1/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {
 		// A taken handle is TYPED as of v0.12.14 (verified live): 422
@@ -329,16 +330,13 @@ func authKernel() *httptest.Server {
 			account = "null"
 		}
 		w.Write([]byte(`{"petname":"kernelc","nickname":"selfname","public_key":"` + key + `","about":"a peer kernel",
-		 "actions":[{"action_id":"a2","name":"synth/make","description":"synth","price":20,"indicative":true}],
+		 "actions":[{"action_id":"a2","name":"synth@kernelc/make","description":"synth","price":20,"indicative":true}],
 		 "account":` + account + `,
 		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
 		    "corroborated_uses":0,"avg_latency_ms":690.5,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
 		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
 		    "corroborated_uses":1,"avg_latency_ms":0,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 		 "online":true,"source":"live",
-		 "steps":[{"id":"PS1","partial_args":{"message":"please confirm the shipment"},
-		   "allowed_input":{"type":"object"},"price":0,"created_at":"2026-09-14T10:43:26Z"}],
-		 "steps_truncated":false,
 		 "reachability":{"path":"direct","rtt_millis":4,"protocols":["/juice/fed/gossip/1"]}}`))
 	})
 	mux.HandleFunc("GET /v1/admin/kernel", func(w http.ResponseWriter, r *http.Request) {
@@ -353,12 +351,8 @@ func authKernel() *httptest.Server {
 		 "lottery":10,"credit_limit":1000,"exposure":320,
 		 "fee_bps":2000,"remote_bps":500,"import_bps":500}`))
 	})
-	mux.HandleFunc("POST /v1/steps/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
-		// One route serves both completions: the ordinary one, and a peer's,
-		// which is the same route with the peer named in the body.
-		b, _ := io.ReadAll(r.Body)
-		lastPeerComplete = r.PathValue("id") + " " + string(b)
-		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","step_id":"` + r.PathValue("id") + `"}`))
+	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","receipt_id":"R2","task_id":"` + r.PathValue("id") + `"}`))
 	})
 	return httptest.NewServer(mux)
 }
@@ -847,7 +841,7 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
@@ -1519,7 +1513,7 @@ func TestStudioLifecycleRedirect(t *testing.T) {
 	}
 }
 
-func TestStepsInboxShowsWaitingStep(t *testing.T) {
+func TestInboxShowsWaitingTask(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -1530,10 +1524,10 @@ func TestStepsInboxShowsWaitingStep(t *testing.T) {
 
 	// S1 is waiting and requires U1 (the signed-in user) → must appear in Inbox.
 	if !strings.Contains(body, "Waiting for you") {
-		t.Error("steps page must have an Inbox section")
+		t.Error("tasks page must have an Inbox section")
 	}
 	if !strings.Contains(body, `action="/inbox/S1/complete"`) {
-		t.Error("inbox must contain the step completion form for S1")
+		t.Error("inbox must contain the task completion form for S1")
 	}
 }
 
@@ -1546,27 +1540,27 @@ func TestInboxGroupsByCreatingAction(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/inbox")
 
-	// Each step card names who asked (the creating action, sys/make) in its ask
+	// Each task card names who asked (the creating action, sys/make) in its ask
 	// line — "sys/make needs …" — not just the completion target. The old separate
 	// group heading is gone (simplified inbox), but the attribution stays.
 	if !strings.Contains(body, "needs") {
-		t.Errorf("step card must name who asks (an ask line): %s", body)
+		t.Errorf("task card must name who asks (an ask line): %s", body)
 	}
 	if !strings.Contains(body, "/make") {
-		t.Errorf("step card must name the creating action sys/make: %s", body)
+		t.Errorf("task card must name the creating action sys/make: %s", body)
 	}
-	// Both completion forms are present, one per step.
+	// Both completion forms are present, one per task.
 	if !strings.Contains(body, `action="/inbox/S1/complete"`) || !strings.Contains(body, `action="/inbox/S2/complete"`) {
-		t.Error("every waiting step keeps its own completion form")
+		t.Error("every waiting task keeps its own completion form")
 	}
-	// The completion button is neutral (no money button, no amount) — a step
+	// The completion button is neutral (no money button, no amount) — a task
 	// completer is doing work, not paying.
 	if strings.Contains(body, `class="btn-money" type="submit">Complete`) {
-		t.Error("step completion must be a neutral button, not a money button naming an amount")
+		t.Error("task completion must be a neutral button, not a money button naming an amount")
 	}
 }
 
-func TestCompleteStepHTMX(t *testing.T) {
+func TestCompleteTaskHTMX(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -1589,17 +1583,17 @@ func TestCompleteStepHTMX(t *testing.T) {
 	frag := string(fragment)
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("complete step returned %d, body: %s", resp.StatusCode, frag)
+		t.Fatalf("complete task returned %d, body: %s", resp.StatusCode, frag)
 	}
 	if !strings.Contains(frag, "Success") {
-		t.Error("complete step HTMX response must show success outcome")
+		t.Error("complete task HTMX response must show success outcome")
 	}
 	if strings.Contains(frag, "<html") {
-		t.Error("HTMX complete step must return a fragment, not a full page")
+		t.Error("HTMX complete task must return a fragment, not a full page")
 	}
 }
 
-func TestInboxPageRendersSteps(t *testing.T) {
+func TestInboxPageRendersTasks(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -1608,7 +1602,7 @@ func TestInboxPageRendersSteps(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/inbox")
 
-	// Step S1 (status=waiting, required_caller=alice=current user) appears as a
+	// Task S1 (status=waiting, required_caller=alice=current user) appears as a
 	// completable card. The price rides on the Complete button — the redundant
 	// No funds-mechanics prose (parked / your wallet / from their process).
 	for _, banned := range []string{"parked", "your wallet", "their process"} {
@@ -1623,11 +1617,11 @@ func TestInboxPageRendersSteps(t *testing.T) {
 	if strings.Contains(body, "Complete (5)") {
 		t.Error("inbox Complete button must NOT name an amount (the completer is not the payer)")
 	}
-	// The inbox is work addressed to you, nothing else: step creation is API and
+	// The inbox is work addressed to you, nothing else: task creation is API and
 	// app-module surface (it needs a live funding trace), never a browser form.
-	for _, gone := range []string{"step-create", "new step", "Funding trace"} {
+	for _, gone := range []string{"task-create", "new task", "Funding trace"} {
 		if strings.Contains(body, gone) {
-			t.Errorf("inbox must not offer step creation (found %q)", gone)
+			t.Errorf("inbox must not offer task creation (found %q)", gone)
 		}
 	}
 }
@@ -1718,7 +1712,7 @@ func actionDetailKernel(actionJSON string) *http.ServeMux {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/A1", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(actionJSON)) })
@@ -2278,11 +2272,47 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 	}
 }
 
-// paymentKernel is a minimal kernel for the v0.12 two-branch inbox: bob has a
-// payment step (target action bears effect="transfer") and an ordinary step
-// whose PRIVATE target action 403s — the completion form must derive from the
-// step's own allowed_input (requirements.md §6.3).
-func paymentKernel() *httptest.Server {
+// heldKey is a public key as a task held on another kernel names its holder
+// when no petname is bound for it (4dbfedd).
+const heldKey = "K98AJeQ6631CO6LJ73nK2PiQW4qY3Nb3eqquXPHYNJ8"
+
+// taskRows are the tasks bob@testnet may list, one of each kind the inbox
+// distinguishes (requirements.md §6.3).
+var taskRows = map[string]string{
+	// A payment task: its target bears effect="transfer".
+	"SP": `{"id":"SP","required_caller":"bob@testnet","owner":"alice@testnet","action":"sys@testnet/transfer",
+	  "price":0,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-01T00:00:00Z",
+	  "partial_args":{"target":"alice@testnet","amount":300},"allowed_input":{"type":"object","properties":{}}}`,
+	// An ordinary task on a PRIVATE target the completer cannot read.
+	"SO": `{"id":"SO","required_caller":"bob@testnet","owner":"alice@testnet","action":"alice@testnet/private-work",
+	  "price":5,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-02T00:00:00Z",
+	  "partial_args":{"context":"sealed"},
+	  "allowed_input":{"type":"object","properties":{"answer":{"type":"string","description":"Your answer"}},"required":["answer"]}}`,
+	// A task another kernel holds for bob: no action, no creator, owner the holder.
+	"SH": `{"id":"SH","required_caller":"bob@testnet","owner":"` + heldKey + `",
+	  "price":0,"status":"waiting","created_at":"2026-08-03T00:00:00Z",
+	  "partial_args":{"message":"from afar"},"allowed_input":{"type":"object"}}`,
+	// A task on another kernel's action: never read here.
+	"SR": `{"id":"SR","required_caller":"bob@testnet","owner":"alice@testnet","action":"vendor@bravo/thing",
+	  "price":0,"status":"waiting","created_by":"alice@testnet/ask","created_at":"2026-08-04T00:00:00Z",
+	  "partial_args":{"note":"x"},"allowed_input":{"type":"object"}}`,
+	// Bob asked carol: his to withdraw, not to complete.
+	"SX": `{"id":"SX","required_caller":"carol@testnet","owner":"bob@testnet","action":"carol@testnet/review",
+	  "price":7,"status":"waiting","created_by":"bob@testnet/ask","created_at":"2026-08-05T00:00:00Z",
+	  "partial_args":{},"allowed_input":{"type":"object"}}`,
+	// Done: history, no gesture.
+	"SD": `{"id":"SD","required_caller":"bob@testnet","owner":"alice@testnet","action":"alice@testnet/hello",
+	  "price":0,"status":"done","tx_id":"TD","created_at":"2026-07-01T00:00:00Z","partial_args":{}}`,
+}
+
+// taskRefReads and taskCancels record what the BFF asked of the task kernel.
+var taskRefReads, taskCancels []string
+
+// taskKernel serves taskRows to bob@testnet. A reference read answers the
+// transfer action with its effect and nothing else — a private action is not
+// served to him.
+func taskKernel() *httptest.Server {
+	taskRefReads, taskCancels = nil, nil
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -2294,30 +2324,42 @@ func paymentKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U2","address":"bob@testnet","available":700,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[
-		 {"id":"SP","required_caller":"bob@testnet","owner":"alice@testnet","action":"sys@testnet/transfer","action_id":"AT",
-		  "price":0,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-01T00:00:00Z",
-		  "partial_args":{"target":"alice@testnet","amount":300},
-		  "allowed_input":{"type":"object","properties":{}}},
-		 {"id":"SO","required_caller":"bob@testnet","owner":"alice@testnet","action":"alice@testnet/private-work","action_id":"AP",
-		  "price":5,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-02T00:00:00Z",
-		  "partial_args":{"context":"sealed"},
-		  "allowed_input":{"type":"object","properties":{"answer":{"type":"string","description":"Your answer"}},"required":["answer"]}}
-		]`))
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		rows := []string{}
+		for _, id := range []string{"SP", "SO", "SH", "SR", "SX", "SD"} {
+			rows = append(rows, taskRows[id])
+		}
+		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
-	mux.HandleFunc("GET /v1/actions/AT", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"AT","action":"sys@testnet/transfer","name":"transfer","kind":"native",
-		 "active":true,"visibility":"public","price":0,"effect":"transfer",
-		 "input_schema":{"type":"object","properties":{"target":{"type":"string"},"amount":{"type":"integer"}}}}`))
+	mux.HandleFunc("GET /v1/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(taskRows[r.PathValue("id")]))
 	})
-	mux.HandleFunc("GET /v1/actions/AP", func(w http.ResponseWriter, r *http.Request) {
-		// A private target under the v0.12 binding rule: parked fine, unreadable
-		// by the completer.
-		w.WriteHeader(403)
-		w.Write([]byte(`{"code":"unauthorized","error":"not allowed"}`))
+	mux.HandleFunc("POST /v1/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		taskCancels = append(taskCancels, r.PathValue("id"))
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","status":"cancelled"}`))
 	})
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") == "SH" { // completed on the holding kernel
+			w.Write([]byte(`{"result":{},"tx_id":"their-tx","trace_id":"tr","receipt_id":"","task_id":"SH"}`))
+			return
+		}
+		w.Write([]byte(`{"result":{},"tx_id":"T9","trace_id":"tr","receipt_id":"R9","task_id":"` + r.PathValue("id") + `"}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		ref := r.URL.Query().Get("ref")
+		if ref == "" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		taskRefReads = append(taskRefReads, ref)
+		if ref == "sys@testnet/transfer" {
+			w.Write([]byte(`[{"id":"AT","action":"sys@testnet/transfer","name":"transfer","kind":"native",
+			 "active":true,"visibility":"local","price":0,"effect":"transfer",
+			 "input_schema":{"type":"object","properties":{"target":{"type":"string"},"amount":{"type":"integer"}}}}]`))
+			return
+		}
+		w.Write([]byte(`[]`))
+	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -2325,7 +2367,7 @@ func paymentKernel() *httptest.Server {
 }
 
 func TestInboxTwoBranchCompletion(t *testing.T) {
-	kernel := paymentKernel()
+	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
@@ -2337,36 +2379,120 @@ func TestInboxTwoBranchCompletion(t *testing.T) {
 	// money button naming the sealed amount, recipient named in the provenance
 	// face (§6.3).
 	if !strings.Contains(page, "Complete (300 credits)") {
-		t.Errorf("payment step must render the money amount on the button: %s", page)
+		t.Errorf("payment task must render the money amount on the button: %s", page)
 	}
 	if !strings.Contains(page, "Paid from your balance") || !strings.Contains(page, "alice") {
-		t.Errorf("payment step must disclose whose funds move and to whom: %s", page)
+		t.Errorf("payment task must disclose whose funds move and to whom: %s", page)
 	}
 	// Ordinary branch: neutral Complete, no amount — even though the target
-	// action is unreadable, the form renders from the step's allowed_input.
+	// action is unreadable, the form renders from the task's allowed_input.
 	if !strings.Contains(page, `type="submit">Complete</button>`) {
-		t.Errorf("ordinary step must keep the neutral Complete: %s", page)
+		t.Errorf("ordinary task must keep the neutral Complete: %s", page)
 	}
 	if !strings.Contains(page, `name="f_answer"`) {
-		t.Errorf("completion form must derive from allowed_input when the action 403s: %s", page)
+		t.Errorf("completion form must derive from allowed_input: %s", page)
+	}
+	if strings.Contains(page, "could not be found") {
+		t.Errorf("an unreadable target must not surface as an error: %s", page)
 	}
 }
 
-func TestStepDetailPrivateTargetStillCompletable(t *testing.T) {
-	kernel := paymentKernel()
+// The effect is read by the row's action address, once per address, and only
+// for an address on this kernel: a reference to another kernel would dial it
+// and cache a proxy (§6.3).
+func TestInboxReadsEffectsOnlyForLocalAddresses(t *testing.T) {
+	kernel := taskKernel()
 	defer kernel.Close()
-	// Serve the single-step read from the same fixtures.
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	// The detail route must not error on the 403 target; the form comes from
-	// allowed_input.
-	kernelMux := http.NewServeMux()
-	_ = kernelMux // (single-step read is exercised via the inbox page above)
+	_ = getBody(t, cl, srv.URL+"/inbox")
+	got := strings.Join(taskRefReads, ",")
+	if got != "sys@testnet/transfer,alice@testnet/private-work" {
+		t.Errorf("reference reads = %q, want the two local waiting targets once each", got)
+	}
+}
+
+// A task held on another kernel names its holder (a key truncated, the whole
+// key in the title), completes with the neutral Complete, and links no receipt
+// afterwards: its reply names none here (§6.3).
+func TestInboxTaskHeldOnAnotherKernel(t *testing.T) {
+	kernel := taskKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
 	page := getBody(t, cl, srv.URL+"/inbox")
-	if strings.Contains(page, "could not be found") {
-		t.Errorf("a private target action must not surface as an error: %s", page)
+	if !strings.Contains(page, `title="`+heldKey+`">`+heldKey[:8]+`…</span>`) {
+		t.Errorf("the holder must be named by its truncated key: %s", page)
+	}
+	if !strings.Contains(page, `action="/inbox/SH/complete"`) {
+		t.Error("a task held elsewhere is completable here")
+	}
+
+	form := url.Values{"raw_args": {"{}"}, "gorilla.csrf.Token": {csrfTokenFrom(t, page)}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/inbox/SH/complete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	frag, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(frag), "Success") {
+		t.Fatalf("completion must succeed: %s", frag)
+	}
+	if strings.Contains(string(frag), "/transactions/") {
+		t.Errorf("no receipt is linked when the reply names none: %s", frag)
+	}
+}
+
+// Decline is offered to the two parties the kernel accepts — the one asked and
+// the one who asked — on a waiting task, never in a list row, and posts to the
+// kernel's cancel route (§6.3).
+func TestInboxDeclineOfferedToBothParties(t *testing.T) {
+	kernel := taskKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	page := getBody(t, cl, srv.URL+"/inbox")
+	for _, id := range []string{"SP", "SO", "SH", "SR"} {
+		if !strings.Contains(page, `action="/inbox/`+id+`/cancel"`) {
+			t.Errorf("the one asked may decline %s", id)
+		}
+	}
+	for _, id := range []string{"SX", "SD"} {
+		if strings.Contains(page, `action="/inbox/`+id+`/cancel"`) {
+			t.Errorf("no decline in a history row (%s)", id)
+		}
+	}
+	if !strings.Contains(page, `data-confirm="Decline this task? Its reserved price returns to the payer."`) {
+		t.Error("decline must sit behind the confirm naming its consequence")
+	}
+
+	asked := getBody(t, cl, srv.URL+"/inbox/SX")
+	if !strings.Contains(asked, `action="/inbox/SX/cancel"`) {
+		t.Error("the one who asked may decline from the task's page")
+	}
+	if strings.Contains(asked, `action="/inbox/SX/complete"`) {
+		t.Error("only the required caller may complete")
+	}
+	if done := getBody(t, cl, srv.URL+"/inbox/SD"); strings.Contains(done, "/cancel") {
+		t.Error("a task no longer waiting offers no decline")
+	}
+
+	resp := postTo(t, cl, srv.URL+"/inbox/SX/cancel", asked, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/inbox" {
+		t.Errorf("decline = %d → %q, want a redirect to the inbox", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if strings.Join(taskCancels, ",") != "SX" {
+		t.Errorf("kernel cancels = %v", taskCancels)
 	}
 }
 
@@ -2395,10 +2521,10 @@ func TestActionRatingsRenderFromProjection(t *testing.T) {
 	}
 }
 
-// Step creation has no browser route: it needs a live funding trace, which is
+// Task creation has no browser route: it needs a live funding trace, which is
 // bookkeeping the UI keeps hidden. The kernel API and app modules still compose
-// steps; the browser does not.
-func TestNoBrowserStepCreation(t *testing.T) {
+// tasks; the browser does not.
+func TestNoBrowserTaskCreation(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -2414,8 +2540,8 @@ func TestNoBrowserStepCreation(t *testing.T) {
 		t.Errorf("POST /inbox = %d, want no such route", resp.StatusCode)
 	}
 	// Nor may the palette still offer it.
-	if strings.Contains(page, `"step create"`) {
-		t.Error("the palette must not carry a step-create command")
+	if strings.Contains(page, `"task create"`) {
+		t.Error("the palette must not carry a task-create command")
 	}
 }
 
@@ -2470,6 +2596,10 @@ func TestEntryRowPartySignAndReason(t *testing.T) {
 		{"fee", client.LedgerEntry{From: "bob", To: "sys", Amount: 5, Reason: tx}, "sys", false, tx, ""},
 		{"obligation", client.LedgerEntry{From: "bob", To: "sys", Amount: 9, Reason: "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"}, "sys", false, "", "obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b"},
 		{"crossing in", client.LedgerEntry{To: "bob", Amount: 7}, "", true, "", ""},
+		// A transfer to or from another kernel names the SENDER's transaction:
+		// the sender's own, so linked; on the receiving kernel, the other's, so text.
+		{"transfer sent", client.LedgerEntry{From: "bob", To: "sys", Amount: 9, Reason: "transfer " + tx}, "sys", false, tx, ""},
+		{"transfer received", client.LedgerEntry{From: "sys", To: "bob", Amount: 9, Reason: "transfer " + tx}, "sys", true, "", "transfer " + tx},
 	}
 	for _, c := range cases {
 		got := entryRowOf(c.entry, "bob")
@@ -2523,7 +2653,7 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	// sys/lookup: one unresolved discovery hit and one RESOLVED proxy. Both
 	// carry a kernel-qualified ref and an observed_at; only the second has a
@@ -2584,7 +2714,7 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"P1","action":"vendor@bravo/slow","name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
@@ -2669,7 +2799,7 @@ func TestRemoteTransactionBreakdownNamesTheObligation(t *testing.T) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{"results":[]},"tx_id":"T1"}`))
 	})
@@ -2715,7 +2845,7 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("ref") == "sys@testnet/lookup" {
 			w.Write([]byte(`[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":7}]`))
@@ -2762,7 +2892,7 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"WEB","action":"sys@testnet/web","name":"web","kind":"http","active":true,"price":0,
@@ -2893,7 +3023,7 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("ref") != "" {
 			w.Write([]byte(`[]`))
@@ -2972,7 +3102,7 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/steps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("ref") != "" {
 			w.Write([]byte(`[]`))
@@ -3073,5 +3203,125 @@ func TestLoginSignsInByAddress(t *testing.T) {
 	}
 	if body := getBody(t, loginClientAs(t, srv.URL, "sys"), srv.URL+"/browse"); !strings.Contains(body, `href="/admin"`) {
 		t.Error("sys@testnet is the superuser")
+	}
+}
+
+// The sessions page lists closed sessions too, which the kernel serves only
+// when asked (?all=1); the wallet's open list does not ask (§6.5).
+func TestSessionsPageAsksForClosedSessions(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	_ = getBody(t, cl, srv.URL+"/processes")
+	if !strings.Contains(lastProcessesQuery, "all=1") {
+		t.Errorf("sessions page query = %q, want all=1", lastProcessesQuery)
+	}
+	_ = getBody(t, cl, srv.URL+"/wallet")
+	if strings.Contains(lastProcessesQuery, "all=1") {
+		t.Errorf("wallet query = %q, want open sessions only", lastProcessesQuery)
+	}
+}
+
+// Registering a payout address takes the account's password. A wrong one is
+// the kernel's 401, which must read as the password being wrong and must NOT
+// end the session the way a 401 elsewhere does (§6.5).
+func TestRegisterAddressWrongPasswordKeepsTheSession(t *testing.T) {
+	var sent string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"testnet","public_key":"PK","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=C"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":5000000,"locked":0}`))
+	})
+	mux.HandleFunc("PUT /v1/me/blockchain-address", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sent = string(b)
+		if !strings.Contains(sent, `"current_password":"right-password"`) {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"code":"unauthenticated","error":"invalid current password"}`))
+			return
+		}
+		w.Write([]byte(`{"blockchain_address":"0xalice","attributed":1}`))
+	})
+	for _, path := range []string{"/v1/withdrawals", "/v1/processes", "/v1/transactions", "/v1/ledger", "/v1/tasks", "/v1/actions"} {
+		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	}
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	page := getBody(t, cl, srv.URL+"/wallet")
+	if !strings.Contains(page, `name="current_password"`) {
+		t.Fatal("the address form must ask for the password")
+	}
+	form := url.Values{"address": {"0xAlice"}, "signature": {"sig"}, "current_password": {"wrong"}}
+	resp := postTo(t, cl, srv.URL+"/wallet/address", page, form)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/wallet" {
+		t.Fatalf("wrong password = %d → %q, want back to the wallet", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	after := getBody(t, cl, srv.URL+"/wallet")
+	if !strings.Contains(after, "Current password is incorrect.") {
+		t.Errorf("the wallet must say the password was wrong: %s", after)
+	}
+	if !strings.Contains(after, `name="current_password"`) {
+		t.Error("a wrong password must not end the session")
+	}
+	for _, want := range []string{`"blockchain_address":"0xAlice"`, `"signature":"sig"`} {
+		if !strings.Contains(sent, want) {
+			t.Errorf("request %s lacks %s", sent, want)
+		}
+	}
+
+	form.Set("current_password", "right-password")
+	resp = postTo(t, cl, srv.URL+"/wallet/address", after, form)
+	resp.Body.Close()
+	if ok := getBody(t, cl, srv.URL+"/wallet"); !strings.Contains(ok, "Address registered; 1 earlier payment(s) credited.") {
+		t.Errorf("a right password registers: %s", ok)
+	}
+}
+
+// A transfer to another kernel's user carries the state of this kernel's
+// payment on its transaction; the receipt states it as served (§6.5).
+func TestReceiptStatesATransferPayment(t *testing.T) {
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=C"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"TXP","action":"sys@testnet/transfer","status":"success","gross":0,"net":0,"fee":0,
+		 "args":{"target":"bob@bravo","amount":2500000},"result":{"amount":2500000},"payment":"announced",
+		 "owner":"alice@testnet","caller":"alice@testnet","target":"sys@testnet","started_at":"2026-10-02T11:15:59Z"}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "alice")
+
+	body := getBody(t, cl, srv.URL+"/transactions/TXP")
+	if !strings.Contains(body, `Payment to the recipient's kernel <span class="pill ">announced</span>`) {
+		t.Errorf("the receipt must state the payment as served, in a neutral pill: %s", body)
 	}
 }
