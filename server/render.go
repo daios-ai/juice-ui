@@ -237,6 +237,8 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"badge":        badge,
 		"cardArt":      CardArt,
 		"initial":      initial,
+		"authPanel":    newAuthPanel,
+		"httpMethods":  func() []string { return []string{"POST", "GET", "PUT", "PATCH", "DELETE"} },
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {

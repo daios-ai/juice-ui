@@ -281,3 +281,62 @@ func TestApprovalCollapsesForBothKernelShapes(t *testing.T) {
 		t.Errorf("the sealed payload renders read-only, got %d locked", len(sealed.Locked))
 	}
 }
+
+// The kernel stores schemas in the canonical form of its subset (verified live
+// on ba7f5e5): a nullable field is `type: [T, "null"]`, keys arrive sorted, and
+// a closed object carries additionalProperties:false. One nullable property
+// must not send the whole form to the raw editor.
+func TestBuildFormCanonicalNullable(t *testing.T) {
+	fm := BuildForm(json.RawMessage(`{"additionalProperties":false,"properties":{
+		"kind":{"description":"K.","enum":["a","b",null],"type":["string","null"]},
+		"nest":{"additionalProperties":false,"description":"N.","properties":{"y":{"description":"Y.","type":"string"}},"type":["object","null"]},
+		"opt":{"description":"O.","type":["string","null"]},
+		"zeta":{"description":"Z.","type":"string"}},"required":["zeta"],"type":"object"}`))
+	if fm.UseRawFallback || len(fm.Fields) != 4 {
+		t.Fatalf("a nullable field must decode as a typed field: %+v", fm)
+	}
+	byName := map[string]Field{}
+	for _, f := range fm.Fields {
+		byName[f.Name] = f
+	}
+	if f := byName["opt"]; f.Type != "string" || !f.Nullable {
+		t.Errorf("opt = %+v, want a nullable string", f)
+	}
+	if f := byName["zeta"]; f.Nullable || !f.Required {
+		t.Errorf("zeta = %+v, want a required non-nullable string", f)
+	}
+	// null is the field's own choice, so it is not an enum option.
+	if f := byName["kind"]; !f.Nullable || strings.Join(f.Enum, ",") != "a,b" {
+		t.Errorf("kind = %+v, want enum a,b and nullable", f)
+	}
+	if f := byName["nest"]; f.Type != "object" || !f.Nullable || !strings.Contains(f.Example, `"y": ""`) {
+		t.Errorf("nest = %+v, want a nullable object with its skeleton", f)
+	}
+}
+
+// Title and the bounds the browser enforces exactly are carried as written;
+// nothing else is.
+func TestBuildFormHints(t *testing.T) {
+	fm := BuildForm(json.RawMessage(`{"properties":{
+		"n":{"description":"N.","maximum":9,"minimum":1.5,"default":3,"type":"number"},
+		"s":{"description":"S.","maxLength":5,"minLength":2,"pattern":"^a","title":"Short name","type":"string"}},"type":"object"}`))
+	n, s := fm.Fields[0], fm.Fields[1]
+	if n.Min != "1.5" || n.Max != "9" || n.Value != "" {
+		t.Errorf("n = %+v, want min 1.5, max 9, and no pre-filled default", n)
+	}
+	if s.Title != "Short name" || s.MinLength != "2" || s.MaxLength != "5" {
+		t.Errorf("s = %+v, want title and length bounds", s)
+	}
+}
+
+// The canonical "takes nothing" schema is a closed object with no properties;
+// a schema under additionalProperties is a map, whose keys no field list can
+// name.
+func TestBuildFormClosedEmptyAndMap(t *testing.T) {
+	if fm := BuildForm(json.RawMessage(`{"additionalProperties":false,"properties":{},"type":"object"}`)); !fm.NoFields {
+		t.Errorf("a closed object with no properties takes nothing: %+v", fm)
+	}
+	if fm := BuildForm(json.RawMessage(`{"additionalProperties":{"type":"string"},"properties":{},"type":"object"}`)); !fm.UseRawFallback {
+		t.Errorf("a map-shaped object needs the raw editor: %+v", fm)
+	}
+}

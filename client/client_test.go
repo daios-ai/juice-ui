@@ -508,8 +508,9 @@ func TestCompleteTaskAlwaysSendsArgs(t *testing.T) {
 func TestImportInstallsAnApplicationByName(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"created":[{"id":"a1","name":"pets/index"}],"updated":[],"unchanged":[],"deactivated":[],
-	 "rejected":[{"key":"noDesc","reason":"missing description and summary"}]}`
+	f.reply = `{"created":[{"id":"a1","name":"pets/index","title":"Pets"}],"updated":[],"unchanged":[],"deactivated":[],
+	 "rejected":[{"key":"noDesc","location":"GET /pets","reason":"missing description and summary"}],
+	 "notices":[{"key":"index","location":"GET /","note":"input.properties.tag: nullable folded into type [T, \"null\"]"}]}`
 	res, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "http://spec", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -533,8 +534,14 @@ func TestImportInstallsAnApplicationByName(t *testing.T) {
 	if len(res.Created) != 1 || res.Created[0].ID != "a1" {
 		t.Fatalf("import result = %+v", res)
 	}
-	if len(res.Rejected) != 1 || res.Rejected[0].Key != "noDesc" {
-		t.Errorf("a rejected operation must be carried with its reason: %+v", res.Rejected)
+	if len(res.Rejected) != 1 || res.Rejected[0].Key != "noDesc" || res.Rejected[0].Location != "GET /pets" {
+		t.Errorf("a rejected operation must be carried with its place and reason: %+v", res.Rejected)
+	}
+	if len(res.Notices) != 1 || res.Notices[0].Key != "index" || res.Notices[0].Location != "GET /" || !strings.Contains(res.Notices[0].Note, "nullable") {
+		t.Errorf("a notice must be carried with its place and note: %+v", res.Notices)
+	}
+	if res.Created[0].Title != "Pets" {
+		t.Errorf("an action row carries its title: %+v", res.Created[0])
 	}
 	// Re-import by name alone: the kernel re-reads the document it recorded.
 	if _, err := f.client().ImportOpenAPI(context.Background(), "tok", "pets", "", nil); err != nil {
@@ -713,6 +720,7 @@ func TestCreateActionMarshalsMethodParams(t *testing.T) {
 	f.reply = `{"id":"a1","name":"weather","kind":"http"}`
 	in := CreateActionInput{
 		Name:   "weather",
+		Title:  "Weather now",
 		Kind:   "http",
 		Source: "https://api.x/{city}",
 		Method: "GET",
@@ -725,7 +733,7 @@ func TestCreateActionMarshalsMethodParams(t *testing.T) {
 	if err := json.Unmarshal(f.lastBody, &sent); err != nil {
 		t.Fatal(err)
 	}
-	if sent.Method != "GET" || len(sent.Params) != 2 || sent.Params[1] != (HTTPParam{Name: "units", In: "query"}) {
+	if sent.Method != "GET" || len(sent.Params) != 2 || sent.Params[1] != (HTTPParam{Name: "units", In: "query"}) || sent.Title != "Weather now" {
 		t.Errorf("sent = %+v", sent)
 	}
 
@@ -762,8 +770,16 @@ func TestUpdateActionSendsSourceAndAuth(t *testing.T) {
 	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{Visibility: &vis}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(f.lastBody), `"auth"`) {
-		t.Errorf("empty auth must be omitted: %s", f.lastBody)
+	if strings.Contains(string(f.lastBody), `"auth"`) || strings.Contains(string(f.lastBody), `"title"`) {
+		t.Errorf("empty auth and title must be omitted: %s", f.lastBody)
+	}
+	// A title-only update sends the title alone.
+	title := "A new title"
+	if _, err := f.client().UpdateAction(context.Background(), "tok", "a1", UpdateActionInput{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	if string(f.lastBody) != `{"target":"a1","title":"A new title"}` {
+		t.Errorf("title-only update body = %s", f.lastBody)
 	}
 }
 

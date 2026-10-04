@@ -409,12 +409,12 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .action-card.inactive { opacity: .55; }
 .media-link { display: block; }
 .media-link:hover { text-decoration: none; }
-/* Card head: the ref is the title/link (truncates); attribute chips sit right
-   and never get pushed out. */
-/* Card title row: ref on the left, price right-aligned (mockup card-top). */
+/* Card title row: the action's title is the link (truncates), price
+   right-aligned; the ref sits on its own line beneath. */
 .card-top { display: flex; align-items: baseline; gap: .6rem; margin: .55rem 0 .15rem; }
 .card-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); font-size: 1rem; }
 .card-top .price { flex: 0 0 auto; font-size: .9rem; }
+.card-ref { margin: 0 0 .15rem; font-size: .78rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-desc { margin: 0; font-size: .85rem; color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-desc .chip { vertical-align: 1px; }
 /* Freshness of a remote-backed row's terms (the kernel's observed_at). Quiet:
@@ -519,6 +519,8 @@ button { font-family: inherit; cursor: pointer; }
 
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: .25rem; }
+/* A checkbox choice under a field (a nullable field's explicit null). */
+label.check { display: inline-flex; align-items: center; gap: .35rem; font-weight: 400; margin: .3rem 0 0; }
 .field { margin-bottom: 1rem; }
 /* Input-mode switch (fields | JSON) — the same bare tab-group switch idiom as the
    yours|everyone scope switch, sized down and right-aligned above the fields. It

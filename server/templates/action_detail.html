@@ -6,7 +6,7 @@
   {{template "_media" $d.Action}}
   <div>
     <div class="action-head">
-      <h1 class="mono">{{template "_ref" (ref $d.Action.Ref "")}}</h1>
+      <h1>{{$d.Action.Title}}</h1>
       <span class="chips">
         {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
         {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
@@ -14,6 +14,7 @@
         {{if not $d.Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
       </span>
     </div>
+    <p class="subtitle">{{template "_ref" (ref $d.Action.Ref "")}}</p>
     {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
     {{template "_stat_strip" (statStrip $d.Action.Price $d.Action.Experience true true)}}
   </div>
@@ -91,77 +92,37 @@
 </div>
 
 <dialog id="form-action-edit" class="modal-form"{{if eq $d.OpenForm "action-edit"}} open{{end}} aria-label="Edit action">
-  <div class="modal-head"><h2>Edit {{$d.Action.Name}}</h2><a class="modal-close" href="/actions/{{$d.Action.ID}}" data-modal-close aria-label="Close">×</a></div>
+  {{$e := $d.Edit}}
+  <div class="modal-head"><h2>Edit {{$d.Action.Title}}</h2><a class="modal-close" href="/actions/{{$d.Action.ID}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
+    {{with $e.Error}}{{template "_error" .}}{{end}}
     <form class="stack" method="post" action="/actions/{{$d.Action.ID}}/update">
       {{$.CSRFField}}
       <div class="field">
+        <label for="edit-title">Title</label>
+        <input id="edit-title" name="title" type="text" maxlength="80" value="{{$e.Title}}" required>
+      </div>
+      <div class="field">
         <label for="edit-description">Description</label>
-        <input id="edit-description" name="description" type="text" value="{{$d.Action.Description}}">
+        <textarea id="edit-description" name="description" rows="1">{{$e.Description}}</textarea>
       </div>
-      <div class="field">
-        <label for="edit-input-schema">Input schema (JSON)</label>
-        <p class="help">Schema hints only; the kernel validates. Leave blank to keep the current schema.</p>
-        <textarea id="edit-input-schema" name="input_schema" placeholder='{"type":"object","properties":{}}' rows="1">{{jsonEdit $d.Action.InputSchema}}</textarea>
-      </div>
-      <div class="field">
-        <label for="edit-output-schema">Output schema (JSON)</label>
-        <textarea id="edit-output-schema" name="output_schema" placeholder='{"type":"object"}' rows="1">{{jsonEdit $d.Action.OutputSchema}}</textarea>
-      </div>
-      {{if $d.Action.HTTP}}
+      {{if $e.HasHTTP}}
       <div class="field">
         <label for="edit-source">Source URL</label>
-        <input id="edit-source" name="source" type="text" value="{{$d.Action.HTTP.URL}}">
+        <input id="edit-source" name="source" type="text" value="{{$e.Source}}">
       </div>
-      <div class="field">
-        <label for="edit-method">Method</label>
-        <select id="edit-method" name="method">
-          {{$m := $d.Action.HTTP.Method}}
-          <option value="POST" {{if eq $m "POST"}}selected{{end}}>POST</option>
-          <option value="GET" {{if eq $m "GET"}}selected{{end}}>GET</option>
-          <option value="PUT" {{if eq $m "PUT"}}selected{{end}}>PUT</option>
-          <option value="PATCH" {{if eq $m "PATCH"}}selected{{end}}>PATCH</option>
-          <option value="DELETE" {{if eq $m "DELETE"}}selected{{end}}>DELETE</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Parameter bindings</label>
-        <p class="help">Bind input fields to the request. Remove all for implicit routing.</p>
-        <div data-param-rows>
-          {{range $d.Action.HTTP.Params}}
-          <div class="row compact" data-param-row>
-            <input class="stretch" name="param_name" type="text" value="{{.Name}}" autocomplete="off">
-            <select class="input-sm" name="param_in">
-              <option value="path" {{if eq .In "path"}}selected{{end}}>path</option>
-              <option value="query" {{if eq .In "query"}}selected{{end}}>query</option>
-              <option value="body" {{if eq .In "body"}}selected{{end}}>body</option>
-            </select>
-            <button type="button" class="btn-quiet" data-param-remove>Remove</button>
-          </div>
-          {{else}}
-          <div class="row compact" data-param-row>
-            <input class="stretch" name="param_name" type="text" placeholder="field name" autocomplete="off">
-            <select class="input-sm" name="param_in">
-              <option value="path">path</option>
-              <option value="query">query</option>
-              <option value="body" selected>body</option>
-            </select>
-            <button type="button" class="btn-quiet" data-param-remove>Remove</button>
-          </div>
-          {{end}}
-        </div>
-        <button type="button" class="btn" data-param-add>Add parameter</button>
-      </div>
+      {{template "_form_http" $e}}
       {{end}}
       <div class="field">
         <label for="edit-price">Price</label>
-        <input id="edit-price" name="price" type="number" min="0" step="{{amountStep}}" value="{{amountInput $d.Action.Price}}" class="input-sm">
+        <input id="edit-price" name="price" type="number" min="0" step="{{amountStep}}" value="{{$e.Price}}" class="input-sm">
       </div>
+      {{template "_form_schemas" $e}}
       <div class="cluster">
         <button class="btn" type="submit">Save changes</button>
         <a class="btn" href="/actions/{{$d.Action.ID}}" data-modal-close>Cancel</a>
       </div>
-      <p class="help muted flush">Saving deactivates the action until you re-enable it.</p>
+      <p class="help muted flush">A price, schema or source change deactivates the action until you re-enable it.</p>
     </form>
     <hr class="card-sep">
     <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">

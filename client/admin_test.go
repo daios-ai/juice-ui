@@ -258,11 +258,11 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	// action row is {name, description, price} only and the account arrives inline
 	// — shapes captured live 2026-08-06.
 	f.reply = `{"handle":"k","public_key":"PKEY","about":"a test kernel","online":true,"source":"live",
-	 "actions":[{"name":"seller@bee/greet","price":12,"description":"Greets a person."}],
+	 "actions":[{"name":"seller@bee/greet","title":"Greet a person","price":12,"description":"Greets a person."}],
 	 "account":{"available":5,"locked":0,"suspended":false},
 	 "evidence":[{"issuer_public_key":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
 	   "corroborated_uses":1,"avg_latency_ms":90760.5,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
-	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"error":""}}`
+	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"version":"juice-kernel/dev","error":""}}`
 	insp, err := f.client().AdminInspect(context.Background(), "tok", "PKEY")
 	if err != nil {
 		t.Fatal(err)
@@ -273,10 +273,10 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	if !insp.Online || insp.Source != "live" {
 		t.Errorf("top-level online/source not decoded: online=%v source=%q", insp.Online, insp.Source)
 	}
-	if insp.Reachability.Path != "direct" || insp.Reachability.RTTMillis != 7 {
+	if insp.Reachability.Path != "direct" || insp.Reachability.RTTMillis != 7 || insp.Reachability.Version != "juice-kernel/dev" {
 		t.Errorf("reachability diagnostics not decoded: %+v", insp.Reachability)
 	}
-	if len(insp.Actions) != 1 || insp.Actions[0].Name != "seller@bee/greet" || insp.Actions[0].Price != 12 {
+	if len(insp.Actions) != 1 || insp.Actions[0].Name != "seller@bee/greet" || insp.Actions[0].Title != "Greet a person" || insp.Actions[0].Price != 12 {
 		t.Errorf("peer action not decoded: %+v", insp.Actions)
 	}
 	// The account arrives inline, so the page needs no roster scan. It is

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,6 +131,7 @@ type actionView struct {
 	FirstPayee   bool // viewer has never paid this action's owner (first-payee hint)
 	Outcome      *Outcome
 	OpenForm     string
+	Edit         actionDraft // the edit dialog's values
 	Error        string
 	// Proposed marks the page as the planner's choice rather than an ordinary
 	// open, and ProposedMessage carries anything the model said — which is often
@@ -156,6 +158,7 @@ type actionsView struct {
 	Superuser   bool
 	Pager       Pager // paging over the (filtered) management table
 	OpenForm    string
+	Create      actionDraft // the create dialog's values
 	Error       string
 	Notice      string
 }
@@ -1112,7 +1115,7 @@ func (s *Server) getTasksBadge(w http.ResponseWriter, r *http.Request) {
 // ---- action detail & run ----
 
 func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
-	s.renderAction(w, r, r.PathValue("id"), nil)
+	s.renderAction(w, r, r.PathValue("id"), nil, nil)
 }
 
 // renderAction renders one action's page. proposed pre-fills the run form's
@@ -1120,7 +1123,10 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 // open. The two callers are the action page itself and the proposal (§6.2), and
 // they differ in nothing else: a proposal is the same page, already filled in,
 // and the same confirm still has to be pressed.
-func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string, proposal *proposal) {
+//
+// edit is a refused edit to re-render in the open dialog; nil fills the dialog
+// from the action itself.
+func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string, proposal *proposal, edit *actionDraft) {
 	ctx := r.Context()
 	var view actionView
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -1180,7 +1186,13 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 			view.Form.Example = raw
 		}
 	}
-	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
+	status := http.StatusOK
+	if edit != nil {
+		view.Edit, view.OpenForm, status = *edit, "action-edit", http.StatusUnprocessableEntity
+	} else {
+		view.Edit = s.draftOf(view.Action)
+	}
+	s.renderPage(w, r, status, "action_detail", view.Action.Title, view)
 }
 
 // getDiscovered opens an action this kernel has only heard of through gossip.
@@ -1288,7 +1300,8 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		_ = s.render.Fragment(w, http.StatusOK, "_call_outcome", *view.Outcome)
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Name, view)
+	view.Edit = s.draftOf(view.Action)
+	s.renderPage(w, r, http.StatusOK, "action_detail", view.Action.Title, view)
 }
 
 // isHTMX reports whether the request came from htmx (so we can return a fragment
@@ -1308,6 +1321,12 @@ func orDefaultStr(v, def string) string {
 // from your transactions) and browse the public catalog. A superuser can widen
 // the management list to every action with ?scope=all.
 func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
+	s.renderWorkshop(w, r, nil)
+}
+
+// renderWorkshop renders the workshop. create is a refused create to re-render
+// in the open dialog; nil renders the page as opened.
+func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *actionDraft) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
 	scope := r.URL.Query().Get("scope")   // "" | "all" (superuser)
@@ -1391,45 +1410,34 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 	start, end, hasNext := pageSlice(len(view.Mine), offset, pageSize)
 	view.Mine = view.Mine[start:end]
 	view.Pager = pageNav(r, offset, pageSize, hasNext)
-	s.renderPage(w, r, http.StatusOK, "workshop", "Workshop", view, view.User.Available)
+	status := http.StatusOK
+	if create != nil {
+		view.Create, view.OpenForm, status = *create, "action-create", http.StatusUnprocessableEntity
+	}
+	s.renderPage(w, r, status, "workshop", "Workshop", view, view.User.Available)
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	price, err := s.parseAmount(r.FormValue("price"))
-	if err != nil {
-		s.flashRedirect(w, r, "/workshop", "error", capitalize(err.Error())+".")
-		return
-	}
-	in := client.CreateActionInput{
-		Name:        strings.TrimSpace(r.FormValue("name")),
-		Kind:        r.FormValue("kind"),
-		Source:      strings.TrimSpace(r.FormValue("source")),
-		Description: r.FormValue("description"),
-		Price:       price,
-	}
-	switch in.Kind {
-	case "http":
-		in.Method = strings.TrimSpace(r.FormValue("method"))
-		in.Params = parseHTTPParams(r)
-	case "wasm":
-		// The compiled module, base64, as sys/tinygo/compile returns it. The
-		// kernel validates it; the UI carries it.
-		in.WasmArtifact = strings.TrimSpace(r.FormValue("wasm_artifact"))
-	}
-	if !s.applySchemas(w, r, "/workshop", &in.InputSchema, &in.OutputSchema) {
-		return
-	}
-
-	in.Auth = upstreamAuth(r)
-
+	d := readDraft(r)
+	in, err := s.createInput(d, r)
 	var created client.Action
-	err = s.sessions.Do(ctx, func(tok string) error {
-		a, e := s.client.CreateAction(ctx, tok, in)
-		created = a
-		return e
-	})
-	s.flashResult(w, r, err, "/workshop", "Action '"+created.Name+"' created (inactive). Enable it when ready.")
+	if err == nil {
+		err = s.sessions.Do(ctx, func(tok string) error {
+			a, e := s.client.CreateAction(ctx, tok, in)
+			created = a
+			return e
+		})
+	}
+	switch {
+	case isAuthErr(err):
+		s.handleErr(w, r, err)
+	case err != nil:
+		d.Error = draftError(err)
+		s.renderWorkshop(w, r, &d)
+	default:
+		s.flashRedirect(w, r, "/workshop", "success", "Action '"+created.Title+"' created (inactive). Enable it when ready.")
+	}
 }
 
 func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
@@ -1462,9 +1470,18 @@ func (s *Server) postImport(w http.ResponseWriter, r *http.Request) {
 		kind = "info"
 		var parts []string
 		for _, rj := range res.Rejected {
-			parts = append(parts, rj.Key+" — "+rj.Reason)
+			parts = append(parts, rj.Key+" ("+rj.Location+") — "+rj.Reason)
 		}
 		msg += " Not installed: " + strings.Join(parts, "; ") + "."
+	}
+	// A notice names an installed operation whose stored contract differs from
+	// the document, because the kernel folded a form into its schema subset.
+	if len(res.Notices) > 0 {
+		var parts []string
+		for _, n := range res.Notices {
+			parts = append(parts, n.Key+" — "+n.Note)
+		}
+		msg += " Adjusted: " + strings.Join(parts, "; ") + "."
 	}
 	s.flashRedirect(w, r, "/workshop", kind, msg)
 }
@@ -1544,36 +1561,157 @@ func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/actions/"+id, "success", "Price updated. Action is now inactive.")
 }
 
-// schemaFromForm reads and validates a JSON-schema form field. An empty field
-// is valid and returns nil (meaning "leave unset"); invalid JSON returns an
-// error. Shared by action create and update so the rule is defined once.
-func schemaFromForm(r *http.Request, key string) (json.RawMessage, error) {
-	raw := strings.TrimSpace(r.FormValue(key))
-	if raw == "" {
-		return nil, nil
-	}
-	if !json.Valid([]byte(raw)) {
-		return nil, fmt.Errorf("The %s is not valid JSON.", key)
-	}
-	return json.RawMessage(raw), nil
+// actionDraft is what a person typed into the create or edit dialog, as
+// typed. A refused submission — a local parse error or the kernel's refusal —
+// re-renders the dialog from it, so nothing typed is lost. Secrets are not
+// kept: they never reach a page, so their inputs come back empty and required.
+type actionDraft struct {
+	Title, Name, Kind, Description, Price string
+	Source, Method                        string
+	Params                                []client.HTTPParam
+	HasHTTP                               bool // the form carried the http section
+	InputSchema, OutputSchema             string
+	WasmArtifact                          string
+	AuthScheme, AuthName, AuthUser        string // the credential's non-secret part
+	Error                                 string
 }
 
-// applySchemas reads the input_schema and output_schema form fields into the given
-// destinations (shared by action create and update). On invalid JSON it flashes a
-// form error to dest and returns false, so the caller returns.
-func (s *Server) applySchemas(w http.ResponseWriter, r *http.Request, dest string, input, output *json.RawMessage) bool {
-	for _, f := range []struct {
-		key string
-		dst *json.RawMessage
-	}{{"input_schema", input}, {"output_schema", output}} {
-		raw, err := schemaFromForm(r, f.key)
-		if err != nil {
-			s.flashRedirect(w, r, dest, "error", err.Error())
-			return false
-		}
-		*f.dst = raw
+// readDraft reads the create/edit dialog. One reader serves both, so the two
+// dialogs cannot read a field differently.
+func readDraft(r *http.Request) actionDraft {
+	_ = r.ParseForm()
+	return actionDraft{
+		Title:        strings.TrimSpace(r.FormValue("title")),
+		Name:         strings.TrimSpace(r.FormValue("name")),
+		Kind:         r.FormValue("kind"),
+		Description:  r.FormValue("description"),
+		Price:        strings.TrimSpace(r.FormValue("price")),
+		Source:       strings.TrimSpace(r.FormValue("source")),
+		Method:       strings.TrimSpace(r.FormValue("method")),
+		Params:       parseHTTPParams(r),
+		HasHTTP:      r.PostForm.Has("method"),
+		InputSchema:  strings.TrimSpace(r.FormValue("input_schema")),
+		OutputSchema: strings.TrimSpace(r.FormValue("output_schema")),
+		WasmArtifact: strings.TrimSpace(r.FormValue("wasm_artifact")),
+		AuthScheme:   r.FormValue("auth_scheme"),
+		AuthName:     strings.TrimSpace(r.FormValue("auth_param_name")),
+		AuthUser:     r.FormValue("auth_basic_username"),
 	}
-	return true
+}
+
+// draftOf fills the edit dialog from the action as the kernel serves it.
+func (s *Server) draftOf(a client.Action) actionDraft {
+	d := actionDraft{
+		Title:        a.Title,
+		Description:  a.Description,
+		InputSchema:  jsonEdit(a.InputSchema),
+		OutputSchema: jsonEdit(a.OutputSchema),
+	}
+	if u, ok := s.identity.Unit(); ok {
+		d.Price = u.Input(a.Price)
+	}
+	if a.HTTP != nil {
+		d.HasHTTP, d.Source, d.Method, d.Params = true, a.HTTP.URL, a.HTTP.Method, a.HTTP.Params
+	}
+	return d
+}
+
+// createInput turns a draft into the create body, refusing what is not
+// well-formed before anything is sent.
+func (s *Server) createInput(d actionDraft, r *http.Request) (client.CreateActionInput, error) {
+	in := client.CreateActionInput{Name: d.Name, Title: d.Title, Kind: d.Kind, Source: d.Source, Description: d.Description}
+	var err error
+	if in.Price, err = s.parseAmount(d.Price); err != nil {
+		return in, err
+	}
+	if in.InputSchema, in.OutputSchema, err = draftSchemas(d); err != nil {
+		return in, err
+	}
+	switch d.Kind {
+	case "http":
+		in.Method, in.Params = d.Method, d.Params
+	case "wasm":
+		// The compiled module, base64, as sys/tinygo/compile returns it. The
+		// kernel validates it; the UI carries it.
+		in.WasmArtifact = d.WasmArtifact
+	}
+	in.Auth = upstreamAuth(r)
+	return in, nil
+}
+
+// updateInput turns a draft into the update body, sending only what differs
+// from the action as served. The kernel deactivates an action on any schema in
+// an update, even an identical one (verified live, ba7f5e5), so resending what
+// the dialog merely showed would make a title edit cost the action its live
+// state. ok is false when nothing differs.
+func (s *Server) updateInput(d actionDraft, cur client.Action) (in client.UpdateActionInput, ok bool, err error) {
+	was := s.draftOf(cur)
+	if d.Title != was.Title {
+		in.Title, ok = &d.Title, true
+	}
+	if d.Description != was.Description {
+		in.Description, ok = &d.Description, true
+	}
+	if d.Price != "" {
+		p, err := s.parseAmount(d.Price)
+		if err != nil {
+			return in, false, err
+		}
+		if p != cur.Price {
+			in.Price, ok = &p, true
+		}
+	}
+	inSchema, outSchema, err := draftSchemas(d)
+	if err != nil {
+		return in, false, err
+	}
+	if inSchema != nil && !sameJSON(inSchema, cur.InputSchema) {
+		in.InputSchema, ok = inSchema, true
+	}
+	if outSchema != nil && !sameJSON(outSchema, cur.OutputSchema) {
+		in.OutputSchema, ok = outSchema, true
+	}
+	if d.HasHTTP && (d.Source != was.Source || d.Method != was.Method || !reflect.DeepEqual(d.Params, was.Params)) {
+		in.Source, in.Method, in.Params, ok = &d.Source, d.Method, d.Params, true
+	}
+	return in, ok, nil
+}
+
+// sameJSON reports whether two JSON texts hold the same value, whatever their
+// spacing or key order.
+func sameJSON(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
+}
+
+// draftSchemas reads the two schema texts. An empty text sends nothing; text
+// that is not JSON is refused here, since the kernel could only say less.
+func draftSchemas(d actionDraft) (in, out json.RawMessage, err error) {
+	for _, f := range []struct {
+		name, text string
+		dst        *json.RawMessage
+	}{{"input schema", d.InputSchema, &in}, {"output schema", d.OutputSchema, &out}} {
+		if f.text == "" {
+			continue
+		}
+		if !json.Valid([]byte(f.text)) {
+			return nil, nil, fmt.Errorf("the %s is not valid JSON", f.name)
+		}
+		*f.dst = json.RawMessage(f.text)
+	}
+	return in, out, nil
+}
+
+// draftError is the sentence a refused dialog shows: the kernel's own, mapped,
+// or the local parse error as a sentence.
+func draftError(err error) string {
+	if _, ok := client.AsKernelError(err); ok {
+		return userMessage(err)
+	}
+	return capitalize(err.Error()) + "."
 }
 
 // parseHTTPParams reads the repeated param_name/param_in form rows into ordered
@@ -1601,45 +1739,40 @@ func parseHTTPParams(r *http.Request) []client.HTTPParam {
 func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	if err := r.ParseForm(); err != nil {
-		s.flashRedirect(w, r, "/actions/"+id, "error", "Could not read the form.")
-		return
-	}
-	desc := r.FormValue("description")
-	in := client.UpdateActionInput{Description: &desc}
-	if r.PostForm.Has("price") {
-		p, err := s.parseAmount(r.FormValue("price"))
-		if err != nil {
-			s.flashRedirect(w, r, "/actions/"+id, "error", capitalize(err.Error())+".")
-			return
-		}
-		in.Price = &p
-	}
-	if !s.applySchemas(w, r, "/actions/"+id, &in.InputSchema, &in.OutputSchema) {
-		return
-	}
-	// Source/method/params come only from the http subsection, which renders the
-	// method select. Absent it (e.g. a wasm action), leave the request untouched.
-	if r.PostForm.Has("method") {
-		source := strings.TrimSpace(r.FormValue("source"))
-		in.Source = &source
-		in.Method = strings.TrimSpace(r.FormValue("method"))
-		in.Params = parseHTTPParams(r)
-	}
+	d := readDraft(r)
 	var rows []client.Action
+	changed := false
 	err := s.sessions.Do(ctx, func(tok string) error {
-		a, e := s.client.UpdateAction(ctx, tok, id, in)
-		rows = a
+		cur, e := s.client.GetAction(ctx, tok, id)
+		if e != nil {
+			return e
+		}
+		in, ok, e := s.updateInput(d, cur)
+		if e != nil || !ok {
+			return e
+		}
+		changed = true
+		rows, e = s.client.UpdateAction(ctx, tok, id, in)
 		return e
 	})
-	// The kernel decides what an edit costs: a price, schema or source change
-	// deactivates, a description change does not (kernel §D4). Report the state it
-	// returned rather than predicting one.
-	msg := "Action updated."
-	if len(rows) == 1 && !rows[0].Active {
-		msg += " It is now inactive — enable it when ready."
+	switch {
+	case isAuthErr(err):
+		s.handleErr(w, r, err)
+	case err != nil:
+		d.Error = draftError(err)
+		s.renderAction(w, r, id, nil, &d)
+	case !changed:
+		s.flashRedirect(w, r, "/actions/"+id, "info", "No changes.")
+	default:
+		// The kernel decides what an edit costs: a price, schema or source change
+		// deactivates, a title or description change does not (kernel §D4).
+		// Report the state it returned rather than predicting one.
+		msg := "Action updated."
+		if len(rows) == 1 && !rows[0].Active {
+			msg += " It is now inactive — enable it when ready."
+		}
+		s.flashRedirect(w, r, "/actions/"+id, "success", msg)
 	}
-	s.flashResult(w, r, err, "/actions/"+id, msg)
 }
 
 func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
@@ -2123,12 +2256,23 @@ func buildArgs(r *http.Request) (json.RawMessage, error) {
 	if useRaw {
 		return rawJSONOrEmpty(r.FormValue("raw_args"))
 	}
+	// Three states per field, kept distinct: blank is omitted, a value is sent,
+	// and null is sent only when the person ticks the field's null box — never
+	// derived from a blank input, which would make omission impossible.
 	obj := map[string]json.RawMessage{}
+	for key := range r.Form {
+		if strings.HasPrefix(key, "n_") {
+			obj[key[2:]] = json.RawMessage("null")
+		}
+	}
 	for key := range r.Form {
 		if !strings.HasPrefix(key, "f_") {
 			continue
 		}
 		name := key[2:]
+		if _, isNull := obj[name]; isNull {
+			continue
+		}
 		val := strings.TrimSpace(r.Form.Get(key))
 		if val == "" {
 			continue
@@ -2202,7 +2346,7 @@ func catalogAsResults(actions []client.Action, q string) []actionCardView {
 	ql := strings.ToLower(q)
 	var out []actionCardView
 	for _, a := range actions {
-		if ql != "" && !strings.Contains(strings.ToLower(a.Name+" "+a.Description), ql) {
+		if ql != "" && !strings.Contains(strings.ToLower(a.Title+" "+a.Name+" "+a.Description), ql) {
 			continue
 		}
 		out = append(out, actionCardView{Action: a})
@@ -2285,6 +2429,24 @@ func (s *Server) nativeOffered(ctx context.Context, token, ref string) bool {
 //
 // The delegated schemes are absent by construction: they hold no secret here,
 // each caller supplying their own through the Grants surface (§6.4).
+// authPanel feeds the _form_auth partial: the input id prefix, the owner-held
+// schemes it offers, and the non-secret part of a refused submission.
+type authPanel struct {
+	ID, Scheme, Name, User string
+}
+
+// Schemes are the owner-held schemes the panel offers. The delegated schemes
+// are absent by construction: each caller supplies their own through Grants.
+func (authPanel) Schemes() []string { return []string{"bearer", "basic", "header", "query"} }
+
+// AuthPanel is the create dialog's credential panel, keeping what was typed.
+func (d actionDraft) AuthPanel(id string) authPanel {
+	return authPanel{ID: id, Scheme: d.AuthScheme, Name: d.AuthName, User: d.AuthUser}
+}
+
+// newAuthPanel is an empty credential panel (the import dialog).
+func newAuthPanel(id string) authPanel { return authPanel{ID: id} }
+
 func upstreamAuth(r *http.Request) json.RawMessage {
 	scheme := r.FormValue("auth_scheme")
 	if scheme == "" {
@@ -2392,7 +2554,7 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", capitalize(userMessage(e))+".")
 		return
 	}
-	s.renderAction(w, r, id, &proposal{Args: args, Raws: raws, Message: message})
+	s.renderAction(w, r, id, &proposal{Args: args, Raws: raws, Message: message}, nil)
 }
 
 // proposal is the planner's choice as the action page renders it: the arguments

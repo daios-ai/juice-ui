@@ -90,6 +90,7 @@ func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
 type PeerAction struct {
 	ActionID    string `json:"action_id"`
 	Name        string `json:"name"`
+	Title       string `json:"title"`
 	Description string `json:"description"`
 	Price       int64  `json:"price"`
 	Indicative  bool   `json:"indicative"`
@@ -132,6 +133,7 @@ type Evidence struct {
 type Reachability struct {
 	Path      string   `json:"path"` // "direct" | "relayed" | "unreachable" | …
 	RTTMillis int64    `json:"rtt_millis"`
+	Version   string   `json:"version"` // the peer's agent string, juice-kernel/<version>
 	Protocols []string `json:"protocols"`
 	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }

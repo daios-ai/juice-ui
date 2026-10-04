@@ -5,32 +5,33 @@
      ids. The delegated schemes are absent by construction: they hold no secret
      here, each caller supplying their own through Grants (§6.4). */}}
 {{define "_form_auth"}}
-<details class="auth-panel">
+<details class="auth-panel"{{if .Scheme}} open{{end}}>
   <summary>Upstream authentication (optional)</summary>
   <div class="field">
-    <label for="{{.}}-auth-scheme">Scheme</label>
-    <select id="{{.}}-auth-scheme" name="auth_scheme">
+    <label for="{{.ID}}-auth-scheme">Scheme</label>
+    <select id="{{.ID}}-auth-scheme" name="auth_scheme">
       <option value="">none</option>
-      <option value="bearer">bearer</option>
-      <option value="basic">basic</option>
-      <option value="header">header</option>
-      <option value="query">query</option>
+      {{range .Schemes}}<option value="{{.}}"{{if eq . $.Scheme}} selected{{end}}>{{.}}</option>{{end}}
     </select>
   </div>
+  {{/* A secret input is required: the panel of an unchosen scheme is disabled
+       (rendered so, and kept so by the scheme select), so only the chosen
+       scheme's secret is asked for, a form without JavaScript still submits,
+       and a refused form — which never echoes a secret — asks for it again. */}}
   <div data-auth-scheme="bearer" hidden>
-    <div class="field flush"><label for="{{.}}-auth-bearer">Bearer token</label><input id="{{.}}-auth-bearer" name="auth_bearer_token" type="password" autocomplete="off"></div>
+    <div class="field flush"><label for="{{.ID}}-auth-bearer">Bearer token</label><input id="{{.ID}}-auth-bearer" name="auth_bearer_token" type="password" autocomplete="off" required{{if ne .Scheme "bearer"}} disabled{{end}}></div>
   </div>
   <div data-auth-scheme="basic" hidden>
-    <div class="field"><label for="{{.}}-auth-user">Username</label><input id="{{.}}-auth-user" name="auth_basic_username" type="text" autocomplete="off"></div>
-    <div class="field flush"><label for="{{.}}-auth-pass">Password</label><input id="{{.}}-auth-pass" name="auth_basic_password" type="password" autocomplete="off"></div>
+    <div class="field"><label for="{{.ID}}-auth-user">Username</label><input id="{{.ID}}-auth-user" name="auth_basic_username" type="text" autocomplete="off" value="{{.User}}" required{{if ne .Scheme "basic"}} disabled{{end}}></div>
+    <div class="field flush"><label for="{{.ID}}-auth-pass">Password</label><input id="{{.ID}}-auth-pass" name="auth_basic_password" type="password" autocomplete="off" required{{if ne .Scheme "basic"}} disabled{{end}}></div>
   </div>
   <div data-auth-scheme="header" hidden>
-    <div class="field"><label for="{{.}}-auth-hname">Header name</label><input id="{{.}}-auth-hname" name="auth_param_name" type="text" autocomplete="off"></div>
-    <div class="field flush"><label for="{{.}}-auth-hval">Header value</label><input id="{{.}}-auth-hval" name="auth_param_value" type="password" autocomplete="off"></div>
+    <div class="field"><label for="{{.ID}}-auth-hname">Header name</label><input id="{{.ID}}-auth-hname" name="auth_param_name" type="text" autocomplete="off" value="{{.Name}}" required{{if ne .Scheme "header"}} disabled{{end}}></div>
+    <div class="field flush"><label for="{{.ID}}-auth-hval">Header value</label><input id="{{.ID}}-auth-hval" name="auth_param_value" type="password" autocomplete="off" required{{if ne .Scheme "header"}} disabled{{end}}></div>
   </div>
   <div data-auth-scheme="query" hidden>
-    <div class="field"><label for="{{.}}-auth-qname">Query name</label><input id="{{.}}-auth-qname" name="auth_param_name" type="text" autocomplete="off"></div>
-    <div class="field flush"><label for="{{.}}-auth-qval">Query value</label><input id="{{.}}-auth-qval" name="auth_param_value" type="password" autocomplete="off"></div>
+    <div class="field"><label for="{{.ID}}-auth-qname">Query name</label><input id="{{.ID}}-auth-qname" name="auth_param_name" type="text" autocomplete="off" value="{{.Name}}" required{{if ne .Scheme "query"}} disabled{{end}}></div>
+    <div class="field flush"><label for="{{.ID}}-auth-qval">Query value</label><input id="{{.ID}}-auth-qval" name="auth_param_value" type="password" autocomplete="off" required{{if ne .Scheme "query"}} disabled{{end}}></div>
   </div>
   <p class="help muted">Secrets are write-only — stored encrypted, never shown again.</p>
 </details>
@@ -45,50 +46,36 @@
 */}}
 
 {{define "_form_action_create"}}
+{{$c := .Data.Create}}
 <dialog id="form-action-create" class="modal-form"{{if eq .Data.OpenForm "action-create"}} open{{end}} aria-label="Create action">
   <div class="modal-head"><h2>Create action</h2><a class="modal-close" href="/workshop" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
+    {{with $c.Error}}{{template "_error" .}}{{end}}
     <form class="stack" method="post" action="/actions">
       {{.CSRFField}}
       <div class="field">
+        <label for="c-title">Title</label>
+        <input id="c-title" name="title" type="text" placeholder="Summarize a web page" maxlength="80" value="{{$c.Title}}" required>
+      </div>
+      <div class="field">
         <label for="c-name">Name</label>
-        <input id="c-name" name="name" type="text" placeholder="my-action" required>
+        <input id="c-name" name="name" type="text" class="mono" placeholder="my-action" value="{{$c.Name}}" required>
       </div>
       <div class="field">
         <label for="c-kind">Kind</label>
         <select id="c-kind" name="kind">
           <option value="http">http</option>
-          <option value="wasm">wasm</option>
+          <option value="wasm"{{if eq $c.Kind "wasm"}} selected{{end}}>wasm</option>
         </select>
       </div>
       <div class="field">
         <label for="c-source">Source</label>
         <p class="help">For http: the endpoint URL. For wasm: a base64 artifact from sys/tinygo/compile.</p>
-        <input id="c-source" name="source" type="text" placeholder="https://api.example.com/v1/thing">
+        <input id="c-source" name="source" type="text" placeholder="https://api.example.com/v1/thing" value="{{$c.Source}}">
       </div>
       <div data-kind="http">
-        <div class="field">
-          <label for="c-method">Method</label>
-          <select id="c-method" name="method">
-            <option value="POST">POST</option><option value="GET">GET</option>
-            <option value="PUT">PUT</option><option value="PATCH">PATCH</option><option value="DELETE">DELETE</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Parameter bindings</label>
-          <p class="help">Bind input fields to path/query/body. Leave empty for implicit routing.</p>
-          <div data-param-rows>
-            <div class="row compact" data-param-row>
-              <input class="stretch" name="param_name" type="text" placeholder="field name" autocomplete="off">
-              <select class="input-sm" name="param_in">
-                <option value="path">path</option><option value="query">query</option><option value="body" selected>body</option>
-              </select>
-              <button type="button" class="btn-quiet" data-param-remove>Remove</button>
-            </div>
-          </div>
-          <button type="button" class="btn" data-param-add>Add parameter</button>
-        </div>
-        {{template "_form_auth" "c"}}
+        {{template "_form_http" $c}}
+        {{template "_form_auth" ($c.AuthPanel "c")}}
       </div>
       {{/* A kind=wasm action is its compiled module. sys/tinygo/compile returns
            one, and without somewhere to put it a person can compile in the UI
@@ -99,25 +86,18 @@
         <div class="field">
           <label for="c-artifact">Compiled artifact</label>
           <p class="help">Base64, as sys/tinygo/compile returns it.</p>
-          <textarea id="c-artifact" name="wasm_artifact" rows="1" class="mono"></textarea>
+          <textarea id="c-artifact" name="wasm_artifact" rows="1" class="mono">{{$c.WasmArtifact}}</textarea>
         </div>
       </div>
       <div class="field">
         <label for="c-desc">Description</label>
-        <textarea id="c-desc" name="description" placeholder="What this action does — used for discovery and function calling." rows="1"></textarea>
+        <textarea id="c-desc" name="description" placeholder="What this action does — used for discovery and function calling." rows="1">{{$c.Description}}</textarea>
       </div>
       <div class="field">
         <label for="c-price">Price</label>
-        <input id="c-price" name="price" type="number" min="0" step="{{amountStep}}" value="0" class="input-sm">
+        <input id="c-price" name="price" type="number" min="0" step="{{amountStep}}" value="{{with $c.Price}}{{.}}{{else}}0{{end}}" class="input-sm">
       </div>
-      <div class="field">
-        <label for="c-in">Input schema (JSON)</label>
-        <textarea id="c-in" name="input_schema" placeholder='{"type":"object","properties":{}}' rows="1"></textarea>
-      </div>
-      <div class="field">
-        <label for="c-out">Output schema (JSON)</label>
-        <textarea id="c-out" name="output_schema" placeholder='{"type":"object"}' rows="1"></textarea>
-      </div>
+      {{template "_form_schemas" $c}}
       <div class="cluster">
         <button class="btn" type="submit">Create action</button>
         <a class="btn" href="/workshop" data-modal-close>Cancel</a>
@@ -126,6 +106,57 @@
     </form>
   </div>
 </dialog>
+{{end}}
+
+{{/* _form_http — an http action's method and parameter bindings, shared by
+     the create and edit dialogs, which never share a page, so fixed ids are
+     safe. Input: actionDraft. */}}
+{{define "_form_http"}}
+<div class="field">
+  <label for="http-method">Method</label>
+  <select id="http-method" name="method">
+    {{$m := .Method}}
+    {{range $v := httpMethods}}<option value="{{$v}}"{{if eq $v $m}} selected{{end}}>{{$v}}</option>{{end}}
+  </select>
+</div>
+<div class="field">
+  <label>Parameter bindings</label>
+  <p class="help">Bind input fields to path/query/body. Leave empty for implicit routing.</p>
+  <div data-param-rows>
+    {{range .Params}}
+    <div class="row compact" data-param-row>
+      <input class="stretch" name="param_name" type="text" value="{{.Name}}" autocomplete="off">
+      <select class="input-sm" name="param_in">
+        <option value="path"{{if eq .In "path"}} selected{{end}}>path</option><option value="query"{{if eq .In "query"}} selected{{end}}>query</option><option value="body"{{if eq .In "body"}} selected{{end}}>body</option>
+      </select>
+      <button type="button" class="btn-quiet" data-param-remove>Remove</button>
+    </div>
+    {{else}}
+    <div class="row compact" data-param-row>
+      <input class="stretch" name="param_name" type="text" placeholder="field name" autocomplete="off">
+      <select class="input-sm" name="param_in">
+        <option value="path">path</option><option value="query">query</option><option value="body" selected>body</option>
+      </select>
+      <button type="button" class="btn-quiet" data-param-remove>Remove</button>
+    </div>
+    {{end}}
+  </div>
+  <button type="button" class="btn" data-param-add>Add parameter</button>
+</div>
+{{end}}
+
+{{/* _form_schemas — the two schema texts, shared by the create and edit
+     dialogs. The kernel stores them in its canonical form, which is what the
+     edit dialog shows back. Input: actionDraft. */}}
+{{define "_form_schemas"}}
+<div class="field">
+  <label for="input-schema">Input schema (JSON)</label>
+  <textarea id="input-schema" name="input_schema" placeholder='{"type":"object","properties":{}}' rows="1" class="mono">{{.InputSchema}}</textarea>
+</div>
+<div class="field">
+  <label for="output-schema">Output schema (JSON)</label>
+  <textarea id="output-schema" name="output_schema" placeholder='{"type":"object"}' rows="1" class="mono">{{.OutputSchema}}</textarea>
+</div>
 {{end}}
 
 {{define "_form_action_import"}}
@@ -147,7 +178,7 @@
       {{/* One credential for the whole application: an auth is write-only, so
            an application not given one here cannot be given one afterwards
            without naming its subtree by hand (§6.4). */}}
-      {{template "_form_auth" "i"}}
+      {{template "_form_auth" (authPanel "i")}}
       <div class="cluster">
         <button class="btn" type="submit">Import</button>
         <a class="btn" href="/workshop" data-modal-close>Cancel</a>

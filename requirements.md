@@ -1,7 +1,20 @@
 # Juice Web UI Requirements
 
-Version: 0.11.0
+Version: 0.12.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.12.0.** The kernel (ba7f5e5) makes an action a tool
+> definition: it carries a required one-line **title**, and both schemas are
+> one subset of JSON Schema, stored in canonical form. Each fact below was
+> measured live (`docs/kernel-v0.19-verification.md`). A card, the action page,
+> the workshop table and a peer's action list lead with the title, the address
+> beneath it (§6.2, §6.4, §6.6). Create and edit take a title, and a refused
+> dialog comes back open with what was typed, never a secret (§6.4). A form
+> reads the canonical schema: a nullable field is a typed field with an explicit
+> null choice, distinct from leaving it blank (§6.2). An import names each
+> refused operation's place in the document and each fold the kernel applied
+> (§6.4). Chat declares its schemas in canonical form and retitles its actions
+> without a contract update, so no member loses their grant (§10).
 
 > **What changed in 0.11.0.** The kernel (4dbfedd) calls a step a **task**, and
 > the UI follows it in routes, types and words: the inbox lists tasks, and
@@ -746,10 +759,11 @@ spend:
   topbar** at the top of the content area (a compact search input reflows onto the
   browse page itself on mobile, where the topbar is hidden) — and MUST issue
   `sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
-  MUST render as ranked cards, each with a **media slot** (§6.2 media), the ref
-  (owner-emphasized) with **price right-aligned** in the title row, a one-line
-  description, and the **same reputation strip the action page uses** (icon +
-  tooltip: success · rating · latency), price-less on the card since price is
+  MUST render as ranked cards, each with a **media slot** (§6.2 media), the
+  action's **title** as the link with **price right-aligned** in the title row,
+  the ref (owner-emphasized) on its own line beneath, a one-line description,
+  and the **same reputation strip the action page uses** (icon + tooltip:
+  success · rating · latency), price-less on the card since price is
   right-aligned in the title row. The browse page is **headless** (no page-head)
   and shows a **flat catalog capped at 20 per page** with a pager (§7 pagination);
   there are no filter tabs.
@@ -766,8 +780,8 @@ spend:
   authenticated local caller, so results MAY name a remote action this kernel has
   not resolved: its address names another kernel (`owner@<kernel-key>/name`) and
   the `action_id` is the **remote** id, which resolves to nothing locally. Such a
-  card MUST be rendered from the lookup row alone, and MUST show the address
-  (owner segment unlinked, §6.2 refs), the description, and a quiet chip
+  card MUST be rendered from the lookup row alone, and MUST show the title, the
+  address (owner segment unlinked, §6.2 refs), the description, and a quiet chip
   marking it as discovered, distinct from the remote-proxy chip. It MUST NOT show
   a reputation strip (the discovery cache stores none). Its link is the resolve
   entry, not a page built from the row.
@@ -809,8 +823,8 @@ spend:
 
 **Action page.**
 
-* MUST show a hero pairing the media slot (§6.2 media) with the ref, owner block,
-  reputation strip, and price in large type, then description and two schema
+* MUST show a hero pairing the media slot (§6.2 media) with the title as the
+  heading, the ref (owner block) as its subtitle, the reputation strip, and price in large type, then description and two schema
   panels rendered from `input_schema`/`output_schema` as field lists (name, type,
   required, description), with raw JSON behind a toggle.
 * The reputation strip MUST show four metrics — runs, success rate, rating, mean
@@ -846,10 +860,19 @@ spend:
   Edit modal only).
 * Inputs MUST be generated from `input_schema` (typed fields, required markers,
   descriptions as help text, client-side hints only; the kernel validates). A
-  raw-JSON input MUST be available.
+  raw-JSON input MUST be available. The schema arrives in the kernel's
+  canonical form, keys sorted, so fields render in that order. A nullable field
+  (`type: [T, "null"]`) MUST render as its typed input plus an explicit `null`
+  choice: a blank field is **omitted**, a value is sent, and `null` is sent only
+  when chosen — never derived from a blank. A property's `title` labels it
+  beside its key; `minimum`/`maximum`/`minLength`/`maxLength` become the
+  input's bounds. Nothing else is mapped (`default` would be submitted; `pattern`
+  is anchored differently in HTML). A map-shaped object (a schema under
+  `additionalProperties`) uses the raw editor; a closed object with no
+  properties is a confirm alone.
 * **A run MUST pin the quote it was shown.** Every action read and every
   `sys/lookup` row carries `quote_hash`, a fingerprint of the quoted terms
-  (price, description, schemas, effect). The form carries it as a hidden field
+  (price, title, description, schemas, effect). The form carries it as a hidden field
   and the handler MUST read it back **from the request** — never from a fresh
   read of the action, which would always match and silently disable the
   protection. If the terms moved, the kernel refuses with `terms_changed` before
@@ -1024,7 +1047,13 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   action beyond `private` may require verified ownership; the UI surfaces the
   kernel's rejection (§10) rather than driving a proof.
 * Editing source, schema, kind, or price MUST warn that saving deactivates the
-  action until re-enabled, matching the kernel's contract-drift rule.
+  action until re-enabled, matching the kernel's contract-drift rule; a title or
+  description change keeps it live.
+* Create and edit MUST take the action's **title** (required, one line, at most
+  80 characters, the kernel's rule). A refused create or edit — a local parse
+  error or the kernel's refusal — MUST re-render the dialog open with the
+  message inside it and everything typed kept, except a secret: a secret never
+  reaches a page, so its input comes back empty and required.
 * For `kind=wasm`, the UI MUST surface compile failure on enable as a typed build
   error.
 * Source-URL input MAY be preflighted for obvious non-HTTP(S)/loopback cases; the
@@ -1039,7 +1068,10 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   serve.
 * OpenAPI import MUST be a wizard: spec URL → preview table of importable
   operations with per-operation validation messages → `POST /v1/actions/import`
-  (idempotent) → created/updated/deactivated results. Reimport MUST be presented
+  (idempotent) → created/updated/deactivated results. A refused operation is
+  named with its place in the document (`METHOD /path`) and the kernel's reason;
+  an installed operation the kernel adjusted to its schema subset is named with
+  the kernel's note. Reimport MUST be presented
   as "changed → deactivated; re-verify and re-enable." There is no unimport: an
   application is switched off or removed with the ordinary verbs over its path
   (`target: owner/name`), which is what the kernel serves. Upstream credentials (`auth_json`) MUST be entered in write-only
@@ -1248,8 +1280,9 @@ symmetry, but because the kernel refuses anything else.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
   addresses a task to the kernel as `sys@<kernel>`, and it is listed in `sys`'s
   inbox and completed there like any other (§6.3); this page lists none. An
-  inspected action is named by its address and renders as every address does
-  (§4), unlinked.
+  inspected action leads with its title, then its address, which renders as
+  every address does (§4), unlinked. Reachability states the path, one ping's
+  round trip, and the peer's version.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the
   subject issued about itself, and **counterparty experience** from the rest,
@@ -1805,6 +1838,17 @@ once its prerequisite is confirmed on the running kernel.
   doorbell off the outbox seed trace, which settles when the seed call returns.
   Registration, and so the rooms gate, fail on this kernel until chat holds a
   trace that is still live when it mints.
+* **Chat's contract follows the canonical form (apps).** The kernel stores
+  every schema canonical — an object naming its properties closed with
+  `additionalProperties: false` — and rewrites stored rows into it at boot
+  (verified on ba7f5e5: the rewrite keeps the action live and its grants
+  intact). Chat declares exactly that form, so a reconcile compares equal and
+  rewrites nothing: a contract update deactivates every chat action and revokes
+  every member's grant, and members connect again through the rooms gate. A
+  closed output also refuses a reply carrying an undeclared field, at zero
+  charge, so the daemon's replies are its declared outputs. A title differing
+  alone — the kernel titled chat's rows with the last segment of their names —
+  is sent alone, which keeps the action live and its grants intact.
 * **Kernel contract defects (informative).** `juicedocs/API.md` still describes
   a parked call's `refund_eligible_at` and an automatic refund, which 4dbfedd
   serves neither of; its R6 breaks off mid-sentence; and it says a task

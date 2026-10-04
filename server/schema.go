@@ -8,12 +8,19 @@ import (
 
 // Field is one input field derived from a JSON Schema property.
 type Field struct {
-	Name        string
-	Type        string // string | integer | number | boolean | object | array
-	Required    bool
+	Name     string
+	Type     string // string | integer | number | boolean | object | array
+	Nullable bool   // the schema admits null (`type: [T, "null"]`)
+	Required bool
+	// Title is the property's own short label, shown beside its key.
+	Title       string
 	Description string
 	Enum        []string
 	Example     string // for object/array fields: a pretty-printed JSON skeleton
+	// The bounds the browser enforces exactly as the schema means them, as
+	// written; empty when the schema states none. The kernel validates the rest.
+	Min, Max             string
+	MinLength, MaxLength string
 	// Value pre-fills the input. It is used where something already proposed an
 	// argument — the model's selection (§6.2) — and is empty otherwise. A
 	// pre-filled field is still an ordinary field: it is editable, it is
@@ -32,28 +39,63 @@ type FormModel struct {
 	// there is no input to collect, so the form is just its confirm button. It is
 	// distinct from UseRawFallback, which means "shape unknown, type it yourself"
 	// — offering a JSON box here would ask a person to author `{}` by hand. The
-	// kernel serves this for an approval-only task in either of two shapes,
-	// `{"type":"object"}` and `{"type":"object","properties":{}}` (§10).
+	// kernel's canonical form of "takes nothing" is
+	// `{"type":"object","properties":{},"additionalProperties":false}`, while a
+	// bare `{"type":"object"}` admits any object (verified live, ba7f5e5).
 	NoFields bool
 	Example  string // a pretty-printed JSON skeleton of the whole input, for the raw editor
 }
 
-// schemaDoc is the subset of JSON Schema the form renderer understands.
+// schemaType is `type` as the kernel's schema subset writes it (D4): one name,
+// or `[T, "null"]` for a field that may be null.
+type schemaType struct {
+	Name     string
+	Nullable bool
+}
+
+func (t *schemaType) UnmarshalJSON(b []byte) error {
+	if err := json.Unmarshal(b, &t.Name); err == nil {
+		return nil
+	}
+	var names []string
+	if err := json.Unmarshal(b, &names); err != nil {
+		return err
+	}
+	for _, n := range names {
+		if n == "null" {
+			t.Nullable = true
+		} else {
+			t.Name = n
+		}
+	}
+	return nil
+}
+
+// schemaDoc is the part of an object schema the form renderer reads.
 type schemaDoc struct {
-	Type       string          `json:"type"`
+	Type       schemaType      `json:"type"`
 	Properties json.RawMessage `json:"properties"`
 	Required   []string        `json:"required"`
+	// AdditionalProperties is false, absent, or a schema; a schema makes the
+	// object a map, whose keys no field list can name.
+	AdditionalProperties json.RawMessage `json:"additionalProperties"`
 }
 
+// propDoc is one property node.
 type propDoc struct {
-	Type        string            `json:"type"`
+	Type        schemaType        `json:"type"`
+	Title       string            `json:"title"`
 	Description string            `json:"description"`
 	Enum        []json.RawMessage `json:"enum"`
+	Minimum     json.RawMessage   `json:"minimum"`
+	Maximum     json.RawMessage   `json:"maximum"`
+	MinLength   json.RawMessage   `json:"minLength"`
+	MaxLength   json.RawMessage   `json:"maxLength"`
 }
 
-// BuildForm parses an input_schema into a FormModel. Any schema that is not a
-// non-empty object schema yields UseRawFallback so the user can still submit raw
-// JSON args.
+// BuildForm parses an input_schema into a FormModel. Any schema that is not an
+// object schema naming its fields yields UseRawFallback so the user can still
+// submit raw JSON args.
 func BuildForm(inputSchema json.RawMessage) FormModel {
 	if len(bytes.TrimSpace(inputSchema)) == 0 {
 		return FormModel{UseRawFallback: true}
@@ -62,12 +104,13 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	if err := json.Unmarshal(inputSchema, &doc); err != nil {
 		return FormModel{UseRawFallback: true}
 	}
-	// No `properties` key at all is an UNCONSTRAINED object — any shape is
-	// valid, so the completer needs the raw editor. An explicitly EMPTY
-	// `properties` is the opposite claim: this input declares no fields, so
-	// there is nothing to collect and the form is its confirm button alone.
-	// The kernel serves the latter as an approval-only task's allowed_input.
-	if doc.Type != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 {
+	// No `properties` key at all is an UNCONSTRAINED object, and a schema under
+	// `additionalProperties` is a map — any keys are valid, so the completer
+	// needs the raw editor. An explicitly EMPTY `properties` on a closed object
+	// is the opposite claim: this input declares no fields, so there is nothing
+	// to collect and the form is its confirm button alone.
+	isMap := bytes.HasPrefix(bytes.TrimSpace(doc.AdditionalProperties), []byte("{"))
+	if doc.Type.Name != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 || isMap {
 		return FormModel{UseRawFallback: true}
 	}
 	keys := orderedKeys(doc.Properties)
@@ -91,12 +134,18 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 		p := props[k]
 		f := Field{
 			Name:        k,
-			Type:        p.Type,
+			Type:        p.Type.Name,
+			Nullable:    p.Type.Nullable,
 			Required:    required[k],
+			Title:       p.Title,
 			Description: p.Description,
 			Enum:        enumStrings(p.Enum),
+			Min:         string(p.Minimum),
+			Max:         string(p.Maximum),
+			MinLength:   string(p.MinLength),
+			MaxLength:   string(p.MaxLength),
 		}
-		if p.Type == "object" || p.Type == "array" {
+		if f.Type == "object" || f.Type == "array" {
 			f.Example = SchemaExample(rawProps[k])
 		}
 		fm.Fields = append(fm.Fields, f)
@@ -104,9 +153,10 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	return fm
 }
 
-// orderedKeys returns the property keys in their schema declaration order by
-// streaming the JSON object, so the form preserves the author's field order
-// rather than Go's randomized map iteration.
+// orderedKeys returns an object's keys in the order they are served by
+// streaming the JSON object, rather than Go's randomized map iteration. The
+// kernel stores schemas canonical, keys sorted, so a schema's fields arrive in
+// that order (verified live, ba7f5e5); partial_args keep the order they carry.
 func orderedKeys(obj json.RawMessage) []string {
 	dec := json.NewDecoder(bytes.NewReader(obj))
 	// expect '{'
@@ -160,7 +210,7 @@ func skeleton(raw json.RawMessage) string {
 		return "null"
 	}
 	var s struct {
-		Type       string            `json:"type"`
+		Type       schemaType        `json:"type"`
 		Properties json.RawMessage   `json:"properties"`
 		Items      json.RawMessage   `json:"items"`
 		Enum       []json.RawMessage `json:"enum"`
@@ -171,7 +221,7 @@ func skeleton(raw json.RawMessage) string {
 	if len(s.Enum) > 0 {
 		return string(s.Enum[0])
 	}
-	switch s.Type {
+	switch s.Type.Name {
 	case "string":
 		return `""`
 	case "integer", "number":
@@ -201,13 +251,17 @@ func skeleton(raw json.RawMessage) string {
 	}
 }
 
-// enumStrings renders enum values as display strings.
+// enumStrings renders enum values as display strings. A null member is left
+// out: a nullable field carries null as its own explicit choice.
 func enumStrings(raw []json.RawMessage) []string {
 	if len(raw) == 0 {
 		return nil
 	}
 	out := make([]string, 0, len(raw))
 	for _, r := range raw {
+		if string(bytes.TrimSpace(r)) == "null" {
+			continue
+		}
 		var s string
 		if err := json.Unmarshal(r, &s); err == nil {
 			out = append(out, s)

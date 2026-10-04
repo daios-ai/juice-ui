@@ -1017,6 +1017,7 @@ func TestCreateActionParsesTypedPrice(t *testing.T) {
 
 	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))
 	form := url.Values{
+		"title":              {"Priced thing"},
 		"name":               {"priced"},
 		"kind":               {"http"},
 		"price":              {"12"}, // a typed amount is digits: the symbol is display only
@@ -1035,6 +1036,188 @@ func TestCreateActionParsesTypedPrice(t *testing.T) {
 	mu.Unlock()
 	if !strings.Contains(got, `"price":12`) {
 		t.Errorf("a typed price of 12 must reach the kernel as 12 base units; kernel body = %s", got)
+	}
+	if !strings.Contains(got, `"title":"Priced thing"`) {
+		t.Errorf("the title must reach the kernel; kernel body = %s", got)
+	}
+}
+
+// TestCreateActionRefusedKeepsDraft: a refused create — the kernel's refusal or
+// a local parse error — re-renders the workshop with the create dialog open,
+// the message inside it, and everything typed kept, except a secret, which
+// never reaches a page and is asked for again.
+func TestCreateActionRefusedKeepsDraft(t *testing.T) {
+	cases := []struct {
+		name, price, wantMsg string
+		kernelCalled         bool
+	}{
+		{"kernel refusal", "1", "Please check your input: title is longer than 80 characters", true},
+		{"bad amount", "abc", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			mux := http.NewServeMux()
+			fakeHealth(mux)
+			mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"redirect":"?code=CODE"}`))
+			})
+			mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+			})
+			mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
+			})
+			mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+			mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+			mux.HandleFunc("POST /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				w.Write([]byte(`{"code":"invalid_input","error":"title is longer than 80 characters"}`))
+			})
+			kernel := httptest.NewServer(mux)
+			defer kernel.Close()
+			srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+			defer srv.Close()
+			cl := loginClient(t, srv.URL)
+
+			fields := url.Values{
+				"gorilla.csrf.Token": {csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))},
+				"title":              {"My weather"},
+				"name":               {"weather"},
+				"kind":               {"http"},
+				"price":              {tc.price},
+				"input_schema":       {`{"type":"object","properties":{}}`},
+				"auth_scheme":        {"header"},
+				"auth_param_name":    {"X-Api-Key"},
+				"auth_param_value":   {"s3cret-value"},
+			}
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions", strings.NewReader(fields.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := cl.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			page := string(b)
+
+			if called != tc.kernelCalled {
+				t.Errorf("kernel called = %v, want %v", called, tc.kernelCalled)
+			}
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Errorf("status = %d, want 422", resp.StatusCode)
+			}
+			if !strings.Contains(page, `id="form-action-create" class="modal-form" open`) {
+				t.Error("the create dialog must come back open")
+			}
+			if tc.wantMsg != "" && !strings.Contains(page, tc.wantMsg) {
+				t.Errorf("the refusal must be stated in the dialog, want %q", tc.wantMsg)
+			}
+			if !strings.Contains(page, `banner-error`) {
+				t.Error("the dialog must carry the error banner")
+			}
+			for _, kept := range []string{`value="My weather"`, `value="weather"`, `value="X-Api-Key"`, `<option value="header" selected>`, `{&#34;type&#34;:&#34;object&#34;`} {
+				if !strings.Contains(page, kept) {
+					t.Errorf("typed input not kept: %q", kept)
+				}
+			}
+			if strings.Contains(page, "s3cret-value") {
+				t.Error("a secret must never be written back into the page")
+			}
+			// The chosen scheme's secret is asked for again; an unchosen scheme's
+			// inputs are rendered disabled, so they neither block a submit without
+			// JavaScript nor are sent.
+			if !strings.Contains(page, `id="c-auth-hval" name="auth_param_value" type="password" autocomplete="off" required>`) {
+				t.Error("the chosen scheme's secret must come back empty and required")
+			}
+			if !strings.Contains(page, `name="auth_bearer_token" type="password" autocomplete="off" required disabled>`) {
+				t.Error("an unchosen scheme's secret must be rendered disabled")
+			}
+		})
+	}
+}
+
+// TestImportFlashNamesLocationsAndNotices: an import names each refused
+// operation with its place in the document and the kernel's reason, and each
+// installed operation whose contract the kernel adjusted.
+func TestImportFlashNamesLocationsAndNotices(t *testing.T) {
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("POST /v1/actions/import", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"created":[{"id":"P1","name":"pets/good","title":"Add a pet"}],"updated":[],"unchanged":[],"deactivated":[],
+			"rejected":[{"key":"choice","location":"POST /echo/choice","reason":"input.properties.x: oneOf is not supported"}],
+			"notices":[{"key":"good","location":"POST /echo/good","note":"input.properties.tag: nullable folded into type [T, \"null\"]"}]}`))
+	})
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	fields := url.Values{
+		"gorilla.csrf.Token": {csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))},
+		"name":               {"pets"},
+		"spec_url":           {"http://127.0.0.1:1/openapi.json"},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/import", strings.NewReader(fields.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	page := html.UnescapeString(string(b))
+	for _, want := range []string{
+		"pets: 1 created, 0 updated, 0 unchanged, 0 deactivated.",
+		"Not installed: choice (POST /echo/choice) — input.properties.x: oneOf is not supported.",
+		`Adjusted: good — input.properties.tag: nullable folded into type [T, "null"].`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("import flash missing %q", want)
+		}
+	}
+}
+
+// TestBuildArgsThreeStates: a blank field is omitted, a value is sent, and null
+// is sent only when the field's null box is ticked — whatever its input holds.
+func TestBuildArgsThreeStates(t *testing.T) {
+	form := url.Values{
+		"has_fields": {"1"},
+		"f_blank":    {""}, "t_blank": {"string"},
+		"f_value": {"hi"}, "t_value": {"string"},
+		"f_nulled": {"ignored"}, "t_nulled": {"string"}, "n_nulled": {"1"},
+		"f_obj": {`{"y":""}`}, "t_obj": {"object"}, "n_obj": {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	raw, err := buildArgs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	_ = json.Unmarshal(raw, &got)
+	if _, ok := got["blank"]; ok {
+		t.Error("a blank field must be omitted")
+	}
+	if got["value"] != "hi" {
+		t.Errorf("value = %v, want hi", got["value"])
+	}
+	for _, k := range []string{"nulled", "obj"} {
+		if v, ok := got[k]; !ok || v != nil {
+			t.Errorf("%s = %v (present %v), want null", k, v, ok)
+		}
 	}
 }
 
@@ -1763,7 +1946,8 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 		`value="https://api.x/{city}"`,
 		`value="city"`,
 		`value="units"`,
-		"Saving deactivates the action",
+		`name="title"`,
+		"A price, schema or source change deactivates the action",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("edit form missing %q", want)
@@ -2181,6 +2365,12 @@ func updateActionKernel(gotBody *[]byte) *http.ServeMux {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions/A1", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"A1","action":"alice@testnet/weather","name":"weather","title":"Weather now","description":"Weather.","kind":"http","active":true,"price":0,
+			"input_schema":{"additionalProperties":false,"properties":{"city":{"description":"City.","type":"string"}},"type":"object"},
+			"http":{"method":"GET","url":"https://api.example.com/w"}}`))
+	})
+	mux.HandleFunc("GET /v1/actions/A1/ratings", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		*gotBody, _ = io.ReadAll(r.Body)
@@ -2242,6 +2432,54 @@ func TestUpdateAction(t *testing.T) {
 	}
 }
 
+// TestUpdateActionSendsOnlyChanges: the edit dialog shows every field, but the
+// kernel deactivates an action on any schema in an update, even an identical
+// one, so only what differs from the action as served is sent. A title edit
+// with everything else as shown sends the title alone; an untouched dialog
+// sends nothing.
+func TestUpdateActionSendsOnlyChanges(t *testing.T) {
+	var gotBody []byte
+	kernel := httptest.NewServer(updateActionKernel(&gotBody))
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	shown := url.Values{
+		"gorilla.csrf.Token": {csrfTokenFrom(t, getBody(t, cl, srv.URL+"/workshop"))},
+		"title":              {"Weather now"},
+		"description":        {"Weather."},
+		"price":              {"0"},
+		// The served schema as the dialog shows it: indented, so only its value
+		// is the same.
+		"input_schema": {"{\n  \"type\": \"object\",\n  \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"City.\"}},\n  \"additionalProperties\": false\n}"},
+		"source":       {"https://api.example.com/w"},
+		"method":       {"GET"},
+	}
+	post := func(v url.Values) string {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/update", strings.NewReader(v.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return string(b)
+	}
+	if page := post(shown); gotBody != nil || !strings.Contains(page, "No changes.") {
+		t.Errorf("an untouched dialog must send nothing; sent %s", gotBody)
+	}
+	retitled := url.Values{}
+	for k, v := range shown {
+		retitled[k] = v
+	}
+	retitled.Set("title", "Weather right now")
+	post(retitled)
+	if string(gotBody) != `{"target":"A1","title":"Weather right now"}` {
+		t.Errorf("a title edit must send the title alone; sent %s", gotBody)
+	}
+}
+
 func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 	var gotBody []byte
 	kernel := httptest.NewServer(updateActionKernel(&gotBody))
@@ -2267,8 +2505,20 @@ func TestUpdateActionInvalidSchemaRejected(t *testing.T) {
 	if gotBody != nil {
 		t.Error("invalid schema must not reach the kernel")
 	}
-	if !strings.Contains(string(page), "not valid JSON") {
-		t.Error("invalid schema must surface a flash error")
+	// The refusal re-renders the edit dialog open, with the message inside it
+	// and what was typed kept.
+	body := string(page)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", resp.StatusCode)
+	}
+	if !strings.Contains(body, "The input schema is not valid JSON.") {
+		t.Error("invalid schema must surface its message in the dialog")
+	}
+	if !strings.Contains(body, `id="form-action-edit" class="modal-form" open`) {
+		t.Error("the edit dialog must come back open")
+	}
+	if !strings.Contains(body, "{not json</textarea>") {
+		t.Error("the typed schema must be kept")
 	}
 }
 

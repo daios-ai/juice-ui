@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1469,6 +1470,84 @@ func TestActionCardDiscovered(t *testing.T) {
 	}
 	if strings.Contains(proxy, "known network") {
 		t.Errorf("a resolved proxy must not read as discovered: %s", proxy)
+	}
+}
+
+// An action card leads with the action's title as its link, and carries the
+// ref on its own line beneath (§5.5) — a discovered card too, whose title comes
+// from the lookup row.
+func TestActionCardLeadsWithTitle(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []actionCardView{
+		{Action: client.Action{ID: "A1", Action: "tom@play/greet", Title: "Greet a person", Active: true}},
+		{Discovered: true, Action: client.Action{ID: "R1", Action: "tom@KERNELKEY/greet", Title: "Greet a person"}},
+	} {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_action_card", v); err != nil {
+			t.Fatal(err)
+		}
+		body := rec.Body.String()
+		if !regexp.MustCompile(`<a class="card-title" href="[^"]+" title="Greet a person">Greet a person</a>`).MatchString(body) {
+			t.Errorf("the card title must be the action's title, linked: %s", body)
+		}
+		if !strings.Contains(body, `<p class="card-ref"><span class="ref mono">`) {
+			t.Errorf("the ref must sit on its own line beneath the title: %s", body)
+		}
+	}
+}
+
+// A peer's action list leads each row with the action's title, the address
+// beneath it.
+func TestPeerActionsLeadWithTitle(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_peer_actions", []client.PeerAction{{Name: "seller@bee/greet", Title: "Greet a person", Price: 12}}); err != nil {
+		t.Fatal(err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `<td>Greet a person<div class="small"><span class="ref mono">`) {
+		t.Errorf("a peer action row must lead with its title: %s", body)
+	}
+}
+
+// A nullable field offers null as its own choice beside its input, the bounds
+// the schema states become the browser's, and an optional select can be left
+// blank (omitted).
+func TestFormFieldsNullableAndBounds(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fm := BuildForm(json.RawMessage(`{"properties":{
+		"n":{"description":"N.","maximum":9,"minimum":1,"type":"integer"},
+		"opt":{"description":"O.","enum":["a",null],"type":["string","null"]},
+		"s":{"description":"S.","maxLength":5,"title":"Short","type":"string"}},"required":["s"],"type":"object"}`))
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<input type="checkbox" name="n_opt" value="1"> null`,
+		`min="1" max="9"`,
+		`maxlength="5"`,
+		`Short <span class="mono muted small">s</span>`,
+		`<option value=""></option>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("form fields missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `name="n_s"`) || strings.Contains(body, `name="n_n"`) {
+		t.Error("only a nullable field offers null")
+	}
+	if strings.Contains(body, `<option value="null"`) {
+		t.Error("null is not an enum option; the checkbox carries it")
 	}
 }
 

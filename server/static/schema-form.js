@@ -14,7 +14,12 @@ for (const panel of document.querySelectorAll("[data-run-panel]")) {
   const apply = (useRaw) => {
     segFields.setAttribute("aria-pressed", String(!useRaw));
     segJson.setAttribute("aria-pressed", String(useRaw));
-    if (fields) fields.hidden = useRaw;
+    if (fields) {
+      fields.hidden = useRaw;
+      // A hidden field still takes part in constraint validation; disabled, it
+      // neither blocks the raw editor's submit nor is sent with it.
+      for (const el of fields.querySelectorAll("input, select, textarea")) el.disabled = useRaw;
+    }
     raw.hidden = !useRaw;
     // The server chooses raw vs structured from has_fields; disabling it while
     // raw is active makes the raw editor authoritative on submit.

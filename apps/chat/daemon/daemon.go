@@ -38,6 +38,7 @@ const adminHeader = "X-Chat-Admin"
 // requirements §3).
 type Op struct {
 	Name         string
+	Title        string // the one line a person reads in a list (kernel D4)
 	Description  string
 	InputSchema  json.RawMessage
 	OutputSchema json.RawMessage
@@ -45,14 +46,19 @@ type Op struct {
 
 // Success-response schemas. Business rejections are returned as non-2xx (a run
 // failure, not output-validated), so the schemas describe only the 2xx body.
+// Every schema here is written in the kernel's canonical form — an object
+// naming its properties is closed with additionalProperties:false — because
+// the kernel stores that form, so the declared contract equals the stored one
+// and reconciliation sees no drift. A closed output also means a reply carrying
+// a field not declared here fails at zero charge (verified live, ba7f5e5).
 const (
-	outOK   = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the operation was applied."}}}`
-	outRoom = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the room was created."},"room_id":{"type":"string","description":"Id of the newly created room; use it to address the room in later calls."}}}`
-	outMsg  = `{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the message was posted."},"message_id":{"type":"string","description":"Id of the newly posted message; use it to delete the message later."}}}`
+	outOK   = `{"type":"object","additionalProperties":false,"properties":{"ok":{"type":"boolean","description":"True when the operation was applied."}}}`
+	outRoom = `{"type":"object","additionalProperties":false,"properties":{"ok":{"type":"boolean","description":"True when the room was created."},"room_id":{"type":"string","description":"Id of the newly created room; use it to address the room in later calls."}}}`
+	outMsg  = `{"type":"object","additionalProperties":false,"properties":{"ok":{"type":"boolean","description":"True when the message was posted."},"message_id":{"type":"string","description":"Id of the newly posted message; use it to delete the message later."}}}`
 	// outRead is the read action's response: the room's recent messages, oldest first.
-	outRead = `{"type":"object","properties":{` +
+	outRead = `{"type":"object","additionalProperties":false,"properties":{` +
 		`"ok":{"type":"boolean","description":"True on success."},` +
-		`"messages":{"type":"array","description":"The room's recent messages, oldest first.","items":{"type":"object","properties":{` +
+		`"messages":{"type":"array","description":"The room's recent messages, oldest first.","items":{"type":"object","additionalProperties":false,"properties":{` +
 		`"id":{"type":"string","description":"Id of the message."},` +
 		`"seq":{"type":"integer","description":"Per-room sequence number; pass the largest one back as ` + "`after`" + ` to fetch only newer messages next time."},` +
 		`"from":{"type":"string","description":"Address of the sender."},` +
@@ -66,50 +72,58 @@ const (
 var Ops = []Op{
 	{
 		Name:         "msg/create-room",
+		Title:        "Create a chat room",
 		Description:  "Create a chat room — a named conversation the caller owns — and add the given members alongside the caller. Returns the new room's id.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Addresses of users to add as members besides the caller, for example bob@alpha and carol@alpha. May be empty."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","description":"Display name for the room (for example: general)."},"members":{"type":"array","items":{"type":"string"},"description":"Addresses of users to add as members besides the caller, for example bob@alpha and carol@alpha. May be empty."}}}`),
 		OutputSchema: json.RawMessage(outRoom),
 	},
 	{
 		Name:         "msg/delete-room",
+		Title:        "Delete a chat room",
 		Description:  "Delete a chat room for everyone. Only the room's owner may delete it.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to delete."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room to delete."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "msg/add-member",
+		Title:        "Add a member to a chat room",
 		Description:  "Add a user to a chat room. Only the room's owner may add members.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Address of the user to add, for example bob@alpha."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Address of the user to add, for example bob@alpha."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "msg/remove-member",
+		Title:        "Remove a member from a chat room",
 		Description:  "Remove a member from a chat room. Only the room's owner may remove members, and the owner cannot remove themselves.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Address of the member to remove."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room."},"member":{"type":"string","description":"Address of the member to remove."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "msg/leave-room",
+		Title:        "Leave a chat room",
 		Description:  "Leave a chat room you are a member of. The owner cannot leave; they delete the room instead.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to leave."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room to leave."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "msg/message",
+		Title:        "Post a chat message",
 		Description:  "Post a message to a chat room. Only a member of the room may post. Returns the new message's id.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to post to."},"text":{"type":"string","description":"The message text to post."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room to post to."},"text":{"type":"string","description":"The message text to post."}}}`),
 		OutputSchema: json.RawMessage(outMsg),
 	},
 	{
 		Name:         "msg/delete-message",
+		Title:        "Delete a chat message",
 		Description:  "Delete a message you sent. Only the message's original sender may delete it.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the message is in."},"message":{"type":"string","description":"Id of the message to delete (as returned by the message action)."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room the message is in."},"message":{"type":"string","description":"Id of the message to delete (as returned by the message action)."}}}`),
 		OutputSchema: json.RawMessage(outOK),
 	},
 	{
 		Name:         "msg/read",
+		Title:        "Read a chat room",
 		Description:  "Read recent messages in a chat room you are a member of, oldest first. Poll this after a chat notification to see what was said. Pass `after` (a message seq) to fetch only messages newer than it; omit it for the recent window.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room to read."},"after":{"type":"integer","description":"Return only messages with a seq greater than this (from a prior read); omit or 0 for the recent window."}}}`),
+		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room to read."},"after":{"type":"integer","description":"Return only messages with a seq greater than this (from a prior read); omit or 0 for the recent window."}}}`),
 		OutputSchema: json.RawMessage(outRead),
 	},
 }

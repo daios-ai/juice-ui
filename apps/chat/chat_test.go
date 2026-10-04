@@ -313,7 +313,7 @@ func TestEnsureActionsLeavesCorrectAlone(t *testing.T) {
 	base := "http://localhost:8080/_kernel/chat/"
 	var seed []fakeAction
 	for i, op := range daemon.Ops {
-		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Active: true, Public: true,
+		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Title: op.Title, Active: true, Public: true,
 			URL: base + op.Name, Description: op.Description, InSchema: string(op.InputSchema), OutSchema: string(op.OutputSchema)})
 	}
 	f := newFakeKernel(seed...)
@@ -331,6 +331,79 @@ func TestEnsureActionsLeavesCorrectAlone(t *testing.T) {
 	}
 }
 
+// TestEnsureActionsRetitlesWithoutContractUpdate checks the upgrade to titled
+// actions: the kernel titled chat's rows with the last segment of their names,
+// and only the title differs. The reconcile must send the title alone — a full
+// contract update would deactivate every action and revoke every user's grant,
+// and users would have to connect again.
+func TestEnsureActionsRetitlesWithoutContractUpdate(t *testing.T) {
+	base := "http://localhost:8080/_kernel/chat/"
+	var seed []fakeAction
+	for i, op := range daemon.Ops {
+		last := op.Name[strings.LastIndex(op.Name, "/")+1:]
+		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Title: last, Active: true, Public: true,
+			URL: base + op.Name, Description: op.Description, InSchema: string(op.InputSchema), OutSchema: string(op.OutputSchema)})
+	}
+	f := newFakeKernel(seed...)
+	defer f.close()
+	c := New()
+	c.deps = apps.Deps{Address: testAddress, Client: client.New(f.url, nil), PublicURL: "http://localhost:8080"}
+	c.sa = apps.NewServiceAccount(c.deps, chatHandle, "pw")
+	c.store = mustStore(t)
+	c.st.AuthRev = authRev()
+	if err := c.ensureActions(context.Background()); err != nil {
+		t.Fatalf("ensureActions: %v", err)
+	}
+	for i, op := range daemon.Ops {
+		var body map[string]any
+		if err := json.Unmarshal([]byte(f.updateBody("a"+strconv.Itoa(i))), &body); err != nil {
+			t.Fatalf("%s: no update sent: %v", op.Name, err)
+		}
+		if body["title"] != op.Title || len(body) != 2 { // target + title, nothing else
+			t.Errorf("%s: update = %v, want the title alone", op.Name, body)
+		}
+	}
+	if f.enableCount() != 0 {
+		t.Errorf("a retitle re-enabled %d actions; it never deactivates them", f.enableCount())
+	}
+}
+
+// TestSchemasAreCanonical checks every schema chat declares is in the kernel's
+// canonical form: an object naming its properties is closed. The kernel stores
+// that form, so a declared schema without it would differ from the stored one
+// forever, and every reconcile would rewrite the contract and revoke grants.
+func TestSchemasAreCanonical(t *testing.T) {
+	var walk func(path string, n map[string]any)
+	walk = func(path string, n map[string]any) {
+		if props, ok := n["properties"].(map[string]any); ok {
+			if n["additionalProperties"] != false {
+				t.Errorf("%s: object with properties is not closed", path)
+			}
+			for k, v := range props {
+				walk(path+"."+k, v.(map[string]any))
+			}
+		}
+		if items, ok := n["items"].(map[string]any); ok {
+			walk(path+"[]", items)
+		}
+	}
+	schemas := map[string]json.RawMessage{
+		"ack.in": ackInSchema, "ack.out": ackOutSchema, "outbox.in": outboxInSchema, "outbox.out": outboxOutSchema,
+		"register.in": registerInSchema, "register.out": registerOutSchema,
+		"validate.in": validateInSchema, "validate.out": validateOutSchema,
+	}
+	for _, op := range daemon.Ops {
+		schemas[op.Name+".in"], schemas[op.Name+".out"] = op.InputSchema, op.OutputSchema
+	}
+	for name, raw := range schemas {
+		var n map[string]any
+		if err := json.Unmarshal(raw, &n); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		walk(name, n)
+	}
+}
+
 // TestEnsureActionsForcesOnAuthRevChange reproduces the live "unknown caller key" /
 // "unauthenticated caller" bug: the readable contract already matches, but the
 // write-only auth config was pushed under a *different* header by an earlier build.
@@ -342,7 +415,7 @@ func TestEnsureActionsForcesOnAuthRevChange(t *testing.T) {
 	base := "http://localhost:8080/_kernel/chat/"
 	var seed []fakeAction
 	for i, op := range daemon.Ops {
-		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Active: true, Public: true,
+		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Title: op.Title, Active: true, Public: true,
 			URL: base + op.Name, Description: op.Description, InSchema: string(op.InputSchema), OutSchema: string(op.OutputSchema)})
 	}
 	f := newFakeKernel(seed...)
@@ -411,8 +484,11 @@ func TestEnsureActionsReconcilesStaleSchema(t *testing.T) {
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
 	}
-	if upd := f.updateBody("cr"); !strings.Contains(upd, "room_id") {
-		t.Errorf("stale output_schema not reconciled to declare room_id: %q", upd)
+	// A contract change is the full update — title included — and it revokes
+	// grants; users connect again through the gate TestIndexGateOnConnector
+	// covers.
+	if upd := f.updateBody("cr"); !strings.Contains(upd, "room_id") || !strings.Contains(upd, `"title":"Create a chat room"`) {
+		t.Errorf("stale output_schema not reconciled to the full contract: %q", upd)
 	}
 	if !f.enabled("cr") {
 		t.Error("reconciled action not re-enabled")
@@ -452,7 +528,7 @@ func TestEnsureActionsIsResilient(t *testing.T) {
 	base := "http://localhost:8080/_kernel/chat/"
 	var seed []fakeAction
 	for i, op := range daemon.Ops {
-		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Active: true, Public: true,
+		seed = append(seed, fakeAction{ID: "a" + strconv.Itoa(i), Name: op.Name, Title: op.Title, Active: true, Public: true,
 			URL: base + op.Name, Description: op.Description, InSchema: string(op.InputSchema), OutSchema: string(op.OutputSchema)})
 	}
 	f := newFakeKernel(seed...)
@@ -487,6 +563,7 @@ func TestEnsureActionsIsResilient(t *testing.T) {
 
 type fakeAction struct {
 	ID, Name    string
+	Title       string
 	Active      bool
 	Public      bool
 	URL         string
@@ -509,8 +586,8 @@ func (a *fakeAction) wire() string {
 	if a.Public {
 		vis = "public"
 	}
-	return fmt.Sprintf(`{"id":%q,"name":%q,"kind":"http","active":%t,"visibility":%q,"description":%q,"auth_scheme":"delegated_bearer","requires_grant":true,"http":{"method":"POST","url":%q},"input_schema":%s,"output_schema":%s}`,
-		a.ID, a.Name, a.Active, vis, a.Description, a.URL, in, out)
+	return fmt.Sprintf(`{"id":%q,"name":%q,"title":%q,"kind":"http","active":%t,"visibility":%q,"description":%q,"auth_scheme":"delegated_bearer","requires_grant":true,"http":{"method":"POST","url":%q},"input_schema":%s,"output_schema":%s}`,
+		a.ID, a.Name, a.Title, a.Active, vis, a.Description, a.URL, in, out)
 }
 
 type fakeKernel struct {
@@ -576,7 +653,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		defer f.mu.Unlock()
 		f.seq++
 		id := "new" + strconv.Itoa(f.seq)
-		a := &fakeAction{ID: id, Name: in.Name, URL: in.Source, Description: in.Description,
+		a := &fakeAction{ID: id, Name: in.Name, Title: in.Title, URL: in.Source, Description: in.Description,
 			InSchema: string(in.InputSchema), OutSchema: string(in.OutputSchema)}
 		f.acts[id] = a
 		if !isSpecialName(in.Name) { // register/validate/outbox are not Ops — keep them out of op-churn counts
@@ -607,6 +684,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		if in.Visibility != nil {
 			a.Public = *in.Visibility == "public"
+		}
+		if in.Title != nil {
+			a.Title = *in.Title
 		}
 		if in.Description != nil {
 			a.Description = *in.Description

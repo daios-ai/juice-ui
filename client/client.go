@@ -132,6 +132,9 @@ type Action struct {
 	ID     string `json:"id"`
 	Action string `json:"action"`
 	Name   string `json:"name"`
+	// Title is the one line a person reads in a list (kernel D4: required,
+	// trimmed, 1–80 characters). It is part of the quoted terms.
+	Title  string `json:"title"`
 	Kind   string `json:"kind"`
 	Active bool   `json:"active"`
 	// Visibility is the kernel's three-way caller-scope: "private" (owner only),
@@ -157,8 +160,8 @@ type Action struct {
 	// that completing a task on this action spends the completer's own money
 	// (requirements.md §6.3): never key on the action's name.
 	Effect string `json:"effect,omitempty"`
-	// QuoteHash fingerprints the terms quoted here — action id, effect,
-	// description, both schemas, and price (kernel §4, v0.12.15). Pin it on a run
+	// QuoteHash fingerprints the terms quoted here — action id, effect, title,
+	// description, both schemas, and price (kernel P2). Pin it on a run
 	// and a call whose terms moved is refused with terms_changed BEFORE funds are
 	// locked, at zero charge, so a displayed price is binding rather than
 	// advisory. Carried on action reads, listings, and sys/lookup rows; because
@@ -235,6 +238,7 @@ func (a Action) IsPrivate() bool { return a.Vis() == "private" }
 // Auth is write-only upstream credential config {scheme, config, secrets}; never returned by the kernel.
 type CreateActionInput struct {
 	Name         string          `json:"name"`
+	Title        string          `json:"title"`
 	Kind         string          `json:"kind"`
 	Source       string          `json:"source,omitempty"`
 	Method       string          `json:"method,omitempty"`
@@ -255,6 +259,7 @@ type UpdateActionInput struct {
 	// Target is the action id or owner/path this update names; set by UpdateAction.
 	Target       string          `json:"target"`
 	Price        *int64          `json:"price,omitempty"`
+	Title        *string         `json:"title,omitempty"`
 	Description  *string         `json:"description,omitempty"`
 	Source       *string         `json:"source,omitempty"`
 	Method       string          `json:"method,omitempty"`
@@ -431,14 +436,25 @@ type ImportResult struct {
 	Unchanged   []Action          `json:"unchanged"`
 	Deactivated []Action          `json:"deactivated"`
 	Rejected    []ImportRejection `json:"rejected"`
+	Notices     []ImportNotice    `json:"notices"`
 }
 
 // ImportRejection is one operation the kernel would not install, and why —
 // a missing description, an unsupported body, an ambiguous success schema. The
 // wizard shows them: an operation silently absent reads as a kernel fault.
 type ImportRejection struct {
-	Key    string `json:"key"`
-	Reason string `json:"reason"`
+	Key      string `json:"key"`
+	Location string `json:"location"` // METHOD /path in the document
+	Reason   string `json:"reason"`
+}
+
+// ImportNotice is one place where the stored contract differs from the
+// document because the kernel folded a form into its schema subset (a 3.0
+// nullable, say). The operation is installed; the note says what changed.
+type ImportNotice struct {
+	Key      string `json:"key"`
+	Location string `json:"location"`
+	Note     string `json:"note"`
 }
 
 // Health is GET /health (open): the identity banner a client pins before it

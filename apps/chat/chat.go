@@ -422,6 +422,7 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 				if !ok {
 					na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
 						Name:         op.Name,
+						Title:        op.Title,
 						Kind:         "http",
 						Source:       want,
 						Method:       "POST",
@@ -440,16 +441,18 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 					return nil
 				}
 				if force || contractDrifted(a, want, op) {
-					// Bring the WHOLE contract into line (source, schemas, description,
-					// AND auth), then re-enable — the update deactivates the action and
-					// revokes its grants; per-user provisioning re-heals them.
-					desc := op.Description
+					// Bring the WHOLE contract into line (source, schemas, title,
+					// description, AND auth), then re-enable. The update deactivates
+					// the action and revokes its grants; users connect again with
+					// "Connect to chat" (there is no silent re-provisioning).
+					desc, title := op.Description, op.Title
 					if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
 						Source:       &want,
 						Method:       "POST",
 						Auth:         auth,
 						InputSchema:  op.InputSchema,
 						OutputSchema: op.OutputSchema,
+						Title:        &title,
 						Description:  &desc,
 						Visibility:   &visPublic,
 					}); err != nil {
@@ -459,6 +462,9 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 						return fmt.Errorf("chat: enable %s/%s: %w", chatHandle, op.Name, err)
 					}
 					return nil
+				}
+				if err := c.retitle(ctx, tok, a, op.Title); err != nil {
+					return err
 				}
 				// Contract already correct — only nudge active/public state if needed.
 				if !a.Active {
@@ -507,8 +513,8 @@ func (c *Chat) ensureActions(ctx context.Context) error {
 
 // outbox action schemas — activation requires described properties; it takes none.
 var (
-	outboxInSchema  = json.RawMessage(`{"type":"object","properties":{}}`)
-	outboxOutSchema = json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string","description":"Id of the sentinel task that holds the outbox process open."}}}`)
+	outboxInSchema  = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{}}`)
+	outboxOutSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"task_id":{"type":"string","description":"Id of the sentinel task that holds the outbox process open."}}}`)
 )
 
 const outboxDesc = "Opens the chat outbox seed by creating a sentinel task via the trace capability; called only by chat."
@@ -518,10 +524,10 @@ const outboxDesc = "Opens the chat outbox seed by creating a sentinel task via t
 // task's onward). Both carry a bearer upstream secret so the daemon/plugin trusts that
 // the kernel is the caller.
 var (
-	registerInSchema  = json.RawMessage(`{"type":"object","properties":{"username":{"type":"string","description":"The address to issue a chat key for, for example agent@alpha. A verification task is sent to this address."}}}`)
-	registerOutSchema = json.RawMessage(`{"type":"object","properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect chat@<kernel>/msg --token <api_key>. It activates once the address's owner accepts the verification task."},"task_id":{"type":"string","description":"Id of the verification task sent to the address; complete it (as that user) to activate the key."}}}`)
-	validateInSchema  = json.RawMessage(`{"type":"object","properties":{"reg_id":{"type":"string","description":"Registration id carried by the verification task; names which pending key to activate."}}}`)
-	validateOutSchema = json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean","description":"True when the key was activated."}}}`)
+	registerInSchema  = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"username":{"type":"string","description":"The address to issue a chat key for, for example agent@alpha. A verification task is sent to this address."}}}`)
+	registerOutSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"api_key":{"type":"string","description":"The chat API key. Connect it with: juice user connect chat@<kernel>/msg --token <api_key>. It activates once the address's owner accepts the verification task."},"task_id":{"type":"string","description":"Id of the verification task sent to the address; complete it (as that user) to activate the key."}}}`)
+	validateInSchema  = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"reg_id":{"type":"string","description":"Registration id carried by the verification task; names which pending key to activate."}}}`)
+	validateOutSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"ok":{"type":"boolean","description":"True when the key was activated."}}}`)
 )
 
 const (
@@ -533,8 +539,8 @@ const (
 // mirrors a doorbell's partial_args ({room, room_name}) so the completed task's merged
 // args validate against it.
 var (
-	ackInSchema  = json.RawMessage(`{"type":"object","properties":{"room":{"type":"string","description":"Id of the room the doorbell is for."},"room_name":{"type":"string","description":"Display name of that room."}}}`)
-	ackOutSchema = json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean","description":"Always true; completing a doorbell is a no-op."}}}`)
+	ackInSchema  = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"room":{"type":"string","description":"Id of the room the doorbell is for."},"room_name":{"type":"string","description":"Display name of that room."}}}`)
+	ackOutSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"ok":{"type":"boolean","description":"Always true; completing a doorbell is a no-op."}}}`)
 )
 
 const ackDesc = "No-op onward for chat doorbell and sentinel tasks; completing a doorbell dismisses it and does nothing else. Owned by chat and priced 0."
@@ -567,7 +573,8 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		id, err := c.ensureSpecialAction(ctx, tok, specialAction{
 			// local (not private): a doorbell/message task's required_caller is
 			// another member, who must be able to call this onward (kernel requirement).
-			name: ackName, vis: "local", in: ackInSchema, out: ackOutSchema, desc: ackDesc,
+			name: ackName, vis: "local", in: ackInSchema, out: ackOutSchema,
+			title: "Dismiss a chat notification", desc: ackDesc,
 		})
 		if err != nil {
 			return err
@@ -575,13 +582,14 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		c.ackID = id
 	}
 	if _, err := c.ensureSpecialAction(ctx, tok, specialAction{
-		name: outboxName, public: false, in: outboxInSchema, out: outboxOutSchema, desc: outboxDesc,
+		name: outboxName, public: false, in: outboxInSchema, out: outboxOutSchema,
+		title: "Open the chat outbox", desc: outboxDesc,
 	}); err != nil {
 		return err
 	}
 	if _, err := c.ensureSpecialAction(ctx, tok, specialAction{
 		name: registerName, public: true, auth: bearerAuth(c.st.RegisterSecret),
-		in: registerInSchema, out: registerOutSchema, desc: registerDesc,
+		in: registerInSchema, out: registerOutSchema, title: "Request a chat key", desc: registerDesc,
 	}); err != nil {
 		return err
 	}
@@ -589,7 +597,7 @@ func (c *Chat) ensureSeed(ctx context.Context, tok string) error {
 		// local (not private): the verification task's required_caller is the
 		// registrant, who must be able to call this onward (kernel requirement).
 		name: validateName, vis: "local", auth: bearerAuth(c.st.ValidateSecret),
-		in: validateInSchema, out: validateOutSchema, desc: validateDesc,
+		in: validateInSchema, out: validateOutSchema, title: "Activate a chat key", desc: validateDesc,
 	})
 	if err != nil {
 		return err
@@ -645,6 +653,7 @@ type specialAction struct {
 	public  bool
 	auth    json.RawMessage // nil for the no-auth owner-called outbox
 	in, out json.RawMessage
+	title   string
 	desc    string
 }
 
@@ -679,7 +688,7 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 	vis := sp.visibilityOf()
 	if a == nil {
 		na, err := c.deps.Client.CreateAction(ctx, tok, client.CreateActionInput{
-			Name: sp.name, Kind: "http", Source: want, Method: "POST",
+			Name: sp.name, Title: sp.title, Kind: "http", Source: want, Method: "POST",
 			Description: sp.desc, Price: 0, InputSchema: sp.in, OutputSchema: sp.out, Auth: sp.auth,
 		})
 		if err != nil {
@@ -696,10 +705,10 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 		return na.ID, nil
 	}
 	if a.HTTP == nil || a.HTTP.URL != want {
-		desc := sp.desc
+		desc, title := sp.desc, sp.title
 		if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
 			Source: &want, Method: "POST", InputSchema: sp.in, OutputSchema: sp.out,
-			Description: &desc, Visibility: &vis, Auth: sp.auth,
+			Title: &title, Description: &desc, Visibility: &vis, Auth: sp.auth,
 		}); err != nil {
 			return "", fmt.Errorf("chat: reconcile %s/%s: %w", chatHandle, sp.name, err)
 		}
@@ -707,6 +716,9 @@ func (c *Chat) ensureSpecialAction(ctx context.Context, tok string, sp specialAc
 			return "", fmt.Errorf("chat: enable %s/%s: %w", chatHandle, sp.name, err)
 		}
 		return a.ID, nil
+	}
+	if err := c.retitle(ctx, tok, *a, sp.title); err != nil {
+		return "", err
 	}
 	if !a.Active {
 		if _, err := c.deps.Client.EnableAction(ctx, tok, a.ID); err != nil {
@@ -746,6 +758,21 @@ func contractDrifted(a client.Action, wantURL string, op daemon.Op) bool {
 		return true
 	}
 	return !schemaEqual(a.InputSchema, op.InputSchema) || !schemaEqual(a.OutputSchema, op.OutputSchema)
+}
+
+// retitle brings an action's title into line on its own. A title is quoted, not
+// executed, so the kernel keeps the action live and its grants intact (D4) —
+// which a full contract update would not. It is what the upgrade to titled
+// actions needs: the kernel titled chat's rows with the last segment of their
+// names.
+func (c *Chat) retitle(ctx context.Context, tok string, a client.Action, title string) error {
+	if a.Title == title {
+		return nil
+	}
+	if _, err := c.deps.Client.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{Title: &title}); err != nil {
+		return fmt.Errorf("chat: retitle %s/%s: %w", chatHandle, a.Name, err)
+	}
+	return nil
 }
 
 // schemaEqual compares two JSON schemas structurally (order-independent). An

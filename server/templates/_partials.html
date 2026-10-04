@@ -7,9 +7,12 @@
      the deterministic cardArt fallback until then. Takes an Action. */}}
 {{define "_media"}}<span class="media">{{cardArt .ID .Action .Kind}}</span>{{end}}
 
-{{/* A DISCOVERED card is the unresolved counterpart of an ordinary one: the
+{{/* An action card leads with the action's title (the link), the price
+     right-aligned beside it, and the ref on its own line beneath (§5.5).
+
+     A DISCOVERED card is the unresolved counterpart of an ordinary one: the
      kernel has only heard of the action through gossip, so nothing local backs
-     it. It states what is known — the kernel-qualified ref, the description, and
+     it. It states what is known — the title, the kernel-qualified ref, the description, and
      the catalog price, which the kernel now serves on every lookup row and which
      is INDICATIVE until resolution re-quotes it. No reputation (the discovery
      cache stores none) and no link (the id belongs to the remote kernel).
@@ -20,9 +23,10 @@
 <article class="action-card">
   <a class="media-link" href="/discovered?ref={{.Action.Ref}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
-    <span class="card-title" title="{{.Action.Ref}}"><a href="/discovered?ref={{.Action.Ref}}">{{template "_ref" (ref .Action.Ref "")}}</a></span>
+    <a class="card-title" href="/discovered?ref={{.Action.Ref}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
     {{template "_price" (price .Action.Price true)}}
   </div>
+  <p class="card-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
   <p class="card-desc">
     <span class="chip" title="Discovered — known through the network, not resolved here">R</span>
     {{.Action.Description}}
@@ -33,9 +37,10 @@
 <article class="action-card{{if not .Action.Active}} inactive{{end}}">
   <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
   <div class="card-top">
-    <span class="card-title" title="{{.Action.Ref}}">{{template "_ref" (ref .Action.Ref .Action.ID)}}</span>
+    <a class="card-title" href="/actions/{{.Action.ID}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
     {{template "_price" (price .Action.Price false)}}
   </div>
+  <p class="card-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
   <p class="card-desc">
     {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
     {{- if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span> {{else if .Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span> {{end -}}
@@ -321,7 +326,7 @@
   <tbody>
   {{range .}}
   <tr>
-    <td>{{template "_ref" (ref .Name "")}}{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
+    <td>{{.Title}}<div class="small">{{template "_ref" (ref .Name "")}}</div>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
     <td class="money">{{template "_price" (price .Price false)}}</td>
   </tr>
   {{end}}
@@ -377,26 +382,31 @@
 <div data-fields class="stack">
   {{range .Fields}}
   <div class="field">
-    <label for="f_{{.Name}}">{{.Name}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</label>
+    <label for="f_{{.Name}}">{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</label>
     {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
     <input type="hidden" name="t_{{.Name}}" value="{{.Type}}">
     {{/* Value pre-fills a field where something already proposed an argument
          (§6.2). A pre-filled field is an ordinary field: editable, submitted
-         like any other, and trusted no more than one typed by hand. */}}
+         like any other, and trusted no more than one typed by hand. A blank
+         field is omitted, so an optional select leads with a blank choice. */}}
     {{$v := .Value}}
     {{if .Enum}}
     <select id="f_{{.Name}}" name="f_{{.Name}}">
+      {{if not .Required}}<option value=""></option>{{end}}
       {{range .Enum}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
     </select>
     {{else if eq .Type "boolean"}}
-    <select id="f_{{.Name}}" name="f_{{.Name}}"><option value="false">false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
+    <select id="f_{{.Name}}" name="f_{{.Name}}">{{if not .Required}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
     {{else if or (eq .Type "integer") (eq .Type "number")}}
-    <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" {{if eq .Type "integer"}}step="1"{{end}} value="{{$v}}">
+    <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}} value="{{$v}}">
     {{else if or (eq .Type "object") (eq .Type "array")}}
     <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}" rows="1">{{if $v}}{{$v}}{{else}}{{.Example}}{{end}}</textarea>
     {{else}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}" rows="1">{{$v}}</textarea>
+    <textarea id="f_{{.Name}}" name="f_{{.Name}}" rows="1"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}>{{$v}}</textarea>
     {{end}}
+    {{/* null is its own choice, never a blank input: ticked, the field is sent
+         as null whatever the input holds. */}}
+    {{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Name}}" value="1"> null</label>{{end}}
   </div>
   {{end}}
 </div>
@@ -573,7 +583,7 @@
   <dt>Status</dt><dd>
     {{if $i.Online}}
     <span class="pill status-credited">online</span>
-    <span class="muted small">{{if $i.Reachability.Path}}{{$i.Reachability.Path}}{{else}}reachable{{end}}{{if $i.Reachability.RTTMillis}} · {{$i.Reachability.RTTMillis}} ms{{end}}</span>
+    <span class="muted small">{{if $i.Reachability.Path}}{{$i.Reachability.Path}}{{else}}reachable{{end}}{{if $i.Reachability.RTTMillis}} · {{$i.Reachability.RTTMillis}} ms{{end}}{{with $i.Reachability.Version}} · {{.}}{{end}}</span>
     {{else}}
     <span class="pill status-escrow">offline</span>
     <span class="muted small"{{with $i.Reachability.Error}} title="{{.}}"{{end}}>{{if eq $i.Source "local"}}last-known data{{else}}unreachable{{end}}</span>
@@ -631,7 +641,7 @@
   {{range .Fields}}
   <tr>
     <td class="mono">{{.Name}}</td>
-    <td class="mono muted">{{.Type}}</td>
+    <td class="mono muted">{{.Type}}{{if .Nullable}} | null{{end}}</td>
     <td>{{if .Required}}<span title="required" aria-label="required">✓</span>{{end}}</td>
     <td class="muted">{{.Description}}</td>
   </tr>

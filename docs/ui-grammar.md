@@ -302,10 +302,11 @@ none float, none are colored.
 
 - `.card` (surface, border, radius, pad); `.action-card` for catalog items;
   `.grid` for card collections; `.card-list` for stacked cards.
-- **Action card:** a **media slot** (`.media`, §5.13) on top, then the **ref as
-  the title** (`_ref`, owner emphasized) and the link to the action — never the
-  bare name or the raw kind string — with the price right-aligned in the title row,
-  a one-line description, and **the same `_stat_strip`** the action page uses
+- **Action card:** a **media slot** (`.media`, §5.13) on top, then the action's
+  **title** as the card title and the link to the action (`.card-title`) — never
+  the bare name or the raw kind string — with the price right-aligned in the title
+  row, the **ref** on its own line beneath (`.card-ref`, `_ref`, owner
+  emphasized), a one-line description, and **the same `_stat_strip`** the action page uses
   (icon + tooltip: success · rating · latency), rendered **price-less** on the card
   (`statStrip … withPrice=false`) since price is already in the title row. The strip
   sits **below and outside** the media (kernel chrome never overlaps counterparty
@@ -398,7 +399,12 @@ When that kernel segment is a **raw public key** — an action discovered but no
 resolved is `owner@<43 chars>/name` — it is **truncated** through the same
 primitive a kernel card uses (§5.11), leaving the owner legible and the whole
 segment in the `title`. A bound petname is not key-shaped and renders whole. A
-43-character key MUST never be a card title.
+43-character key MUST never be a card title — the action's title is.
+
+Wherever an action is presented as a thing — a card, the action page's `<h1>`,
+a workshop row, a peer's action list — its **title** leads and its ref follows
+beneath it. Where a row only names the action a record is about (a receipt, a
+task, a ledger entry), the ref alone stands: the kernel serves no title there.
 
 ### 5.8 Modals & floating forms
 
@@ -407,6 +413,12 @@ segment in the `title`. A bound petname is not key-shaped and renders whole. A
   with `showModal()`. **No-JS:** the server renders the named dialog `[open]` as
   an in-flow card. `?form` values are whitelisted server-side.
 - Structure: `.modal-head` (title + `.modal-close`) → `.modal-body` (the form).
+- **A refused dialog comes back open:** a local parse error or the kernel's
+  refusal re-renders the dialog `[open]` with the message as `_error` at the top
+  of `.modal-body` and every typed value kept — except a secret, which never
+  reaches a page: its input returns empty and `required`.
+- **A nullable schema field** renders its typed input and a `label.check`
+  checkbox `null` beneath it. Blank omits the field; the box sends `null`.
 - **Destructive confirm:** `form[data-confirm="…"]` routes through the shared
   confirm modal — a native `dialog.modal-confirm` (`#modal-backdrop`) shown with
   `showModal()`, so it stacks in the top layer above an open `modal-form`; its
