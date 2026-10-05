@@ -1,7 +1,20 @@
 # Juice Web UI Requirements
 
-Version: 0.12.0
+Version: 0.13.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.13.0.** Home is a **dashboard**: balances, the tasks
+> waiting for you, open sessions and recent ledger activity, each linking to
+> its full page (§6.1). Browse leaves the navigation and stays as the results
+> page a search lands on, its empty query the catalog. Actions are listed as
+> **rows in one ranked column**, not a grid; a row leads with a square tile
+> cropped from the same art, and the 16:9 slot remains on the action page
+> only (§6.2). The peer roster and the agents page use the same row. The
+> search box offers **search hints** while typing — catalog titles that run the
+> search when chosen, as a search engine completes a query — from the free
+> action list and never from `sys/lookup`, which is a priced run (§6.2). A rowable row is
+> keyboard-navigable and its link is the pointer target, so no row shows a
+> pointer cursor it cannot honour (§6.1).
 
 > **What changed in 0.12.0.** The kernel (ba7f5e5) makes an action a tool
 > definition: it carries a required one-line **title**, and both schemas are
@@ -403,10 +416,12 @@ server-side.
   validation): the UI presents kernel results; the kernel decides.
 
 **Navigation model.** The UI's navigation MUST present the juice CLI concepts as
-a marketplace, not a raw command dump. The primary groups are **browse**,
+a marketplace, not a raw command dump. The primary groups are **home**,
 **inbox**, **workshop**, **wallet**, and **settings**, plus **network** (federation)
 and **admin**, both shown **only to the `sys` superuser**. Each maps to the same
-CLI concepts as before: `browse` is discovery + execution (`run` + the catalog);
+CLI concepts as before: `home` is the dashboard over the others; discovery +
+execution (`run` + the catalog) is reached from the search box on every page,
+whose results page is `browse`;
 `inbox` is `task` — work addressed to the user, carrying the sole attention badge;
 `workshop` is the provider surface (`action` management + earnings + creation);
 `wallet` is money evidence (`user` balances + `process` lifetimes + the `tx`
@@ -641,13 +656,23 @@ kernel and world is in use, and keys everything durable by
 ### 6.1 Information architecture
 
 * The UI MUST present a left sidebar whose entries are the primary groups
-  (`browse`, `inbox`, `workshop`, `wallet`, `settings`, then `network` and `admin` for
+  (`home`, `inbox`, `workshop`, `wallet`, `settings`, then `network` and `admin` for
   `sys`), default-expanded with labels, collapsible, with collapse state
   persisted server-side. The active group MUST carry `aria-current`. The `inbox`
   entry MUST carry its waiting-count task badge in every state — a constraint on
   the entry wherever it renders, not on any one surface. A single nav model, built
   once server-side, MUST drive the sidebar and the mobile drawer (and the command
   palette), so the three cannot drift.
+* **Home is the dashboard** (`/`, where sign-in lands). It MUST show the
+  viewer's available and parked balance, the waiting tasks addressed to them
+  (read as `status=waiting`, never the whole history), their open sessions,
+  and their most recent ledger entries — at most five rows each, every section
+  linking to its full page. Recent activity MUST come from the ledger, which
+  holds only the viewer's entries, not from the transaction list, which the
+  kernel pages before its party filter. Home MUST NOT complete a task (the
+  inbox is the one surface that spends on a task) and MUST NOT draw a balance
+  chart (the kernel serves no series). Results and action pages belong to no
+  nav group: they are reached from search.
 * The account/identity summary (handle, balance) lives at the sidebar foot;
   nothing that is itself a primary destination sits in a popover. Preferences are
   not chrome: the theme picker MUST appear exactly once, on `settings`.
@@ -695,8 +720,10 @@ kernel and world is in use, and keys everything durable by
 * The UI MUST be keyboard-navigable as a first-class affordance: a Ctrl/Cmd+K
   command palette whose entries mirror the CLI (and are gated — admin commands
   appear only for `sys`), `g`+letter section navigation, `/` to focus search,
-  `?` for a shortcuts overlay, `j`/`k`/`Enter` to move through and open table
-  rows, and `Esc` to close the top layer. The command registry MUST be delivered
+  `?` for a shortcuts overlay, `j`/`k`/`Enter` to move through and open rows
+  (table rows and list rows alike), and `Esc` to close the top layer. A
+  rowable row's pointer target is its link: the row MUST NOT show a pointer
+  cursor, since no click handler stands behind it. The command registry MUST be delivered
   as inert JSON data (a `type="application/json"` block), never executable inline
   script, to satisfy the CSP. Every palette command MUST target a real link or
   form, so the keyboard layer adds no capability unreachable without it.
@@ -759,23 +786,38 @@ spend:
   topbar** at the top of the content area (a compact search input reflows onto the
   browse page itself on mobile, where the topbar is hidden) — and MUST issue
   `sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
-  MUST render as ranked cards, each with a **media slot** (§6.2 media), the
-  action's **title** as the link with **price right-aligned** in the title row,
-  the ref (owner-emphasized) on its own line beneath, a one-line description,
-  and the **same reputation strip the action page uses** (icon + tooltip:
-  success · rating · latency), price-less on the card since price is
-  right-aligned in the title row. The browse page is **headless** (no page-head)
+  MUST render as **rows in one ranked column** (the rank is a sequence, so it
+  is not spread over a grid), filling the container like every component. A
+  row leads with a
+  **square tile** (§6.2 media), then the action's **title** as the link with
+  its chips beside it and the **price right-aligned** on that line, the ref
+  (owner-emphasized) on its own line beneath, the description (at most two
+  lines), and the **same reputation strip the action page uses** (icon +
+  tooltip: success · rating · latency), price-less since the price is on the
+  title line. The title is the row's one pointer target. The browse page is
+  **headless** (no page-head)
   and shows a **flat catalog capped at 20 per page** with a pager (§7 pagination);
   there are no filter tabs.
-* **Media slot.** Every action card and the action page MUST carry a 16:9 media
-  slot. Until the kernel serves images (*Conditional*, §10; tracked in
+* **Search hints.** While a person types, the search box MUST offer up to
+  eight **search hints**: distinct catalog titles containing the text, after a
+  short pause in typing. A hint is a query, not an action, as a search engine
+  completes a query: choosing one MUST run the search for it (`/browse?q=`),
+  exactly as if typed, and MUST NOT open an action page. Hints MUST be read
+  from **one page** of the free action list (`GET /v1/actions`), never from
+  `sys/lookup`: a lookup is a run at an operator-set price, and a run per
+  keystroke would spend and record a transaction each time (§8.2). A title
+  beyond that page MAY be missing. Without JavaScript the box submits as
+  before. A free kernel read of catalog titles, discovered actions included,
+  is requested in `kernel-plan.md`.
+* **Media slot.** The action page MUST carry a 16:9 media slot, and every list
+  row a square tile cropped from the same image. Until the kernel serves images (*Conditional*, §10; tracked in
   `ROADMAP.md`), the slot MUST render a **deterministic generated fallback**
   (seeded from the action's id/owner/kind, palette-constrained, produced
   server-side as inline SVG — no external fetch, no `style=`, CSP-safe). When a
   kernel image lands it MUST override the fallback. The media is decorative
   counterparty content: kernel-captured chrome (ref, price, reputation) MUST
   render **outside** the media box (§8).
-* Price MUST appear on each card. Sort and filter by price MUST be available.
+* Price MUST appear on each row. Sort and filter by price MUST be available.
 * **Discovered results.** `sys/lookup` fuses the gossip discovery cache for an
   authenticated local caller, so results MAY name a remote action this kernel has
   not resolved: its address names another kernel (`owner@<kernel-key>/name`) and
@@ -1206,7 +1248,7 @@ symmetry, but because the kernel refuses anything else.
 * **The roster is the whole known network.** `/v1/admin/peers` merges by public
   key, excluding this kernel, **counterparties** (`has_account`, a bilateral
   position) and **discovered peers** (a catalog: action count).
-  Both render as the same `.kernel-card` under a `.tabs` filter
+  Both render as the same list row (§6.2) under a `.tabs` filter
   (`counterparties` | `known network`), paged and **not polled**. A discovered
   card is the unresolved counterpart of a counterparty card, as §6.2's
   discovered action card is of a resolved one: a `known network` chip and **no

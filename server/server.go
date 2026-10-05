@@ -291,9 +291,7 @@ func New(o Options) (http.Handler, error) {
 	// Home + legacy redirects (bookmarks / old links). The nav is relabelled as a
 	// marketplace (browse/inbox/workshop/wallet/settings), so the old CLI-noun URLs
 	// 301 to their new homes.
-	mux.HandleFunc("GET /{$}", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/browse", http.StatusSeeOther)
-	}))
+	mux.HandleFunc("GET /{$}", s.requireAuth(s.getHome))
 	for from, to := range map[string]string{
 		"/run": "/browse", "/discover": "/browse", "/actions": "/browse",
 		"/steps": "/inbox", "/studio": "/workshop",
@@ -307,6 +305,7 @@ func New(o Options) (http.Handler, error) {
 
 	// Browse — discovery, catalog, and execution.
 	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))
+	mux.HandleFunc("GET /search/suggest", s.requireAuth(s.getSuggest))
 	mux.HandleFunc("POST /browse/propose", s.requireAuth(s.postPropose))
 
 	// Workshop — the provider surface (own actions, earnings, creation).
@@ -651,7 +650,7 @@ func navIcon(paths string) template.HTML {
 }
 
 var (
-	iconBrowse   = navIcon(`<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>`)                                      // compass
+	iconHome     = navIcon(`<path d="M4 11l8-7 8 7"/><path d="M6 9.5V19a1 1 0 0 0 1 1h3.5v-5h3v5H17a1 1 0 0 0 1-1V9.5"/>`)            // house
 	iconInbox    = navIcon(`<path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5a3 3 0 0 0 6 0h5"/>`)    // tray
 	iconWorkshop = navIcon(`<path d="M9 3h6M10 3v6l-4.4 8.1A2 2 0 0 0 7.4 20h9.2a2 2 0 0 0 1.8-2.9L14 9V3"/><path d="M7.7 13h8.6"/>`) // lab beaker
 
@@ -670,7 +669,7 @@ var (
 // drawer renders the same list. One model, two renderings.
 func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	nav := []NavItem{
-		{Slug: "browse", Label: "browse", Href: "/browse", Icon: iconBrowse},
+		{Slug: "home", Label: "home", Href: "/", Icon: iconHome},
 		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge"},
 		{Slug: "workshop", Label: "workshop", Href: "/workshop", Icon: iconWorkshop},
 		{Slug: "wallet", Label: "wallet", Href: "/wallet", Icon: iconWallet},
@@ -785,9 +784,10 @@ func (s *Server) badgeSecs() int { return int(s.badgeTTL / time.Second) }
 // aria-current highlighting.
 func activeGroup(path string) string {
 	switch {
-	case path == "/browse" || strings.HasPrefix(path, "/actions"):
-		// The catalog and every action detail/lifecycle page belong to browse.
-		return "browse"
+	case path == "/":
+		// Results and action pages are reached from search, not the nav, so
+		// they belong to no group.
+		return "home"
 	case strings.HasPrefix(path, "/workshop"):
 		return "workshop"
 	case strings.HasPrefix(path, "/inbox"):

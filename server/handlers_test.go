@@ -641,8 +641,8 @@ func TestOwnerPageShowsVisibleSetAcrossLevels(t *testing.T) {
 	// Your own page: A3 is alice's inactive/private draft — it must appear (and
 	// self-labels via the card's inactive/lock chips).
 	own := getBody(t, cl, srv.URL+"/users/alice@testnet")
-	if !strings.Contains(own, "alice") || !strings.Contains(own, `class="action-card`) {
-		t.Error("owner page must show the handle and action cards")
+	if !strings.Contains(own, "alice") || !strings.Contains(own, `class="action-row`) {
+		t.Error("owner page must show the handle and action rows")
 	}
 	if !strings.Contains(own, "draft") {
 		t.Error("your own owner page must include your private/inactive actions")
@@ -1423,11 +1423,11 @@ func TestActionCardChips(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	// Browse renders active public actions as image cards. The ref is the title:
-	// the owner links to its owner page, the name to the action (YouTube model).
+	// Browse lists active public actions as rows: the title links to the
+	// action, the owner in the ref to its owner page.
 	browse := getBody(t, cl, srv.URL+"/browse")
-	if !strings.Contains(browse, `class="card-title"`) {
-		t.Error("browse card must carry a card title")
+	if !strings.Contains(browse, `class="action-title"`) {
+		t.Error("browse row must carry a title")
 	}
 	if !strings.Contains(browse, `href="/actions/A1"`) {
 		t.Error("browse card name must link to the action")
@@ -1438,8 +1438,8 @@ func TestActionCardChips(t *testing.T) {
 	if strings.Contains(browse, `title="WebAssembly action">W`) {
 		t.Error("browse card must NOT show an always-on kind chip (exceptional-only)")
 	}
-	if !strings.Contains(browse, `class="media"`) {
-		t.Error("browse card must carry a media slot")
+	if !strings.Contains(browse, `class="media tile"`) {
+		t.Error("browse row must lead with a tile")
 	}
 
 	// The workshop management table carries the visibility + state cells: a private
@@ -3305,29 +3305,27 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 			t.Errorf("browse must offer the sort %q: %s", want, page)
 		}
 	}
+	// A row is found by its link; the order of the links is the order shown.
 	order := func(body string) []string {
-		var out []string
-		for _, name := range []string{"alice@testnet/cheap", "alice@testnet/loved", "alice@testnet/meh"} {
-			out = append(out, name)
-		}
+		out := []string{"/actions/CHEAP", "/actions/LOVED", "/actions/MEH"}
 		sort.Slice(out, func(i, j int) bool { return strings.Index(body, out[i]) < strings.Index(body, out[j]) })
 		return out
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "alice@testnet/cheap" || got[2] != "alice@testnet/loved" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "/actions/CHEAP" || got[2] != "/actions/LOVED" {
 		t.Errorf("price order = %v", got)
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "alice@testnet/loved" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "/actions/LOVED" {
 		t.Errorf("rating order must put the best-rated first: %v", got)
 	}
 	// A row nobody has rated is not SCORED as a bad one. It sorts into the
 	// unrated block after the rated rows, which says the true thing — it has not
 	// been rated — rather than interleaving silence with measured opinion.
 	rated := getBody(t, cl, srv.URL+"/browse?sort=rating")
-	if strings.Index(rated, "alice@testnet/cheap") < strings.Index(rated, "alice@testnet/meh") {
+	if strings.Index(rated, "/actions/CHEAP") < strings.Index(rated, "/actions/MEH") {
 		t.Error("an unrated action belongs after the rated ones, not among them")
 	}
 	// An unknown sort shows the list, not an error.
-	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "alice@testnet/cheap") {
+	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "/actions/CHEAP") {
 		t.Errorf("an unknown sort falls back to relevance: %s", body)
 	}
 }
@@ -3382,7 +3380,7 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/browse?sort=rating")
-	best := fmt.Sprintf("alice@testnet/a%02d", total-1)
+	best := fmt.Sprintf(`href="/actions/A%d"`, total-1)
 	if !strings.Contains(body, best) {
 		t.Errorf("the best-rated action must be on the first page of a rating sort: %s", best)
 	}
@@ -3573,5 +3571,167 @@ func TestReceiptStatesATransferPayment(t *testing.T) {
 	body := getBody(t, cl, srv.URL+"/transactions/TXP")
 	if !strings.Contains(body, `Payment to the recipient's kernel <span class="pill ">announced</span>`) {
 		t.Errorf("the receipt must state the payment as served, in a neutral pill: %s", body)
+	}
+}
+
+// homeKernel is a fake kernel for the dashboard and the type-ahead. It records
+// every task-list query and counts action-list reads and runs, so a test can
+// assert what each page asked the kernel for.
+type homeKernel struct {
+	*httptest.Server
+	taskQueries []string
+	actionLists int
+	runs        int
+	failLedger  bool
+}
+
+func newHomeKernel(t *testing.T) *homeKernel {
+	k := &homeKernel{}
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":40}`))
+	})
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		k.taskQueries = append(k.taskQueries, r.URL.RawQuery)
+		// Seven waiting tasks for alice and one for bob (a superuser's view).
+		var rows []string
+		for i := 0; i < 7; i++ {
+			rows = append(rows, fmt.Sprintf(`{"id":"T%d","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`, i))
+		}
+		rows = append(rows, `{"id":"TBOB","required_caller":"bob@testnet","owner":"bob@testnet","action":"bob@testnet/x","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`)
+		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+	})
+	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
+		var rows []string
+		for i := 0; i < 7; i++ {
+			rows = append(rows, fmt.Sprintf(`{"id":"P%d000000","status":"open","available":10,"locked":0}`, i))
+		}
+		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+	})
+	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) {
+		if k.failLedger {
+			http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte(`[{"amount":300,"reason":"","created_at":"2024-01-02T12:00:00Z","operator":"sys@testnet","from":"sys@testnet","to":"alice@testnet"}]`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		k.actionLists++
+		var rows []string
+		for i := 0; i < 12; i++ {
+			rows = append(rows, fmt.Sprintf(`{"id":"G%d","action":"alice@testnet/greet%d","name":"greet%d","title":"Greet %d","kind":"wasm","active":true,"price":0}`, i, i, i, i))
+		}
+		rows = append(rows, `{"id":"S1","action":"alice@testnet/summ","name":"summ","title":"Summarize a page","kind":"wasm","active":true,"price":0}`,
+			`{"id":"S2","action":"alice@testnet/summ2","name":"summ2","title":"summarize a page","kind":"wasm","active":true,"price":0}`)
+		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+	})
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		k.runs++
+		w.Write([]byte(`{"result":{}}`))
+	})
+	k.Server = httptest.NewServer(mux)
+	t.Cleanup(k.Close)
+	return k
+}
+
+// Home is the dashboard: balances, the waiting tasks addressed to the viewer
+// (at most five, asked for as waiting so no history is read), open sessions
+// (at most five), and recent ledger activity, each linking to its full page.
+func TestHomeIsTheDashboard(t *testing.T) {
+	k := newHomeKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	k.taskQueries = nil
+	resp, err := cl.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	page := string(body)
+	if resp.StatusCode != http.StatusOK || resp.Request.URL.Path != "/" {
+		t.Fatalf("/ must render the dashboard, got %d at %s", resp.StatusCode, resp.Request.URL.Path)
+	}
+	for _, want := range []string{"500 credits", "40 credits", `href="/inbox"`, `href="/processes"`, `href="/transactions"`, `href="/wallet"`, "from sys@testnet"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("home must show %q", want)
+		}
+	}
+	if n := strings.Count(page, `data-href="/inbox/T`); n != 5 {
+		t.Errorf("home shows %d waiting tasks, want 5", n)
+	}
+	if strings.Contains(page, "/inbox/TBOB") {
+		t.Error("home must show only tasks addressed to the viewer")
+	}
+	if n := strings.Count(page, `<a class="mono" href="/processes/P`); n != 5 {
+		t.Errorf("home shows %d open sessions, want 5", n)
+	}
+	for _, q := range k.taskQueries {
+		if !strings.Contains(q, "status=waiting") || strings.Contains(q, "all=1") {
+			t.Errorf("home must ask for waiting tasks only, asked %q", q)
+		}
+	}
+	if !strings.Contains(page, `aria-current="page"><svg`) || !strings.Contains(page, `href="/" title="home" aria-current="page"`) {
+		t.Error("the home nav item must be current on /")
+	}
+	// A secondary read failing leaves the rest of the page standing.
+	k.failLedger = true
+	if page := getBody(t, cl, srv.URL+"/"); !strings.Contains(page, "500 credits") || !strings.Contains(page, "No activity yet.") {
+		t.Error("home must still render when the ledger read fails")
+	}
+}
+
+// The type-ahead offers search hints: distinct catalog titles containing the
+// text, each a link that runs the search for it, never a link to an action.
+// It reads one page of the free action list and never runs anything: sys/lookup
+// is a priced run that would record a transaction per keystroke.
+func TestSuggestOffersSearchHintsAndNeverRuns(t *testing.T) {
+	k := newHomeKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	k.actionLists, k.runs = 0, 0
+	body := getBody(t, cl, srv.URL+"/search/suggest?q=greet")
+	if n := strings.Count(body, `class="menu-item"`); n != suggestLimit {
+		t.Errorf("hints = %d, want the cap %d: %s", n, suggestLimit, body)
+	}
+	if k.actionLists != 1 || k.runs != 0 {
+		t.Errorf("suggest made %d action-list reads and %d runs, want 1 and 0", k.actionLists, k.runs)
+	}
+	if strings.Contains(body, "/actions/") || strings.Contains(body, "alice@testnet") {
+		t.Errorf("a hint is a query, never an action or its address: %s", body)
+	}
+	if !strings.Contains(body, `<a class="menu-item" href="/browse?q=Greet%200">Greet 0</a>`) {
+		t.Errorf("a hint must be its title, linked to the search for it: %s", body)
+	}
+	// Titles match case-insensitively, and a title held by several actions is
+	// one hint.
+	body = getBody(t, cl, srv.URL+"/search/suggest?q=SUMMAR")
+	if strings.Count(body, ">Summarize a page</a>") != 1 {
+		t.Errorf("a shared title must be offered once: %s", body)
+	}
+	// An empty query asks the kernel nothing and renders nothing.
+	k.actionLists = 0
+	if body := getBody(t, cl, srv.URL+"/search/suggest?q=+"); strings.TrimSpace(body) != "" || k.actionLists != 0 {
+		t.Errorf("an empty query must render nothing and read nothing: %q (%d reads)", body, k.actionLists)
+	}
+	// Both search boxes carry the wiring; without JavaScript they still submit.
+	page := getBody(t, cl, srv.URL+"/browse")
+	if strings.Count(page, `hx-get="/search/suggest"`) != 2 || strings.Count(page, `<div class="omni-suggest"></div>`) != 2 {
+		t.Error("the topbar and browse search boxes must both offer suggestions")
 	}
 }

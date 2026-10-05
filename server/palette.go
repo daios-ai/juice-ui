@@ -28,6 +28,7 @@ type Command struct {
 // theme list.
 func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 	cmds := []Command{
+		{Name: "home", Hint: "Balance, waiting tasks, and recent activity", Kind: "nav", Href: "/"},
 		{Name: "browse", Hint: "Discover and run an action", Kind: "nav", Href: "/browse"},
 		{Name: "workshop", Hint: "Your actions, earnings, and creation", Kind: "nav", Href: "/workshop"},
 		{Name: "action create", Hint: "Create a new action", Kind: "form", Href: "/workshop?form=action-create"},

@@ -7,50 +7,107 @@
      the deterministic cardArt fallback until then. Takes an Action. */}}
 {{define "_media"}}<span class="media">{{cardArt .ID .Action .Kind}}</span>{{end}}
 
-{{/* An action card leads with the action's title (the link), the price
-     right-aligned beside it, and the ref on its own line beneath (§5.5).
+{{/* _tile — the square crop of the same art (§5.13), the icon a list row
+     leads with. The SVG slices to any box, so one generator serves both. */}}
+{{define "_tile"}}<span class="media tile">{{cardArt .ID .Action .Kind}}</span>{{end}}
 
-     A DISCOVERED card is the unresolved counterpart of an ordinary one: the
+{{/* _action_row — an action in a ranked list (§5.5): the tile, then the
+     title (the link) with its chips and the price right-aligned, the ref,
+     the description, and the stat strip. The title is the one pointer
+     target; rowable gives the row j/k/Enter only.
+
+     A DISCOVERED row is the unresolved counterpart of an ordinary one: the
      kernel has only heard of the action through gossip, so nothing local backs
-     it. It states what is known — the title, the kernel-qualified ref, the description, and
-     the catalog price, which the kernel now serves on every lookup row and which
-     is INDICATIVE until resolution re-quotes it. No reputation (the discovery
-     cache stores none) and no link (the id belongs to the remote kernel).
-     Resolution happens on the first call, after which the kernel shadows this
-     row with the cached proxy. */}}
-{{define "_action_card"}}
+     it. It states what is known — the title, the kernel-qualified ref, the
+     description, and the catalog price, INDICATIVE until resolution re-quotes
+     it. No stat strip (the discovery cache stores no reputation); its link
+     resolves it, after which the kernel shadows this row with the cached
+     proxy. */}}
+{{define "_action_row"}}
 {{if .Discovered}}
-<article class="action-card">
-  <a class="media-link" href="/discovered?ref={{.Action.Ref}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
-  <div class="card-top">
-    <a class="card-title" href="/discovered?ref={{.Action.Ref}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
-    {{template "_price" (price .Action.Price true)}}
+<article class="action-row rowable" tabindex="-1" data-href="/discovered?ref={{.Action.Ref}}">
+  {{template "_tile" .Action}}
+  <div class="action-body">
+    <div class="action-line">
+      <a class="action-title" href="/discovered?ref={{.Action.Ref}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
+      <span class="chip" title="Discovered — known through the network, not resolved here">R</span>
+      {{template "_price" (price .Action.Price true)}}
+    </div>
+    <p class="action-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
+    <p class="action-desc">{{.Action.Description}}</p>
+    {{if .Observed}}<p class="action-observed muted tiny">terms seen {{.ObservedAgo}}</p>{{end}}
   </div>
-  <p class="card-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
-  <p class="card-desc">
-    <span class="chip" title="Discovered — known through the network, not resolved here">R</span>
-    {{.Action.Description}}
-  </p>
-  {{if .Observed}}<p class="card-observed muted tiny">terms seen {{.ObservedAgo}}</p>{{end}}
 </article>
 {{else}}
-<article class="action-card{{if not .Action.Active}} inactive{{end}}">
-  <a class="media-link" href="/actions/{{.Action.ID}}" aria-label="{{.Action.Ref}}">{{template "_media" .Action}}</a>
-  <div class="card-top">
-    <a class="card-title" href="/actions/{{.Action.ID}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
-    {{template "_price" (price .Action.Price false)}}
+<article class="action-row rowable{{if not .Action.Active}} inactive{{end}}" tabindex="-1" data-href="/actions/{{.Action.ID}}">
+  {{template "_tile" .Action}}
+  <div class="action-body">
+    <div class="action-line">
+      <a class="action-title" href="/actions/{{.Action.ID}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
+      {{- if eq .Action.Kind "remote_proxy"}} <span class="chip filled" title="Remote — imported from a peer kernel">R</span>{{end -}}
+      {{- if .Action.IsPrivate}} <span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if .Action.IsLocal}} <span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end -}}
+      {{- if .NeedsConnect}} <span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end -}}
+      {{- if not .Action.Active}} <span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
+      {{template "_price" (price .Action.Price false)}}
+    </div>
+    <p class="action-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
+    <p class="action-desc">{{.Action.Description}}</p>
+    {{template "_stat_strip" (statStrip .Action.Price .Action.Experience false false)}}
   </div>
-  <p class="card-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
-  <p class="card-desc">
-    {{- if eq .Action.Kind "remote_proxy"}}<span class="chip filled" title="Remote — imported from a peer kernel">R</span> {{end -}}
-    {{- if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span> {{else if .Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span> {{end -}}
-    {{- if .NeedsConnect}}<span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span> {{end -}}
-    {{- if not .Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span> {{end -}}
-    {{.Action.Description}}
-  </p>
-  {{template "_stat_strip" (statStrip .Action.Price .Action.Experience false false)}}
 </article>
 {{end}}
+{{end}}
+
+{{/* _suggest_attrs — the type-ahead wiring of a search input: htmx fetches
+     the suggestions into the form's .omni-suggest after a pause in typing.
+     Without JavaScript nothing is fetched and the form submits as before. */}}
+{{define "_suggest_attrs"}} hx-get="/search/suggest" hx-trigger="input changed delay:200ms, search" hx-target="next .omni-suggest" hx-sync="this:replace"{{end}}
+
+{{/* _suggestions — the type-ahead hints: catalog titles, each an ordinary
+     link that runs the search for it, as if typed. A hint is a query, never an
+     action. Takes []string; empty renders nothing, which hides the panel. */}}
+{{define "_suggestions"}}{{if .}}<nav class="suggest-list" aria-label="Search suggestions">
+{{range .}}<a class="menu-item" href="/browse?q={{.}}">{{.}}</a>
+{{end}}</nav>{{end}}{{end}}
+
+{{/* _open_sessions — the viewer's open processes, each with its parked funds
+     and, when endable, the end-and-refund command. Shared by wallet and home;
+     takes the page (it needs the CSRF field). */}}
+{{define "_open_sessions"}}
+{{if .Data.Open}}
+<div class="card-list">
+  {{range .Data.Open}}
+  <div class="card row">
+    <div class="stretch">
+      <a class="mono" href="/processes/{{.ID}}">{{truncate 8 .ID}}</a>
+      <div class="small muted">
+        <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
+      </div>
+    </div>
+    {{if .Endable}}
+    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting tasks are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
+      {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{else}}<p class="muted">No open sessions.</p>{{end}}
+{{end}}
+
+{{/* _activity — the ledger preview: every movement between accounts,
+     settlement included, so it alone is the activity (§6.5). Takes []entryRow. */}}
+{{define "_activity"}}
+{{if .}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Party</th><th>Reason</th><th class="money">Amount</th><th>When</th></tr></thead>
+  <tbody>
+  {{range .}}{{template "_activity_entry" .}}{{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="muted">No activity yet.</p>{{end}}
 {{end}}
 
 {{/* _stat_strip — THE action stats line (price · success · rating · latency),
@@ -519,12 +576,12 @@
 {{define "_peers"}}
 {{if .Peers}}
 {{$known := .Known}}
-<div class="net-grid">
+<div class="action-list">
   {{range .Peers}}
   {{$n := nameOf .Petname .PublicKey}}
-  <div class="kernel-card{{if .Suspended}} inactive{{end}}">
-    <span class="media wide">{{cardArt .PublicKey $n.Text "kernel"}}</span>
-    <div class="kernel-body">
+  <div class="action-row{{if .Suspended}} inactive{{end}}">
+    <span class="media tile">{{cardArt .PublicKey $n.Text "kernel"}}</span>
+    <div class="action-body">
       {{/* The name that RESOLVES is the petname; an unbound kernel shows its
            truncated key and stays callable by it. The rename link keys on the
            public key, never on the displayed name — an unbound kernel has no

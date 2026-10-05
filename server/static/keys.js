@@ -132,8 +132,25 @@ if (palette) {
   });
 }
 
+// --- search suggestions ---
+// The suggestions are ordinary links in the search form (htmx fills them).
+// ↓/↑ move focus between the input and the links; Esc leaves the form, which
+// hides the panel (CSS :focus-within). Tab and Enter work natively on links.
+document.addEventListener("keydown", (e) => {
+  const form = e.target.closest && e.target.closest(".omni");
+  if (!form) return;
+  if (e.key === "Escape") { e.target.blur(); return; }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const links = [...form.querySelectorAll(".omni-suggest a")];
+  if (links.length === 0) return;
+  e.preventDefault();
+  const items = [form.querySelector('input[name="q"]'), ...links];
+  const i = items.indexOf(e.target) + (e.key === "ArrowDown" ? 1 : -1);
+  items[Math.min(Math.max(i, 0), items.length - 1)].focus();
+});
+
 // --- global shortcuts ---
-const GO = { b: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/settings", n: "/admin/peers", x: "/admin" };
+const GO = { h: "/", b: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/settings", n: "/admin/peers", x: "/admin" };
 let goArmed = false;
 
 function typingContext(el) {
@@ -177,9 +194,9 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// j/k row navigation over .rowable table rows.
+// j/k row navigation over .rowable rows (table rows and list rows alike).
 function moveRow(dir) {
-  const rows = [...document.querySelectorAll("tr.rowable")];
+  const rows = [...document.querySelectorAll(".rowable")];
   if (rows.length === 0) return;
   let idx = rows.indexOf(document.activeElement);
   idx = idx < 0 ? (dir > 0 ? 0 : rows.length - 1) : Math.min(Math.max(idx + dir, 0), rows.length - 1);

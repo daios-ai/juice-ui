@@ -7,8 +7,9 @@
 {{/* Mobile-only search — the topbar omnibox is hidden below 720px. */}}
 <form class="omni browse-search" method="get" action="/browse" role="search">
   <label for="q" class="sr-only">Search</label>
-  <input id="q" name="q" type="search" enterkeyhint="search" value="{{$q}}" placeholder="what do you need done?">
+  <input id="q" name="q" type="search" enterkeyhint="search" value="{{$q}}" placeholder="what do you need done?" autocomplete="off"{{template "_suggest_attrs"}}>
   <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
+  <div class="omni-suggest"></div>
 </form>
 
 {{$cards := .Data.Catalog}}{{if $q}}{{$cards = .Data.Results}}{{end}}
@@ -20,8 +21,8 @@
 <nav class="tabs" aria-label="Sort">
   {{range .Data.Sorts}}{{template "_tab" (tab .Label .Href .Current)}}{{end}}
 </nav>
-<div class="grid">
-  {{range $cards}}{{template "_action_card" .}}{{end}}
+<div class="action-list">
+  {{range $cards}}{{template "_action_row" .}}{{end}}
 </div>
 {{if not $q}}{{template "_pager" .Data.Pager}}{{end}}
 {{/* Ask the kernel's planner which of these fits, and with what arguments. It

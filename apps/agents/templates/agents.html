@@ -8,16 +8,18 @@
 <p><a class="btn-quiet" href="/agents?form=agent-create" data-modal="form-agent-create">+ new agent</a></p>
 
 {{if $d.Agents}}
-<div class="grid">
+<div class="action-list">
   {{range $d.Agents}}
-  <article class="action-card">
-    <a class="media-link" href="/agents/{{.Handle}}" aria-label="{{.Handle}}"><span class="media">{{cardArt .Handle .Handle "agent"}}</span></a>
-    <div class="card-top">
-      <a class="card-title ref mono" href="/agents/{{.Handle}}"><span class="owner">{{.Handle}}</span></a>
+  <article class="action-row">
+    <span class="media tile">{{cardArt .Handle .Handle "agent"}}</span>
+    <div class="action-body">
+      <div class="action-line">
+        <a class="action-title ref mono" href="/agents/{{.Handle}}"><span class="owner">{{.Handle}}</span></a>
+      </div>
+      <div class="row compact" id="agent-status-{{.Handle}}"
+           hx-get="/agents/{{.Handle}}/status" hx-trigger="every 3s"
+           hx-target="#agent-status-{{.Handle}}" hx-swap="innerHTML">{{template "_agent_status" .}}</div>
     </div>
-    <div class="card-meta row compact" id="agent-status-{{.Handle}}"
-         hx-get="/agents/{{.Handle}}/status" hx-trigger="every 3s"
-         hx-target="#agent-status-{{.Handle}}" hx-swap="innerHTML">{{template "_agent_status" .}}</div>
   </article>
   {{end}}
 </div>

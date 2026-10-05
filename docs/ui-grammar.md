@@ -30,14 +30,14 @@ Three laws underpin everything:
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
 | Tab bar | `.tab-bar` + `.tab` | the fixed mobile bottom nav |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
-| Card / grid / table | `.card` · `.grid` · `.card-list` · `.action-card` · `table` (`.rowable`, `.stats-table`) | containers & data |
-| **Media** | `.media` (16:9 slot) · `_media` partial · `cardArt` fallback | the action image slot (§5.13) |
+| Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
+| **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
 | **Stat** | `.stat` (label · value · link) | a workshop earnings/metric tile |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Search pill** | `.omni` + `.omni-go` submit segment | **the** search, segmented like a single pill: input left, equal-height icon-submit right. Topbar on desktop, in-page on browse ≤720px — identical anatomy in both |
+| **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, segmented like a single pill: input left, equal-height icon-submit right. Topbar on desktop, in-page on browse ≤720px — identical anatomy in both. Search hints drop beneath it as a `.menu`-styled panel: catalog titles, each a link that runs the search for it — a query, never an action |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
-| **Kernel card** | `.kernel-card` · `.banner` | a kernel on `network` — counterparty or discovered (§5.11) |
+| **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea | forms |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
@@ -195,9 +195,9 @@ One scale; no ad-hoc margins. Steps (rem): **.25 · .35 · .5 · .75 · 1 · 1.4
 | `.subtitle` bottom | `1.4` |
 | `.card` padding | `.85 1` |
 | `.field` bottom | `1` |
-| `.grid` gap (auto-fill `minmax(260px,1fr)`) | `.85` |
+| `.action-list` gap (one column) | `1.1` |
 
-Compose with `.stack` / `.row` / `.cluster` / `.grid`; never hand-set margins in
+Compose with `.stack` / `.row` / `.cluster` / `.action-list`; never hand-set margins in
 templates.
 
 ---
@@ -298,29 +298,34 @@ none float, none are colored.
 - **Field-switch** (`.field-switch`, `fields | JSON`) is the bare tab-group switch
   (§5.2) — the one way to edit a structured form as raw JSON. No "edit as JSON" button.
 
-### 5.5 Cards, grids, tables
+### 5.5 Cards, lists, tables
 
-- `.card` (surface, border, radius, pad); `.action-card` for catalog items;
-  `.grid` for card collections; `.card-list` for stacked cards.
-- **Action card:** a **media slot** (`.media`, §5.13) on top, then the action's
-  **title** as the card title and the link to the action (`.card-title`) — never
-  the bare name or the raw kind string — with the price right-aligned in the title
-  row, the **ref** on its own line beneath (`.card-ref`, `_ref`, owner
-  emphasized), a one-line description, and **the same `_stat_strip`** the action page uses
-  (icon + tooltip: success · rating · latency), rendered **price-less** on the card
-  (`statStrip … withPrice=false`) since price is already in the title row. The strip
-  sits **below and outside** the media (kernel chrome never overlaps counterparty
+- `.card` (surface, border, radius, pad); `.card-list` for stacked cards;
+  `.action-list` for a collection of things, one **ranked column** of
+  `.action-row`s. There is no grid: a rank is a sequence, and rows align the
+  facts a person compares. Like every component it fills the container (§1).
+- **Action row:** a **square tile** (`.media.tile`, §5.13) on the left, then
+  the action's **title** as the link to the action (`.action-title`) — never
+  the bare name or the raw kind string — with its chips beside it and the price
+  right-aligned on that line (`.action-line`), the **ref** on its own line
+  beneath (`.action-ref`, `_ref`, owner emphasized), the description (at most two
+  lines, `.action-desc`), and **the same `_stat_strip`** the action page uses
+  (icon + tooltip: success · rating · latency), rendered **price-less** on the row
+  (`statStrip … withPrice=false`) since price is already on the title line. The
+  title is the row's one pointer target; the row is `.rowable` for `j`/`k`/`Enter`
+  and carries no click handler. The peer roster and the agents page use the same
+  row. The strip sits outside the tile (kernel chrome never overlaps counterparty
   pixels). One strip, one grammar, both surfaces. **Attribute chips** (`.chip`)
   mark the *exception* only:
   - **A chip is ONE letter or ONE icon. Never a word, never a phrase** — the
     meaning lives in its `title`, which is also its accessible label. A chip is
-    a mark in the corner of a card, not a caption.
+    a mark beside a title, not a caption.
   - **Kind** (one chip): `W` wasm · `N` native · `H` http · `R` remote
     (`kind == "remote_proxy"`, via the `kindBadge` helper). **`R` stands out by
     weight** (`.chip.filled`), never by hue.
   - **Visibility** → a chip only for the non-default narrowing: `private` (lock
     icon) or `local` (`L`); `public` shows nothing.
-  - **Inactive** → the card is dimmed (`.action-card.inactive`) plus an ✗ icon
+  - **Inactive** → the row is dimmed (`.action-row.inactive`) plus an ✗ icon
     chip.
   - **Needs account** → a filled key-icon chip (`.chip.filled`, `#key`) only
     when the action requires a per-caller grant the viewer hasn't connected.
@@ -330,16 +335,19 @@ none float, none are colored.
   - **Discovered** → an unfilled `R` on a lookup result this kernel has not
     resolved — the same letter as a resolved remote, without the weight, because
     it is that action before resolution: the ref is kernel-qualified and the
-    card carries no reputation strip and no link, because nothing local backs it
-    yet (requirements.md §6.2). It DOES carry a price — the kernel prices every
+    row carries no reputation strip, because nothing local backs it yet; its
+    link resolves it (requirements.md §6.2). It DOES carry a price — the kernel prices every
     lookup row — rendered **indicative** (muted **plus** an accessible label,
     never weight alone, which a screen reader cannot perceive). It is the
     unresolved counterpart of `R`, so the two never appear together.
   - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
     is spent on them (every hue is a reserved money/trust signal); emphasis is
     by weight (`.chip.filled`), never by hue.
-- **Tables:** full width, hairline row borders, muted `th`. A clickable row is
-  `.rowable` + `tabindex="-1"` + `data-href`; navigable with `j`/`k`/`Enter`.
+- **Tables:** full width, hairline row borders, muted `th`. A navigable row is
+  `.rowable` + `tabindex="-1"` + `data-href`: `j`/`k` move to it and `Enter`
+  follows it. Its **link is the pointer target** — the row shows no pointer
+  cursor, because no click handler stands behind it (and a row holds
+  selectable text and nested links).
 - **Money columns are right-aligned, header included** — a money `<th>` carries
   `class="money"` so the title sits over its right-aligned values.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
@@ -429,8 +437,9 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 - **Ctrl/Cmd+K** opens the palette (`<dialog class="palette">`). Its registry is
   **inert JSON** (`<script type="application/json">`, CSP-safe), built
   server-side and **admin-gated** (admin commands only for `sys`).
-- Shortcuts: `g`+letter (section nav) · `/` (focus search) · `?` (help overlay) ·
-  `j/k/Enter` (rows) · `Esc` (close topmost). Every command targets a real
+- Shortcuts: `g`+letter (section nav, `g h` home) · `/` (focus search) · `?`
+  (help overlay) · `j/k/Enter` (table and list rows) · `Esc` (close topmost) ·
+  `↓/↑` in the search box (move into the search hints). Every command targets a real
   link/form — the keyboard layer adds no capability unreachable without it.
 
 ### 5.10 Feedback
@@ -457,8 +466,9 @@ one `.tabs` filter (`counterparties | known network`, §5.2), paged and never
 polled. There is **no subscribe/unsubscribe verb**; the one opener is **inspect a
 kernel by key**.
 
-The kernel card has **two states**, the same relation §5.5 draws between a
-resolved and a discovered action card. A **counterparty** carries Inspect ·
+A peer is a list row (§5.5: tile, name line, facts, commands) with **two
+states**, the same relation §5.5 draws between a resolved and a discovered
+action row. A **counterparty** carries Inspect ·
 Suspend/Unsuspend. A **discovered** kernel carries the same `known network`
 `.chip.tag`, its action count and catalog freshness, and **no account-dependent
 verb** — its one gesture is **Name**, a `.btn-quiet` opener whose `?form=` link
@@ -516,8 +526,9 @@ and a rail halt as a `.banner-error` — plus the obligations above.
 
 ### 5.13 Media slot
 
-- `.media` is a **16:9** slot on the action card and the action-page hero. It
-  renders, in order of precedence: a **kernel image** (Conditional — no field yet,
+- `.media` is a **16:9** slot on the action-page hero; `.media.tile` is the
+  **square** crop of the same image that leads a list row (48px, 40px on a
+  phone). The art slices to any box, so one generator serves both. It renders, in order of precedence: a **kernel image** (Conditional — no field yet,
   `ROADMAP.md`), else the **`cardArt` fallback** — a deterministic inline SVG
   seeded from the action's id/owner/kind, colored from tokens
   (`var(--surface-2)`/`var(--accent)`), **presentation attributes only** (no
@@ -526,7 +537,8 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   and kernel-captured facts (ref, price, reputation, any money control) render
   **outside** it (the media is in the hero; the run form and its money control are
   a separate section below).
-- The same slot backs `.kernel-card`'s `.banner` (a 4:1 variant) on `network`.
+- The same slot backs `.kernel-card`'s `.banner` (a 4:1 variant) for this
+  kernel's identity on `network`.
 
 ---
 

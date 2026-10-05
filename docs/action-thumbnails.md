@@ -3,8 +3,11 @@
 Status: design, not implemented. Resolves the *Conditional* media-slot item in
 `requirements.md` §6.2 / §10.
 
-Every action card and action page carries a 16:9 media slot. This document
-specifies what fills it. Two layers, composed per action:
+The action page carries a 16:9 media slot, and every list row a square tile
+cropped from the same image (`requirements.md` §6.2). The fallback SVG uses
+`preserveAspectRatio="xMidYMid slice"` with the glyph centred, so one image
+fills both boxes: the square crop trims the ground's sides and keeps the
+glyph whole. This document specifies what fills them. Two layers, composed per action:
 
 1. a **deterministic fallback**, always available, computed from kernel data;
 2. an optional **provider-supplied image**, hash-pinned by the kernel and served

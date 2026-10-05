@@ -30,25 +30,7 @@
 </div>
 
 <div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
-{{if .Data.Open}}
-<div class="card-list">
-  {{range .Data.Open}}
-  <div class="card row">
-    <div class="stretch">
-      <a class="mono" href="/processes/{{.ID}}">{{truncate 8 .ID}}</a>
-      <div class="small muted">
-        <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
-      </div>
-    </div>
-    {{if .Endable}}
-    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting tasks are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
-      {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
-    </form>
-    {{end}}
-  </div>
-  {{end}}
-</div>
-{{else}}<p class="muted">No open sessions.</p>{{end}}
+{{template "_open_sessions" .}}
 
 {{if .Data.Withdrawals}}
 <h2>Withdrawals</h2>
@@ -70,19 +52,8 @@
 </div>
 {{end}}
 
-{{/* The ledger journals every movement between accounts, settlement
-     included, so it alone is the activity (requirements.md §6.5). */}}
 <div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
-{{if .Data.Activity}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>Party</th><th>Reason</th><th class="money">Amount</th><th>When</th></tr></thead>
-  <tbody>
-  {{range .Data.Activity}}{{template "_activity_entry" .}}{{end}}
-  </tbody>
-</table>
-</div>
-{{else}}<p class="muted">No activity yet.</p>{{end}}
+{{template "_activity" .Data.Activity}}
 
 {{if .Data.CanWithdraw}}
 <dialog id="form-withdraw" class="modal-form"{{if eq .Data.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">

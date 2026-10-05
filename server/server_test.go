@@ -309,3 +309,16 @@ func TestKernelIdentityAddressAndLocal(t *testing.T) {
 		t.Error("an unknown kernel composes nothing and owns nothing")
 	}
 }
+
+// Home is current only on /; results and action pages are reached from
+// search, not the nav, so they belong to no group.
+func TestActiveGroupHome(t *testing.T) {
+	for path, want := range map[string]string{
+		"/": "home", "/browse": "", "/actions/A1": "", "/discovered": "",
+		"/inbox/T1": "inbox", "/transactions": "wallet", "/workshop": "workshop",
+	} {
+		if got := activeGroup(path); got != want {
+			t.Errorf("activeGroup(%q) = %q, want %q", path, got, want)
+		}
+	}
+}

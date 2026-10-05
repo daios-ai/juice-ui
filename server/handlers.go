@@ -236,7 +236,7 @@ type errorView struct{ Message string }
 
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions.IsAuthenticated(r.Context()) {
-		http.Redirect(w, r, "/browse", http.StatusSeeOther)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	view := loginView{Tab: loginTab(r)}
@@ -254,7 +254,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
 		return
 	}
-	http.Redirect(w, r, "/browse", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
@@ -1861,6 +1861,56 @@ func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
 }
 
+// homeView is the dashboard: what the viewer has, what waits on them, and what
+// just moved. Each list is a preview of the page its "all" link opens.
+type homeView struct {
+	Available int64
+	Locked    int64
+	Waiting   []client.Task
+	Open      []client.Process
+	Activity  []entryRow
+}
+
+// homePreview is how many rows each dashboard section shows.
+const homePreview = 5
+
+func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var view homeView
+	err := s.sessions.Do(ctx, func(tok string) error {
+		me, e := s.client.Me(ctx, tok)
+		if e != nil {
+			return e
+		}
+		view.Available, view.Locked = me.Available, me.Locked
+		// Waiting tasks only: an empty status would read the whole history.
+		// A superuser lists everyone's, so keep the ones addressed to the viewer,
+		// the inbox's own rule.
+		if tasks, e := s.client.ListTasks(ctx, tok, "waiting"); e == nil {
+			for _, t := range tasks {
+				if t.Waiting() && t.RequiredCaller == me.Address && len(view.Waiting) < homePreview {
+					view.Waiting = append(view.Waiting, t)
+				}
+			}
+		}
+		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
+			view.Open = procs[:min(len(procs), homePreview)]
+		}
+		// The ledger, not the transaction list: the kernel pages transactions
+		// before its party filter, so a short page could hide the viewer's rows;
+		// the ledger holds only the viewer's entries.
+		entries, _ := s.client.Ledger(ctx, tok, homePreview, 0)
+		for _, e := range entries {
+			view.Activity = append(view.Activity, entryRowOf(e, me.Address))
+		}
+		return nil
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	s.renderPage(w, r, http.StatusOK, "home", "Home", view, view.Available)
+}
+
 func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	amount, err := s.parseAmount(r.FormValue("amount"))
@@ -2342,6 +2392,44 @@ func parseLookup(result json.RawMessage) []actionCardView {
 
 // catalogAsResults adapts catalog actions to actionCardViews, filtering by a
 // case-insensitive substring match so the fallback "search" is meaningful.
+// suggestLimit caps the type-ahead list; suggestPage is the one page of the
+// catalog it reads. Suggestions are hints, so a match beyond the first page may
+// be missing; reading the whole catalog on every pause in typing is not worth it.
+const (
+	suggestLimit = 8
+	suggestPage  = 200
+)
+
+// getSuggest answers the search box's type-ahead with search hints, as a
+// search engine completes a query: distinct catalog titles that contain the
+// text. A hint is a query, not an action; choosing one runs the search. It
+// reads the free action list and never runs sys/lookup, which is priced by the
+// operator and would record a transaction per keystroke (§8.2). A failure
+// answers with no hints; the search itself still works.
+func (s *Server) getSuggest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	var out []string
+	if q != "" {
+		err := s.sessions.Do(ctx, func(tok string) error {
+			actions, e := s.client.ListActions(ctx, tok, "", "", false, suggestPage, 0)
+			seen := map[string]bool{}
+			for _, a := range actions {
+				key := strings.ToLower(a.Title)
+				if len(out) < suggestLimit && !seen[key] && strings.Contains(key, q) {
+					seen[key] = true
+					out = append(out, a.Title)
+				}
+			}
+			return e
+		})
+		if err != nil {
+			s.log.Warn("suggest failed", "err", err)
+		}
+	}
+	_ = s.render.Fragment(w, http.StatusOK, "_suggestions", out)
+}
+
 func catalogAsResults(actions []client.Action, q string) []actionCardView {
 	ql := strings.ToLower(q)
 	var out []actionCardView

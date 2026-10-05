@@ -4,8 +4,8 @@
   <h1 class="mono">{{$d.Address}}</h1>
 </div>
 {{if $d.Cards}}
-<div class="grid">
-  {{range $d.Cards}}{{template "_action_card" .}}{{end}}
+<div class="action-list">
+  {{range $d.Cards}}{{template "_action_row" .}}{{end}}
 </div>
 {{else}}
 <p class="muted">No actions yet.</p>

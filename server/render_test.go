@@ -1415,14 +1415,14 @@ func TestCallFormPayment(t *testing.T) {
 // backs it, so the card states the kernel-qualified ref and the description and
 // stops there — no price, no reputation strip, no link to a local action page,
 // and no run affordance (the local price does not exist until resolution).
-func TestActionCardDiscovered(t *testing.T) {
+func TestActionRowDiscovered(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	card := func(v actionCardView) string {
 		rec := httptest.NewRecorder()
-		if err := r.Fragment(rec, 200, "_action_card", v); err != nil {
+		if err := r.Fragment(rec, 200, "_action_row", v); err != nil {
 			t.Fatalf("Fragment: %v", err)
 		}
 		return rec.Body.String()
@@ -1473,28 +1473,38 @@ func TestActionCardDiscovered(t *testing.T) {
 	}
 }
 
-// An action card leads with the action's title as its link, and carries the
-// ref on its own line beneath (§5.5) — a discovered card too, whose title comes
-// from the lookup row.
-func TestActionCardLeadsWithTitle(t *testing.T) {
+// An action row leads with the tile, then the action's title as its link with
+// the chips beside it, and the ref on its own line beneath (§5.5) — a
+// discovered row too, whose title comes from the lookup row. The title is the
+// one pointer target; the row itself is keyboard-navigable only.
+func TestActionRowLeadsWithTitle(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range []actionCardView{
-		{Action: client.Action{ID: "A1", Action: "tom@play/greet", Title: "Greet a person", Active: true}},
+		{Action: client.Action{ID: "A1", Action: "tom@play/greet", Title: "Greet a person", Active: true, Visibility: "private"}},
 		{Discovered: true, Action: client.Action{ID: "R1", Action: "tom@KERNELKEY/greet", Title: "Greet a person"}},
 	} {
 		rec := httptest.NewRecorder()
-		if err := r.Fragment(rec, 200, "_action_card", v); err != nil {
+		if err := r.Fragment(rec, 200, "_action_row", v); err != nil {
 			t.Fatal(err)
 		}
 		body := rec.Body.String()
-		if !regexp.MustCompile(`<a class="card-title" href="[^"]+" title="Greet a person">Greet a person</a>`).MatchString(body) {
-			t.Errorf("the card title must be the action's title, linked: %s", body)
+		if !regexp.MustCompile(`<a class="action-title" href="[^"]+" title="Greet a person">Greet a person</a>`).MatchString(body) {
+			t.Errorf("the row title must be the action's title, linked: %s", body)
 		}
-		if !strings.Contains(body, `<p class="card-ref"><span class="ref mono">`) {
+		if !strings.Contains(body, `<p class="action-ref"><span class="ref mono">`) {
 			t.Errorf("the ref must sit on its own line beneath the title: %s", body)
+		}
+		if !regexp.MustCompile(`(?s)<span class="media tile">.*class="action-title"`).MatchString(body) {
+			t.Errorf("the row must lead with the square tile: %s", body)
+		}
+		if !regexp.MustCompile(`(?s)class="action-title"[^>]*>[^<]*</a>\s*<span class="chip".*class="action-ref"`).MatchString(body) {
+			t.Errorf("the chips must sit beside the title, above the ref: %s", body)
+		}
+		if !strings.Contains(body, `class="action-row rowable`) || strings.Contains(body, "onclick") {
+			t.Errorf("the row must be keyboard-navigable with no click handler: %s", body)
 		}
 	}
 }

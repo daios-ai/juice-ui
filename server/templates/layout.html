@@ -27,7 +27,7 @@
     {{if .Me}}
     <aside class="sidebar">
       <div class="sidebar-top">
-        <a class="brand" href="/browse"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>
+        <a class="brand" href="/"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>
         <form method="post" action="/sidebar" class="sidebar-collapse">
           {{.CSRFField}}
           <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
@@ -72,8 +72,9 @@
           </span>
         </a>
         <form class="omni" method="get" action="/browse" role="search">
-          <input type="search" enterkeyhint="search" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off">
+          <input type="search" enterkeyhint="search" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off"{{template "_suggest_attrs"}}>
           <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
+          <div class="omni-suggest"></div>
         </form>
         <button type="button" class="kbd" data-open-palette aria-label="Command palette">⌘K</button>
       </header>
@@ -119,7 +120,7 @@
     <div class="modal-body">
       <dl class="help-grid">
         <dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette</dd>
-        <dt><kbd>g</kbd> then <kbd>b i k w y</kbd></dt><dd>Go to browse · inbox · workshop · wallet · settings</dd>
+        <dt><kbd>g</kbd> then <kbd>h b i k w y</kbd></dt><dd>Go to home · browse · inbox · workshop · wallet · settings</dd>
         <dt><kbd>/</kbd></dt><dd>Focus search</dd>
         <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>

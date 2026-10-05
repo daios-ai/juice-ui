@@ -311,7 +311,8 @@ func TestNoRowThumbnails(t *testing.T) {
 
 // TestContainerIsTheOnlyWidthDecision enforces the width rule: the content
 // container is the ONE width decision — in-flow components fill it, never capping
-// themselves (no narrow strips inside broad pages). Pixel max-widths are allowed
+// themselves (no narrow strips inside broad pages). A max-width in any length
+// unit (px, ch, em, rem, vw) is allowed
 // only on the container itself, the topbar omnibox pill, top-layer overlays
 // (dialogs, the live region), and the bare entry card.
 func TestContainerIsTheOnlyWidthDecision(t *testing.T) {
@@ -320,12 +321,12 @@ func TestContainerIsTheOnlyWidthDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(b), "")
-	ruleRe := regexp.MustCompile(`(?s)([^{}]+)\{[^{}]*max-width:\s*\d+px`)
+	ruleRe := regexp.MustCompile(`(?s)([^{}]+)\{[^{}]*max-width:\s*[\d.]+(px|ch|r?em|vw)`)
 	allowed := regexp.MustCompile(`^(\.container|\.omni|\.auth-card|\.live-region|dialog\.)`)
 	for _, m := range ruleRe.FindAllStringSubmatch(src, -1) {
 		sel := strings.TrimSpace(m[1])
 		if !allowed.MatchString(sel) {
-			t.Errorf("app.css: %q carries a px max-width — the container is the only width decision; in-flow components fill it (grammar §Main area)", sel)
+			t.Errorf("app.css: %q carries a length max-width — the container is the only width decision; in-flow components fill it (grammar §Main area)", sel)
 		}
 	}
 }
