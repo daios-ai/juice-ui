@@ -5,11 +5,8 @@
 <p class="subtitle id mono">{{$d.Process.ID}}</p>
 
 <div class="card">
-  <div class="balances">
-    <div class="balance"><div class="amount money sig-credited">{{money $d.Process.Available}}</div><div class="label">available</div></div>
-    <div class="balance"><div class="amount money sig-escrow">{{money $d.Process.Locked}}</div><div class="label">parked</div></div>
-    <div class="balance"><div class="amount"><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></div><div class="label">status</div></div>
-  </div>
+  <p><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></p>
+  {{template "_figures" (figures (figure $d.Process.Available "available" "") (figure $d.Process.Locked "parked ◷" "escrow"))}}
   {{template "_process_await" $d}}
   {{if $d.Process.Endable}}
   <div class="row">

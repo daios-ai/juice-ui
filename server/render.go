@@ -234,6 +234,9 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"runForm":      runForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
+		"figure":       figure,
+		"linkedFigure": linkedFigure,
+		"figures":      figures,
 		"badge":        badge,
 		"cardArt":      CardArt,
 		"initial":      initial,
@@ -594,6 +597,29 @@ type StatStrip struct {
 	Counts    bool
 	WithPrice bool // detail page leads with price; cards omit it (shown top-right)
 }
+
+// Figure is one headline money figure: the amount, what it is, and its signal
+// (§7) — "" plain, "credited" earned (signed +), "escrow" parked. Href, when
+// set, links the label to the records behind the figure. Every page that leads
+// with money renders its figures through the one _figures partial.
+type Figure struct {
+	Amount int64
+	Label  string
+	Signal string
+	Href   string
+}
+
+// figure builds a Figure (template helper); linkedFigure adds its link.
+func figure(amount int64, label, signal string) Figure {
+	return Figure{Amount: amount, Label: label, Signal: signal}
+}
+
+func linkedFigure(amount int64, label, signal, href string) Figure {
+	return Figure{Amount: amount, Label: label, Signal: signal, Href: href}
+}
+
+// figures collects Figures for the _figures partial (template helper).
+func figures(f ...Figure) []Figure { return f }
 
 // statStrip builds a StatStrip. It is nil-safe (a card's *client.Stats is nil
 // until the action has usage), so an unused action renders honest empty states.

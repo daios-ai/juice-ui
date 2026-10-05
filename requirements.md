@@ -14,7 +14,9 @@ Status: design draft — endpoint surface gated against the running kernel
 > search when chosen, as a search engine completes a query — from the free
 > action list and never from `sys/lookup`, which is a priced run (§6.2). A rowable row is
 > keyboard-navigable and its link is the pointer target, so no row shows a
-> pointer cursor it cannot honour (§6.1).
+> pointer cursor it cannot honour (§6.1). Every headline money figure —
+> wallet, home, workshop earnings, a session's funds — renders through one
+> component, the wallet's (§6.4).
 
 > **What changed in 0.12.0.** The kernel (ba7f5e5) makes an action a tool
 > definition: it carries a required one-line **title**, and both schemas are
@@ -1073,7 +1075,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 * Workshop MUST present, in order: earnings, action list, creation zone.
 * Earnings MUST be computed in the BFF by folding the user's own transactions;
-  each figure MUST link to its underlying transactions. The BFF MUST NOT
+  each figure MUST link to its underlying transactions. Earnings, like every
+  headline money figure (wallet, home, a session), MUST render through the one
+  figures component, the wallet's anatomy (§7). The BFF MUST NOT
   reproduce kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
   actions, filter by state, and show kind, price, success rate, rating trend, a

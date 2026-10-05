@@ -70,6 +70,21 @@
 {{range .}}<a class="menu-item" href="/browse?q={{.}}">{{.}}</a>
 {{end}}</nav>{{end}}{{end}}
 
+{{/* _figures — THE headline money figures (§5.6), the wallet's anatomy on
+     every page that leads with money: a large mono amount coloured by its
+     signal, its label beneath, linked when the figure has records behind it.
+     Build with `figures` of `figure`/`linkedFigure`. */}}
+{{define "_figures"}}
+<div class="balances">
+  {{range .}}
+  <div class="balance">
+    <div class="amount mono{{if .Signal}} sig-{{.Signal}}{{end}}">{{if eq .Signal "credited"}}+{{end}}{{money .Amount}}</div>
+    <div class="label">{{if .Href}}<a href="{{.Href}}">{{.Label}} →</a>{{else}}{{.Label}}{{end}}</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
 {{/* _open_sessions — the viewer's open processes, each with its parked funds
      and, when endable, the end-and-refund command. Shared by wallet and home;
      takes the page (it needs the CSRF field). */}}

@@ -4,16 +4,7 @@
   <p class="subtitle">Available and parked funds.{{if .Data.Superuser}} <span class="scope-note">superuser scope: all rows</span>{{end}}</p>
 </div>
 
-<div class="balances">
-  <div class="balance">
-    <div class="amount mono">{{money .Data.Available}}</div>
-    <div class="label">available</div>
-  </div>
-  <div class="balance">
-    <div class="amount mono sig-escrow">{{money .Data.Locked}}</div>
-    <div class="label">parked ◷</div>
-  </div>
-</div>
+{{template "_figures" (figures (figure .Data.Available "available" "") (figure .Data.Locked "parked ◷" "escrow"))}}
 {{/* Where money comes in, and where it goes out, differ by world: a world whose
      money has no addresses has nothing to send from a user's side, and the
      operator records payments in and out instead (kernel §D23). The world is

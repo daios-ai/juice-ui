@@ -1751,3 +1751,33 @@ func TestActionPageRendersOthersReports(t *testing.T) {
 		t.Error("no reports, no evidence section")
 	}
 }
+
+// The headline money figures are one component, the wallet's anatomy: a mono
+// amount coloured and signed by its signal, its label beneath, linked only
+// when records stand behind it.
+func TestFiguresAreTheWalletAnatomy(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_figures", figures(
+		figure(5000000, "available", ""),
+		figure(1000000, "parked ◷", "escrow"),
+		linkedFigure(2000000, "earned this month", "credited", "/transactions"),
+	)); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<div class="amount mono">5000000 credits</div>`,
+		`<div class="amount mono sig-escrow">1000000 credits</div>`,
+		`<div class="amount mono sig-credited">+2000000 credits</div>`,
+		`<div class="label">available</div>`,
+		`<div class="label"><a href="/transactions">earned this month →</a></div>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("figures must render %q: %s", want, body)
+		}
+	}
+}

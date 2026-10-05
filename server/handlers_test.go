@@ -1850,7 +1850,18 @@ func TestStudioShowsEarnings(t *testing.T) {
 		}
 	}
 	if !strings.Contains(body, "+45 credits") {
-		t.Errorf("all-time earnings tile must show the +45 credits net: %s", body)
+		t.Errorf("all-time earnings must show the +45 credits net: %s", body)
+	}
+	// Every page that leads with money draws it through the one figures
+	// component, and links each earnings figure to its transactions.
+	if !strings.Contains(body, `<a href="/transactions">earned all time · 1 call →</a>`) {
+		t.Error("an earnings figure must link to its transactions")
+	}
+	for _, page := range []string{"/workshop", "/wallet", "/"} {
+		b := getBody(t, cl, srv.URL+page)
+		if !strings.Contains(b, `<div class="balances">`) || strings.Contains(b, `class="stat"`) {
+			t.Errorf("%s must render its money through the figures component", page)
+		}
 	}
 }
 

@@ -8,23 +8,8 @@
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
 {{/* Earnings — folded from your transactions in the BFF (never kernel settlement). */}}
-<div class="stat-row">
-  <div class="stat">
-    <div class="label">this month</div>
-    <div class="value sig-credited">+{{money $d.MonthEarned}}</div>
-    <a href="/transactions">{{$d.Earnings.Count}} call{{if ne $d.Earnings.Count 1}}s{{end}} all-time →</a>
-  </div>
-  <div class="stat">
-    <div class="label">parked ◷</div>
-    <div class="value sig-escrow">{{money $d.User.Locked}}</div>
-    <a href="/wallet">open sessions →</a>
-  </div>
-  <div class="stat">
-    <div class="label">all time</div>
-    <div class="value sig-credited">+{{money $d.Earnings.Earned}}</div>
-    <a href="/transactions">full ledger →</a>
-  </div>
-</div>
+{{$calls := "calls"}}{{if eq $d.Earnings.Count 1}}{{$calls = "call"}}{{end}}
+{{template "_figures" (figures (linkedFigure $d.MonthEarned "earned this month" "credited" "/transactions") (linkedFigure $d.User.Locked "parked ◷" "escrow" "/wallet") (linkedFigure $d.Earnings.Earned (printf "earned all time · %d %s" $d.Earnings.Count $calls) "credited" "/transactions"))}}
 
 <div class="subhead">
   <h2>{{if eq $d.Scope "all"}}All actions{{else}}Your actions{{end}}</h2>
