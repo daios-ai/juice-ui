@@ -669,11 +669,11 @@ var (
 // drawer renders the same list. One model, two renderings.
 func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	nav := []NavItem{
-		{Slug: "home", Label: "home", Href: "/", Icon: iconHome},
-		{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge"},
-		{Slug: "workshop", Label: "workshop", Href: "/workshop", Icon: iconWorkshop},
-		{Slug: "wallet", Label: "wallet", Href: "/wallet", Icon: iconWallet},
-		{Slug: "settings", Label: "settings", Href: "/settings", Icon: iconYou},
+		{Slug: "home", Label: "Home", Href: "/", Icon: iconHome},
+		{Slug: "inbox", Label: "Inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge"},
+		{Slug: "workshop", Label: "Workshop", Href: "/workshop", Icon: iconWorkshop},
+		{Slug: "wallet", Label: "Wallet", Href: "/wallet", Icon: iconWallet},
+		{Slug: "settings", Label: "Settings", Href: "/settings", Icon: iconYou},
 	}
 	// App entries (chat, agents) fold in after the core groups.
 	me := s.sessions.Address(r.Context())
@@ -697,8 +697,8 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	}
 	if super {
 		nav = append(nav,
-			NavItem{Slug: "network", Label: "network", Href: "/admin/peers", Icon: iconNetwork},
-			NavItem{Slug: "admin", Label: "admin", Href: "/admin", Icon: iconAdmin},
+			NavItem{Slug: "network", Label: "Network", Href: "/admin/peers", Icon: iconNetwork},
+			NavItem{Slug: "admin", Label: "Admin", Href: "/admin", Icon: iconAdmin},
 		)
 	}
 	for i := range nav {

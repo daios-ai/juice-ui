@@ -87,10 +87,10 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		t.Error("/admin user handle must link to the user's detail page")
 	}
 	// Admin and Peers are now separate top-level sidebar entries (not a sub-nav).
-	if !strings.Contains(body, `href="/admin" title="admin"`) {
+	if !strings.Contains(body, `href="/admin" title="Admin"`) {
 		t.Error("superuser sidebar must have an Admin nav entry")
 	}
-	if !strings.Contains(body, `href="/admin/peers" title="network"`) {
+	if !strings.Contains(body, `href="/admin/peers" title="Network"`) {
 		t.Error("superuser sidebar must have a separate network nav entry")
 	}
 	if strings.Contains(body, "linkbar") {
@@ -119,7 +119,7 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(pbody, "This kernel") {
 		t.Error("/admin/peers must render the 'This kernel' identity card")
 	}
-	if !strings.Contains(pbody, `href="/admin/peers" title="network" aria-current="page"`) {
+	if !strings.Contains(pbody, `href="/admin/peers" title="Network" aria-current="page"`) {
 		t.Error("/admin/peers must mark the network nav entry active")
 	}
 }

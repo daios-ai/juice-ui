@@ -626,26 +626,21 @@ func TestTruncateOwnsItsEllipsis(t *testing.T) {
 	}
 }
 
-// TestHeadingCase enforces §3: a page title (<h1>) is a lowercase noun, as the
-// nav names the groups, and a section heading (<h2>) is in sentence case. Only
-// literal words are checked; a title rendered from data keeps its own case.
+// TestHeadingCase enforces §3: one capitalization for every heading. A page
+// title (<h1>) and a section heading (<h2>) are both in sentence case — the
+// first letter capital, the rest as written. Only literal words are checked; a
+// title rendered from data keeps its own case.
 func TestHeadingCase(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
 	apps, _ := filepath.Glob("../apps/*/templates/*.html")
-	h1Re := regexp.MustCompile(`(?s)<h1[^>]*>(.*?)</h1>`)
-	h2Re := regexp.MustCompile(`(?s)<h2[^>]*>(.*?)</h2>`)
+	headRe := regexp.MustCompile(`(?s)<h[12][^>]*>(.*?)</h[12]>`)
 	// A chip is a one-letter mark beside a name (§5.5), not a word of it.
 	chipRe := regexp.MustCompile(`(?s)<span class="chip[^"]*"[^>]*>.*?</span>`)
 	check := func(f, src string) {
-		for _, m := range h1Re.FindAllStringSubmatch(src, -1) {
-			if txt := visibleText(chipRe.ReplaceAllString(m[1], "")); txt != strings.ToLower(txt) {
-				t.Errorf("%s: page title %q must be a lowercase noun (grammar §3)", f, txt)
-			}
-		}
-		for _, m := range h2Re.FindAllStringSubmatch(src, -1) {
-			txt := visibleText(m[1])
+		for _, m := range headRe.FindAllStringSubmatch(src, -1) {
+			txt := visibleText(chipRe.ReplaceAllString(m[1], ""))
 			if r, _ := utf8.DecodeRuneInString(txt); unicode.IsLetter(r) && !unicode.IsUpper(r) {
-				t.Errorf("%s: section heading %q must be in sentence case (grammar §3)", f, txt)
+				t.Errorf("%s: heading %q must be in sentence case (grammar §3)", f, txt)
 			}
 		}
 	}

@@ -3694,7 +3694,7 @@ func TestHomeIsTheDashboard(t *testing.T) {
 			t.Errorf("home must ask for waiting tasks only, asked %q", q)
 		}
 	}
-	if !strings.Contains(page, `aria-current="page"><svg`) || !strings.Contains(page, `href="/" title="home" aria-current="page"`) {
+	if !strings.Contains(page, `aria-current="page"><svg`) || !strings.Contains(page, `href="/" title="Home" aria-current="page"`) {
 		t.Error("the home nav item must be current on /")
 	}
 	// A secondary read failing leaves the rest of the page standing.

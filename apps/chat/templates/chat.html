@@ -2,7 +2,7 @@
 {{$d := .Data}}
 
 {{if $d.Connected}}
-<div class="page-head"><h1>chat</h1></div>
+<div class="page-head"><h1>Chat</h1></div>
 
 <p><a class="btn-quiet" href="/chat?form=room-create" data-modal="form-room-create">+ new room</a></p>
 
@@ -45,7 +45,7 @@
   </div>
 </dialog>
 {{else}}
-<div class="page-head"><h1>chat</h1></div>
+<div class="page-head"><h1>Chat</h1></div>
 <div class="banner banner-info" role="status">
   <p>Connect your account to start using chat.</p>
   <form method="post" action="/chat/connect">

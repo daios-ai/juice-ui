@@ -128,7 +128,7 @@ func (c *Chat) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" {
 		return nil
 	}
-	return []apps.NavEntry{{Slug: "chat", Label: "chat", Href: "/chat", Icon: chatIcon, Match: "/chat", BadgeURL: "/chat/badge"}}
+	return []apps.NavEntry{{Slug: "chat", Label: "Chat", Href: "/chat", Icon: chatIcon, Match: "/chat", BadgeURL: "/chat/badge"}}
 }
 
 func (c *Chat) Templates() fs.FS { return tmplFS }

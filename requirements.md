@@ -20,7 +20,8 @@ Status: design draft — endpoint surface gated against the running kernel
 > subtitle, and no control or field carries a sentence explaining behaviour
 > (the paid-run caption, the deactivation note, the import, secret and
 > rename notes are gone); a subtitle is a record's identity or a scope note
-> (grammar §3).
+> (grammar §3). Page titles, section headings and nav labels share one
+> capitalization, sentence case (§6.1).
 
 > **What changed in 0.12.0.** The kernel (ba7f5e5) makes an action a tool
 > definition: it carries a required one-line **title**, and both schemas are
@@ -422,9 +423,9 @@ server-side.
   validation): the UI presents kernel results; the kernel decides.
 
 **Navigation model.** The UI's navigation MUST present the juice CLI concepts as
-a marketplace, not a raw command dump. The primary groups are **home**,
-**inbox**, **workshop**, **wallet**, and **settings**, plus **network** (federation)
-and **admin**, both shown **only to the `sys` superuser**. Each maps to the same
+a marketplace, not a raw command dump. The primary groups are **Home**,
+**Inbox**, **Workshop**, **Wallet**, and **Settings**, plus **Network** (federation)
+and **Admin**, both shown **only to the `sys` superuser**. Each maps to the same
 CLI concepts as before: `home` is the dashboard over the others; discovery +
 execution (`run` + the catalog) is reached from the search box on every page,
 whose results page is `browse`;
@@ -662,7 +663,7 @@ kernel and world is in use, and keys everything durable by
 ### 6.1 Information architecture
 
 * The UI MUST present a left sidebar whose entries are the primary groups
-  (`home`, `inbox`, `workshop`, `wallet`, `settings`, then `network` and `admin` for
+  (`Home`, `Inbox`, `Workshop`, `Wallet`, `Settings`, then `Network` and `Admin` for
   `sys`), default-expanded with labels, collapsible, with collapse state
   persisted server-side. The active group MUST carry `aria-current`. The `inbox`
   entry MUST carry its waiting-count task badge in every state — a constraint on

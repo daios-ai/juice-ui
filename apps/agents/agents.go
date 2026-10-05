@@ -104,7 +104,7 @@ func (a *Agents) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" || !superuser {
 		return nil
 	}
-	return []apps.NavEntry{{Slug: "agents", Label: "agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
+	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
 }
 
 func (a *Agents) Templates() fs.FS { return tmplFS }

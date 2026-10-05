@@ -72,7 +72,7 @@ The frame every page renders into. Defined in `layout.html`.
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
+| **Nav** | `Home · Inbox · Workshop · Wallet · Settings` + `Network · Admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
@@ -140,14 +140,14 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   say that — `credits` is not "not redeemable" — so without this a person cannot
   tell a rehearsal from a live market. Both halves are `/health` fields, stated
   and not judged: the UI never labels a world play or real, it names it.
-- **Page titles (`<h1>`) are lowercase nouns** on **every** page, index and
-  detail alike, named as the nav and the lists name them: `home · inbox ·
-  workshop · wallet · settings · network · admin`, a detail page the singular
-  of its list (`transaction`, `session`, `task`), and pages outside the nav
-  likewise (`recovery phrase`, `connect`, `error`). A title rendered from data
-  (an action's title, an address) keeps its own case. **Section headings
-  (`<h2>`) are sentence case** ("Open sessions", "Kernels"). `TestHeadingCase`
-  enforces both. A **detail** page
+- **One capitalization: sentence case.** Page titles (`<h1>`), section
+  headings (`<h2>`) and nav labels all start with a capital and continue as
+  written. A page is named as the nav and the lists name it: `Home · Inbox ·
+  Workshop · Wallet · Settings · Network · Admin`, a detail page the singular
+  of its list (`Transaction`, `Session`, `Task`), and pages outside the nav
+  likewise (`Recovery phrase`, `Connect`, `Error`). A title rendered from data
+  (an action's title, an address) keeps its own case. `TestHeadingCase`
+  enforces it. A **detail** page
   opens with the sticky **crumb** (`← group` back-link + record identity) above
   the title and shows the resource id/name.
 - **Money, IDs, hashes, addresses:** mono + `tabular-nums`. The **owner
@@ -578,8 +578,8 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   link to the record; referenced entities link to their pages; list money is the
   signed perspective amount (gross/fee/parties live on the detail page). Every
   `<table>` sits in a `.table-scroll`.
-- Lowercase group titles (`browse · inbox · workshop · wallet · you · network ·
-  admin`); `page-head` (the title only) on index, sticky crumb on detail.
+- Sentence-case titles, headings and nav labels (`Home · Inbox · Workshop ·
+  Wallet · Settings · Network · Admin`); `page-head` (the title only) on index, sticky crumb on detail.
   Commands are quiet and inline — never a floating page-head cluster (sticky is
   the page's own header refusing to scroll away, not floating chrome).
 - **Copy is rationed (§3 Copy discipline):** no orientation subtitles; no
