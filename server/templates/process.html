@@ -4,14 +4,14 @@
 <h1>Session</h1>
 <p class="subtitle id mono">{{$d.Process.ID}}</p>
 
-<div class="card">
+<div class="card stack">
   <p><span class="pill {{statusClass $d.Process.Status}}">{{$d.Process.Status}}</span></p>
   {{template "_figures" (figures (figure $d.Process.Available "available" "") (figure $d.Process.Locked "parked ◷" "escrow"))}}
   {{template "_process_await" $d}}
   {{if $d.Process.Endable}}
-  <div class="row">
-    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="Force-end this process? Waiting tasks are cancelled and their parked prices refunded to you.">
-      {{.CSRFField}}<button class="btn-danger" type="submit">Force-end</button>
+  <div class="cluster">
+    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="End this session?">
+      {{.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum $d.Process.Available $d.Process.Locked)}}</button>
     </form>
   </div>
   {{end}}

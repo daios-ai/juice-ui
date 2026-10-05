@@ -15,8 +15,7 @@
   {{$t := .Task}}
   <div class="task-card">
     <div class="task-ask">{{template "_task_asker" $t}}{{if $t.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
-    {{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price .Form.Editable .Form.IsApproval .Form.Locked $t.PartialArgs nil .IsPayment .Payment .PayTo)}}
-    {{if .CanDecline}}{{template "_task_decline" (declineForm $.CSRFField $t.ID)}}{{end}}
+    {{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price .Form.Editable .Form.IsApproval .Form.Locked $t.PartialArgs nil .IsPayment .Payment .PayTo .CanDecline)}}
   </div>
   {{end}}
 {{end}}

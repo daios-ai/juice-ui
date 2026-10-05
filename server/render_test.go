@@ -608,7 +608,7 @@ func TestCallFormComplete(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	locked := []LockedField{{Name: "to", Value: `"bob"`}}
-	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil, nil, false, 0, "")
+	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil, nil, false, 0, "", false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -676,7 +676,7 @@ func TestCallFormApproval(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	locked := []LockedField{{Name: "message", Value: `"hi"`}}
-	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil, nil, false, 0, "")
+	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil, nil, false, 0, "", false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -1387,7 +1387,7 @@ func TestCallFormPayment(t *testing.T) {
 	rec := httptest.NewRecorder()
 	cf := completeForm(template.HTML(`<input>`), "SP", 0, FormModel{}, true,
 		[]LockedField{{Name: "target", Value: `"alice"`}, {Name: "amount", Value: "300"}}, nil, nil,
-		true, 300, "alice")
+		true, 300, "alice", false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
 	}
@@ -1401,7 +1401,7 @@ func TestCallFormPayment(t *testing.T) {
 	// Typed amount: money button, no parenthesized figure (wallet-send pattern).
 	rec2 := httptest.NewRecorder()
 	cf2 := completeForm(template.HTML(`<input>`), "SP2", 0, FormModel{UseRawFallback: true}, false, nil, nil, nil,
-		true, 0, "")
+		true, 0, "", false)
 	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
 		t.Fatal(err)
 	}
@@ -1785,5 +1785,34 @@ func TestFiguresAreBlocks(t *testing.T) {
 	}
 	if strings.Count(body, "<a ") != 1 {
 		t.Errorf("only a figure with records behind it links: %s", body)
+	}
+}
+
+// A task the viewer may also decline renders Decline in the completion form's
+// own command row, after Complete, submitting the separate decline form by its
+// id; the decline form carries the plain confirm and sits outside the call form.
+func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	cf := completeForm(template.HTML(`<input>`), "T7", 0, FormModel{}, true, nil, nil, nil, false, 0, "", true)
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !regexp.MustCompile(`(?s)<div class="cluster">\s*<button class="btn" type="submit">Complete</button>\s*<button class="btn-danger" type="submit" form="decline-T7">Decline</button>`).MatchString(body) {
+		t.Errorf("Decline must follow Complete in one row: %s", body)
+	}
+	if !regexp.MustCompile(`(?s)</form>\s*<form id="decline-T7" method="post" action="/inbox/T7/cancel" data-confirm="Decline this task\?">`).MatchString(body) {
+		t.Errorf("the decline form must follow the call form, with a plain confirm: %s", body)
+	}
+	rec = httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "T8", 0, FormModel{}, true, nil, nil, nil, false, 0, "", false)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Body.String(), "decline") {
+		t.Errorf("no Decline without the right to decline: %s", rec.Body.String())
 	}
 }

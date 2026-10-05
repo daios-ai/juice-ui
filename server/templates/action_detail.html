@@ -86,7 +86,7 @@
       <button class="btn" type="submit">Set visibility</button>
     </form>
     <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
-    <form method="post" action="/actions/delete" data-confirm="Delete this action? History is preserved.">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn-danger" type="submit">Delete</button></form>
+    <form method="post" action="/actions/delete" data-confirm="Delete this action?">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn-danger" type="submit">Delete</button></form>
   </div>
 </div>
 

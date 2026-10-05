@@ -515,12 +515,8 @@ button { font-family: inherit; cursor: pointer; }
 .btn-money:hover { background: var(--accent-hover); border-color: var(--accent-hover); text-decoration: none; }
 .btn-danger { background: var(--danger); color: var(--danger-contrast); border-color: var(--danger); font-weight: 600; }
 .btn-danger:hover { filter: brightness(1.08); text-decoration: none; }
-/* .small keeps the same shape at reduced scale */
-.btn.small, .btn-money.small, .btn-danger.small { padding: .3rem .6rem; font-size: .8rem; }
 .btn-quiet { background: none; border: none; color: var(--text-muted); padding: .25rem .5rem; cursor: pointer; font-family: inherit; font-size: .9rem; }
 .btn-quiet:hover { color: var(--text); text-decoration: underline; }
-.btn-quiet.danger { color: var(--danger); }
-.row-foot { display: flex; align-items: center; gap: .75rem; margin-top: .6rem; }
 .fingerprint { font-family: var(--font-mono); font-size: .72rem; color: var(--text-muted); overflow-wrap: anywhere; }
 .btn-icon { background: none; border: 1px solid var(--border); border-radius: var(--radius-s); padding: .35rem .5rem; color: var(--text); font-size: 1rem; cursor: pointer; }
 .btn-icon .ico { width: 1.05rem; height: 1.05rem; }

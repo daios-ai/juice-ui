@@ -19,7 +19,7 @@
     {{else}}
     <form method="post" action="/admin/users/{{$u.Address}}/suspend" data-confirm="Suspend {{$u.Address}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
     {{end}}
-    <a class="btn-quiet" href="/admin/users/{{$u.Address}}?form=admin-rename" data-modal="form-admin-rename">rename</a>
+    <a class="btn" href="/admin/users/{{$u.Address}}?form=admin-rename" data-modal="form-admin-rename">Rename</a>
   </div>
 </div>
 

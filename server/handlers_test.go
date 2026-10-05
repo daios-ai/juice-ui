@@ -2731,13 +2731,21 @@ func TestInboxDeclineOfferedToBothParties(t *testing.T) {
 			t.Errorf("no decline in a history row (%s)", id)
 		}
 	}
-	if !strings.Contains(page, `data-confirm="Decline this task? Its reserved price returns to the payer."`) {
-		t.Error("decline must sit behind the confirm naming its consequence")
+	if !strings.Contains(page, `data-confirm="Decline this task?"`) {
+		t.Error("decline must sit behind a plain confirm")
+	}
+	// Decline stands in the task's command row, beside Complete, submitting
+	// its own form through the form attribute.
+	if !regexp.MustCompile(`(?s)<div class="cluster">\s*<button class="btn[^"]*" type="submit">Complete[^<]*</button>\s*<button class="btn-danger" type="submit" form="decline-SP">Decline</button>`).MatchString(page) {
+		t.Error("Decline must sit beside Complete in one row")
 	}
 
 	asked := getBody(t, cl, srv.URL+"/inbox/SX")
 	if !strings.Contains(asked, `action="/inbox/SX/cancel"`) {
 		t.Error("the one who asked may decline from the task's page")
+	}
+	if !strings.Contains(asked, `<div class="cluster"><button class="btn-danger" type="submit" form="decline-SX">Decline</button></div>`) {
+		t.Error("a decline without a completion form still stands in a command row")
 	}
 	if strings.Contains(asked, `action="/inbox/SX/complete"`) {
 		t.Error("only the required caller may complete")

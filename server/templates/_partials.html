@@ -101,7 +101,7 @@
       </div>
     </div>
     {{if .Endable}}
-    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session? Waiting tasks are cancelled and {{money (sum .Available .Locked)}} is refunded to you.">
+    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session?">
       {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
     </form>
     {{end}}
@@ -321,7 +321,7 @@
        completer must still supply — the two halves of one form. */}}
   {{if .Locked}}<dl class="locked-args flush">{{range .Locked}}<dt>{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{else if .LockedRaw}}<pre class="json">{{json .LockedRaw}}</pre>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
-  <div class="row">
+  <div class="cluster">
     {{/* Two-branch completion rule (requirements.md §6.3, the single statement):
          an ORDINARY task completion (OneShot) is NEUTRAL and names NO amount —
          the completer is doing requested work; the funds were reserved by
@@ -332,6 +332,7 @@
          pattern). A paid *run* names its price as before. */}}
     {{$spend := or (and (gt .Price 0) (not .OneShot)) .IsPayment}}
     <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if and (gt .Price 0) (not .OneShot)}} ({{money .Price}}){{else if and .IsPayment (gt .Payment 0)}} ({{money .Payment}}){{end}}</button>
+    {{if .DeclineID}}{{template "_decline_button" .DeclineID}}{{end}}
     <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running…</span>
     </div>
@@ -339,6 +340,7 @@
   {{if .IsPayment}}<p class="help muted flush">Paid from your balance{{if .PayTo}} to <span class="mono">{{.PayTo}}</span>{{end}}.</p>{{end}}
   {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
+{{if .DeclineID}}{{template "_task_decline" (declineForm .CSRFField .DeclineID)}}{{end}}
 <div id="{{.ResultID}}">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
 {{end}}
 
@@ -375,16 +377,14 @@
      key truncated with the whole key in the title. Input: string. */}}
 {{define "_kernel_name"}}{{$n := kernelName .}}<span class="mono"{{if $n.IsKey}} title="{{$n.Title}}"{{end}}>{{$n.Text}}</span>{{end}}
 
-{{/* _task_decline is the one Decline control: destructive, behind the shared
-     confirm naming the consequence (ui-grammar §5.8). The kernel decides who
-     may decline; the page offers it only to the two parties it accepts.
-     Input: taskDecline. */}}
-{{define "_task_decline"}}
-<form method="post" action="/inbox/{{.ID}}/cancel" data-confirm="Decline this task? Its reserved price returns to the payer.">
-  {{.CSRFField}}
-  <button class="btn-danger small" type="submit">Decline</button>
-</form>
-{{end}}
+{{/* _task_decline is the one Decline form, and _decline_button its button.
+     The form is empty and sits outside any other form; the button sits in the
+     task's command row and submits it through the form attribute, so Decline
+     stands beside Complete (ui-grammar §5.1). The kernel decides who may
+     decline; the page offers it only to the two parties it accepts.
+     _task_decline takes a taskDecline, _decline_button the task id. */}}
+{{define "_task_decline"}}<form id="decline-{{.ID}}" method="post" action="/inbox/{{.ID}}/cancel" data-confirm="Decline this task?">{{.CSRFField}}</form>{{end}}
+{{define "_decline_button"}}<button class="btn-danger" type="submit" form="decline-{{.}}">Decline</button>{{end}}
 
 {{/* _peer_actions renders a federation kernel's public actions. Input:
      []client.PeerAction — the name is the action's address as this kernel
@@ -611,28 +611,28 @@
       <div class="fingerprint">{{truncate 16 .PublicKey}}</div>
       {{if $known}}
       <div class="small muted">{{.Actions}} actions{{template "_peer_contact" .}}</div>
-      <div class="row-foot">
-        <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
+      <div class="cluster">
+        <a class="btn" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{/* Binding a petname is the only way to name a kernel merely
              discovered — the kernel binds one automatically only on our own
              first outbound use (§13). The peer's own page carries that form,
              keyed on the public key. */}}
-        <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>
+        <a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>
       </div>
       {{else}}
       {{/* A peer holds no money here: a foreign call is funded by the serving
            kernel and settles per call on the rail (kernel §D14/§P10), so a
            counterparty row carries contact facts, not a balance. */}}
       <div class="small muted">{{template "_peer_contact" .}}</div>
-      <div class="row-foot">
-        <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}">Inspect</a>
+      <div class="cluster">
+        <a class="btn" href="/admin/peers/{{.PublicKey}}">Inspect</a>
         {{if .Suspended}}
         <form method="post" action="/admin/peers/unsuspend">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet" type="submit">Unsuspend</button>
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn" type="submit">Unsuspend</button>
         </form>
         {{else}}
-        <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}? Their inbound calls are refused until you unsuspend.">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-quiet danger" type="submit">Suspend</button>
+        <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
+          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-danger" type="submit">Suspend</button>
         </form>
         {{end}}
       </div>

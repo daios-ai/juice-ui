@@ -10,10 +10,10 @@
 {{define "_agent_status"}}
 {{if .Running}}
 <span class="pill">running</span>
-<form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}? It drains in-flight tasks and exits.">{{.CSRF}}<button class="btn-danger small" type="submit">Stop</button></form>
+<form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}?">{{.CSRF}}<button class="btn-danger" type="submit">Stop</button></form>
 {{else}}
 <span class="muted small">stopped</span>
-<a class="btn small" href="/agents/{{.Handle}}?form=start" data-modal="form-start-{{.Handle}}">Start…</a>
+<a class="btn" href="/agents/{{.Handle}}?form=start" data-modal="form-start-{{.Handle}}">Start…</a>
 {{end}}
 {{end}}
 

@@ -66,7 +66,7 @@
 
 <h2>Danger</h2>
 <div class="cluster">
-  <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}? Its home, files, and memory are removed. This cannot be undone.">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
+  <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
 </div>
 
 {{/* ---- edit modals (persona / knowledge / config) ---- */}}

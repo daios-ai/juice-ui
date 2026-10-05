@@ -22,9 +22,9 @@
     <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>
     <td>
       {{if .Suspended}}
-      <form method="post" action="/admin/users/{{.Address}}/unsuspend">{{$.CSRFField}}<button class="btn small" type="submit">Unsuspend</button></form>
+      <form method="post" action="/admin/users/{{.Address}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
       {{else}}
-      <form method="post" action="/admin/users/{{.Address}}/suspend" data-confirm="Suspend {{.Address}}? They cannot authenticate and their actions become uncallable until unsuspended.">{{$.CSRFField}}<button class="btn-danger small" type="submit">Suspend</button></form>
+      <form method="post" action="/admin/users/{{.Address}}/suspend" data-confirm="Suspend {{.Address}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
       {{end}}
     </td>
   </tr>

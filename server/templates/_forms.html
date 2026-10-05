@@ -225,7 +225,7 @@
 <dialog id="form-admin-deposit" class="modal-form"{{if eq .Data.OpenForm "admin-deposit"}} open{{end}} aria-label="Deposit credits">
   <div class="modal-head"><h2>Deposit credits</h2><a class="modal-close" href="{{.Data.Back}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/admin/deposit" data-confirm="Record this payment? The account is credited against the reference you named.">
+    <form class="stack" method="post" action="/admin/deposit" data-confirm="Record this payment?">
       {{.CSRFField}}
       <input type="hidden" name="back" value="{{.Data.Back}}">
       <div class="field">

@@ -21,7 +21,10 @@ Status: design draft — endpoint surface gated against the running kernel
 > (the paid-run caption, the deactivation note, the import, secret and
 > rename notes are gone); a subtitle is a record's identity or a scope note
 > (grammar §3). Page titles, section headings and nav labels share one
-> capitalization, sentence case (§6.1).
+> capitalization, sentence case (§6.1). Buttons have one geometry (no size
+> modifier); a record's commands share one row, so a task's Decline stands
+> beside Complete; one command has one look and label everywhere (Suspend,
+> `End · refund N`); and every confirm is one plain question (§6.3, §6.5).
 
 > **What changed in 0.12.0.** The kernel (ba7f5e5) makes an action a tool
 > definition: it carries a required one-line **title**, and both schemas are
@@ -1064,9 +1067,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 * **A waiting task can be declined** (`POST /v1/tasks/{id}/cancel`) by either
   party the kernel accepts: its `required_caller`, or its `owner` (the process
   owner who asked). Declining cancels it and returns its reserved price to the
-  payer; the control is the destructive `Decline` behind a confirm naming that
-  consequence (§7), offered on the inbox card and on the task's own page, never
-  in a list row. The kernel refuses anyone else and any task no longer waiting.
+  payer; the control is the destructive `Decline`, standing in the task's command
+  row beside `Complete`, behind the plain confirm "Decline this task?" (§7),
+  offered on the inbox card and on the task's own page, never in a list row. The kernel refuses anyone else and any task no longer waiting.
 * Completed and cancelled tasks MUST appear in history.
 * `sys/message` tasks MUST render as a message (sender, text, acknowledge
   button).
@@ -1135,8 +1138,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 * The Wallet MUST show two balances (credited / escrow-pending signals):
   **available** and **parked** (all locked funds; the open-sessions list itemizes
-  them, each with a force-end control naming its consequence — cancels waiting
-  tasks, refunds parked prices — via `POST /v1/processes/{id}/end`). "locked" is not
+  them, each with the `End · refund N` control behind the plain confirm "End this
+  session?" — ending cancels waiting tasks and refunds parked prices — via
+  `POST /v1/processes/{id}/end`). "locked" is not
   a user-facing label. Parked is the served `locked` whole: it also holds what a
   call to another kernel stakes on its ticket (kernel P10), which no session
   itemizes, and the UI states the total rather than computing a remainder.
@@ -1146,7 +1150,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   page and the process page — keyed on the kernel's `awaiting_receipt`. A
   doomed act is never offered.
 * The wallet MUST link to the full **sessions** page (`GET /v1/processes?all=1`,
-  open + closed — the kernel lists only open ones otherwise), which itself MUST offer the same force-end control on each endable
+  open + closed — the kernel lists only open ones otherwise), which itself MUST offer the same `End · refund N` control on each endable
   row and paginate (§7). A session awaiting a remote receipt MUST show that
   state and its age from the kernel's `awaiting_receipt`/`awaiting_receipt_since`
   — the standing evidence behind a parked run (§6.2).

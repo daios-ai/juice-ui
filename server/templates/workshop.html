@@ -72,7 +72,7 @@
         <form method="post" action="/actions/visibility">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><input type="hidden" name="visibility" value="local"><button class="menu-item" type="submit">local{{if $a.IsLocal}} ✓{{end}}</button></form>
         <form method="post" action="/actions/visibility">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><input type="hidden" name="visibility" value="public"><button class="menu-item" type="submit">public{{if $a.IsPublic}} ✓{{end}}</button></form>
         <div class="menu-divider"></div>
-        <form method="post" action="/actions/delete" data-confirm="Delete {{$a.Ref}}? History is preserved.">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><button class="menu-item danger" type="submit">Delete…</button></form>
+        <form method="post" action="/actions/delete" data-confirm="Delete {{$a.Ref}}?">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><button class="menu-item danger" type="submit">Delete…</button></form>
       </div>
       {{end}}
     </td>

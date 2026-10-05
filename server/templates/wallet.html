@@ -50,7 +50,7 @@
 <dialog id="form-withdraw" class="modal-form"{{if eq .Data.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">
   <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/wallet/withdraw" data-confirm="{{if .Data.MyAddress}}Withdraw to your registered address? A withdrawal keeps the destination it was made with.{{else}}Withdraw? The operator records the payment out.{{end}}">
+    <form class="stack" method="post" action="/wallet/withdraw" data-confirm="Withdraw?">
       {{.CSRFField}}
       <input type="hidden" name="id" value="{{.Data.WithdrawalID}}">
       <div class="field">

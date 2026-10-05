@@ -655,3 +655,39 @@ func TestHeadingCase(t *testing.T) {
 		check(f, string(b))
 	}
 }
+
+// TestButtonsHaveOneGeometryAndOneLook enforces §5.1 on every core and app
+// template: no size modifier on a button, no quiet-danger tier, no second
+// command-row container, and every confirm a single plain question.
+func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	apps, _ := filepath.Glob("../apps/*/templates/*.html")
+	sizedRe := regexp.MustCompile(`class="btn(?:-money|-danger|-quiet|-icon)?\b[^"]*\bsmall\b`)
+	confirmRe := regexp.MustCompile(`data-confirm="([^"]*)"`)
+	check := func(f, src string) {
+		if loc := sizedRe.FindStringIndex(src); loc != nil {
+			t.Errorf("%s: a button carries a size modifier — all buttons share one geometry (grammar §5.1): …%s…", f, snippet(src, loc[0]))
+		}
+		for _, bad := range []string{"btn-quiet danger", "row-foot"} {
+			if strings.Contains(src, bad) {
+				t.Errorf("%s: %q is retired — a destructive command is .btn-danger, a command row is .cluster (grammar §5.1)", f, bad)
+			}
+		}
+		for _, m := range confirmRe.FindAllStringSubmatch(src, -1) {
+			q := visibleText(m[1])
+			if !strings.HasSuffix(q, "?") || secondSentenceRe.MatchString(q) {
+				t.Errorf("%s: confirm %q must be one plain question (grammar §5.8)", f, m[1])
+			}
+		}
+	}
+	for _, f := range core {
+		check(f, string(mustRead(t, f)))
+	}
+	for _, f := range apps {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(f, string(b))
+	}
+}

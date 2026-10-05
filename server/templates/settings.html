@@ -47,8 +47,8 @@
       <span class="muted small">{{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}</span>
       <span class="cluster grant-actions">
         {{range .Connections}}{{if .ProviderKey}}
-        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}? Every action it backs is disconnected.">
-          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect all</button>
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Provider}}?">
+          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger" type="submit">Disconnect all</button>
         </form>
         {{end}}{{end}}
       </span>
@@ -63,8 +63,8 @@
         <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
         <td class="muted">{{shortTime .CreatedAt}}</td>
         <td>
-          <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}? Running it will ask you to connect again.">
-            {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger small" type="submit">Disconnect</button>
+          <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}?">
+            {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger" type="submit">Disconnect</button>
           </form>
         </td>
       </tr>
@@ -81,8 +81,8 @@
       <span class="chip" title="Unused — no action is connected to this account">0</span>
       <span class="cluster grant-actions">
         {{if .ProviderKey}}
-        <form method="post" action="/grants/disconnect" data-confirm="Disconnect the account {{.Provider}}?">
-          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger small" type="submit">Disconnect all</button>
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Provider}}?">
+          {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger" type="submit">Disconnect all</button>
         </form>
         {{end}}
       </span>

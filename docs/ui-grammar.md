@@ -227,6 +227,19 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 
+**One geometry, one row, one look.**
+- No size modifier exists: every button, in a table cell or a card, has the
+  one geometry. `.small` is a text utility, never on a button.
+- A record's commands stand in **one `.cluster` row** (gap .5rem), primary
+  first, destructive last. A command that posts to its own action joins the row
+  through the HTML `form="…"` attribute (a task's Decline beside Complete), so
+  no command drops below its row. A quiet text command never shares a row with
+  buttons; navigation inside such a row (`Inspect`, `Rename`) is a `.btn`.
+- One command has one look and one label everywhere: Suspend is `.btn-danger`,
+  Unsuspend `.btn`, ending a session `End · refund N` (`.btn-danger`). There is
+  no quiet-danger tier.
+- `TestButtonsHaveOneGeometryAndOneLook` enforces this on every template.
+
 **Rules.** These are the *only* button styles. The money tier is the **authorizing
 control** — the form submit that actually moves credits (`Run (12)`,
 `Synthesize (20)`, Deposit/Withdraw). The run form is **inline** (on the action
@@ -444,8 +457,10 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   checkbox `null` beneath it. Blank omits the field; the box sends `null`.
 - **Destructive confirm:** `form[data-confirm="…"]` routes through the shared
   confirm modal — a native `dialog.modal-confirm` (`#modal-backdrop`) shown with
-  `showModal()`, so it stacks in the top layer above an open `modal-form`; its
-  message names the consequence.
+  `showModal()`, so it stacks in the top layer above an open `modal-form`. Its
+  message is **one plain question** naming the act and its record ("Decline
+  this task?", "Suspend bob@alpha?"), never a sentence explaining what follows;
+  an amount that is data rides on the button (`End · refund 0.40 fUSD`).
 
 ### 5.9 Command palette & keyboard
 

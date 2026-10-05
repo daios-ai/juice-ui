@@ -174,6 +174,11 @@ type CallForm struct {
 	// disable the protection while looking correct. If the terms moved between
 	// render and submit, the kernel refuses before locking, at zero charge.
 	QuoteHash string
+	// DeclineID, set on a task the viewer may also decline, puts Decline in
+	// the form's own button row, after Complete. The button submits the
+	// separate decline form (_task_decline) through the HTML form attribute, so
+	// the two commands share one row and keep their own actions.
+	DeclineID string
 }
 
 // runForm builds a CallForm for running an action (repeatable, no locked args).
@@ -190,14 +195,19 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 // completeForm builds a CallForm for completing a task (one-shot; the sealed args
 // render read-only above the editable fields). ResultID is per-task so many
 // inbox forms don't collide. locked is the structured split; lockedRaw is the
-// raw fallback when the schema produced no structured fields.
-func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string) CallForm {
-	return CallForm{
+// raw fallback when the schema produced no structured fields. canDecline puts
+// Decline beside Complete.
+func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string, canDecline bool) CallForm {
+	f := CallForm{
 		CSRFField: csrf, PostURL: "/inbox/" + taskID + "/complete", Verb: "Complete",
 		Price: price, Locked: locked, LockedRaw: lockedRaw, Editable: editable, IsApproval: isApproval,
 		ResultID: "task-result-" + taskID, Outcome: outcome, OneShot: true,
 		IsPayment: isPayment, Payment: payment, PayTo: payTo,
 	}
+	if canDecline {
+		f.DeclineID = taskID
+	}
+	return f
 }
 
 // Caller executes actions via POST /v1/run.
