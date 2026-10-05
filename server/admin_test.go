@@ -562,9 +562,6 @@ func TestAdminRenameUser(t *testing.T) {
 	if !strings.Contains(page, `?form=admin-rename`) || !strings.Contains(page, `id="form-admin-rename"`) {
 		t.Error("the user page must carry the rename opener and its modal")
 	}
-	if !strings.Contains(page, "Frees the old address; references use the new one.") {
-		t.Error("rename must disclose that references follow the account")
-	}
 
 	resp := postTo(t, cl, srv.URL+"/admin/users/alice@testnet/rename", page, url.Values{"new_name": {"alicia@testnet"}})
 	resp.Body.Close()

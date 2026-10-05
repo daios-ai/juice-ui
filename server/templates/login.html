@@ -6,8 +6,6 @@
     {{if .KernelHandle}}
     <p class="auth-kernel">Sign in to <b class="mono">{{.KernelHandle}}</b>{{if .KernelNet}} on {{.KernelNet}}{{end}}{{if and .KernelName (ne .KernelName .KernelHandle)}} <span class="muted">· recorded as {{.KernelName}}</span>{{end}}</p>
     {{if .KernelFP}}<p class="kernel-fp mono" title="Kernel public key — verify you reached the right kernel"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg> {{.KernelFP}}</p>{{end}}
-    {{else}}
-    <p class="subtitle auth-subtitle">A terminal for callable actions.</p>
     {{end}}
 
     {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}

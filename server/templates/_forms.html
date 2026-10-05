@@ -33,7 +33,6 @@
     <div class="field"><label for="{{.ID}}-auth-qname">Query name</label><input id="{{.ID}}-auth-qname" name="auth_param_name" type="text" autocomplete="off" value="{{.Name}}" required{{if ne .Scheme "query"}} disabled{{end}}></div>
     <div class="field flush"><label for="{{.ID}}-auth-qval">Query value</label><input id="{{.ID}}-auth-qval" name="auth_param_value" type="password" autocomplete="off" required{{if ne .Scheme "query"}} disabled{{end}}></div>
   </div>
-  <p class="help muted">Secrets are write-only — stored encrypted, never shown again.</p>
 </details>
 {{end}}
 
@@ -102,7 +101,6 @@
         <button class="btn" type="submit">Create action</button>
         <a class="btn" href="/workshop" data-modal-close>Cancel</a>
       </div>
-      <p class="help muted flush">Created inactive.</p>
     </form>
   </div>
 </dialog>
@@ -167,12 +165,10 @@
       {{.CSRFField}}
       <div class="field">
         <label for="i-name">Application name<span class="req">*</span></label>
-        <p class="help">One name holds one document. Re-importing it reconciles changes.</p>
         <input id="i-name" name="name" type="text" class="mono" placeholder="pets" required>
       </div>
       <div class="field">
         <label for="i-url">Spec URL</label>
-        <p class="help">Given once; later imports re-read the recorded document.</p>
         <input id="i-url" name="spec_url" type="text" placeholder="https://api.example.com/openapi.json">
       </div>
       {{/* One credential for the whole application: an auth is write-only, so
@@ -238,7 +234,6 @@
       </div>
       <div class="field">
         <label for="dep-ref">Payment reference</label>
-        <p class="help">Your record of it, or the transaction that carried it.</p>
         <input id="dep-ref" name="ref" type="text" class="mono" value="{{.Data.FundRef}}" required>
       </div>
       <div class="field">

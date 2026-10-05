@@ -2,7 +2,6 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>network</h1>
-  <p class="subtitle">Kernels on {{.KernelNet}}, and the money they owe. <span class="scope-note">superuser only</span></p>
 </div>
 
 {{/* A halt refuses outgoing rail work while deposits, paid work and reads
@@ -101,7 +100,6 @@
     <form class="stack" method="get" action="/admin/peers/inspect">
       <div class="field">
         <label for="insp-key">Kernel public key</label>
-        <p class="help">The kernel's base64url Ed25519 key — its global name.</p>
         <input id="insp-key" name="key" type="text" class="mono" required>
       </div>
       <div class="cluster">

@@ -1958,7 +1958,6 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 		`value="city"`,
 		`value="units"`,
 		`name="title"`,
-		"A price, schema or source change deactivates the action",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("edit form missing %q", want)

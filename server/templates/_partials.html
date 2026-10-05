@@ -335,7 +335,6 @@
       <span class="bar" aria-hidden="true"></span><span>Running…</span>
     </div>
   </div>
-  {{if and (gt .Price 0) (not .OneShot)}}<p class="help muted flush">Maximum, all-in. Refunded in full if it fails.</p>{{end}}
   {{if .IsPayment}}<p class="help muted flush">Paid from your balance{{if .PayTo}} to <span class="mono">{{.PayTo}}</span>{{end}}.</p>{{end}}
   {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
@@ -642,7 +641,7 @@
   {{end}}
 </div>
 {{else if .Known}}<p class="muted">No kernels discovered yet.</p>
-{{else}}<p class="muted">No counterparties yet. A first call creates one.</p>{{end}}
+{{else}}<p class="muted">No counterparties yet.</p>{{end}}
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect

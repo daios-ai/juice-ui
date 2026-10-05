@@ -55,7 +55,7 @@ The frame every page renders into. Defined in `layout.html`.
 │ SIDEBAR  │  flash bar (one-shot, when present)     │
 │ brand    ├───────────────────────────────────────┤
 │ juice ◄logo│ ┌── page-head ───────────────────┐   │
-│          │  │ title + subtitle                │   │
+│          │  │ title                           │   │
 │ ▸ browse │  └─────────────────────────────────┘   │
 │ ▸ inbox• │  content (container, max ~1160px)       │
 │ ▸ workshop│                                        │
@@ -75,7 +75,7 @@ The frame every page renders into. Defined in `layout.html`.
 | **Nav** | `browse · inbox · workshop · wallet · you` + `network · admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
-| **page-head** | title + subtitle only — no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
+| **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
 | **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar of four** (`browse · inbox• · chat• · you`) | Same layout reflowed. Badges stay on `inbox` and `chat`. The remaining destinations (`wallet`, `workshop`, `network`, `admin`) and preferences live inside the `you` hub — no hamburger drawer. The topbar is hidden here, so browse renders the **same** `.omni` search pill in-page (`.browse-search` shows it ≤720px) — one component, both form factors. |
 
@@ -147,21 +147,24 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 - **Money, IDs, hashes, addresses:** mono + `tabular-nums`. The **owner
   segment** of a ref is weight-emphasized (`.owner`) and MUST NOT use accent.
 - **Index vs detail:**
-  - *Index* = `page-head` (title + subtitle) → section `<h2>` → a `.tabs` filter
+  - *Index* = `page-head` (the title) → section `<h2>` → a `.tabs` filter
     row (with an optional inline `+ new …` command) → list.
   - *Detail* = crumb (sticky back-link) → `<h1>` → `.subtitle` (the id) → cards.
 
 **Copy discipline — words are a component.** Prose is rationed like color. Every
 visible string is exactly one register:
 
-- **Orientation** — the page-head / section `.subtitle`: one short phrase, a single
-  sentence, no verb describing what the kernel or a control *does*. "Work addressed
-  to you." — never a description of what *waiting* and *history* mean.
-- **Disclosure** — a consequence you consent to or a constraint on you (the refund
-  rule, out-of-band top-ups, fee "on value added", "saving deactivates the action").
-  Legitimately words — several are required by `requirements.md` — but shown **once,
-  at the point of consequence**, beside the button or field that triggers it; never
-  duplicated, never floating up-page as a standalone note.
+- **No orientation prose.** A page is not introduced: the title, the section
+  headings and the content say what it is. A `.subtitle` holds only a record's
+  **identity** on a detail page (its id, an action's ref, a kernel's key or its
+  own self-description) or a superuser **scope note**; never a sentence about
+  the page.
+- **Disclosure** — only a fact that is data and changes what a person does: who
+  is paid and how much (`Paid from your balance to …`, a first payee), a ticket
+  or payment status. Shown **once, at the point of consequence**. A sentence
+  explaining how the system behaves ("refunded if it fails", "saving
+  deactivates", "secrets are write-only", "re-importing reconciles") is a
+  remark, and remarks do not appear.
 - **Narration** — how the kernel/system works. Belongs **nowhere**: structure,
   labels, columns, chips, and just-in-time affordances already carry it. Cut it, or
   turn it into structure.
@@ -260,7 +263,7 @@ bottom nav is a separate component (`.tab-bar`). The `.linkbar` is retired.
 
 ### 5.3 Commands are inline & quiet
 
-The `page-head` carries **no commands** — just the title and subtitle. A command
+The `page-head` carries **no commands** — just the title. A command
 lives **inline, with the content it acts on**, as a single quiet affordance:
 `+ new action` above the actions list, `update account` by the identity card,
 `+ deposit credits` in the users section. All are `.btn-quiet` (or a plain link);
@@ -571,10 +574,10 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   signed perspective amount (gross/fee/parties live on the detail page). Every
   `<table>` sits in a `.table-scroll`.
 - Lowercase group titles (`browse · inbox · workshop · wallet · you · network ·
-  admin`); `page-head` (title + subtitle only) on index, sticky crumb on detail.
+  admin`); `page-head` (the title only) on index, sticky crumb on detail.
   Commands are quiet and inline — never a floating page-head cluster (sticky is
   the page's own header refusing to scroll away, not floating chrome).
-- **Copy is rationed (§3 Copy discipline):** subtitles orient in one phrase; no
+- **Copy is rationed (§3 Copy discipline):** no orientation subtitles; no
   sentence narrates kernel/control behavior; disclosures appear once, at the point
   of consequence. Empty states and `help` name the thing, they don't lecture. A
   field caption never restates its label or explains a mechanism. The drift guard
@@ -595,8 +598,8 @@ and a rail halt as a `.banner-error` — plus the obligations above.
 - **Drift guard:** a test scans templates and fails on any button class outside
   §5.1 (incl. the retired `.btn-primary`), any inline `style=`, any `.toolbar`,
   any `.linkbar`, the superseded `auth-tab` class,
-  any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` that runs past one
-  phrase or into a second sentence, any prose note (`.help` / `.card-note`) that
+  any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` holding prose
+  (only an identity or a scope note), any prose note (`.help` / `.card-note`) that
   swells into a paragraph, and any **`¤` character, `$` before a figure, or
   hard-coded `step` on an amount input** (`TestMoneyGrammar`) — money is the
   world's unit and symbol through the `money` helper, the step is the world's

@@ -39,7 +39,6 @@
 
 {{if $d.Ratings}}
 <h2>Ratings</h2>
-<p class="muted small">From paid calls.</p>
 <div class="card-list">
 {{range $d.Ratings}}
 <div class="card">
@@ -122,7 +121,6 @@
         <button class="btn" type="submit">Save changes</button>
         <a class="btn" href="/actions/{{$d.Action.ID}}" data-modal-close>Cancel</a>
       </div>
-      <p class="help muted flush">A price, schema or source change deactivates the action until you re-enable it.</p>
     </form>
     <hr class="card-sep">
     <form method="post" action="/actions/{{$d.Action.ID}}/update-price" class="row compact">

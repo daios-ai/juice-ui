@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="page-head">
   <h1>wallet</h1>
-  <p class="subtitle">Available and parked funds.{{if .Data.Superuser}} <span class="scope-note">superuser scope: all rows</span>{{end}}</p>
+  {{if .Data.Superuser}}<p class="subtitle"><span class="scope-note">superuser scope: all rows</span></p>{{end}}
 </div>
 
 {{template "_figures" (figures (figure .Data.Available "available" "") (figure .Data.Locked "parked ◷" "escrow"))}}
@@ -76,7 +76,6 @@
       {{.CSRFField}}
       <div class="field">
         <label for="ad-addr">Address<span class="req">*</span></label>
-        <p class="help">Money is credited to the address it came from, so payments count only once this is registered.</p>
         <input id="ad-addr" name="address" type="text" class="mono" required>
       </div>
       <div class="field">

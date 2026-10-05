@@ -586,9 +586,9 @@ func TestCallFormRun(t *testing.T) {
 	if strings.Contains(body, `data-oneshot="true"`) {
 		t.Error("action run form must repeat, not be one-shot")
 	}
-	// A paid run is a settling payment: the refund disclosure rides with the confirm.
-	if !strings.Contains(body, "Refunded in full if it fails.") {
-		t.Errorf("paid run form must disclose the refund at the confirm: %s", body)
+	// The confirm carries no remark beside it (grammar §3).
+	if strings.Contains(body, "Refunded") || strings.Contains(body, "all-in") {
+		t.Errorf("the run confirm must carry no remark: %s", body)
 	}
 	// Result target must sit after the closing </form>, not inside it.
 	form := strings.Index(body, "</form>")

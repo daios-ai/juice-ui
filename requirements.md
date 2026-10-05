@@ -16,7 +16,11 @@ Status: design draft — endpoint surface gated against the running kernel
 > keyboard-navigable and its link is the pointer target, so no row shows a
 > pointer cursor it cannot honour (§6.1). Every headline money figure —
 > wallet, home, workshop earnings, a session's funds — renders through one
-> component, the wallet's (§6.4).
+> component, the wallet's (§6.4). **No remarks**: a page carries no orientation
+> subtitle, and no control or field carries a sentence explaining behaviour
+> (the paid-run caption, the deactivation note, the import, secret and
+> rename notes are gone); a subtitle is a record's identity or a scope note
+> (grammar §3).
 
 > **What changed in 0.12.0.** The kernel (ba7f5e5) makes an action a tool
 > definition: it carries a required one-line **title**, and both schemas are
@@ -942,8 +946,8 @@ spend:
   one-click retry: repeating it could repeat a side effect or a payment. The
   discriminator is the kernel's field, never the action's kind.
 * A **paid** run's confirm is the single money button reading `Run (N)` (the
-  accent conveys credits — no glyph on the button), and the form MUST disclose
-  "Maximum, all-in. Refunded in full if it fails." A **first payment** to this
+  accent conveys credits — no glyph on the button), with no remark beside it. A
+  **first payment** to this
   owner MUST show a quiet first-payee hint (§8.3). A **free** run is the same
   form with a neutral `Run` button.
 * The receipt MUST offer one-click re-run with the same args.
@@ -954,7 +958,7 @@ spend:
   document_url   [https://…            ]
   target_lang    [German             ▾ ]
 
-  [ Run ($0.012) ]   Maximum, all-in. Refunded if it fails.
+  [ Run ($0.012) ]
   ┌─ result ──────────────────────────────────┐
   │  Success.   { … }        Receipt · ▲ ▼      │
   └────────────────────────────────────────────┘
@@ -1092,9 +1096,10 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   narrowing (`private`/`local`), nothing for `public`. Widening an OpenAPI-imported
   action beyond `private` may require verified ownership; the UI surfaces the
   kernel's rejection (§10) rather than driving a proof.
-* Editing source, schema, kind, or price MUST warn that saving deactivates the
-  action until re-enabled, matching the kernel's contract-drift rule; a title or
-  description change keeps it live.
+* Saving a source, schema, kind or price change deactivates the action until
+  re-enabled (the kernel's contract-drift rule); a title or description change
+  keeps it live. The action's state shows the result; the dialog carries no
+  remark about it.
 * Create and edit MUST take the action's **title** (required, one line, at most
   80 characters, the kernel's rule). A refused create or edit — a local parse
   error or the kernel's refusal — MUST re-render the dialog open with the

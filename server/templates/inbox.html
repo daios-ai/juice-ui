@@ -2,7 +2,7 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>inbox</h1>
-  <p class="subtitle">Work addressed to you.{{if $d.Superuser}} <span class="scope-note">superuser scope: all tasks</span>{{end}}</p>
+  {{if $d.Superuser}}<p class="subtitle"><span class="scope-note">superuser scope: all tasks</span></p>{{end}}
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}

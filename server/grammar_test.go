@@ -367,24 +367,16 @@ func visibleText(html string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// TestSubtitlesAreOrienting enforces §3: a page-head/section subtitle orients in one
-// short phrase and a single sentence — it never narrates kernel or control behavior.
-// Detail-page subtitles carry only an id (template-only), so they strip to empty.
-func TestSubtitlesAreOrienting(t *testing.T) {
-	const maxRunes = 64
+// TestSubtitlesHoldNoProse enforces §3: a page is not introduced. A subtitle
+// holds only a record's identity (template output: an id, a ref, a key) or a
+// superuser scope note, so once both are stripped no literal word remains.
+func TestSubtitlesHoldNoProse(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
 		for _, m := range subtitleRe.FindAllStringSubmatch(src, -1) {
-			txt := visibleText(m[1])
-			if txt == "" {
-				continue // an id or otherwise template-only subtitle
-			}
-			if n := utf8.RuneCountInString(txt); n > maxRunes {
-				t.Errorf("%s: subtitle runs to %d runes (max %d) — orient in one phrase, don't narrate (grammar §3): %q", f, n, maxRunes, txt)
-			}
-			if secondSentenceRe.MatchString(txt) {
-				t.Errorf("%s: subtitle spans multiple sentences — orient in one phrase, don't narrate (grammar §3): %q", f, txt)
+			if txt := visibleText(m[1]); txt != "" {
+				t.Errorf("%s: subtitle holds prose — a page is not introduced; a subtitle is an identity or a scope note (grammar §3): %q", f, txt)
 			}
 		}
 	}
@@ -447,19 +439,11 @@ func TestAppTemplatesFollowGrammar(t *testing.T) {
 				t.Errorf("%s: retired component %q must not reappear", f, bad)
 			}
 		}
-		// Copy discipline (§3) applies wherever a template lives: an app's subtitle
-		// orients in one phrase and its help note discloses one thing — neither
-		// narrates how the kernel/daemon works. Same guards as the core (§3 tests).
+		// Copy discipline (§3) applies wherever a template lives: an app's
+		// subtitle holds no prose either.
 		for _, m := range subtitleRe.FindAllStringSubmatch(src, -1) {
-			txt := visibleText(m[1])
-			if txt == "" {
-				continue
-			}
-			if n := utf8.RuneCountInString(txt); n > 64 {
-				t.Errorf("%s: subtitle runs to %d runes (max 64) — orient in one phrase, don't narrate (grammar §3): %q", f, n, txt)
-			}
-			if secondSentenceRe.MatchString(txt) {
-				t.Errorf("%s: subtitle spans multiple sentences — orient in one phrase, don't narrate (grammar §3): %q", f, txt)
+			if txt := visibleText(m[1]); txt != "" {
+				t.Errorf("%s: subtitle holds prose (grammar §3): %q", f, txt)
 			}
 		}
 		// Prose notes cap on length only (like the core §3 test): a legitimate
