@@ -32,7 +32,7 @@ Three laws underpin everything:
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
 | Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
-| **Figures** | `.balances` + `.balance` · `_figures` partial | **the** headline money figures — a large mono amount coloured by its signal, its label beneath (linked when records stand behind it). One anatomy on wallet, home, workshop and a session |
+| **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, segmented like a single pill: input left, equal-height icon-submit right. Topbar on desktop, in-page on browse ≤720px — identical anatomy in both. Search hints drop beneath it as a `.menu`-styled panel: catalog titles, each a link that runs the search for it — a query, never an action |
@@ -378,12 +378,11 @@ none float, none are colored.
 
 ### 5.6 Status, pills, money
 
-- **Headline money figures are one component, `_figures`** (the wallet's
-  anatomy): `.balances` of `.balance` — the amount large in mono, coloured by
-  its signal (`sig-credited` with a `+`, `sig-escrow`), the label muted
-  beneath, the label a link when records stand behind the figure. Wallet,
-  home, workshop earnings and a session's funds all render through it; no page
-  draws its own tiles.
+- **Headline money figures are one component, `_figures`**: a `.stat-row` of
+  `.stat` blocks — the label muted on top, the amount in mono coloured by its
+  signal (`sig-credited` with a `+`, `sig-escrow`), and a quiet link to the
+  records behind it when there are any. Wallet, home, workshop earnings and a
+  session's funds all render through it; no page draws its own figures.
 
 - `.pill` — bordered, `currentColor`. State variants:
   `.status-credited / -refunded / -escrow / -danger`.

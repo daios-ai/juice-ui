@@ -1752,32 +1752,38 @@ func TestActionPageRendersOthersReports(t *testing.T) {
 	}
 }
 
-// The headline money figures are one component, the wallet's anatomy: a mono
-// amount coloured and signed by its signal, its label beneath, linked only
-// when records stand behind it.
-func TestFiguresAreTheWalletAnatomy(t *testing.T) {
+// The headline money figures are one component, one block per figure: the
+// label, the mono amount coloured and signed by its signal, and a link to the
+// records behind it only when there are any.
+func TestFiguresAreBlocks(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	if err := r.Fragment(rec, 200, "_figures", figures(
-		figure(5000000, "available", ""),
-		figure(1000000, "parked ◷", "escrow"),
-		linkedFigure(2000000, "earned this month", "credited", "/transactions"),
+		figure(5, "available", ""),
+		figure(1, "parked ◷", "escrow"),
+		linkedFigure(2, "this month", "credited", "full ledger", "/transactions"),
 	)); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
+	if !strings.Contains(body, `<div class="stat-row">`) || strings.Count(body, `<div class="stat">`) != 3 {
+		t.Errorf("each figure must be a block in one row: %s", body)
+	}
 	for _, want := range []string{
-		`<div class="amount mono">5000000 credits</div>`,
-		`<div class="amount mono sig-escrow">1000000 credits</div>`,
-		`<div class="amount mono sig-credited">+2000000 credits</div>`,
 		`<div class="label">available</div>`,
-		`<div class="label"><a href="/transactions">earned this month →</a></div>`,
+		`<div class="value">5 credits</div>`,
+		`<div class="value sig-escrow">1 credits</div>`,
+		`<div class="value sig-credited">+2 credits</div>`,
+		`<a href="/transactions">full ledger →</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("figures must render %q: %s", want, body)
 		}
+	}
+	if strings.Count(body, "<a ") != 1 {
+		t.Errorf("only a figure with records behind it links: %s", body)
 	}
 }

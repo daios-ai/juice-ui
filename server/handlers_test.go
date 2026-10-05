@@ -1854,12 +1854,12 @@ func TestStudioShowsEarnings(t *testing.T) {
 	}
 	// Every page that leads with money draws it through the one figures
 	// component, and links each earnings figure to its transactions.
-	if !strings.Contains(body, `<a href="/transactions">earned all time · 1 call →</a>`) {
+	if !strings.Contains(body, `<a href="/transactions">1 call all-time →</a>`) {
 		t.Error("an earnings figure must link to its transactions")
 	}
 	for _, page := range []string{"/workshop", "/wallet", "/"} {
 		b := getBody(t, cl, srv.URL+page)
-		if !strings.Contains(b, `<div class="balances">`) || strings.Contains(b, `class="stat"`) {
+		if !strings.Contains(b, `<div class="stat-row">`) || strings.Contains(b, `class="balance`) {
 			t.Errorf("%s must render its money through the figures component", page)
 		}
 	}

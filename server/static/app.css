@@ -483,11 +483,13 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .scope-note { color: var(--text-muted); font-size: .82rem; border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: .2rem .5rem; display: inline-block; }
 
 /* Balances */
-/* Headline money figures (_figures, grammar §5.6): wallet, home, workshop, session. */
-.balances { display: flex; gap: 2rem; flex-wrap: wrap; }
-.balance .amount { font-size: 1.9rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.balance .label { color: var(--text-muted); font-size: .85rem; }
-.balance .label a { color: inherit; }
+/* Headline money figures (_figures, grammar §5.6) — one block each: wallet,
+   home, workshop, session. */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .85rem; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
+.stat .label { color: var(--text-muted); font-size: .82rem; }
+.stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 700; margin: .2rem 0 .1rem; }
+.stat a { font-size: .82rem; color: var(--text-muted); }
 
 /* Buttons — ONE geometry (grammar §5.1). Color is reserved for the real
    money/danger moment; everything else is the single neutral .btn, so two

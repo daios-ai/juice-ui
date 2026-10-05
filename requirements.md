@@ -16,7 +16,7 @@ Status: design draft — endpoint surface gated against the running kernel
 > keyboard-navigable and its link is the pointer target, so no row shows a
 > pointer cursor it cannot honour (§6.1). Every headline money figure —
 > wallet, home, workshop earnings, a session's funds — renders through one
-> component, the wallet's (§6.4). **No remarks**: a page carries no orientation
+> component, one block per figure (§6.4). **No remarks**: a page carries no orientation
 > subtitle, and no control or field carries a sentence explaining behaviour
 > (the paid-run caption, the deactivation note, the import, secret and
 > rename notes are gone); a subtitle is a record's identity or a scope note
@@ -1081,7 +1081,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 * Earnings MUST be computed in the BFF by folding the user's own transactions;
   each figure MUST link to its underlying transactions. Earnings, like every
   headline money figure (wallet, home, a session), MUST render through the one
-  figures component, the wallet's anatomy (§7). The BFF MUST NOT
+  figures component: one block per figure (§7). The BFF MUST NOT
   reproduce kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
   actions, filter by state, and show kind, price, success rate, rating trend, a

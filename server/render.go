@@ -598,14 +598,16 @@ type StatStrip struct {
 	WithPrice bool // detail page leads with price; cards omit it (shown top-right)
 }
 
-// Figure is one headline money figure: the amount, what it is, and its signal
-// (§7) — "" plain, "credited" earned (signed +), "escrow" parked. Href, when
-// set, links the label to the records behind the figure. Every page that leads
-// with money renders its figures through the one _figures partial.
+// Figure is one headline money figure, drawn as a block: what it is, the
+// amount with its signal (§7) — "" plain, "credited" earned (signed +),
+// "escrow" parked — and, when records stand behind it, a link to them (Link is
+// its text, Href its target). Every page that leads with money renders its
+// figures through the one _figures partial.
 type Figure struct {
 	Amount int64
 	Label  string
 	Signal string
+	Link   string
 	Href   string
 }
 
@@ -614,8 +616,8 @@ func figure(amount int64, label, signal string) Figure {
 	return Figure{Amount: amount, Label: label, Signal: signal}
 }
 
-func linkedFigure(amount int64, label, signal, href string) Figure {
-	return Figure{Amount: amount, Label: label, Signal: signal, Href: href}
+func linkedFigure(amount int64, label, signal, link, href string) Figure {
+	return Figure{Amount: amount, Label: label, Signal: signal, Link: link, Href: href}
 }
 
 // figures collects Figures for the _figures partial (template helper).

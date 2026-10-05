@@ -70,16 +70,17 @@
 {{range .}}<a class="menu-item" href="/browse?q={{.}}">{{.}}</a>
 {{end}}</nav>{{end}}{{end}}
 
-{{/* _figures — THE headline money figures (§5.6), the wallet's anatomy on
-     every page that leads with money: a large mono amount coloured by its
-     signal, its label beneath, linked when the figure has records behind it.
-     Build with `figures` of `figure`/`linkedFigure`. */}}
+{{/* _figures — THE headline money figures (§5.6), one block each on every
+     page that leads with money: the label, the mono amount coloured by its
+     signal, and a link to the records behind it when there are any. Build with
+     `figures` of `figure`/`linkedFigure`. */}}
 {{define "_figures"}}
-<div class="balances">
+<div class="stat-row">
   {{range .}}
-  <div class="balance">
-    <div class="amount mono{{if .Signal}} sig-{{.Signal}}{{end}}">{{if eq .Signal "credited"}}+{{end}}{{money .Amount}}</div>
-    <div class="label">{{if .Href}}<a href="{{.Href}}">{{.Label}} →</a>{{else}}{{.Label}}{{end}}</div>
+  <div class="stat">
+    <div class="label">{{.Label}}</div>
+    <div class="value{{if .Signal}} sig-{{.Signal}}{{end}}">{{if eq .Signal "credited"}}+{{end}}{{money .Amount}}</div>
+    {{if .Href}}<a href="{{.Href}}">{{.Link}} →</a>{{end}}
   </div>
   {{end}}
 </div>
