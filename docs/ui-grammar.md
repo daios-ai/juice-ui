@@ -140,8 +140,14 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   say that — `credits` is not "not redeemable" — so without this a person cannot
   tell a rehearsal from a live market. Both halves are `/health` fields, stated
   and not judged: the UI never labels a world play or real, it names it.
-- **Titles are lowercase group nouns** on **both** index and detail pages:
-  `browse · inbox · workshop · wallet · you · network · admin`. A **detail** page
+- **Page titles (`<h1>`) are lowercase nouns** on **every** page, index and
+  detail alike, named as the nav and the lists name them: `home · inbox ·
+  workshop · wallet · settings · network · admin`, a detail page the singular
+  of its list (`transaction`, `session`, `task`), and pages outside the nav
+  likewise (`recovery phrase`, `connect`, `error`). A title rendered from data
+  (an action's title, an address) keeps its own case. **Section headings
+  (`<h2>`) are sentence case** ("Open sessions", "Kernels"). `TestHeadingCase`
+  enforces both. A **detail** page
   opens with the sticky **crumb** (`← group` back-link + record identity) above
   the title and shows the resource id/name.
 - **Money, IDs, hashes, addresses:** mono + `tabular-nums`. The **owner

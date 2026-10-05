@@ -2,7 +2,7 @@
 {{$d := .Data}}
 {{$me := $d.Me.Address}}
 <nav class="crumb"><a href="/transactions">← transactions</a></nav>
-<h1>tx</h1>
+<h1>transaction</h1>
 <p class="subtitle id mono">{{$d.Tx.ID}}</p>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
