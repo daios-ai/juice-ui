@@ -14,10 +14,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/gorilla/csrf"
+	"golang.org/x/text/unicode/norm"
 )
 
 // ---- view models ----
@@ -2401,26 +2403,23 @@ const (
 )
 
 // getSuggest answers the search box's type-ahead with search hints, as a
-// search engine completes a query: distinct catalog titles that contain the
-// text. A hint is a query, not an action; choosing one runs the search. It
-// reads the free action list and never runs sys/lookup, which is priced by the
-// operator and would record a transaction per keystroke (§8.2). A failure
-// answers with no hints; the search itself still works.
+// search engine completes a query: catalog titles ranked by searchHints. A hint
+// is a query, not an action; choosing one runs the search. It reads the free
+// action list and never runs sys/lookup, which is priced by the operator and
+// would record a transaction per keystroke (§8.2). A failure answers with no
+// hints; the search itself still works.
 func (s *Server) getSuggest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	q := r.URL.Query().Get("q")
 	var out []string
-	if q != "" {
+	if hintKey(q) != "" {
 		err := s.sessions.Do(ctx, func(tok string) error {
 			actions, e := s.client.ListActions(ctx, tok, "", "", false, suggestPage, 0)
-			seen := map[string]bool{}
-			for _, a := range actions {
-				key := strings.ToLower(a.Title)
-				if len(out) < suggestLimit && !seen[key] && strings.Contains(key, q) {
-					seen[key] = true
-					out = append(out, a.Title)
-				}
+			titles := make([]string, len(actions))
+			for i, a := range actions {
+				titles[i] = a.Title
 			}
+			out = searchHints(titles, q, suggestLimit)
 			return e
 		})
 		if err != nil {
@@ -2428,6 +2427,93 @@ func (s *Server) getSuggest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = s.render.Fragment(w, http.StatusOK, "_suggestions", out)
+}
+
+// hintKey is the form titles and typed text are compared in: compatibility
+// decomposed (NFKD, so fullwidth and ligature forms read as plain letters) with
+// combining marks removed (so "Résumé" reads "resume"), lowercased, every run of non-letters and non-digits one space, trimmed.
+func hintKey(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range norm.NFKD.String(s) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+			continue
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			space = false
+			b.WriteRune(unicode.ToLower(r))
+		default:
+			space = true
+		}
+	}
+	return b.String()
+}
+
+// searchHints picks at most limit titles for the typed text q. A title
+// matches when every typed word begins one of its words ("sum web" finds
+// "Summarize a web page"; "g" finds "Greet", not "Leave a chat room"). Titles
+// that begin with the whole text rank first, then the other matches; within
+// each, shorter first, then alphabetical. Titles equal under hintKey are one
+// hint, written as first seen.
+func searchHints(titles []string, q string, limit int) []string {
+	typed := strings.Fields(hintKey(q))
+	if len(typed) == 0 {
+		return nil
+	}
+	whole := strings.Join(typed, " ")
+	type hint struct {
+		title, key string
+		rank       int
+	}
+	var hits []hint
+	seen := map[string]bool{}
+	for _, t := range titles {
+		key := hintKey(t)
+		if key == "" || seen[key] || !wordsBegin(strings.Fields(key), typed) {
+			continue
+		}
+		seen[key] = true
+		rank := 1
+		if strings.HasPrefix(key, whole) {
+			rank = 0
+		}
+		hits = append(hits, hint{t, key, rank})
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		a, b := hits[i], hits[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
+		if len(a.key) != len(b.key) {
+			return len(a.key) < len(b.key)
+		}
+		return a.key < b.key
+	})
+	out := make([]string, 0, min(len(hits), limit))
+	for _, h := range hits[:min(len(hits), limit)] {
+		out = append(out, h.title)
+	}
+	return out
+}
+
+// wordsBegin reports whether every typed word is the beginning of some word.
+func wordsBegin(words, typed []string) bool {
+	for _, t := range typed {
+		found := false
+		for _, w := range words {
+			if strings.HasPrefix(w, t) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func catalogAsResults(actions []client.Action, q string) []actionCardView {

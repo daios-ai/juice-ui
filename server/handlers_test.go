@@ -3745,3 +3745,57 @@ func TestSuggestOffersSearchHintsAndNeverRuns(t *testing.T) {
 		t.Error("the topbar and browse search boxes must both offer suggestions")
 	}
 }
+
+// hintKey folds accents, case, punctuation and spacing, so a title and what a
+// person types compare as words.
+func TestHintKeyNormalizes(t *testing.T) {
+	for in, want := range map[string]string{
+		"Résumé  Builder":        "resume builder",
+		"web-page/fetch":         "web page fetch",
+		"  Chat with the MODEL ": "chat with the model",
+		"Ｆｕｌｌ width":             "full width",
+		"--":                     "",
+		"Naïve café 2":           "naive cafe 2",
+	} {
+		if got := hintKey(in); got != want {
+			t.Errorf("hintKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// searchHints matches typed words against word starts, ranks titles that
+// begin with the text first and shorter ones before longer, and offers a title
+// once however it is written.
+func TestSearchHintsMatchRankAndDedupe(t *testing.T) {
+	titles := []string{
+		"Leave a chat room",
+		"Summarize a web page",
+		"Greet a person",
+		"Fetch a web page",
+		"Get the time",
+		"Résumé builder",
+		"resume Builder",
+		"Grammar check for long documents",
+	}
+	cases := []struct {
+		q    string
+		want []string
+	}{
+		{"g", []string{"Get the time", "Greet a person", "Grammar check for long documents"}},
+		{"sum web", []string{"Summarize a web page"}},
+		{"web", []string{"Fetch a web page", "Summarize a web page"}},
+		{"RESUME", []string{"Résumé builder"}},
+		{"web-pa", []string{"Fetch a web page", "Summarize a web page"}},
+		{"xyz", nil},
+		{"  ", nil},
+	}
+	for _, c := range cases {
+		got := searchHints(titles, c.q, 8)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("searchHints(%q) = %q, want %q", c.q, got, c.want)
+		}
+	}
+	if got := searchHints(titles, "a", 2); len(got) != 2 {
+		t.Errorf("the limit must cap the hints: %q", got)
+	}
+}
