@@ -133,7 +133,7 @@ if (palette) {
 }
 
 // --- search suggestions ---
-// The suggestions are ordinary links in the search form (htmx fills them).
+// The hints are ordinary links in the search form (app.js renders them).
 // ↓/↑ move focus between the input and the links; Esc leaves the form, which
 // hides the panel (CSS :focus-within). Tab and Enter work natively on links.
 document.addEventListener("keydown", (e) => {

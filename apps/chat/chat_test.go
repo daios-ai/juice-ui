@@ -633,6 +633,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		w.Write([]byte(`{"access_token":"t","refresh_token":"r"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		// sys's catalog carries sys/sink (resolveSink finds the doorbell/sentinel onward).
 		if r.URL.Query().Get("owner") == "sys" {
 			w.Write([]byte(`[{"id":"sink","action":"sys/sink","name":"sink","active":true,"public":true}]`))
@@ -1358,4 +1361,15 @@ func TestDaemonReasonSurvivesToTheUser(t *testing.T) {
 			t.Errorf("daemonReason(%v) = %q, want empty", err, got)
 		}
 	}
+}
+
+// pastEnd answers the catalog read beyond its last page. The client reads
+// GET /v1/actions by offset until an empty page, and every fixture here fits
+// in the first page, so any later offset is past the end.
+func pastEnd(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Query().Get("offset") == "" {
+		return false
+	}
+	w.Write([]byte(`[]`))
+	return true
 }

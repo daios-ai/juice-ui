@@ -145,23 +145,30 @@ func TestListTransactionsPagination(t *testing.T) {
 	}
 }
 
-func TestListActionsEncodesFilters(t *testing.T) {
+// ListActions reads the catalog with the owner filter alone (the kernel
+// dropped all= and name=), and decodes a discovered row's marks.
+func TestListActionsEncodesOwnerAndDecodesDiscovered(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `[{"id":"a1","action":"alice/greet","name":"greet"}]`
-	acts, err := f.client().ListActions(context.Background(), "tok", "alice", "greet", true, 0, 0)
+	var paths []string
+	f.replyFn = func(r *http.Request) string {
+		paths = append(paths, r.URL.RequestURI())
+		if r.URL.Query().Get("offset") != "" {
+			return `[]`
+		}
+		return `[{"id":"","action":"tom@KEY/greet","title":"Greet","discovered":true,"remote_action_id":"R9"}]`
+	}
+	acts, err := f.client().ListActions(context.Background(), "tok", "alice@testnet")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(acts) != 1 || acts[0].Action != "alice/greet" {
+	if len(acts) != 1 || !acts[0].Discovered || acts[0].RemoteActionID != "R9" || acts[0].ID != "" {
 		t.Fatalf("acts = %+v", acts)
 	}
-	if !strings.Contains(f.lastPath, "owner=alice") || !strings.Contains(f.lastPath, "name=greet") {
-		t.Errorf("filters not encoded: %s", f.lastPath)
-	}
-	// all=true includes the caller's own inactive/private rows.
-	if !strings.Contains(f.lastPath, "all=1") {
-		t.Errorf("all flag not encoded: %s", f.lastPath)
+	for _, p := range paths {
+		if !strings.Contains(p, "owner=alice%40testnet") || strings.Contains(p, "all=") || strings.Contains(p, "name=") {
+			t.Errorf("request %s: owner only, never all= or name=", p)
+		}
 	}
 }
 
@@ -399,7 +406,7 @@ func TestListActionsNullBecomesEmpty(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `null` // kernel returns null for empty lists (verified live)
-	acts, err := f.client().ListActions(context.Background(), "tok", "", "", false, 0, 0)
+	acts, err := f.client().ListActions(context.Background(), "tok", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,29 +415,32 @@ func TestListActionsNullBecomesEmpty(t *testing.T) {
 	}
 }
 
-func TestListActionsPagination(t *testing.T) {
+// The catalog is read page after page until an empty page: the kernel
+// promises no row is skipped or repeated, not that a page is full, so a short
+// page does not end the read.
+func TestListActionsReadsUntilAnEmptyPage(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	// limit>0 → a single server page at the given offset (no client-side loop).
-	f.reply = `[{"id":"a1"},{"id":"a2"}]`
-	page, err := f.client().ListActions(context.Background(), "tok", "", "", false, 2, 20)
+	pages := map[string]string{
+		"0":   `[{"id":"a1"},{"id":"a2"}]`, // short, yet not the last
+		"200": `[{"id":"a3"}]`,
+		"400": `[]`,
+	}
+	var seen []string
+	f.replyFn = func(r *http.Request) string {
+		off := r.URL.Query().Get("offset")
+		if off == "" {
+			off = "0"
+		}
+		seen = append(seen, off+":"+r.URL.Query().Get("limit"))
+		return pages[off]
+	}
+	all, err := f.client().ListActions(context.Background(), "tok", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page) != 2 {
-		t.Errorf("single page = %+v", page)
-	}
-	if !strings.Contains(f.lastPath, "limit=2") || !strings.Contains(f.lastPath, "offset=20") {
-		t.Errorf("limit/offset not sent: %s", f.lastPath)
-	}
-	// limit==0 → fetch ALL by paging with the ceiling; a short first page ends it.
-	f.reply = `[{"id":"x"}]`
-	all, err := f.client().ListActions(context.Background(), "tok", "", "", false, 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != 1 || !strings.Contains(f.lastPath, "limit=200") {
-		t.Errorf("get-all must page with the ceiling limit: %s (%+v)", f.lastPath, all)
+	if len(all) != 3 || strings.Join(seen, ",") != "0:200,200:200,400:200" {
+		t.Errorf("read %v → %+v; want three pages of the ceiling ending on the empty one", seen, all)
 	}
 }
 

@@ -337,3 +337,67 @@ document.body.addEventListener('click', (e) => {
     setTimeout(() => { btn.textContent = label; }, 1500);
   });
 });
+
+// Search hints, the way a static site searches its index: the page loads the
+// whole catalog's titles once (GET /search/catalog.json, each title with its
+// key already normalized by the server's hintKey) and matches them in the
+// browser as the person types, so typing sends no request. A hint is a query:
+// each is an ordinary link that runs the search for its title. Without
+// JavaScript the box submits as before.
+//
+// hintKey and the ranking mirror server/handlers.go (hintKey, wordsBegin, and
+// catalogAsResults's title tiers); server/testdata/hints.json holds the cases
+// both are checked against.
+const HINT_LIMIT = 8;
+
+// hintKey: NFKD, combining marks removed, lowercase, every run of characters
+// that are neither letters nor decimal digits one space, trimmed.
+function hintKey(s) {
+  return s.normalize("NFKD").replace(/\p{Mn}/gu, "").toLowerCase()
+    .replace(/[^\p{L}\p{Nd}]+/gu, " ").trim();
+}
+
+// matchHints ranks the catalog for the typed text: every typed word must begin
+// a word of the key; keys beginning with the whole text first, then the other
+// matches; shorter first, then alphabetical.
+function matchHints(catalog, q) {
+  const typed = hintKey(q).split(" ").filter(Boolean);
+  if (typed.length === 0) return [];
+  const whole = typed.join(" ");
+  const hits = [];
+  for (const e of catalog) {
+    const words = e.k.split(" ");
+    if (!typed.every((t) => words.some((w) => w.startsWith(t)))) continue;
+    hits.push({ t: e.t, k: e.k, rank: e.k.startsWith(whole) ? 0 : 1 });
+  }
+  hits.sort((a, b) => a.rank - b.rank || a.k.length - b.k.length || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  return hits.slice(0, HINT_LIMIT).map((h) => h.t);
+}
+
+for (const input of document.querySelectorAll("input[data-search-hints]")) {
+  const panel = input.form?.querySelector(".omni-suggest");
+  if (!panel) continue;
+  let catalog = null;
+  const load = () => {
+    catalog ??= fetch("/search/catalog.json", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : []))
+      .catch(() => []);
+    return catalog;
+  };
+  const render = async () => {
+    const titles = matchHints(await load(), input.value);
+    const nav = document.createElement("nav");
+    nav.className = "suggest-list";
+    nav.setAttribute("aria-label", "Search suggestions");
+    for (const t of titles) {
+      const a = document.createElement("a");
+      a.className = "menu-item";
+      a.href = "/browse?q=" + encodeURIComponent(t);
+      a.textContent = t;
+      nav.append(a);
+    }
+    panel.replaceChildren(...(titles.length ? [nav] : []));
+  };
+  input.addEventListener("focus", load, { once: true });
+  input.addEventListener("input", render);
+}

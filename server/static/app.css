@@ -132,9 +132,8 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 /* Topbar: sticky bar with the persistent omnibox (present on every page,
    requirements §6.2). Below 720px it also carries the nav trigger at its left. */
 .topbar { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 1rem; height: var(--topbar-h); padding: 0 1.5rem; background: var(--bg); border-bottom: 1px solid var(--border); }
-/* Search pill — ONE component, both form factors: the topbar on desktop, in-page
-   on browse ≤720px. Segmented: input fills the left, the equal-height icon
-   segment on the right submits. Focus ring on the pill (the input's own is off). */
+/* Search pill — ONE component, in the topbar at every width. Segmented: input
+   fills the left, the equal-height icon segment on the right submits. Focus ring on the pill (the input's own is off). */
 .omni { flex: 1 1 auto; max-width: 560px; margin: 0 auto; display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px; position: relative; }
 .omni:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .omni input { flex: 1 1 auto; min-width: 0; border: none; background: none; font: inherit; color: inherit; outline: none; padding: .45rem 1rem; }
@@ -151,8 +150,6 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .suggest-list .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 .kbd { flex: 0 0 auto; font-family: var(--font-mono); font-size: .68rem; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: .05rem .3rem; background: none; cursor: pointer; }
 .kbd:hover { color: var(--text); }
-/* The same pill rendered in-page on browse ≤720px (the topbar is hidden there). */
-.browse-search { display: none; margin: 0 0 1rem; }
 
 /* Price is money DISPLAY (mono, tabular), not a control — never the accent
    (accent = money movement only). The `$` prefix comes from the money helper. */

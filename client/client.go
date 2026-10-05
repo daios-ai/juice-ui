@@ -141,13 +141,18 @@ type Action struct {
 	// "local" (any local caller of this kernel, never peers), or "public" (anyone,
 	// and the only value served in manifests/gossip). It replaces the old boolean
 	// `public`. Empty on a legacy kernel; treat empty as "private" (the default).
-	Visibility   string          `json:"visibility"`
-	Price        int64           `json:"price"`
-	Description  string          `json:"description"`
-	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
-	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
-	Source       json.RawMessage `json:"source,omitempty"`
-	HTTP         *HTTPSpec       `json:"http,omitempty"`
+	Visibility string `json:"visibility"`
+	// Discovered marks a catalog row this kernel knows only through gossip
+	// from a peer (kernel D16): it has no local id, RemoteActionID is the
+	// peer's own id for it, and its price is indicative until resolution.
+	Discovered     bool            `json:"discovered,omitempty"`
+	RemoteActionID string          `json:"remote_action_id,omitempty"`
+	Price          int64           `json:"price"`
+	Description    string          `json:"description"`
+	InputSchema    json.RawMessage `json:"input_schema,omitempty"`
+	OutputSchema   json.RawMessage `json:"output_schema,omitempty"`
+	Source         json.RawMessage `json:"source,omitempty"`
+	HTTP           *HTTPSpec       `json:"http,omitempty"`
 	// AuthScheme is the upstream auth scheme (e.g. "delegated_bearer"), and
 	// RequiresGrant reports whether a per-caller grant is needed to run the action.
 	// The kernel exposes these even though the auth config/secrets stay write-only
@@ -918,59 +923,41 @@ func (c *Client) Ledger(ctx context.Context, token string, limit, offset int) ([
 
 // ---- actions ----
 
-// ListActions lists actions. owner and name are optional filters ("" to omit).
-// The kernel returns active rows by default (unauthenticated → active public;
-// authenticated → + own active; superuser → all owners' active); pass all=true
-// (?all=1) to include the caller's own inactive/private rows — required to show
-// a user their inactive drafts.
+// ListActions reads the catalog (GET /v1/actions), every page: the caller's
+// own actions in every state, every other live action it may call, and, for a
+// session, the actions discovered on peers (marked Discovered). owner, when
+// set, narrows it to that owner's rows. Rows come in title order.
 //
-// limit>0 returns a single server page of that size at the given offset (newest
-// first). limit==0 returns the FULL set: the kernel pages every list endpoint
-// with a default of 50 (ceiling 200, §R6), so an unpaged call would silently
-// truncate — the workshop and chat's own-action reconciliation need every row,
-// so we page through with offset.
-func (c *Client) ListActions(ctx context.Context, token, owner, name string, all bool, limit, offset int) ([]Action, error) {
-	if limit > 0 {
-		return c.actionsPage(ctx, token, owner, name, all, limit, offset)
-	}
+// The kernel pages after scoping (limit ceiling 200) and promises only that no
+// row is skipped or repeated, not that a page is full, so the read continues
+// by offset until a page comes back empty.
+func (c *Client) ListActions(ctx context.Context, token, owner string) ([]Action, error) {
 	const page = 200 // server ceiling
 	var out []Action
 	for off := 0; ; off += page {
-		batch, err := c.actionsPage(ctx, token, owner, name, all, page, off)
+		batch, err := c.actionsPage(ctx, token, owner, page, off)
 		if err != nil {
 			return out, err
 		}
-		out = append(out, batch...)
-		if len(batch) < page {
+		if len(batch) == 0 {
 			return out, nil
 		}
+		out = append(out, batch...)
 	}
 }
 
-// actionsPage fetches one page of actions (GET /v1/actions?…&limit=&offset=).
-func (c *Client) actionsPage(ctx context.Context, token, owner, name string, all bool, limit, offset int) ([]Action, error) {
+// actionsPage fetches one page of the catalog (GET /v1/actions?…&limit=&offset=).
+func (c *Client) actionsPage(ctx context.Context, token, owner string, limit, offset int) ([]Action, error) {
 	q := url.Values{}
 	if owner != "" {
 		q.Set("owner", owner)
 	}
-	if name != "" {
-		q.Set("name", name)
-	}
-	if all {
-		q.Set("all", "1") // include the caller's own inactive/private rows (else active-only)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
+	q.Set("limit", strconv.Itoa(limit))
 	if offset > 0 {
 		q.Set("offset", strconv.Itoa(offset))
 	}
-	path := "/v1/actions"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
 	var a []Action
-	err := c.do(ctx, http.MethodGet, path, token, nil, &a)
+	err := c.do(ctx, http.MethodGet, "/v1/actions?"+q.Encode(), token, nil, &a)
 	return a, err
 }
 

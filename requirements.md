@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.13.0
+Version: 0.14.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.14.0.** The kernel (034426e) serves one catalog:
+> `GET /v1/actions` holds the caller's own actions in every state, the live
+> ones it may call, and the actions discovered on peers (`discovered: true`,
+> no local id), title-ordered and paged after scoping; `?all=` and `?name=` are
+> gone (`docs/kernel-v0.20-verification.md`). The browse catalog renders a
+> discovered row in its discovered form (§6.2) and the workshop leaves it out
+> (§6.4). Search hints load the whole catalog once and match it in the browser,
+> discovered actions included, and the search fallback matches the catalog by
+> the same rules (§6.2).
 
 > **What changed in 0.13.0.** Home is a **dashboard**: balances, the tasks
 > waiting for you, open sessions and recent ledger activity, each linking to
@@ -809,16 +819,25 @@ spend:
   and shows a **flat catalog capped at 20 per page** with a pager (§7 pagination);
   there are no filter tabs.
 * **Search hints.** While a person types, the search box MUST offer up to
-  eight **search hints**: distinct catalog titles containing the text, after a
-  short pause in typing. A hint is a query, not an action, as a search engine
-  completes a query: choosing one MUST run the search for it (`/browse?q=`),
-  exactly as if typed, and MUST NOT open an action page. Hints MUST be read
-  from **one page** of the free action list (`GET /v1/actions`), never from
-  `sys/lookup`: a lookup is a run at an operator-set price, and a run per
-  keystroke would spend and record a transaction each time (§8.2). A title
-  beyond that page MAY be missing. Without JavaScript the box submits as
-  before. A free kernel read of catalog titles, discovered actions included,
-  is requested in `kernel-plan.md`.
+  eight **search hints**, matched in the browser as a static site searches its
+  index: the page loads the whole catalog's titles once
+  (`GET /search/catalog.json`: every page of `GET /v1/actions` — the caller's
+  own actions, the live ones it may call, and those discovered on peers — each
+  distinct title with its normalized key) and matches them on every keystroke,
+  so typing sends no request. Matching folds accents, case and punctuation
+  (decimal digits are kept), requires every typed word to begin a word of the
+  title, and ranks titles beginning with the text first, then shorter ones. A
+  hint is a query, not an action: choosing one MUST run the search for it
+  (`/browse?q=`), exactly as if typed, and MUST NOT open an action page. Hints
+  MUST NOT come from `sys/lookup`, a run at an operator-set price (§8.2). The
+  catalog file holds the account's private titles, so it MUST NOT be stored by
+  the browser (`Cache-Control: no-store`); the page fetches it once per load.
+  Without JavaScript the box submits as before.
+* **Search fallback.** When `sys/lookup` is priced or fails, the search MUST
+  match the whole catalog by the hints' rules over title, name and description
+  — a title beginning with the query first, then a title holding its words, then
+  a name or description holding them — at most 20 results, discovered rows
+  kept and marked.
 * **Media slot.** The action page MUST carry a 16:9 media slot, and every list
   row a square tile cropped from the same image. Until the kernel serves images (*Conditional*, §10; tracked in
   `ROADMAP.md`), the slot MUST render a **deterministic generated fallback**
@@ -837,7 +856,10 @@ spend:
   marking it as discovered, distinct from the remote-proxy chip. It MUST NOT show
   a reputation strip (the discovery cache stores none). Its link is the resolve
   entry, not a page built from the row.
-  **A row is discovered iff its `action_id` names no local action** — the UI
+  **In the catalog, a row is discovered iff the kernel marks it so**
+  (`discovered: true`, kernel 034426e); the browse catalog renders it in this
+  form. **For a lookup hit, a row is discovered iff its `action_id` names no
+  local action** — the UI
   attempts the ordinary read and falls back when it 404s; a row that fails the
   read is discovered iff its address is another kernel's. The address alone
   MUST NOT be the test: once resolved, a proxy keeps its remote address *and*
@@ -1081,7 +1103,10 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 ### 6.4 action — catalog and provider workspace
 
-* Workshop MUST present, in order: earnings, action list, creation zone.
+* Workshop MUST present, in order: earnings, action list, creation zone. Its
+  action list is this kernel's actions (`?owner=` the viewer, or the whole
+  catalog for the superuser); a discovered row is not one to manage and MUST be
+  left out.
 * Earnings MUST be computed in the BFF by folding the user's own transactions;
   each figure MUST link to its underlying transactions. Earnings, like every
   headline money figure (wallet, home, a session), MUST render through the one

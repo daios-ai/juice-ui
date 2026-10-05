@@ -28,14 +28,13 @@ Three laws underpin everything:
 |---|---|---|
 | Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-quiet` | actions |
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
-| Tab bar | `.tab-bar` + `.tab` | the fixed mobile bottom nav |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
 | Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
 | **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, segmented like a single pill: input left, equal-height icon-submit right. Topbar on desktop, in-page on browse ≤720px — identical anatomy in both. Search hints drop beneath it as a `.menu`-styled panel: catalog titles, each a link that runs the search for it — a query, never an action |
+| **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea | forms |
@@ -72,12 +71,12 @@ The frame every page renders into. Defined in `layout.html`.
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `Home · Inbox · Workshop · Wallet · Settings` + `Network · Admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile tab bar, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + lowercase label; label hidden when collapsed. |
+| **Nav** | `Home · Inbox · Workshop · Wallet · Settings` + `Network · Admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile drawer, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + sentence-case label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Mobile** (`≤720px`) | sidebar → fixed bottom **tab bar of four** (`browse · inbox• · chat• · you`) | Same layout reflowed. Badges stay on `inbox` and `chat`. The remaining destinations (`wallet`, `workshop`, `network`, `admin`) and preferences live inside the `you` hub — no hamburger drawer. The topbar is hidden here, so browse renders the **same** `.omni` search pill in-page (`.browse-search` shows it ≤720px) — one component, both form factors. |
+| **Mobile** (`≤720px`) | the same shell, narrower: the sidebar becomes a left **drawer** opened by a menu button at the topbar's left (`requirements.md` §6.1) | The topbar stays at every width and carries the menu trigger and the one search pill. The drawer holds the **whole** nav (the same model the sidebar renders); its trigger carries the inbox badge. No fixed bottom bar: the nav is unbounded, so any bar would need an arbitrary overflow. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -277,8 +276,8 @@ peer of the state filters — mixing them let two tabs on different variables bo
 light up. Each axis preserves the other's value (`actionsHref`).
 
 A filter row may carry **one** inline command (`+ new action`) as a
-`.btn-quiet.tabs-action`, right-aligned and not styled as a tab. The fixed mobile
-bottom nav is a separate component (`.tab-bar`). The `.linkbar` is retired.
+`.btn-quiet.tabs-action`, right-aligned and not styled as a tab. The `.linkbar` is
+retired.
 
 ### 5.3 Commands are inline & quiet
 

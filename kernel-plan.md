@@ -1,49 +1,12 @@
 # Kernel requests from juice-ui
 
-Two additions to the kernel's user-facing surface that the UI needs and cannot
-build on its own. Both are stated as contracts, read against `juicedocs` at
-kernel `ba7f5e5`; neither prescribes an implementation.
+An addition to the kernel's user-facing surface that the UI needs and cannot
+build on its own, stated as a contract, read against `juicedocs` at kernel
+`034426e`; it prescribes no implementation. (A first request, a free read of
+the catalog for search hints, was met by `034426e`: `GET /v1/actions` now
+serves the whole catalog, discovered actions included.)
 
-## 1. A search-hint read over the catalog
-
-**Need.** The search bar offers search hints while a person types, as a
-search engine completes a query: catalog titles, each of which runs the search
-when chosen. A hint is a query, not an action, so it needs no address, terms
-or proof of existence. The source is the catalog the kernel already holds: its
-local actions and the gossip discovery cache.
-
-**Why the kernel.** The discovery cache has two reads today. `sys/lookup` is a
-run, so one call per keystroke would write one transaction per keystroke at an
-operator-set price. `admin peer inspect` is superuser-only and per peer.
-`GET /v1/actions` is free but serves only local rows and resolved proxies. No
-free read of discovered titles exists for an ordinary user.
-
-**Request.**
-
-```
-GET /v1/suggestions?q=<text>&limit=<n>   →   ["<title>", …]
-```
-
-- **Source:** active local actions the caller may see, and the discovery
-  cache, in one reply.
-- **Matching:** lexical only, a case-insensitive substring match on the
-  title. No semantic leg, so no embedding call.
-- **Payload:** distinct titles alone. No address, schema, evidence or price:
-  a hint feeds the search, and the search returns the actions.
-- **Bounds:** `limit` default 8, ceiling 20. An empty `q` answers `[]`, so the
-  reply is never the catalog.
-- **Cost:** a plain read. No run, transaction or ledger entry, and no price.
-- **Access:** authenticated. Local rows pass the ordinary per-row visibility
-  gate. Discovered rows are served as held.
-
-**To confirm on the kernel side.** That every row in the discovery cache is
-public by construction (only public actions are gossiped), so serving it to
-any authenticated user discloses nothing new.
-
-**UI until then.** Distinct titles from one page of `GET /v1/actions` (local
-rows only).
-
-## 2. An entry point for creating a task from outside a call
+## An entry point for creating a task from outside a call
 
 **Need.** On an action's run form a person fills the fields they know and
 sends the rest to someone else: a task on that action with `partial_args` set

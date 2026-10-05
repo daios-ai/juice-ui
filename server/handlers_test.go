@@ -9,6 +9,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -143,13 +144,22 @@ func authKernel() *httptest.Server {
 		"AN": `{"id":"AN","action":"sys@testnet/gmail-read","name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
 	}
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		// The kernel returns active rows by default; the inactive/private draft
-		// (A3) appears only with ?all=1 — so tests that see the draft prove the UI
-		// threads all=1 for the owner's own list.
-		if r.URL.Query().Get("all") == "1" {
-			w.Write([]byte("[" + rows["A1"] + "," + rows["A3"] + "]"))
+		if pastEnd(w, r) {
+			return
+		}
+		// The catalog (kernel 034426e): the caller's own actions in every
+		// state — A3 is alice's inactive private draft — and every other live
+		// one; ?owner= narrows it to one owner's.
+		if owner := r.URL.Query().Get("owner"); owner != "" {
+			var mine []string
+			for _, id := range []string{"A1", "A3", "AG", "AN"} {
+				if strings.Contains(rows[id], `"action":"`+owner+`/`) {
+					mine = append(mine, rows[id])
+				}
+			}
+			w.Write([]byte("[" + strings.Join(mine, ",") + "]"))
 		} else {
-			w.Write([]byte("[" + rows["A1"] + "," + rows["AG"] + "," + rows["AN"] + "]"))
+			w.Write([]byte("[" + rows["A1"] + "," + rows["A3"] + "," + rows["AG"] + "," + rows["AN"] + "]"))
 		}
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -2100,19 +2110,17 @@ func TestCatalogAsResults(t *testing.T) {
 		t.Errorf("catalogAsResults must preserve Kind, got %q", got[0].Action.Kind)
 	}
 
-	all := catalogAsResults(actions, "")
-	if len(all) != 2 {
-		t.Fatalf("empty query should return all %d actions, got %d", len(actions), len(all))
+	if none := catalogAsResults(actions, "  "); len(none) != 0 {
+		t.Fatalf("a query with no words matches nothing, got %d", len(none))
 	}
 }
 
 // TestSearchIsOnePill guards the single search component: the segmented .omni
 // pill (input left, equal-height .omni-go submit segment right) is THE search,
-// rendered in the topbar (layout.html) and in-page on browse ≤720px — identical
-// anatomy in both, with a search-typed input so phone keyboards offer submit.
+// rendered once, in the topbar (layout.html), present at every width, with a
+// search-typed input so phone keyboards offer submit.
 func TestSearchIsOnePill(t *testing.T) {
 	for file, marker := range map[string]string{
-		"templates/browse.html": `class="omni browse-search"`,
 		"templates/layout.html": `class="omni"`,
 	} {
 		b, err := tmplFS.ReadFile(file)
@@ -2129,7 +2137,7 @@ func TestSearchIsOnePill(t *testing.T) {
 			t.Fatalf("%s: search pill form not closed", file)
 		}
 		form := src[i : i+end]
-		for _, want := range []string{`type="search"`, `enterkeyhint="search"`, `omni-go`, `type="submit"`} {
+		for _, want := range []string{`type="search"`, `enterkeyhint="search"`, `omni-go`, `type="submit"`, `data-search-hints`, `class="omni-suggest"`} {
 			if !strings.Contains(form, want) {
 				t.Errorf("%s: search pill lacks %s — one segmented pill everywhere (input + submit segment)", file, want)
 			}
@@ -2196,6 +2204,9 @@ func TestCreateActionAuth(t *testing.T) {
 				w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 			})
 			mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+				if pastEnd(w, r) {
+					return
+				}
 				w.Write([]byte(`[]`))
 			})
 			mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
@@ -2606,6 +2617,9 @@ func taskKernel() *httptest.Server {
 		w.Write([]byte(`{"result":{},"tx_id":"T9","trace_id":"tr","receipt_id":"R9","task_id":"` + r.PathValue("id") + `"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		ref := r.URL.Query().Get("ref")
 		if ref == "" {
 			w.Write([]byte(`[]`))
@@ -3115,6 +3129,9 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		if r.URL.Query().Get("ref") == "sys@testnet/lookup" {
 			w.Write([]byte(`[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":7}]`))
 			return
@@ -3167,6 +3184,9 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 		 "description":"Fetch a public web page","input_schema":{"type":"object","properties":{"url":{"type":"string","description":"the page"}},"required":["url"]}}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		switch r.URL.Query().Get("ref") {
 		case "sys@testnet/llm/decide":
 			fmt.Fprintf(w, `[{"id":"D","action":"sys@testnet/llm/decide","name":"decide","kind":"native","active":true,"price":%d}]`, decidePrice)
@@ -3293,6 +3313,9 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		if r.URL.Query().Get("ref") != "" {
 			w.Write([]byte(`[]`))
 			return
@@ -3370,6 +3393,9 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		if r.URL.Query().Get("ref") != "" {
 			w.Write([]byte(`[]`))
 			return
@@ -3641,6 +3667,9 @@ func newHomeKernel(t *testing.T) *homeKernel {
 		w.Write([]byte(`[{"amount":300,"reason":"","created_at":"2024-01-02T12:00:00Z","operator":"sys@testnet","from":"sys@testnet","to":"alice@testnet"}]`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
 		if r.URL.Query().Get("ref") != "" {
 			w.Write([]byte(`[]`))
 			return
@@ -3651,7 +3680,8 @@ func newHomeKernel(t *testing.T) *homeKernel {
 			rows = append(rows, fmt.Sprintf(`{"id":"G%d","action":"alice@testnet/greet%d","name":"greet%d","title":"Greet %d","kind":"wasm","active":true,"price":0}`, i, i, i, i))
 		}
 		rows = append(rows, `{"id":"S1","action":"alice@testnet/summ","name":"summ","title":"Summarize a page","kind":"wasm","active":true,"price":0}`,
-			`{"id":"S2","action":"alice@testnet/summ2","name":"summ2","title":"summarize a page","kind":"wasm","active":true,"price":0}`)
+			`{"id":"S2","action":"alice@testnet/summ2","name":"summ2","title":"summarize a page","kind":"wasm","active":true,"price":0}`,
+			`{"id":"","action":"tom@BRAVOKEY/tools/weather","name":"tools/weather","title":"Weather forecast","kind":"wasm","active":true,"price":3,"discovered":true,"remote_action_id":"R1"}`)
 		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
@@ -3712,98 +3742,159 @@ func TestHomeIsTheDashboard(t *testing.T) {
 	}
 }
 
-// The type-ahead offers search hints: distinct catalog titles containing the
-// text, each a link that runs the search for it, never a link to an action.
-// It reads one page of the free action list and never runs anything: sys/lookup
-// is a priced run that would record a transaction per keystroke.
-func TestSuggestOffersSearchHintsAndNeverRuns(t *testing.T) {
+// hintFixture is server/testdata/hints.json, the cases the server's hint
+// rules and the browser's matcher (static/app.js) are both held to: keys
+// (normalization), a catalog of title/key pairs, and queries with the titles
+// the hints must offer, in order. The live check runs the same file through
+// the browser's matcher.
+type hintFixture struct {
+	Keys []struct {
+		In  string `json:"in"`
+		Out string `json:"out"`
+	} `json:"keys"`
+	Catalog []catalogTitle `json:"catalog"`
+	Cases   []struct {
+		Query string   `json:"query"`
+		Want  []string `json:"want"`
+	} `json:"cases"`
+}
+
+func TestHintFixture(t *testing.T) {
+	b, err := os.ReadFile("testdata/hints.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx hintFixture
+	if err := json.Unmarshal(b, &fx); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range fx.Keys {
+		if got := hintKey(c.In); got != c.Out {
+			t.Errorf("hintKey(%q) = %q, want %q", c.In, got, c.Out)
+		}
+	}
+	actions := make([]client.Action, len(fx.Catalog))
+	for i, e := range fx.Catalog {
+		if got := hintKey(e.T); got != e.K {
+			t.Errorf("catalog key of %q = %q, fixture says %q", e.T, got, e.K)
+		}
+		actions[i] = client.Action{Title: e.T}
+	}
+	// With titles alone, the fallback's ranking is the hints' ranking; the
+	// hints show the first eight.
+	for _, c := range fx.Cases {
+		var got []string
+		for _, r := range catalogAsResults(actions, c.Query) {
+			if len(got) < 8 {
+				got = append(got, r.Action.Title)
+			}
+		}
+		if strings.Join(got, "|") != strings.Join(c.Want, "|") {
+			t.Errorf("hints for %q = %q, want %q", c.Query, got, c.Want)
+		}
+	}
+}
+
+// The search fallback ranks a title starting with the query, then a title
+// holding its words, then a name or description holding them, and keeps a
+// discovered row as discovered.
+func TestCatalogFallbackRanksAndKeepsDiscovered(t *testing.T) {
+	actions := []client.Action{
+		{ID: "D", Title: "Forecast tool", Description: "Gives the weather anywhere."},
+		{ID: "B", Title: "US weather alerts"},
+		{ID: "A", Title: "Weather forecast"},
+		{Title: "Weather in Norway", Discovered: true, Action: "sys@KEY/weather/norway"},
+		{ID: "X", Title: "Unrelated", Description: "Nothing here."},
+	}
+	got := catalogAsResults(actions, "WEATHER")
+	var order []string
+	for _, r := range got {
+		order = append(order, r.Action.Title)
+	}
+	if strings.Join(order, "|") != "Weather forecast|Weather in Norway|US weather alerts|Forecast tool" {
+		t.Errorf("fallback order = %q", order)
+	}
+	if !got[1].Discovered || got[0].Discovered {
+		t.Error("the fallback must keep the catalog's discovered mark")
+	}
+}
+
+// pastEnd answers the catalog read beyond its last page. The client reads
+// GET /v1/actions by offset until an empty page, and every fixture here fits
+// in the first page, so any later offset is past the end.
+func pastEnd(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Query().Get("offset") == "" {
+		return false
+	}
+	w.Write([]byte(`[]`))
+	return true
+}
+
+// The search box's hints come from one catalog file, as a static site's search
+// index does: every title the viewer may see — local and discovered — once,
+// with its normalized key, ordered by key. It is read in one catalog read,
+// never runs anything, and is never stored by the browser (it holds the
+// account's private titles).
+func TestSearchCatalogServesEveryTitleOnce(t *testing.T) {
 	k := newHomeKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
 	k.actionLists, k.runs = 0, 0
-	body := getBody(t, cl, srv.URL+"/search/suggest?q=greet")
-	if n := strings.Count(body, `class="menu-item"`); n != suggestLimit {
-		t.Errorf("hints = %d, want the cap %d: %s", n, suggestLimit, body)
+	resp, err := cl.Get(srv.URL + "/search/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	var got []catalogTitle
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
 	}
 	if k.actionLists != 1 || k.runs != 0 {
-		t.Errorf("suggest made %d action-list reads and %d runs, want 1 and 0", k.actionLists, k.runs)
+		t.Errorf("catalog made %d list reads and %d runs, want 1 and 0", k.actionLists, k.runs)
 	}
-	if strings.Contains(body, "/actions/") || strings.Contains(body, "alice@testnet") {
-		t.Errorf("a hint is a query, never an action or its address: %s", body)
+	keys := map[string]int{}
+	for i, e := range got {
+		keys[e.K]++
+		if i > 0 && got[i-1].K > e.K {
+			t.Errorf("catalog not ordered by key at %q", e.K)
+		}
+		if e.K != hintKey(e.T) {
+			t.Errorf("key of %q = %q", e.T, e.K)
+		}
 	}
-	if !strings.Contains(body, `<a class="menu-item" href="/browse?q=Greet%200">Greet 0</a>`) {
-		t.Errorf("a hint must be its title, linked to the search for it: %s", body)
+	if keys["weather forecast"] != 1 {
+		t.Error("a discovered action's title belongs in the catalog")
 	}
-	// Titles match case-insensitively, and a title held by several actions is
-	// one hint.
-	body = getBody(t, cl, srv.URL+"/search/suggest?q=SUMMAR")
-	if strings.Count(body, ">Summarize a page</a>") != 1 {
-		t.Errorf("a shared title must be offered once: %s", body)
-	}
-	// An empty query asks the kernel nothing and renders nothing.
-	k.actionLists = 0
-	if body := getBody(t, cl, srv.URL+"/search/suggest?q=+"); strings.TrimSpace(body) != "" || k.actionLists != 0 {
-		t.Errorf("an empty query must render nothing and read nothing: %q (%d reads)", body, k.actionLists)
-	}
-	// Both search boxes carry the wiring; without JavaScript they still submit.
-	page := getBody(t, cl, srv.URL+"/browse")
-	if strings.Count(page, `hx-get="/search/suggest"`) != 2 || strings.Count(page, `<div class="omni-suggest"></div>`) != 2 {
-		t.Error("the topbar and browse search boxes must both offer suggestions")
+	if keys["summarize a page"] != 1 || keys["greet 0"] != 1 || len(got) != 14 {
+		t.Errorf("each title once, all 14 of them: %+v", got)
 	}
 }
 
-// hintKey folds accents, case, punctuation and spacing, so a title and what a
-// person types compare as words.
-func TestHintKeyNormalizes(t *testing.T) {
-	for in, want := range map[string]string{
-		"Résumé  Builder":        "resume builder",
-		"web-page/fetch":         "web page fetch",
-		"  Chat with the MODEL ": "chat with the model",
-		"Ｆｕｌｌ width":             "full width",
-		"--":                     "",
-		"Naïve café 2":           "naive cafe 2",
-	} {
-		if got := hintKey(in); got != want {
-			t.Errorf("hintKey(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
+// The browse catalog renders a discovered row in its discovered form — linked
+// to resolve on open, never to a local action page it does not have — and
+// the workshop, which manages this kernel's actions, leaves it out.
+func TestCatalogDiscoveredRows(t *testing.T) {
+	k := newHomeKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
 
-// searchHints matches typed words against word starts, ranks titles that
-// begin with the text first and shorter ones before longer, and offers a title
-// once however it is written.
-func TestSearchHintsMatchRankAndDedupe(t *testing.T) {
-	titles := []string{
-		"Leave a chat room",
-		"Summarize a web page",
-		"Greet a person",
-		"Fetch a web page",
-		"Get the time",
-		"Résumé builder",
-		"resume Builder",
-		"Grammar check for long documents",
+	page := getBody(t, cl, srv.URL+"/browse?sort=price")
+	if !strings.Contains(page, `href="/discovered?ref=tom%40BRAVOKEY%2ftools%2fweather"`) {
+		t.Error("a discovered catalog row must link to resolve-on-open")
 	}
-	cases := []struct {
-		q    string
-		want []string
-	}{
-		{"g", []string{"Get the time", "Greet a person", "Grammar check for long documents"}},
-		{"sum web", []string{"Summarize a web page"}},
-		{"web", []string{"Fetch a web page", "Summarize a web page"}},
-		{"RESUME", []string{"Résumé builder"}},
-		{"web-pa", []string{"Fetch a web page", "Summarize a web page"}},
-		{"xyz", nil},
-		{"  ", nil},
+	if strings.Contains(page, `href="/actions/"`) {
+		t.Error("no catalog row may link to an action page without an id")
 	}
-	for _, c := range cases {
-		got := searchHints(titles, c.q, 8)
-		if strings.Join(got, "|") != strings.Join(c.want, "|") {
-			t.Errorf("searchHints(%q) = %q, want %q", c.q, got, c.want)
-		}
+	if !strings.Contains(page, `title="Discovered`) {
+		t.Error("a discovered catalog row carries the discovered chip")
 	}
-	if got := searchHints(titles, "a", 2); len(got) != 2 {
-		t.Errorf("the limit must cap the hints: %q", got)
+	if strings.Contains(getBody(t, cl, srv.URL+"/workshop"), "Weather forecast") {
+		t.Error("the workshop manages this kernel's actions; a discovered row is not one")
 	}
 }

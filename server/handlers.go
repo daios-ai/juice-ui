@@ -91,6 +91,13 @@ type actionCardView struct {
 // (template helper).
 func (c actionCardView) Observed() bool { return c.ObservedAt != "" }
 
+// cardOf wraps a catalog row. The catalog marks a row the kernel knows only
+// through a peer's gossip (discovered: no local id, an indicative price), and
+// the row renders in that form: resolve-on-open, no reputation.
+func cardOf(a client.Action) actionCardView {
+	return actionCardView{Action: a, Discovered: a.Discovered}
+}
+
 // ObservedAgo renders the freshness stamp as an age in words, through the same
 // helper the peer roster's last-seen uses.
 func (c actionCardView) ObservedAgo() string { return relTime(c.ObservedAt) }
@@ -385,21 +392,18 @@ type ownerView struct {
 func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	address := r.PathValue("address")
-	// Show what the viewer may see across all three visibility levels. For anyone
-	// else's page that is the caller-visible active set (public + local); on your
-	// own page it is everything you own — private and inactive included — so all=1
-	// is passed exactly when the viewer is the owner (the kernel widens ?all only
-	// within the caller's own scope, §14).
-	isOwner := address == s.sessions.Address(ctx)
+	// The catalog narrowed to one owner is exactly what the viewer may see of
+	// theirs: on your own page everything you own, private and inactive
+	// included; on anyone else's, their live actions you may call.
 	view := ownerView{Address: address}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		acts, e := s.client.ListActions(ctx, tok, address, "", isOwner, 0, 0)
+		acts, e := s.client.ListActions(ctx, tok, address)
 		if e != nil {
 			return e
 		}
 		cards := make([]actionCardView, len(acts))
 		for i, a := range acts {
-			cards[i] = actionCardView{Action: a}
+			cards[i] = cardOf(a)
 		}
 		s.fetchEvidence(ctx, tok, cards)
 		view.Cards = cards
@@ -738,16 +742,17 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			available, haveMe = me.Available, true
 		}
 		if q == "" {
-			// Fetch the whole visible catalog and slice one page here: the kernel
-			// paginates raw rows before its visibility filter, so a server-side page
-			// can't page the visible set (see pageSlice).
-			cat, e := s.client.ListActions(ctx, tok, "", "", false, 0, 0)
+			// Read the whole catalog — local actions and those discovered on
+			// peers — and slice one page here, because a sort orders the whole
+			// list (below).
+			cat, e := s.client.ListActions(ctx, tok, "")
 			if e != nil {
 				return e
 			}
 			cards := make([]actionCardView, len(cat))
 			for i, a := range cat {
-				cards[i] = actionCardView{Action: a, NeedsConnect: needsConnect(a, granted)}
+				cards[i] = cardOf(a)
+				cards[i].NeedsConnect = !a.Discovered && needsConnect(a, granted)
 			}
 			// A sort orders the WHOLE catalog, then the page is cut from it.
 			// Ordering only the page would answer a different question than the
@@ -797,7 +802,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			default:
 				view.Reason = out.Reason()
 			}
-			cat, e := s.client.ListActions(ctx, tok, "", "", false, 0, 0)
+			cat, e := s.client.ListActions(ctx, tok, "")
 			if e != nil {
 				return e
 			}
@@ -812,6 +817,9 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		// down to a stranger's (requirements.md §6.2).
 		var wg sync.WaitGroup
 		for i := range view.Results {
+			if view.Results[i].Discovered {
+				continue // the catalog already says: no local row to read
+			}
 			wg.Add(1)
 			go func(i int, id string) {
 				defer wg.Done()
@@ -1349,13 +1357,16 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 		if scope == "all" {
 			ownerFilter = "" // whole catalog; superuser sees all rows
 		}
-		a, e := s.client.ListActions(ctx, tok, ownerFilter, "", true, 0, 0)
+		a, e := s.client.ListActions(ctx, tok, ownerFilter)
 		if e != nil {
 			return e
 		}
-		mine = make([]actionCardView, len(a))
+		// The workshop manages this kernel's actions: a row known only from a
+		// peer's gossip is not one to manage here.
 		for i := range a {
-			mine[i] = actionCardView{Action: a[i]}
+			if !a[i].Discovered {
+				mine = append(mine, cardOf(a[i]))
+			}
 		}
 		s.fetchEvidence(ctx, tok, mine)
 		txs, _ = s.client.ListTransactions(ctx, tok, "", 0)
@@ -2392,43 +2403,6 @@ func parseLookup(result json.RawMessage) []actionCardView {
 	return out
 }
 
-// catalogAsResults adapts catalog actions to actionCardViews, filtering by a
-// case-insensitive substring match so the fallback "search" is meaningful.
-// suggestLimit caps the type-ahead list; suggestPage is the one page of the
-// catalog it reads. Suggestions are hints, so a match beyond the first page may
-// be missing; reading the whole catalog on every pause in typing is not worth it.
-const (
-	suggestLimit = 8
-	suggestPage  = 200
-)
-
-// getSuggest answers the search box's type-ahead with search hints, as a
-// search engine completes a query: catalog titles ranked by searchHints. A hint
-// is a query, not an action; choosing one runs the search. It reads the free
-// action list and never runs sys/lookup, which is priced by the operator and
-// would record a transaction per keystroke (§8.2). A failure answers with no
-// hints; the search itself still works.
-func (s *Server) getSuggest(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	q := r.URL.Query().Get("q")
-	var out []string
-	if hintKey(q) != "" {
-		err := s.sessions.Do(ctx, func(tok string) error {
-			actions, e := s.client.ListActions(ctx, tok, "", "", false, suggestPage, 0)
-			titles := make([]string, len(actions))
-			for i, a := range actions {
-				titles[i] = a.Title
-			}
-			out = searchHints(titles, q, suggestLimit)
-			return e
-		})
-		if err != nil {
-			s.log.Warn("suggest failed", "err", err)
-		}
-	}
-	_ = s.render.Fragment(w, http.StatusOK, "_suggestions", out)
-}
-
 // hintKey is the form titles and typed text are compared in: compatibility
 // decomposed (NFKD, so fullwidth and ligature forms read as plain letters) with
 // combining marks removed (so "Résumé" reads "resume"), lowercased, every run of non-letters and non-digits one space, trimmed.
@@ -2452,53 +2426,6 @@ func hintKey(s string) string {
 	return b.String()
 }
 
-// searchHints picks at most limit titles for the typed text q. A title
-// matches when every typed word begins one of its words ("sum web" finds
-// "Summarize a web page"; "g" finds "Greet", not "Leave a chat room"). Titles
-// that begin with the whole text rank first, then the other matches; within
-// each, shorter first, then alphabetical. Titles equal under hintKey are one
-// hint, written as first seen.
-func searchHints(titles []string, q string, limit int) []string {
-	typed := strings.Fields(hintKey(q))
-	if len(typed) == 0 {
-		return nil
-	}
-	whole := strings.Join(typed, " ")
-	type hint struct {
-		title, key string
-		rank       int
-	}
-	var hits []hint
-	seen := map[string]bool{}
-	for _, t := range titles {
-		key := hintKey(t)
-		if key == "" || seen[key] || !wordsBegin(strings.Fields(key), typed) {
-			continue
-		}
-		seen[key] = true
-		rank := 1
-		if strings.HasPrefix(key, whole) {
-			rank = 0
-		}
-		hits = append(hits, hint{t, key, rank})
-	}
-	sort.Slice(hits, func(i, j int) bool {
-		a, b := hits[i], hits[j]
-		if a.rank != b.rank {
-			return a.rank < b.rank
-		}
-		if len(a.key) != len(b.key) {
-			return len(a.key) < len(b.key)
-		}
-		return a.key < b.key
-	})
-	out := make([]string, 0, min(len(hits), limit))
-	for _, h := range hits[:min(len(hits), limit)] {
-		out = append(out, h.title)
-	}
-	return out
-}
-
 // wordsBegin reports whether every typed word is the beginning of some word.
 func wordsBegin(words, typed []string) bool {
 	for _, t := range typed {
@@ -2516,14 +2443,105 @@ func wordsBegin(words, typed []string) bool {
 	return true
 }
 
-func catalogAsResults(actions []client.Action, q string) []actionCardView {
-	ql := strings.ToLower(q)
-	var out []actionCardView
+// catalogTitle is one entry of the search-hint catalog: a title and its
+// hintKey. The browser matches typed text against these keys, so a title is
+// normalized once, here, by the one rule the search fallback also uses.
+type catalogTitle struct {
+	T string `json:"t"`
+	K string `json:"k"`
+}
+
+// catalogTitles returns the catalog's distinct titles (equal under hintKey is
+// one), ordered by key.
+func catalogTitles(actions []client.Action) []catalogTitle {
+	seen := map[string]bool{}
+	out := []catalogTitle{}
 	for _, a := range actions {
-		if ql != "" && !strings.Contains(strings.ToLower(a.Title+" "+a.Name+" "+a.Description), ql) {
+		k := hintKey(a.Title)
+		if k == "" || seen[k] {
 			continue
 		}
-		out = append(out, actionCardView{Action: a})
+		seen[k] = true
+		out = append(out, catalogTitle{T: a.Title, K: k})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].K < out[j].K })
+	return out
+}
+
+// getSearchCatalog serves the search box's hints the way a static site serves
+// its search index: the whole catalog's titles at once (local actions,
+// resolved proxies and the actions discovered on peers), which the page
+// matches in the browser as the person types, so typing sends no request. It
+// reads the free catalog and never runs sys/lookup. The list is the caller's
+// own (it holds their private titles), so it is never stored by the browser:
+// a cached copy at this one URL could be shown to the next account. A failure
+// answers with no titles; the search itself still works.
+func (s *Server) getSearchCatalog(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	out := []catalogTitle{}
+	err := s.sessions.Do(ctx, func(tok string) error {
+		actions, e := s.client.ListActions(ctx, tok, "")
+		if e == nil {
+			out = catalogTitles(actions)
+		}
+		return e
+	})
+	if err != nil {
+		s.log.Warn("search catalog failed", "err", err)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// fallbackLimit caps the search fallback, like the one ranked page a lookup
+// answers.
+const fallbackLimit = 20
+
+// catalogAsResults is the search when sys/lookup is priced or fails: the
+// catalog matched by the hints' rules (hintKey, every typed word beginning a
+// word). A title beginning with the query ranks first, then a title holding
+// the words, then a name or description holding them; shorter titles first
+// within each, then alphabetical. Discovered rows are kept and marked.
+func catalogAsResults(actions []client.Action, q string) []actionCardView {
+	typed := strings.Fields(hintKey(q))
+	if len(typed) == 0 {
+		return nil
+	}
+	whole := strings.Join(typed, " ")
+	type hit struct {
+		a    client.Action
+		key  string
+		rank int
+	}
+	var hits []hit
+	for _, a := range actions {
+		key := hintKey(a.Title)
+		rank := 0
+		switch {
+		case strings.HasPrefix(key, whole):
+		case wordsBegin(strings.Fields(key), typed):
+			rank = 1
+		case wordsBegin(strings.Fields(hintKey(a.Name+" "+a.Description)), typed):
+			rank = 2
+		default:
+			continue
+		}
+		hits = append(hits, hit{a, key, rank})
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		x, y := hits[i], hits[j]
+		if x.rank != y.rank {
+			return x.rank < y.rank
+		}
+		if len(x.key) != len(y.key) {
+			return len(x.key) < len(y.key)
+		}
+		return x.key < y.key
+	})
+	out := make([]actionCardView, 0, min(len(hits), fallbackLimit))
+	for _, h := range hits[:min(len(hits), fallbackLimit)] {
+		out = append(out, cardOf(h.a))
 	}
 	return out
 }

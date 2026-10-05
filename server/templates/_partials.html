@@ -58,18 +58,6 @@
 {{end}}
 {{end}}
 
-{{/* _suggest_attrs — the type-ahead wiring of a search input: htmx fetches
-     the suggestions into the form's .omni-suggest after a pause in typing.
-     Without JavaScript nothing is fetched and the form submits as before. */}}
-{{define "_suggest_attrs"}} hx-get="/search/suggest" hx-trigger="input changed delay:200ms, search" hx-target="next .omni-suggest" hx-sync="this:replace"{{end}}
-
-{{/* _suggestions — the type-ahead hints: catalog titles, each an ordinary
-     link that runs the search for it, as if typed. A hint is a query, never an
-     action. Takes []string; empty renders nothing, which hides the panel. */}}
-{{define "_suggestions"}}{{if .}}<nav class="suggest-list" aria-label="Search suggestions">
-{{range .}}<a class="menu-item" href="/browse?q={{.}}">{{.}}</a>
-{{end}}</nav>{{end}}{{end}}
-
 {{/* _figures — THE headline money figures (§5.6), one block each on every
      page that leads with money: the label, the mono amount coloured by its
      signal, and a link to the records behind it when there are any. Build with
