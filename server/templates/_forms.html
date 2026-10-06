@@ -127,7 +127,7 @@
       <select class="input-sm" name="param_in">
         <option value="path"{{if eq .In "path"}} selected{{end}}>path</option><option value="query"{{if eq .In "query"}} selected{{end}}>query</option><option value="body"{{if eq .In "body"}} selected{{end}}>body</option>
       </select>
-      <button type="button" class="btn-quiet" data-row-remove>Remove</button>
+      <button type="button" class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button>
     </div>
     {{else}}
     <div class="row compact" data-row>
@@ -135,11 +135,11 @@
       <select class="input-sm" name="param_in">
         <option value="path">path</option><option value="query">query</option><option value="body" selected>body</option>
       </select>
-      <button type="button" class="btn-quiet" data-row-remove>Remove</button>
+      <button type="button" class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button>
     </div>
     {{end}}
   </div>
-  <button type="button" class="btn" data-row-add>Add parameter</button>
+  <button type="button" class="btn-icon" data-row-add aria-label="Add parameter"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>
 </div>
 {{end}}
 

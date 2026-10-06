@@ -304,8 +304,10 @@ none float, none are colored.
   **autosizes** to content up to 10 lines then scrolls; mono; `rows="1"`. Never
   a fixed multi-line box.
 - **Progressive widgets:** repeatable rows (`[data-rows]`/`[data-row]`, Add =
-  `.btn`, Remove = `.btn-quiet`; one mechanism for the http parameter rows and
-  a schema array's rows — Add clones the last row, clears it and, when the
+  `.btn-icon` `#plus`, Remove = `.btn-icon` `#x-mark`, each with its
+  `aria-label`; one mechanism for the http parameter rows and a schema array's
+  rows — Add clones the last row, or the kept template once every row is
+  removed, clears it and, when the
   container names its array's path, renumbers the clone to one past the highest
   index in every `name`, `id`, `for` and nested `data-rows`), scheme reveal
   (`[data-auth-scheme]`), kind reveal (`[data-kind]`) — all disable hidden

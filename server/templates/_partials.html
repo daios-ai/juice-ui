@@ -469,9 +469,9 @@
   <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
   {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}
   <div data-rows="{{.Path}}">
-    {{range .Rows}}<div class="row compact" data-row><div class="stretch">{{template "_field" .}}</div><button type="button" class="btn-quiet" data-row-remove>Remove</button></div>{{end}}
+    {{range .Rows}}<div class="row compact" data-row><div class="stretch">{{template "_field" .}}</div><button type="button" class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></div>{{end}}
   </div>
-  <button type="button" class="btn" data-row-add>Add</button>
+  <button type="button" class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>
   {{end}}
   {{template "_field_null" .}}
 </fieldset>

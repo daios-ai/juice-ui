@@ -1840,7 +1840,8 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 		`<input type="hidden" name="t_/msgs/0" value="object">`,
 		`name="f_/msgs/0/role" rows="1" placeholder="user"></textarea>`,
 		`<div data-rows="/msgs/0/tags">`, `name="f_/msgs/0/tags/0"`,
-		`class="btn-quiet" data-row-remove>Remove</button>`, `class="btn" data-row-add>Add</button>`,
+		`class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button>`,
+		`class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>`,
 		`name="f_/meta" placeholder="{}" rows="1"></textarea>`, `<input type="hidden" name="t_/meta" value="object">`,
 	} {
 		if !strings.Contains(body, want) {

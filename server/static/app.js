@@ -220,7 +220,8 @@ for (const sel of document.querySelectorAll('select[name="kind"]')) {
 }
 
 // Repeatable rows ([data-rows]): the http parameter rows and a schema array's
-// rows (§6.2). Add clones the last row and clears it; when the container names
+// rows (§6.2). Add clones the last row (or the kept template of an emptied
+// container) and clears it; when the container names
 // its array's path, the clone's index segment is rewritten to one past the
 // highest in use — in every name, id, for and nested data-rows — so a removed
 // index is never reused and a nested array keeps its own rows. Remove drops
@@ -229,22 +230,33 @@ for (const sel of document.querySelectorAll('select[name="kind"]')) {
 function wireRows(box) {
   const path = box.dataset.rows;
   const rows = () => [...box.children].filter((el) => el.matches('[data-row]'));
+  // A row's own Remove is its direct child, and its own containers are the
+  // nearest ones: a nested array's buttons belong to the nested rows.
   const wire = (row) => {
-    row.querySelector('[data-row-remove]')?.addEventListener('click', () => row.remove());
-    for (const inner of row.querySelectorAll('[data-rows]')) wireRows(inner);
+    [...row.children].find((el) => el.matches('[data-row-remove]'))?.addEventListener('click', () => row.remove());
+    for (const inner of row.querySelectorAll('[data-rows]')) {
+      if (inner.closest('[data-row]') === row) wireRows(inner);
+    }
   };
   rows().forEach(wire);
+  // A select keeps its choice: emptied, it would submit nothing it offers.
+  const clear = (row) => {
+    for (const el of row.querySelectorAll('input:not([type=hidden]), textarea')) el.value = '';
+    for (const el of row.querySelectorAll('input[type=checkbox]')) el.checked = false;
+    return row;
+  };
+  // A cleared copy of the first row, kept so Add still has a row to clone once
+  // every row has been removed.
+  const template = rows()[0] && clear(rows()[0].cloneNode(true));
   const add = box.parentElement.querySelector(':scope > [data-row-add]');
-  if (!add) return;
+  if (!add || !template) return;
   add.addEventListener('click', () => {
     const last = rows().at(-1);
-    if (!last) return;
-    const row = last.cloneNode(true);
-    for (const el of row.querySelectorAll('input:not([type=hidden]), textarea, select')) el.value = '';
-    for (const el of row.querySelectorAll('input[type=checkbox]')) el.checked = false;
+    const source = last || template;
+    const row = clear(source.cloneNode(true));
     if (path) {
-      const from = path + '/' + indexOf(last, path);
-      const to = path + '/' + (Math.max(...rows().map((r) => indexOf(r, path))) + 1);
+      const from = path + '/' + indexOf(source, path);
+      const to = path + '/' + (last ? Math.max(...rows().map((r) => indexOf(r, path))) + 1 : 0);
       for (const el of row.querySelectorAll('[name], [id], [for], [data-rows]')) {
         for (const attr of ['name', 'id', 'for', 'data-rows']) {
           const v = el.getAttribute(attr);
