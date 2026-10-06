@@ -590,7 +590,7 @@ fieldset.group { border: 1px solid var(--border); border-radius: var(--radius); 
 fieldset.group legend { font-weight: 600; padding: 0 .3rem; }
 fieldset.group .field:last-child, fieldset.group [data-row] .field { margin-bottom: 0; }
 [data-row] + [data-row] { margin-top: .5rem; }
-[data-rows] + .btn { margin-top: .5rem; }
+[data-rows] + [data-row-add] { margin-top: .5rem; }
 /* The run result renders as a card attached just below the form. */
 .outcome { margin-top: .85rem; }
 
