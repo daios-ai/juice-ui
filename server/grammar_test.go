@@ -333,14 +333,14 @@ func TestContainerIsTheOnlyWidthDecision(t *testing.T) {
 }
 
 // TestNoRetiredRawToggle ensures the old "edit as JSON" text-button toggle and its
-// .raw-switch wrapper are gone — the input-mode toggle is the .field-switch bare
+// .raw-switch wrapper are gone — the input-mode toggle is the one .json-toggle
 // tab-group switch (fields | JSON), identical on action-run and step-complete forms.
 func TestNoRetiredRawToggle(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
-		if strings.Contains(src, "edit as JSON") || strings.Contains(src, "raw-switch") || strings.Contains(src, "data-raw-toggle") {
-			t.Errorf("%s: retired raw toggle — use the .field-switch (fields | JSON) switch", f)
+		if strings.Contains(src, "edit as JSON") || strings.Contains(src, "raw-switch") || strings.Contains(src, "data-raw-toggle") || strings.Contains(src, "data-raw-seg") || strings.Contains(src, "field-switch") {
+			t.Errorf("%s: retired raw toggle — use the one .json-toggle (_json_toggle)", f)
 		}
 	}
 }

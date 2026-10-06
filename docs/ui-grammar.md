@@ -38,7 +38,7 @@ Three laws underpin everything:
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
-| **Frozen form** | `.frozen` · `.field .box` · `.frozen-json` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box, nothing submittable; raw JSON behind a closed disclosure, Download on a result (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
+| **Frozen form** | `.frozen` · `.field .box` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) · `.json-toggle` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -321,15 +321,20 @@ none float, none are colored.
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
-  the field-switch), **approval** (nothing left to fill → just the button), or a
+  the JSON toggle), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.
   Structured means the schema's whole tree: a nested object is a
   `fieldset.group` under its `legend`, an array its `[data-rows]` with Add and
   Remove, a map-shaped node an empty JSON textarea with the shape as its
   placeholder; a field's wire name is its JSON Pointer (`f_/messages/0/content`,
   `t_` the type hint, `n_` the null box; `requirements.md` §6.2).
-- **Field-switch** (`.field-switch`, `fields | JSON`) is the bare tab-group switch
-  (§5.2) — the one way to edit a structured form as raw JSON. No "edit as JSON" button.
+- **JSON toggle** (`.json-toggle`, `_json_toggle`, one `aria-pressed` word
+  `JSON` at the top right of a `[data-json]` block) is the one way to see a
+  block as JSON: on a structured form it swaps the fields for the raw editor; on
+  a frozen form it swaps the fields for the raw JSON (and its Download). A
+  binary view whose off-state has no name is the one case `.tabs` (§5.2) cannot
+  express, so this is the one toggle the grammar admits. No "edit as JSON"
+  button, no disclosure for JSON.
 
 ### 5.5 Cards, lists, tables
 
@@ -488,7 +493,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | Element | Use |
 |---|---|
 | Flash bar | one-shot result of the last action, top of content |
-| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as a frozen form (`_value_block`) |
+| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as a frozen form (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row |
 | `.banner` (`-info`/`-error`) | inline notice |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |

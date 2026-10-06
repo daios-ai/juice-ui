@@ -213,6 +213,7 @@
 <div class="outcome success" role="status">
   {{template "_value_block" (valueBlock .Result (download .TxID))}}
   {{if .TxID}}
+  <hr class="card-sep">
   <div class="row compact">
     <a class="btn" href="/transactions/{{.TxID}}">Receipt</a>
     <form class="row compact stretch" method="post" action="/transactions/{{.TxID}}/rate"
@@ -296,7 +297,7 @@
      toggle), one money-labeled button with progress, and the result BELOW the
      form. A task form is one-shot (disabled on success by app.js). */}}
 {{define "_call_form"}}
-<form class="card stack" method="post" action="{{.PostURL}}" data-run-panel {{if .OneShot}}data-oneshot="true"{{end}}
+<form class="card stack" method="post" action="{{.PostURL}}" data-json {{if .OneShot}}data-oneshot="true"{{end}}
       hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
       hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
@@ -304,6 +305,7 @@
        request, never from a fresh read of the action — a pin taken from the
        re-read would always match and silently disable the protection. */}}
   {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
+  {{if .Structured}}{{template "_json_toggle"}}{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
   {{if .Locked}}<div class="frozen locked">{{template "_frozen" (frozen .Locked)}}</div>{{end}}
@@ -434,10 +436,6 @@
      person to author `{}` by hand (§10). */}}
 {{if .NoFields}}{{else}}
 {{if not .UseRawFallback}}
-<div class="field-switch" role="group" aria-label="Input mode">
-  <button type="button" class="seg" data-raw-seg="fields" aria-pressed="true">fields</button>
-  <button type="button" class="seg" data-raw-seg="json" aria-pressed="false">JSON</button>
-</div>
 <div data-fields class="stack">
   {{range .Fields}}{{template "_field" .}}{{end}}
 </div>
@@ -517,10 +515,15 @@
 
 {{/* _frozen — a JSON value as a frozen form (§7): the root object's fields
      directly, any other value one label-less box. _value_block adds the raw
-     JSON behind a disclosure, and the download when the value is a
+     JSON behind the JSON toggle, and the download when the value is a
      transaction's result. */}}
 {{define "_frozen"}}{{if and (eq .Type "object") .Fields}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}{{template "_field" .}}{{end}}{{end}}
-{{define "_value_block"}}<div class="frozen">{{template "_frozen" .Root}}<details class="frozen-json"><summary>JSON</summary><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</details></div>{{end}}
+{{define "_value_block"}}<div class="frozen" data-json>{{template "_json_toggle"}}<div data-fields>{{template "_frozen" .Root}}</div><div data-raw hidden><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</div></div>{{end}}
+
+{{/* _json_toggle — THE JSON switch (§5.4): one pressed-state button at the
+     top right of a [data-json] block, swapping its [data-fields] for its
+     [data-raw] — the editor in a form, the raw JSON of a frozen form. */}}
+{{define "_json_toggle"}}<button type="button" class="json-toggle" data-json-toggle aria-pressed="false">JSON</button>{{end}}
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 

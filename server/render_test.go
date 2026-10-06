@@ -640,28 +640,36 @@ func TestCallFormComplete(t *testing.T) {
 	}
 }
 
-// TestFormFieldsStructuredSwitch renders _form_fields for a structured schema: it
-// carries the segmented fields|JSON field-switch (not the retired "edit as JSON"
-// text button) and the has_fields marker.
-func TestFormFieldsStructuredSwitch(t *testing.T) {
+// A structured form carries the one JSON toggle at its top, before any field,
+// with the has_fields marker it disables; an approval or a raw-only form, with
+// nothing to swap, carries none.
+func TestCallFormCarriesTheJSONToggle(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	fm := FormModel{Fields: []Field{{Name: "to", Type: "string"}}}
-	if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
-		t.Fatalf("Fragment: %v", err)
+	render := func(fm FormModel, approval bool) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "S1", 0, fm, approval, json.RawMessage(`{"to":"bob"}`), nil, false, 0, "", false)); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `data-raw-seg="fields"`) || !strings.Contains(body, `data-raw-seg="json"`) {
-		t.Errorf("structured form must render the fields|JSON field-switch: %s", body)
+	body := render(FormModel{Fields: []Field{{Name: "to", Type: "string", Path: "/to"}}}, false)
+	toggle := `<button type="button" class="json-toggle" data-json-toggle aria-pressed="false">JSON</button>`
+	if !strings.Contains(body, toggle) || !strings.Contains(body, `name="has_fields"`) || !strings.Contains(body, `data-json `) {
+		t.Errorf("structured form must carry the JSON toggle and the has_fields marker: %s", body)
 	}
-	if strings.Contains(body, "edit as JSON") {
-		t.Error("retired 'edit as JSON' text button must be gone")
+	if strings.Index(body, toggle) > strings.Index(body, `class="frozen locked"`) {
+		t.Error("the toggle sits at the top of the block, before the sealed part")
 	}
-	if !strings.Contains(body, `name="has_fields"`) {
-		t.Error("structured form must emit the has_fields marker")
+	if strings.Contains(body, "data-raw-seg") || strings.Contains(body, "field-switch") {
+		t.Error("the retired two-segment switch must be gone")
+	}
+	for _, b := range []string{render(FormModel{UseRawFallback: true}, false), render(FormModel{}, true)} {
+		if strings.Contains(b, "data-json-toggle") {
+			t.Errorf("a raw-only or approval form has nothing to swap: %s", b)
+		}
 	}
 }
 
@@ -763,6 +771,9 @@ func TestRenderFragment(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `class="outcome success"`) || strings.Contains(body, "Success.") || !strings.Contains(body, "/transactions/tx1") {
 		t.Errorf("a success is its styling and its result, with no sentence: %s", body)
+	}
+	if sep := strings.Index(body, `<hr class="card-sep">`); sep < 0 || sep < strings.Index(body, `data-json-toggle`) || sep > strings.Index(body, "/transactions/tx1/rate") {
+		t.Errorf("a rule separates the result from its receipt and rating: %s", body)
 	}
 }
 
@@ -915,7 +926,7 @@ func TestActionDetailNeverGuessesAvailability(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "data-run-panel") {
+	if !strings.Contains(body, "data-json") {
 		t.Error("a remote action must render the run form: availability is the kernel's to report")
 	}
 	if strings.Contains(body, `hx-get="/actions/a1"`) {
@@ -1877,14 +1888,15 @@ func TestValueBlockRendersAFrozenForm(t *testing.T) {
 		`<label>empty</label>`, `<div class="box muted">{}</div>`,
 		`<details class="frozen-fold"><summary>` + strings.Repeat("x", 80) + `…</summary><div class="box">` + long + `</div></details>`,
 		`<legend>n</legend>`, `<label>k</label>`, `<div class="box">&lt;i&gt;</div>`,
-		`<details class="frozen-json"><summary>JSON</summary><pre class="json">`,
+		`<div class="frozen" data-json><button type="button" class="json-toggle" data-json-toggle aria-pressed="false">JSON</button><div data-fields>`,
+		`<div data-raw hidden><pre class="json">`,
 		`<a href="/transactions/T1/result.json" download>Download</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("frozen form missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "<input") || strings.Contains(body, "<button") || strings.Contains(body, "data-rows") {
+	if strings.Contains(body, "<input") || strings.Contains(body, "data-row") {
 		t.Errorf("a frozen form has no control and no row mechanism: %s", body)
 	}
 	if strings.Index(body, `<label>z</label>`) > strings.Index(body, `<legend>list</legend>`) {

@@ -279,6 +279,34 @@ for (const box of document.querySelectorAll('[data-rows]')) {
   if (!box.parentElement.closest('[data-rows]')) wireRows(box);
 }
 
+// The JSON toggle: a [data-json] block holds its fields ([data-fields]) and its
+// JSON ([data-raw]); the toggle swaps them. In a form the hidden editor's
+// inputs are disabled so only the visible one submits and has_fields tells the
+// server which it was (the kernel validates either, R2.5); on a frozen form
+// the same control shows the raw JSON. Without script the block stays as the
+// server rendered it. A result arrives by htmx swap, so new content is wired
+// as it lands.
+function wireJSON(root) {
+  for (const block of root.querySelectorAll('[data-json]')) {
+    const toggle = block.querySelector('[data-json-toggle]');
+    const fields = block.querySelector('[data-fields]');
+    const raw = block.querySelector('[data-raw]');
+    if (!toggle || !fields || !raw) continue;
+    const apply = (json) => {
+      toggle.setAttribute('aria-pressed', String(json));
+      fields.hidden = json;
+      raw.hidden = !json;
+      for (const el of fields.querySelectorAll('input, select, textarea')) el.disabled = json;
+      for (const el of block.querySelectorAll('[name=has_fields]')) el.disabled = json;
+      if (json) raw.querySelector('textarea')?.dispatchEvent(new Event('input'));
+    };
+    toggle.addEventListener('click', () => apply(toggle.getAttribute('aria-pressed') !== 'true'));
+    apply(false);
+  }
+}
+wireJSON(document);
+document.body.addEventListener('htmx:afterSwap', (e) => wireJSON(e.target));
+
 // Password confirmation: in a form marked [data-confirm-password], the
 // confirm field must equal the password field. Uses native constraint validation
 // (setCustomValidity) so submit is blocked with the browser's own message — no

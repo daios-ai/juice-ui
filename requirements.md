@@ -7,8 +7,8 @@ Status: design draft — endpoint surface gated against the running kernel
 > person reads — a run or task result, a receipt's args and result, a task's
 > sealed `partial_args`, the receipt-verification checks (§7): the run form's
 > own anatomy, read-only, so a result looks like the form that produced it;
-> nothing interpreted, the raw JSON behind a disclosure, a Download on a
-> result. The outcome panel states the money fact alone; a success is its
+> nothing interpreted, the raw JSON behind the same JSON toggle the form
+> carries, a Download on a result. The outcome panel states the money fact alone; a success is its
 > styling and its result. The run form renders the input schema at every depth: a nested
 > object is a group, an array its rows with Add and Remove, a map-shaped node a
 > JSON editor; fields are named by JSON Pointer and the args are rebuilt from
@@ -1058,8 +1058,8 @@ one question — what happened to the money — so no two may share a sentence:
   click accepts the new terms (§6.2 quote pinning). Not a failure: nothing was
   locked, so nothing was refunded.
 * success → no sentence: the panel's styling says it, and it holds the result
-  as a frozen form (§7), its JSON behind a disclosure and a Download of the
-  transaction's result; a receipt
+  as a frozen form (§7), its JSON behind the JSON toggle and a Download of the
+  transaction's result; then, below a rule, a receipt
   summary (gross paid / net to provider / fee captioned "on value added"); an
   inline rate control (0/1 + optional note).
 
@@ -1498,12 +1498,16 @@ the transaction's `payment` (§6.5).
   result, a receipt's args and result, a task's sealed `partial_args`, the
   receipt-verification checks. It is the run form's anatomy (§6.2) read-only,
   so a result looks like the form that produced it: a key is a label over a
-  box with the input's geometry holding the value's text with its line breaks;
+  box with the input's geometry, in the read-only register (no fill, a hairline
+  border) so it cannot be taken for an input, holding the value's text with
+  its line breaks;
   a nested object is a group under its legend; an array is its rows; a number
   is its literal, a boolean, `null`, `{}` and `[]` their words, muted. Keys
   keep the order served. A string past 800 characters folds (closed) behind its
-  first line. Nothing is submittable. The raw JSON sits behind a closed
-  disclosure, with a Download where the value is a transaction's result.
+  first line. Nothing is submittable. The raw JSON sits behind the same JSON
+  toggle the form carries — one `aria-pressed` word at the block's top right,
+  swapping the fields for the JSON — with a Download where the value is a
+  transaction's result.
   Nothing in it is interpreted (§8.1).
 
   **The world is named wherever the interface names itself.** The chrome states

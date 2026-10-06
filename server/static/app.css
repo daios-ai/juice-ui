@@ -524,18 +524,17 @@ label { display: block; font-weight: 600; margin-bottom: .25rem; }
 /* A checkbox choice under a field (a nullable field's explicit null). */
 label.check { display: inline-flex; align-items: center; gap: .35rem; font-weight: 400; margin: .3rem 0 0; }
 .field { margin-bottom: 1rem; }
-/* Input-mode switch (fields | JSON) — the same bare tab-group switch idiom as the
-   yours|everyone scope switch, sized down and right-aligned above the fields. It
-   is the one way to flip a structured form to raw JSON, identical on action-run
-   and task-complete forms. */
-.field-switch { display: flex; justify-content: flex-end; gap: .25rem; margin-bottom: .35rem; }
-.field-switch .seg {
-  background: none; border: none; border-bottom: 2px solid transparent;
-  padding: .15rem .4rem; margin-bottom: -1px; cursor: pointer;
+/* The JSON toggle (§5.4): one pressed-state word at the top right of a block,
+   swapping its fields for its JSON — the editor of a form, the raw JSON of a
+   frozen form. Same control on both surfaces. */
+.json-toggle {
+  display: block; margin-left: auto; background: none; border: none; border-bottom: 2px solid transparent;
+  padding: .15rem .4rem; cursor: pointer;
   font-family: inherit; font-size: .8rem; font-weight: 600; color: var(--text-muted);
 }
-.field-switch .seg:hover { color: var(--text); }
-.field-switch .seg[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--text); }
+.json-toggle:hover { color: var(--text); }
+.json-toggle[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--text); }
+.stack > .json-toggle + * { margin-top: .35rem; }
 /* Inbox task cards — calm: who asks + what, then the neutral Complete. */
 .task-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
 .task-ask { margin-bottom: .6rem; font-size: .95rem; }
@@ -576,12 +575,12 @@ textarea {
    separated by a hairline so the two halves of the one form read distinctly. */
 form > .frozen.locked { border-bottom: 1px solid var(--border); padding-bottom: .6rem; margin-bottom: .2rem; }
 /* The frozen form (§7): a JSON value in the form's own anatomy, read-only. Each
-   control is a .box with the input's geometry; a long string folds behind its
-   first line; the raw JSON sits behind the .frozen-json disclosure. */
-.field .box { width: 100%; padding: .5rem .6rem; font-size: .9rem; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-s); white-space: pre-wrap; overflow-wrap: anywhere; }
-.frozen-json > summary, .frozen-fold > summary { cursor: pointer; font-size: .85rem; color: var(--text-muted); }
-.frozen-json > summary { font-weight: 600; }
-.frozen-json { margin-top: .5rem; }
+   control is a .box with the input's geometry in the read-only register — no
+   fill, a hairline — so it cannot be taken for an input; a long string folds
+   behind its first line; the raw JSON sits behind the JSON toggle. */
+.field .box { width: 100%; padding: .5rem .6rem; font-size: .9rem; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-s); white-space: pre-wrap; overflow-wrap: anywhere; }
+.frozen-fold > summary { cursor: pointer; font-size: .85rem; color: var(--text-muted); }
+.frozen > [data-fields] > .field:last-child { margin-bottom: 0; }
 /* A nested node of the run form (§6.2): an object's properties, or an array's
    rows, grouped under their legend. */
 fieldset.group { border: 1px solid var(--border); border-radius: var(--radius); padding: .6rem .75rem; margin: 0 0 1rem; min-width: 0; }

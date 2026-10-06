@@ -180,6 +180,10 @@ type CallForm struct {
 	DeclineID string
 }
 
+// Structured reports a form with typed fields, which the JSON toggle swaps for
+// the raw editor; an approval or a raw-only form has nothing to swap.
+func (f CallForm) Structured() bool { return !f.IsApproval && len(f.Editable.Fields) > 0 }
+
 // runForm builds a CallForm for running an action (repeatable, no locked args).
 // firstPayee/payeeOwner drive the first-payment hint (§8.3) on a paid run.
 func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome, firstPayee bool, payeeOwner, quoteHash string) CallForm {
