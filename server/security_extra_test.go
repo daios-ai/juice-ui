@@ -145,9 +145,11 @@ func TestFormQueryOpensDialogNoJS(t *testing.T) {
 	}
 }
 
-// TestPaletteRegistryInPage verifies the command registry is embedded as inert
-// JSON and gated: admin commands appear only for sys.
-func TestPaletteRegistryInPage(t *testing.T) {
+// TestCommandRegistryInPage verifies the command registry is embedded as inert
+// JSON and gated (admin commands appear only for sys), that the page carries
+// the one form a post command submits through, and that the palette, its chip
+// and its shortcut are gone: commands live in the search pill (§6.1).
+func TestCommandRegistryInPage(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -162,6 +164,17 @@ func TestPaletteRegistryInPage(t *testing.T) {
 	}
 	if strings.Contains(alice, `"admin users"`) {
 		t.Error("non-superuser registry must not include admin commands")
+	}
+	if !strings.Contains(alice, `<form id="command-post" method="post" hidden>`) {
+		t.Error("the page must carry the form a post command submits through")
+	}
+	for _, gone := range []string{`data-open-palette`, `id="palette"`, "Ctrl</kbd> <kbd>K"} {
+		if strings.Contains(alice, gone) {
+			t.Errorf("the palette, its chip and its shortcut are retired: %q", gone)
+		}
+	}
+	if !strings.Contains(alice, `<kbd>></kbd>`) {
+		t.Error("the help overlay names the > prefix for commands")
 	}
 
 	sys := getBody(t, loginClientAs(t, srv.URL, "sys"), srv.URL+"/browse")

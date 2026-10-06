@@ -711,3 +711,17 @@ func TestJSONRendersThroughTheFrozenForm(t *testing.T) {
 		}
 	}
 }
+
+// The command palette is retired: commands are rows of the search pill (§6.1),
+// so no template opens a palette, renders its rows, or binds its shortcut.
+func TestNoPaletteSurface(t *testing.T) {
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		src := string(mustRead(t, f))
+		for _, gone := range []string{"data-open-palette", "palette-item", `id="palette"`, "Ctrl</kbd> <kbd>K"} {
+			if strings.Contains(src, gone) {
+				t.Errorf("%s: the palette is retired (%q); commands live in the search pill", f, gone)
+			}
+		}
+	}
+}

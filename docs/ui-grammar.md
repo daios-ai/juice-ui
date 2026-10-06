@@ -34,13 +34,13 @@ Three laws underpin everything:
 | **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action |
+| **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action. The command registry's entries list first among them, marked `›` (`.menu-item.command`; a title row never carries the mark), at most three beside titles, twelve rows in all; `>` lists commands only (§5.9) |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a frozen form (§5.4) |
 | **Frozen form** | `.frozen` · `.field .box` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
-| Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
+| Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
 | Ref | `_ref` partial | an action address `owner@kernel/name` (owner linked only when local) |
@@ -91,8 +91,8 @@ links (server renders the active tab with JS off); app.js swaps panels
 client-side.
 
 **Layer order** (all native `<dialog>` except the menu/flash; `Esc` closes the
-topmost): content < flash < menu/popover < modal form & confirm modal < command
-palette / help overlay < aria-live toast.
+topmost): content < flash < menu/popover < modal form & confirm modal < help
+overlay < aria-live toast.
 
 ---
 
@@ -479,15 +479,22 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   this task?", "Suspend bob@alpha?"), never a sentence explaining what follows;
   an amount that is data rides on the button (`End · refund 0.40 fUSD`).
 
-### 5.9 Command palette & keyboard
+### 5.9 Commands & keyboard
 
-- **Ctrl/Cmd+K** opens the palette (`<dialog class="palette">`). Its registry is
-  **inert JSON** (`<script type="application/json">`, CSP-safe), built
-  server-side and **admin-gated** (admin commands only for `sys`).
+- **Commands are rows of the search pill.** The registry is **inert JSON**
+  (`<script type="application/json" id="command-registry">`, CSP-safe), built
+  server-side and **admin-gated** (admin commands only for `sys`). The pill
+  lists matching commands before the title hints, each a `.menu-item.command`
+  with the `›` mark (`.mark`) and its hint in `.muted.small`: a link, or for a
+  post a `<button type="submit" form="command-post" formaction name value>`
+  bound to the page's one hidden `#command-post` form, which carries the CSRF
+  field. At most three commands beside titles, twelve rows in all; a leading
+  `>` lists commands only. There is no palette, no ⌘K chip, no Ctrl/Cmd+K.
 - Shortcuts: `g`+letter (section nav, `g h` home) · `/` (focus search) · `?`
-  (help overlay) · `j/k/Enter` (table and list rows) · `Esc` (close topmost) ·
-  `↓/↑` in the search box (move into the search hints). Every command targets a real
-  link/form — the keyboard layer adds no capability unreachable without it.
+  (help overlay, `dialog.palette`) · `j/k/Enter` (table and list rows) · `Esc`
+  (close topmost) · `↓/↑` in the search box (move through hints and commands).
+  Every command targets a real link/form — the keyboard layer adds no
+  capability unreachable without it.
 
 ### 5.10 Feedback
 
@@ -626,7 +633,7 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   chat unread); no notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
   WCAG AA (theme test).
-- CSP: no inline script; palette registry is inert JSON; `Referrer-Policy:
+- CSP: no inline script; the command registry is inert JSON; `Referrer-Policy:
   same-origin` (never `no-referrer` — it nulls the Origin and breaks CSRF).
 - Floating forms degrade to the `?form=` no-JS path.
 - **Closed component set** (§0 registry): new UI composes existing components;

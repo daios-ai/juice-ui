@@ -429,7 +429,7 @@ func New(o Options) (http.Handler, error) {
 
 // securityHeaders serves a strict Content-Security-Policy and related hardening
 // on every response (R8): no inline scripts, self-hosted assets only, no framing,
-// no referrer leakage. The command-palette registry and no-JS forms are designed
+// no referrer leakage. The command registry and no-JS forms are designed
 // to satisfy this policy (inert JSON data, external ES modules, no inline JS).
 func securityHeaders(next http.Handler) http.Handler {
 	const csp = "default-src 'self'; script-src 'self'; style-src 'self'; " +

@@ -1,42 +1,219 @@
 {
   "keys": [
-    {"in": "Résumé  Builder", "out": "resume builder"},
-    {"in": "web-page/fetch", "out": "web page fetch"},
-    {"in": "  Chat with the MODEL ", "out": "chat with the model"},
-    {"in": "Ｆｕｌｌ width", "out": "full width"},
-    {"in": "--", "out": ""},
-    {"in": "Naïve café 2", "out": "naive cafe 2"},
-    {"in": "GPT-4o", "out": "gpt 4o"},
-    {"in": "Python 3.12", "out": "python 3 12"},
-    {"in": "½ cup", "out": "1 2 cup"},
-    {"in": "x²", "out": "x2"}
+    {
+      "in": "Résumé  Builder",
+      "out": "resume builder"
+    },
+    {
+      "in": "web-page/fetch",
+      "out": "web page fetch"
+    },
+    {
+      "in": "  Chat with the MODEL ",
+      "out": "chat with the model"
+    },
+    {
+      "in": "Ｆｕｌｌ width",
+      "out": "full width"
+    },
+    {
+      "in": "--",
+      "out": ""
+    },
+    {
+      "in": "Naïve café 2",
+      "out": "naive cafe 2"
+    },
+    {
+      "in": "GPT-4o",
+      "out": "gpt 4o"
+    },
+    {
+      "in": "Python 3.12",
+      "out": "python 3 12"
+    },
+    {
+      "in": "½ cup",
+      "out": "1 2 cup"
+    },
+    {
+      "in": "x²",
+      "out": "x2"
+    }
   ],
   "catalog": [
-    {"t": "Résumé builder", "k": "resume builder"},
-    {"t": "GPT 4 chat", "k": "gpt 4 chat"},
-    {"t": "Python 3.12 runtime", "k": "python 3 12 runtime"},
-    {"t": "Ｆｕｌｌ width text", "k": "full width text"},
-    {"t": "Send a message", "k": "send a message"},
-    {"t": "Post a chat message", "k": "post a chat message"},
-    {"t": "Delete a chat message", "k": "delete a chat message"},
-    {"t": "Weather forecast", "k": "weather forecast"},
-    {"t": "US weather alerts (National Weather Service)", "k": "us weather alerts national weather service"},
-    {"t": "Web-page fetch", "k": "web page fetch"},
-    {"t": "Item 1", "k": "item 1"}, {"t": "Item 2", "k": "item 2"}, {"t": "Item 3", "k": "item 3"},
-    {"t": "Item 4", "k": "item 4"}, {"t": "Item 5", "k": "item 5"}, {"t": "Item 6", "k": "item 6"},
-    {"t": "Item 7", "k": "item 7"}, {"t": "Item 8", "k": "item 8"}, {"t": "Item 9", "k": "item 9"}
+    {
+      "t": "Résumé builder",
+      "k": "resume builder"
+    },
+    {
+      "t": "GPT 4 chat",
+      "k": "gpt 4 chat"
+    },
+    {
+      "t": "Python 3.12 runtime",
+      "k": "python 3 12 runtime"
+    },
+    {
+      "t": "Ｆｕｌｌ width text",
+      "k": "full width text"
+    },
+    {
+      "t": "Send a message",
+      "k": "send a message"
+    },
+    {
+      "t": "Post a chat message",
+      "k": "post a chat message"
+    },
+    {
+      "t": "Delete a chat message",
+      "k": "delete a chat message"
+    },
+    {
+      "t": "Weather forecast",
+      "k": "weather forecast"
+    },
+    {
+      "t": "US weather alerts (National Weather Service)",
+      "k": "us weather alerts national weather service"
+    },
+    {
+      "t": "Web-page fetch",
+      "k": "web page fetch"
+    },
+    {
+      "t": "Item 1",
+      "k": "item 1"
+    },
+    {
+      "t": "Item 2",
+      "k": "item 2"
+    },
+    {
+      "t": "Item 3",
+      "k": "item 3"
+    },
+    {
+      "t": "Item 4",
+      "k": "item 4"
+    },
+    {
+      "t": "Item 5",
+      "k": "item 5"
+    },
+    {
+      "t": "Item 6",
+      "k": "item 6"
+    },
+    {
+      "t": "Item 7",
+      "k": "item 7"
+    },
+    {
+      "t": "Item 8",
+      "k": "item 8"
+    },
+    {
+      "t": "Item 9",
+      "k": "item 9"
+    },
+    {
+      "t": "Item 10",
+      "k": "item 10"
+    },
+    {
+      "t": "Item 11",
+      "k": "item 11"
+    },
+    {
+      "t": "Item 12",
+      "k": "item 12"
+    },
+    {
+      "t": "Item 13",
+      "k": "item 13"
+    }
   ],
   "cases": [
-    {"query": "message", "want": ["Send a message", "Post a chat message", "Delete a chat message"]},
-    {"query": "weather", "want": ["Weather forecast", "US weather alerts (National Weather Service)"]},
-    {"query": "RESUME", "want": ["Résumé builder"]},
-    {"query": "gpt 4", "want": ["GPT 4 chat"]},
-    {"query": "3.12", "want": ["Python 3.12 runtime"]},
-    {"query": "ｆｕｌｌ", "want": ["Ｆｕｌｌ width text"]},
-    {"query": "web-pa", "want": ["Web-page fetch"]},
-    {"query": "a", "want": ["Send a message", "Post a chat message", "Delete a chat message", "US weather alerts (National Weather Service)"]},
-    {"query": "item", "want": ["Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6", "Item 7", "Item 8"]},
-    {"query": "xyz", "want": []},
-    {"query": "  ", "want": []}
+    {
+      "query": "message",
+      "want": [
+        "Send a message",
+        "Post a chat message",
+        "Delete a chat message"
+      ]
+    },
+    {
+      "query": "weather",
+      "want": [
+        "Weather forecast",
+        "US weather alerts (National Weather Service)"
+      ]
+    },
+    {
+      "query": "RESUME",
+      "want": [
+        "Résumé builder"
+      ]
+    },
+    {
+      "query": "gpt 4",
+      "want": [
+        "GPT 4 chat"
+      ]
+    },
+    {
+      "query": "3.12",
+      "want": [
+        "Python 3.12 runtime"
+      ]
+    },
+    {
+      "query": "ｆｕｌｌ",
+      "want": [
+        "Ｆｕｌｌ width text"
+      ]
+    },
+    {
+      "query": "web-pa",
+      "want": [
+        "Web-page fetch"
+      ]
+    },
+    {
+      "query": "a",
+      "want": [
+        "Send a message",
+        "Post a chat message",
+        "Delete a chat message",
+        "US weather alerts (National Weather Service)"
+      ]
+    },
+    {
+      "query": "item",
+      "want": [
+        "Item 1",
+        "Item 2",
+        "Item 3",
+        "Item 4",
+        "Item 5",
+        "Item 6",
+        "Item 7",
+        "Item 8",
+        "Item 9",
+        "Item 10",
+        "Item 11",
+        "Item 12"
+      ]
+    },
+    {
+      "query": "xyz",
+      "want": []
+    },
+    {
+      "query": "  ",
+      "want": []
+    }
   ]
 }

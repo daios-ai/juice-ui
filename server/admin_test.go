@@ -62,9 +62,9 @@ func TestAdminHiddenFromNonSuperuser(t *testing.T) {
 	if strings.Contains(home, `href="/admin"`) {
 		t.Error("non-superuser nav must not link to /admin")
 	}
-	// Nor should the palette registry carry admin commands.
+	// Nor should the command registry carry admin commands.
 	if strings.Contains(home, `"admin users"`) {
-		t.Error("non-superuser palette registry must not include admin commands")
+		t.Error("non-superuser command registry must not include admin commands")
 	}
 }
 
@@ -108,7 +108,7 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		t.Error("/admin must offer the deposit command inline")
 	}
 	// admin withdraw was retired with the settle surface in 0.7.0: the kernel
-	// serves no such verb, and a palette entry for one opens a dialog that does
+	// serves no such verb, and a command entry for one opens a dialog that does
 	// not exist.
 	if strings.Contains(body, "admin-withdraw") {
 		t.Error("/admin must not offer a retired admin withdraw")

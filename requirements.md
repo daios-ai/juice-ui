@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.15.0
+Version: 0.16.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.16.0.** The command palette, its ⌘K chip and the
+> Ctrl/Cmd+K binding are gone. The commands are rows of the search pill's hint
+> list (§6.1): listed first, marked `›`, at most three when titles also match,
+> twelve rows in all; a leading `>` lists commands only. A command is a link or
+> a submit button bound to the page's one command form. The registry stays
+> inert, server-built JSON, admin verbs for `sys` only.
 
 > **What changed in 0.15.0.** One **frozen form** renders every JSON value a
 > person reads — a run or task result, a receipt's args and result, a task's
@@ -692,8 +699,8 @@ kernel and world is in use, and keys everything durable by
   persisted server-side. The active group MUST carry `aria-current`. The `inbox`
   entry MUST carry its waiting-count task badge in every state — a constraint on
   the entry wherever it renders, not on any one surface. A single nav model, built
-  once server-side, MUST drive the sidebar and the mobile drawer (and the command
-  palette), so the three cannot drift.
+  once server-side, MUST drive the sidebar and the mobile drawer (and the search
+  pill's commands), so they cannot drift.
 * **Home is the dashboard** (`/`, where sign-in lands). It MUST show the
   viewer's available and parked balance, the waiting tasks addressed to them
   (read as `status=waiting`, never the whole history), their open sessions,
@@ -748,16 +755,23 @@ kernel and world is in use, and keys everything durable by
   the named dialog already `[open]` as an in-flow card, so every flow stays
   operable with JS off. The `?form=` value MUST be validated server-side against a
   per-page whitelist before rendering.
-* The UI MUST be keyboard-navigable as a first-class affordance: a Ctrl/Cmd+K
-  command palette whose entries mirror the CLI (and are gated — admin commands
-  appear only for `sys`), `g`+letter section navigation, `/` to focus search,
-  `?` for a shortcuts overlay, `j`/`k`/`Enter` to move through and open rows
-  (table rows and list rows alike), and `Esc` to close the top layer. A
-  rowable row's pointer target is its link: the row MUST NOT show a pointer
-  cursor, since no click handler stands behind it. The command registry MUST be delivered
-  as inert JSON data (a `type="application/json"` block), never executable inline
-  script, to satisfy the CSP. Every palette command MUST target a real link or
-  form, so the keyboard layer adds no capability unreachable without it.
+* The UI MUST be keyboard-navigable as a first-class affordance: `g`+letter
+  section navigation, `/` to focus search, `?` for a shortcuts overlay,
+  `j`/`k`/`Enter` to move through and open rows (table rows and list rows
+  alike), and `Esc` to close the top layer. A rowable row's pointer target is
+  its link: the row MUST NOT show a pointer cursor, since no click handler
+  stands behind it.
+* **Commands are rows of the search pill.** The command registry mirrors the
+  CLI (gated: admin commands appear only for `sys`) and is delivered as inert
+  JSON data (a `type="application/json"` block), never executable inline
+  script, to satisfy the CSP. The pill lists the commands matching the typed
+  text before the title hints, each marked `›` (chrome; a title row never
+  carries the mark, §8.1) — at most three when titles also match, twelve rows
+  in all; a leading `>` lists commands only, `>` alone all of them. A command
+  is a link (a page, or a `?form=` URL the server renders open) or a submit
+  button bound to the page's one hidden command form, so every command targets
+  a real link or form and the keyboard layer adds no capability unreachable
+  without it. There is no palette, chip or Ctrl/Cmd+K binding.
 
 ### 6.2 run — discovery, action page, run form
 
@@ -830,7 +844,7 @@ spend:
   and shows a **flat catalog capped at 20 per page** with a pager (§7 pagination);
   there are no filter tabs.
 * **Search hints.** While a person types, the search box MUST offer up to
-  eight **search hints**, matched in the browser as a static site searches its
+  twelve **search hints**, matched in the browser as a static site searches its
   index: the page loads the whole catalog's titles once
   (`GET /search/catalog.json`: every page of `GET /v1/actions` — the caller's
   own actions, the live ones it may call, and those discovered on peers — each

@@ -63,7 +63,7 @@ func TestBuildCommandsThemesMatchList(t *testing.T) {
 			t.Errorf("missing theme command for %q", th.Slug)
 			continue
 		}
-		if c.Kind != "post" || c.Href != "/theme" || c.Fields["theme"] != th.Slug {
+		if c.Kind != "post" || c.Href != "/theme" || c.Field != "theme" || c.Value != th.Slug {
 			t.Errorf("theme command %q malformed: %+v", th.Slug, c)
 		}
 	}
@@ -80,13 +80,13 @@ func TestCommandsJSONValid(t *testing.T) {
 	}
 }
 
-// The palette follows the surface: there is no subscribe verb to invoke, and the
+// The registry follows the surface: there is no subscribe verb to invoke, and the
 // entry that replaces it opens the inspect-by-key form (a whitelisted ?form
 // value, or the anchor would render a dialog that never opens).
 func TestBuildCommandsNoSubscription(t *testing.T) {
 	for _, c := range BuildCommands(true, ThemeList()) {
 		if strings.Contains(strings.ToLower(c.Name), "subscribe") {
-			t.Errorf("palette still offers a subscription verb: %q", c.Name)
+			t.Errorf("registry still offers a subscription verb: %q", c.Name)
 		}
 	}
 	var inspect *Command
@@ -96,9 +96,28 @@ func TestBuildCommandsNoSubscription(t *testing.T) {
 		}
 	}
 	if inspect == nil {
-		t.Fatal("superuser palette must offer network inspect")
+		t.Fatal("superuser registry must offer network inspect")
 	}
 	if !formWhitelist["admin"]["admin-inspect"] {
 		t.Error("the inspect form must be whitelisted, or its ?form anchor opens nothing")
+	}
+}
+
+// Every command is a link or a post, and a post carries exactly the one field
+// its submit button can send.
+func TestCommandsAreLinksOrPosts(t *testing.T) {
+	for _, c := range BuildCommands(true, ThemeList()) {
+		switch c.Kind {
+		case "link":
+			if c.Field != "" || c.Value != "" {
+				t.Errorf("link %q carries a field", c.Name)
+			}
+		case "post":
+			if c.Field == "" || c.Value == "" {
+				t.Errorf("post %q names no field", c.Name)
+			}
+		default:
+			t.Errorf("command %q has kind %q", c.Name, c.Kind)
+		}
 	}
 }

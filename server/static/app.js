@@ -412,10 +412,17 @@ document.body.addEventListener('click', (e) => {
 // each is an ordinary link that runs the search for its title. Without
 // JavaScript the box submits as before.
 //
+// The command registry (#command-registry, inert JSON built per session) is
+// listed the same way, first and marked (§6.1): a command is chrome, a title is
+// counterparty content, and the two differ by what they are built from. At most
+// COMMAND_LIMIT commands show when titles also match; a leading ">" lists
+// commands only (">" alone, all of them).
+//
 // hintKey and the ranking mirror server/handlers.go (hintKey, wordsBegin, and
 // catalogAsResults's title tiers); server/testdata/hints.json holds the cases
 // both are checked against.
-const HINT_LIMIT = 8;
+const HINT_LIMIT = 12;
+const COMMAND_LIMIT = 3;
 
 // hintKey: NFKD, combining marks removed, lowercase, every run of characters
 // that are neither letters nor decimal digits one space, trimmed.
@@ -424,22 +431,48 @@ function hintKey(s) {
     .replace(/[^\p{L}\p{Nd}]+/gu, " ").trim();
 }
 
-// matchHints ranks the catalog for the typed text: every typed word must begin
-// a word of the key; keys beginning with the whole text first, then the other
-// matches; shorter first, then alphabetical.
-function matchHints(catalog, q) {
+// matchHints ranks entries {t, k} for the typed text: every typed word must
+// begin a word of the key; keys beginning with the whole text first, then the
+// other matches; shorter first, then alphabetical. An empty text matches
+// nothing unless `all` asks for everything.
+function matchHints(entries, q, limit, all = false) {
   const typed = hintKey(q).split(" ").filter(Boolean);
-  if (typed.length === 0) return [];
+  if (typed.length === 0 && !all) return [];
   const whole = typed.join(" ");
   const hits = [];
-  for (const e of catalog) {
+  for (const e of entries) {
     const words = e.k.split(" ");
     if (!typed.every((t) => words.some((w) => w.startsWith(t)))) continue;
-    hits.push({ t: e.t, k: e.k, rank: e.k.startsWith(whole) ? 0 : 1 });
+    hits.push({ ...e, rank: e.k.startsWith(whole) ? 0 : 1 });
   }
   hits.sort((a, b) => a.rank - b.rank || a.k.length - b.k.length || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
-  return hits.slice(0, HINT_LIMIT).map((h) => h.t);
+  return hits.slice(0, limit);
 }
+
+// commandRow renders one command: a link, or a submit button bound to the
+// page's command form (form="command-post"), which carries the CSRF field.
+function commandRow(c) {
+  const row = document.createElement(c.kind === "post" ? "button" : "a");
+  row.className = "menu-item command";
+  if (c.kind === "post") {
+    row.type = "submit"; row.setAttribute("form", "command-post");
+    row.formAction = c.href; row.name = c.field; row.value = c.value;
+  } else {
+    row.href = c.href;
+  }
+  const mark = document.createElement("span");
+  mark.className = "mark"; mark.setAttribute("aria-hidden", "true"); mark.textContent = "›";
+  const hint = document.createElement("span");
+  hint.className = "muted small"; hint.textContent = c.hint;
+  row.append(mark, c.name, " ", hint);
+  return row;
+}
+
+let commands = [];
+try {
+  commands = JSON.parse(document.getElementById("command-registry")?.textContent || "[]")
+    .map((c) => ({ t: c.name, k: hintKey(c.name), cmd: c }));
+} catch (_) { commands = []; }
 
 for (const input of document.querySelectorAll("input[data-search-hints]")) {
   const panel = input.form?.querySelector(".omni-suggest");
@@ -452,18 +485,22 @@ for (const input of document.querySelectorAll("input[data-search-hints]")) {
     return catalog;
   };
   const render = async () => {
-    const titles = matchHints(await load(), input.value);
+    const only = input.value.startsWith(">");
+    const q = only ? input.value.slice(1) : input.value;
+    const cmds = matchHints(commands, q, only ? HINT_LIMIT : COMMAND_LIMIT, only);
+    const titles = only ? [] : matchHints(await load(), q, HINT_LIMIT - cmds.length);
     const nav = document.createElement("nav");
     nav.className = "suggest-list";
     nav.setAttribute("aria-label", "Search suggestions");
-    for (const t of titles) {
+    for (const c of cmds) nav.append(commandRow(c.cmd));
+    for (const e of titles) {
       const a = document.createElement("a");
       a.className = "menu-item";
-      a.href = "/browse?q=" + encodeURIComponent(t);
-      a.textContent = t;
+      a.href = "/browse?q=" + encodeURIComponent(e.t);
+      a.textContent = e.t;
       nav.append(a);
     }
-    panel.replaceChildren(...(titles.length ? [nav] : []));
+    panel.replaceChildren(...(nav.children.length ? [nav] : []));
   };
   input.addEventListener("focus", load, { once: true });
   input.addEventListener("input", render);

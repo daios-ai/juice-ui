@@ -148,8 +148,11 @@ html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sideb
 .omni-suggest:empty, .omni:not(:focus-within) .omni-suggest { display: none; }
 .suggest-list { display: flex; flex-direction: column; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 .suggest-list .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
-.kbd { flex: 0 0 auto; font-family: var(--font-mono); font-size: .68rem; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: .05rem .3rem; background: none; cursor: pointer; }
-.kbd:hover { color: var(--text); }
+/* A command among the hints (§6.1): chrome, marked by the CLI's prompt glyph
+   and by weight; a title row is a plain menu-item and never carries either. */
+.suggest-list .command { font-weight: 600; }
+.suggest-list .command .mark { font-family: var(--font-mono); color: var(--text-muted); }
+.suggest-list .command .muted { font-weight: 400; }
 
 /* Price is money DISPLAY (mono, tabular), not a control — never the accent
    (accent = money movement only). The `$` prefix comes from the money helper. */
@@ -311,21 +314,13 @@ dialog.modal-form[open]:not(:modal) {
 .modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; line-height: 1; padding: .1rem .35rem; border-radius: var(--radius); text-decoration: none; }
 .modal-close:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 
-/* Command palette + help overlay (keyboard layer) */
+/* Help overlay (keyboard layer) */
 dialog.palette {
   border: 1px solid var(--border-strong); border-radius: var(--radius);
   background: var(--surface); color: var(--text); padding: 0;
   max-width: 560px; width: 92%; margin-top: 12vh; box-shadow: none;
 }
 dialog.palette::backdrop { background: rgba(0,0,0,.4); }
-.palette-input { width: 100%; border: none; border-bottom: 1px solid var(--border); border-radius: 0; padding: .75rem 1rem; background: none; font-size: 1rem; }
-.palette-input:focus-visible { outline: none; }
-.palette-list { list-style: none; margin: 0; padding: .3rem; max-height: 50vh; overflow: auto; }
-.palette-item { display: flex; align-items: baseline; gap: .6rem; padding: .45rem .6rem; border-radius: var(--radius); cursor: pointer; }
-.palette-item[aria-selected="true"] { background: var(--surface-2); }
-.palette-item .cmd { font-weight: 600; }
-.palette-item .hint { color: var(--text-muted); font-size: .85rem; }
-.palette-empty { padding: .6rem; color: var(--text-muted); }
 .help-grid { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0; }
 .help-grid kbd { font-family: var(--font-mono); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .05rem .35rem; font-size: .85rem; }
 
@@ -339,7 +334,6 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
   .menu-trigger { display: flex; }
   .topbar { padding: 0 .75rem; gap: .6rem; }
   .media.tile { width: 40px; flex-basis: 40px; }
-  .kbd { display: none; } /* a keyboard hint has no meaning on a touch device */
   .container { padding-left: 1rem; padding-right: 1rem; }
 
   /* Dialogs become bottom sheets: full-width, anchored to the bottom edge, the

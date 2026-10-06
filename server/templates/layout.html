@@ -75,7 +75,6 @@
           <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
           <div class="omni-suggest"></div>
         </form>
-        <button type="button" class="kbd" data-open-palette aria-label="Command palette">⌘K</button>
       </header>
       {{end}}
 
@@ -108,19 +107,17 @@
   <div aria-live="polite" aria-atomic="true" id="live-region" class="live-region"></div>
 
   {{if .Me}}
-  <!-- Keyboard command palette (Ctrl/Cmd+K). Registry is inert JSON data (CSP-safe). -->
+  <!-- The command registry the search pill lists (inert JSON, CSP-safe), and the
+       one form a post command's button submits through (form="command-post"). -->
   <script type="application/json" id="command-registry">{{.Commands}}</script>
-  <dialog id="palette" class="palette" aria-label="Command palette">
-    <input type="text" class="palette-input" id="palette-input" placeholder="Type a command…  (e.g. action create, tx list, theme nord)" aria-label="Command" autocomplete="off">
-    <ul class="palette-list" id="palette-list" role="listbox"></ul>
-  </dialog>
+  <form id="command-post" method="post" hidden>{{.CSRFField}}</form>
   <dialog id="help" class="palette" aria-label="Keyboard shortcuts">
     <div class="modal-head"><h2>Keyboard shortcuts</h2><button class="modal-close" data-modal-close aria-label="Close">×</button></div>
     <div class="modal-body">
       <dl class="help-grid">
-        <dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette</dd>
         <dt><kbd>g</kbd> then <kbd>h b i k w y</kbd></dt><dd>Go to home · browse · inbox · workshop · wallet · settings</dd>
         <dt><kbd>/</kbd></dt><dd>Focus search</dd>
+        <dt><kbd>></kbd></dt><dd>Commands, in the search box</dd>
         <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>
         <dt><kbd>?</kbd></dt><dd>This help</dd>

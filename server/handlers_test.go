@@ -2822,9 +2822,9 @@ func TestNoBrowserTaskCreation(t *testing.T) {
 	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
 		t.Errorf("POST /inbox = %d, want no such route", resp.StatusCode)
 	}
-	// Nor may the palette still offer it.
+	// Nor may the command registry still offer it.
 	if strings.Contains(page, `"task create"`) {
-		t.Error("the palette must not carry a task-create command")
+		t.Error("the registry must not carry a task-create command")
 	}
 }
 
@@ -2855,7 +2855,7 @@ func TestNoActionGetsABespokeSurface(t *testing.T) {
 	}
 	// And no command names one action.
 	if strings.Contains(getBody(t, cl, srv.URL+"/browse"), "send credits") {
-		t.Error("the palette must not carry a command for a single action")
+		t.Error("the registry must not carry a command for a single action")
 	}
 }
 
@@ -3782,11 +3782,11 @@ func TestHintFixture(t *testing.T) {
 		actions[i] = client.Action{Title: e.T}
 	}
 	// With titles alone, the fallback's ranking is the hints' ranking; the
-	// hints show the first eight.
+	// hints show the first twelve.
 	for _, c := range fx.Cases {
 		var got []string
 		for _, r := range catalogAsResults(actions, c.Query) {
-			if len(got) < 8 {
+			if len(got) < 12 {
 				got = append(got, r.Action.Title)
 			}
 		}

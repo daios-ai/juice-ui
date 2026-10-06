@@ -35,7 +35,7 @@ func StaticFS() fs.FS {
 }
 
 // NavItem is one entry in the single server-built nav model. The sidebar, the
-// mobile tab bar, and the palette all render from this list, so the three cannot
+// mobile drawer, and the search pill's commands all render from this list, so they cannot
 // drift (the old layout hand-duplicated them). Icon is the full inline <svg> so a
 // core sprite entry and an app's inline icon render uniformly.
 type NavItem struct {
@@ -55,7 +55,7 @@ type Page struct {
 	Theme        string          // theme slug, or "" to defer to prefers-color-scheme
 	Sidebar      string          // "collapsed" | "" (expanded); stamped to avoid flash
 	Active       string          // active nav group ("browse"|"inbox"|…) for aria-current
-	Nav          []NavItem       // the single nav model (sidebar + drawer + palette)
+	Nav          []NavItem       // the single nav model (sidebar + drawer + the pill's commands)
 	Me           string          // signed-in address for the nav, or "" when anonymous
 	KernelHandle string          // this kernel's own name (from /health), or "" if unknown
 	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
@@ -66,7 +66,7 @@ type Page struct {
 	Themes       []ANSIPalette   // selectable terminal themes for the picker
 	CSRFField    template.HTML   // hidden CSRF input for no-JS forms
 	CSRFToken    string          // raw token for the <meta> tag htmx reads
-	Commands     template.JS     // JSON command registry for the keyboard palette (inert data)
+	Commands     template.JS     // JSON command registry the search pill lists (inert data)
 	Flash        string          // transient user message
 	FlashKind    string          // "success" | "error" | "info" | ""
 	AppNav       []apps.NavEntry // sidebar entries contributed by apps
