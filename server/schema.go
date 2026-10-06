@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Field is one node of the run form, derived from a node of the input schema.
@@ -40,6 +41,64 @@ type Field struct {
 	Map     bool
 	Example string          // a compact JSON skeleton: a Map node's placeholder
 	items   json.RawMessage // an array's item schema, for one more row
+	// Frozen marks a node of the frozen form (§7): a JSON value — a result, a
+	// receipt's args, sealed partial_args — in the form's own anatomy, each
+	// control a read-only box. Long marks a frozen string past longText, folded.
+	Frozen, Long bool
+}
+
+// longText is the length past which a frozen string folds, so a page body or a
+// compiled artifact does not push the rest of the result off screen.
+const longText = 800
+
+// Frozen builds the frozen form of a JSON value. Object keys keep the order
+// served; a number keeps its literal text; null, `{}` and `[]` are words in a
+// box; empty or invalid input is `raw`, shown as it came.
+func Frozen(raw json.RawMessage) Field { return frozenField("", raw) }
+
+func frozenField(name string, raw json.RawMessage) Field {
+	raw = bytes.TrimSpace(raw)
+	f := Field{Name: name, Frozen: true}
+	if len(raw) == 0 || !json.Valid(raw) {
+		f.Type, f.Value = "raw", string(raw)
+		return f
+	}
+	switch raw[0] {
+	case '{':
+		keys := orderedKeys(raw)
+		if len(keys) == 0 {
+			f.Type, f.Value = "null", "{}"
+			return f
+		}
+		var m map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &m)
+		f.Type = "object"
+		for _, k := range keys {
+			f.Fields = append(f.Fields, frozenField(k, m[k]))
+		}
+	case '[':
+		var items []json.RawMessage
+		_ = json.Unmarshal(raw, &items)
+		if len(items) == 0 {
+			f.Type, f.Value = "null", "[]"
+			return f
+		}
+		f.Type = "array"
+		for _, it := range items {
+			f.Rows = append(f.Rows, frozenField("", it))
+		}
+	case '"':
+		f.Type = "string"
+		_ = json.Unmarshal(raw, &f.Value)
+		f.Long = utf8.RuneCountInString(f.Value) > longText
+	case 'n':
+		f.Type, f.Value = "null", "null"
+	case 't', 'f':
+		f.Type, f.Value = "boolean", string(raw)
+	default:
+		f.Type, f.Value = "number", string(raw)
+	}
+	return f
 }
 
 // FormModel is the server-side model the run form is rendered from (R6.5.4). The

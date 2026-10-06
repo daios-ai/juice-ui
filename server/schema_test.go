@@ -418,3 +418,47 @@ func TestFormFill(t *testing.T) {
 		t.Errorf("rows = %+v", msgs.Rows)
 	}
 }
+
+// The frozen form keeps the kernel's own order and types: keys as served,
+// numbers as written, booleans and null as words, a long string folded, empty
+// containers as words, empty or invalid input raw.
+func TestFrozenKeepsOrderAndTypes(t *testing.T) {
+	f := Frozen(json.RawMessage(`{"z":1.50,"a":[true,null,"x"],"m":{"k":"v"},"e":{},"l":[]}`))
+	if f.Type != "object" || len(f.Fields) != 5 || !f.Frozen {
+		t.Fatalf("root = %+v", f)
+	}
+	names := []string{}
+	for _, c := range f.Fields {
+		names = append(names, c.Name)
+	}
+	if strings.Join(names, ",") != "z,a,m,e,l" {
+		t.Errorf("keys reordered: %v", names)
+	}
+	if n := f.Fields[0]; n.Type != "number" || n.Value != "1.50" {
+		t.Errorf("number = %+v, want its literal text", n)
+	}
+	arr := f.Fields[1]
+	if arr.Type != "array" || len(arr.Rows) != 3 || arr.Rows[0].Value != "true" || arr.Rows[1].Type != "null" || arr.Rows[2].Type != "string" || arr.Rows[2].Name != "" {
+		t.Errorf("array = %+v", arr.Rows)
+	}
+	if m := f.Fields[2]; m.Type != "object" || m.Fields[0].Name != "k" || m.Fields[0].Value != "v" || !m.Fields[0].Frozen {
+		t.Errorf("nested object = %+v", m)
+	}
+	if e, l := f.Fields[3], f.Fields[4]; e.Type != "null" || e.Value != "{}" || l.Type != "null" || l.Value != "[]" {
+		t.Errorf("empties = %+v %+v", e, l)
+	}
+	long := strings.Repeat("é", longText+1)
+	b, _ := json.Marshal(long)
+	if v := Frozen(b); !v.Long || v.Value != long {
+		t.Errorf("a string past %d characters folds: %+v", longText, v.Long)
+	}
+	if v := Frozen(json.RawMessage(`"short"`)); v.Long || v.Type != "string" {
+		t.Error("a short string does not fold")
+	}
+	if v := Frozen(nil); v.Type != "raw" || v.Value != "" {
+		t.Errorf("empty = %+v", v)
+	}
+	if v := Frozen(json.RawMessage(`{broken`)); v.Type != "raw" || v.Value != "{broken" {
+		t.Errorf("invalid = %+v", v)
+	}
+}

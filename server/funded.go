@@ -143,7 +143,7 @@ func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
 
 // CallForm drives the shared _call_form partial for both running an action and
 // completing a task — conceptually the same act (execute an action). Locked
-// (a task's pre-bound args) renders through the value tree; Editable is the
+// (a task's pre-bound args) renders as a frozen form; Editable is the
 // remaining input; the result renders below the form with progress + disable.
 type CallForm struct {
 	CSRFField  template.HTML

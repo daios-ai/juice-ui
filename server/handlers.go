@@ -2155,7 +2155,7 @@ func (s *Server) getTxVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 // getResultJSON serves a transaction's result as a file: the download the
-// value tree offers (§6.5). Who may read it is the kernel's decision, as for
+// frozen form offers (§6.5). Who may read it is the kernel's decision, as for
 // the receipt page.
 func (s *Server) getResultJSON(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

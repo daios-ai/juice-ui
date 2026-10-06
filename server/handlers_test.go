@@ -1779,7 +1779,7 @@ func TestCompleteTaskHTMX(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("complete task returned %d, body: %s", resp.StatusCode, frag)
 	}
-	if !strings.Contains(frag, "Success") {
+	if !strings.Contains(frag, `class="outcome success"`) {
 		t.Error("complete task HTMX response must show success outcome")
 	}
 	if strings.Contains(frag, "<html") {
@@ -2717,7 +2717,7 @@ func TestInboxTaskHeldOnAnotherKernel(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	frag, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(frag), "Success") {
+	if !strings.Contains(string(frag), `class="outcome success"`) {
 		t.Fatalf("completion must succeed: %s", frag)
 	}
 	if strings.Contains(string(frag), "/transactions/") {
@@ -3963,12 +3963,9 @@ func TestResultDownloadIsAnAttachment(t *testing.T) {
 	}
 	// The receipt page renders both values as trees, escaped, and offers the download.
 	page := getBody(t, cl, srv.URL+"/transactions/T1")
-	for _, want := range []string{`<dt>q</dt>`, `&lt;b&gt;x&lt;/b&gt;`, `<dt>items</dt>`, `<ol class="tree">`, `<span class="null">null</span>`, `href="/transactions/T1/result.json" download`, "line1\nline2"} {
+	for _, want := range []string{`<label>q</label>`, `<div class="box">&lt;b&gt;x&lt;/b&gt;</div>`, `<legend>items</legend>`, `<div class="rows">`, `<div class="box muted">null</div>`, `href="/transactions/T1/result.json" download`, "line1\nline2", `<details class="frozen-json">`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("receipt page missing %q", want)
 		}
-	}
-	if strings.Contains(page, `<pre class="json">{\n  &#34;q&#34;`) && !strings.Contains(page, `<details class="tree-json">`) {
-		t.Error("the raw JSON sits behind the disclosure")
 	}
 }

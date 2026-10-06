@@ -462,19 +462,10 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .details-panel form { margin-top: .75rem; }
 .auth-panel { margin-top: .5rem; margin-bottom: 1rem; }
 .auth-panel summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
-/* The value tree (§7): THE read-only rendering of a JSON value — args, results,
-   sealed partial_args. An object is a key/value grid, an array an ordered list,
-   a string wrapped text; a nested container folds open, a long string closed. */
-.tree { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: 0; }
-.tree dt { font-weight: 600; }
-.tree dd { margin: 0; min-width: 0; }
-.tree .text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tree .null, .tree-block > .null { color: var(--text-muted); }
-.tree dd > details > .tree, .tree li > details > .tree { padding-left: .75rem; border-left: 1px solid var(--border); margin-top: .2rem; }
-ol.tree { display: block; padding-left: 1.25rem; }
-.tree summary, .tree-json > summary, .tree-fold > summary { cursor: pointer; font-size: .85rem; color: var(--text-muted); }
-.tree-json > summary { font-weight: 600; }
-.tree-json { margin-top: .5rem; }
+/* A label/value list of kernel facts (an account's balances). */
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: 0; }
+.kv dt { font-weight: 600; }
+.kv dd { margin: 0; }
 .parties { width: auto; }
 .parties th { padding-right: 2rem; }
 /* Action detail header: title on owner/name + card-consistent chips beside it. */
@@ -583,14 +574,21 @@ textarea {
 
 /* The run/task form's sealed args sit read-only above the editable fields,
    separated by a hairline so the two halves of the one form read distinctly. */
-form > .tree-block.locked { border-bottom: 1px solid var(--border); padding-bottom: .6rem; margin-bottom: .2rem; }
+form > .frozen.locked { border-bottom: 1px solid var(--border); padding-bottom: .6rem; margin-bottom: .2rem; }
+/* The frozen form (§7): a JSON value in the form's own anatomy, read-only. Each
+   control is a .box with the input's geometry; a long string folds behind its
+   first line; the raw JSON sits behind the .frozen-json disclosure. */
+.field .box { width: 100%; padding: .5rem .6rem; font-size: .9rem; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-s); white-space: pre-wrap; overflow-wrap: anywhere; }
+.frozen-json > summary, .frozen-fold > summary { cursor: pointer; font-size: .85rem; color: var(--text-muted); }
+.frozen-json > summary { font-weight: 600; }
+.frozen-json { margin-top: .5rem; }
 /* A nested node of the run form (§6.2): an object's properties, or an array's
    rows, grouped under their legend. */
 fieldset.group { border: 1px solid var(--border); border-radius: var(--radius); padding: .6rem .75rem; margin: 0 0 1rem; min-width: 0; }
 fieldset.group legend { font-weight: 600; padding: 0 .3rem; }
-fieldset.group .field:last-child, fieldset.group [data-row] .field { margin-bottom: 0; }
-[data-row] + [data-row] { margin-top: .5rem; }
-[data-rows] + [data-row-add] { margin-top: .5rem; }
+fieldset.group .field:last-child, fieldset.group .rows .field { margin-bottom: 0; }
+.rows > * + * { margin-top: .5rem; }
+.rows + [data-row-add] { margin-top: .5rem; }
 /* The run result renders as a card attached just below the form. */
 .outcome { margin-top: .85rem; }
 

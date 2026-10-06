@@ -624,8 +624,8 @@ func TestCallFormComplete(t *testing.T) {
 	}
 	// Sealed args render as a read-only dl (the completed part), separated from the
 	// editable part — same anatomy as the run form.
-	if !strings.Contains(body, `class="tree-block locked"`) || !strings.Contains(body, "<dt>to</dt>") || !strings.Contains(body, "bob") {
-		t.Errorf("locked args must render as the value tree: %s", body)
+	if !strings.Contains(body, `class="frozen locked"`) || !strings.Contains(body, "<label>to</label>") || !strings.Contains(body, `<div class="box">bob</div>`) {
+		t.Errorf("locked args must render as a frozen form: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
 		t.Error("locked args carry no verbal label — the visual contrast is the signposting")
@@ -761,8 +761,8 @@ func TestRenderFragment(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Success") || !strings.Contains(body, "/transactions/tx1") {
-		t.Errorf("fragment render missing content: %s", body)
+	if !strings.Contains(body, `class="outcome success"`) || strings.Contains(body, "Success.") || !strings.Contains(body, "/transactions/tx1") {
+		t.Errorf("a success is its styling and its result, with no sentence: %s", body)
 	}
 }
 
@@ -1836,10 +1836,10 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`<fieldset class="field group">`, `<legend>Messages <span class="mono muted small">msgs</span></legend>`,
-		`<input type="hidden" name="t_/msgs" value="array">`, `<div data-rows="/msgs">`, `data-row>`,
+		`<input type="hidden" name="t_/msgs" value="array">`, `<div class="rows" data-rows="/msgs">`, `data-row>`,
 		`<input type="hidden" name="t_/msgs/0" value="object">`,
 		`name="f_/msgs/0/role" rows="1" placeholder="user"></textarea>`,
-		`<div data-rows="/msgs/0/tags">`, `name="f_/msgs/0/tags/0"`,
+		`<div class="rows" data-rows="/msgs/0/tags">`, `name="f_/msgs/0/tags/0"`,
 		`class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button>`,
 		`class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>`,
 		`name="f_/meta" placeholder="{}" rows="1"></textarea>`, `<input type="hidden" name="t_/meta" value="object">`,
@@ -1853,10 +1853,11 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 	}
 }
 
-// The value tree: a key/value list in served order, an ordered list, text with
-// its line breaks, the words for null and booleans, a long string folded, the
-// JSON behind a disclosure, and a Download only where a transaction exists.
-func TestValueBlockRendersTheTree(t *testing.T) {
+// The frozen form: a result in the form's own anatomy, read-only — labels over
+// boxes, a nested object a group under its legend, an array its rows, the words
+// for null and booleans, a long string folded, nothing submittable, the JSON
+// behind a disclosure, and a Download only where a transaction exists.
+func TestValueBlockRendersAFrozenForm(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
@@ -1871,22 +1872,37 @@ func TestValueBlockRendersTheTree(t *testing.T) {
 	long := strings.Repeat("x", longText+1)
 	body := render(`{"z":"a\nb","list":[1,true,null],"empty":{},"long":"`+long+`","n":{"k":"<i>"}}`, "/transactions/T1/result.json")
 	for _, want := range []string{
-		`<dl class="tree"><dt>z</dt><dd><span class="text">a` + "\n" + `b</span></dd>`,
-		`<dt>list</dt><dd><details open><summary>3 items</summary><ol class="tree"><li>1</li><li>true</li><li><span class="null">null</span></li></ol></details></dd>`,
-		`<dt>empty</dt><dd><span class="null">{}</span></dd>`,
-		`<details class="tree-fold"><summary>` + strings.Repeat("x", 80) + `…</summary>`,
-		`<dt>n</dt><dd><details open><summary>1 keys</summary><dl class="tree"><dt>k</dt><dd><span class="text">&lt;i&gt;</span></dd></dl></details></dd>`,
-		`<details class="tree-json"><summary>JSON</summary><pre class="json">`,
+		`<label>z</label>`, `<div class="box">a` + "\n" + `b</div>`,
+		`<legend>list</legend>`, `<div class="rows">`, `<div class="box">1</div>`, `<div class="box">true</div>`, `<div class="box muted">null</div>`,
+		`<label>empty</label>`, `<div class="box muted">{}</div>`,
+		`<details class="frozen-fold"><summary>` + strings.Repeat("x", 80) + `…</summary><div class="box">` + long + `</div></details>`,
+		`<legend>n</legend>`, `<label>k</label>`, `<div class="box">&lt;i&gt;</div>`,
+		`<details class="frozen-json"><summary>JSON</summary><pre class="json">`,
 		`<a href="/transactions/T1/result.json" download>Download</a>`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("value block missing %q:\n%s", want, body)
+			t.Errorf("frozen form missing %q:\n%s", want, body)
 		}
 	}
-	if b := render(`"plain"`, ""); strings.Contains(b, "Download") || !strings.Contains(b, `<span class="text">plain</span>`) {
-		t.Errorf("a scalar result has no download and renders as text: %s", b)
+	if strings.Contains(body, "<input") || strings.Contains(body, "<button") || strings.Contains(body, "data-rows") {
+		t.Errorf("a frozen form has no control and no row mechanism: %s", body)
+	}
+	if strings.Index(body, `<label>z</label>`) > strings.Index(body, `<legend>list</legend>`) {
+		t.Error("keys keep the order served")
+	}
+	if b := render(`"plain"`, ""); strings.Contains(b, "Download") || strings.Contains(b, "<label") || !strings.Contains(b, `<div class="box">plain</div>`) {
+		t.Errorf("a scalar result is one label-less box with no download: %s", b)
 	}
 	if b := render(``, ""); !strings.Contains(b, `<pre class="json"></pre>`) {
 		t.Errorf("an empty value renders raw: %s", b)
+	}
+}
+
+func TestResultDownload(t *testing.T) {
+	if got := resultDownload("T1"); got != "/transactions/T1/result.json" {
+		t.Errorf("download = %q", got)
+	}
+	if resultDownload("") != "" {
+		t.Error("no transaction, no download")
 	}
 }

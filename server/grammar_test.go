@@ -692,10 +692,10 @@ func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 	}
 }
 
-// A JSON value a person reads renders only through the value tree (§7): the
+// A JSON value a person reads renders only through the frozen form (§7): the
 // `json` helper appears in no template outside `_value_block`, and the row
 // attributes the shared mechanism replaced do not return.
-func TestJSONRendersThroughTheValueTree(t *testing.T) {
+func TestJSONRendersThroughTheFrozenForm(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))

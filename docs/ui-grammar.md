@@ -38,7 +38,7 @@ Three laws underpin everything:
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
-| **Value tree** | `.tree` (dl / ol) · `.tree-block` · `.tree-json` · `.tree-fold` · `_value` / `_value_block` partials | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks: structure by JSON type, nothing interpreted; raw JSON behind a closed disclosure, Download on a result (`requirements.md` §7) |
+| **Frozen form** | `.frozen` · `.field .box` · `.frozen-json` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box, nothing submittable; raw JSON behind a closed disclosure, Download on a result (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -315,7 +315,7 @@ none float, none are colored.
   pre-filled.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
   (action run **and** task completion), always inline (never a modal): optional
-  **locked block** (a task's pre-bound args as the value tree, `.tree-block.locked`,
+  **locked block** (a task's pre-bound args as a frozen form, `.frozen.locked`,
   no verbal label — the sealed half of the form), the **editable input**, **one
   button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
@@ -488,7 +488,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | Element | Use |
 |---|---|
 | Flash bar | one-shot result of the last action, top of content |
-| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success carries the value tree (`_value_block`) |
+| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as a frozen form (`_value_block`) |
 | `.banner` (`-info`/`-error`) | inline notice |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
@@ -596,8 +596,8 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   a **payment task** completion is a genuine spend and uses the money button
   naming the amount (§5.1, requirements.md §6.3).
 - Counterparty content (names, descriptions, args, results, reasons) renders
-  **inert**: escaped, no chrome, no accent; a JSON value only through the value
-  tree (`_value` / `_value_block`), which is structure by JSON type and
+  **inert**: escaped, no chrome, no accent; a JSON value only through the frozen
+  form (`_frozen` / `_value_block`), which is structure by JSON type and
   interprets nothing. Trust affordances key on kernel-captured fields, never
   payload shape.
 - No spend reachable from a list view or a GET; money moves only through a
@@ -635,7 +635,7 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   (only an identity or a scope note), any prose note (`.help` / `.card-note`) that
   swells into a paragraph, and any **`¤` character, `$` before a figure, or
   hard-coded `step` on an amount input** (`TestMoneyGrammar`), any `{{json …}}`
-  outside `_value_block` (`TestJSONRendersThroughTheValueTree`), and the retired
+  outside `_value_block` (`TestJSONRendersThroughTheFrozenForm`), and the retired
   `data-param-*` row attributes — money is the
   world's unit and symbol through the `money` helper, the step is the world's
   through `{{amountStep}}`, and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the

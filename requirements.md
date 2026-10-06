@@ -3,11 +3,13 @@
 Version: 0.15.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.15.0.** One **value tree** renders every JSON value a
+> **What changed in 0.15.0.** One **frozen form** renders every JSON value a
 > person reads — a run or task result, a receipt's args and result, a task's
-> sealed `partial_args`, the receipt-verification checks (§7): structure by
-> JSON type, nothing interpreted, the raw JSON behind a disclosure, a Download
-> on a result. The run form renders the input schema at every depth: a nested
+> sealed `partial_args`, the receipt-verification checks (§7): the run form's
+> own anatomy, read-only, so a result looks like the form that produced it;
+> nothing interpreted, the raw JSON behind a disclosure, a Download on a
+> result. The outcome panel states the money fact alone; a success is its
+> styling and its result. The run form renders the input schema at every depth: a nested
 > object is a group, an array its rows with Add and Remove, a map-shaped node a
 > JSON editor; fields are named by JSON Pointer and the args are rebuilt from
 > the form alone (§6.2).
@@ -1010,7 +1012,7 @@ spend:
 
   [ Run ($0.012) ]
   ┌─ result ──────────────────────────────────┐
-  │  Success.   { … }        Receipt · ▲ ▼      │
+  │  [frozen form of the result]  Receipt · ▲ ▼ │
   └────────────────────────────────────────────┘
 ```
 
@@ -1055,8 +1057,9 @@ one question — what happened to the money — so no two may share a sentence:
   naming the price the kernel now quotes, with the form re-pinned so one more
   click accepts the new terms (§6.2 quote pinning). Not a failure: nothing was
   locked, so nothing was refunded.
-* success → the result as the value tree (§7), its JSON behind a disclosure
-  and a Download of the transaction's result; a receipt
+* success → no sentence: the panel's styling says it, and it holds the result
+  as a frozen form (§7), its JSON behind a disclosure and a Download of the
+  transaction's result; a receipt
   summary (gross paid / net to provider / fee captioned "on value added"); an
   inline rate control (0/1 + optional note).
 
@@ -1274,7 +1277,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   own `action` address, captured with the call, so no action is re-read and a
   deleted one still names itself), status, and cost breakdown.
 * The receipt page MUST show parties (buyer/seller, viewer's role highlighted),
-  action ref, args and result as value trees (§7, the result with its
+  action ref, args and result as frozen forms (§7, the result with its
   Download: `GET /transactions/{id}/result.json`, served as an attachment),
   gross/fee/net (fee captioned "on value
   added"), failure `reason` when present, and the buyer's rating block.
@@ -1491,15 +1494,17 @@ the transaction's `payment` (§6.5).
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
-* **The value tree is the one rendering of a JSON value a person reads** — a
+* **The frozen form is the one rendering of a JSON value a person reads** — a
   result, a receipt's args and result, a task's sealed `partial_args`, the
-  receipt-verification checks. It is structure by JSON type alone (RFC 8259):
-  an object is a key/value list in the order served, an array an ordered list,
-  a string its text with its line breaks, a number its literal, a boolean and
-  `null` their words. A nested container folds (open); a string past 800
-  characters folds (closed) behind its first line. The raw JSON sits behind a
-  closed disclosure, with a Download where the value is a transaction's
-  result. Nothing in it is interpreted (§8.1).
+  receipt-verification checks. It is the run form's anatomy (§6.2) read-only,
+  so a result looks like the form that produced it: a key is a label over a
+  box with the input's geometry holding the value's text with its line breaks;
+  a nested object is a group under its legend; an array is its rows; a number
+  is its literal, a boolean, `null`, `{}` and `[]` their words, muted. Keys
+  keep the order served. A string past 800 characters folds (closed) behind its
+  first line. Nothing is submittable. The raw JSON sits behind a closed
+  disclosure, with a Download where the value is a transaction's result.
+  Nothing in it is interpreted (§8.1).
 
   **The world is named wherever the interface names itself.** The chrome states
   the kernel's handle and the world it serves, on every page, because a kernel
@@ -1615,7 +1620,7 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
 
 1. Render every counterparty-authored string escaped and quarantined from chrome:
    no markdown, no auto-links, no bold, no the accent, never adjacent to or styled like
-   a button; a result, args or sealed `partial_args` only through the value tree
+   a button; a result, args or sealed `partial_args` only through the frozen form
    (§7), whose structure is the JSON type and never the value: no value is
    linked, formatted or turned into an icon, a boolean is its word. The chrome
    vocabulary defined in §7 MUST NOT be applied to counterparty content. Trust affordances

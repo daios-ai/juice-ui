@@ -211,7 +211,6 @@
 </div>
 {{else}}
 <div class="outcome success" role="status">
-  <strong>Success.</strong>
   {{template "_value_block" (valueBlock .Result (download .TxID))}}
   {{if .TxID}}
   <div class="row compact">
@@ -307,7 +306,7 @@
   {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
-  {{if .Locked}}<div class="tree-block locked">{{template "_value" (value .Locked)}}</div>{{end}}
+  {{if .Locked}}<div class="frozen locked">{{template "_frozen" (frozen .Locked)}}</div>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="cluster">
     {{/* Two-branch completion rule (requirements.md §6.3, the single statement):
@@ -458,7 +457,9 @@
      Pointer under f_ (value), t_ (type; a container's says how its children
      nest) and n_ (the null choice). An object is a group of its properties, an
      array its rows, a Map node a JSON editor, anything else one input. An
-     array element has no name and renders label-less. */}}
+     array element has no name and renders label-less. A Frozen node is the
+     same anatomy read-only (§7): no wire names, no buttons, each control a
+     .box holding the value. */}}
 {{define "_field_name"}}{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}{{end}}
 {{define "_field_null"}}{{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Path}}" value="1"> null</label>{{end}}{{end}}
 {{define "_field"}}
@@ -466,9 +467,11 @@
 <fieldset class="field group">
   {{if .Name}}<legend>{{template "_field_name" .}}</legend>{{end}}
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
-  <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
-  {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}
-  <div data-rows="{{.Path}}">
+  {{if not .Frozen}}<input type="hidden" name="t_{{.Path}}" value="{{.Type}}">{{end}}
+  {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else if .Frozen}}
+  <div class="rows">{{range .Rows}}{{template "_field" .}}{{end}}</div>
+  {{else}}
+  <div class="rows" data-rows="{{.Path}}">
     {{range .Rows}}<div class="row compact" data-row><div class="stretch">{{template "_field" .}}</div><button type="button" class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></div>{{end}}
   </div>
   <button type="button" class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>
@@ -478,15 +481,18 @@
 {{end}}{{end}}
 {{if or .Map (and (ne .Type "object") (ne .Type "array"))}}
 <div class="field">
-  {{if .Name}}<label for="f_{{.Path}}">{{template "_field_name" .}}</label>{{end}}
+  {{if .Name}}<label{{if not .Frozen}} for="f_{{.Path}}"{{end}}>{{template "_field_name" .}}</label>{{end}}
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
+  {{$v := .Value}}
+  {{if .Frozen}}
+  {{if .Long}}<details class="frozen-fold"><summary>{{truncate 80 $v}}</summary><div class="box">{{$v}}</div></details>{{else if eq .Type "null"}}<div class="box muted">{{$v}}</div>{{else if eq .Type "raw"}}<pre class="json">{{$v}}</pre>{{else}}<div class="box">{{$v}}</div>{{end}}
+  {{else}}
   <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
   {{/* Value pre-fills a field where something already proposed an argument
        (§6.2). A pre-filled field is an ordinary field: editable, submitted
        like any other, and trusted no more than one typed by hand. A blank
        field is omitted, so an optional select leads with a blank choice; a
        schema default is a placeholder, never a value. */}}
-  {{$v := .Value}}
   {{if .Map}}
   <textarea id="f_{{.Path}}" name="f_{{.Path}}" placeholder="{{.Example}}" rows="1">{{$v}}</textarea>
   {{else if .Enum}}
@@ -504,20 +510,17 @@
   <textarea id="f_{{.Path}}" name="f_{{.Path}}" rows="1"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}}>{{$v}}</textarea>
   {{end}}
   {{template "_field_null" .}}
+  {{end}}
 </div>
 {{end}}
 {{end}}
 
-{{/* _value — THE read-only rendering of a JSON value (§7): args, results and
-     sealed partial_args. Structure by JSON type only — a key/value list, an
-     ordered list, a scalar's text; nothing is linked, formatted or iconized
-     (§8.1). A nested container folds (open); a long string folds (closed). */}}
-{{define "_value"}}{{if eq .Kind "object"}}{{if .Entries}}<dl class="tree">{{range .Entries}}<dt>{{.Key}}</dt><dd>{{template "_value_nested" .Value}}</dd>{{end}}</dl>{{else}}<span class="null">{}</span>{{end}}{{else if eq .Kind "array"}}{{if .Items}}<ol class="tree">{{range .Items}}<li>{{template "_value_nested" .}}</li>{{end}}</ol>{{else}}<span class="null">[]</span>{{end}}{{else if eq .Kind "string"}}{{if .Long}}<details class="tree-fold"><summary>{{truncate 80 .Text}}</summary><span class="text">{{.Text}}</span></details>{{else}}<span class="text">{{.Text}}</span>{{end}}{{else if eq .Kind "null"}}<span class="null">null</span>{{else if eq .Kind "raw"}}<pre class="json">{{.Text}}</pre>{{else}}{{.Text}}{{end}}{{end}}
-{{define "_value_nested"}}{{if and (eq .Kind "object") .Entries}}<details open><summary>{{len .Entries}} keys</summary>{{template "_value" .}}</details>{{else if and (eq .Kind "array") .Items}}<details open><summary>{{len .Items}} items</summary>{{template "_value" .}}</details>{{else}}{{template "_value" .}}{{end}}{{end}}
-
-{{/* _value_block — a value with its JSON behind a disclosure, and the download
-     when the result has a transaction here. */}}
-{{define "_value_block"}}<div class="tree-block">{{template "_value" .Value}}<details class="tree-json"><summary>JSON</summary><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</details></div>{{end}}
+{{/* _frozen — a JSON value as a frozen form (§7): the root object's fields
+     directly, any other value one label-less box. _value_block adds the raw
+     JSON behind a disclosure, and the download when the value is a
+     transaction's result. */}}
+{{define "_frozen"}}{{if and (eq .Type "object") .Fields}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}{{template "_field" .}}{{end}}{{end}}
+{{define "_value_block"}}<div class="frozen">{{template "_frozen" .Root}}<details class="frozen-json"><summary>JSON</summary><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</details></div>{{end}}
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 
@@ -559,7 +562,7 @@
 {{if .Receipt}}
 <div class="outcome {{if .Receipt.Valid}}success{{else}}failed{{end}}" role="status">
   <strong>{{if .Receipt.Valid}}Receipt verified.{{else}}Verification failed.{{end}}</strong>
-  <div class="tree-block">{{template "_value" (value .Receipt.Checks)}}</div>
+  <div class="frozen">{{template "_frozen" (frozen .Receipt.Checks)}}</div>
 </div>
 {{else if .ReceiptMsg}}
 <div class="banner banner-info" role="status">{{.ReceiptMsg}}</div>
@@ -675,7 +678,7 @@
      peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
-<dl class="tree">
+<dl class="kv">
   <dt>Petname</dt><dd class="mono">{{if $i.Petname}}{{$i.Petname}}{{else}}<span class="muted">—</span>{{end}}</dd>
   <dt>Status</dt><dd>
     {{if $i.Online}}
