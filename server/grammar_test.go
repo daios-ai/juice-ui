@@ -691,3 +691,23 @@ func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 		check(f, string(b))
 	}
 }
+
+// A JSON value a person reads renders only through the value tree (§7): the
+// `json` helper appears in no template outside `_value_block`, and the row
+// attributes the shared mechanism replaced do not return.
+func TestJSONRendersThroughTheValueTree(t *testing.T) {
+	files, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range files {
+		src := string(mustRead(t, f))
+		if i := strings.Index(src, `{{define "_value_block"}}`); i >= 0 {
+			end := strings.Index(src[i:], "\n")
+			src = src[:i] + src[i+end:]
+		}
+		if strings.Contains(src, "{{json ") {
+			t.Errorf("%s: JSON renders through _value_block, not the json helper", f)
+		}
+		if strings.Contains(src, "data-param-") {
+			t.Errorf("%s: retired data-param-* rows — use [data-rows]", f)
+		}
+	}
+}

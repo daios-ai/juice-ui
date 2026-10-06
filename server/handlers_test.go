@@ -181,7 +181,8 @@ func authKernel() *httptest.Server {
 		w.Write([]byte(`{"result":{"status":"success","action_id":"A2","action_name":"synthesized","diagnostics":[]},"tx_id":"TX1","trace_id":"TR1"}`))
 	})
 	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"T1","action_id":"owned","action":"alice@testnet/x","owner":"alice@testnet","target":"bob@testnet","caller":"alice@testnet","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z"}`))
+		w.Write([]byte(`{"id":"T1","action_id":"owned","action":"alice@testnet/x","owner":"alice@testnet","target":"bob@testnet","caller":"alice@testnet","status":"success","gross":100,"fee":10,"net":90,"started_at":"2024-01-01T00:00:00Z",` +
+			`"args":{"q":"<b>x</b>"},"result":{"items":["a","b"],"text":"line1\nline2","ok":true,"none":null}}`))
 	})
 	// A mutation names a target and answers with the rows it wrote, in name order
 	// — one target may name a whole application (kernel v0.14.0).
@@ -1205,10 +1206,10 @@ func TestImportFlashNamesLocationsAndNotices(t *testing.T) {
 func TestBuildArgsThreeStates(t *testing.T) {
 	form := url.Values{
 		"has_fields": {"1"},
-		"f_blank":    {""}, "t_blank": {"string"},
-		"f_value": {"hi"}, "t_value": {"string"},
-		"f_nulled": {"ignored"}, "t_nulled": {"string"}, "n_nulled": {"1"},
-		"f_obj": {`{"y":""}`}, "t_obj": {"object"}, "n_obj": {"1"},
+		"f_/blank":   {""}, "t_/blank": {"string"},
+		"f_/value": {"hi"}, "t_/value": {"string"},
+		"f_/nulled": {"ignored"}, "t_/nulled": {"string"}, "n_/nulled": {"1"},
+		"f_/obj/y": {"ignored"}, "t_/obj/y": {"string"}, "t_/obj": {"object"}, "n_/obj": {"1"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -2663,7 +2664,7 @@ func TestInboxTwoBranchCompletion(t *testing.T) {
 	if !strings.Contains(page, `type="submit">Complete</button>`) {
 		t.Errorf("ordinary task must keep the neutral Complete: %s", page)
 	}
-	if !strings.Contains(page, `name="f_answer"`) {
+	if !strings.Contains(page, `name="f_/answer"`) {
 		t.Errorf("completion form must derive from allowed_input: %s", page)
 	}
 	if strings.Contains(page, "could not be found") {
@@ -3017,7 +3018,7 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 
 	page := getBody(t, cl, srv.URL+"/actions/P1")
 	resp := postTo(t, cl, srv.URL+"/actions/P1/run", page,
-		url.Values{"f_q": {"hello"}, "t_q": {"string"}, "has_fields": {"1"}})
+		url.Values{"f_/q": {"hello"}, "t_/q": {"string"}, "has_fields": {"1"}})
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	body := string(raw)
@@ -3249,7 +3250,7 @@ func TestProposalFillsTheFormAndSpendsNothing(t *testing.T) {
 	if !strings.Contains(body, "Chosen for you") {
 		t.Errorf("a proposal must say it is one: %s", body)
 	}
-	if !strings.Contains(body, `name="f_url" rows="1">example.com`) {
+	if !strings.Contains(body, `name="f_/url" rows="1">example.com`) {
 		t.Errorf("the proposed argument must fill the ordinary field: %s", body)
 	}
 	// Nothing ran, and the spend is where it always was: behind the run form's
@@ -3896,5 +3897,78 @@ func TestCatalogDiscoveredRows(t *testing.T) {
 	}
 	if strings.Contains(getBody(t, cl, srv.URL+"/workshop"), "Weather forecast") {
 		t.Error("the workshop manages this kernel's actions; a discovered row is not one")
+	}
+}
+
+// The args are rebuilt from the form's pointers and hints alone: a nested
+// object, an array whose blank row is dropped and whose indices compact, a
+// null box that nulls its subtree, an escaped key, and an untouched optional
+// map, which is omitted like any blank field (§6.2).
+func TestBuildArgsRebuildsTheTree(t *testing.T) {
+	form := url.Values{
+		"has_fields":         {"1"},
+		"t_/messages":        {"array"},
+		"t_/messages/0":      {"object"},
+		"f_/messages/0/role": {"user"}, "t_/messages/0/role": {"string"},
+		"f_/messages/0/content": {"hi"}, "t_/messages/0/content": {"string"},
+		"t_/messages/1":      {"object"},
+		"f_/messages/1/role": {""}, "t_/messages/1/role": {"string"},
+		"f_/messages/1/content": {""}, "t_/messages/1/content": {"string"},
+		"t_/messages/2":      {"object"},
+		"f_/messages/2/role": {"system"}, "t_/messages/2/role": {"string"},
+		"f_/messages/2/content": {"later"}, "t_/messages/2/content": {"string"},
+		"t_/options":       {"object"},
+		"f_/options/depth": {"3"}, "t_/options/depth": {"integer"},
+		"t_/options/tags":   {"array"},
+		"f_/options/tags/0": {""}, "t_/options/tags/0": {"string"},
+		"t_/tool":      {"object"},
+		"f_/tool/name": {"ignored"}, "t_/tool/name": {"string"}, "n_/tool": {"1"},
+		"f_/meta": {""}, "t_/meta": {"object"},
+		"f_/a~1b": {"slash"}, "t_/a~1b": {"string"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	raw, err := buildArgs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"a/b":"slash","messages":[{"content":"hi","role":"user"},{"content":"later","role":"system"}],"options":{"depth":3},"tool":null}`
+	if string(raw) != want {
+		t.Errorf("args = %s\nwant %s", raw, want)
+	}
+}
+
+// A result downloads as a file from its transaction, through the kernel's own
+// read, so who may have it is the kernel's decision (§6.5).
+func TestResultDownloadIsAnAttachment(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	resp, err := cl.Get(srv.URL + "/transactions/T1/result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("status %d, type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != `attachment; filename="result-T1.json"` {
+		t.Errorf("disposition = %q", cd)
+	}
+	if !strings.Contains(string(body), `"items":["a","b"]`) {
+		t.Errorf("body = %s", body)
+	}
+	// The receipt page renders both values as trees, escaped, and offers the download.
+	page := getBody(t, cl, srv.URL+"/transactions/T1")
+	for _, want := range []string{`<dt>q</dt>`, `&lt;b&gt;x&lt;/b&gt;`, `<dt>items</dt>`, `<ol class="tree">`, `<span class="null">null</span>`, `href="/transactions/T1/result.json" download`, "line1\nline2"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("receipt page missing %q", want)
+		}
+	}
+	if strings.Contains(page, `<pre class="json">{\n  &#34;q&#34;`) && !strings.Contains(page, `<details class="tree-json">`) {
+		t.Error("the raw JSON sits behind the disclosure")
 	}
 }

@@ -607,8 +607,7 @@ func TestCallFormComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	locked := []LockedField{{Name: "to", Value: `"bob"`}}
-	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, locked, nil, nil, false, 0, "", false)
+	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, json.RawMessage(`{"to":"bob"}`), nil, false, 0, "", false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -625,8 +624,8 @@ func TestCallFormComplete(t *testing.T) {
 	}
 	// Sealed args render as a read-only dl (the completed part), separated from the
 	// editable part — same anatomy as the run form.
-	if !strings.Contains(body, `class="locked-args`) || !strings.Contains(body, "<dt>to</dt>") || !strings.Contains(body, "bob") {
-		t.Errorf("locked args must render as a read-only dl: %s", body)
+	if !strings.Contains(body, `class="tree-block locked"`) || !strings.Contains(body, "<dt>to</dt>") || !strings.Contains(body, "bob") {
+		t.Errorf("locked args must render as the value tree: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
 		t.Error("locked args carry no verbal label — the visual contrast is the signposting")
@@ -675,8 +674,7 @@ func TestCallFormApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	locked := []LockedField{{Name: "message", Value: `"hi"`}}
-	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, locked, nil, nil, false, 0, "", false)
+	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, json.RawMessage(`{"message":"hi"}`), nil, false, 0, "", false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -1386,7 +1384,7 @@ func TestCallFormPayment(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	cf := completeForm(template.HTML(`<input>`), "SP", 0, FormModel{}, true,
-		[]LockedField{{Name: "target", Value: `"alice"`}, {Name: "amount", Value: "300"}}, nil, nil,
+		json.RawMessage(`{"target":"alice","amount":300}`), nil,
 		true, 300, "alice", false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
@@ -1400,7 +1398,7 @@ func TestCallFormPayment(t *testing.T) {
 	}
 	// Typed amount: money button, no parenthesized figure (wallet-send pattern).
 	rec2 := httptest.NewRecorder()
-	cf2 := completeForm(template.HTML(`<input>`), "SP2", 0, FormModel{UseRawFallback: true}, false, nil, nil, nil,
+	cf2 := completeForm(template.HTML(`<input>`), "SP2", 0, FormModel{UseRawFallback: true}, false, nil, nil,
 		true, 0, "", false)
 	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
 		t.Fatal(err)
@@ -1543,7 +1541,7 @@ func TestFormFieldsNullableAndBounds(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`<input type="checkbox" name="n_opt" value="1"> null`,
+		`<input type="checkbox" name="n_/opt" value="1"> null`,
 		`min="1" max="9"`,
 		`maxlength="5"`,
 		`Short <span class="mono muted small">s</span>`,
@@ -1553,7 +1551,7 @@ func TestFormFieldsNullableAndBounds(t *testing.T) {
 			t.Errorf("form fields missing %q: %s", want, body)
 		}
 	}
-	if strings.Contains(body, `name="n_s"`) || strings.Contains(body, `name="n_n"`) {
+	if strings.Contains(body, `name="n_/s"`) || strings.Contains(body, `name="n_/n"`) {
 		t.Error("only a nullable field offers null")
 	}
 	if strings.Contains(body, `<option value="null"`) {
@@ -1797,7 +1795,7 @@ func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := completeForm(template.HTML(`<input>`), "T7", 0, FormModel{}, true, nil, nil, nil, false, 0, "", true)
+	cf := completeForm(template.HTML(`<input>`), "T7", 0, FormModel{}, true, nil, nil, false, 0, "", true)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
 	}
@@ -1809,10 +1807,85 @@ func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
 		t.Errorf("the decline form must follow the call form, with a plain confirm: %s", body)
 	}
 	rec = httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "T8", 0, FormModel{}, true, nil, nil, nil, false, 0, "", false)); err != nil {
+	if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "T8", 0, FormModel{}, true, nil, nil, false, 0, "", false)); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(rec.Body.String(), "decline") {
 		t.Errorf("no Decline without the right to decline: %s", rec.Body.String())
+	}
+}
+
+// The run form renders the schema's tree: a nested object as a group under its
+// legend, an array as rows that name their path (a nested array its own), a map
+// node as an empty JSON editor with the shape as placeholder, a default as a
+// placeholder and never a value, and only grammar buttons.
+func TestFormFieldsRenderTheTree(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
+		"msgs":{"type":"array","title":"Messages","description":"M.","items":{"type":"object","properties":{
+			"role":{"type":"string","default":"user"},
+			"tags":{"type":"array","items":{"type":"string"}}}}},
+		"meta":{"type":"object","additionalProperties":{"type":"string"}}}}`))
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<fieldset class="field group">`, `<legend>Messages <span class="mono muted small">msgs</span></legend>`,
+		`<input type="hidden" name="t_/msgs" value="array">`, `<div data-rows="/msgs">`, `data-row>`,
+		`<input type="hidden" name="t_/msgs/0" value="object">`,
+		`name="f_/msgs/0/role" rows="1" placeholder="user"></textarea>`,
+		`<div data-rows="/msgs/0/tags">`, `name="f_/msgs/0/tags/0"`,
+		`class="btn-quiet" data-row-remove>Remove</button>`, `class="btn" data-row-add>Add</button>`,
+		`name="f_/meta" placeholder="{}" rows="1"></textarea>`, `<input type="hidden" name="t_/meta" value="object">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("form missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `>user</textarea>`) {
+		t.Error("a default is a placeholder, never a value")
+	}
+}
+
+// The value tree: a key/value list in served order, an ordered list, text with
+// its line breaks, the words for null and booleans, a long string folded, the
+// JSON behind a disclosure, and a Download only where a transaction exists.
+func TestValueBlockRendersTheTree(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(raw, download string) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_value_block", valueBlock(json.RawMessage(raw), download)); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	long := strings.Repeat("x", longText+1)
+	body := render(`{"z":"a\nb","list":[1,true,null],"empty":{},"long":"`+long+`","n":{"k":"<i>"}}`, "/transactions/T1/result.json")
+	for _, want := range []string{
+		`<dl class="tree"><dt>z</dt><dd><span class="text">a` + "\n" + `b</span></dd>`,
+		`<dt>list</dt><dd><details open><summary>3 items</summary><ol class="tree"><li>1</li><li>true</li><li><span class="null">null</span></li></ol></details></dd>`,
+		`<dt>empty</dt><dd><span class="null">{}</span></dd>`,
+		`<details class="tree-fold"><summary>` + strings.Repeat("x", 80) + `…</summary>`,
+		`<dt>n</dt><dd><details open><summary>1 keys</summary><dl class="tree"><dt>k</dt><dd><span class="text">&lt;i&gt;</span></dd></dl></details></dd>`,
+		`<details class="tree-json"><summary>JSON</summary><pre class="json">`,
+		`<a href="/transactions/T1/result.json" download>Download</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("value block missing %q:\n%s", want, body)
+		}
+	}
+	if b := render(`"plain"`, ""); strings.Contains(b, "Download") || !strings.Contains(b, `<span class="text">plain</span>`) {
+		t.Errorf("a scalar result has no download and renders as text: %s", b)
+	}
+	if b := render(``, ""); !strings.Contains(b, `<pre class="json"></pre>`) {
+		t.Errorf("an empty value renders raw: %s", b)
 	}
 }

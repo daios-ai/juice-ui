@@ -6,7 +6,7 @@
 <nav class="crumb"><a href="/admin">← admin</a></nav>
 <h1>{{$u.Address}}</h1>
 <div class="card">
-  <dl class="locked-args">
+  <dl class="tree">
     <dt>Address</dt><dd class="mono">{{$u.Address}}</dd>
     {{if $u.Description}}<dt>About</dt><dd>{{$u.Description}}</dd>{{end}}
     <dt>Available</dt><dd class="money">{{money $u.Available}}</dd>

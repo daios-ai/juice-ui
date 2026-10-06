@@ -110,7 +110,7 @@ func TestSchemaExampleNested(t *testing.T) {
 			t.Errorf("example missing %q:\n%s", want, ex)
 		}
 	}
-	// The array field carries its own skeleton for pre-filling its textarea.
+	// The array field starts with one row of its item's fields, at its index path.
 	fm := BuildForm(schema)
 	var msgs Field
 	for _, f := range fm.Fields {
@@ -118,8 +118,8 @@ func TestSchemaExampleNested(t *testing.T) {
 			msgs = f
 		}
 	}
-	if msgs.Type != "array" || !json.Valid([]byte(msgs.Example)) || !strings.Contains(msgs.Example, `"role"`) {
-		t.Errorf("messages field example wrong: %q", msgs.Example)
+	if msgs.Type != "array" || len(msgs.Rows) != 1 || len(msgs.Rows[0].Fields) != 2 || msgs.Rows[0].Fields[0].Path != "/messages/0/role" {
+		t.Errorf("messages field rows wrong: %+v", msgs.Rows)
 	}
 }
 
@@ -309,8 +309,8 @@ func TestBuildFormCanonicalNullable(t *testing.T) {
 	if f := byName["kind"]; !f.Nullable || strings.Join(f.Enum, ",") != "a,b" {
 		t.Errorf("kind = %+v, want enum a,b and nullable", f)
 	}
-	if f := byName["nest"]; f.Type != "object" || !f.Nullable || !strings.Contains(f.Example, `"y": ""`) {
-		t.Errorf("nest = %+v, want a nullable object with its skeleton", f)
+	if f := byName["nest"]; f.Type != "object" || !f.Nullable || len(f.Fields) != 1 || f.Fields[0].Path != "/nest/y" {
+		t.Errorf("nest = %+v, want a nullable object with its one field", f)
 	}
 }
 
@@ -338,5 +338,83 @@ func TestBuildFormClosedEmptyAndMap(t *testing.T) {
 	}
 	if fm := BuildForm(json.RawMessage(`{"additionalProperties":{"type":"string"},"properties":{},"type":"object"}`)); !fm.UseRawFallback {
 		t.Errorf("a map-shaped object needs the raw editor: %+v", fm)
+	}
+}
+
+// The form is the schema's tree: an object's properties nest under its path, an
+// array starts with max(minItems, 1) rows of its item, a map-shaped node is a
+// JSON editor with the shape as its placeholder, and keys are pointer-escaped.
+func TestBuildFormTree(t *testing.T) {
+	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
+		"a/b":{"type":"string","default":"x","format":"email"},
+		"date":{"type":"string","format":"date"},
+		"depth":{"type":"integer","exclusiveMinimum":0,"exclusiveMaximum":10},
+		"meta":{"type":"object","additionalProperties":{"type":"string"}},
+		"msgs":{"type":"array","minItems":2,"items":{"type":"object","properties":{
+			"role":{"type":"string","enum":["user","system"]},
+			"tool":{"type":["object","null"],"properties":{"name":{"type":"string"}}}},"required":["role"]}},
+		"tags":{"type":"array","items":{"type":"string"}},
+		"loose":{"type":"array"}},"required":["msgs"]}`))
+	if fm.UseRawFallback || len(fm.Fields) != 7 {
+		t.Fatalf("form = %+v", fm)
+	}
+	by := map[string]Field{}
+	for _, f := range fm.Fields {
+		by[f.Name] = f
+	}
+	if f := by["a/b"]; f.Path != "/a~1b" || f.Default != "x" || f.Value != "" || f.Input != "email" {
+		t.Errorf("a/b = %+v: want an escaped path, the default as placeholder only, an email input", f)
+	}
+	if f := by["date"]; f.Input != "date" {
+		t.Errorf("date = %+v", f)
+	}
+	if f := by["depth"]; f.Min != "1" || f.Max != "9" {
+		t.Errorf("depth = %+v: exclusive integer bounds shift by one", f)
+	}
+	if f := by["meta"]; !f.Map || f.Example != "{}" || f.Fields != nil {
+		t.Errorf("meta = %+v: a map node is a JSON editor", f)
+	}
+	msgs := by["msgs"]
+	if !msgs.Required || len(msgs.Rows) != 2 || msgs.Rows[1].Path != "/msgs/1" || msgs.Rows[1].Name != "" {
+		t.Fatalf("msgs = %+v", msgs)
+	}
+	row := msgs.Rows[1]
+	if len(row.Fields) != 2 || row.Fields[0].Path != "/msgs/1/role" || !row.Fields[0].Required || len(row.Fields[0].Enum) != 2 {
+		t.Errorf("row = %+v", row.Fields)
+	}
+	if tool := row.Fields[1]; !tool.Nullable || tool.Type != "object" || tool.Fields[0].Path != "/msgs/1/tool/name" {
+		t.Errorf("tool = %+v", tool)
+	}
+	if f := by["tags"]; len(f.Rows) != 1 || f.Rows[0].Type != "string" || f.Rows[0].Path != "/tags/0" {
+		t.Errorf("tags = %+v", f)
+	}
+	if f := by["loose"]; !f.Map || f.Example != "[]" {
+		t.Errorf("an array without items is a JSON editor: %+v", f)
+	}
+	for _, c := range []string{"plain", "a/b", "a~b", "~1/"} {
+		if pointerUnescape(pointerEscape(c)) != c {
+			t.Errorf("pointer round trip broke %q", c)
+		}
+	}
+}
+
+// A proposal fills the tree: scalars as text, one row per array element, a map
+// node as its JSON; a key the schema does not name is left alone.
+func TestFormFill(t *testing.T) {
+	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
+		"n":{"type":"integer"},
+		"meta":{"type":"object","additionalProperties":{"type":"string"}},
+		"msgs":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}}}}`))
+	fm.Fill(json.RawMessage(`{"n":4,"meta":{"k":"v"},"msgs":[{"role":"user","content":"a"},{"role":"system","content":"b"}],"extra":1}`))
+	by := map[string]Field{}
+	for _, f := range fm.Fields {
+		by[f.Name] = f
+	}
+	if by["n"].Value != "4" || by["meta"].Value != `{"k":"v"}` {
+		t.Errorf("scalars = %q, map = %q", by["n"].Value, by["meta"].Value)
+	}
+	msgs := by["msgs"]
+	if len(msgs.Rows) != 2 || msgs.Rows[1].Path != "/msgs/1" || msgs.Rows[1].Fields[0].Value != "system" || msgs.Rows[0].Fields[1].Value != "a" {
+		t.Errorf("rows = %+v", msgs.Rows)
 	}
 }

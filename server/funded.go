@@ -143,15 +143,14 @@ func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
 
 // CallForm drives the shared _call_form partial for both running an action and
 // completing a task — conceptually the same act (execute an action). Locked
-// (a task's pre-bound args) renders through the result renderer; Editable is the
+// (a task's pre-bound args) renders through the value tree; Editable is the
 // remaining input; the result renders below the form with progress + disable.
 type CallForm struct {
 	CSRFField  template.HTML
 	PostURL    string
 	Verb       string          // "Run" | "Complete"
 	Price      int64           // >0 → money button "Verb (N)"; 0 → plain "Verb"
-	Locked     []LockedField   // a task's pre-bound args, shown read-only above the fields
-	LockedRaw  json.RawMessage // fallback raw pre-bound args when the schema gave no split
+	Locked     json.RawMessage // a task's pre-bound args, shown read-only above the fields
 	Editable   FormModel
 	IsApproval bool   // no editable input — just acknowledge
 	ResultID   string // id of the below-form result target
@@ -194,13 +193,12 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 
 // completeForm builds a CallForm for completing a task (one-shot; the sealed args
 // render read-only above the editable fields). ResultID is per-task so many
-// inbox forms don't collide. locked is the structured split; lockedRaw is the
-// raw fallback when the schema produced no structured fields. canDecline puts
+// inbox forms don't collide. locked is the task's partial_args. canDecline puts
 // Decline beside Complete.
-func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked []LockedField, lockedRaw json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string, canDecline bool) CallForm {
+func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string, canDecline bool) CallForm {
 	f := CallForm{
 		CSRFField: csrf, PostURL: "/inbox/" + taskID + "/complete", Verb: "Complete",
-		Price: price, Locked: locked, LockedRaw: lockedRaw, Editable: editable, IsApproval: isApproval,
+		Price: price, Locked: locked, Editable: editable, IsApproval: isApproval,
 		ResultID: "task-result-" + taskID, Outcome: outcome, OneShot: true,
 		IsPayment: isPayment, Payment: payment, PayTo: payTo,
 	}

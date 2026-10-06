@@ -24,7 +24,7 @@
 
 {{if $d.CanComplete}}
 <h2>Complete</h2>
-{{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price $d.Form.Editable $d.Form.IsApproval $d.Form.Locked $t.PartialArgs nil $d.IsPayment $d.Payment $d.PayTo $d.CanDecline)}}
+{{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price $d.Form.Editable $d.Form.IsApproval $t.PartialArgs nil $d.IsPayment $d.Payment $d.PayTo $d.CanDecline)}}
 {{else if $d.CanDecline}}
 <div class="cluster">{{template "_decline_button" $t.ID}}</div>
 {{template "_task_decline" (declineForm $.CSRFField $t.ID)}}

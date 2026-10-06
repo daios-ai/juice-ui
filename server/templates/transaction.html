@@ -42,11 +42,11 @@
   {{/* Args / Result — counterparty content, inert */}}
   <div>
     <h3>Arguments</h3>
-    <pre class="json">{{json $d.Tx.Args}}</pre>
+    {{template "_value_block" (valueBlock $d.Tx.Args "")}}
   </div>
   <div>
     <h3>Result</h3>
-    <pre class="json">{{json $d.Tx.Result}}</pre>
+    {{template "_value_block" (valueBlock $d.Tx.Result (download $d.Tx.ID))}}
   </div>
 
   {{/* Receipt verification — on demand (Verify control) */}}

@@ -37,7 +37,8 @@ Three laws underpin everything:
 | **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
-| Field | `.field` + inputs/select/textarea | forms |
+| Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
+| **Value tree** | `.tree` (dl / ol) · `.tree-block` · `.tree-json` · `.tree-fold` · `_value` / `_value_block` partials | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks: structure by JSON type, nothing interpreted; raw JSON behind a closed disclosure, Download on a result (`requirements.md` §7) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -302,20 +303,29 @@ none float, none are colored.
 - **Textarea:** starts at **exactly one line** (`min-height` = 1 line + padding),
   **autosizes** to content up to 10 lines then scrolls; mono; `rows="1"`. Never
   a fixed multi-line box.
-- **Progressive widgets:** repeatable rows (`[data-param-rows]`/`[data-param-row]`),
-  scheme reveal (`[data-auth-scheme]`), kind reveal (`[data-http-only]`) — all
-  disable hidden inputs so they aren't submitted. Secrets are masked, write-only,
-  never pre-filled.
+- **Progressive widgets:** repeatable rows (`[data-rows]`/`[data-row]`, Add =
+  `.btn`, Remove = `.btn-quiet`; one mechanism for the http parameter rows and
+  a schema array's rows — Add clones the last row, clears it and, when the
+  container names its array's path, renumbers the clone to one past the highest
+  index in every `name`, `id`, `for` and nested `data-rows`), scheme reveal
+  (`[data-auth-scheme]`), kind reveal (`[data-kind]`) — all disable hidden
+  inputs so they aren't submitted. Secrets are masked, write-only, never
+  pre-filled.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
   (action run **and** task completion), always inline (never a modal): optional
-  **locked block** (a task's pre-bound args as a read-only `.locked-args` dl, no
-  verbal label — the sealed half of the form), the **editable input**, **one
+  **locked block** (a task's pre-bound args as the value tree, `.tree-block.locked`,
+  no verbal label — the sealed half of the form), the **editable input**, **one
   button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the field-switch), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.
+  Structured means the schema's whole tree: a nested object is a
+  `fieldset.group` under its `legend`, an array its `[data-rows]` with Add and
+  Remove, a map-shaped node an empty JSON textarea with the shape as its
+  placeholder; a field's wire name is its JSON Pointer (`f_/messages/0/content`,
+  `t_` the type hint, `n_` the null box; `requirements.md` §6.2).
 - **Field-switch** (`.field-switch`, `fields | JSON`) is the bare tab-group switch
   (§5.2) — the one way to edit a structured form as raw JSON. No "edit as JSON" button.
 
@@ -476,7 +486,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | Element | Use |
 |---|---|
 | Flash bar | one-shot result of the last action, top of content |
-| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel |
+| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success carries the value tree (`_value_block`) |
 | `.banner` (`-info`/`-error`) | inline notice |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
@@ -584,8 +594,10 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   a **payment task** completion is a genuine spend and uses the money button
   naming the amount (§5.1, requirements.md §6.3).
 - Counterparty content (names, descriptions, args, results, reasons) renders
-  **inert**: escaped, no chrome, no accent, JSON in a code block. Trust
-  affordances key on kernel-captured fields, never payload shape.
+  **inert**: escaped, no chrome, no accent; a JSON value only through the value
+  tree (`_value` / `_value_block`), which is structure by JSON type and
+  interprets nothing. Trust affordances key on kernel-captured fields, never
+  payload shape.
 - No spend reachable from a list view or a GET; money moves only through a
   confirm that names the amount.
 - Record lists share one row partial per record type; the truncated id is the
@@ -620,7 +632,9 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   any `<table>` not wrapped in a `.table-scroll`, any `.subtitle` holding prose
   (only an identity or a scope note), any prose note (`.help` / `.card-note`) that
   swells into a paragraph, and any **`¤` character, `$` before a figure, or
-  hard-coded `step` on an amount input** (`TestMoneyGrammar`) — money is the
+  hard-coded `step` on an amount input** (`TestMoneyGrammar`), any `{{json …}}`
+  outside `_value_block` (`TestJSONRendersThroughTheValueTree`), and the retired
+  `data-param-*` row attributes — money is the
   world's unit and symbol through the `money` helper, the step is the world's
   through `{{amountStep}}`, and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the
   vocabulary the kernel retired: settle, unimport, the transfer queue, admin

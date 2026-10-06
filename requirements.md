@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.14.0
+Version: 0.15.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.15.0.** One **value tree** renders every JSON value a
+> person reads — a run or task result, a receipt's args and result, a task's
+> sealed `partial_args`, the receipt-verification checks (§7): structure by
+> JSON type, nothing interpreted, the raw JSON behind a disclosure, a Download
+> on a result. The run form renders the input schema at every depth: a nested
+> object is a group, an array its rows with Add and Remove, a map-shaped node a
+> JSON editor; fields are named by JSON Pointer and the args are rebuilt from
+> the form alone (§6.2).
 
 > **What changed in 0.14.0.** The kernel (034426e) serves one catalog:
 > `GET /v1/actions` holds the caller's own actions in every state, the live
@@ -940,10 +949,25 @@ spend:
   choice: a blank field is **omitted**, a value is sent, and `null` is sent only
   when chosen — never derived from a blank. A property's `title` labels it
   beside its key; `minimum`/`maximum`/`minLength`/`maxLength` become the
-  input's bounds. Nothing else is mapped (`default` would be submitted; `pattern`
-  is anchored differently in HTML). A map-shaped object (a schema under
-  `additionalProperties`) uses the raw editor; a closed object with no
-  properties is a confirm alone.
+  input's bounds; `default` is the input's placeholder, never its value (it is
+  an annotation no validator inserts, and a pre-filled value would be submitted
+  untyped); `format` `date`, `email` and `uri` set the input type (`date-time`
+  is not mapped: `datetime-local` carries no zone and fails RFC 3339); an
+  integer's exclusive bound becomes the next inclusive one. Nothing else is
+  mapped (`multipleOf` would misread HTML's `step`, whose base is `min`;
+  `pattern` is anchored differently in HTML).
+* **The form is the schema's tree.** A nested object renders as a group of its
+  properties under its label; an array as rows of its item, `max(minItems, 1)`
+  to start, with Add and Remove; a map-shaped node (a schema under
+  `additionalProperties`, or an array without `items`) as an empty JSON editor
+  whose placeholder is the shape. A field is named by its JSON Pointer
+  (`f_/messages/0/content`), its type by `t_<path>` — a container's hint says
+  how its children nest — and its null choice by `n_<path>`, which nulls the
+  whole subtree. The args are rebuilt from the form alone, with no schema read
+  at submit: an empty container is omitted, a row left blank is dropped and the
+  indices compact; an explicit `[]` or `{}` is typed in JSON mode. The map-shaped
+  input as a whole uses the raw editor; a closed object with no properties is a
+  confirm alone.
 * **A run MUST pin the quote it was shown.** Every action read and every
   `sys/lookup` row carries `quote_hash`, a fingerprint of the quoted terms
   (price, title, description, schemas, effect). The form carries it as a hidden field
@@ -1031,7 +1055,8 @@ one question — what happened to the money — so no two may share a sentence:
   naming the price the kernel now quotes, with the form re-pinned so one more
   click accepts the new terms (§6.2 quote pinning). Not a failure: nothing was
   locked, so nothing was refunded.
-* success → the result (formatted, foldable, downloadable JSON); a receipt
+* success → the result as the value tree (§7), its JSON behind a disclosure
+  and a Download of the transaction's result; a receipt
   summary (gross paid / net to provider / fee captioned "on value added"); an
   inline rate control (0/1 + optional note).
 
@@ -1249,7 +1274,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   own `action` address, captured with the call, so no action is re-read and a
   deleted one still names itself), status, and cost breakdown.
 * The receipt page MUST show parties (buyer/seller, viewer's role highlighted),
-  action ref, inline args and result, gross/fee/net (fee captioned "on value
+  action ref, args and result as value trees (§7, the result with its
+  Download: `GET /transactions/{id}/result.json`, served as an attachment),
+  gross/fee/net (fee captioned "on value
   added"), failure `reason` when present, and the buyer's rating block.
   *Conditional:* where the kernel serves them, the value and federation economics
   fields (`premium`, `value`, `value_to`) render as additional breakdown rows,
@@ -1464,6 +1491,15 @@ the transaction's `payment` (§6.5).
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
+* **The value tree is the one rendering of a JSON value a person reads** — a
+  result, a receipt's args and result, a task's sealed `partial_args`, the
+  receipt-verification checks. It is structure by JSON type alone (RFC 8259):
+  an object is a key/value list in the order served, an array an ordered list,
+  a string its text with its line breaks, a number its literal, a boolean and
+  `null` their words. A nested container folds (open); a string past 800
+  characters folds (closed) behind its first line. The raw JSON sits behind a
+  closed disclosure, with a Download where the value is a transaction's
+  result. Nothing in it is interpreted (§8.1).
 
   **The world is named wherever the interface names itself.** The chrome states
   the kernel's handle and the world it serves, on every page, because a kernel
@@ -1579,8 +1615,10 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
 
 1. Render every counterparty-authored string escaped and quarantined from chrome:
    no markdown, no auto-links, no bold, no the accent, never adjacent to or styled like
-   a button; result JSON in a non-interpreted code block. The chrome vocabulary
-   defined in §7 MUST NOT be applied to counterparty content. Trust affordances
+   a button; a result, args or sealed `partial_args` only through the value tree
+   (§7), whose structure is the JSON type and never the value: no value is
+   linked, formatted or turned into an icon, a boolean is its word. The chrome
+   vocabulary defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
    task's `required_caller` and `action`), never on payload shape.
 2. Route every act that moves the user's own money — run (including a run of a

@@ -212,7 +212,7 @@
 {{else}}
 <div class="outcome success" role="status">
   <strong>Success.</strong>
-  <pre class="json">{{json .Result}}</pre>
+  {{template "_value_block" (valueBlock .Result (download .TxID))}}
   {{if .TxID}}
   <div class="row compact">
     <a class="btn" href="/transactions/{{.TxID}}">Receipt</a>
@@ -307,7 +307,7 @@
   {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
-  {{if .Locked}}<dl class="locked-args flush">{{range .Locked}}<dt>{{.Name}}</dt><dd class="mono">{{.Value}}</dd>{{end}}</dl>{{else if .LockedRaw}}<pre class="json">{{json .LockedRaw}}</pre>{{end}}
+  {{if .Locked}}<div class="tree-block locked">{{template "_value" (value .Locked)}}</div>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="cluster">
     {{/* Two-branch completion rule (requirements.md §6.3, the single statement):
@@ -440,35 +440,7 @@
   <button type="button" class="seg" data-raw-seg="json" aria-pressed="false">JSON</button>
 </div>
 <div data-fields class="stack">
-  {{range .Fields}}
-  <div class="field">
-    <label for="f_{{.Name}}">{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</label>
-    {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
-    <input type="hidden" name="t_{{.Name}}" value="{{.Type}}">
-    {{/* Value pre-fills a field where something already proposed an argument
-         (§6.2). A pre-filled field is an ordinary field: editable, submitted
-         like any other, and trusted no more than one typed by hand. A blank
-         field is omitted, so an optional select leads with a blank choice. */}}
-    {{$v := .Value}}
-    {{if .Enum}}
-    <select id="f_{{.Name}}" name="f_{{.Name}}">
-      {{if not .Required}}<option value=""></option>{{end}}
-      {{range .Enum}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
-    </select>
-    {{else if eq .Type "boolean"}}
-    <select id="f_{{.Name}}" name="f_{{.Name}}">{{if not .Required}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
-    {{else if or (eq .Type "integer") (eq .Type "number")}}
-    <input id="f_{{.Name}}" name="f_{{.Name}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}} value="{{$v}}">
-    {{else if or (eq .Type "object") (eq .Type "array")}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}" placeholder="JSON {{.Type}}" rows="1">{{if $v}}{{$v}}{{else}}{{.Example}}{{end}}</textarea>
-    {{else}}
-    <textarea id="f_{{.Name}}" name="f_{{.Name}}" rows="1"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}>{{$v}}</textarea>
-    {{end}}
-    {{/* null is its own choice, never a blank input: ticked, the field is sent
-         as null whatever the input holds. */}}
-    {{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Name}}" value="1"> null</label>{{end}}
-  </div>
-  {{end}}
+  {{range .Fields}}{{template "_field" .}}{{end}}
 </div>
 {{end}}
 <div class="field" data-raw{{if not .UseRawFallback}} hidden{{end}}>
@@ -481,6 +453,71 @@
 {{if not .UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}
 {{end}}
 {{end}}
+
+{{/* _field — one node of the schema tree (§6.2). Its wire name is its JSON
+     Pointer under f_ (value), t_ (type; a container's says how its children
+     nest) and n_ (the null choice). An object is a group of its properties, an
+     array its rows, a Map node a JSON editor, anything else one input. An
+     array element has no name and renders label-less. */}}
+{{define "_field_name"}}{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}{{end}}
+{{define "_field_null"}}{{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Path}}" value="1"> null</label>{{end}}{{end}}
+{{define "_field"}}
+{{if or (eq .Type "object") (eq .Type "array")}}{{if not .Map}}
+<fieldset class="field group">
+  {{if .Name}}<legend>{{template "_field_name" .}}</legend>{{end}}
+  {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
+  <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
+  {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}
+  <div data-rows="{{.Path}}">
+    {{range .Rows}}<div class="row compact" data-row><div class="stretch">{{template "_field" .}}</div><button type="button" class="btn-quiet" data-row-remove>Remove</button></div>{{end}}
+  </div>
+  <button type="button" class="btn" data-row-add>Add</button>
+  {{end}}
+  {{template "_field_null" .}}
+</fieldset>
+{{end}}{{end}}
+{{if or .Map (and (ne .Type "object") (ne .Type "array"))}}
+<div class="field">
+  {{if .Name}}<label for="f_{{.Path}}">{{template "_field_name" .}}</label>{{end}}
+  {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
+  <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
+  {{/* Value pre-fills a field where something already proposed an argument
+       (§6.2). A pre-filled field is an ordinary field: editable, submitted
+       like any other, and trusted no more than one typed by hand. A blank
+       field is omitted, so an optional select leads with a blank choice; a
+       schema default is a placeholder, never a value. */}}
+  {{$v := .Value}}
+  {{if .Map}}
+  <textarea id="f_{{.Path}}" name="f_{{.Path}}" placeholder="{{.Example}}" rows="1">{{$v}}</textarea>
+  {{else if .Enum}}
+  <select id="f_{{.Path}}" name="f_{{.Path}}">
+    {{if not .Required}}<option value=""></option>{{end}}
+    {{range .Enum}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  {{else if eq .Type "boolean"}}
+  <select id="f_{{.Path}}" name="f_{{.Path}}">{{if not .Required}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
+  {{else if or (eq .Type "integer") (eq .Type "number")}}
+  <input id="f_{{.Path}}" name="f_{{.Path}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
+  {{else if .Input}}
+  <input id="f_{{.Path}}" name="f_{{.Path}}" type="{{.Input}}"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
+  {{else}}
+  <textarea id="f_{{.Path}}" name="f_{{.Path}}" rows="1"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}}>{{$v}}</textarea>
+  {{end}}
+  {{template "_field_null" .}}
+</div>
+{{end}}
+{{end}}
+
+{{/* _value — THE read-only rendering of a JSON value (§7): args, results and
+     sealed partial_args. Structure by JSON type only — a key/value list, an
+     ordered list, a scalar's text; nothing is linked, formatted or iconized
+     (§8.1). A nested container folds (open); a long string folds (closed). */}}
+{{define "_value"}}{{if eq .Kind "object"}}{{if .Entries}}<dl class="tree">{{range .Entries}}<dt>{{.Key}}</dt><dd>{{template "_value_nested" .Value}}</dd>{{end}}</dl>{{else}}<span class="null">{}</span>{{end}}{{else if eq .Kind "array"}}{{if .Items}}<ol class="tree">{{range .Items}}<li>{{template "_value_nested" .}}</li>{{end}}</ol>{{else}}<span class="null">[]</span>{{end}}{{else if eq .Kind "string"}}{{if .Long}}<details class="tree-fold"><summary>{{truncate 80 .Text}}</summary><span class="text">{{.Text}}</span></details>{{else}}<span class="text">{{.Text}}</span>{{end}}{{else if eq .Kind "null"}}<span class="null">null</span>{{else if eq .Kind "raw"}}<pre class="json">{{.Text}}</pre>{{else}}{{.Text}}{{end}}{{end}}
+{{define "_value_nested"}}{{if and (eq .Kind "object") .Entries}}<details open><summary>{{len .Entries}} keys</summary>{{template "_value" .}}</details>{{else if and (eq .Kind "array") .Items}}<details open><summary>{{len .Items}} items</summary>{{template "_value" .}}</details>{{else}}{{template "_value" .}}{{end}}{{end}}
+
+{{/* _value_block — a value with its JSON behind a disclosure, and the download
+     when the result has a transaction here. */}}
+{{define "_value_block"}}<div class="tree-block">{{template "_value" .Value}}<details class="tree-json"><summary>JSON</summary><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</details></div>{{end}}
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 
@@ -522,7 +559,7 @@
 {{if .Receipt}}
 <div class="outcome {{if .Receipt.Valid}}success{{else}}failed{{end}}" role="status">
   <strong>{{if .Receipt.Valid}}Receipt verified.{{else}}Verification failed.{{end}}</strong>
-  <pre class="json">{{json .Receipt.Checks}}</pre>
+  <div class="tree-block">{{template "_value" (value .Receipt.Checks)}}</div>
 </div>
 {{else if .ReceiptMsg}}
 <div class="banner banner-info" role="status">{{.ReceiptMsg}}</div>
@@ -638,7 +675,7 @@
      peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
-<dl class="locked-args">
+<dl class="tree">
   <dt>Petname</dt><dd class="mono">{{if $i.Petname}}{{$i.Petname}}{{else}}<span class="muted">—</span>{{end}}</dd>
   <dt>Status</dt><dd>
     {{if $i.Online}}
@@ -689,27 +726,5 @@
 </div>
 {{else}}
 <div id="process-await"></div>
-{{end}}
-{{end}}
-
-{{define "_schema_panel"}}
-{{if not .UseRawFallback}}
-<div class="table-scroll">
-<table class="schema-table">
-  <thead><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr></thead>
-  <tbody>
-  {{range .Fields}}
-  <tr>
-    <td class="mono">{{.Name}}</td>
-    <td class="mono muted">{{.Type}}{{if .Nullable}} | null{{end}}</td>
-    <td>{{if .Required}}<span title="required" aria-label="required">✓</span>{{end}}</td>
-    <td class="muted">{{.Description}}</td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
-{{else}}
-<p class="muted">No structured schema defined.</p>
 {{end}}
 {{end}}

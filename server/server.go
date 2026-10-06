@@ -336,6 +336,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /transactions", s.requireAuth(s.getTransactions))
 	mux.HandleFunc("GET /transactions/{id}", s.requireAuth(s.getTransaction))
 	mux.HandleFunc("GET /transactions/{id}/verify", s.requireAuth(s.getTxVerify))
+	mux.HandleFunc("GET /transactions/{id}/result.json", s.requireAuth(s.getResultJSON))
 	mux.HandleFunc("POST /transactions/{id}/rate", s.requireAuth(s.postRate))
 
 	// Inbox — tasks addressed to you.

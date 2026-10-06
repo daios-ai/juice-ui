@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1185,9 +1186,8 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 	}
 	if proposal != nil {
 		view.Proposed, view.ProposedMessage = true, proposal.Message
-		for i := range view.Form.Fields {
-			view.Form.Fields[i].Value = proposal.Args[view.Form.Fields[i].Name]
-		}
+		args, _ := json.Marshal(proposal.Raws)
+		view.Form.Fill(args)
 		// The raw-JSON box carries the proposal too. It is the only input where
 		// the schema is unusable, and it is one toggle away everywhere else — so
 		// filling only the fields would drop the proposal silently for one action
@@ -2154,6 +2154,30 @@ func (s *Server) getTxVerify(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "transaction", "Transaction", view)
 }
 
+// getResultJSON serves a transaction's result as a file: the download the
+// value tree offers (§6.5). Who may read it is the kernel's decision, as for
+// the receipt page.
+func (s *Server) getResultJSON(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+	var tx client.Transaction
+	err := s.sessions.Do(ctx, func(tok string) error {
+		t, e := s.client.GetTransaction(ctx, tok, id)
+		tx = t
+		return e
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	body := bytes.TrimSpace(tx.Result)
+	if len(body) == 0 {
+		body = []byte("null")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="result-`+id[:min(8, len(id))]+`.json"`)
+	_, _ = w.Write(body)
+}
+
 func (s *Server) postRate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
@@ -2311,6 +2335,11 @@ func rawJSONOrEmpty(s string) (json.RawMessage, error) {
 // buildArgs assembles the call args from the run form: either the raw-JSON
 // editor, or the typed fields coerced by their schema type. The kernel remains
 // the validation authority (R2.5); this only shapes JSON.
+//
+// A field is named by its JSON Pointer (`f_/messages/0/content`), its type by
+// `t_<path>` — a container's hint, `object` or `array`, says how its children
+// nest — and its null box by `n_<path>`. The tree is rebuilt from the form
+// alone, so no schema is read at submit (§6.2).
 func buildArgs(r *http.Request) (json.RawMessage, error) {
 	if err := r.ParseForm(); err != nil {
 		return nil, err
@@ -2321,32 +2350,123 @@ func buildArgs(r *http.Request) (json.RawMessage, error) {
 	}
 	// Three states per field, kept distinct: blank is omitted, a value is sent,
 	// and null is sent only when the person ticks the field's null box — never
-	// derived from a blank input, which would make omission impossible.
-	obj := map[string]json.RawMessage{}
+	// derived from a blank input, which would make omission impossible. A null
+	// box nulls its whole subtree.
+	hints := map[string]string{}
+	var nulls []string
 	for key := range r.Form {
-		if strings.HasPrefix(key, "n_") {
-			obj[key[2:]] = json.RawMessage("null")
+		switch {
+		case strings.HasPrefix(key, "t_"):
+			hints[key[2:]] = r.Form.Get(key)
+		case strings.HasPrefix(key, "n_"):
+			nulls = append(nulls, key[2:])
 		}
 	}
+	root := map[string]any{}
 	for key := range r.Form {
 		if !strings.HasPrefix(key, "f_") {
 			continue
 		}
-		name := key[2:]
-		if _, isNull := obj[name]; isNull {
+		path := key[2:]
+		if underAny(path, nulls) {
 			continue
 		}
 		val := strings.TrimSpace(r.Form.Get(key))
 		if val == "" {
 			continue
 		}
-		rv, err := coerce(r.Form.Get("t_"+name), val)
+		rv, err := coerce(hints[path], val)
 		if err != nil {
-			return nil, fmt.Errorf("field %q: %w", name, err)
+			return nil, fmt.Errorf("field %q: %w", path, err)
 		}
-		obj[name] = rv
+		if err := setAt(root, path, rv); err != nil {
+			return nil, err
+		}
 	}
-	return json.Marshal(obj)
+	for _, p := range nulls {
+		if err := setAt(root, p, json.RawMessage("null")); err != nil {
+			return nil, err
+		}
+	}
+	out, _ := finalize("", root, hints).(map[string]any)
+	if out == nil {
+		out = map[string]any{}
+	}
+	return json.Marshal(out)
+}
+
+// underAny reports whether path is one of the prefixes or beneath one.
+func underAny(path string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if path == p || strings.HasPrefix(path, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// setAt places a leaf at a JSON Pointer, creating the containers above it as
+// maps keyed by reference token; finalize turns the arrays into slices.
+func setAt(root map[string]any, path string, leaf json.RawMessage) error {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("field %q: not a pointer", path)
+	}
+	segs := strings.Split(path[1:], "/")
+	node := root
+	for _, seg := range segs[:len(segs)-1] {
+		key := pointerUnescape(seg)
+		child, ok := node[key].(map[string]any)
+		if !ok {
+			if _, isLeaf := node[key]; isLeaf {
+				return fmt.Errorf("field %q: conflicts with a value above it", path)
+			}
+			child = map[string]any{}
+			node[key] = child
+		}
+		node = child
+	}
+	node[pointerUnescape(segs[len(segs)-1])] = leaf
+	return nil
+}
+
+// finalize prunes empty containers bottom-up and orders an array's elements by
+// index, so a row left blank is dropped and the indices compact. A container
+// is an array iff its hint says so. Nil means "nothing here".
+func finalize(path string, node any, hints map[string]string) any {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return node
+	}
+	if hints[path] == "array" {
+		idx := make([]int, 0, len(m))
+		for k := range m {
+			if i, err := strconv.Atoi(k); err == nil {
+				idx = append(idx, i)
+			}
+		}
+		sort.Ints(idx)
+		arr := make([]any, 0, len(idx))
+		for _, i := range idx {
+			k := strconv.Itoa(i)
+			if v := finalize(path+"/"+k, m[k], hints); v != nil {
+				arr = append(arr, v)
+			}
+		}
+		if len(arr) == 0 {
+			return nil
+		}
+		return arr
+	}
+	obj := make(map[string]any, len(m))
+	for k, v := range m {
+		if v := finalize(path+"/"+pointerEscape(k), v, hints); v != nil {
+			obj[k] = v
+		}
+	}
+	if len(obj) == 0 {
+		return nil
+	}
+	return obj
 }
 
 // coerce converts a string form value to a JSON value of the field's type.

@@ -219,25 +219,52 @@ for (const sel of document.querySelectorAll('select[name="kind"]')) {
   update();
 }
 
-// Repeatable parameter rows (create and edit forms): clone the first row on add,
-// drop a row on remove. Cloned rows inherit the template's disabled state, so
-// they stay consistent with the kind toggle above.
-for (const box of document.querySelectorAll('[data-param-rows]')) {
-  const tmpl = box.querySelector('[data-param-row]');
+// Repeatable rows ([data-rows]): the http parameter rows and a schema array's
+// rows (§6.2). Add clones the last row and clears it; when the container names
+// its array's path, the clone's index segment is rewritten to one past the
+// highest in use — in every name, id, for and nested data-rows — so a removed
+// index is never reused and a nested array keeps its own rows. Remove drops
+// the row. Cloned rows inherit the template's disabled state, so they stay
+// consistent with the kind toggle above.
+function wireRows(box) {
+  const path = box.dataset.rows;
+  const rows = () => [...box.children].filter((el) => el.matches('[data-row]'));
   const wire = (row) => {
-    const rm = row.querySelector('[data-param-remove]');
-    if (rm) rm.addEventListener('click', () => row.remove());
+    row.querySelector('[data-row-remove]')?.addEventListener('click', () => row.remove());
+    for (const inner of row.querySelectorAll('[data-rows]')) wireRows(inner);
   };
-  box.querySelectorAll('[data-param-row]').forEach(wire);
-  const add = box.parentElement.querySelector('[data-param-add]');
-  if (add && tmpl) {
-    add.addEventListener('click', () => {
-      const row = tmpl.cloneNode(true);
-      for (const i of row.querySelectorAll('input')) i.value = '';
-      wire(row);
-      box.appendChild(row);
-    });
-  }
+  rows().forEach(wire);
+  const add = box.parentElement.querySelector(':scope > [data-row-add]');
+  if (!add) return;
+  add.addEventListener('click', () => {
+    const last = rows().at(-1);
+    if (!last) return;
+    const row = last.cloneNode(true);
+    for (const el of row.querySelectorAll('input:not([type=hidden]), textarea, select')) el.value = '';
+    for (const el of row.querySelectorAll('input[type=checkbox]')) el.checked = false;
+    if (path) {
+      const from = path + '/' + indexOf(last, path);
+      const to = path + '/' + (Math.max(...rows().map((r) => indexOf(r, path))) + 1);
+      for (const el of row.querySelectorAll('[name], [id], [for], [data-rows]')) {
+        for (const attr of ['name', 'id', 'for', 'data-rows']) {
+          const v = el.getAttribute(attr);
+          if (v && (v.endsWith(from) || v.includes(from + '/'))) el.setAttribute(attr, v.replace(from, to));
+        }
+      }
+    }
+    wire(row);
+    box.appendChild(row);
+    for (const ta of row.querySelectorAll('textarea')) resizeTA(ta);
+  });
+}
+// The index of a row: the segment after its array's path in its first named control.
+function indexOf(row, path) {
+  const el = row.querySelector('[name]');
+  const m = el && el.name.slice(2).startsWith(path + '/') ? el.name.slice(2 + path.length + 1).split('/')[0] : '0';
+  return Number(m) || 0;
+}
+for (const box of document.querySelectorAll('[data-rows]')) {
+  if (!box.parentElement.closest('[data-rows]')) wireRows(box);
 }
 
 // Password confirmation: in a form marked [data-confirm-password], the

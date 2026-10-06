@@ -3,29 +3,43 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
-// Field is one input field derived from a JSON Schema property.
+// Field is one node of the run form, derived from a node of the input schema.
+// The form is the schema's tree (requirements.md §6.2): an object renders its
+// Fields as a group, an array its Rows, a map-shaped node a JSON editor, and
+// every other node one input.
 type Field struct {
-	Name     string
-	Type     string // string | integer | number | boolean | object | array
-	Nullable bool   // the schema admits null (`type: [T, "null"]`)
-	Required bool
+	// Name is the property key; Path is the node's JSON Pointer (RFC 6901), the
+	// wire name under the f_/t_/n_ prefixes. An array element has no Name.
+	Name, Path string
+	Type       string // string | integer | number | boolean | object | array
+	Nullable   bool   // the schema admits null (`type: [T, "null"]`)
+	Required   bool
 	// Title is the property's own short label, shown beside its key.
 	Title       string
 	Description string
 	Enum        []string
-	Example     string // for object/array fields: a pretty-printed JSON skeleton
 	// The bounds the browser enforces exactly as the schema means them, as
 	// written; empty when the schema states none. The kernel validates the rest.
 	Min, Max             string
 	MinLength, MaxLength string
+	Default              string // the schema's default, shown as a placeholder and never submitted
+	Input                string // an input type from `format`: date | email | url; "" for text
 	// Value pre-fills the input. It is used where something already proposed an
 	// argument — the model's selection (§6.2) — and is empty otherwise. A
 	// pre-filled field is still an ordinary field: it is editable, it is
 	// submitted like any other, and nothing about it is trusted.
-	Value string
+	Value  string
+	Fields []Field // an object's properties, in the order served
+	Rows   []Field // an array's elements, at Path/0, Path/1, …
+	// Map marks a node whose keys no field list can name — an object under
+	// `additionalProperties`, or an array without `items` — edited as JSON.
+	Map     bool
+	Example string          // a compact JSON skeleton: a Map node's placeholder
+	items   json.RawMessage // an array's item schema, for one more row
 }
 
 // FormModel is the server-side model the run form is rendered from (R6.5.4). The
@@ -71,26 +85,32 @@ func (t *schemaType) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// schemaDoc is the part of an object schema the form renderer reads.
+// schemaDoc is one schema node, as far as the form renderer reads it.
 type schemaDoc struct {
-	Type       schemaType      `json:"type"`
-	Properties json.RawMessage `json:"properties"`
-	Required   []string        `json:"required"`
+	Type        schemaType        `json:"type"`
+	Title       string            `json:"title"`
+	Description string            `json:"description"`
+	Enum        []json.RawMessage `json:"enum"`
+	Default     json.RawMessage   `json:"default"`
+	Format      string            `json:"format"`
+	Minimum     json.RawMessage   `json:"minimum"`
+	Maximum     json.RawMessage   `json:"maximum"`
+	ExclMin     json.RawMessage   `json:"exclusiveMinimum"`
+	ExclMax     json.RawMessage   `json:"exclusiveMaximum"`
+	MinLength   json.RawMessage   `json:"minLength"`
+	MaxLength   json.RawMessage   `json:"maxLength"`
+	MinItems    int               `json:"minItems"`
+	Items       json.RawMessage   `json:"items"`
+	Properties  json.RawMessage   `json:"properties"`
+	Required    []string          `json:"required"`
 	// AdditionalProperties is false, absent, or a schema; a schema makes the
 	// object a map, whose keys no field list can name.
 	AdditionalProperties json.RawMessage `json:"additionalProperties"`
 }
 
-// propDoc is one property node.
-type propDoc struct {
-	Type        schemaType        `json:"type"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Enum        []json.RawMessage `json:"enum"`
-	Minimum     json.RawMessage   `json:"minimum"`
-	Maximum     json.RawMessage   `json:"maximum"`
-	MinLength   json.RawMessage   `json:"minLength"`
-	MaxLength   json.RawMessage   `json:"maxLength"`
+// isMap reports a schema under additionalProperties.
+func (d schemaDoc) isMap() bool {
+	return bytes.HasPrefix(bytes.TrimSpace(d.AdditionalProperties), []byte("{"))
 }
 
 // BuildForm parses an input_schema into a FormModel. Any schema that is not an
@@ -109,48 +129,166 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	// needs the raw editor. An explicitly EMPTY `properties` on a closed object
 	// is the opposite claim: this input declares no fields, so there is nothing
 	// to collect and the form is its confirm button alone.
-	isMap := bytes.HasPrefix(bytes.TrimSpace(doc.AdditionalProperties), []byte("{"))
-	if doc.Type.Name != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 || isMap {
+	if doc.Type.Name != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 || doc.isMap() {
 		return FormModel{UseRawFallback: true}
 	}
-	keys := orderedKeys(doc.Properties)
-	if len(keys) == 0 {
+	fields := childFields("", doc)
+	if fields == nil {
 		return FormModel{NoFields: true}
 	}
-	var props map[string]propDoc
-	if err := json.Unmarshal(doc.Properties, &props); err != nil {
-		return FormModel{UseRawFallback: true}
+	return FormModel{Fields: fields, Example: SchemaExample(inputSchema)}
+}
+
+// childFields builds an object's property fields under path, in the order the
+// kernel serves them (canonical, keys sorted; verified live, ba7f5e5). Nil when
+// the object names no property.
+func childFields(path string, doc schemaDoc) []Field {
+	keys := orderedKeys(doc.Properties)
+	if len(keys) == 0 {
+		return nil
 	}
-	// Keep the raw schema of each property so nested object/array fields can be
-	// given a concrete JSON skeleton (R6.5.4: tell the user what the shape is).
-	var rawProps map[string]json.RawMessage
-	_ = json.Unmarshal(doc.Properties, &rawProps)
+	var props map[string]json.RawMessage
+	_ = json.Unmarshal(doc.Properties, &props)
 	required := make(map[string]bool, len(doc.Required))
 	for _, r := range doc.Required {
 		required[r] = true
 	}
-	fm := FormModel{Fields: make([]Field, 0, len(keys)), Example: SchemaExample(inputSchema)}
+	fields := make([]Field, 0, len(keys))
 	for _, k := range keys {
-		p := props[k]
-		f := Field{
-			Name:        k,
-			Type:        p.Type.Name,
-			Nullable:    p.Type.Nullable,
-			Required:    required[k],
-			Title:       p.Title,
-			Description: p.Description,
-			Enum:        enumStrings(p.Enum),
-			Min:         string(p.Minimum),
-			Max:         string(p.Maximum),
-			MinLength:   string(p.MinLength),
-			MaxLength:   string(p.MaxLength),
-		}
-		if f.Type == "object" || f.Type == "array" {
-			f.Example = SchemaExample(rawProps[k])
-		}
-		fm.Fields = append(fm.Fields, f)
+		fields = append(fields, buildField(path+"/"+pointerEscape(k), k, props[k], required[k]))
 	}
-	return fm
+	return fields
+}
+
+// buildField builds the field tree of one schema node. An array starts with
+// max(minItems, 1) rows: a row left blank is omitted on submit.
+func buildField(path, name string, raw json.RawMessage, required bool) Field {
+	var p schemaDoc
+	_ = json.Unmarshal(raw, &p)
+	f := Field{
+		Name: name, Path: path, Type: p.Type.Name, Nullable: p.Type.Nullable, Required: required,
+		Title: p.Title, Description: p.Description, Enum: enumStrings(p.Enum),
+		Min: string(p.Minimum), Max: string(p.Maximum),
+		MinLength: string(p.MinLength), MaxLength: string(p.MaxLength),
+		Default: scalarText(p.Default), Input: inputType(p.Format),
+	}
+	// HTML has no exclusive bound; for an integer the next value is exact.
+	if f.Type == "integer" {
+		if f.Min == "" {
+			f.Min = shifted(p.ExclMin, 1)
+		}
+		if f.Max == "" {
+			f.Max = shifted(p.ExclMax, -1)
+		}
+	}
+	switch f.Type {
+	case "object":
+		if f.Fields = childFields(path, p); f.Fields == nil || p.isMap() {
+			f.Fields, f.Map, f.Example = nil, true, skeleton(raw)
+		}
+	case "array":
+		if len(bytes.TrimSpace(p.Items)) == 0 {
+			f.Map, f.Example = true, "[]"
+			break
+		}
+		f.items = p.Items
+		for len(f.Rows) < max(p.MinItems, 1) {
+			f.addRow()
+		}
+	}
+	return f
+}
+
+// addRow appends one more element to an array field.
+func (f *Field) addRow() {
+	f.Rows = append(f.Rows, buildField(f.Path+"/"+strconv.Itoa(len(f.Rows)), "", f.items, false))
+}
+
+// Fill pre-fills the form from a proposed args object (§6.2): scalars become
+// input values, an array gets one row per element, a Map node its JSON. A key
+// the schema does not name is left to the raw editor.
+func (fm *FormModel) Fill(args json.RawMessage) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(args, &m) != nil {
+		return
+	}
+	for i := range fm.Fields {
+		if v, ok := m[fm.Fields[i].Name]; ok {
+			fm.Fields[i].fill(v)
+		}
+	}
+}
+
+func (f *Field) fill(v json.RawMessage) {
+	v = bytes.TrimSpace(v)
+	if len(v) == 0 || string(v) == "null" {
+		return
+	}
+	switch {
+	case f.Map:
+		f.Value = string(v)
+	case f.Type == "object":
+		var m map[string]json.RawMessage
+		_ = json.Unmarshal(v, &m)
+		for i := range f.Fields {
+			if c, ok := m[f.Fields[i].Name]; ok {
+				f.Fields[i].fill(c)
+			}
+		}
+	case f.Type == "array":
+		var items []json.RawMessage
+		if json.Unmarshal(v, &items) != nil || len(items) == 0 {
+			return
+		}
+		f.Rows = nil
+		for _, it := range items {
+			f.addRow()
+			f.Rows[len(f.Rows)-1].fill(it)
+		}
+	default:
+		f.Value = scalarText(v)
+	}
+}
+
+// scalarText is a JSON scalar as a person would type it: a string without its
+// quotes, anything else as written. Empty for no value.
+func scalarText(v json.RawMessage) string {
+	var s string
+	if json.Unmarshal(v, &s) == nil {
+		return s
+	}
+	return string(bytes.TrimSpace(v))
+}
+
+// inputType maps the formats HTML enforces as the schema means them. date-time
+// is left out: datetime-local submits no zone and fails RFC 3339.
+func inputType(format string) string {
+	switch format {
+	case "date", "email":
+		return format
+	case "uri":
+		return "url"
+	}
+	return ""
+}
+
+// shifted is an exclusive integer bound moved by d onto the inclusive one.
+func shifted(raw json.RawMessage, d int64) string {
+	n, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(n+d, 10)
+}
+
+// pointerEscape encodes one JSON Pointer reference token (RFC 6901 §3).
+func pointerEscape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "~", "~0"), "/", "~1")
+}
+
+// pointerUnescape decodes one reference token (RFC 6901 §4: ~1 first, then ~0).
+func pointerUnescape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "~1", "/"), "~0", "~")
 }
 
 // orderedKeys returns an object's keys in the order they are served by
