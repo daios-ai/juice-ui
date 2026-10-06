@@ -656,18 +656,18 @@ func TestCallFormCarriesTheJSONToggle(t *testing.T) {
 		return rec.Body.String()
 	}
 	body := render(FormModel{Fields: []Field{{Name: "to", Type: "string", Path: "/to"}}}, false)
-	toggle := `<button type="button" class="json-toggle" data-json-toggle aria-pressed="false">JSON</button>`
+	toggle := `<button type="button" class="switch" role="switch" aria-checked="false" data-json-switch>JSON</button>`
 	if !strings.Contains(body, toggle) || !strings.Contains(body, `name="has_fields"`) || !strings.Contains(body, `data-json `) {
 		t.Errorf("structured form must carry the JSON toggle and the has_fields marker: %s", body)
 	}
 	if strings.Index(body, toggle) > strings.Index(body, `class="frozen locked"`) {
 		t.Error("the toggle sits at the top of the block, before the sealed part")
 	}
-	if strings.Contains(body, "data-raw-seg") || strings.Contains(body, "field-switch") {
-		t.Error("the retired two-segment switch must be gone")
+	if strings.Contains(body, "data-raw-seg") || strings.Contains(body, "field-switch") || strings.Contains(body, "aria-pressed") {
+		t.Error("the retired two-segment switch and the tab-like toggle must be gone")
 	}
 	for _, b := range []string{render(FormModel{UseRawFallback: true}, false), render(FormModel{}, true)} {
-		if strings.Contains(b, "data-json-toggle") {
+		if strings.Contains(b, "data-json-switch") {
 			t.Errorf("a raw-only or approval form has nothing to swap: %s", b)
 		}
 	}
@@ -772,7 +772,7 @@ func TestRenderFragment(t *testing.T) {
 	if !strings.Contains(body, `class="outcome success"`) || strings.Contains(body, "Success.") || !strings.Contains(body, "/transactions/tx1") {
 		t.Errorf("a success is its styling and its result, with no sentence: %s", body)
 	}
-	if sep := strings.Index(body, `<hr class="card-sep">`); sep < 0 || sep < strings.Index(body, `data-json-toggle`) || sep > strings.Index(body, "/transactions/tx1/rate") {
+	if sep := strings.Index(body, `<hr class="card-sep">`); sep < 0 || sep < strings.Index(body, `data-json-switch`) || sep > strings.Index(body, "/transactions/tx1/rate") {
 		t.Errorf("a rule separates the result from its receipt and rating: %s", body)
 	}
 }
@@ -1888,7 +1888,7 @@ func TestValueBlockRendersAFrozenForm(t *testing.T) {
 		`<label>empty</label>`, `<div class="box muted">{}</div>`,
 		`<details class="frozen-fold"><summary>` + strings.Repeat("x", 80) + `…</summary><div class="box">` + long + `</div></details>`,
 		`<legend>n</legend>`, `<label>k</label>`, `<div class="box">&lt;i&gt;</div>`,
-		`<div class="frozen" data-json><button type="button" class="json-toggle" data-json-toggle aria-pressed="false">JSON</button><div data-fields>`,
+		`<div class="frozen" data-json><button type="button" class="switch" role="switch" aria-checked="false" data-json-switch>JSON</button><div data-fields>`,
 		`<div data-raw hidden><pre class="json">`,
 		`<a href="/transactions/T1/result.json" download>Download</a>`,
 	} {

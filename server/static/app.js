@@ -288,19 +288,19 @@ for (const box of document.querySelectorAll('[data-rows]')) {
 // as it lands.
 function wireJSON(root) {
   for (const block of root.querySelectorAll('[data-json]')) {
-    const toggle = block.querySelector('[data-json-toggle]');
+    const toggle = block.querySelector('[data-json-switch]');
     const fields = block.querySelector('[data-fields]');
     const raw = block.querySelector('[data-raw]');
     if (!toggle || !fields || !raw) continue;
     const apply = (json) => {
-      toggle.setAttribute('aria-pressed', String(json));
+      toggle.setAttribute('aria-checked', String(json));
       fields.hidden = json;
       raw.hidden = !json;
       for (const el of fields.querySelectorAll('input, select, textarea')) el.disabled = json;
       for (const el of block.querySelectorAll('[name=has_fields]')) el.disabled = json;
       if (json) raw.querySelector('textarea')?.dispatchEvent(new Event('input'));
     };
-    toggle.addEventListener('click', () => apply(toggle.getAttribute('aria-pressed') !== 'true'));
+    toggle.addEventListener('click', () => apply(toggle.getAttribute('aria-checked') !== 'true'));
     apply(false);
   }
 }

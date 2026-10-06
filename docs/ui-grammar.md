@@ -38,7 +38,8 @@ Three laws underpin everything:
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
 | **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
-| **Frozen form** | `.frozen` · `.field .box` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) · `.json-toggle` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
+| **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a frozen form (§5.4) |
+| **Frozen form** | `.frozen` · `.field .box` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -328,13 +329,13 @@ none float, none are colored.
   Remove, a map-shaped node an empty JSON textarea with the shape as its
   placeholder; a field's wire name is its JSON Pointer (`f_/messages/0/content`,
   `t_` the type hint, `n_` the null box; `requirements.md` §6.2).
-- **JSON toggle** (`.json-toggle`, `_json_toggle`, one `aria-pressed` word
-  `JSON` at the top right of a `[data-json]` block) is the one way to see a
-  block as JSON: on a structured form it swaps the fields for the raw editor; on
-  a frozen form it swaps the fields for the raw JSON (and its Download). A
-  binary view whose off-state has no name is the one case `.tabs` (§5.2) cannot
-  express, so this is the one toggle the grammar admits. No "edit as JSON"
-  button, no disclosure for JSON.
+- **JSON switch** (`.switch`, `_json_switch`: the label `JSON` and a track
+  with a knob, `role="switch"`, at the top right of a `[data-json]` block) is
+  the one way to see a block as JSON: on a structured form it swaps the fields
+  for the raw editor; on a frozen form it swaps the fields for the raw JSON (and
+  its Download). A binary view whose off-state has no name is what `.tabs`
+  (§5.2) cannot express; the switch is the component for it. No "edit as JSON"
+  button, no disclosure for JSON, no underlined word.
 
 ### 5.5 Cards, lists, tables
 

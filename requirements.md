@@ -1505,8 +1505,8 @@ the transaction's `payment` (§6.5).
   is its literal, a boolean, `null`, `{}` and `[]` their words, muted. Keys
   keep the order served. A string past 800 characters folds (closed) behind its
   first line. Nothing is submittable. The raw JSON sits behind the same JSON
-  toggle the form carries — one `aria-pressed` word at the block's top right,
-  swapping the fields for the JSON — with a Download where the value is a
+  switch the form carries — a labelled switch (`role="switch"`) at the block's
+  top right, swapping the fields for the JSON — with a Download where the value is a
   transaction's result.
   Nothing in it is interpreted (§8.1).
 

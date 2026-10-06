@@ -524,17 +524,29 @@ label { display: block; font-weight: 600; margin-bottom: .25rem; }
 /* A checkbox choice under a field (a nullable field's explicit null). */
 label.check { display: inline-flex; align-items: center; gap: .35rem; font-weight: 400; margin: .3rem 0 0; }
 .field { margin-bottom: 1rem; }
-/* The JSON toggle (§5.4): one pressed-state word at the top right of a block,
-   swapping its fields for its JSON — the editor of a form, the raw JSON of a
-   frozen form. Same control on both surfaces. */
-.json-toggle {
-  display: block; margin-left: auto; background: none; border: none; border-bottom: 2px solid transparent;
-  padding: .15rem .4rem; cursor: pointer;
+/* Switch (§5.4): a binary view or setting — its label, then a track with a
+   knob; on, the track fills with ink (never the accent). The JSON switch sits
+   at the top right of a form and of a frozen form alike. */
+.switch {
+  display: flex; align-items: center; gap: .4rem; margin-left: auto;
+  background: none; border: none; padding: 0; cursor: pointer;
   font-family: inherit; font-size: .8rem; font-weight: 600; color: var(--text-muted);
 }
-.json-toggle:hover { color: var(--text); }
-.json-toggle[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--text); }
-.stack > .json-toggle + * { margin-top: .35rem; }
+.switch::after {
+  content: ""; box-sizing: border-box; width: 2rem; height: 1.1rem; border-radius: 1rem;
+  border: 1px solid var(--border-strong); background: var(--bg);
+  background-image: radial-gradient(circle at 50% 50%, var(--text) 0 .33rem, transparent .36rem);
+  background-size: 1rem 1rem; background-repeat: no-repeat; background-position: 0 50%;
+  transition: background-position .15s, background-color .15s;
+}
+.switch[aria-checked="true"] { color: var(--text); }
+.switch[aria-checked="true"]::after {
+  background-color: var(--text); border-color: var(--text);
+  background-image: radial-gradient(circle at 50% 50%, var(--bg) 0 .33rem, transparent .36rem);
+  background-position: 100% 50%;
+}
+/* A hidden input occupies no slot in a stack. */
+.stack > input[type=hidden] + * { margin-top: 0; }
 /* Inbox task cards — calm: who asks + what, then the neutral Complete. */
 .task-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem 1rem; }
 .task-ask { margin-bottom: .6rem; font-size: .95rem; }
