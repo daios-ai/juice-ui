@@ -2,9 +2,9 @@
 
 An addition to the kernel's user-facing surface that the UI needs and cannot
 build on its own, stated as a contract, read against `juicedocs` at kernel
-`034426e`; it prescribes no implementation. (A first request, a free read of
-the catalog for search hints, was met by `034426e`: `GET /v1/actions` now
-serves the whole catalog, discovered actions included.)
+`034426e`; it prescribes no implementation. (Met: a free read of the catalog for
+search hints, by `034426e`; the superuser's recovery key at a non-interactive
+first boot, by `99eab16` (v0.15.7, `JUICE_BOOTSTRAP_RECOVERY_KEY`).)
 
 ## An entry point for creating a task from outside a call
 

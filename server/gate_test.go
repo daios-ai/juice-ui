@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +19,7 @@ type fakeSteps struct {
 	mu      sync.Mutex
 	local   bool
 	created []string
-	phrase  string
+	keys    []string
 	err     error
 	report  func(state, detail string)
 }
@@ -29,13 +30,15 @@ func (f *fakeSteps) Ensure(ctx context.Context, report func(state, detail string
 	f.mu.Unlock()
 	<-ctx.Done()
 }
-func (f *fakeSteps) Create(world, handle, password string) (string, error) {
+func (f *fakeSteps) Create(world, handle, password, key string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, world+"/"+handle+"/"+password)
-	return f.phrase, f.err
+	f.keys = append(f.keys, key)
+	return f.err
 }
-func (f *fakeSteps) Local() bool { return f.local }
+func (f *fakeSteps) Local() bool      { return f.local }
+func (f *fakeSteps) Worlds() []string { return []string{"arbitrum-one", "play"} }
 
 func newGate(t *testing.T, listen string) (*Gate, *fakeSteps) {
 	t.Helper()
@@ -43,7 +46,7 @@ func newGate(t *testing.T, listen string) (*Gate, *fakeSteps) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	steps := &fakeSteps{local: true, phrase: "one two three four five six seven eight nine ten eleven twelve"}
+	steps := &fakeSteps{local: true}
 	g := NewGate(r, steps, "http://127.0.0.1:4040", listen, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -90,7 +93,7 @@ func TestGateScreenFollowsTheState(t *testing.T) {
 	} {
 		steps.report(state, map[string]string{"installing": "v0.15.6", "failed": "could not bind :4040"}[state])
 		body := do(t, h, http.MethodGet, "/anything/at/all", nil, nil).Body.String()
-		if !strings.Contains(body, want) || !strings.Contains(body, `hx-get="/kernel/status"`) {
+		if !strings.Contains(body, want) || !strings.Contains(body, `hx-get="/kernel/status"`) || !strings.Contains(body, "Juice installation") {
 			t.Errorf("%s: screen missing %q", state, want)
 		}
 	}
@@ -116,8 +119,11 @@ func TestGateFirstBootIsLocal(t *testing.T) {
 	h := g.Handler()
 	steps.report("needs-create", "")
 	body := do(t, h, http.MethodGet, "/", nil, nil).Body.String()
-	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `value="play"`) {
-		t.Errorf("a local request gets the form: %s", body)
+	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<option selected>play</option>`) || !strings.Contains(body, `<option>arbitrum-one</option>`) {
+		t.Errorf("a local request gets the form, the installation's worlds to choose from: %s", body)
+	}
+	if strings.Contains(body, "hx-get") {
+		t.Error("the form is not polled: nothing changes until it is posted, and a swap would erase it")
 	}
 	if b := do(t, h, http.MethodGet, "/", nil, map[string]string{"X-Forwarded-For": "203.0.113.9"}).Body.String(); strings.Contains(b, `action="/kernel/create"`) || !strings.Contains(b, "juice kernel serve") {
 		t.Error("a proxied request names the terminal command")
@@ -149,15 +155,21 @@ func TestGateFirstBootIsLocal(t *testing.T) {
 	if rec := do(t, h, http.MethodPost, "/kernel/create", bad, nil); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "don&#39;t match") || len(steps.created) != 0 {
 		t.Errorf("unequal passwords re-render the form: %d", rec.Code)
 	}
+	unlisted := url.Values{"world": {"../x"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
+	if rec := do(t, h, http.MethodPost, "/kernel/create", unlisted, nil); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "Choose a world") || len(steps.created) != 0 {
+		t.Errorf("a world the installation does not hold is refused: %d", rec.Code)
+	}
 }
 
-// A created kernel shows its phrase, on every path, until acknowledged; the
-// acknowledgement drops it, releases the loop and sends the person to the root.
-// The password and the phrase reach no log.
+// The gate generates the phrase, as signup does, and passes the kernel its
+// public key; a failed attempt keeps the phrase, so the attempt that succeeds
+// presents the same key. The phrase is shown, on every path, until
+// acknowledged; the acknowledgement drops it, releases the loop and sends the
+// person to the root. The password and the phrase reach no log.
 func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	var logBuf strings.Builder
 	r, _ := NewRenderer(playKernel)
-	steps := &fakeSteps{local: true, phrase: "one two three four five six seven eight nine ten eleven twelve"}
+	steps := &fakeSteps{local: true, err: errorString("the kernel did not start: transport refused")}
 	g := NewGate(r, steps, "http://127.0.0.1:4040", "127.0.0.1:8080", slog.New(slog.NewTextHandler(&logBuf, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -166,17 +178,34 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	h := g.Handler()
 	steps.report("needs-create", "")
 	form := url.Values{"world": {"play"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
+	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a failed boot re-renders the form: %d", rec.Code)
+	}
+	steps.err = nil
 	rec := do(t, h, http.MethodPost, "/kernel/create", form, nil)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<li>twelve</li>") || !strings.Contains(rec.Body.String(), `action="/kernel/created"`) {
+	words := regexp.MustCompile(`<li>([a-z]+)</li>`).FindAllStringSubmatch(rec.Body.String(), -1)
+	var phrase []string
+	for _, m := range words {
+		phrase = append(phrase, m[1])
+	}
+	if rec.Code != 200 || len(phrase) != 12 || !strings.Contains(rec.Body.String(), `action="/kernel/created"`) {
 		t.Fatalf("the phrase page: %d %s", rec.Code, rec.Body.String())
 	}
-	if len(steps.created) != 1 || steps.created[0] != "play/alpha/secret123" {
+	pub, err := recoveryPubKey(strings.Join(phrase, " "))
+	if err != nil {
+		t.Fatalf("the phrase is a BIP-39 mnemonic: %v", err)
+	}
+	if len(steps.keys) != 2 || steps.keys[0] != pub || steps.keys[1] != pub {
+		t.Errorf("every attempt presents the key of the phrase shown: %v, want %s", steps.keys, pub)
+	}
+	if len(steps.created) != 2 || steps.created[1] != "play/alpha/secret123" {
 		t.Errorf("Create called with %v", steps.created)
 	}
-	if b := do(t, h, http.MethodGet, "/elsewhere", nil, nil).Body.String(); !strings.Contains(b, "<li>twelve</li>") {
+	shown := "<li>" + phrase[0] + "</li>"
+	if b := do(t, h, http.MethodGet, "/elsewhere", nil, nil).Body.String(); !strings.Contains(b, shown) {
 		t.Error("every path keeps the phrase until it is acknowledged")
 	}
-	if b := do(t, h, http.MethodGet, "/", nil, map[string]string{"X-Forwarded-For": "203.0.113.9"}).Body.String(); strings.Contains(b, "<li>twelve</li>") {
+	if b := do(t, h, http.MethodGet, "/", nil, map[string]string{"X-Forwarded-For": "203.0.113.9"}).Body.String(); strings.Contains(b, "phrase-words") {
 		t.Error("the phrase is shown only to the local request")
 	}
 	select {
@@ -193,11 +222,14 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	default:
 		t.Fatal("acknowledgement releases the loop")
 	}
-	if b := do(t, h, http.MethodGet, "/", nil, nil).Body.String(); strings.Contains(b, "<li>twelve</li>") {
+	if b := do(t, h, http.MethodGet, "/", nil, nil).Body.String(); strings.Contains(b, "phrase-words") {
 		t.Error("the phrase is dropped once acknowledged")
 	}
-	if l := logBuf.String(); strings.Contains(l, "secret123") || strings.Contains(l, "twelve") {
-		t.Errorf("the log holds neither the password nor the phrase: %s", l)
+	l := logBuf.String()
+	for _, w := range append(phrase, "secret123") {
+		if strings.Contains(l, " "+w+" ") || strings.Contains(l, "secret123") {
+			t.Fatalf("the log holds neither the password nor the phrase: %s", l)
+		}
 	}
 }
 

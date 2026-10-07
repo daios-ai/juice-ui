@@ -146,7 +146,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   written. A page is named as the nav and the lists name it: `Home · Inbox ·
   Workshop · Wallet · Settings · Network · Admin`, a detail page the singular
   of its list (`Transaction`, `Session`, `Task`), and pages outside the nav
-  likewise (`Recovery phrase`, `Connect`, `Error`, `Kernel` — the gate's
+  likewise (`Recovery phrase`, `Connect`, `Error`, `Juice installation` — the gate's
   screen, an `.auth-card` with the state line, the `.progress` bar or the
   first-boot form). A title rendered from data
   (an action's title, an address) keeps its own case. `TestHeadingCase`

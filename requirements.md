@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.17.0
+Version: 0.17.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.17.1.** The first boot follows the standard for a
+> recovery phrase: the UI generates it, as at signup, shows it once and passes
+> the kernel only its public key (`JUICE_BOOTSTRAP_RECOVERY_KEY`, kernel
+> v0.15.7); the kernel prints none. The world is chosen from the installation's
+> world files, a binary older than the verified release is replaced, and the
+> screen, headed Juice installation, states each field's consequence.
 
 > **What changed in 0.17.0.** The UI is the way a person connects to Juice:
 > before the application serves, the **kernel gate** (§1) installs the kernel
@@ -468,17 +475,23 @@ kernel answers `/health`, when the application takes the listener:
 
 * the configured kernel URL is not loopback → **wait** (a kernel elsewhere is an
   operator's; it is never installed or started);
-* `$JUICE_HOME/bin/juice` is missing → **install** it: the release this UI was
+* `$JUICE_HOME/bin/juice` is missing or older than the release this UI was
+  verified against → **install** it: the release this UI was
   verified against, the platform's asset and `checksums.txt` from the kernel's
   GitHub releases, refused without a matching SHA-256, tried with `--version`,
   renamed atomically into `bin/` (the contract of the kernel's own
   `install.sh`);
 * no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port →
-  **create**: a first-boot form (world, kernel name, superuser password) writes
-  that home's `config.json` and serves the kernel once with the password in
-  the child's environment, the kernel's documented non-interactive first boot;
-  the recovery phrase the kernel prints once is shown once, held in memory
-  until acknowledged, and stored nowhere;
+  **create**: a first-boot form (world, kernel name, superuser password; the
+  world one of `$JUICE_HOME/worlds/*.json`, `play` on an installation never
+  served, checked on the server) writes that home's `config.json` and serves
+  the kernel once with the password and the superuser's recovery public key in
+  the child's environment, the kernel's documented non-interactive first boot.
+  The UI generates the recovery phrase as at signup, one for every attempt of
+  the boot (a kernel that enrolled the key and then failed to serve keeps it),
+  and shows it once the kernel answers, held in memory until acknowledged and
+  stored nowhere. The screen is headed Juice installation and each field states
+  its one consequence;
 * otherwise → **start** `juice kernel serve <world>`, detached so the kernel
   outlives the UI; the kernel's own lock makes this safe beside an operator's
   start.

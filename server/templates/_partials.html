@@ -739,20 +739,22 @@
      answers (then HX-Redirect to /). needs-create on a local request is the
      first-boot form; elsewhere it names the terminal command. */}}
 {{define "_kernel_status"}}
-<div id="kernel-status" hx-get="/kernel/status" hx-trigger="every 2s" hx-swap="outerHTML">
+<div id="kernel-status"{{if ne .State "needs-create"}} hx-get="/kernel/status" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
   {{if eq .State "needs-create"}}
     {{if .Local}}
     {{if .Error}}{{template "_error" .Error}}{{end}}
     <form class="stack" method="post" action="/kernel/create" data-confirm-password>
       <div class="field">
         <label for="k-world">World</label>
-        <input id="k-world" name="world" type="text" class="mono" value="{{.World}}" required>
+        <p class="help">The network this kernel joins, for life.</p>
+        <select id="k-world" name="world" class="mono" required>{{range .Worlds}}<option{{if eq . $.World}} selected{{end}}>{{.}}</option>{{end}}</select>
       </div>
       <div class="field">
         <label for="k-handle">Kernel name</label>
+        <p class="help">Its name on the network. It cannot be changed.</p>
         <input id="k-handle" name="handle" type="text" class="mono" value="{{.Handle}}" autocomplete="off" required>
       </div>
-      <div class="field"><label for="k-pw">Superuser password</label><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div class="field"><label for="k-pw">Superuser password</label><p class="help">The password of sys. Only the recovery phrase resets it.</p><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
       <div class="field"><label for="k-pw2">Confirm password</label><input id="k-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
       <button class="btn" type="submit">Create kernel</button>
     </form>

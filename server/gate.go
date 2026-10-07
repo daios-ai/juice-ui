@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -15,8 +16,11 @@ type Steps interface {
 	// Ensure runs until the kernel answers, reporting each state; it blocks in
 	// the needs-create state until created is closed.
 	Ensure(ctx context.Context, report func(state, detail string), created <-chan struct{})
-	// Create makes this installation's kernel and returns the recovery phrase.
-	Create(world, handle, password string) (phrase string, err error)
+	// Create makes this installation's kernel, enrolling recoveryKey for sys,
+	// and returns once it answers.
+	Create(world, handle, password, recoveryKey string) error
+	// Worlds are the networks this installation can serve.
+	Worlds() []string
 	// Local reports whether the configured kernel is this installation's.
 	Local() bool
 }
@@ -35,11 +39,12 @@ type Gate struct {
 	ready   chan struct{}
 	readyMu sync.Once
 
-	mu     sync.Mutex
-	state  string
-	detail string
-	phrase string // the first boot's recovery phrase, held until acknowledged
-	err    string // the last Create error, shown with the form
+	mu       sync.Mutex
+	state    string
+	detail   string
+	mnemonic string // the first boot's recovery phrase, one for every attempt
+	phrase   string // the mnemonic once the kernel answers, held until acknowledged
+	err      string // the last Create error, shown with the form
 }
 
 // NewGate builds the gate for the kernel at url; listen is the UI's own address.
@@ -75,6 +80,7 @@ type kernelView struct {
 	Command            string
 	Error              string
 	World, Handle      string
+	Worlds             []string
 }
 
 // Handler serves the screen on every path, the status fragment, and the two
@@ -122,8 +128,12 @@ func (g *Gate) sameOrigin(r *http.Request) bool {
 func (g *Gate) view(r *http.Request) kernelView {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return kernelView{State: g.state, Detail: g.detail, URL: g.url, Local: g.local(r), Error: g.err,
+	v := kernelView{State: g.state, Detail: g.detail, URL: g.url, Local: g.local(r), Error: g.err,
 		Command: "juice kernel serve play", World: r.FormValue("world"), Handle: r.FormValue("handle")}
+	if v.State == "needs-create" {
+		v.Worlds = g.steps.Worlds()
+	}
+	return v
 }
 
 func (g *Gate) getScreen(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +148,7 @@ func (g *Gate) getScreen(w http.ResponseWriter, r *http.Request) {
 	if v.World == "" {
 		v.World = "play"
 	}
-	_ = g.render.Render(w, http.StatusOK, "kernel", Page{Title: "Kernel", Path: r.URL.Path, Data: v})
+	_ = g.render.Render(w, http.StatusOK, "kernel", Page{Title: "Juice installation", Path: r.URL.Path, Data: v})
 }
 
 func (g *Gate) getStatus(w http.ResponseWriter, r *http.Request) {
@@ -165,22 +175,18 @@ func (g *Gate) postCreate(w http.ResponseWriter, r *http.Request) {
 	pw, pw2 := r.FormValue("password"), r.FormValue("confirm_password")
 	var fail string
 	switch {
-	case world == "" || handle == "":
-		fail = "A world and a kernel name are required."
+	case !slices.Contains(g.steps.Worlds(), world):
+		fail = "Choose a world."
+	case handle == "":
+		fail = "A kernel name is required."
 	case len(pw) < 8:
 		fail = "The password needs at least 8 characters."
 	case pw != pw2:
 		fail = "The passwords don't match."
 	}
 	if fail == "" {
-		phrase, err := g.steps.Create(world, handle, pw)
-		if err != nil {
-			fail = err.Error()
-		} else {
-			g.mu.Lock()
-			g.phrase, g.err = phrase, ""
-			g.mu.Unlock()
-			g.renderPhrase(w, phrase)
+		fail = g.create(w, world, handle, pw)
+		if fail == "" {
 			return
 		}
 	}
@@ -188,7 +194,38 @@ func (g *Gate) postCreate(w http.ResponseWriter, r *http.Request) {
 	g.err = fail
 	g.mu.Unlock()
 	v := g.view(r)
-	_ = g.render.Render(w, http.StatusUnprocessableEntity, "kernel", Page{Title: "Kernel", Data: v})
+	_ = g.render.Render(w, http.StatusUnprocessableEntity, "kernel", Page{Title: "Juice installation", Data: v})
+}
+
+// create runs the first boot with the recovery key of one phrase, generated
+// here as at signup (recovery.go) and kept across failed attempts: a kernel
+// that enrolled the key and then failed to serve is no longer at its first
+// boot, ignores another key, and is recovered by this phrase alone. On success
+// it renders the phrase page; otherwise it returns what to show with the form.
+func (g *Gate) create(w http.ResponseWriter, world, handle, pw string) string {
+	g.mu.Lock()
+	if g.mnemonic == "" {
+		m, err := generateMnemonic()
+		if err != nil {
+			g.mu.Unlock()
+			return "Couldn't set up account recovery. Please try again."
+		}
+		g.mnemonic = m
+	}
+	mnemonic := g.mnemonic
+	g.mu.Unlock()
+	pub, err := recoveryPubKey(mnemonic)
+	if err != nil {
+		return "Couldn't set up account recovery. Please try again."
+	}
+	if err := g.steps.Create(world, handle, pw, pub); err != nil {
+		return err.Error()
+	}
+	g.mu.Lock()
+	g.phrase, g.err = mnemonic, ""
+	g.mu.Unlock()
+	g.renderPhrase(w, mnemonic)
+	return ""
 }
 
 // postCreated is the phrase's acknowledgement: the phrase is dropped, the loop

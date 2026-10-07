@@ -26,12 +26,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // Release is the kernel release this UI was verified against; it is what the
 // gate installs when the binary is missing. The kernel's releases ship one
 // tarball per platform and a checksums.txt, built by its release workflow.
-const Release = "v0.15.6"
+const Release = "v0.15.7"
 
 // Releases is the kernel's release download base.
 const Releases = "https://github.com/daios-ai/juice/releases/download"
@@ -74,6 +76,38 @@ func isLoopback(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// Version is the release the installed binary reports (`juice version v0.15.7
+// (…)` → v0.15.7), or "" when it is absent or does not say.
+func (i *Installation) Version() string {
+	bin := i.Binary()
+	if bin == "" {
+		return ""
+	}
+	out, _ := exec.Command(bin, "--version").Output()
+	if f := strings.Fields(string(out)); len(f) >= 3 {
+		return f[2]
+	}
+	return ""
+}
+
+// Worlds are the networks this installation can serve: the files in worlds/,
+// sorted. The kernel writes the shipped ones on its first serve, so an
+// installation never served holds none; play, the world every build ships, is
+// then the one offered.
+func (i *Installation) Worlds() []string {
+	entries, _ := os.ReadDir(filepath.Join(i.Home, "worlds"))
+	var ws []string
+	for _, e := range entries {
+		if n, ok := strings.CutSuffix(e.Name(), ".json"); ok && !e.IsDir() && n != "" && !strings.HasPrefix(n, ".") {
+			ws = append(ws, n)
+		}
+	}
+	if len(ws) == 0 {
+		return []string{"play"}
+	}
+	return ws
 }
 
 // Binary is the installation's kernel executable, $JUICE_HOME/bin/juice, or ""
@@ -242,16 +276,14 @@ func untarJuice(tgz []byte) ([]byte, error) {
 
 // Create makes this installation's kernel: it writes kernels/<world>/config.json
 // (the kernel's name, the UI's port, a log file) and serves it once with the
-// sys password in the child's environment, which is the kernel's documented
-// non-interactive first boot. The kernel prints the recovery phrase once among
-// its boot messages, so for this one run the child's whole output goes to a
-// 0600 file of its own, read and unlinked the moment the phrase appears: the
-// phrase reaches neither kernel.log nor the kernel's own log file (log_file,
-// which keeps the kernel's log of this run), and is held nowhere else. Cleanup is defined only for a
-// failure before the child starts; once it has run, the home is the kernel's
-// and a partial boot is rerunnable by the kernel's own contract, so the next
-// round starts it again.
-func (i *Installation) Create(world, handle, password string) (string, error) {
+// sys password and recovery public key in the child's environment, the kernel's
+// documented non-interactive first boot. The caller holds the recovery phrase;
+// the kernel never sees it and prints none. Create returns once the kernel
+// answers, or with the kernel's own last words if it exits first. Cleanup is
+// defined only for a failure before the child starts; once it has run, the
+// home is the kernel's and a partial boot is rerunnable by the kernel's own
+// contract.
+func (i *Installation) Create(world, handle, password, recoveryKey string) error {
 	dir := filepath.Join(i.Home, "kernels", world)
 	// A home that is already here is a first boot to rerun (World() found no
 	// servable home on this port, so this one has no world file yet) — unless
@@ -262,11 +294,11 @@ func (i *Installation) Create(world, handle, password string) (string, error) {
 		}
 		_ = json.Unmarshal(b, &c)
 		if c.ListenAddr != "" && c.ListenAddr != "127.0.0.1:"+i.URL.Port() {
-			return "", fmt.Errorf("a kernel home %s already exists, listening on %s", dir, c.ListenAddr)
+			return fmt.Errorf("a kernel home %s already exists, listening on %s", dir, c.ListenAddr)
 		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return err
 	}
 	cfg, _ := json.Marshal(map[string]string{
 		"kernel_handle": handle,
@@ -275,56 +307,28 @@ func (i *Installation) Create(world, handle, password string) (string, error) {
 	})
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
 		os.RemoveAll(dir)
-		return "", err
+		return err
 	}
-	_ = os.MkdirAll(filepath.Join(i.Home, "ui"), 0o700)
-	out, err := os.CreateTemp(filepath.Join(i.Home, "ui"), "boot-*")
+	done, err := i.serve(world, []string{"JUICE_BOOTSTRAP_PASSWORD=" + password, "JUICE_BOOTSTRAP_RECOVERY_KEY=" + recoveryKey}, nil, nil)
 	if err != nil {
 		os.RemoveAll(dir)
-		return "", err
+		return err
 	}
-	defer os.Remove(out.Name())
-	defer out.Close()
-	done, err := i.serve(world, []string{"JUICE_BOOTSTRAP_PASSWORD=" + password}, out, out)
-	if err != nil {
-		os.RemoveAll(dir)
-		return "", err
-	}
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		b, _ := os.ReadFile(out.Name())
-		if p := phraseIn(string(b)); p != "" {
-			return p, nil
+	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
+		if i.Serving(context.Background()) {
+			return nil
 		}
 		select {
 		case <-done:
-			// The child is gone: one last read, since it may have printed the
-			// phrase and then exited (a first boot that stops at once).
-			b, _ := os.ReadFile(out.Name())
-			if p := phraseIn(string(b)); p != "" {
-				return p, nil
-			}
-			return "", fmt.Errorf("the kernel did not start: %s", lastLines(string(b)))
+			return fmt.Errorf("the kernel did not start: %s", i.logTail())
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	b, _ := os.ReadFile(out.Name())
-	return "", fmt.Errorf("the kernel did not start within a minute: %s", lastLines(string(b)))
+	return fmt.Errorf("the kernel did not start within a minute: %s", i.logTail())
 }
 
 func lastLines(s string) string {
 	return strings.Join(tail(strings.Split(strings.TrimSpace(s), "\n"), 5), "\n")
-}
-
-// phraseIn is the line after the kernel's "recovery phrase" line, or "".
-func phraseIn(out string) string {
-	lines := strings.Split(out, "\n")
-	for n, line := range lines {
-		if strings.Contains(strings.ToLower(line), "recovery phrase") && n+1 < len(lines) && strings.TrimSpace(lines[n+1]) != "" {
-			return strings.Join(strings.Fields(lines[n+1]), " ")
-		}
-	}
-	return ""
 }
 
 // Start serves this installation's kernel home, detached from this process,
@@ -421,7 +425,9 @@ func (i *Installation) Ensure(ctx context.Context, report func(State, string), c
 			if !wait(2 * time.Second) {
 				return
 			}
-		case i.Binary() == "":
+		case i.Binary() == "" || semver.Compare(i.Version(), Release) < 0:
+			// An older binary would ignore the recovery key a first boot
+			// passes; a newer one is kept.
 			report(Installing, Release)
 			if err := i.Install(ctx); err != nil {
 				report(Failed, err.Error())

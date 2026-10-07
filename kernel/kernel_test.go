@@ -14,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -74,17 +76,31 @@ func TestWorldMatchesByPort(t *testing.T) {
 	}
 }
 
-// A fake kernel script: answers --version, or serves by printing the phrase (a
-// first boot) and a log line.
+// A fake kernel script: answers --version, or serves by writing its world
+// file and saying which bootstrap variables it was given.
 const fakeJuice = `#!/bin/sh
 case "$1" in
 --version) echo "juice version v9.9.9 (test)";;
-kernel) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw}" >&2
+kernel) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_RECOVERY_KEY:+key}" >&2
         mkdir -p "$JUICE_HOME/worlds"; echo '{"rail":"manual"}' > "$JUICE_HOME/worlds/$3.json"
-        if [ -n "$JUICE_BOOTSTRAP_PASSWORD" ]; then echo "sys recovery phrase (write this down; it is shown only once):"; echo "  one two three"; fi
         echo "server.ready" >&2; exit 0;;
 esac
 `
+
+// health is a fake /health that answers once up is set.
+func health(t *testing.T, up *atomic.Bool) *url.URL {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if up.Load() {
+			w.Write([]byte(`{"public_key":"K"}`))
+			return
+		}
+		http.Error(w, "down", 503)
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	return u
+}
 
 func tarball(t *testing.T, script string) []byte {
 	t.Helper()
@@ -156,60 +172,70 @@ func installFake(t *testing.T, i *Installation) {
 	}
 }
 
-// Create writes the home, boots once with the password in the child's
-// environment only, returns the phrase, and logs everything but the phrase.
-func TestCreateReturnsThePhraseAndLogsTheRest(t *testing.T) {
-	i := inst(t, "http://127.0.0.1:4391")
+// Create writes the home and boots once with the password and the recovery
+// key in the child's environment only; it returns once the kernel answers.
+func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
+	var up atomic.Bool
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
-	phrase, err := i.Create("play", "alpha", "secret123")
-	if err != nil {
+	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+		if !slices.Contains(env, "JUICE_BOOTSTRAP_PASSWORD=secret123") || !slices.Contains(env, "JUICE_BOOTSTRAP_RECOVERY_KEY=PUBKEY") {
+			t.Errorf("the child's environment carries both: %v", env)
+		}
+		fmt.Fprintln(stderr, "server.ready")
+		go func() { time.Sleep(300 * time.Millisecond); up.Store(true) }()
+		return make(chan struct{}), nil
+	}
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
 		t.Fatal(err)
 	}
-	if phrase != "one two three" {
-		t.Errorf("phrase = %q", phrase)
+	if !up.Load() {
+		t.Error("Create returns only once the kernel answers")
 	}
 	cfg, _ := os.ReadFile(filepath.Join(i.Home, "kernels", "play", "config.json"))
-	for _, want := range []string{`"kernel_handle":"alpha"`, `"listen_addr":"127.0.0.1:4391"`, `"log_file":`} {
+	for _, want := range []string{`"kernel_handle":"alpha"`, `"listen_addr":"127.0.0.1:` + i.URL.Port() + `"`, `"log_file":`} {
 		if !strings.Contains(string(cfg), want) {
 			t.Errorf("config.json lacks %s: %s", want, cfg)
 		}
 	}
+	if strings.Contains(string(cfg), "secret123") || strings.Contains(string(cfg), "PUBKEY") {
+		t.Errorf("config.json holds no credential: %s", cfg)
+	}
 	if st, _ := os.Stat(filepath.Join(i.Home, "kernels", "play", "config.json")); st.Mode().Perm() != 0o600 {
 		t.Errorf("config.json mode = %v, want 0600", st.Mode().Perm())
 	}
-	time.Sleep(100 * time.Millisecond)
 	log, _ := os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
-	if strings.Contains(string(log), "one two three") || strings.Contains(string(log), "Recovery phrase") || strings.Contains(string(log), "secret123") {
-		t.Errorf("the log must hold neither the phrase nor the password: %s", log)
+	if !strings.Contains(string(log), "server.ready") || strings.Contains(string(log), "secret123") || strings.Contains(string(log), "PUBKEY") {
+		t.Errorf("the boot's output goes to kernel.log, without the credentials: %s", log)
 	}
-	if strings.Contains(string(log), "boot ") {
-		t.Errorf("a first boot's output goes to its own unlinked file, not kernel.log: %s", log)
+	// The real launcher hands the script both variables; a start, neither.
+	i.launch = nil
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+		t.Fatal(err)
 	}
 	if err := i.Start("play"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	log, _ = os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
-	if !strings.Contains(string(log), "boot "+i.Home) || !strings.Contains(string(log), "server.ready") || strings.Contains(string(log), " pw") {
-		t.Errorf("a start's output goes to kernel.log, with no password in its environment: %s", log)
-	}
-	if left, _ := filepath.Glob(filepath.Join(i.Home, "ui", "boot-*")); len(left) != 0 {
-		t.Errorf("the phrase file is unlinked: %v", left)
+	if !strings.Contains(string(log), "boot "+i.Home+" pw key") || !strings.Contains(string(log), "boot "+i.Home+"  \n") {
+		t.Errorf("a first boot gets both variables and a start neither: %s", log)
 	}
 	if i.World() != "play" {
 		t.Error("the created home is this installation's kernel (the kernel wrote its world file)")
 	}
 	writeHome(t, i, "other", "127.0.0.1:4040")
-	if _, err := i.Create("other", "alpha", "secret123"); err == nil || !strings.Contains(err.Error(), "listening on 127.0.0.1:4040") {
+	if err := i.Create("other", "alpha", "secret123", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "listening on 127.0.0.1:4040") {
 		t.Errorf("a home listening elsewhere is another kernel's: %v", err)
 	}
 }
 
-// A child that exits before the phrase is an error carrying its output; the
-// home stays, since the kernel's partial boot is rerunnable, and the next
-// round starts it. A home that cannot be written is removed.
+// A child that exits before the kernel answers is an error carrying its last
+// words; the home stays, since the kernel's partial boot is rerunnable. A home
+// whose child never started is removed.
 func TestCreateFailureKeepsTheHomeOnceTheChildRan(t *testing.T) {
-	i := inst(t, "http://127.0.0.1:4391")
+	var up atomic.Bool
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
 	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
 		fmt.Fprintln(stderr, "bootstrap: kernel name refused")
@@ -217,27 +243,62 @@ func TestCreateFailureKeepsTheHomeOnceTheChildRan(t *testing.T) {
 		close(done)
 		return done, nil
 	}
-	_, err := i.Create("play", "Bad Name", "secret123")
+	err := i.Create("play", "Bad Name", "secret123", "PUBKEY")
 	if err == nil || !strings.Contains(err.Error(), "kernel name refused") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(i.Home, "kernels", "play", "config.json")); statErr != nil {
 		t.Error("the home is left for the retry")
 	}
-	// The retry is another Create on the same home: a first boot rerun.
-	i.launch = nil
-	if phrase, err := i.Create("play", "alpha", "secret123"); err != nil || phrase != "one two three" {
-		t.Errorf("the rerun first boot: %q %v", phrase, err)
-	}
 	i.launch = func(string, []string, []string, *os.File, *os.File) (<-chan struct{}, error) {
 		return nil, fmt.Errorf("exec: not permitted")
 	}
-	_, err = i.Create("other", "alpha", "secret123")
-	if err == nil {
+	if err := i.Create("other", "alpha", "secret123", "PUBKEY"); err == nil {
 		t.Fatal("a child that never started is an error")
 	}
 	if _, statErr := os.Stat(filepath.Join(i.Home, "kernels", "other")); !os.IsNotExist(statErr) {
 		t.Error("a home whose child never started is removed")
+	}
+}
+
+// The worlds offered are the files in worlds/; an installation never served
+// has none, and play is offered.
+func TestWorldsAreTheWorldFiles(t *testing.T) {
+	i := inst(t, "http://127.0.0.1:4391")
+	if w := i.Worlds(); strings.Join(w, ",") != "play" {
+		t.Errorf("a never-served installation offers play: %v", w)
+	}
+	dir := filepath.Join(i.Home, "worlds")
+	os.MkdirAll(filepath.Join(dir, "sub.json"), 0o700)
+	for _, n := range []string{"polygon.json", "play.json", ".hidden.json", "arbitrum-one.json", "notes.txt"} {
+		os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o600)
+	}
+	if w := i.Worlds(); strings.Join(w, ",") != "arbitrum-one,play,polygon" {
+		t.Errorf("worlds = %v", w)
+	}
+}
+
+// A binary older than Release is replaced before anything is created, since it
+// would ignore the recovery key; the version is what --version says.
+func TestEnsureReplacesAnOlderBinary(t *testing.T) {
+	var up atomic.Bool
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Releases: releases(t, tarball(t, fakeJuice), "").URL}
+	installFake(t, i)
+	if v := i.Version(); v != "v9.9.9" {
+		t.Fatalf("Version = %q", v)
+	}
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, "v9.9.9", "v0.1.0", 1)), 0o755)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var seen []State
+	i.Ensure(ctx, func(s State, _ string) {
+		seen = append(seen, s)
+		if s == NeedsCreate {
+			cancel()
+		}
+	}, nil)
+	if strings.Join(stateStrings(seen), ",") != "installing,needs-create" || i.Version() != "v9.9.9" {
+		t.Errorf("states = %v, version %s", seen, i.Version())
 	}
 }
 
@@ -271,7 +332,6 @@ func TestEnsureOrdersTheFacts(t *testing.T) {
 		if strings.Join(args, " ") != "kernel serve play" {
 			t.Errorf("args = %v", args)
 		}
-		fmt.Fprintln(stdout, "sys recovery phrase:\n  one two three")
 		return make(chan struct{}), nil
 	}
 	created := make(chan struct{})
@@ -281,7 +341,7 @@ func TestEnsureOrdersTheFacts(t *testing.T) {
 		local.Ensure(context.Background(), func(s State, _ string) {
 			seen = append(seen, s)
 			if s == NeedsCreate {
-				if _, err := local.Create("play", "alpha", "secret123"); err != nil {
+				if err := local.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
 					t.Error(err)
 				}
 				close(created)
