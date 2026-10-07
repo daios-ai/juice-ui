@@ -29,6 +29,7 @@ $JUICE_HOME/
   bin/                   the family's executables, where the installer puts them
   worlds/<world>.json    one network's definition: its money, and the servers to meet it through
   llm/<endpoint>.json    one language-model provider: its protocol, address and models
+  schemas/               the JSON Schema of config.json, world and endpoint files, rewritten every serve
   kernels/<world>/       one kernel: juice.db, config.json, the rail key and its records,
                          serve.lock, cache/
   client/config.json     the kernels this client knows, and which login is selected
@@ -56,6 +57,8 @@ that file: the name may hold letters, digits, dot, dash and underscore, up to 64
 not begin with a dot. The worlds this installation's binary ships are written into `worlds/` the
 first time it serves and never overwritten, so an operator's edit — their own node, their own
 meeting point — outlives an upgrade, and a network this build does not ship is a file they add.
+`juice kernel worlds` lists them, the shipped ones included before anything has served, so a
+program can offer the choice before the first boot.
 
 One installation runs one kernel per world, so the world is the whole of what `serve` is told. The
 kernel's own nickname (D15) — what it calls itself on the network, since every kernel on one shares
@@ -69,7 +72,10 @@ client port and the peer transport alike. One server per kernel, enforced by the
 A kernel is created by its first boot, and only on the operator's word: a `config.json` written in
 advance, or an answer given at a terminal after they are told which kernels are here. It then asks
 for what the kernel cannot revise — the name it goes by on the network — and refuses off a terminal,
-naming the key and the file that would have answered. That first boot is the only writer of
+naming the key and the file that would have answered. The superuser's password is
+`JUICE_BOOTSTRAP_PASSWORD` or asked; a program that performs the boot generates the recovery phrase
+itself and passes its public key as `JUICE_BOOTSTRAP_RECOVERY_KEY`, so the kernel shows no phrase,
+and without one the kernel generates the phrase and prints it once. That first boot is the only writer of
 `config.json`, and it writes nothing until the answers are in hand, so a boot that is declined or
 unanswered leaves nothing behind. The network is recorded once the rail has verified it, and from
 then on a boot offering that kernel another world is refused before anything is opened.
@@ -116,6 +122,7 @@ Commands:
 | Command | Effect |
 |---|---|
 | `juice kernel add URL` | register the kernel answering there, under the name it calls itself; selects nothing. The same key on the same network at a new address is that kernel having moved: the address is updated and its logins are kept; any other answer is refused |
+| `juice kernel worlds` | the worlds this installation can serve: its world files and the shipped ones not yet written, with money and description; writes nothing |
 | `juice kernel list` | the kernels known, marking the one in use |
 | `juice kernel forget NAME` | drop the record and those logins' credentials |
 | `juice auth login USER@KERNEL` | authenticate there, and act as that login |
