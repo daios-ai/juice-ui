@@ -81,7 +81,7 @@ func TestWorldMatchesByPort(t *testing.T) {
 const fakeJuice = `#!/bin/sh
 case "$1 $2" in
 "--version "*) echo "juice version v9.9.9 (test)";;
-"kernel worlds") echo '[{"world":"play","description":"'"$JUICE_HOME"'","file":""},{"world":"bad","error":"parse world file","file":"x"}]';;
+"kernel worlds") echo '[{"world":"play","description":"no real money","file":""},{"world":"bad","error":"'"$JUICE_HOME"'","file":"x"}]';;
 kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_RECOVERY_KEY:+key}" >&2
         mkdir -p "$JUICE_HOME/worlds"; echo '{"rail":"manual"}' > "$JUICE_HOME/worlds/$3.json"
         echo "server.ready" >&2; exit 0;;
@@ -271,7 +271,7 @@ func TestWorldsAreWhatTheKernelLists(t *testing.T) {
 	}
 	installFake(t, i)
 	ws, err := i.Worlds()
-	if err != nil || len(ws) != 2 || ws[0] != (World{Name: "play", Description: i.Home}) || ws[1] != (World{Name: "bad", Error: "parse world file"}) {
+	if err != nil || len(ws) != 2 || ws[0] != (World{Name: "play"}) || ws[1] != (World{Name: "bad", Error: i.Home}) {
 		t.Fatalf("Worlds = %+v, %v", ws, err)
 	}
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho 'unreadable worlds' >&2; exit 1\n"), 0o755)

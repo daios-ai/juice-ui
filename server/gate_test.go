@@ -46,7 +46,7 @@ func (f *fakeSteps) Worlds() ([]World, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return []World{{Name: "arbitrum-one", Description: "USDT0 on Arbitrum One"}, {Name: "bad", Error: "parse world file"}, {Name: "play", Description: "no real money"}}, nil
+	return []World{{Name: "arbitrum-one"}, {Name: "bad", Error: "parse world file"}, {Name: "play"}}, nil
 }
 
 func newGate(t *testing.T, listen string) (*Gate, *fakeSteps) {
@@ -128,8 +128,8 @@ func TestGateFirstBootIsLocal(t *testing.T) {
 	h := g.Handler()
 	steps.report("needs-create", "")
 	body := do(t, h, http.MethodGet, "/", nil, nil).Body.String()
-	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<option value="play" selected>play — no real money</option>`) ||
-		!strings.Contains(body, `<option value="arbitrum-one">arbitrum-one — USDT0 on Arbitrum One</option>`) || !strings.Contains(body, `<option value="bad" disabled>bad — parse world file</option>`) {
+	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<option value="play" selected>play</option>`) ||
+		!strings.Contains(body, `<option value="arbitrum-one">arbitrum-one</option>`) || !strings.Contains(body, `<option value="bad" disabled>bad — parse world file</option>`) {
 		t.Errorf("a local request gets the form, the kernel's worlds to choose from, one it would refuse disabled with its error: %s", body)
 	}
 	if strings.Contains(body, "hx-get") {

@@ -26,9 +26,9 @@ type Steps interface {
 	Local() bool
 }
 
-// World is one network the kernel lists: a name, its description, or the
-// error the kernel would give serving it.
-type World struct{ Name, Description, Error string }
+// World is one network the kernel lists: a name, and the error the kernel
+// would give serving it, if any.
+type World struct{ Name, Error string }
 
 // Gate serves the kernel screen while the kernel is installed, created,
 // started or awaited (requirements.md §1), and nothing else: every path is the

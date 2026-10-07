@@ -261,7 +261,7 @@ func TestStepsCarryTheKernelsWorlds(t *testing.T) {
 	script := "#!/bin/sh\necho '[{\"world\":\"play\",\"description\":\"no real money\"},{\"world\":\"bad\",\"error\":\"parse world file\"}]'\n"
 	os.WriteFile(filepath.Join(home, "bin", "juice"), []byte(script), 0o755)
 	ws, err := steps{&kernel.Installation{Home: home}}.Worlds()
-	want := []server.World{{Name: "play", Description: "no real money"}, {Name: "bad", Error: "parse world file"}}
+	want := []server.World{{Name: "play"}, {Name: "bad", Error: "parse world file"}}
 	if err != nil || !slices.Equal(ws, want) {
 		t.Errorf("Worlds = %+v, %v", ws, err)
 	}

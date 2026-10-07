@@ -747,7 +747,7 @@
       <div class="field">
         <label for="k-world">World</label>
         <p class="help">The network this kernel joins, for life.</p>
-        <select id="k-world" name="world" class="mono" required>{{range .Worlds}}<option value="{{.Name}}"{{if .Error}} disabled{{else if eq .Name $.World}} selected{{end}}>{{.Name}} — {{or .Error .Description}}</option>{{end}}</select>
+        <select id="k-world" name="world" class="mono" required>{{range .Worlds}}<option value="{{.Name}}"{{if .Error}} disabled{{else if eq .Name $.World}} selected{{end}}>{{.Name}}{{if .Error}} — {{.Error}}{{end}}</option>{{end}}</select>
       </div>
       <div class="field">
         <label for="k-handle">Kernel name</label>

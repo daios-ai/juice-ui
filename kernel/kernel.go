@@ -93,11 +93,10 @@ func (i *Installation) Version() string {
 }
 
 // World is one network this installation can serve, as `juice kernel worlds`
-// reports it: its name, its description, or the error serve would give.
+// reports it: its name, and the error serve would give, if any.
 type World struct {
-	Name        string `json:"world"`
-	Description string `json:"description"`
-	Error       string `json:"error"`
+	Name  string `json:"world"`
+	Error string `json:"error"`
 }
 
 // Worlds are the networks this installation can serve, as the kernel lists

@@ -5,8 +5,8 @@ Status: design draft — endpoint surface gated against the running kernel
 
 > **What changed in 0.17.2.** The first boot offers every world the
 > installation can serve, as `juice kernel worlds` lists them (kernel v0.15.8),
-> the shipped ones included before any kernel has served, each with its
-> description; the superuser password's help names the account, `sys`; the phrase's
+> the shipped ones included before any kernel has served, each by its name;
+> the superuser password's help names the account, `sys`; the phrase's
 > acknowledgement counts only while one is pending, as at signup.
 
 > **What changed in 0.17.1.** The first boot follows the standard for a
@@ -490,7 +490,7 @@ kernel answers `/health`, when the application takes the listener:
 * no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port →
   **create**: a first-boot form (world, kernel name, superuser password; the
   world one of those `juice kernel worlds` lists — the world files and the
-  shipped worlds not yet written — each labelled with its description, `play`
+  shipped worlds not yet written — each by its name, `play`
   preselected, a world the kernel would refuse shown disabled with its error,
   and only a listed, servable world accepted on the server) writes that home's `config.json` and serves
   the kernel once with the password and the superuser's recovery public key in
