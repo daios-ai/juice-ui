@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -102,7 +104,20 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /v1/auth/recover/start", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"nonce":"NONCE1","expires_in_seconds":600}`))
 	})
+	// The kernel verifies the signature over the challenge in the recovery
+	// domain of its network (fingerprint D1), as v0.15.7 does, against the key
+	// of the phrase TestRecoverResetsPassword uses.
 	mux.HandleFunc("POST /v1/auth/recover/complete", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Nonce, Signature string }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		pubB64, _ := recoveryPubKey("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+		pub, _ := base64.RawURLEncoding.DecodeString(pubB64)
+		sig, _ := base64.RawURLEncoding.DecodeString(in.Signature)
+		if !ed25519.Verify(pub, []byte(`juice/v1/D1/recovery`+"\n"+`{"recovery_challenge":"`+in.Nonce+`"}`), sig) {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"code":"unauthorized","error":"recovery signature is invalid"}`))
+			return
+		}
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {

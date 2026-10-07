@@ -369,7 +369,7 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 		fail(recoverErrorMessage(err))
 		return
 	}
-	sig, err := signRecoveryChallenge(phrase, nonce)
+	sig, err := signRecoveryChallenge(phrase, s.kernelIdentity(ctx).NetworkFingerprint, nonce)
 	if err != nil {
 		fail("That recovery phrase isn't valid — check the words and spacing.")
 		return

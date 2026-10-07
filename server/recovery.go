@@ -21,7 +21,13 @@ import (
 //	seed  = BIP-39(phrase)          // empty passphrase
 //	priv  = Ed25519 from seed[:32]
 //	pub   = base64url(priv.public)  // == recovery_public_key
-//	sig   = base64url(Ed25519-sign(priv, JCS({"recovery_challenge": nonce})))
+//	sig   = base64url(Ed25519-sign(priv, "juice/v1/" + network + "/recovery\n" ‖ JCS({"recovery_challenge": nonce})))
+//
+// network is the kernel's network fingerprint (/health network_fingerprint):
+// every Juice payload is signed under that prefix and one domain per kind
+// (kernel requirements.md §5, "Every Juice payload signs …"), so a signature
+// verifies on one network and in one domain only. API.md's bare-JCS form is
+// refused by the kernel ("recovery signature is invalid", v0.15.7).
 //
 // base64url is unpadded (RawURLEncoding), matching the kernel's key format.
 
@@ -67,10 +73,9 @@ func recoveryPubKey(mnemonic string) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(pub), nil
 }
 
-// signRecoveryChallenge signs the server nonce with the phrase-derived key,
-// producing the base64url signature the kernel verifies against the enrolled
-// recovery_public_key.
-func signRecoveryChallenge(mnemonic, nonce string) (string, error) {
+// signRecoveryChallenge signs the server nonce with the phrase-derived key, in
+// the recovery domain of the kernel's network.
+func signRecoveryChallenge(mnemonic, network, nonce string) (string, error) {
 	priv, err := recoveryKey(mnemonic)
 	if err != nil {
 		return "", err
@@ -79,6 +84,6 @@ func signRecoveryChallenge(mnemonic, nonce string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("recovery challenge: %w", err)
 	}
-	sig := ed25519.Sign(priv, payload)
+	sig := ed25519.Sign(priv, append([]byte("juice/v1/"+network+"/recovery\n"), payload...))
 	return base64.RawURLEncoding.EncodeToString(sig), nil
 }

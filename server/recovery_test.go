@@ -59,12 +59,13 @@ func TestRecoveryDerivationVector(t *testing.T) {
 }
 
 // TestSignChallengeVerifiesUnderKey proves the signature the BFF produces verifies
-// against the enrolled recovery key over the canonical challenge — the property the
-// kernel checks at recover/complete.
+// against the enrolled recovery key over the canonical challenge in the recovery
+// domain of the network — the property the kernel checks at recover/complete —
+// and over nothing else.
 func TestSignChallengeVerifiesUnderKey(t *testing.T) {
 	const m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 	const nonce = "nonce-12345"
-	sigB64, err := signRecoveryChallenge(m, nonce)
+	sigB64, err := signRecoveryChallenge(m, "fp", nonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +79,11 @@ func TestSignChallengeVerifiesUnderKey(t *testing.T) {
 	if string(payload) != `{"recovery_challenge":"nonce-12345"}` {
 		t.Errorf("challenge payload not canonical: %s", payload)
 	}
-	if !ed25519.Verify(pub, payload, sig) {
-		t.Error("signature does not verify against the derived recovery key")
+	if !ed25519.Verify(pub, append([]byte("juice/v1/fp/recovery\n"), payload...), sig) {
+		t.Error("signature does not verify against the derived recovery key in the recovery domain")
+	}
+	if ed25519.Verify(pub, payload, sig) || ed25519.Verify(pub, append([]byte("juice/v1/other/recovery\n"), payload...), sig) {
+		t.Error("the signature verifies on its network and domain only")
 	}
 }
 
@@ -87,7 +91,7 @@ func TestRecoveryRejectsInvalidPhrase(t *testing.T) {
 	if _, err := recoveryPubKey("not a real bip39 mnemonic at all"); err == nil {
 		t.Error("an invalid phrase must be rejected, not silently derived")
 	}
-	if _, err := signRecoveryChallenge("still not valid", "n"); err == nil {
+	if _, err := signRecoveryChallenge("still not valid", "fp", "n"); err == nil {
 		t.Error("signing with an invalid phrase must fail")
 	}
 }
