@@ -67,7 +67,10 @@ identity, which is its key and does not exist until that boot.
 
 Each kernel is started with its own `--listen-addr` and carries its own `fed_listen_addrs` in its own
 `config.json`. Nothing allocates ports for them; a collision is a bind failure at startup, for the
-client port and the peer transport alike. One server per kernel, enforced by the lock in its home.
+client port and the peer transport alike. One server per kernel, enforced by the lock in its home:
+`serve.lock`, which the server holds under an exclusive `flock` and writes its process id into. A
+program that stops a kernel reads the id from there; the lock, not the number, says whether a
+kernel holds the home, since a reader that can take the lock has found no kernel.
 
 A kernel is created by its first boot, and only on the operator's word: a `config.json` written in
 advance, or an answer given at a terminal after they are told which kernels are here. It then asks
@@ -75,11 +78,10 @@ for what the kernel cannot revise — the name it goes by on the network — and
 naming the key and the file that would have answered. The superuser's password is
 `JUICE_BOOTSTRAP_PASSWORD` or asked; a program that performs the boot generates the recovery phrase
 itself and passes its public key as `JUICE_BOOTSTRAP_RECOVERY_KEY`, so the kernel shows no phrase,
-and without one the kernel generates the phrase and prints it once. The kernel is the only writer of
-`config.json` — that first boot, and later its superuser through `admin kernel config` — and a boot
-writes nothing until the answers are in hand, so one that is declined or unanswered leaves nothing
-behind. The network is recorded once the rail has verified it, and from then on a boot offering that
-kernel another world is refused before anything is opened.
+and without one the kernel generates the phrase and prints it once. That first boot is the only writer of
+`config.json`, and it writes nothing until the answers are in hand, so a boot that is declined or
+unanswered leaves nothing behind. The network is recorded once the rail has verified it, and from
+then on a boot offering that kernel another world is refused before anything is opened.
 
 Removing a kernel is not a lifecycle verb. Its directory holds a ledger, a signing key, a rail
 key and possibly unsettled obligations, so it is archived or destroyed deliberately by the operator,
