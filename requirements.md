@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.17.1
+Version: 0.17.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.17.2.** The first boot offers every world the
+> installation can serve, as `juice kernel worlds` lists them (kernel v0.15.8),
+> the shipped ones included before any kernel has served, each with its
+> description; the superuser password's help names the account, `sys`.
 
 > **What changed in 0.17.1.** The first boot follows the standard for a
 > recovery phrase: the UI generates it, as at signup, shows it once and passes
@@ -483,15 +488,18 @@ kernel answers `/health`, when the application takes the listener:
   `install.sh`);
 * no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port →
   **create**: a first-boot form (world, kernel name, superuser password; the
-  world one of `$JUICE_HOME/worlds/*.json`, `play` on an installation never
-  served, checked on the server) writes that home's `config.json` and serves
+  world one of those `juice kernel worlds` lists — the world files and the
+  shipped worlds not yet written — each labelled with its description, `play`
+  preselected, a world the kernel would refuse shown disabled with its error,
+  and only a listed, servable world accepted on the server) writes that home's `config.json` and serves
   the kernel once with the password and the superuser's recovery public key in
   the child's environment, the kernel's documented non-interactive first boot.
   The UI generates the recovery phrase as at signup, one for every attempt of
   the boot (a kernel that enrolled the key and then failed to serve keeps it),
   and shows it once the kernel answers, held in memory until acknowledged and
-  stored nowhere. The screen is headed Juice installation and each field states
-  its one consequence;
+  stored nowhere. The screen is headed Juice installation; the world and the
+  kernel name each state their one consequence, and the password names the
+  account it opens, `sys`;
 * otherwise → **start** `juice kernel serve <world>`, detached so the kernel
   outlives the UI; the kernel's own lock makes this safe beside an operator's
   start.

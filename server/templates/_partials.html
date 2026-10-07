@@ -747,14 +747,14 @@
       <div class="field">
         <label for="k-world">World</label>
         <p class="help">The network this kernel joins, for life.</p>
-        <select id="k-world" name="world" class="mono" required>{{range .Worlds}}<option{{if eq . $.World}} selected{{end}}>{{.}}</option>{{end}}</select>
+        <select id="k-world" name="world" class="mono" required>{{range .Worlds}}<option value="{{.Name}}"{{if .Error}} disabled{{else if eq .Name $.World}} selected{{end}}>{{.Name}} — {{or .Error .Description}}</option>{{end}}</select>
       </div>
       <div class="field">
         <label for="k-handle">Kernel name</label>
         <p class="help">Its name on the network. It cannot be changed.</p>
         <input id="k-handle" name="handle" type="text" class="mono" value="{{.Handle}}" autocomplete="off" required>
       </div>
-      <div class="field"><label for="k-pw">Superuser password</label><p class="help">The password of sys. Only the recovery phrase resets it.</p><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div class="field"><label for="k-pw">Superuser password</label><p class="help">The superuser signs in as sys.</p><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
       <div class="field"><label for="k-pw2">Confirm password</label><input id="k-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
       <button class="btn" type="submit">Create kernel</button>
     </form>

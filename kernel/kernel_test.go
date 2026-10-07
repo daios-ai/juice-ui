@@ -76,12 +76,13 @@ func TestWorldMatchesByPort(t *testing.T) {
 	}
 }
 
-// A fake kernel script: answers --version, or serves by writing its world
-// file and saying which bootstrap variables it was given.
+// A fake kernel script: answers --version, lists two worlds, or serves by
+// writing its world file and saying which bootstrap variables it was given.
 const fakeJuice = `#!/bin/sh
-case "$1" in
---version) echo "juice version v9.9.9 (test)";;
-kernel) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_RECOVERY_KEY:+key}" >&2
+case "$1 $2" in
+"--version "*) echo "juice version v9.9.9 (test)";;
+"kernel worlds") echo '[{"world":"play","description":"'"$JUICE_HOME"'","file":""},{"world":"bad","error":"parse world file","file":"x"}]';;
+kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_RECOVERY_KEY:+key}" >&2
         mkdir -p "$JUICE_HOME/worlds"; echo '{"rail":"manual"}' > "$JUICE_HOME/worlds/$3.json"
         echo "server.ready" >&2; exit 0;;
 esac
@@ -261,20 +262,21 @@ func TestCreateFailureKeepsTheHomeOnceTheChildRan(t *testing.T) {
 	}
 }
 
-// The worlds offered are the files in worlds/; an installation never served
-// has none, and play is offered.
-func TestWorldsAreTheWorldFiles(t *testing.T) {
+// The worlds are what the kernel lists, run against this installation; a
+// failing list is its error, and no binary is an error.
+func TestWorldsAreWhatTheKernelLists(t *testing.T) {
 	i := inst(t, "http://127.0.0.1:4391")
-	if w := i.Worlds(); strings.Join(w, ",") != "play" {
-		t.Errorf("a never-served installation offers play: %v", w)
+	if _, err := i.Worlds(); err == nil {
+		t.Error("no binary lists no worlds")
 	}
-	dir := filepath.Join(i.Home, "worlds")
-	os.MkdirAll(filepath.Join(dir, "sub.json"), 0o700)
-	for _, n := range []string{"polygon.json", "play.json", ".hidden.json", "arbitrum-one.json", "notes.txt"} {
-		os.WriteFile(filepath.Join(dir, n), []byte("{}"), 0o600)
+	installFake(t, i)
+	ws, err := i.Worlds()
+	if err != nil || len(ws) != 2 || ws[0] != (World{Name: "play", Description: i.Home}) || ws[1] != (World{Name: "bad", Error: "parse world file"}) {
+		t.Fatalf("Worlds = %+v, %v", ws, err)
 	}
-	if w := i.Worlds(); strings.Join(w, ",") != "arbitrum-one,play,polygon" {
-		t.Errorf("worlds = %v", w)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho 'unreadable worlds' >&2; exit 1\n"), 0o755)
+	if _, err := i.Worlds(); err == nil || !strings.Contains(err.Error(), "unreadable worlds") {
+		t.Errorf("a failing list gives its error: %v", err)
 	}
 }
 

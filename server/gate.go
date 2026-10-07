@@ -19,11 +19,16 @@ type Steps interface {
 	// Create makes this installation's kernel, enrolling recoveryKey for sys,
 	// and returns once it answers.
 	Create(world, handle, password, recoveryKey string) error
-	// Worlds are the networks this installation can serve.
-	Worlds() []string
+	// Worlds are the networks this installation can serve, as the kernel
+	// lists them.
+	Worlds() ([]World, error)
 	// Local reports whether the configured kernel is this installation's.
 	Local() bool
 }
+
+// World is one network the kernel lists: a name, its description, or the
+// error the kernel would give serving it.
+type World struct{ Name, Description, Error string }
 
 // Gate serves the kernel screen while the kernel is installed, created,
 // started or awaited (requirements.md §1), and nothing else: every path is the
@@ -80,7 +85,7 @@ type kernelView struct {
 	Command            string
 	Error              string
 	World, Handle      string
-	Worlds             []string
+	Worlds             []World
 }
 
 // Handler serves the screen on every path, the status fragment, and the two
@@ -131,7 +136,10 @@ func (g *Gate) view(r *http.Request) kernelView {
 	v := kernelView{State: g.state, Detail: g.detail, URL: g.url, Local: g.local(r), Error: g.err,
 		Command: "juice kernel serve play", World: r.FormValue("world"), Handle: r.FormValue("handle")}
 	if v.State == "needs-create" {
-		v.Worlds = g.steps.Worlds()
+		var err error
+		if v.Worlds, err = g.steps.Worlds(); err != nil {
+			v.Error = err.Error()
+		}
 	}
 	return v
 }
@@ -175,7 +183,7 @@ func (g *Gate) postCreate(w http.ResponseWriter, r *http.Request) {
 	pw, pw2 := r.FormValue("password"), r.FormValue("confirm_password")
 	var fail string
 	switch {
-	case !slices.Contains(g.steps.Worlds(), world):
+	case !g.servable(world):
 		fail = "Choose a world."
 	case handle == "":
 		fail = "A kernel name is required."
@@ -195,6 +203,14 @@ func (g *Gate) postCreate(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	v := g.view(r)
 	_ = g.render.Render(w, http.StatusUnprocessableEntity, "kernel", Page{Title: "Juice installation", Data: v})
+}
+
+// servable reports whether the kernel lists world and would serve it; the
+// name becomes the kernel's home directory, so the form's choices alone do not
+// bound it.
+func (g *Gate) servable(world string) bool {
+	ws, err := g.steps.Worlds()
+	return err == nil && slices.ContainsFunc(ws, func(w World) bool { return w.Name == world && w.Error == "" })
 }
 
 // create runs the first boot with the recovery key of one phrase, generated

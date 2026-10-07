@@ -6,7 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
 	"testing"
+
+	"github.com/daios-ai/juice-ui/kernel"
+	"github.com/daios-ai/juice-ui/server"
 )
 
 func env(m map[string]string) func(string) string {
@@ -246,5 +251,18 @@ func TestVersionDefaults(t *testing.T) {
 	// Build metadata has safe defaults when not injected via -ldflags.
 	if version == "" || commit == "" {
 		t.Errorf("version/commit must have non-empty defaults, got %q/%q", version, commit)
+	}
+}
+
+// The adapter carries the kernel's worlds to the gate field for field.
+func TestStepsCarryTheKernelsWorlds(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "bin"), 0o700)
+	script := "#!/bin/sh\necho '[{\"world\":\"play\",\"description\":\"no real money\"},{\"world\":\"bad\",\"error\":\"parse world file\"}]'\n"
+	os.WriteFile(filepath.Join(home, "bin", "juice"), []byte(script), 0o755)
+	ws, err := steps{&kernel.Installation{Home: home}}.Worlds()
+	want := []server.World{{Name: "play", Description: "no real money"}, {Name: "bad", Error: "parse world file"}}
+	if err != nil || !slices.Equal(ws, want) {
+		t.Errorf("Worlds = %+v, %v", ws, err)
 	}
 }

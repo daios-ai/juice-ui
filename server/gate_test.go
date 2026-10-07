@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ type fakeSteps struct {
 	created []string
 	keys    []string
 	err     error
+	listErr error
 	report  func(state, detail string)
 }
 
@@ -37,8 +39,15 @@ func (f *fakeSteps) Create(world, handle, password, key string) error {
 	f.keys = append(f.keys, key)
 	return f.err
 }
-func (f *fakeSteps) Local() bool      { return f.local }
-func (f *fakeSteps) Worlds() []string { return []string{"arbitrum-one", "play"} }
+func (f *fakeSteps) Local() bool { return f.local }
+func (f *fakeSteps) Worlds() ([]World, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return []World{{Name: "arbitrum-one", Description: "USDT0 on Arbitrum One"}, {Name: "bad", Error: "parse world file"}, {Name: "play", Description: "no real money"}}, nil
+}
 
 func newGate(t *testing.T, listen string) (*Gate, *fakeSteps) {
 	t.Helper()
@@ -119,8 +128,9 @@ func TestGateFirstBootIsLocal(t *testing.T) {
 	h := g.Handler()
 	steps.report("needs-create", "")
 	body := do(t, h, http.MethodGet, "/", nil, nil).Body.String()
-	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<option selected>play</option>`) || !strings.Contains(body, `<option>arbitrum-one</option>`) {
-		t.Errorf("a local request gets the form, the installation's worlds to choose from: %s", body)
+	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<option value="play" selected>play — no real money</option>`) ||
+		!strings.Contains(body, `<option value="arbitrum-one">arbitrum-one — USDT0 on Arbitrum One</option>`) || !strings.Contains(body, `<option value="bad" disabled>bad — parse world file</option>`) {
+		t.Errorf("a local request gets the form, the kernel's worlds to choose from, one it would refuse disabled with its error: %s", body)
 	}
 	if strings.Contains(body, "hx-get") {
 		t.Error("the form is not polled: nothing changes until it is posted, and a swap would erase it")
@@ -158,6 +168,16 @@ func TestGateFirstBootIsLocal(t *testing.T) {
 	unlisted := url.Values{"world": {"../x"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
 	if rec := do(t, h, http.MethodPost, "/kernel/create", unlisted, nil); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "Choose a world") || len(steps.created) != 0 {
 		t.Errorf("a world the installation does not hold is refused: %d", rec.Code)
+	}
+	refused := url.Values{"world": {"bad"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
+	if rec := do(t, h, http.MethodPost, "/kernel/create", refused, nil); rec.Code != http.StatusUnprocessableEntity || len(steps.created) != 0 {
+		t.Errorf("a world the kernel would refuse is refused: %d", rec.Code)
+	}
+	steps.mu.Lock()
+	steps.listErr = errors.New("juice kernel worlds: unreadable")
+	steps.mu.Unlock()
+	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "juice kernel worlds: unreadable") || strings.Contains(rec.Body.String(), "<option") || len(steps.created) != 0 {
+		t.Errorf("a failing list is the form's error, with nothing to choose: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

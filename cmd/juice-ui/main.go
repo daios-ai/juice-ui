@@ -156,12 +156,21 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	})
 }
 
-// steps adapts the kernel package to the gate's Steps: the gate speaks in
-// strings, the kernel package in its own State type.
+// steps adapts the kernel package to the gate's Steps; each package keeps its
+// own types.
 type steps struct{ *kernel.Installation }
 
 func (s steps) Ensure(ctx context.Context, report func(state, detail string), created <-chan struct{}) {
 	s.Installation.Ensure(ctx, func(st kernel.State, d string) { report(string(st), d) }, created)
+}
+
+func (s steps) Worlds() ([]server.World, error) {
+	ws, err := s.Installation.Worlds()
+	out := make([]server.World, len(ws))
+	for n, w := range ws {
+		out[n] = server.World(w)
+	}
+	return out, err
 }
 
 // switcher is the listener's handler: the gate first, the application once it

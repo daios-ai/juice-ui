@@ -31,9 +31,9 @@ import (
 )
 
 // Release is the kernel release this UI was verified against; it is what the
-// gate installs when the binary is missing. The kernel's releases ship one
+// gate installs when the binary is missing or older. The kernel's releases ship one
 // tarball per platform and a checksums.txt, built by its release workflow.
-const Release = "v0.15.7"
+const Release = "v0.15.8"
 
 // Releases is the kernel's release download base.
 const Releases = "https://github.com/daios-ai/juice/releases/download"
@@ -92,22 +92,42 @@ func (i *Installation) Version() string {
 	return ""
 }
 
-// Worlds are the networks this installation can serve: the files in worlds/,
-// sorted. The kernel writes the shipped ones on its first serve, so an
-// installation never served holds none; play, the world every build ships, is
-// then the one offered.
-func (i *Installation) Worlds() []string {
-	entries, _ := os.ReadDir(filepath.Join(i.Home, "worlds"))
-	var ws []string
-	for _, e := range entries {
-		if n, ok := strings.CutSuffix(e.Name(), ".json"); ok && !e.IsDir() && n != "" && !strings.HasPrefix(n, ".") {
-			ws = append(ws, n)
+// World is one network this installation can serve, as `juice kernel worlds`
+// reports it: its name, its description, or the error serve would give.
+type World struct {
+	Name        string `json:"world"`
+	Description string `json:"description"`
+	Error       string `json:"error"`
+}
+
+// Worlds are the networks this installation can serve, as the kernel lists
+// them: its world files and the shipped worlds not yet written, before any
+// kernel has served. The command writes nothing.
+func (i *Installation) Worlds() ([]World, error) {
+	bin := i.Binary()
+	if bin == "" {
+		return nil, errors.New("the kernel binary is not installed")
+	}
+	cmd := exec.Command(bin, "kernel", "worlds", "--json")
+	cmd.Env = i.env()
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("juice kernel worlds: %s", strings.TrimSpace(string(ee.Stderr)))
 		}
+		return nil, fmt.Errorf("juice kernel worlds: %w", err)
 	}
-	if len(ws) == 0 {
-		return []string{"play"}
+	var ws []World
+	if err := json.Unmarshal(out, &ws); err != nil {
+		return nil, fmt.Errorf("juice kernel worlds: %w", err)
 	}
-	return ws
+	return ws, nil
+}
+
+// env is the environment of every kernel command: this process's, with
+// JUICE_HOME pinned to the installation.
+func (i *Installation) env() []string {
+	return append(os.Environ(), "JUICE_HOME="+i.Home)
 }
 
 // Binary is the installation's kernel executable, $JUICE_HOME/bin/juice, or ""
@@ -350,8 +370,7 @@ func (i *Installation) serve(world string, extraEnv []string, stdout, stderr *os
 	if bin == "" {
 		return nil, errors.New("the kernel binary is not installed")
 	}
-	env := append(os.Environ(), "JUICE_HOME="+i.Home)
-	env = append(env, extraEnv...)
+	env := append(i.env(), extraEnv...)
 	logf := i.logFile()
 	defer logf.Close()
 	if stdout == nil {
