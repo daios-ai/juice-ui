@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -62,9 +61,9 @@ type wiring struct {
 	identity *server.KernelIdentity
 	apps     []apps.App
 	renderer *server.Renderer
-	// configSchema is the kernel's schema of its config.json; "" when the
-	// kernel is not this installation's.
-	configSchema string
+	// config is this installation's kernel configuration; nil when the kernel
+	// is not this installation's.
+	config server.Configuration
 }
 
 // wire constructs the client, the identity (pinned to the recorded key when
@@ -157,7 +156,7 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 		BadgeInterval:  cfg.BadgeInterval,
 		Identity:       w.identity,
 		KernelName:     cfg.Kernel,
-		ConfigSchema:   w.configSchema,
+		Config:         w.config,
 	})
 }
 
@@ -226,10 +225,10 @@ func main() {
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
-	// The kernel writes its schema of config.json in this installation on every
-	// serve; a kernel elsewhere may be another release, so it has none here.
+	// Only this installation's kernel is configured here: a kernel elsewhere
+	// is its operator's, edited and restarted where it runs.
 	if inst.Local() {
-		w.configSchema = filepath.Join(cfg.Root, "schemas", "config.schema.json")
+		w.config = inst
 	}
 	handler, err := build(w, cfg, log)
 	if err != nil {

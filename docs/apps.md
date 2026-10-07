@@ -44,13 +44,12 @@ core rotting into a monolith; read them before touching this seam.
    contract, its list ordering). The plugin owns *Juice/UI integration* (kernel
    actions, grants, identity, templates, the nav badge). Neither reaches across:
    the plugin never writes the daemon's tables; the daemon never mints a grant.
-4. **Identity is stateless and deterministic.** Caller tokens are *derived*
-   (`CallerIdentity`'s HMAC), never stored, so they survive any store reset and can
-   never desync from a kernel grant. Prefer derivation over persistence for anything
-   that must stay in lock-step with the kernel.
+4. **The caller is who the kernel says.** A `delegated_bearer` action carries the
+   key the caller connected on `apps.CallerKeyHeader`; the app resolves that key to
+   the caller and trusts nothing else in the request.
 5. **Self-provisioning; new capabilities go in the seam.** An app provisions its own
    secrets into app state (no per-app environment variables). A capability more than
-   one app could want — the app-state store, `ServiceAccount`, `CallerIdentity`,
+   one app could want — the app-state store, `ServiceAccount`, `CallerKeyHeader`,
    badge polling, `UserDataDir` — lands in `apps/apps.go`, never hardwired into one
    app. The badge poll is the worked example: chat asked for a live nav count, and
    the answer was a seam field (`NavEntry.BadgeURL`) every future app inherits.
@@ -110,33 +109,6 @@ logs the cause with an operator fix (e.g. a suspended account → "run `admin
 unsuspend`"), and because it keeps retrying at the cap it **self-heals** the moment
 the account is restored — no restart. The app supplies only its password (persisted
 via `SaveAppState`) and its idempotent domain bootstrap (the `setup` callback).
-
-## Identifying callers — `apps.CallerIdentity`
-
-The **inbound** mirror of `ServiceAccount`. A plugin whose service uses
-`delegated_bearer` actions must identify the caller the kernel forwards. The seam
-does this statelessly:
-
-```go
-id := apps.NewCallerIdentity(signingKey)  // app persists signingKey
-// mint the token to connect as a user's grant:
-client.ConnectGrant(ctx, userTok, deps.Address("myapp")+"/do", id.Token(handle))
-// register the action with delegated_bearer auth on apps.CallerKeyHeader;
-// hand id.Authenticate to the service as its auth hook (it verifies the injected token).
-```
-
-`token(handle) = base64url(handle).base64url(HMAC-SHA256(signingKey, handle))` —
-**deterministic** (same key+handle → same token, so it survives any store reset and
-can never desync with the grant) and **unforgeable** (only the signing-key holder
-mints a valid one). The service stores **no** per-user keys; `Verify`/`Authenticate`
-recover the handle by recomputing the MAC. The signing key persists via
-`SaveAppState`, so identity outlives the service's own store.
-
-Together `ServiceAccount` (outbound: authenticate *as* a Juice user) and
-`CallerIdentity` (inbound: identify calling users) are the seam's full "a plugin is
-a Juice service" identity toolkit — and both keep the plugin's *service* (e.g.
-chat's `daemon`) Juice-agnostic: auth is injected, so the service could run
-standalone.
 
 ### Reconciling write-only auth config
 
@@ -271,8 +243,8 @@ transport, so the REST contract is exercised without a socket).
 
 - **Synchronous identity + authorization.** Each state-changing op is a fixed
   write route (`/create-room`, `/message`, …). The caller is whatever the injected
-  auth hook returns (in juice-ui, `apps.CallerIdentity.Authenticate` verifying the
-  token the kernel injects for that user's `delegated_bearer` grant), so the daemon
+  auth hook returns (in juice-ui, the store resolving, by hash, the key the kernel
+  injects for that user's `delegated_bearer` grant), so the daemon
   authorizes *at the door* — creator-only admin ops, member-only posting — and
   returns a real success or a typed failure, never a hollow ack.
 - **Durable, indexed, incremental.** The store is the source of truth (the kernel
@@ -298,11 +270,6 @@ side's internals.
   matching write route, and publishes it — reconciling a stale action left by an
   earlier build. It mounts the daemon's write routes under the CSRF-exempt
   `/_kernel/chat/` prefix.
-- **Provisions each user via `apps.CallerIdentity`.** On first chat touch (once per
-  run) it connects the user's **deterministic** caller token — `id.Token(handle)` —
-  as a grant on every `chat@<kernel>` action, *as the user*, silently. Because the token is
-  a stateless function of the signing key + handle, this can never desync with the
-  grant and survives a store loss; it also re-points any stale grant.
 - **Reads** rooms/messages via the daemon's REST `Client`; **writes** by running
   `chat@<kernel>/*` as the signed-in user. The kernel dials the daemon synchronously and
   injects the caller's token, so the write is applied (or rejected) by the time

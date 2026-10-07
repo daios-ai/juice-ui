@@ -7,7 +7,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"os"
 	"reflect"
 	"slices"
 	"sort"
@@ -38,9 +37,10 @@ type depositForm struct {
 
 type adminView struct {
 	depositForm
-	Users    []client.AdminUser
-	Pager    Pager
-	OpenForm string
+	Users        []client.AdminUser
+	Pager        Pager
+	OpenForm     string
+	Configurable bool // this installation's kernel: its configuration page exists
 }
 
 type adminUserView struct {
@@ -108,7 +108,7 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	// Back drives the shared deposit dialog's close/cancel links; empty would make
 	// them reload this URL with ?form= still set, reopening the dialog on the
 	// no-JS path.
-	view := adminView{OpenForm: openForm(r, "admin"), depositForm: depositForm{Back: "/admin"}}
+	view := adminView{OpenForm: openForm(r, "admin"), depositForm: depositForm{Back: "/admin"}, Configurable: s.config != nil}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.AdminListUsers(ctx, tok)
 		if e != nil {
@@ -387,65 +387,89 @@ func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
 }
 
-// configView is the kernel's configuration page (§6.6): the saved config.json
-// as a form generated from the kernel's own schema of it, the secrets the
-// kernel withholds as write-only inputs, and the kernel's two facts about the
-// running process.
-type configView struct {
-	Form           FormModel
-	ETag           string
-	Secrets        []string // replaceable secrets, by the kernel's dotted path
-	Overridden     []string
-	PendingRestart bool
+// Configuration is this installation's kernel configuration file, which the UI
+// edits for the operator and applies by restarting the kernel (kernel manual:
+// "edit the file and restart the kernel"). Version is the file's fingerprint;
+// Reconfigure refuses a file changed since that version.
+type Configuration interface {
+	Config() (config, schema []byte, version string, err error)
+	Reconfigure(version string, config []byte) error
 }
 
-// configFixed are the keys a save always keeps as saved: the schema pointer,
-// the first boot's answers, and listen_addr, the port this UI finds its kernel
-// by (kernel.World).
-var configFixed = []string{"$schema", "kernel_handle", "listen_addr", "credentials_key"}
+// configView is the configuration page (§6.6): the file as a form generated
+// from the kernel's own schema of it, its secrets as write-only inputs.
+type configView struct {
+	Form    FormModel
+	Version string
+	Secrets []string // replaceable secrets, by dotted path
+}
+
+// configFixed are kept as saved whatever the form says: the schema pointer,
+// the first boot's name, and listen_addr, the port this UI finds its kernel by
+// (kernel.World).
+var configFixed = []string{"$schema", "kernel_handle", "listen_addr"}
+
+// secretPaths are the file's secrets present in cfg, by dotted path: the keys
+// the kernel gives no command-line flag, a command line being readable by every
+// user of the machine (kernel requirements, Config) — credentials_key and each
+// language-model endpoint's key.
+func secretPaths(cfg map[string]any) []string {
+	var out []string
+	if _, ok := cfg["credentials_key"]; ok {
+		out = append(out, "credentials_key")
+	}
+	eps, _ := getDotted(cfg, "native.llm.endpoints").(map[string]any)
+	for n, ep := range eps {
+		if ep, _ := ep.(map[string]any); ep != nil && ep["key"] != nil {
+			out = append(out, "native.llm.endpoints."+n+".key")
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var kc client.KernelConfig
-	err := s.sessions.Do(ctx, func(tok string) (e error) {
-		kc, e = s.client.AdminKernelConfig(ctx, tok)
-		return e
-	})
+	raw, schema, version, err := s.config.Config()
+	var cfg map[string]any
+	if err == nil {
+		err = decodeNumbers(raw, &cfg)
+	}
 	if s.handleErr(w, r, err) {
 		return
 	}
-	// No schema file (a kernel not of this installation) leaves the raw editor.
-	schema, _ := os.ReadFile(s.configSchema)
+	secrets := secretPaths(cfg)
+	for _, p := range secrets {
+		deleteDotted(cfg, p)
+	}
+	shown, _ := json.MarshalIndent(cfg, "", "  ")
 	form := BuildForm(schema)
-	form.Fill(kc.Config)
-	// The JSON editor opens on the saved file, never a skeleton: a save from it
-	// is diffed against the saved file, so what it omits is removed.
-	var pretty bytes.Buffer
-	_ = json.Indent(&pretty, kc.Config, "", "  ")
-	form.Example = pretty.String()
+	form.Fill(shown)
+	// The JSON editor opens on the file itself, never a skeleton: what a save
+	// from it omits is removed.
+	form.Example = string(shown)
 	fields := form.Fields[:0]
 	for _, f := range form.Fields {
-		if f.Name == "$schema" || slices.Contains(kc.Secrets, f.Name) {
-			continue // editor metadata; a withheld secret has its own input
+		if f.Name == "$schema" || f.Name == "credentials_key" {
+			continue // editor metadata; a secret is never shown
 		}
 		f.Frozen = slices.Contains(configFixed, f.Name)
 		fields = append(fields, f)
 	}
 	form.Fields = fields
 	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{
-		Form: form, ETag: kc.ETag, Overridden: kc.Overridden, PendingRestart: kc.PendingRestart,
-		Secrets: slices.DeleteFunc(kc.Secrets, func(p string) bool { return slices.Contains(configFixed, p) }),
+		Form: form, Version: version,
+		Secrets: slices.DeleteFunc(secrets, func(p string) bool { return p == "credentials_key" }),
 	})
 }
 
-// postAdminConfig sends the difference between the saved file and the form as
-// one merge patch against the version the page was rendered from; the kernel
-// validates it and refuses a stale version (412).
+// postAdminConfig writes the form over the file the page was rendered from and
+// restarts the kernel on it. What the form cannot carry is kept as saved: the
+// fixed keys, every secret not replaced, and an empty value a blank input
+// cannot tell from absent.
 func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 	const back = "/admin/config"
-	ctx := r.Context()
 	args, err := buildArgs(r)
-	var to map[string]any
+	var to, saved map[string]any
 	if err == nil {
 		err = decodeNumbers(args, &to)
 	}
@@ -453,41 +477,36 @@ func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
-	var patch map[string]any
-	err = s.sessions.Do(ctx, func(tok string) error {
-		kc, e := s.client.AdminKernelConfig(ctx, tok)
-		var from map[string]any
-		if e == nil {
-			e = decodeNumbers(kc.Config, &from)
+	raw, _, _, err := s.config.Config()
+	if err == nil {
+		err = decodeNumbers(raw, &saved)
+	}
+	if err != nil {
+		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
+		return
+	}
+	for _, p := range append(slices.Clone(configFixed), secretPaths(saved)...) {
+		deleteDotted(to, p)
+		if v := getDotted(saved, p); v != nil {
+			setDotted(to, p, v)
 		}
-		if e != nil {
-			return e
+	}
+	for key, v := range r.PostForm {
+		if p, ok := strings.CutPrefix(key, "s_"); ok && strings.TrimSpace(v[0]) != "" {
+			setDotted(to, p, v[0])
 		}
-		for _, k := range configFixed {
-			if v, ok := from[k]; ok {
-				to[k] = v
-			} else {
-				delete(to, k)
-			}
-		}
-		patch = mergePatch(from, to)
-		for key, v := range r.PostForm {
-			if p, ok := strings.CutPrefix(key, "s_"); ok && strings.TrimSpace(v[0]) != "" {
-				patch = setDotted(patch, p, v[0])
-			}
-		}
-		if patch == nil {
-			return nil
-		}
-		body, _ := json.Marshal(patch)
-		_, e = s.client.AdminPatchKernelConfig(ctx, tok, r.PostFormValue("etag"), body)
-		return e
-	})
-	if err == nil && patch == nil {
+	}
+	keepEmpty(saved, to)
+	if reflect.DeepEqual(saved, to) {
 		s.flashRedirect(w, r, back, "info", "Nothing changed.")
 		return
 	}
-	s.flashResult(w, r, err, back, "Saved.")
+	out, _ := json.MarshalIndent(to, "", "  ")
+	if err := s.config.Reconfigure(r.PostFormValue("version"), append(out, '\n')); err != nil {
+		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
+		return
+	}
+	s.flashRedirect(w, r, back, "success", "Saved and restarted.")
 }
 
 // decodeNumbers decodes a JSON object keeping numbers as written, so a saved
@@ -501,32 +520,20 @@ func decodeNumbers(raw []byte, v *map[string]any) error {
 	return nil
 }
 
-// mergePatch is the RFC 7396 merge patch turning from into to, nil when they
-// agree. A key to lacks becomes null, restoring the kernel's default, unless
-// from holds it empty: a blank input cannot tell "", [] or null from absent.
-func mergePatch(from, to map[string]any) map[string]any {
-	p := map[string]any{}
+// keepEmpty puts back into to what from holds empty and to lacks, at any
+// depth: a blank input cannot tell "", [], {} or null from absent.
+func keepEmpty(from, to map[string]any) {
 	for k, f := range from {
-		if _, ok := to[k]; !ok && !isEmpty(f) {
-			p[k] = nil
+		t, ok := to[k]
+		if !ok && isEmpty(f) {
+			to[k] = f
 		}
-	}
-	for k, t := range to {
-		fm, ok1 := from[k].(map[string]any)
+		fm, ok1 := f.(map[string]any)
 		tm, ok2 := t.(map[string]any)
-		switch {
-		case ok1 && ok2:
-			if sub := mergePatch(fm, tm); sub != nil {
-				p[k] = sub
-			}
-		case !reflect.DeepEqual(from[k], t):
-			p[k] = t
+		if ok1 && ok2 {
+			keepEmpty(fm, tm)
 		}
 	}
-	if len(p) == 0 {
-		return nil
-	}
-	return p
 }
 
 func isEmpty(v any) bool {
@@ -543,22 +550,33 @@ func isEmpty(v any) bool {
 	return false
 }
 
-// setDotted sets a value at a dotted path (the kernel's name for a secret) in
-// a merge patch, creating the objects above it.
-func setDotted(patch map[string]any, path string, v any) map[string]any {
-	if patch == nil {
-		patch = map[string]any{}
-	}
-	node := patch
+// getDotted, setDotted and deleteDotted address a value in a JSON object by a
+// dotted path, the kernel's own spelling of a nested key (`native.time.price`).
+func getDotted(m map[string]any, path string) any {
 	segs := strings.Split(path, ".")
 	for _, k := range segs[:len(segs)-1] {
-		child, ok := node[k].(map[string]any)
+		m, _ = m[k].(map[string]any)
+	}
+	return m[segs[len(segs)-1]]
+}
+
+func setDotted(m map[string]any, path string, v any) {
+	segs := strings.Split(path, ".")
+	for _, k := range segs[:len(segs)-1] {
+		child, ok := m[k].(map[string]any)
 		if !ok {
 			child = map[string]any{}
-			node[k] = child
+			m[k] = child
 		}
-		node = child
+		m = child
 	}
-	node[segs[len(segs)-1]] = v
-	return patch
+	m[segs[len(segs)-1]] = v
+}
+
+func deleteDotted(m map[string]any, path string) {
+	segs := strings.Split(path, ".")
+	for _, k := range segs[:len(segs)-1] {
+		m, _ = m[k].(map[string]any)
+	}
+	delete(m, segs[len(segs)-1])
 }

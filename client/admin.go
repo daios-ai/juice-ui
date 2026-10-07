@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -493,42 +492,6 @@ func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, err
 	var id Identity
 	err := c.do(ctx, http.MethodGet, "/v1/admin/kernel", token, nil, &id)
 	return id, err
-}
-
-// KernelConfig is the kernel's saved config.json as its superuser reads it
-// (GET /v1/admin/kernel/config): every secret withheld from Config and named in
-// Secrets by its dotted path, the keys this run's command line overrides, and
-// whether the file changed since the kernel started. ETag is the version a
-// change is made against.
-type KernelConfig struct {
-	Config         json.RawMessage `json:"config"`
-	Secrets        []string        `json:"secrets"`
-	Overridden     []string        `json:"overridden"`
-	PendingRestart bool            `json:"pending_restart"`
-	ETag           string          `json:"-"`
-}
-
-// AdminKernelConfig reads the kernel's saved configuration.
-func (c *Client) AdminKernelConfig(ctx context.Context, token string) (KernelConfig, error) {
-	return c.kernelConfig(ctx, http.MethodGet, token, nil, nil)
-}
-
-// AdminPatchKernelConfig applies an RFC 7396 merge patch to the saved
-// configuration (PATCH /v1/admin/kernel/config) against the version etag
-// names; a stale one is refused 412 (KindInvalidState). The kernel holds the
-// result to a start's rules before it writes, and it applies at the next start.
-func (c *Client) AdminPatchKernelConfig(ctx context.Context, token, etag string, patch json.RawMessage) (KernelConfig, error) {
-	return c.kernelConfig(ctx, http.MethodPatch, token, http.Header{
-		"Content-Type": {"application/merge-patch+json"}, "If-Match": {etag}}, patch)
-}
-
-func (c *Client) kernelConfig(ctx context.Context, method, token string, hdr http.Header, body any) (KernelConfig, error) {
-	var kc KernelConfig
-	h, err := c.send(ctx, method, "/v1/admin/kernel/config", token, hdr, body, &kc)
-	if err == nil {
-		kc.ETag = h.Get("ETag")
-	}
-	return kc, err
 }
 
 // There is no subscribe/unsubscribe: consuming a peer's actions needs no

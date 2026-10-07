@@ -3,10 +3,11 @@
 Version: 0.18.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.18.0.** The superuser changes the kernel's configuration
-> from Admin (§6.6), through the kernel's own `/v1/admin/kernel/config`
-> (kernel v0.15.9): a form generated from the kernel's schema of `config.json`,
-> saved as one merge patch the kernel validates, applied at its next start.
+> **What changed in 0.18.0.** The superuser changes this installation's kernel
+> configuration from Admin (§6.6): a form generated from the kernel's schema of
+> `config.json`; a save rewrites the file and restarts the kernel by the process
+> id in its `serve.lock` (kernel v0.15.10), and the previous file returns if the
+> kernel refuses the new one.
 
 > **What changed in 0.17.2.** The first boot offers every world the
 > installation can serve, as `juice kernel worlds` lists them (kernel v0.15.8),
@@ -1548,28 +1549,32 @@ bilateral settlement to initiate, no settle route, and nothing here to press.
   name — and the account is named in the route, not the body. It offers no peer
   field: a peer is not a user, and the kernel refuses one here.
 
-**Configuration.** The kernel's `config.json` is read and changed through
-`GET`/`PATCH /v1/admin/kernel/config`, on a page reached from `admin`. The kernel
-is the file's only writer after the first boot and its sole validator; this
-page never reads or writes the file.
+**Configuration.** The kernel's settings are its `config.json`, applied by
+editing the file and restarting the kernel (kernel manual). The UI, which
+supervises this installation's kernel (§1), does both for the operator, on a
+page reached from `admin` that exists only when the kernel is this
+installation's. (`ecosystem-standard.md` §3 still names the first boot the
+file's only writer; the kernel manual has the operator edit it.)
 
 * The form is the kernel's own JSON Schema of the file,
   `$JUICE_HOME/schemas/config.schema.json`, rendered by the run form's
-  components (§6.2) and filled from the saved file, its JSON switch opening on
-  the saved file itself. A kernel not of this installation has no schema here,
-  and the page is the JSON editor alone.
-* What a first boot decided, and `listen_addr`, the port this UI finds its kernel
-  by, are read-only. Every secret the kernel names, `credentials_key` excepted,
-  has a write-only input, shown only as "configured ✓ (replace)".
-* A save sends the difference from the saved file as one RFC 7396 merge patch,
-  under `If-Match` with the version the page read. A field cleared is `null`,
-  restoring the kernel's default; a blank field where the file holds an empty
-  value is no change, since a blank input cannot tell the two apart. A secret
-  left blank is kept. The kernel's refusal, a stale version included, is shown
-  as given.
-* The kernel's two facts about the running process are shown: the keys this
-  run's command line overrides, and, when the saved file differs from the one
-  it started with, that saved changes apply at the next start.
+  components (§6.2) and filled from the file; its JSON switch opens on the file
+  itself.
+* `kernel_handle`, decided at first boot, and `listen_addr`, the port this UI
+  finds its kernel by, are read-only. The file's secrets — the keys the kernel
+  gives no command-line flag: `credentials_key` and each
+  `native.llm.endpoints.<endpoint>.key` — are never shown; each endpoint key has
+  a write-only input, shown only as "configured ✓ (replace)", and one left blank
+  is kept.
+* A field cleared is removed from the file, restoring the kernel's default; a
+  blank field where the file holds an empty value is no change, since a blank
+  input cannot tell the two apart. A form unchanged writes nothing.
+* A save is refused if the file changed since the page was read (its SHA-256).
+  Otherwise the kernel is stopped by SIGTERM to the process id in its
+  `serve.lock`, once the lock shows a server holds it and only for a positive
+  id; the file is replaced atomically; and the kernel is served again. If it
+  does not answer, the previous file is written back and served, and the
+  kernel's last words are shown.
 
 **No value-transfer queue.** A transfer to another kernel settles in the
 sender's own call and is paid on the rail like a won ticket (kernel §D18, P11);
@@ -2076,10 +2081,6 @@ once its prerequisite is confirmed on the running kernel.
   charge, so the daemon's replies are its declared outputs. A title differing
   alone — the kernel titled chat's rows with the last segment of their names —
   is sent alone, which keeps the action live and its grants intact.
-* **Restarting the kernel (§6.6).** *Conditional:* a restart control beside a
-  pending configuration change. The kernel records no process id and serves no
-  restart, and it runs detached, outliving the UI, so the UI cannot reliably
-  signal it; the prerequisite is either from the kernel.
 * **Kernel contract defects (informative).** `juicedocs/API.md` still describes
   a parked call's `refund_eligible_at` and an automatic refund, which 4dbfedd
   serves neither of; its R6 breaks off mid-sentence; and it says a task

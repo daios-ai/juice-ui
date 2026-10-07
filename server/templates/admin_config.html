@@ -1,16 +1,14 @@
 {{define "content"}}
 {{$d := .Data}}
-{{/* The kernel's saved config.json (§6.6), read and changed through
-     /v1/admin/kernel/config: the form is the kernel's own schema of the file,
-     and a save is one merge patch the kernel validates. Secrets are named by
-     the kernel and written here, never read. */}}
+{{/* This installation's kernel configuration file (§6.6): the form is the
+     kernel's own schema of it, a save rewrites the file and restarts the
+     kernel, and the previous file returns if the kernel refuses the new one.
+     Secrets are written here, never read. */}}
 <nav class="crumb"><a href="/admin">← admin</a></nav>
 <h1>Configuration</h1>
-{{if $d.PendingRestart}}<div class="banner banner-info" role="status">Saved changes apply at the next start.</div>{{end}}
-{{if $d.Overridden}}<p class="muted small">Overridden on this run's command line: <span class="mono">{{range $i, $k := $d.Overridden}}{{if $i}}, {{end}}{{$k}}{{end}}</span></p>{{end}}
-<form class="card stack" method="post" action="/admin/config" data-json>
+<form class="card stack" method="post" action="/admin/config" data-json data-confirm="Restart the kernel to apply?">
   {{.CSRFField}}
-  <input type="hidden" name="etag" value="{{$d.ETag}}">
+  <input type="hidden" name="version" value="{{$d.Version}}">
   {{if not $d.Form.UseRawFallback}}{{template "_json_switch"}}{{end}}
   {{template "_form_fields" $d.Form}}
   {{if $d.Secrets}}
@@ -21,6 +19,6 @@
     {{end}}
   </fieldset>
   {{end}}
-  <div class="cluster"><button class="btn" type="submit">Save</button></div>
+  <div class="cluster"><button class="btn" type="submit">Save and restart</button></div>
 </form>
 {{end}}

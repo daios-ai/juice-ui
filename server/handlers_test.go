@@ -35,7 +35,6 @@ var (
 	lastDeposit        string
 	lastSignIn         string // the account an authorize named
 	lastProcessesQuery string // the query the last process listing sent
-	lastConfigPatch    string // the merge patch the last config change sent, "" for none
 )
 
 // fakeHealth gives a fake kernel the identity banner every login pins: its key,
@@ -66,7 +65,7 @@ func withEvidence(row, experience string) string {
 }
 
 func authKernel() *httptest.Server {
-	lastRename, lastDeposit, lastSignIn, lastProcessesQuery, lastConfigPatch = "", "", "", "", ""
+	lastRename, lastDeposit, lastSignIn, lastProcessesQuery = "", "", "", ""
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -381,34 +380,7 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{},"tx_id":"T2","trace_id":"TR2","receipt_id":"R2","task_id":"` + r.PathValue("id") + `"}`))
 	})
-	// The configuration at version "v1"; a patch against another is stale, and
-	// one raising fee_bps past 10000 is refused, as the kernel answers.
-	mux.HandleFunc("/v1/admin/kernel/config", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch {
-			b, _ := io.ReadAll(r.Body)
-			switch {
-			case r.Header.Get("If-Match") != `"v1"`:
-				w.WriteHeader(http.StatusPreconditionFailed)
-				w.Write([]byte(`{"code":"precondition_failed","error":"the configuration changed since it was read; read it again"}`))
-				return
-			case strings.Contains(string(b), "20000"):
-				w.WriteHeader(http.StatusUnprocessableEntity)
-				w.Write([]byte(`{"code":"invalid_input","error":"fee_bps must be between 0 and 10000"}`))
-				return
-			}
-			lastConfigPatch = string(b)
-		}
-		w.Header().Set("ETag", `"v1"`)
-		w.Write([]byte(testConfig))
-	})
 	return httptest.NewServer(mux)
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
 
 // csrfFieldRe matches the hidden CSRF input rendered by csrf.TemplateField. We
@@ -2813,15 +2785,6 @@ func TestInboxDeclineOfferedToBothParties(t *testing.T) {
 	if strings.Join(taskCancels, ",") != "SX" {
 		t.Errorf("kernel cancels = %v", taskCancels)
 	}
-}
-
-// postForm posts an authenticated form with a fresh CSRF token scraped from the
-// wallet page.
-// postForm posts a wallet form, taking its CSRF token from the wallet page.
-func postForm(t *testing.T, cl *http.Client, urlStr string, form url.Values) *http.Response {
-	t.Helper()
-	base := urlStr[:strings.LastIndex(urlStr, "/")]
-	return postTo(t, cl, urlStr, getBody(t, cl, base+"/wallet"), form)
 }
 
 func TestActionRatingsRenderFromProjection(t *testing.T) {

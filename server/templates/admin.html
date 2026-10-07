@@ -4,10 +4,12 @@
   <h1>Admin</h1>
 </div>
 
+{{if $d.Configurable}}
 <h2>Kernel</h2>
 <div class="row control-row">
   <a class="btn-quiet" href="/admin/config">configuration</a>
 </div>
+{{end}}
 
 <h2>Users</h2>
 <div class="row control-row">

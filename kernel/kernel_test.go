@@ -12,11 +12,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -368,4 +371,93 @@ func stateStrings(s []State) []string {
 		out[i] = string(v)
 	}
 	return out
+}
+
+// running stands in for a serving kernel: a child whose id is in serve.lock,
+// the lock held for it until it exits, and /health up meanwhile.
+func running(t *testing.T, i *Installation, up *atomic.Bool, pid string) *exec.Cmd {
+	t.Helper()
+	lock := filepath.Join(i.Home, "kernels", "play", "serve.lock")
+	child := exec.Command("sleep", "60")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { child.Process.Kill() })
+	if pid == "" {
+		pid = strconv.Itoa(child.Process.Pid)
+	}
+	os.WriteFile(lock, []byte(pid+"\n"), 0o644)
+	f, _ := os.Open(lock)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	up.Store(true)
+	go func() { child.Wait(); up.Store(false); f.Close() }()
+	return child
+}
+
+// Reconfigure is the operator's edit-and-restart: the kernel named in
+// serve.lock is stopped, the file written, the kernel served again. A file the
+// kernel refuses is replaced by the old one, which is served; a stale version
+// and a lock naming no process change nothing.
+func TestReconfigureRestartsAndRollsBack(t *testing.T) {
+	var up atomic.Bool
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
+	installFake(t, i)
+	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
+	file := filepath.Join(i.Home, "kernels", "play", "config.json")
+	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+		done := make(chan struct{})
+		if cfg, _ := os.ReadFile(file); strings.Contains(string(cfg), "bad") {
+			fmt.Fprintln(stderr, "\x1b[92mINF\x1b[0m server.shutdown\nerror: \x1b[1mbad\x1b[0m is not a setting")
+			close(done)
+		} else {
+			up.Store(true)
+		}
+		return done, nil
+	}
+	good := []byte(`{"kernel_handle":"x","listen_addr":"127.0.0.1:` + i.URL.Port() + `","fee_bps":1}`)
+
+	child := running(t, i, &up, "")
+	_, _, v, _ := i.Config()
+	if err := i.Reconfigure(v, good); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(file); string(got) != string(good) || child.ProcessState == nil {
+		t.Errorf("the kernel is stopped and the file written: %s", got)
+	}
+	if st, _ := os.Stat(file); st.Mode().Perm() != 0o600 {
+		t.Errorf("config.json mode = %v, want 0600", st.Mode().Perm())
+	}
+
+	running(t, i, &up, "")
+	_, _, v, _ = i.Config()
+	err := i.Reconfigure(v, []byte(`{"bad":1}`))
+	if err == nil || !strings.HasSuffix(err.Error(), "previous one is restored: the kernel did not start: error: bad is not a setting") {
+		t.Errorf("a refused file is rolled back: %v", err)
+	}
+	if got, _ := os.ReadFile(file); string(got) != string(good) || !up.Load() {
+		t.Errorf("the old file is back and served: %s", got)
+	}
+
+	if err := i.Reconfigure("stale", []byte(`{}`)); err == nil || !strings.Contains(err.Error(), "changed since") {
+		t.Errorf("a stale version is refused: %v", err)
+	}
+	for _, pid := range []string{"0", "-1", "x"} {
+		child := running(t, i, &up, pid)
+		_, _, v, _ = i.Config()
+		if err := i.Reconfigure(v, []byte(`{"fee_bps":2}`)); err == nil || !strings.Contains(err.Error(), "names no process") {
+			t.Errorf("serve.lock %q: %v", pid, err)
+		}
+		if child.ProcessState != nil {
+			t.Errorf("serve.lock %q signalled a process", pid)
+		}
+		child.Process.Kill()
+		for up.Load() {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if got, _ := os.ReadFile(file); string(got) == `{"fee_bps":2}` {
+		t.Error("a lock naming no process leaves the old file")
+	}
 }

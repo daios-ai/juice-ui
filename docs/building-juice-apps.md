@@ -1,7 +1,7 @@
 # Building Juice Apps
 
 `docs/apps.md` describes the **seam** — the `apps.App` interface, `ServiceAccount`,
-`CallerIdentity`, the dependency rules, the checklist. Read it first for the
+`CallerKeyHeader`, the dependency rules, the checklist. Read it first for the
 mechanics. This document is the **mental model and the sharp edges**: how to *think*
 about an app so it composes with the rest of Juice, and the non-obvious things that
 cost real debugging time on the first app (chat). It is prescriptive for every future
@@ -128,9 +128,6 @@ transition. Rules that follow:
 
 - **Resolve app-state from exactly one canonical path.** No cwd-relative fallback, no
   "try these legacy locations." Ambiguous resolution *is* the bug.
-- **Prefer derivation over storage** for anything that must stay in lock-step with the
-  kernel. `CallerIdentity` derives per-user tokens by HMAC — nothing to lose, nothing
-  to desync. Apply the same instinct wherever you can.
 - **Treat a credential mismatch as terminal and loud**, not a silent retry-storm.
 
 ## 6. Test against the deployment's reality, not a throwaway's defaults

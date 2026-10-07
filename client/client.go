@@ -505,29 +505,19 @@ func ShortKey(key string) string {
 // request id (from context, if present), marshaling body, and decoding the
 // response into out. Non-2xx responses are classified into a *KernelError.
 func (c *Client) do(ctx context.Context, method, path, token string, body, out any) error {
-	_, err := c.send(ctx, method, path, token, nil, body, out)
-	return err
-}
-
-// send is do with request headers (a JSON body's Content-Type defaults to
-// application/json) and the response's headers returned.
-func (c *Client) send(ctx context.Context, method, path, token string, hdr http.Header, body, out any) (http.Header, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("marshal request: %w", err)
+			return fmt.Errorf("marshal request: %w", err)
 		}
 		rdr = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rdr)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		return fmt.Errorf("build request: %w", err)
 	}
-	for k, v := range hdr {
-		req.Header[k] = v
-	}
-	if body != nil && req.Header.Get("Content-Type") == "" {
+	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if token != "" {
@@ -541,22 +531,22 @@ func (c *Client) send(ctx context.Context, method, path, token string, hdr http.
 		// No HTTP response at all — the kernel is unreachable (down, restarting, or a
 		// timeout). Type it so callers can surface "kernel unreachable" instead of a
 		// generic failure or a misleading "invalid credentials".
-		return nil, &KernelError{Kind: KindUnavailable, KernelMessage: "kernel request: " + err.Error()}
+		return &KernelError{Kind: KindUnavailable, KernelMessage: "kernel request: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return fmt.Errorf("read response: %w", err)
 	}
 	if cerr := classify(resp.StatusCode, raw); cerr != nil {
-		return nil, cerr
+		return cerr
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return nil, fmt.Errorf("decode response: %w", err)
+			return fmt.Errorf("decode response: %w", err)
 		}
 	}
-	return resp.Header, nil
+	return nil
 }
 
 // emptyArgs returns "{}" when args is empty, per R4.7.

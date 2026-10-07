@@ -24,6 +24,11 @@ import (
 	"github.com/daios-ai/juice-ui/session"
 )
 
+// CallerKeyHeader is the request header an app's delegated_bearer actions carry
+// the caller's key in: the kernel injects the key the caller connected, and the
+// app resolves it to the caller.
+const CallerKeyHeader = "X-Juice-Caller-Key"
+
 // App is one app module. The core calls Templates() and Nav()
 // to fold the module's pages and sidebar entry into the shared shell, Mount() to
 // register its routes, and Start()/Stop() around the process lifecycle for any

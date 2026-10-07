@@ -22,8 +22,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +36,7 @@ import (
 // Release is the kernel release this UI was verified against; it is what the
 // gate installs when the binary is missing or older. The kernel's releases ship one
 // tarball per platform and a checksums.txt, built by its release workflow.
-const Release = "v0.15.9"
+const Release = "v0.15.10"
 
 // Releases is the kernel's release download base.
 const Releases = "https://github.com/daios-ai/juice/releases/download"
@@ -60,6 +63,7 @@ type Installation struct {
 	// fake. Nil means the real one, a detached child of this process.
 	launch func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error)
 	http   *http.Client
+	cfgMu  sync.Mutex // one reconfiguration at a time: compare, write, restart
 }
 
 // Local reports whether the configured kernel is this installation's to manage:
@@ -324,7 +328,7 @@ func (i *Installation) Create(world, handle, password, recoveryKey string) error
 		"listen_addr":   "127.0.0.1:" + i.URL.Port(),
 		"log_file":      filepath.Join(dir, "serve.log"),
 	})
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
+	if err := writeConfig(dir, cfg); err != nil {
 		os.RemoveAll(dir)
 		return err
 	}
@@ -333,6 +337,12 @@ func (i *Installation) Create(world, handle, password, recoveryKey string) error
 		os.RemoveAll(dir)
 		return err
 	}
+	return i.answers(done)
+}
+
+// answers returns once a started kernel answers, or with its own last words
+// if it exits first or does not answer within a minute.
+func (i *Installation) answers(done <-chan struct{}) error {
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); {
 		if i.Serving(context.Background()) {
 			return nil
@@ -346,8 +356,141 @@ func (i *Installation) Create(world, handle, password, recoveryKey string) error
 	return fmt.Errorf("the kernel did not start within a minute: %s", i.logTail())
 }
 
-func lastLines(s string) string {
-	return strings.Join(tail(strings.Split(strings.TrimSpace(s), "\n"), 5), "\n")
+// writeConfig replaces dir/config.json atomically, 0600: a temporary file in
+// the same directory, renamed over it, so a reader never sees half a file.
+func writeConfig(dir string, b []byte) error {
+	f, err := os.CreateTemp(dir, "config.json.*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), filepath.Join(dir, "config.json"))
+}
+
+// Config is this installation's kernel configuration file, the kernel's JSON
+// Schema of it (nil when absent), and the file's version: the SHA-256 of its
+// bytes, which Reconfigure is given back to refuse a stale edit.
+func (i *Installation) Config() (config, schema []byte, version string, err error) {
+	world := i.World()
+	if world == "" {
+		return nil, nil, "", errors.New("no kernel home here")
+	}
+	config, err = os.ReadFile(filepath.Join(i.Home, "kernels", world, "config.json"))
+	if err != nil {
+		return nil, nil, "", err
+	}
+	schema, _ = os.ReadFile(filepath.Join(i.Home, "schemas", "config.schema.json"))
+	return config, schema, fileVersion(config), nil
+}
+
+func fileVersion(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// Reconfigure writes config over the file at version and restarts the kernel
+// on it — the operator's edit-and-restart (kernel manual), done by the UI as
+// the kernel's supervisor. A file changed since version is refused untouched.
+// A kernel that does not answer on the new file is given the old one back and
+// restarted, so a refused setting never leaves the installation without its
+// kernel.
+func (i *Installation) Reconfigure(version string, config []byte) error {
+	i.cfgMu.Lock()
+	defer i.cfgMu.Unlock()
+	world := i.World()
+	if world == "" {
+		return errors.New("no kernel home here")
+	}
+	dir := filepath.Join(i.Home, "kernels", world)
+	old, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		return err
+	}
+	if fileVersion(old) != version {
+		return errors.New("the configuration changed since this page was loaded; reload it")
+	}
+	if err := stop(filepath.Join(dir, "serve.lock")); err != nil {
+		return err
+	}
+	if err := writeConfig(dir, config); err != nil {
+		return err
+	}
+	if err := i.serveAnswering(world); err != nil {
+		if werr := writeConfig(dir, old); werr != nil {
+			return fmt.Errorf("the kernel did not start with this configuration (%v), and the previous one could not be restored: %v", err, werr)
+		}
+		if rerr := i.serveAnswering(world); rerr != nil {
+			return fmt.Errorf("the kernel did not start with this configuration, nor with the previous one, which is restored: %v", rerr)
+		}
+		return fmt.Errorf("the kernel did not start with this configuration; the previous one is restored: %v", err)
+	}
+	return nil
+}
+
+func (i *Installation) serveAnswering(world string) error {
+	done, err := i.serve(world, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+	return i.answers(done)
+}
+
+// stop ends the kernel holding lock, by the process id it wrote there, and
+// returns once the lock is free. The lock, not the number, says whether a
+// kernel holds the home (ecosystem-standard §3).
+func stop(lock string) error {
+	held, err := locked(lock)
+	if err != nil {
+		return err
+	}
+	if held {
+		b, _ := os.ReadFile(lock)
+		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || pid <= 0 { // 0 and below name process groups
+			return fmt.Errorf("serve.lock names no process: %q", strings.TrimSpace(string(b)))
+		}
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			return fmt.Errorf("stop the kernel: %w", err)
+		}
+		for deadline := time.Now().Add(30 * time.Second); held; {
+			if time.Now().After(deadline) {
+				return errors.New("the kernel did not stop within 30 seconds")
+			}
+			time.Sleep(100 * time.Millisecond)
+			if held, err = locked(lock); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// locked reports whether a server holds the exclusive flock on path: the lock
+// is tried without blocking and released at once. A missing file is held by
+// nobody; any error but contention is returned, never read as an answer.
+func locked(path string) (bool, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	switch err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); {
+	case errors.Is(err, syscall.EWOULDBLOCK):
+		return true, nil
+	case err != nil:
+		return false, err
+	}
+	return false, syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
 
 // Start serves this installation's kernel home, detached from this process,
@@ -405,17 +548,15 @@ func (i *Installation) logFile() *os.File {
 	return f
 }
 
-// logTail is the last lines of kernel.log, for a Failed state's detail.
+// ansi matches the terminal colour codes the kernel writes even to a file.
+var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// logTail is the kernel's last words: the last line of kernel.log, where it
+// prints the error it exits on, without colour codes.
 func (i *Installation) logTail() string {
 	b, _ := os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
-	return lastLines(string(b))
-}
-
-func tail(lines []string, n int) []string {
-	if len(lines) > n {
-		return lines[len(lines)-n:]
-	}
-	return lines
+	lines := strings.Split(strings.TrimSpace(ansi.ReplaceAllString(string(b), "")), "\n")
+	return lines[len(lines)-1]
 }
 
 // Ensure runs the gate's loop until the kernel answers, reporting each state.

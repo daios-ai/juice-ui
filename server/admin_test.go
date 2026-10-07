@@ -2,13 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -793,29 +792,55 @@ func TestInspectListsNoPeerHeldTasks(t *testing.T) {
 	}
 }
 
-// testConfig is the fake kernel's saved configuration: secrets withheld and
-// named, one key overridden on the command line, a change pending.
-const testConfig = `{"config":{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{}}}}},` +
-	`"secrets":["credentials_key","native.llm.endpoints.ollama.key"],"overridden":["log_level"],"pending_restart":true}`
-
-// configSchema writes a schema of testConfig's file, as the kernel writes its
-// own under $JUICE_HOME/schemas.
-func configSchema(t *testing.T) func(*testWiring) {
-	p := filepath.Join(t.TempDir(), "config.schema.json")
-	os.WriteFile(p, []byte(`{"type":"object","additionalProperties":false,"properties":{
-		"$schema":{"type":"string"},"kernel_handle":{"type":"string"},"listen_addr":{"type":"string"},
-		"credentials_key":{"type":"string"},"fee_bps":{"type":"integer","default":2000},
-		"auth_audience":{"type":"string"},"credit_limit":{"type":["integer","null"]},
-		"native":{"type":"object","additionalProperties":false,"properties":{
-			"time":{"type":"object","additionalProperties":false,"properties":{"price":{"type":"integer"}}},
-			"llm":{"type":"object","additionalProperties":false,"properties":{
-				"endpoints":{"type":["object","null"],"additionalProperties":{"type":"object"}}}}}}}}`), 0o600)
-	return func(w *testWiring) { w.configSchema = p }
+// fakeConfig is this installation's configuration file at version "v1".
+type fakeConfig struct {
+	file, schema, wrote string
+	err                 error
 }
 
-func configPost(t *testing.T, cl *http.Client, base string, form url.Values) (patch, flash string) {
+func (f *fakeConfig) Config() ([]byte, []byte, string, error) {
+	return []byte(f.file), []byte(f.schema), "v1", nil
+}
+
+func (f *fakeConfig) Reconfigure(version string, cfg []byte) error {
+	if version != "v1" {
+		return errors.New("the configuration changed since this page was loaded; reload it")
+	}
+	if f.err != nil {
+		return f.err
+	}
+	f.wrote = string(cfg)
+	return nil
+}
+
+const testConfigFile = `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"CK",
+"fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"OK"}}}}}`
+
+const testConfigSchema = `{"type":"object","additionalProperties":false,"properties":{
+"$schema":{"type":"string"},"kernel_handle":{"type":"string"},"listen_addr":{"type":"string"},
+"credentials_key":{"type":"string"},"fee_bps":{"type":"integer","default":2000},
+"auth_audience":{"type":"string"},"credit_limit":{"type":["integer","null"]},
+"native":{"type":"object","additionalProperties":false,"properties":{
+	"time":{"type":"object","additionalProperties":false,"properties":{"price":{"type":"integer"}}},
+	"llm":{"type":"object","additionalProperties":false,"properties":{
+		"endpoints":{"type":["object","null"],"additionalProperties":{"type":"object"}}}}}}}}`
+
+func configServer(t *testing.T) (*fakeConfig, *httptest.Server, *http.Client) {
 	t.Helper()
-	lastConfigPatch = ""
+	kernel := authKernel()
+	t.Cleanup(kernel.Close)
+	fc := &fakeConfig{file: testConfigFile, schema: testConfigSchema}
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.config = fc }))
+	t.Cleanup(srv.Close)
+	return fc, srv, loginClientAs(t, srv.URL, "sys")
+}
+
+// configPost saves the form and returns the flash it lands with.
+func configPost(t *testing.T, cl *http.Client, base string, form url.Values) string {
+	t.Helper()
+	if form.Get("version") == "" {
+		form.Set("version", "v1")
+	}
 	resp := postTo(t, cl, base+"/admin/config", getBody(t, cl, base+"/admin/config"), form)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/config" {
@@ -823,106 +848,111 @@ func configPost(t *testing.T, cl *http.Client, base string, form url.Values) (pa
 	}
 	for _, c := range resp.Cookies() {
 		if c.Name == "flash" {
-			flash, _ = url.QueryUnescape(c.Value)
+			f, _ := url.QueryUnescape(c.Value)
+			return f
 		}
 	}
-	return lastConfigPatch, flash
+	return ""
 }
 
-// The page is the kernel's schema filled from the saved file: first-boot keys
-// read-only, a withheld secret write-only, the JSON editor holding the saved
-// file itself, and the kernel's facts about this run.
+// The page is the kernel's schema filled from the file: the first boot's name
+// and the listen address read-only, every secret withheld, an endpoint's key
+// write-only, and the JSON editor holding the file itself.
 func TestAdminConfigPage(t *testing.T) {
-	kernel := authKernel()
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL, configSchema(t)))
-	defer srv.Close()
-	body := getBody(t, loginClientAs(t, srv.URL, "sys"), srv.URL+"/admin/config")
+	_, srv, cl := configServer(t)
+	body := getBody(t, cl, srv.URL+"/admin/config")
 	for _, want := range []string{
-		`name="f_/fee_bps"`, `value="2000"`, `<div class="box">k</div>`,
-		`name="s_native.llm.endpoints.ollama.key" type="password"`, "log_level",
-		"Saved changes apply at the next start.", `fee_bps&#34;: 2000`, `<button class="btn" type="submit">Save</button>`,
+		`name="f_/fee_bps"`, `value="2000"`, `<div class="box">k</div>`, `name="version" value="v1"`,
+		`name="s_native.llm.endpoints.ollama.key" type="password"`, `fee_bps&#34;: 2000`,
+		`<button class="btn" type="submit">Save and restart</button>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)
 		}
 	}
-	for _, not := range []string{`f_/kernel_handle`, `f_/listen_addr`, `credentials_key`, `f_/$schema`} {
+	for _, not := range []string{"CK", "OK", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`} {
 		if strings.Contains(body, not) {
 			t.Errorf("page has %q", not)
 		}
 	}
-
-	// A kernel not of this installation has no schema here: the raw editor.
-	srv2 := httptest.NewServer(newTestHandler(t, kernel.URL))
-	defer srv2.Close()
-	raw := getBody(t, loginClientAs(t, srv2.URL, "sys"), srv2.URL+"/admin/config")
-	if strings.Contains(raw, "has_fields") || !strings.Contains(raw, `fee_bps&#34;: 2000`) {
-		t.Error("without a schema the page is the raw editor on the saved file")
+	if !strings.Contains(getBody(t, cl, srv.URL+"/admin"), `href="/admin/config"`) {
+		t.Error("admin must link the configuration")
 	}
 }
 
-// A save is the difference from the saved file as one merge patch against the
-// version the page was read at; the kernel's refusals are shown as given.
+// A save rewrites the file from the form. What the form cannot carry is kept:
+// the fixed keys, a secret left blank, and an empty value a blank input cannot
+// tell from absent. Nothing changed writes nothing; a refusal is shown as given.
 func TestAdminConfigSave(t *testing.T) {
-	kernel := authKernel()
-	defer kernel.Close()
-	srv := httptest.NewServer(newTestHandler(t, kernel.URL, configSchema(t)))
-	defer srv.Close()
-	cl := loginClientAs(t, srv.URL, "sys")
-	fields := func(fee string) url.Values {
-		return url.Values{"etag": {`"v1"`}, "has_fields": {"1"},
-			"t_/fee_bps": {"integer"}, "f_/fee_bps": {fee}, "f_/auth_audience": {""}, "f_/credit_limit": {""},
-			"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"},
-			"t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"object"}, "f_/native/llm/endpoints": {`{"ollama":{}}`},
-			"s_native.llm.endpoints.ollama.key": {""}}
+	fc, srv, cl := configServer(t)
+	fields := url.Values{"has_fields": {"1"},
+		"t_/fee_bps": {"integer"}, "f_/fee_bps": {"2000"}, "f_/auth_audience": {""}, "f_/credit_limit": {""},
+		"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"},
+		"t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"object"}, "f_/native/llm/endpoints": {`{"ollama":{}}`},
+		"s_native.llm.endpoints.ollama.key": {""}}
+	wrote := func(want string) {
+		t.Helper()
+		var got, w any
+		json.Unmarshal([]byte(fc.wrote), &got)
+		json.Unmarshal([]byte(want), &w)
+		if !reflect.DeepEqual(got, w) {
+			t.Errorf("wrote %s\nwant  %s", fc.wrote, want)
+		}
+		fc.wrote = ""
 	}
 
-	if p, f := configPost(t, cl, srv.URL, fields("2000")); p != "" || f != "info|Nothing changed." {
-		t.Errorf("unchanged form sent %q, flashed %q", p, f)
+	if f := configPost(t, cl, srv.URL, fields); f != "info|Nothing changed." || fc.wrote != "" {
+		t.Errorf("unchanged form flashed %q, wrote %q", f, fc.wrote)
 	}
-	form := fields("")
-	form.Set("s_native.llm.endpoints.ollama.key", "sk")
+	shown := `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{}}}}}`
+	if f := configPost(t, cl, srv.URL, url.Values{"raw_args": {shown}}); f != "info|Nothing changed." {
+		t.Errorf("unchanged JSON flashed %q", f)
+	}
+
+	form := url.Values{}
+	for k, v := range fields {
+		form[k] = v
+	}
+	form.Set("f_/fee_bps", "")
 	form.Del("f_/native/time/price")
-	p, f := configPost(t, cl, srv.URL, form)
-	var got, want any
-	json.Unmarshal([]byte(p), &got)
-	json.Unmarshal([]byte(`{"fee_bps":null,"native":{"time":null,"llm":{"endpoints":{"ollama":{"key":"sk"}}}}}`), &want)
-	if !reflect.DeepEqual(got, want) || f != "success|Saved." {
-		t.Errorf("patch %s flash %q", p, f)
+	form.Set("s_native.llm.endpoints.ollama.key", "sk")
+	if f := configPost(t, cl, srv.URL, form); f != "success|Saved and restarted." {
+		t.Errorf("save flashed %q", f)
 	}
+	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"CK",
+		"auth_audience":"","credit_limit":null,"native":{"llm":{"endpoints":{"ollama":{"key":"sk"}}}}}`)
 
-	// JSON mode saving the saved file unchanged sends nothing.
-	saved := `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{}}}}}`
-	if p, _ := configPost(t, cl, srv.URL, url.Values{"etag": {`"v1"`}, "raw_args": {saved}}); p != "" {
-		t.Errorf("unchanged JSON sent %q", p)
-	}
-	// First-boot keys and listen_addr are never sent, whatever the editor says.
-	edited := strings.Replace(strings.Replace(saved, `"k"`, `"x"`, 1), `"fee_bps":2000,`, ``, 1)
-	if p, _ := configPost(t, cl, srv.URL, url.Values{"etag": {`"v1"`}, "raw_args": {edited}}); p != `{"fee_bps":null}` {
-		t.Errorf("JSON edit sent %q", p)
-	}
+	// The JSON editor cannot rename the kernel or drop a secret.
+	edited := strings.Replace(strings.Replace(shown, `"k"`, `"x"`, 1), `"fee_bps":2000,`, ``, 1)
+	configPost(t, cl, srv.URL, url.Values{"raw_args": {edited}})
+	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"CK",
+		"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"OK"}}}}}`)
 
-	if _, f := configPost(t, cl, srv.URL, fields("20000")); !strings.Contains(f, "between 0 and 10000") {
-		t.Errorf("refusal flashed %q", f)
-	}
-	stale := fields("1")
-	stale.Set("etag", `"v0"`)
-	if _, f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "changed since it was read") {
+	stale := url.Values{"raw_args": {edited}, "version": {"v0"}}
+	if f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "changed since this page was loaded") {
 		t.Errorf("stale flashed %q", f)
 	}
+	fc.err = errors.New("the kernel did not start with this configuration; the previous one is restored: bad")
+	if f := configPost(t, cl, srv.URL, url.Values{"raw_args": {edited}}); !strings.Contains(f, "previous one is restored") {
+		t.Errorf("refusal flashed %q", f)
+	}
 }
 
-// The configuration is the superuser's alone.
-func TestAdminConfigIsSuperuserOnly(t *testing.T) {
+// The page exists for this installation's kernel alone, and for the superuser.
+func TestAdminConfigIsLocalAndSuperuserOnly(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
-	resp, err := loginClientAs(t, srv.URL, "alice").Get(srv.URL + "/admin/config")
-	if err != nil {
-		t.Fatal(err)
+	cl := loginClientAs(t, srv.URL, "sys")
+	resp, _ := cl.Get(srv.URL + "/admin/config")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || strings.Contains(getBody(t, cl, srv.URL+"/admin"), "/admin/config") {
+		t.Error("a kernel elsewhere has no configuration page or link")
 	}
+
+	_, srv2, _ := configServer(t)
+	resp, _ = loginClientAs(t, srv2.URL, "alice").Get(srv2.URL + "/admin/config")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("non-superuser /admin/config = %d want 404", resp.StatusCode)

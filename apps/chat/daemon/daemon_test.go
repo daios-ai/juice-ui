@@ -9,8 +9,8 @@ import (
 )
 
 // testAuth is a trivial injected authenticator: the caller is the X-Test-Caller
-// header, unauthenticated when absent. The token mechanism itself is exercised by
-// apps.CallerIdentity's own tests; here we only need to drive the daemon.
+// header, unauthenticated when absent. The key resolution itself is the store's
+// (ResolveToken); here we only need to drive the daemon.
 func testAuth(r *http.Request) (string, bool) {
 	h := r.Header.Get("X-Test-Caller")
 	return h, h != ""
