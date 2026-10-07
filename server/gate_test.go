@@ -128,7 +128,7 @@ func TestGateFirstBootIsLocal(t *testing.T) {
 	h := g.Handler()
 	steps.report("needs-create", "")
 	body := do(t, h, http.MethodGet, "/", nil, nil).Body.String()
-	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<option value="play" selected>play</option>`) ||
+	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<label>Superuser name</label><div class="box mono">sys</div>`) || !strings.Contains(body, `<option value="play" selected>play</option>`) ||
 		!strings.Contains(body, `<option value="arbitrum-one">arbitrum-one</option>`) || !strings.Contains(body, `<option value="bad" disabled>bad — parse world file</option>`) {
 		t.Errorf("a local request gets the form, the kernel's worlds to choose from, one it would refuse disabled with its error: %s", body)
 	}

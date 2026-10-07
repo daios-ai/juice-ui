@@ -6,7 +6,7 @@ Status: design draft — endpoint surface gated against the running kernel
 > **What changed in 0.17.2.** The first boot offers every world the
 > installation can serve, as `juice kernel worlds` lists them (kernel v0.15.8),
 > the shipped ones included before any kernel has served, each by its name;
-> the superuser password's help names the account, `sys`; the phrase's
+> a read-only Superuser name, `sys`, stands above its password; the phrase's
 > acknowledgement counts only while one is pending, as at signup.
 
 > **What changed in 0.17.1.** The first boot follows the standard for a
@@ -500,8 +500,8 @@ kernel answers `/health`, when the application takes the listener:
   and shows it once the kernel answers, held in memory until acknowledged and
   stored nowhere; the acknowledgement follows signup's rule, counting only
   while a phrase is pending and with its "I understand" box. The screen is headed Juice installation; the world and the
-  kernel name each state their one consequence, and the password names the
-  account it opens, `sys`;
+  kernel name each state their one consequence, and the superuser's name,
+  `sys`, stands read-only above its password;
 * otherwise → **start** `juice kernel serve <world>`, detached so the kernel
   outlives the UI; the kernel's own lock makes this safe beside an operator's
   start.

@@ -754,7 +754,8 @@
         <p class="help">Its name on the network. It cannot be changed.</p>
         <input id="k-handle" name="handle" type="text" class="mono" value="{{.Handle}}" autocomplete="off" required>
       </div>
-      <div class="field"><label for="k-pw">Superuser password</label><p class="help">The superuser signs in as sys.</p><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+      <div class="field"><label>Superuser name</label><div class="box mono">sys</div></div>
+      <div class="field"><label for="k-pw">Superuser password</label><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
       <div class="field"><label for="k-pw2">Confirm password</label><input id="k-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
       <button class="btn" type="submit">Create kernel</button>
     </form>
