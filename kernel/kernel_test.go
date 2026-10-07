@@ -38,6 +38,12 @@ func writeHome(t *testing.T, i *Installation, world, listen string) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Every served world has its file; a stale home (see TestWorldMatchesByPort)
+	// is one without.
+	os.MkdirAll(filepath.Join(i.Home, "worlds"), 0o700)
+	if err := os.WriteFile(filepath.Join(i.Home, "worlds", world+".json"), []byte(`{"rail":"manual"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A home is this installation's kernel when its listen address is loopback on
@@ -49,9 +55,14 @@ func TestWorldMatchesByPort(t *testing.T) {
 	if w := i.World(); w != "" {
 		t.Fatalf("no home should match, got %q", w)
 	}
+	// A home from before homes were named for their world: it listens on the
+	// port by default but has no world file, so it cannot be served and is
+	// passed over in favour of the one that can.
+	writeHome(t, i, "minibox", "")
+	os.Remove(filepath.Join(i.Home, "worlds", "minibox.json"))
 	writeHome(t, i, "play", ":4391")
 	if w := i.World(); w != "play" {
-		t.Errorf("World() = %q, want play (empty host is every local address)", w)
+		t.Errorf("World() = %q, want play (empty host is every local address; a home without a world file is skipped)", w)
 	}
 	d := inst(t, "http://localhost:4040")
 	writeHome(t, d, "play", "") // no listen_addr: the kernel's default :4040
@@ -69,6 +80,7 @@ const fakeJuice = `#!/bin/sh
 case "$1" in
 --version) echo "juice version v9.9.9 (test)";;
 kernel) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw}" >&2
+        mkdir -p "$JUICE_HOME/worlds"; echo '{"rail":"manual"}' > "$JUICE_HOME/worlds/$3.json"
         if [ -n "$JUICE_BOOTSTRAP_PASSWORD" ]; then echo "sys recovery phrase (write this down; it is shown only once):"; echo "  one two three"; fi
         echo "server.ready" >&2; exit 0;;
 esac
@@ -184,11 +196,12 @@ func TestCreateReturnsThePhraseAndLogsTheRest(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(i.Home, "ui", "boot-*")); len(left) != 0 {
 		t.Errorf("the phrase file is unlinked: %v", left)
 	}
-	if _, err := i.Create("play", "alpha", "secret123"); err == nil {
-		t.Error("an existing home is refused")
-	}
 	if i.World() != "play" {
-		t.Error("the created home is this installation's kernel")
+		t.Error("the created home is this installation's kernel (the kernel wrote its world file)")
+	}
+	writeHome(t, i, "other", "127.0.0.1:4040")
+	if _, err := i.Create("other", "alpha", "secret123"); err == nil || !strings.Contains(err.Error(), "listening on 127.0.0.1:4040") {
+		t.Errorf("a home listening elsewhere is another kernel's: %v", err)
 	}
 }
 
@@ -208,8 +221,13 @@ func TestCreateFailureKeepsTheHomeOnceTheChildRan(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "kernel name refused") {
 		t.Fatalf("err = %v", err)
 	}
-	if i.World() != "play" {
+	if _, statErr := os.Stat(filepath.Join(i.Home, "kernels", "play", "config.json")); statErr != nil {
 		t.Error("the home is left for the retry")
+	}
+	// The retry is another Create on the same home: a first boot rerun.
+	i.launch = nil
+	if phrase, err := i.Create("play", "alpha", "secret123"); err != nil || phrase != "one two three" {
+		t.Errorf("the rerun first boot: %q %v", phrase, err)
 	}
 	i.launch = func(string, []string, []string, *os.File, *os.File) (<-chan struct{}, error) {
 		return nil, fmt.Errorf("exec: not permitted")

@@ -88,8 +88,11 @@ func (i *Installation) Binary() string {
 
 // World is the kernel home of this installation whose kernel answers at the
 // configured URL — kernels/<world>/config.json with a loopback listen_addr on
-// the URL's port — or "" when no home matches. A home is what the kernel is;
-// its listen address is the one fact that ties it to the address the UI calls.
+// the URL's port, and a world file worlds/<world>.json, since `serve <world>`
+// is refused without one — or "" when no home matches. A home is what the
+// kernel is; its listen address is the one fact that ties it to the address
+// the UI calls. A home left from before homes were named for their world has
+// no world file and is passed over.
 func (i *Installation) World() string {
 	port := i.URL.Port()
 	if port == "" {
@@ -98,6 +101,9 @@ func (i *Installation) World() string {
 	entries, _ := os.ReadDir(filepath.Join(i.Home, "kernels"))
 	for _, e := range entries {
 		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(i.Home, "worlds", e.Name()+".json")); err != nil {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(i.Home, "kernels", e.Name(), "config.json"))
@@ -247,8 +253,17 @@ func untarJuice(tgz []byte) ([]byte, error) {
 // round starts it again.
 func (i *Installation) Create(world, handle, password string) (string, error) {
 	dir := filepath.Join(i.Home, "kernels", world)
-	if _, err := os.Stat(dir); err == nil {
-		return "", fmt.Errorf("a kernel home %s already exists", dir)
+	// A home that is already here is a first boot to rerun (World() found no
+	// servable home on this port, so this one has no world file yet) — unless
+	// it listens elsewhere, in which case it is another kernel's.
+	if b, err := os.ReadFile(filepath.Join(dir, "config.json")); err == nil {
+		var c struct {
+			ListenAddr string `json:"listen_addr"`
+		}
+		_ = json.Unmarshal(b, &c)
+		if c.ListenAddr != "" && c.ListenAddr != "127.0.0.1:"+i.URL.Port() {
+			return "", fmt.Errorf("a kernel home %s already exists, listening on %s", dir, c.ListenAddr)
+		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
