@@ -118,6 +118,18 @@ func AwaitKernel(c *client.Client, timeout time.Duration) (client.Health, error)
 	}
 }
 
+// Pin records the kernel's public key when the UI was given a bare address and
+// has just learned it from /health. It takes effect once: a recorded key is
+// never replaced, so a server that later answers with another key is another
+// kernel.
+func (k *KernelIdentity) Pin(key string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.recorded == "" {
+		k.recorded = key
+	}
+}
+
 // Get returns the kernel's own /health banner, cached for the TTL, and whether
 // it is known. Unknown means the kernel has not answered yet, or the address
 // answered as a different kernel: the chrome falls back to the plain brand, the

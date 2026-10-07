@@ -303,7 +303,8 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 
 // recoveryPhraseView carries the freshly-minted seed phrase to its standalone page.
 type recoveryPhraseView struct {
-	Words []string
+	Words  []string
+	Action string // where the acknowledgement posts; "" is the sign-up flow's own route
 }
 
 // getRecoveryPhrase shows the seed phrase on a standalone, unauthenticated page

@@ -10,7 +10,7 @@
     </ol>
     <div class="row compact"><button type="button" class="btn-quiet" data-copy="#phrase-words">Copy</button></div>
 
-    <form class="stack" method="post" action="/recovery-phrase">
+    <form class="stack" method="post" action="{{if .Data.Action}}{{.Data.Action}}{{else}}/recovery-phrase{{end}}">
       {{.CSRFField}}
       <label><input type="checkbox" name="understand" required> I understand this phrase is the only way to recover my account.</label>
       <button class="btn" type="submit">I've saved these — continue</button>

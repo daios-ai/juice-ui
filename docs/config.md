@@ -49,9 +49,11 @@ Every key is optional:
   (`context` was the key before the client records held logins. It is refused by
   name, with the remedy, rather than silently ignored.)
 - **`kernel_url`** — a bare address, for a machine with no client records. The
-  kernel is then identified once at startup from its `/health`; a kernel that
-  cannot be identified within ten seconds is a startup error, because the UI
-  keys everything durable on which kernel it is for and will not guess.
+  kernel is then identified from its `/health` before the application serves:
+  until it answers, the UI serves the kernel screen and, for a loopback
+  address, installs, creates or starts this installation's kernel (the kernel
+  gate, `requirements.md` §1); a kernel elsewhere is waited for. The UI keys
+  everything durable on which kernel it is for and never guesses.
 
 - **`badge_interval_seconds`** — how often every nav badge (tasks + each app) is
   polled, and the task-badge cache TTL. File-only; default 30, clamped to ≥ 5.

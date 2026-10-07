@@ -31,6 +31,7 @@ type Config struct {
 	Secure          bool     // Secure flag on cookies; enable behind HTTPS.
 	TrustedOrigins  []string // hosts allowed as the request Origin for CSRF (proxied hostnames)
 	PublicURL       string   // absolute base URL for OAuth grant redirect_uri; "" derives from the request
+	Root            string   // the installation root, $JUICE_HOME (the kernel gate reads bin/ and kernels/ under it)
 	Home            string   // the component home, $JUICE_HOME/ui (docs/installation.md)
 	StatePath       string   // resolved path to state.json (machine-written app state)
 	Notices         []string // one-line startup notices (e.g. a legacy path in use, to migrate)
@@ -73,7 +74,7 @@ func LoadConfig(getenv func(string) string, readFile func(string) ([]byte, error
 
 	root := juiceRoot(getenv)
 	home := filepath.Join(root, "ui")
-	cfg.Home = home
+	cfg.Root, cfg.Home = root, home
 
 	// 2. config file
 	fc, err := loadConfigFile(home, readFile)

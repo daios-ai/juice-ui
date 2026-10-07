@@ -35,7 +35,10 @@ responses rather than reproducing kernel logic.
 ## Prerequisites
 
 - **Go 1.22+**.
-- A **running Juice kernel** (default `http://127.0.0.1:4040`).
+- A Juice kernel at `http://127.0.0.1:4040` by default — or none: on a machine
+  with no kernel the UI installs the kernel binary into `$JUICE_HOME/bin`,
+  creates the kernel from a first-boot page, and starts it (the kernel gate,
+  `requirements.md` §1).
 
 SQLite is provided by `modernc.org/sqlite` (pure Go, no cgo), so `go build` and
 `go test ./...` need no C toolchain and run fully offline.

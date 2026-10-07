@@ -132,12 +132,18 @@ func fakeKernel(t *testing.T) *httptest.Server {
 func TestBuildRefusesAnUnidentifiableKernel(t *testing.T) {
 	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": "http://127.0.0.1:1", "JUICE_UI_SESSION_SECRET": "s"}), noFiles)
 	cfg.StatePath = ""
-	if _, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	w, err := wire(cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := build(w, cfg, log); err == nil {
 		t.Fatal("build must refuse a kernel it cannot identify")
 	}
 	// With a named kernel the identity is on record, and no probe is needed.
 	cfg.Kernel, cfg.KernelPublicKey = "alpha", "KEYA"
-	if _, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+	w, _ = wire(cfg, log)
+	if _, err := build(w, cfg, log); err != nil {
 		t.Fatalf("a named kernel must let the UI start with the kernel down: %v", err)
 	}
 }
@@ -145,7 +151,7 @@ func TestBuildRefusesAnUnidentifiableKernel(t *testing.T) {
 func TestBuildServesLogin(t *testing.T) {
 	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": fakeKernel(t).URL, "JUICE_UI_SESSION_SECRET": "secret-for-test"}), noFiles)
 	cfg.StatePath = "" // in-memory app state; tests write no file
-	h, err := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := buildAll(cfg)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -173,7 +179,7 @@ func TestBuildServesLogin(t *testing.T) {
 func TestBuildRequiresAuthRedirect(t *testing.T) {
 	cfg, _ := LoadConfig(env(map[string]string{"JUICE_KERNEL_URL": fakeKernel(t).URL, "JUICE_UI_SESSION_SECRET": "s"}), noFiles)
 	cfg.StatePath = "" // in-memory app state; tests write no file
-	h, _ := build(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, _ := buildAll(cfg)
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
@@ -188,6 +194,41 @@ func TestBuildRequiresAuthRedirect(t *testing.T) {
 	}
 	if loc := resp.Header.Get("Location"); loc != "/login" {
 		t.Errorf("redirect to %q want /login", loc)
+	}
+}
+
+// buildAll wires and builds, as main does once the gate has released.
+func buildAll(cfg Config) (http.Handler, error) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	w, err := wire(cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	return build(w, cfg, log)
+}
+
+// The listener's handler is swapped, not replaced: the gate answers first and
+// the application afterwards, on the same address.
+func TestSwitcherSwapsHandlers(t *testing.T) {
+	var sw switcher
+	sw.Store(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("gate")) }))
+	srv := httptest.NewServer(&sw)
+	defer srv.Close()
+	get := func() string {
+		resp, err := http.Get(srv.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	if get() != "gate" {
+		t.Fatal("the gate answers first")
+	}
+	sw.Store(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("app")) }))
+	if get() != "app" {
+		t.Fatal("the application answers once stored")
 	}
 }
 

@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.16.0
+Version: 0.17.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.17.0.** The UI is the way a person connects to Juice:
+> before the application serves, the **kernel gate** (§1) installs the kernel
+> binary if it is missing, creates this installation's kernel if none exists,
+> starts it if it is not running, and waits for a kernel elsewhere — each step
+> decided by a fact the UI observes, with no mode setting. The listener answers
+> from the first moment with the kernel screen and the application takes it
+> over when the kernel answers.
 
 > **What changed in 0.16.0.** The command palette, its ⌘K chip and the
 > Ctrl/Cmd+K binding are gone. The commands are rows of the search pill's hint
@@ -452,6 +460,34 @@ server-side.
   session (tokens, PKCE state, CSRF token, theme). It re-renders from kernel
   responses and never reproduces kernel business logic (fees, settlement, schema
   validation): the UI presents kernel results; the kernel decides.
+
+**The kernel gate.** The UI is the desktop to the kernel's server: a person who
+installs the UI has a kernel. At start the listener answers at once with the
+**kernel screen** and a loop acts on observable facts, in this order, until the
+kernel answers `/health`, when the application takes the listener:
+
+* the configured kernel URL is not loopback → **wait** (a kernel elsewhere is an
+  operator's; it is never installed or started);
+* `$JUICE_HOME/bin/juice` is missing → **install** it: the release this UI was
+  verified against, the platform's asset and `checksums.txt` from the kernel's
+  GitHub releases, refused without a matching SHA-256, tried with `--version`,
+  renamed atomically into `bin/` (the contract of the kernel's own
+  `install.sh`);
+* no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port →
+  **create**: a first-boot form (world, kernel name, superuser password) writes
+  that home's `config.json` and serves the kernel once with the password in
+  the child's environment, the kernel's documented non-interactive first boot;
+  the recovery phrase the kernel prints once is shown once, held in memory
+  until acknowledged, and stored nowhere;
+* otherwise → **start** `juice kernel serve <world>`, detached so the kernel
+  outlives the UI; the kernel's own lock makes this safe beside an operator's
+  start.
+
+The first boot is a local act: the form, its post and the phrase page are
+served only to a request from this machine (a loopback listener, a loopback
+peer, no proxy header); any other request is told the terminal command. The
+UI never removes a kernel. A UI configured with a named kernel or an
+operator's running kernel sees no screen: the first fact is true.
 
 **Navigation model.** The UI's navigation MUST present the juice CLI concepts as
 a marketplace, not a raw command dump. The primary groups are **Home**,

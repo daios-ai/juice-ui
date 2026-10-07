@@ -1,6 +1,11 @@
 // Command juice-ui is the entrypoint for the Juice backend-for-frontend: it
 // loads configuration from the environment, wires the kernel client, the
 // server-side session manager, CSRF protection, and the router, then serves.
+//
+// Before the application serves, the kernel gate runs (requirements.md §1): the
+// listener answers at once with the kernel screen while the kernel is
+// installed, created, started or awaited, and the application takes the
+// listener the moment the kernel answers.
 package main
 
 import (
@@ -11,7 +16,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -19,6 +26,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps/agents"
 	"github.com/daios-ai/juice-ui/apps/chat"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/kernel"
 	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
 )
@@ -46,30 +54,66 @@ func csrfKey(secret string) (key []byte, ephemeral bool, err error) {
 	return k, true, nil
 }
 
-// build wires all dependencies into an http.Handler. Separated from main for
-// testability.
-func build(cfg Config, log *slog.Logger) (http.Handler, error) {
-	kernel := client.New(cfg.KernelBaseURL, &http.Client{Timeout: 5 * time.Minute})
+// wiring is what both the gate and the application are built from: one
+// client, one identity, one renderer. Nothing here asks the kernel anything.
+type wiring struct {
+	kernel   *client.Client
+	identity *server.KernelIdentity
+	apps     []apps.App
+	renderer *server.Renderer
+}
 
+// wire constructs the client, the identity (pinned to the recorded key when
+// the kernel is named, pinned later from /health when it is a bare address),
+// the apps and the renderer.
+func wire(cfg Config, log *slog.Logger) (*wiring, error) {
+	w := &wiring{kernel: client.New(cfg.KernelBaseURL, &http.Client{Timeout: 5 * time.Minute})}
+	w.identity = server.NewKernelIdentity(w.kernel, cfg.KernelPublicKey, cfg.BadgeInterval, log)
+
+	// App modules. Each is self-contained; the core only knows the apps.App
+	// seam. Chat runs the in-process chat application, which provisions its own
+	// service account on first run and persists it in state.json — no chat
+	// configuration required.
+	var appTemplates []fs.FS
+	ch := chat.New()
+	w.apps = append(w.apps, ch)
+	appTemplates = append(appTemplates, ch.Templates())
+	// The agents app manages sibling juice-agents (files under $JUICE_HOME/agent
+	// and their serve processes). It owns no kernel account and no persisted state.
+	ag := agents.New()
+	w.apps = append(w.apps, ag)
+	appTemplates = append(appTemplates, ag.Templates())
+
+	// The renderer must include each enabled app's templates so its pages
+	// render in the shared layout.
+	r, err := server.NewRenderer(w.identity, appTemplates...)
+	if err != nil {
+		return nil, fmt.Errorf("load templates: %w", err)
+	}
+	w.renderer = r
+	return w, nil
+}
+
+// build wires all dependencies into the application's http.Handler. Separated
+// from main for testability.
+func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	// The UI must know WHICH kernel it is for before anything is keyed on it: the
 	// app state, the session pin, and the unit every amount is read in. A named
-	// context says so from the client records, offline. A bare address says
+	// kernel says so from the client records, offline. A bare address says
 	// nothing, so the kernel is asked once — and a UI that cannot identify its
 	// kernel does not start, rather than working under a guess.
-	kernelKey := cfg.KernelPublicKey
-	if kernelKey == "" {
-		id, err := server.AwaitKernel(kernel, 10*time.Second)
+	if cfg.KernelPublicKey == "" {
+		id, err := server.AwaitKernel(w.kernel, 10*time.Second)
 		if err != nil {
 			return nil, fmt.Errorf("kernel at %s could not be identified (%w); name a kernel with JUICE_KERNEL or `kernel` in config.json, or start the kernel", cfg.KernelBaseURL, err)
 		}
-		kernelKey = id.PublicKey
+		w.identity.Pin(id.PublicKey)
 		log.Info("kernel identified", "handle", id.Handle, "network", id.Network, "key", client.ShortKey(id.PublicKey))
 	}
-	identity := server.NewKernelIdentity(kernel, kernelKey, cfg.BadgeInterval, log)
 	// Read /health now, so the kernel's name is known before any app composes
 	// an address with it; a kernel that is down is read again on the next
 	// request, and an app's own retry waits for that.
-	identity.Get(context.Background())
+	w.identity.Get(context.Background())
 
 	sm := scs.New()
 	sm.Lifetime = 24 * time.Hour
@@ -80,29 +124,6 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 	sm.Cookie.SameSite = http.SameSiteLaxMode
 	sm.Cookie.Path = "/"
 
-	sessions := session.NewManager(sm, kernel)
-
-	// App modules. Each is self-contained; the core only knows the apps.App
-	// seam. Chat runs the in-process chat application, which provisions its own
-	// service account on first run and persists it in state.json — no chat
-	// configuration required.
-	var appList []apps.App
-	var appTemplates []fs.FS
-	ch := chat.New()
-	appList = append(appList, ch)
-	appTemplates = append(appTemplates, ch.Templates())
-	// The agents app manages sibling juice-agents (files under $JUICE_HOME/agent
-	// and their serve processes). It owns no kernel account and no persisted state.
-	ag := agents.New()
-	appList = append(appList, ag)
-	appTemplates = append(appTemplates, ag.Templates())
-
-	// The renderer must include each enabled app's templates so its pages
-	// render in the shared layout.
-	renderer, err := server.NewRenderer(identity, appTemplates...)
-	if err != nil {
-		return nil, fmt.Errorf("load templates: %w", err)
-	}
 	key, ephemeral, err := csrfKey(cfg.SessionSecret)
 	if err != nil {
 		return nil, err
@@ -118,21 +139,39 @@ func build(cfg Config, log *slog.Logger) (http.Handler, error) {
 		publicURL = "http://" + cfg.ListenAddr
 	}
 	return server.New(server.Options{
-		Client:         kernel,
-		Sessions:       sessions,
-		Renderer:       renderer,
+		Client:         w.kernel,
+		Sessions:       session.NewManager(sm, w.kernel),
+		Renderer:       w.renderer,
 		Logger:         log,
 		CSRFKey:        key,
 		Secure:         cfg.Secure,
 		TrustedOrigins: cfg.TrustedOrigins,
 		PublicURL:      publicURL,
-		Apps:           appList,
+		Apps:           w.apps,
 		StatePath:      cfg.StatePath,
 		Home:           cfg.Home,
 		BadgeInterval:  cfg.BadgeInterval,
-		Identity:       identity,
+		Identity:       w.identity,
 		KernelName:     cfg.Kernel,
 	})
+}
+
+// steps adapts the kernel package to the gate's Steps: the gate speaks in
+// strings, the kernel package in its own State type.
+type steps struct{ *kernel.Installation }
+
+func (s steps) Ensure(ctx context.Context, report func(state, detail string), created <-chan struct{}) {
+	s.Installation.Ensure(ctx, func(st kernel.State, d string) { report(string(st), d) }, created)
+}
+
+// switcher is the listener's handler: the gate first, the application once it
+// is built. One listener, swapped atomically, so the address answers from the
+// first moment and never changes hands.
+type switcher struct{ h atomic.Pointer[http.Handler] }
+
+func (s *switcher) Store(h http.Handler) { s.h.Store(&h) }
+func (s *switcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	(*s.h.Load()).ServeHTTP(w, r)
 }
 
 func main() {
@@ -150,18 +189,37 @@ func main() {
 	for _, n := range cfg.Notices {
 		log.Warn("migration: " + n)
 	}
-	handler, err := build(cfg, log)
+	w, err := wire(cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
 		os.Exit(1)
 	}
+	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
+	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log}
+	gate := server.NewGate(w.renderer, steps{inst}, cfg.KernelBaseURL, cfg.ListenAddr, log)
+
+	var sw switcher
+	sw.Store(gate.Handler())
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: &sw, ReadHeaderTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	go func() { served <- srv.ListenAndServe() }()
 	log.Info("juice-ui listening", "version", version, "commit", commit, "addr", cfg.ListenAddr, "kernel", cfg.KernelBaseURL, "secure", cfg.Secure)
-	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
+
+	go gate.Run(context.Background())
+	select {
+	case <-gate.Ready():
+	case err := <-served:
+		log.Error("server stopped", "err", err)
+		os.Exit(1)
 	}
-	if err := srv.ListenAndServe(); err != nil {
+	handler, err := build(w, cfg, log)
+	if err != nil {
+		log.Error("startup failed", "err", err)
+		os.Exit(1)
+	}
+	sw.Store(handler)
+	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
+	if err := <-served; err != nil {
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
