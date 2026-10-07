@@ -766,7 +766,7 @@
   {{else if eq .State "failed"}}
     {{template "_error" .Detail}}
   {{else}}
-    <p>{{if eq .State "installing"}}Installing the kernel {{.Detail}}{{else if eq .State "starting"}}Starting the kernel{{else}}Waiting for <span class="mono">{{.URL}}</span>{{end}}</p>
+    <p>{{if eq .State "installing"}}Installing the kernel {{.Detail}}{{else if eq .State "starting"}}Starting the kernel{{else if eq .State "serving"}}Opening Juice{{else}}Waiting for <span class="mono">{{.URL}}</span>{{end}}</p>
     <div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span></div>
   {{end}}
 </div>

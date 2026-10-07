@@ -119,6 +119,16 @@ func TestGateScreenFollowsTheState(t *testing.T) {
 	if rec := do(t, h, http.MethodGet, "/kernel/status", nil, nil); rec.Header().Get("HX-Redirect") != "/" {
 		t.Error("serving redirects the poll to the root")
 	}
+	if body := do(t, h, http.MethodGet, "/", nil, nil).Body.String(); !strings.Contains(body, "Opening Juice") {
+		t.Error("a screen loaded before the application takes over says it is opening")
+	}
+	behind := g.Behind(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("app")) }))
+	if rec := do(t, behind, http.MethodGet, "/kernel/status", nil, nil); rec.Header().Get("HX-Redirect") != "/" {
+		t.Error("once the application serves, a kernel screen's poll is still redirected to it")
+	}
+	if b := do(t, behind, http.MethodGet, "/", nil, nil).Body.String(); b != "app" {
+		t.Errorf("every other path is the application's: %q", b)
+	}
 }
 
 // The first boot is a local act: the form and its posts exist only for a

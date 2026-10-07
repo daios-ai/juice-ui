@@ -100,6 +100,17 @@ func (g *Gate) Handler() http.Handler {
 	return securityHeaders(mux)
 }
 
+// Behind is the listener's handler once the application serves: the status
+// fragment stays the gate's, so a kernel screen still open in a browser is
+// redirected to the application by its next poll, and every other path is
+// the application's.
+func (g *Gate) Behind(app http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /kernel/status", securityHeaders(http.HandlerFunc(g.getStatus)))
+	mux.Handle("/", app)
+	return mux
+}
+
 // local reports a request from the person at this machine: the UI listens on
 // loopback, the peer is loopback, and no proxy announced itself. Only such a
 // request may create the kernel or read its phrase (§1).

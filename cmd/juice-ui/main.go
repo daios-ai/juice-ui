@@ -226,7 +226,7 @@ func main() {
 		log.Error("startup failed", "err", err)
 		os.Exit(1)
 	}
-	sw.Store(handler)
+	sw.Store(gate.Behind(handler))
 	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
 	if err := <-served; err != nil {
 		log.Error("server stopped", "err", err)
