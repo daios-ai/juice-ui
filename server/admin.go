@@ -1,9 +1,15 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -379,4 +385,180 @@ func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 		verb = "unsuspended"
 	}
 	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
+}
+
+// configView is the kernel's configuration page (§6.6): the saved config.json
+// as a form generated from the kernel's own schema of it, the secrets the
+// kernel withholds as write-only inputs, and the kernel's two facts about the
+// running process.
+type configView struct {
+	Form           FormModel
+	ETag           string
+	Secrets        []string // replaceable secrets, by the kernel's dotted path
+	Overridden     []string
+	PendingRestart bool
+}
+
+// configFixed are the keys a save always keeps as saved: the schema pointer,
+// the first boot's answers, and listen_addr, the port this UI finds its kernel
+// by (kernel.World).
+var configFixed = []string{"$schema", "kernel_handle", "listen_addr", "credentials_key"}
+
+func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var kc client.KernelConfig
+	err := s.sessions.Do(ctx, func(tok string) (e error) {
+		kc, e = s.client.AdminKernelConfig(ctx, tok)
+		return e
+	})
+	if s.handleErr(w, r, err) {
+		return
+	}
+	// No schema file (a kernel not of this installation) leaves the raw editor.
+	schema, _ := os.ReadFile(s.configSchema)
+	form := BuildForm(schema)
+	form.Fill(kc.Config)
+	// The JSON editor opens on the saved file, never a skeleton: a save from it
+	// is diffed against the saved file, so what it omits is removed.
+	var pretty bytes.Buffer
+	_ = json.Indent(&pretty, kc.Config, "", "  ")
+	form.Example = pretty.String()
+	fields := form.Fields[:0]
+	for _, f := range form.Fields {
+		if f.Name == "$schema" || slices.Contains(kc.Secrets, f.Name) {
+			continue // editor metadata; a withheld secret has its own input
+		}
+		f.Frozen = slices.Contains(configFixed, f.Name)
+		fields = append(fields, f)
+	}
+	form.Fields = fields
+	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{
+		Form: form, ETag: kc.ETag, Overridden: kc.Overridden, PendingRestart: kc.PendingRestart,
+		Secrets: slices.DeleteFunc(kc.Secrets, func(p string) bool { return slices.Contains(configFixed, p) }),
+	})
+}
+
+// postAdminConfig sends the difference between the saved file and the form as
+// one merge patch against the version the page was rendered from; the kernel
+// validates it and refuses a stale version (412).
+func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
+	const back = "/admin/config"
+	ctx := r.Context()
+	args, err := buildArgs(r)
+	var to map[string]any
+	if err == nil {
+		err = decodeNumbers(args, &to)
+	}
+	if err != nil {
+		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
+		return
+	}
+	var patch map[string]any
+	err = s.sessions.Do(ctx, func(tok string) error {
+		kc, e := s.client.AdminKernelConfig(ctx, tok)
+		var from map[string]any
+		if e == nil {
+			e = decodeNumbers(kc.Config, &from)
+		}
+		if e != nil {
+			return e
+		}
+		for _, k := range configFixed {
+			if v, ok := from[k]; ok {
+				to[k] = v
+			} else {
+				delete(to, k)
+			}
+		}
+		patch = mergePatch(from, to)
+		for key, v := range r.PostForm {
+			if p, ok := strings.CutPrefix(key, "s_"); ok && strings.TrimSpace(v[0]) != "" {
+				patch = setDotted(patch, p, v[0])
+			}
+		}
+		if patch == nil {
+			return nil
+		}
+		body, _ := json.Marshal(patch)
+		_, e = s.client.AdminPatchKernelConfig(ctx, tok, r.PostFormValue("etag"), body)
+		return e
+	})
+	if err == nil && patch == nil {
+		s.flashRedirect(w, r, back, "info", "Nothing changed.")
+		return
+	}
+	s.flashResult(w, r, err, back, "Saved.")
+}
+
+// decodeNumbers decodes a JSON object keeping numbers as written, so a saved
+// value and the same value typed back compare equal.
+func decodeNumbers(raw []byte, v *map[string]any) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	if err := d.Decode(v); err != nil || *v == nil {
+		return errors.New("the configuration must be a JSON object")
+	}
+	return nil
+}
+
+// mergePatch is the RFC 7396 merge patch turning from into to, nil when they
+// agree. A key to lacks becomes null, restoring the kernel's default, unless
+// from holds it empty: a blank input cannot tell "", [] or null from absent.
+func mergePatch(from, to map[string]any) map[string]any {
+	p := map[string]any{}
+	for k, f := range from {
+		if _, ok := to[k]; !ok && !isEmpty(f) {
+			p[k] = nil
+		}
+	}
+	for k, t := range to {
+		fm, ok1 := from[k].(map[string]any)
+		tm, ok2 := t.(map[string]any)
+		switch {
+		case ok1 && ok2:
+			if sub := mergePatch(fm, tm); sub != nil {
+				p[k] = sub
+			}
+		case !reflect.DeepEqual(from[k], t):
+			p[k] = t
+		}
+	}
+	if len(p) == 0 {
+		return nil
+	}
+	return p
+}
+
+func isEmpty(v any) bool {
+	switch v := v.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
+}
+
+// setDotted sets a value at a dotted path (the kernel's name for a secret) in
+// a merge patch, creating the objects above it.
+func setDotted(patch map[string]any, path string, v any) map[string]any {
+	if patch == nil {
+		patch = map[string]any{}
+	}
+	node := patch
+	segs := strings.Split(path, ".")
+	for _, k := range segs[:len(segs)-1] {
+		child, ok := node[k].(map[string]any)
+		if !ok {
+			child = map[string]any{}
+			node[k] = child
+		}
+		node = child
+	}
+	node[segs[len(segs)-1]] = v
+	return patch
 }

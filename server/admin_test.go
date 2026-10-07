@@ -1,11 +1,15 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -786,5 +790,141 @@ func TestInspectListsNoPeerHeldTasks(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("the peer-task completion route is gone, got %d", resp.StatusCode)
+	}
+}
+
+// testConfig is the fake kernel's saved configuration: secrets withheld and
+// named, one key overridden on the command line, a change pending.
+const testConfig = `{"config":{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{}}}}},` +
+	`"secrets":["credentials_key","native.llm.endpoints.ollama.key"],"overridden":["log_level"],"pending_restart":true}`
+
+// configSchema writes a schema of testConfig's file, as the kernel writes its
+// own under $JUICE_HOME/schemas.
+func configSchema(t *testing.T) func(*testWiring) {
+	p := filepath.Join(t.TempDir(), "config.schema.json")
+	os.WriteFile(p, []byte(`{"type":"object","additionalProperties":false,"properties":{
+		"$schema":{"type":"string"},"kernel_handle":{"type":"string"},"listen_addr":{"type":"string"},
+		"credentials_key":{"type":"string"},"fee_bps":{"type":"integer","default":2000},
+		"auth_audience":{"type":"string"},"credit_limit":{"type":["integer","null"]},
+		"native":{"type":"object","additionalProperties":false,"properties":{
+			"time":{"type":"object","additionalProperties":false,"properties":{"price":{"type":"integer"}}},
+			"llm":{"type":"object","additionalProperties":false,"properties":{
+				"endpoints":{"type":["object","null"],"additionalProperties":{"type":"object"}}}}}}}}`), 0o600)
+	return func(w *testWiring) { w.configSchema = p }
+}
+
+func configPost(t *testing.T, cl *http.Client, base string, form url.Values) (patch, flash string) {
+	t.Helper()
+	lastConfigPatch = ""
+	resp := postTo(t, cl, base+"/admin/config", getBody(t, cl, base+"/admin/config"), form)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/config" {
+		t.Fatalf("save = %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "flash" {
+			flash, _ = url.QueryUnescape(c.Value)
+		}
+	}
+	return lastConfigPatch, flash
+}
+
+// The page is the kernel's schema filled from the saved file: first-boot keys
+// read-only, a withheld secret write-only, the JSON editor holding the saved
+// file itself, and the kernel's facts about this run.
+func TestAdminConfigPage(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, configSchema(t)))
+	defer srv.Close()
+	body := getBody(t, loginClientAs(t, srv.URL, "sys"), srv.URL+"/admin/config")
+	for _, want := range []string{
+		`name="f_/fee_bps"`, `value="2000"`, `<div class="box">k</div>`,
+		`name="s_native.llm.endpoints.ollama.key" type="password"`, "log_level",
+		"Saved changes apply at the next start.", `fee_bps&#34;: 2000`, `<button class="btn" type="submit">Save</button>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	for _, not := range []string{`f_/kernel_handle`, `f_/listen_addr`, `credentials_key`, `f_/$schema`} {
+		if strings.Contains(body, not) {
+			t.Errorf("page has %q", not)
+		}
+	}
+
+	// A kernel not of this installation has no schema here: the raw editor.
+	srv2 := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv2.Close()
+	raw := getBody(t, loginClientAs(t, srv2.URL, "sys"), srv2.URL+"/admin/config")
+	if strings.Contains(raw, "has_fields") || !strings.Contains(raw, `fee_bps&#34;: 2000`) {
+		t.Error("without a schema the page is the raw editor on the saved file")
+	}
+}
+
+// A save is the difference from the saved file as one merge patch against the
+// version the page was read at; the kernel's refusals are shown as given.
+func TestAdminConfigSave(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, configSchema(t)))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+	fields := func(fee string) url.Values {
+		return url.Values{"etag": {`"v1"`}, "has_fields": {"1"},
+			"t_/fee_bps": {"integer"}, "f_/fee_bps": {fee}, "f_/auth_audience": {""}, "f_/credit_limit": {""},
+			"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"},
+			"t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"object"}, "f_/native/llm/endpoints": {`{"ollama":{}}`},
+			"s_native.llm.endpoints.ollama.key": {""}}
+	}
+
+	if p, f := configPost(t, cl, srv.URL, fields("2000")); p != "" || f != "info|Nothing changed." {
+		t.Errorf("unchanged form sent %q, flashed %q", p, f)
+	}
+	form := fields("")
+	form.Set("s_native.llm.endpoints.ollama.key", "sk")
+	form.Del("f_/native/time/price")
+	p, f := configPost(t, cl, srv.URL, form)
+	var got, want any
+	json.Unmarshal([]byte(p), &got)
+	json.Unmarshal([]byte(`{"fee_bps":null,"native":{"time":null,"llm":{"endpoints":{"ollama":{"key":"sk"}}}}}`), &want)
+	if !reflect.DeepEqual(got, want) || f != "success|Saved." {
+		t.Errorf("patch %s flash %q", p, f)
+	}
+
+	// JSON mode saving the saved file unchanged sends nothing.
+	saved := `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{}}}}}`
+	if p, _ := configPost(t, cl, srv.URL, url.Values{"etag": {`"v1"`}, "raw_args": {saved}}); p != "" {
+		t.Errorf("unchanged JSON sent %q", p)
+	}
+	// First-boot keys and listen_addr are never sent, whatever the editor says.
+	edited := strings.Replace(strings.Replace(saved, `"k"`, `"x"`, 1), `"fee_bps":2000,`, ``, 1)
+	if p, _ := configPost(t, cl, srv.URL, url.Values{"etag": {`"v1"`}, "raw_args": {edited}}); p != `{"fee_bps":null}` {
+		t.Errorf("JSON edit sent %q", p)
+	}
+
+	if _, f := configPost(t, cl, srv.URL, fields("20000")); !strings.Contains(f, "between 0 and 10000") {
+		t.Errorf("refusal flashed %q", f)
+	}
+	stale := fields("1")
+	stale.Set("etag", `"v0"`)
+	if _, f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "changed since it was read") {
+		t.Errorf("stale flashed %q", f)
+	}
+}
+
+// The configuration is the superuser's alone.
+func TestAdminConfigIsSuperuserOnly(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	resp, err := loginClientAs(t, srv.URL, "alice").Get(srv.URL + "/admin/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("non-superuser /admin/config = %d want 404", resp.StatusCode)
 	}
 }

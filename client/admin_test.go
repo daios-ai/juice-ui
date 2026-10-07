@@ -2,7 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -412,5 +415,43 @@ func TestAdminDepositIsUserOnly(t *testing.T) {
 	}
 	if f.lastPath != "/v1/admin/users/"+key+"/deposit" {
 		t.Errorf("the target reaches the kernel unchanged, in the path: %q", f.lastPath)
+	}
+}
+
+// The configuration is read with its version and changed by a merge patch
+// against that version; a stale version is the kernel's 412, an invalid state.
+func TestAdminKernelConfig(t *testing.T) {
+	var got http.Header
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		if r.Method == http.MethodPatch && r.Header.Get("If-Match") != `"v1"` {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			io.WriteString(w, `{"code":"precondition_failed","error":"the configuration changed since it was read; read it again"}`)
+			return
+		}
+		w.Header().Set("ETag", `"v2"`)
+		io.WriteString(w, `{"config":{"fee_bps":1},"secrets":["credentials_key"],"overridden":["log_level"],"pending_restart":true}`)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	kc, err := c.AdminKernelConfig(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kc.ETag != `"v2"` || string(kc.Config) != `{"fee_bps":1}` || kc.Secrets[0] != "credentials_key" || kc.Overridden[0] != "log_level" || !kc.PendingRestart {
+		t.Errorf("decoded = %+v", kc)
+	}
+	if _, err := c.AdminPatchKernelConfig(context.Background(), "tok", `"v1"`, json.RawMessage(`{"fee_bps":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("Content-Type") != "application/merge-patch+json" || got.Get("Authorization") != "Bearer tok" || body != `{"fee_bps":2}` {
+		t.Errorf("patch sent %q %q %q", got.Get("Content-Type"), got.Get("Authorization"), body)
+	}
+	_, err = c.AdminPatchKernelConfig(context.Background(), "tok", `"v0"`, json.RawMessage(`{}`))
+	if ke, ok := AsKernelError(err); !ok || ke.Kind != KindInvalidState || !strings.Contains(ke.UserMessage(), "changed since it was read") {
+		t.Errorf("stale patch = %v", err)
 	}
 }

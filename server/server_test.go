@@ -21,8 +21,9 @@ import (
 // testWiring is what a test may vary about the wiring: which kernel the records
 // name, and how quickly the identity is re-read.
 type testWiring struct {
-	recordedKey string
-	badge       time.Duration
+	recordedKey  string
+	badge        time.Duration
+	configSchema string
 }
 
 // newTestHandler builds the BFF against a fake kernel, wired exactly as
@@ -51,6 +52,7 @@ func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) h
 		Secure:        false,
 		Identity:      identity,
 		BadgeInterval: w.badge,
+		ConfigSchema:  w.configSchema,
 	})
 	if err != nil {
 		t.Fatal(err)

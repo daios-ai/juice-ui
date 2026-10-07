@@ -23,7 +23,7 @@ const (
 	KindUnauthorized           // 403
 	KindNotFound               // 404
 	KindInvalidInput           // 422 (input validation incl. schema violations)
-	KindInvalidState           // 409 (process closed, service not configured, ...)
+	KindInvalidState           // 409 (process closed, service not configured, ...), 412 (stale If-Match)
 	KindInsufficientFunds      // 402
 	KindExecutionFailed        // 500 (action failed after execution began)
 	KindTimeout                // 504
@@ -217,7 +217,7 @@ func classify(status int, body []byte) error {
 		}
 	case http.StatusNotFound:
 		e.Kind = KindNotFound
-	case http.StatusConflict:
+	case http.StatusConflict, http.StatusPreconditionFailed:
 		e.Kind = KindInvalidState
 	case http.StatusUnprocessableEntity, http.StatusBadRequest:
 		e.Kind = KindInvalidInput

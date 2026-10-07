@@ -41,6 +41,10 @@ type Options struct {
 	// money unit. It also keys the app state, so what an app provisioned on one
 	// kernel is never replayed on another (§4).
 	Identity *KernelIdentity
+	// ConfigSchema is the kernel's JSON Schema of its config.json
+	// ($JUICE_HOME/schemas/config.schema.json), the configuration form's
+	// source; "" when the kernel is not this installation's (raw editor).
+	ConfigSchema string
 	// KernelName is the name this kernel is recorded under, shown so a person can see which
 	// kernel the interface is on (ecosystem-standard §6); "" when a bare URL.
 	KernelName string
@@ -48,19 +52,20 @@ type Options struct {
 
 // Server holds dependencies and serves the BFF.
 type Server struct {
-	client     *client.Client
-	sessions   *session.Manager
-	caller     *Caller
-	render     *Renderer
-	log        *slog.Logger
-	secure     bool
-	publicURL  string // configured absolute base URL; "" → derive from the request
-	apps       []apps.App
-	appStore   *appStore       // per-app persisted state (state.json), keyed by kernel
-	home       string          // component home dir handed to apps
-	badgeTTL   time.Duration   // nav-badge poll interval + task-badge cache TTL
-	identity   *KernelIdentity // which kernel this UI is for, and its money unit
-	kernelName string          // the kernel's name in the client records, for the chrome
+	client       *client.Client
+	sessions     *session.Manager
+	caller       *Caller
+	render       *Renderer
+	log          *slog.Logger
+	secure       bool
+	publicURL    string // configured absolute base URL; "" → derive from the request
+	apps         []apps.App
+	appStore     *appStore       // per-app persisted state (state.json), keyed by kernel
+	home         string          // component home dir handed to apps
+	badgeTTL     time.Duration   // nav-badge poll interval + task-badge cache TTL
+	identity     *KernelIdentity // which kernel this UI is for, and its money unit
+	kernelName   string          // the kernel's name in the client records, for the chrome
+	configSchema string          // the kernel's schema of config.json; "" = raw editor
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
@@ -253,18 +258,19 @@ func New(o Options) (http.Handler, error) {
 		badgeTTL = 30 * time.Second
 	}
 	s := &Server{
-		client:     o.Client,
-		sessions:   o.Sessions,
-		caller:     NewCaller(o.Client),
-		render:     o.Renderer,
-		log:        o.Logger,
-		secure:     o.Secure,
-		publicURL:  strings.TrimRight(o.PublicURL, "/"),
-		apps:       o.Apps,
-		home:       o.Home,
-		badgeTTL:   badgeTTL,
-		identity:   o.Identity,
-		kernelName: o.KernelName,
+		client:       o.Client,
+		sessions:     o.Sessions,
+		caller:       NewCaller(o.Client),
+		render:       o.Renderer,
+		log:          o.Logger,
+		secure:       o.Secure,
+		publicURL:    strings.TrimRight(o.PublicURL, "/"),
+		apps:         o.Apps,
+		home:         o.Home,
+		badgeTTL:     badgeTTL,
+		identity:     o.Identity,
+		kernelName:   o.KernelName,
+		configSchema: o.ConfigSchema,
 	}
 	as, err := newAppStore(o.StatePath, o.Identity.recorded)
 	if err != nil {
@@ -380,6 +386,8 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /admin/users/{address}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{address}/rename", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/deposit", s.requireSuperuser(s.postAdminDeposit))
+	mux.HandleFunc("GET /admin/config", s.requireSuperuser(s.getAdminConfig))
+	mux.HandleFunc("POST /admin/config", s.requireSuperuser(s.postAdminConfig))
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a
 	// peer key is 43 base64url chars and can never collide with it.

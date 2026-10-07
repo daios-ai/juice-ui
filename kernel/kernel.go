@@ -33,7 +33,7 @@ import (
 // Release is the kernel release this UI was verified against; it is what the
 // gate installs when the binary is missing or older. The kernel's releases ship one
 // tarball per platform and a checksums.txt, built by its release workflow.
-const Release = "v0.15.8"
+const Release = "v0.15.9"
 
 // Releases is the kernel's release download base.
 const Releases = "https://github.com/daios-ai/juice/releases/download"

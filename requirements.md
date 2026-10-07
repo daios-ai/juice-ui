@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.17.2
+Version: 0.18.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.18.0.** The superuser changes the kernel's configuration
+> from Admin (§6.6), through the kernel's own `/v1/admin/kernel/config`
+> (kernel v0.15.9): a form generated from the kernel's schema of `config.json`,
+> saved as one merge patch the kernel validates, applied at its next start.
 
 > **What changed in 0.17.2.** The first boot offers every world the
 > installation can serve, as `juice kernel worlds` lists them (kernel v0.15.8),
@@ -443,13 +448,11 @@ Status: design draft — endpoint surface gated against the running kernel
 > CSP, and the test discipline.
 Codename: `juice-ui`
 
-> **Gating condition.** A UI feature is mandatory only if it maps to an HTTP
+> **Only what the kernel serves.** A UI feature is mandatory only if it maps to an HTTP
 > endpoint **confirmed on the running kernel**. Anything unconfirmed is marked
 > *Conditional* and indexed in §10 (Open items), and is treated as conditional
-> until verified. Where the running kernel supports something `docs/API.md`
-> omits, the fact is recorded here and `docs/API.md` is updated. The BFF may
-> compose HTTP calls, but must not infer, emulate, or bypass kernel state
-> transitions.
+> until verified. The BFF may compose HTTP calls, but must not infer, emulate,
+> or bypass kernel state transitions.
 
 ## 1. Purpose and architecture
 
@@ -633,7 +636,7 @@ detectable.
   `sys`, covers user list/show/suspend/unsuspend/rename and crediting a user
   (§6.6); federation trust in a namespace of its own — peers, provisioned by
   use alone, with show/inspect/suspend/unsuspend/rename — this kernel's
-  identity, and the obligations owed to it (§6.6). The kernel serves these over
+  identity, the obligations owed to it, and its configuration (§6.6). The kernel serves these over
   HTTP on `/v1/admin/*`, gated by an `IsSuperuser` check on the `sys` bearer
   (API.md C13); the UI is an ordinary client of that surface. **The route says
   which kind of target it takes** and a target of the other kind is refused, so
@@ -1545,6 +1548,29 @@ bilateral settlement to initiate, no settle route, and nothing here to press.
   name — and the account is named in the route, not the body. It offers no peer
   field: a peer is not a user, and the kernel refuses one here.
 
+**Configuration.** The kernel's `config.json` is read and changed through
+`GET`/`PATCH /v1/admin/kernel/config`, on a page reached from `admin`. The kernel
+is the file's only writer after the first boot and its sole validator; this
+page never reads or writes the file.
+
+* The form is the kernel's own JSON Schema of the file,
+  `$JUICE_HOME/schemas/config.schema.json`, rendered by the run form's
+  components (§6.2) and filled from the saved file, its JSON switch opening on
+  the saved file itself. A kernel not of this installation has no schema here,
+  and the page is the JSON editor alone.
+* What a first boot decided, and `listen_addr`, the port this UI finds its kernel
+  by, are read-only. Every secret the kernel names, `credentials_key` excepted,
+  has a write-only input, shown only as "configured ✓ (replace)".
+* A save sends the difference from the saved file as one RFC 7396 merge patch,
+  under `If-Match` with the version the page read. A field cleared is `null`,
+  restoring the kernel's default; a blank field where the file holds an empty
+  value is no change, since a blank input cannot tell the two apart. A secret
+  left blank is kept. The kernel's refusal, a stale version included, is shown
+  as given.
+* The kernel's two facts about the running process are shown: the keys this
+  run's command line overrides, and, when the saved file differs from the one
+  it started with, that saved changes apply at the next start.
+
 **No value-transfer queue.** A transfer to another kernel settles in the
 sender's own call and is paid on the rail like a won ticket (kernel §D18, P11);
 the kernel serves no queue and the UI carries none. Its one visible state is
@@ -2050,6 +2076,10 @@ once its prerequisite is confirmed on the running kernel.
   charge, so the daemon's replies are its declared outputs. A title differing
   alone — the kernel titled chat's rows with the last segment of their names —
   is sent alone, which keeps the action live and its grants intact.
+* **Restarting the kernel (§6.6).** *Conditional:* a restart control beside a
+  pending configuration change. The kernel records no process id and serves no
+  restart, and it runs detached, outliving the UI, so the UI cannot reliably
+  signal it; the prerequisite is either from the kernel.
 * **Kernel contract defects (informative).** `juicedocs/API.md` still describes
   a parked call's `refund_eligible_at` and an automatic refund, which 4dbfedd
   serves neither of; its R6 breaks off mid-sentence; and it says a task
