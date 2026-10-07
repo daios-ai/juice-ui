@@ -281,12 +281,12 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 	// signup rather than creating an unrecoverable account.
 	mnemonic, err := generateMnemonic()
 	if err != nil {
-		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: "Couldn't set up account recovery. Please try again."})
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: recoverySetupFailed})
 		return
 	}
 	recPub, err := recoveryPubKey(mnemonic)
 	if err != nil {
-		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: "Couldn't set up account recovery. Please try again."})
+		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signup", Error: recoverySetupFailed})
 		return
 	}
 	if _, err := s.client.CreateUser(ctx, s.entryAddress(r), password, recPub); err != nil {

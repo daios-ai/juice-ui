@@ -224,7 +224,7 @@ func (g *Gate) create(w http.ResponseWriter, world, handle, pw string) string {
 		m, err := generateMnemonic()
 		if err != nil {
 			g.mu.Unlock()
-			return "Couldn't set up account recovery. Please try again."
+			return recoverySetupFailed
 		}
 		g.mnemonic = m
 	}
@@ -232,7 +232,7 @@ func (g *Gate) create(w http.ResponseWriter, world, handle, pw string) string {
 	g.mu.Unlock()
 	pub, err := recoveryPubKey(mnemonic)
 	if err != nil {
-		return "Couldn't set up account recovery. Please try again."
+		return recoverySetupFailed
 	}
 	if err := g.steps.Create(world, handle, pw, pub); err != nil {
 		return err.Error()
@@ -244,17 +244,21 @@ func (g *Gate) create(w http.ResponseWriter, world, handle, pw string) string {
 	return ""
 }
 
-// postCreated is the phrase's acknowledgement: the phrase is dropped, the loop
-// resumes, and the person is sent to the root, which the application serves
-// once the kernel answers.
+// postCreated is the phrase's acknowledgement, under signup's rule: it counts
+// only while a phrase is pending and with the "I understand" box; otherwise
+// the root shows whatever is pending. Acknowledged, the phrase is dropped, the
+// loop resumes, and the root is served by the application once the kernel
+// answers.
 func (g *Gate) postCreated(w http.ResponseWriter, r *http.Request) {
 	if !g.local(r) || !g.sameOrigin(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	g.mu.Lock()
-	g.phrase = ""
+	if g.phrase != "" && r.FormValue("understand") != "" {
+		g.phrase = ""
+		g.once.Do(func() { close(g.created) })
+	}
 	g.mu.Unlock()
-	g.once.Do(func() { close(g.created) })
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

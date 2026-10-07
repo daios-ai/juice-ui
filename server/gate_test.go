@@ -197,6 +197,17 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	h := g.Handler()
 	steps.report("needs-create", "")
+	released := func() bool {
+		select {
+		case <-g.created:
+			return true
+		default:
+			return false
+		}
+	}
+	if do(t, h, http.MethodPost, "/kernel/created", url.Values{"understand": {"on"}}, nil); released() {
+		t.Fatal("an acknowledgement with no phrase pending releases nothing")
+	}
 	form := url.Values{"world": {"play"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
 	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("a failed boot re-renders the form: %d", rec.Code)
@@ -228,18 +239,14 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	if b := do(t, h, http.MethodGet, "/", nil, map[string]string{"X-Forwarded-For": "203.0.113.9"}).Body.String(); strings.Contains(b, "phrase-words") {
 		t.Error("the phrase is shown only to the local request")
 	}
-	select {
-	case <-g.created:
-		t.Fatal("the loop must wait for the acknowledgement")
-	default:
+	if do(t, h, http.MethodPost, "/kernel/created", nil, nil); released() || !strings.Contains(do(t, h, http.MethodGet, "/", nil, nil).Body.String(), shown) {
+		t.Fatal("without the I-understand box the phrase stays and the loop waits")
 	}
 	rec = do(t, h, http.MethodPost, "/kernel/created", url.Values{"understand": {"on"}}, nil)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
 		t.Errorf("acknowledgement redirects to the root: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	select {
-	case <-g.created:
-	default:
+	if !released() {
 		t.Fatal("acknowledgement releases the loop")
 	}
 	if b := do(t, h, http.MethodGet, "/", nil, nil).Body.String(); strings.Contains(b, "phrase-words") {

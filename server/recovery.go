@@ -39,6 +39,10 @@ type recoveryChallenge struct {
 	RecoveryChallenge string `json:"recovery_challenge"`
 }
 
+// recoverySetupFailed is what a person sees when no phrase could be generated
+// or derived, at signup and at the first boot alike.
+const recoverySetupFailed = "Couldn't set up account recovery. Please try again."
+
 // generateMnemonic returns a fresh 12-word BIP-39 mnemonic (128-bit entropy).
 func generateMnemonic() (string, error) {
 	entropy, err := bip39.NewEntropy(128)
