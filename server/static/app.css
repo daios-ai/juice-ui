@@ -439,7 +439,7 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
 .row.compact { gap: .5rem; }
-.cluster { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 0; }
+.cluster { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .flush { margin: 0; }
 .grow { flex: 1 1 16rem; }
 .stretch { flex: 1; min-width: 0; }
