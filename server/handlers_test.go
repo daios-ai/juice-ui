@@ -335,6 +335,12 @@ func authKernel() *httptest.Server {
 		// 2026-08-05 — an envelope here would silently render zero peers).
 		w.Write([]byte(`[` + rows + `]`))
 	})
+	mux.HandleFunc("GET /v1/admin/peers/{key}", func(w http.ResponseWriter, r *http.Request) {
+		// The peer's own record here: a counterparty's account is dated by
+		// created_at (verified live 2026-10-08).
+		w.Write([]byte(`{"petname":"peerb","nickname":"peerb","public_key":"` + r.PathValue("key") + `","about":"","blockchain_address":"",
+		 "created_at":"2026-09-14T01:13:39Z","last_seen":"2026-08-04T09:54:01Z","suspended_at":null}`))
+	})
 	mux.HandleFunc("GET /v1/admin/peers/{key}/inspect", func(w http.ResponseWriter, r *http.Request) {
 		// online/source are TOP-LEVEL in the real response; reachability holds only
 		// the transport diagnostics. As of v0.12.8 an action is {name, description,

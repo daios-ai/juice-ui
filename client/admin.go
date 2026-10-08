@@ -515,6 +515,27 @@ func (c *Client) AdminRenamePeer(ctx context.Context, token, key, petname string
 	return c.do(ctx, http.MethodPost, "/v1/admin/peers/"+url.PathEscape(key)+"/rename", token, renameBody(petname), nil)
 }
 
+// PeerRecord is GET /v1/admin/peers/{key}: this kernel's own row for a peer —
+// its names, the contact cache, and, for a counterparty, when its account was
+// provisioned (the relationship's start) and where it is paid. It carries no
+// balance (kernel §D14).
+type PeerRecord struct {
+	Petname           string `json:"petname"`
+	Nickname          string `json:"nickname"`
+	PublicKey         string `json:"public_key"`
+	About             string `json:"about"`
+	BlockchainAddress string `json:"blockchain_address"`
+	CreatedAt         string `json:"created_at"`
+	LastSeen          string `json:"last_seen"`
+}
+
+// AdminPeer reads this kernel's record of a peer by key (GET /v1/admin/peers/{key}).
+func (c *Client) AdminPeer(ctx context.Context, token, key string) (PeerRecord, error) {
+	var out PeerRecord
+	err := c.do(ctx, http.MethodGet, "/v1/admin/peers/"+url.PathEscape(key), token, nil, &out)
+	return out, err
+}
+
 // AdminInspect inspects a remote kernel (GET /v1/admin/peers/{key}/inspect).
 func (c *Client) AdminInspect(ctx context.Context, token, key string) (Inspection, error) {
 	var out Inspection

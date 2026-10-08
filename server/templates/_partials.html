@@ -593,23 +593,16 @@
 </tr>
 {{end}}
 
-{{/* _kernel_strip — a kernel's facts in the stat strip's grammar (§5.5): icon
-     and value per slot, the meaning in the title, slots in one fixed order so
-     rows compare down the column, a muted "none" where a slot has nothing.
-     The roster yields the catalog and the contact cache, two dated facts and
-     never a verdict (§6.6); the inspect page's live probe replaces the cache
-     with reachability and adds the provider's own report. */}}
+{{/* _kernel_strip — a peer row's facts in the stat strip's grammar (§5.5):
+     icon and value per slot, the meaning in the title, slots in one fixed
+     order so rows compare down the column, a muted "none" where a slot has
+     nothing. The roster yields the catalog and the contact cache, two dated
+     facts and never a verdict (§6.6). */}}
 {{define "_kernel_strip"}}
 <p class="stat-strip">
   <span title="Public actions in its catalog"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg> {{.Actions}}</span>
-  {{- if .Live}}
-  · {{if eq .Path "unreachable"}}<span class="muted" title="Unreachable"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#arrow-left-right"/></svg> none</span>{{else}}<span title="Reachability and one ping round trip"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#arrow-left-right"/></svg> {{if .Path}}{{.Path}}{{else}}reachable{{end}}{{if .RTTMillis}} · {{.RTTMillis}} ms{{end}}</span>{{end}}
-  · {{if gt .Uses 0}}<span title="Success rate in the provider's own report — {{.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Successes .Uses}}%</span>{{else}}<span class="muted" title="No runs in the provider's own report"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>{{end}}
-  · {{if gt .RatingCount 0}}<span title="Rating in the provider's own report — {{.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .RatingMean .RatingCount}}%</span>{{else}}<span class="muted" title="No ratings in the provider's own report"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
-  {{- else}}
   · {{if .Seen}}<span title="Catalog verified — last successful exchange"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{relTime .Seen}}</span>{{else}}<span class="muted" title="Catalog never verified"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
   · {{if .Failed}}<span title="Last contact failed"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> {{relTime .Failed}}</span>{{else}}<span class="muted" title="No contact has failed"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> none</span>{{end}}
-  {{- end}}
 </p>
 {{end}}
 
@@ -646,16 +639,22 @@
      peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
+{{/* A detail page states each fact with a label, present facts only: no row
+     reads none, and reachability is stated once (§6.6). */}}
 <dl class="kv">
   <dt>Status</dt><dd>
     {{if $i.Online}}
     <span class="pill status-credited">online</span>
-    <span class="muted small">{{if $i.Reachability.Path}}{{$i.Reachability.Path}}{{else}}reachable{{end}}{{if $i.Reachability.RTTMillis}} · {{$i.Reachability.RTTMillis}} ms{{end}}{{with $i.Reachability.Version}} · {{.}}{{end}}</span>
+    <span class="muted small">{{if $i.Reachability.Path}}{{$i.Reachability.Path}}{{else}}reachable{{end}}{{if $i.Reachability.RTTMillis}} · {{$i.Reachability.RTTMillis}} ms{{end}}</span>
     {{else}}
     <span class="pill status-escrow">offline</span>
     <span class="muted small"{{with $i.Reachability.Error}} title="{{.}}"{{end}}>{{if eq $i.Source "local"}}last-known data{{else}}unreachable{{end}}</span>
     {{end}}
   </dd>
+  {{with $i.Reachability.Version}}<dt>Version</dt><dd class="mono">{{.}}</dd>{{end}}
+  {{with len $i.Actions}}<dt>Catalog</dt><dd>{{.}} public action{{if ne . 1}}s{{end}}</dd>{{end}}
+  {{with .Report}}{{if gt .Uses 0}}<dt>Reported</dt><dd>{{pct .Successes .Uses}}% success over {{.Uses}} run{{if ne .Uses 1}}s{{end}}{{if gt .RatingCount 0}} · rating {{ratingPct .RatingMean .RatingCount}}% ({{.RatingCount}} rater{{if ne .RatingCount 1}}s{{end}}){{end}}</dd>{{end}}{{end}}
+  {{with .Record.CreatedAt}}<dt>Party since</dt><dd>{{shortTime .}}</dd>{{end}}
 </dl>
 {{end}}
 

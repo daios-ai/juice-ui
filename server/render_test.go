@@ -1179,57 +1179,63 @@ func TestNameOpenerOnlyOnUnboundRows(t *testing.T) {
 	}
 }
 
-// The inspect page's strip replaces the contact cache with the live probe and
-// pools the provider's own report; rtt is omitted when the kernel did not ping.
-func TestInspectStripExtends(t *testing.T) {
+// The kernel page states its facts with labels, present ones only: status
+// once, version, catalog, the provider's pooled report, and a counterparty's
+// start; no row reads none, no dash, no protocol strings, no strip (§6.6).
+func TestInspectStatesLabelledFacts(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	render := func(i client.Inspection) string {
-		rec := httptest.NewRecorder()
+	render := func(i client.Inspection, rec client.PeerRecord) string {
+		rec2 := httptest.NewRecorder()
 		p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-			Key: "KEYC", Inspection: i, Strip: inspectStrip(i),
+			Key: "KEYC", Inspection: i, Report: poolEvidence(i.SelfEvidence().Rows), Record: rec,
 		}}
-		if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
+		if err := r.Render(rec2, 200, "admin_inspect", p); err != nil {
 			t.Fatalf("render: %v", err)
 		}
-		return rec.Body.String()
+		return rec2.Body.String()
 	}
-	live := render(client.Inspection{PublicKey: "KEYC", Online: true, Source: "live",
+	live := render(client.Inspection{PublicKey: "KEYC", Online: true, Source: "live", Account: &client.PeerAccount{},
 		Actions:      []client.PeerAction{{ActionID: "a1"}, {ActionID: "a2"}},
-		Reachability: client.Reachability{Path: "direct", RTTMillis: 12, Protocols: []string{"/juice/fed/gossip/1"}},
+		Reachability: client.Reachability{Path: "direct", RTTMillis: 12, Version: "juice-kernel/v0.15.10", Protocols: []string{"/juice/fed/gossip/1"}},
 		Evidence: []client.Evidence{
 			{IssuerPublicKey: "KEYC", Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
 			{IssuerPublicKey: "KEYC", Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},
 			{IssuerPublicKey: "OTHER", Uses: 100, Successes: 0},
-		}})
-	for _, want := range []string{`#layers"/></svg> 2<`, `#arrow-left-right"/></svg> direct · 12 ms<`, `title="Success rate in the provider's own report — 10 runs"`, `> 80%<`, `title="Rating in the provider's own report — 10 raters"`, `> 55%<`} {
+		}}, client.PeerRecord{CreatedAt: "2026-09-23T13:38:52Z"})
+	for _, want := range []string{`<dt>Status</dt>`, `>direct · 12 ms<`, `<dt>Version</dt><dd class="mono">juice-kernel/v0.15.10</dd>`, `<dt>Catalog</dt><dd>2 public actions</dd>`, `<dt>Reported</dt><dd>80% success over 10 runs · rating 55% (10 raters)</dd>`, `<dt>Party since</dt>`} {
 		if !strings.Contains(live, want) {
-			t.Errorf("inspect strip missing %q: %s", want, live)
+			t.Errorf("kernel page missing %q: %s", want, live)
 		}
 	}
-	for _, gone := range []string{`title="Catalog verified`, `title="Last contact failed"`, "Petname</dt>", "Protocols", "/juice/fed/gossip/1"} {
+	if n := strings.Count(live, "direct"); n != 1 {
+		t.Errorf("reachability is stated once, got %d", n)
+	}
+	for _, gone := range []string{`class="stat-strip"`, "Petname</dt>", "Protocols", "/juice/fed/gossip/1", ">none<", ">—<"} {
 		if strings.Contains(live, gone) {
-			t.Errorf("inspect page must not render %q", gone)
+			t.Errorf("kernel page must not render %q", gone)
 		}
 	}
-	quiet := render(client.Inspection{PublicKey: "KEYC", Reachability: client.Reachability{Path: "unreachable"}})
-	if !strings.Contains(quiet, `<span class="muted" title="Unreachable">`) || strings.Contains(quiet, " ms<") || !strings.Contains(quiet, `title="No runs in the provider's own report"`) {
-		t.Errorf("an unreachable, unreported kernel renders muted none slots: %s", quiet)
+	quiet := render(client.Inspection{PublicKey: "KEYC", Reachability: client.Reachability{Path: "unreachable"}}, client.PeerRecord{})
+	for _, gone := range []string{"<dt>Version</dt>", "<dt>Catalog</dt>", "<dt>Reported</dt>", "<dt>Party since</dt>", " ms<"} {
+		if strings.Contains(quiet, gone) {
+			t.Errorf("an absent fact has no row: %q", gone)
+		}
 	}
 }
 
 func TestPoolEvidence(t *testing.T) {
-	uses, successes, count, mean := poolEvidence([]client.Evidence{
+	r := poolEvidence([]client.Evidence{
 		{Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
 		{Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},
 	})
-	if uses != 10 || successes != 8 || count != 10 || mean != 0.55 {
-		t.Errorf("pooled = %d/%d, %d raters at %v; want 10/8, 10 at 0.55 (count-weighted, not 0.75)", uses, successes, count, mean)
+	if r.Uses != 10 || r.Successes != 8 || r.RatingCount != 10 || r.RatingMean != 0.55 {
+		t.Errorf("pooled = %+v; want 10/8, 10 raters at 0.55 (count-weighted, not 0.75)", r)
 	}
-	if _, _, count, mean := poolEvidence(nil); count != 0 || mean != 0 {
-		t.Errorf("no rows pool to nothing, got %d at %v", count, mean)
+	if r := poolEvidence(nil); r.RatingCount != 0 || r.RatingMean != 0 {
+		t.Errorf("no rows pool to nothing, got %+v", r)
 	}
 }
 
@@ -1669,7 +1675,7 @@ func TestInspectListsActionsAsDiscoveredRows(t *testing.T) {
 	i := client.Inspection{PublicKey: "KEYC", Actions: []client.PeerAction{{ActionID: "a2", Name: "seller@bee/greet", Title: "Greet a person", Description: "says hi", Price: 12, Indicative: true}}}
 	rec := httptest.NewRecorder()
 	p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-		Key: "KEYC", Inspection: i, Strip: inspectStrip(i), Actions: peerActionRows(i),
+		Key: "KEYC", Inspection: i, Actions: peerActionRows(i),
 	}}
 	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
 		t.Fatal(err)
@@ -1684,12 +1690,9 @@ func TestInspectListsActionsAsDiscoveredRows(t *testing.T) {
 		t.Errorf("no table and no dimming: %s", body)
 	}
 	// The verbs are buttons in the status card, after the facts, as on the
-	// user page; the strip sits in the header, left-aligned by .page-head.
+	// user page.
 	if !strings.Contains(body, `<a class="btn" href="/admin/peers/KEYC?form=admin-rename" data-modal="form-admin-rename">Name</a>`) || strings.Contains(body, "btn-quiet\" href=\"/admin/peers/KEYC?form") {
 		t.Errorf("Name is a .btn in the card: %s", body)
-	}
-	if h, c := strings.Index(body, `class="stat-strip"`), strings.Index(body, `<div class="card">`); h < 0 || c < 0 || h > c {
-		t.Errorf("the strip belongs to the header, before the card: %s", body)
 	}
 }
 

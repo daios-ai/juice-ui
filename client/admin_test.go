@@ -234,6 +234,26 @@ func TestAdminListPeersPagesToExhaustion(t *testing.T) {
 	}
 }
 
+// A peer's record is read by KEY on the peer route (never the users route) and
+// dates a counterparty's account; shape verified live 2026-10-08 (v0.15.6).
+func TestAdminPeerRecord(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.replyFn = func(r *http.Request) string {
+		return `{"about":"","blockchain_address":"","created_at":"2026-09-23T13:38:52Z","last_seen":"2026-10-07T19:22:58Z","nickname":"arfante","petname":"arfante","public_key":"PKEY","suspended_at":null}`
+	}
+	rec, err := f.client().AdminPeer(context.Background(), "tok", "PKEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.lastPath != "/v1/admin/peers/PKEY" {
+		t.Errorf("peer record path = %q", f.lastPath)
+	}
+	if rec.CreatedAt != "2026-09-23T13:38:52Z" || rec.Petname != "arfante" {
+		t.Errorf("record = %+v", rec)
+	}
+}
+
 func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	f := newFake()
 	defer f.close()

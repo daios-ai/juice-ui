@@ -9,8 +9,8 @@ Status: design draft — endpoint surface gated against the running kernel
 > provider's pooled report instead. The key renders in one spelling, the pill
 > reads `this kernel`, a row titled by its key carries the one `name` opener,
 > and the naming form opens prefilled by the kernel's own auto-bind rule. The
-> kernel's page has the row's header, buttons for its verbs, and lists its
-> public actions as discovered rows.
+> kernel's page states its facts with labels, has buttons for its verbs, and
+> lists its public actions as discovered rows.
 
 > **What changed in 0.19.0.** The network page reads like the search results
 > (§6.6): one list in the action row's grammar, this kernel first, then its
@@ -1523,16 +1523,18 @@ symmetry, but because the kernel refuses anything else.
   this kernel's own name, which it binds to its own key. The roster is read
   for that form alone. The kernel remains the validator: a rejection flashes
   its message.
-* **The inspect page states present facts.** Its strip is the row's with the
-  live probe in place of the contact cache: the catalog, reachability (path and
-  one ping's round trip, omitted when the kernel did not ping), and the
-  provider's own report pooled over its actions — successes over uses, and the
-  count-weighted mean rating — each `none` when its denominator is zero. The
-  status line keeps online/offline, source and version. Transport protocol
-  strings are not shown, and no absent field renders as a dash. The page's
-  header is the row's anatomy — name with its marks, key, `about`, strip —
-  and the status card holds the probe's facts and the verbs as buttons, Name
-  and, where an account exists, Suspend, as the user page does.
+* **The inspect page states present facts, with labels.** A strip compares
+  rows down a column; a page has one subject, so it carries no strip and
+  states each fact in a labelled `kv`, present facts only: status (online or
+  offline, with the path and one ping's round trip, stated once), version,
+  catalog (its public action count), the provider's own report pooled over
+  its actions (successes over uses, and the count-weighted mean rating, only
+  where it has runs), and, for a counterparty, when its account here was
+  provisioned (`created_at` of `GET /v1/admin/peers/{key}`). Transport
+  protocol strings are not shown, and no absent fact renders as a row, a dash
+  or `none`. The header is the row's anatomy without the strip — name with its
+  marks, key, `about` — and the card holds the facts and the verbs as buttons,
+  Name and, where an account exists, Suspend, as the user page does.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
   addresses a task to the kernel as `sys@<kernel>`, and it is listed in `sys`'s
   inbox and completed there like any other (§6.3); this page lists none. An

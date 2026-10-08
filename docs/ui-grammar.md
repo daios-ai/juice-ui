@@ -540,16 +540,15 @@ touches a key.
 **The kernel strip** (`_kernel_strip`, `KernelStrip`) ends every peer row, in
 the `_stat_strip` grammar: icon and value per slot, the meaning in `title`,
 `·` between slots, a muted `none` where a slot has nothing. This kernel's row
-carries none — the roster states nothing about it.
+carries none — the roster states nothing about it — and the kernel's page
+carries none: a strip is for comparing rows, and a page states its facts with
+labels.
 
-| slot | icon | row (roster) | inspect page (live probe) |
-|---|---|---|---|
-| catalog | `#layers` | public actions in its catalog | the same |
-| verified | `#clock` | `last_seen`, relative | — |
-| failed | `#x-mark` | `last_contact_failed_at`, relative | — |
-| reach | `#arrow-left-right` | — | `direct · 12 ms`; `none` when unreachable |
-| success | `#milestone` | — | Σsuccesses / Σuses over the provider's own rows |
-| rating | `#thumb-up` | — | count-weighted mean of the provider's own ratings |
+| slot | icon | value |
+|---|---|---|
+| catalog | `#layers` | public actions in its catalog |
+| verified | `#clock` | `last_seen`, relative |
+| failed | `#x-mark` | `last_contact_failed_at`, relative |
 
 The strip keeps the action strip's flex rule: its guarantee is fixed slot
 order and fixed icons, not column alignment, and a grid variant would be a
@@ -572,10 +571,10 @@ bound, else the nickname or `k-<key8>`, suffixed `2`, `3`, … past every name
 held here (requirements §6.6).
 
 **Inspect** (`/admin/peers/{key}`) opens with the row's header in a
-`.page-head` — name with its marks, key, `about`, the kernel strip (above),
-left-aligned there as in `.hero` — then one `.card` holding the polled status
-`kv` (present facts only: no dash for an absent petname, no protocol strings)
-and a `.cluster` of buttons, `Name` (`.btn`) and `Suspend` (`.btn-danger`),
+`.page-head` — name with its marks, key, `about` — then one `.card` holding
+the polled `kv` of labelled, present facts (Status, Version, Catalog,
+Reported, Party since; no `none`, no dash, no protocol strings) and a
+`.cluster` of buttons, `Name` (`.btn`) and `Suspend` (`.btn-danger`),
 as the user page's card does; then the kernel's **public actions** as
 **discovered `_action_row`s** (§5.5 — a remote action before resolution, its
 link resolving it), and **evidence** in **two blocks**, in the same

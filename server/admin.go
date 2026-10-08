@@ -86,49 +86,43 @@ type kernelRow struct {
 	Strip *KernelStrip
 }
 
-// KernelStrip is a kernel's facts as a stat strip (§5.5): fixed slots in a
-// fixed order so rows compare down the column. The roster yields the catalog
-// and the contact cache; the inspect page's live probe replaces the cache with
-// reachability and adds the provider's own report, pooled over its actions.
+// KernelStrip is a peer row's facts as a stat strip (§5.5): fixed slots in a
+// fixed order so rows compare down the column — the catalog and the contact
+// cache, which is all the roster states. A detail page states its facts with
+// labels instead (adminInspectView), since it has no column to compare.
 type KernelStrip struct {
 	Actions int
 	Seen    string // last_seen, "" until an exchange has succeeded
 	Failed  string // last_contact_failed_at, "" until one has failed
-
-	Live        bool // the probe's slots below are present (inspect page)
-	Path        string
-	RTTMillis   int64
-	Uses        int64
-	Successes   int64
-	RatingCount int64
-	RatingMean  float64
 }
 
 func kernelStrip(p client.Peer) *KernelStrip {
 	return &KernelStrip{Actions: p.Actions, Seen: p.LastSeen, Failed: p.LastContactFailedAt}
 }
 
-func inspectStrip(i client.Inspection) KernelStrip {
-	s := KernelStrip{Actions: len(i.Actions), Live: true, Path: i.Reachability.Path, RTTMillis: i.Reachability.RTTMillis}
-	s.Uses, s.Successes, s.RatingCount, s.RatingMean = poolEvidence(i.SelfEvidence().Rows)
-	return s
+// Report is the provider's own evidence pooled over its actions, for the
+// kernel page: stated only where it has runs.
+type Report struct {
+	Uses, Successes, RatingCount int64
+	RatingMean                   float64
 }
 
 // poolEvidence sums one issuer's rows: successes over uses, and the rating as
 // the count-weighted mean of the per-action means, since an unweighted mean of
 // means over-weights thinly rated actions. A zero count leaves the mean zero.
-func poolEvidence(rows []client.Evidence) (uses, successes, ratingCount int64, ratingMean float64) {
+func poolEvidence(rows []client.Evidence) Report {
+	var r Report
 	var weighted float64
 	for _, e := range rows {
-		uses += e.Uses
-		successes += e.Successes
-		ratingCount += e.RatingCount
+		r.Uses += e.Uses
+		r.Successes += e.Successes
+		r.RatingCount += e.RatingCount
 		weighted += e.RatingMean * float64(e.RatingCount)
 	}
-	if ratingCount > 0 {
-		ratingMean = weighted / float64(ratingCount)
+	if r.RatingCount > 0 {
+		r.RatingMean = weighted / float64(r.RatingCount)
 	}
-	return
+	return r
 }
 
 // petnameSuggestion is the name the rename form opens with: the petname when
@@ -164,8 +158,9 @@ func petnameSuggestion(petname, nickname, key string, taken func(string) bool) s
 type adminInspectView struct {
 	Key        string
 	Inspection client.Inspection
-	Strip      KernelStrip
-	Actions    []actionCardView // the peer's public actions, as discovered rows
+	Report     Report            // the provider's own evidence, pooled
+	Record     client.PeerRecord // this kernel's account row for a counterparty
+	Actions    []actionCardView  // the peer's public actions, as discovered rows
 	Suggestion string
 	OpenForm   string
 	CSRFField  template.HTML
@@ -431,8 +426,17 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Inspection = insp
-		view.Strip = inspectStrip(insp)
+		view.Report = poolEvidence(insp.SelfEvidence().Rows)
 		view.Actions = peerActionRows(insp)
+		// A counterparty's account row dates the relationship; a kernel with no
+		// account here has no row to read.
+		if insp.Account != nil {
+			rec, e := s.client.AdminPeer(ctx, tok, key)
+			if e != nil {
+				return e
+			}
+			view.Record = rec
+		}
 		if view.OpenForm != "admin-rename" {
 			return nil
 		}
