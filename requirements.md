@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.22.0
+Version: 0.23.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.23.0.** One **copy control** (§7): wherever a key, a
+> hash, an address or the recovery phrase is named, an icon-only button
+> carries the whole value to the clipboard, because every command that takes
+> one takes it whole and the screen shows what a person can match by eye. A
+> record id gets none, since the kernel resolves a prefix. The phrase page's
+> text button migrates to it, and "Copied" is announced through the live
+> region.
 
 > **What changed in 0.22.0.** Seven restatements that had stopped tracking
 > their owner are removed or corrected, each fact left in one place: amounts
@@ -1451,7 +1459,9 @@ symmetry, but because the kernel refuses anything else.
   **The key renders in one spelling.** The abbreviation exists for matching,
   so a row never shows two of them: an unbound kernel's title is the
   abbreviated key and the row has no ref line; a named kernel's ref line is
-  that same abbreviation. The whole key is recoverable from either.
+  that same abbreviation. The whole key is yielded by the one **copy control**
+  beside either (§7), because every command that takes a kernel takes the
+  whole key.
   **A peer row's facts are a strip**, in the action strip's grammar (§6.2):
   icon and value per slot, the meaning in the tooltip, slots in one fixed
   order so rows compare down the column — the catalog count (both classes),
@@ -1497,7 +1507,8 @@ symmetry, but because the kernel refuses anything else.
   three names and they are not interchangeable, so the UI MUST keep them apart:
   * its **public key** — global, self-certifying, unreadable. The only thing
     every URL, form and mutation keys on. It renders **truncated**, with the
-    whole value recoverable (a `title`), never as a card title in full. This
+    whole value yielded by its copy control (§7), never as a card title in
+    full. This
     holds wherever a kernel is named, including inside a sentence: a failure
     naming a peer (§6.2) carries whichever name the kernel had to hand —
     a petname where the failing path knew one, the key otherwise — so the UI
@@ -1782,6 +1793,15 @@ the transaction's `payment` (§6.5).
 * **Icons.** One set (Heroicons, outline/solid for inactive/active), recolorable
   to tokens, never emoji. Every icon-only control MUST carry an `aria-label`;
   hover tooltips are enhancement only.
+* **The copy control.** A truncated key, hash or address serves matching by
+  eye; the commands that take one — `admin peer inspect <key>`,
+  `admin user deposit --ref <hash>`, a run of `owner@<key>/name` — and the
+  wallets a pay-in address is pasted into take it whole. Wherever such a value
+  is named, ONE icon-only control (`_copy`, carrying the whole value, with an
+  `aria-label` naming what it copies) puts it on the clipboard, acknowledged
+  through the `aria-live` region. A record id needs none: the kernel resolves
+  any prefix of four or more hex digits, so the shown prefix is already a
+  valid argument.
 * **Feedback.** There MUST be no notification feed, bell list, or toast stack;
   outcomes render in place. The UI MUST provide exactly one polite `aria-live`
   region for ephemeral acknowledgement of the user's own just-completed action
@@ -1923,6 +1943,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   `/v1/transfers`, and the network page's peer-held list (drift guard);
 * the truncate helper is the only author of the ellipsis on a shortened id
   (drift guard);
+* a kernel row and a kernel's page carry the whole key in one copy control,
+  which holds the value itself and never a selector (§7);
 * the call-outcome classes, rendered distinctly — including that a parked
   (`timeout`) outcome names the reserved amount and claims no refund or refund
   date, that a failure names a non-zero charge rather than a full refund, that a

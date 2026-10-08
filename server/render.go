@@ -221,6 +221,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"refFolder":    refFolder,
 		"nameOf":       nameOf,
 		"kernelName":   keyDisplay,
+		"copyOf":       copyOf,
 		"obligation":   obligation,
 		"declineForm":  declineForm,
 		"ref":          r.refOf,
@@ -498,6 +499,20 @@ func keyDisplay(s string) Name {
 	}
 	return Name{Text: s, Title: s}
 }
+
+// copyView is what the _copy partial renders: the whole value a copy control
+// puts on the clipboard, and the word its label names it by ("key", "hash",
+// "address"). The control exists because a truncated key or hash serves only
+// matching by eye, while every command that takes one — `admin peer inspect
+// <key>`, `admin user deposit --ref <hash>`, a run of owner@<key>/name — takes
+// it whole, so the page must yield the whole value somewhere.
+type copyView struct {
+	What  string
+	Value string
+}
+
+// copyOf builds that pairing (template helper).
+func copyOf(what, value string) copyView { return copyView{What: what, Value: value} }
 
 // nameOf picks the name to show for a kernel: its petname when one is bound,
 // else its truncated key. A nickname is never chosen — it does not resolve, so

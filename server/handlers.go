@@ -304,7 +304,14 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 // recoveryPhraseView carries the freshly-minted seed phrase to its standalone page.
 type recoveryPhraseView struct {
 	Words  []string
+	Phrase string // the words as one line, what the copy control carries
 	Action string // where the acknowledgement posts; "" is the sign-up flow's own route
+}
+
+// phraseView builds the phrase page's data from the phrase as generated.
+func phraseView(phrase, action string) recoveryPhraseView {
+	words := strings.Fields(phrase)
+	return recoveryPhraseView{Words: words, Phrase: strings.Join(words, " "), Action: action}
 }
 
 // getRecoveryPhrase shows the seed phrase on a standalone, unauthenticated page
@@ -316,7 +323,7 @@ func (s *Server) getRecoveryPhrase(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "recovery_phrase", "Your recovery phrase", recoveryPhraseView{Words: strings.Fields(phrase)})
+	s.renderPage(w, r, http.StatusOK, "recovery_phrase", "Your recovery phrase", phraseView(phrase, ""))
 }
 
 // postRecoveryPhrase is the acknowledgement: the "I understand" box (natively

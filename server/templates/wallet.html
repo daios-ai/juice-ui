@@ -11,7 +11,7 @@
      named in the sentence, because that is the fact deciding how this balance
      moves — and the one thing a person cannot read off the figure (§7). */}}
 {{if .Data.HasAddresses}}
-<p class="card-note">On {{.KernelNet}}, paid in at <span class="mono">{{.Data.KernelAddress}}</span>{{if .Data.Token}} in token <span class="mono">{{.Data.Token}}</span>{{end}}{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
+<p class="card-note">On {{.KernelNet}}, paid in at <span class="mono">{{.Data.KernelAddress}}</span> {{template "_copy" (copyOf "address" .Data.KernelAddress)}}{{if .Data.Token}} in token <span class="mono">{{.Data.Token}}</span>{{end}}{{if .Data.MyAddress}} · you are paid at <span class="mono">{{.Data.MyAddress}}</span>{{end}}</p>
 {{else}}
 <p class="card-note">On {{.KernelNet}}, the operator records money in and out.</p>
 {{end}}
@@ -34,7 +34,7 @@
     <td class="mono" title="{{.ID}}">{{truncate 8 .ID}}</td>
     <td class="money">{{money .Amount}}</td>
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
-    <td class="mono muted">{{if .TxHash}}<span title="{{.TxHash}}">{{truncate 12 .TxHash}}</span>{{else}}—{{end}}</td>
+    <td class="mono muted">{{if .TxHash}}<span title="{{.TxHash}}">{{truncate 12 .TxHash}}</span> {{template "_copy" (copyOf "hash" .TxHash)}}{{else}}—{{end}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>
   </tr>
   {{end}}

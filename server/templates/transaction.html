@@ -31,7 +31,7 @@
   {{template "_cost_breakdown" (costOf $d.Tx)}}
   {{/* Both kernels know a cross-kernel call by the same ticket, so either party
        can follow it — the buyer owes it, the seller is paid by it. */}}
-  {{if $d.Tx.TicketID}}<p class="cost-note muted">Settles on the rail as ticket <span class="mono" title="{{$d.Tx.TicketID}}">{{truncate 8 $d.Tx.TicketID}}</span>.</p>{{end}}
+  {{if $d.Tx.TicketID}}<p class="cost-note muted">Settles on the rail as ticket <span class="mono" title="{{$d.Tx.TicketID}}">{{truncate 8 $d.Tx.TicketID}}</span> {{template "_copy" (copyOf "ticket" $d.Tx.TicketID)}}.</p>{{end}}
   {{/* A transfer to another kernel's user: the state of this kernel's payment
        to that kernel, as served — never a claim that the recipient was credited. */}}
   {{if $d.Tx.Payment}}<p class="cost-note muted">Payment to the recipient's kernel <span class="pill {{statusClass $d.Tx.Payment}}">{{$d.Tx.Payment}}</span></p>{{end}}

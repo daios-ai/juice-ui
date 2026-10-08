@@ -618,6 +618,13 @@ and a rail halt as a `.banner-error` — plus the obligations above.
 - One SVG sprite (`icons.svg`), recolored via `currentColor`, **never emoji**.
   Every icon-only control carries an `aria-label`. The brand uses
   `juice-logo.svg`.
+- **The copy control** is the `_copy` partial, built with `copyOf <what> <value>`:
+  a `.btn-quiet.copy` icon button whose `data-copy` carries the **whole**
+  value — a key, a hash, an address, the recovery phrase — beside the
+  truncated or prose rendering of it, labelled `Copy <what>`. It is the one
+  way a page yields a value the commands take whole (requirements.md §7);
+  "Copied" is announced through the live region, never on the button. A
+  record id gets none, since the kernel resolves a prefix.
 
 ### 5.13 Media slot
 

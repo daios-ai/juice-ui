@@ -8,7 +8,7 @@
     <ol class="phrase-grid" id="phrase-words">
       {{range .Data.Words}}<li>{{.}}</li>{{end}}
     </ol>
-    <div class="row compact"><button type="button" class="btn-quiet" data-copy="#phrase-words">Copy</button></div>
+    <div class="row compact">{{template "_copy" (copyOf "phrase" .Data.Phrase)}}</div>
 
     <form class="stack" method="post" action="{{if .Data.Action}}{{.Data.Action}}{{else}}/recovery-phrase{{end}}">
       {{.CSRFField}}

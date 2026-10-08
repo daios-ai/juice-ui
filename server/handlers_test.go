@@ -596,7 +596,7 @@ func TestSignupShowsRecoveryPhraseThenLogin(t *testing.T) {
 	if strings.Count(body, "<li>") < 12 {
 		t.Errorf("phrase page must show the 12 words: %s", body)
 	}
-	if !strings.Contains(body, `data-copy="#phrase-words"`) || !strings.Contains(body, `name="understand"`) {
+	if !strings.Contains(body, `data-copy="`) || !strings.Contains(body, `aria-label="Copy phrase"`) || !strings.Contains(body, `name="understand"`) {
 		t.Error("phrase page must offer a copy button and an acknowledgement checkbox")
 	}
 	if strings.Contains(body, `class="sidebar"`) || strings.Contains(body, `class="topbar"`) {

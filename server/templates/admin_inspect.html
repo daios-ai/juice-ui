@@ -9,7 +9,7 @@
 <div class="page-head">
   <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
     {{- if $d.Traded}} <span class="pill">party</span>{{end}}{{if $d.Record.Suspended}} <span class="pill status-danger">suspended</span>{{end}}</h1>
-  <p class="subtitle mono hash">{{$d.Key}}</p>
+  <p class="subtitle mono hash">{{$d.Key}} {{template "_copy" (copyOf "key" $d.Key)}}</p>
   {{if $i.About}}<p>{{$i.About}}</p>{{end}}
 </div>
 

@@ -1131,8 +1131,14 @@ func TestKeyRendersInOneSpelling(t *testing.T) {
 		t.Errorf("an unbound row has no ref line: %s", unbound)
 	}
 	bound := renderPeersPage(t, []client.Peer{{Petname: "titan", PublicKey: key}}, false)
-	if !strings.Contains(bound, `<p class="action-ref fingerprint" title="`+key+`">`+short+`</p>`) {
+	if !strings.Contains(bound, `<p class="action-ref fingerprint" title="`+key+`">`+short+` <button`) {
 		t.Errorf("a bound row's ref line is the one key spelling: %s", bound)
+	}
+	// The whole key is yielded by the copy control, in both forms of the row.
+	for _, body := range []string{unbound, bound} {
+		if strings.Count(body, `data-copy="`+key+`"`) != 1 {
+			t.Errorf("a row carries its whole key in one copy control: %s", body)
+		}
 	}
 }
 

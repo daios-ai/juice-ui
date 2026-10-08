@@ -387,22 +387,27 @@ for (const dlg of document.querySelectorAll('dialog.modal-form[open], dialog.dra
   }
 }
 
-// Copy-to-clipboard: a [data-copy="#sel"] button copies the target's text — for a
-// list (the recovery phrase) it joins the items in order with spaces, so the
-// clipboard holds the phrase exactly as it must be re-entered.
+// announce puts one ephemeral acknowledgement in the single polite aria-live
+// region (§7): it replaces what the region held, so there is no stack and no
+// history, and it clears itself.
+function announce(text) {
+  const region = document.getElementById('live-region');
+  if (!region) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = text;
+  region.replaceChildren(toast);
+  clearTimeout(announce.timer);
+  announce.timer = setTimeout(() => { region.replaceChildren(); }, 2000);
+}
+
+// Copy-to-clipboard: a [data-copy] control carries the whole value it copies —
+// a key, a hash, an address, the recovery phrase — so the clipboard holds what
+// a command takes, never the truncation on screen (the _copy partial).
 document.body.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-copy]');
   if (!btn || !navigator.clipboard) return;
-  const el = document.querySelector(btn.getAttribute('data-copy'));
-  if (!el) return;
-  const text = el.children.length
-    ? Array.from(el.children).map((c) => c.textContent.trim()).join(' ')
-    : el.textContent.trim();
-  navigator.clipboard.writeText(text).then(() => {
-    const label = btn.textContent;
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.textContent = label; }, 1500);
-  });
+  navigator.clipboard.writeText(btn.getAttribute('data-copy')).then(() => announce('Copied'));
 });
 
 // Search hints, the way a static site searches its index: the page loads the

@@ -200,7 +200,7 @@ func (g *Gate) getStatus(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gate) renderPhrase(w http.ResponseWriter, phrase string) {
 	_ = g.render.Render(w, http.StatusOK, "recovery_phrase", Page{Title: "Recovery phrase",
-		Data: recoveryPhraseView{Words: strings.Fields(phrase), Action: "/kernel/created"}})
+		Data: phraseView(phrase, "/kernel/created")})
 }
 
 // postCreate is the first boot, a state transition accepted only while the

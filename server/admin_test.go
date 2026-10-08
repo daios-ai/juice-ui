@@ -1044,3 +1044,26 @@ func TestAdminConfigIsLocalAndSuperuserOnly(t *testing.T) {
 		t.Errorf("non-superuser /admin/config = %d want 404", resp.StatusCode)
 	}
 }
+
+// A truncated key serves matching by eye; the commands that take a kernel —
+// inspect, suspend, a run of owner@<key>/name — take it whole. So wherever a
+// key is named, the one copy control carries the whole value (§6.6).
+func TestCopyControlCarriesTheWholeKey(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	roster := getBody(t, cl, srv.URL+"/admin/peers")
+	if !strings.Contains(roster, `data-copy="KEYB"`) || !strings.Contains(roster, `aria-label="Copy key"`) {
+		t.Errorf("a roster row must carry its whole key in the copy control: %s", roster)
+	}
+	inspect := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
+	if !strings.Contains(inspect, `data-copy="KEYC"`) {
+		t.Error("the kernel's page must carry its whole key in the copy control")
+	}
+	if strings.Contains(roster, `data-copy="#`) || strings.Contains(inspect, `data-copy="#`) {
+		t.Error("a copy control carries the value itself, never a selector")
+	}
+}
