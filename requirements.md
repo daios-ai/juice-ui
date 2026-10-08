@@ -8,7 +8,9 @@ Status: design draft — endpoint surface gated against the running kernel
 > a tooltip per slot; the inspect page's strip carries the live probe and the
 > provider's pooled report instead. The key renders in one spelling, the pill
 > reads `this kernel`, a row titled by its key carries the one `name` opener,
-> and the naming form opens prefilled by the kernel's own auto-bind rule.
+> and the naming form opens prefilled by the kernel's own auto-bind rule. The
+> kernel's page has the row's header, buttons for its verbs, and lists its
+> public actions as discovered rows.
 
 > **What changed in 0.19.0.** The network page reads like the search results
 > (§6.6): one list in the action row's grammar, this kernel first, then its
@@ -1516,7 +1518,7 @@ symmetry, but because the kernel refuses anything else.
   **The form opens prefilled** by the kernel's own auto-bind preference (kernel
   §D15), so an explicit bind and an automatic one look alike: the petname when
   one is bound; else the nickname when it is not key-shaped and free; else
-  `k-<key8>`; either suffixed `-2`, `-3`, … to the lowest free number. Free
+  `k-<key8>`; either suffixed `2`, `3`, … to the lowest free number. Free
   means bound to no other kernel here, suspended parties included, and not
   this kernel's own name, which it binds to its own key. The roster is read
   for that form alone. The kernel remains the validator: a rejection flashes
@@ -1527,14 +1529,16 @@ symmetry, but because the kernel refuses anything else.
   provider's own report pooled over its actions — successes over uses, and the
   count-weighted mean rating — each `none` when its denominator is zero. The
   status line keeps online/offline, source and version. Transport protocol
-  strings are not shown, and no absent field renders as a dash. The verbs
-  (name; suspend where an account exists) sit under the title, before the
-  catalog.
+  strings are not shown, and no absent field renders as a dash. The page's
+  header is the row's anatomy — name with its marks, key, `about`, strip —
+  and the status card holds the probe's facts and the verbs as buttons, Name
+  and, where an account exists, Suspend, as the user page does.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
   addresses a task to the kernel as `sys@<kernel>`, and it is listed in `sys`'s
   inbox and completed there like any other (§6.3); this page lists none. An
-  inspected action leads with its title, then its address, which renders as
-  every address does (§4), unlinked. Reachability states the path, one ping's
+  inspected action is a remote action before resolution, so it is listed as
+  the discovered row of the search results (§6.2) — title, `R` chip,
+  indicative price, address, description — and its link resolves it. Reachability states the path, one ping's
   round trip, and the peer's version.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
   in **two views, never folded**: an **execution summary** from the rows the

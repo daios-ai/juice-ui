@@ -467,7 +467,7 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .action-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .action-head h1 { margin: 0; }
 /* The detail/hero stat strip is a facts line, left-aligned (cards center theirs). */
-.action-detail-card .stat-strip, .hero .stat-strip { justify-content: flex-start; }
+.action-detail-card .stat-strip, .hero .stat-strip, .page-head .stat-strip { justify-content: flex-start; }
 .hero h1 { font-size: 1.25rem; }
 
 /* owner/name — owner segment emphasized, confusable-distinct, never accent (R7) */

@@ -134,9 +134,9 @@ func poolEvidence(rows []client.Evidence) (uses, successes, ratingCount int64, r
 // petnameSuggestion is the name the rename form opens with: the petname when
 // one is bound (a rename), else the kernel's own auto-bind preference (kernel
 // §D15) — the cached nickname when it is not key-shaped and free, else
-// k-<key8>, either suffixed -2, -3, … to the lowest free number — so an explicit
-// bind and an automatic one look alike. taken reports a name bound to another
-// kernel or held by this one. The kernel remains the validator.
+// k-<key8>, either suffixed 2, 3, … to the lowest free number. taken reports a
+// name bound to another kernel or held by this one. The kernel remains the
+// validator.
 func petnameSuggestion(petname, nickname, key string, taken func(string) bool) string {
 	if petname != "" {
 		return petname
@@ -149,7 +149,7 @@ func petnameSuggestion(petname, nickname, key string, taken func(string) bool) s
 		return base
 	}
 	for n := 2; ; n++ {
-		if s := fmt.Sprintf("%s-%d", base, n); !taken(s) {
+		if s := fmt.Sprintf("%s%d", base, n); !taken(s) {
 			return s
 		}
 	}
@@ -165,9 +165,23 @@ type adminInspectView struct {
 	Key        string
 	Inspection client.Inspection
 	Strip      KernelStrip
+	Actions    []actionCardView // the peer's public actions, as discovered rows
 	Suggestion string
 	OpenForm   string
 	CSRFField  template.HTML
+}
+
+// peerActionRows renders a peer's public actions as discovered rows: each is a
+// remote action before resolution, which is exactly what the lookup results
+// show (§6.2) — its link resolves it from its home kernel.
+func peerActionRows(i client.Inspection) []actionCardView {
+	rows := make([]actionCardView, 0, len(i.Actions))
+	for _, a := range i.Actions {
+		rows = append(rows, actionCardView{Discovered: true, Action: client.Action{
+			ID: a.ActionID, Action: a.Name, Title: a.Title, Description: a.Description, Price: a.Price, Active: true, Discovered: true,
+		}})
+	}
+	return rows
 }
 
 func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
@@ -418,6 +432,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Inspection = insp
 		view.Strip = inspectStrip(insp)
+		view.Actions = peerActionRows(insp)
 		if view.OpenForm != "admin-rename" {
 			return nil
 		}

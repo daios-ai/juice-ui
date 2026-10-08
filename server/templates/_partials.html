@@ -375,27 +375,6 @@
 {{define "_task_decline"}}<form id="decline-{{.ID}}" method="post" action="/inbox/{{.ID}}/cancel" data-confirm="Decline this task?">{{.CSRFField}}</form>{{end}}
 {{define "_decline_button"}}<button class="btn-danger" type="submit" form="decline-{{.}}">Decline</button>{{end}}
 
-{{/* _peer_actions renders a federation kernel's public actions. Input:
-     []client.PeerAction — the name is the action's address as this kernel
-     would call it (4dbfedd), rendered as every address is and unlinked: the
-     row carries no local id, and reaching the action takes a resolve from its
-     home kernel. No reputation is served here. */}}
-{{define "_peer_actions"}}
-<div class="table-scroll">
-<table class="stats-table">
-  <thead><tr><th>action</th><th class="money">price</th></tr></thead>
-  <tbody>
-  {{range .}}
-  <tr>
-    <td>{{.Title}}<div class="small">{{template "_ref" (ref .Name "")}}</div>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
-    <td class="money">{{template "_price" (price .Price false)}}</td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
-{{end}}
-
 {{/* _evidence renders one block of retained evidence, on a peer's inspection
      and on an action's page. Input: client.IssuerEvidence — .Self marks the
      provider's report about its own actions (never folded with what others
@@ -667,7 +646,6 @@
      peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
-{{template "_kernel_strip" .Strip}}
 <dl class="kv">
   <dt>Status</dt><dd>
     {{if $i.Online}}

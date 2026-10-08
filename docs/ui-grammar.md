@@ -568,13 +568,17 @@ An unbound kernel therefore shows its truncated key, never its nickname. The
 **one** rename modal (§5.8) lives on the kernel's page, keyed on the public key
 — an unbound kernel has no name to key on, and advertised names collide. Its
 field opens prefilled by the kernel's auto-bind preference: the petname when
-bound, else the nickname or `k-<key8>`, suffixed `-2`, `-3`, … past every
-name held here (requirements §6.6).
+bound, else the nickname or `k-<key8>`, suffixed `2`, `3`, … past every name
+held here (requirements §6.6).
 
-**Inspect** (`/admin/peers/{key}`) leads with the verbs under the title, then
-the kernel strip (above) and a `kv` of present facts only — status with
-source and version; no dash for an absent petname, no protocol strings — then
-the kernel's public actions, and **evidence** in **two blocks**, in the same
+**Inspect** (`/admin/peers/{key}`) opens with the row's header in a
+`.page-head` — name with its marks, key, `about`, the kernel strip (above),
+left-aligned there as in `.hero` — then one `.card` holding the polled status
+`kv` (present facts only: no dash for an absent petname, no protocol strings)
+and a `.cluster` of buttons, `Name` (`.btn`) and `Suspend` (`.btn-danger`),
+as the user page's card does; then the kernel's **public actions** as
+**discovered `_action_row`s** (§5.5 — a remote action before resolution, its
+link resolving it), and **evidence** in **two blocks**, in the same
 grouped-block grammar as the action stats table: the provider's own **report**
 ("reported by the provider"), then **counterparty experience** per issuer with
 its corroborated count. Each row names its subject action and states
@@ -591,10 +595,10 @@ paid — and one gesture: a `.btn-money` `Confirm (N)` behind `data-confirm`,
 posting the peer's key and the ticket id. Recording a payment moves real money.
 
 **Rename** is one modal per namespace. A user is renamed on the admin user
-detail (`/admin/users/{address}?form=admin-rename`): a `.btn-quiet` opener beside
+detail (`/admin/users/{address}?form=admin-rename`): a `.btn` opener beside
 Suspend, one field taking the new address, a neutral `.btn` submit. A kernel is
-named on its inspect page, keyed on its public key. The two are separate because
-the kernel's two routes are.
+named on its inspect page the same way, keyed on its public key. The two are
+separate because the kernel's two routes are.
 
 A counterparty carries **no money at all**: a peer account is identity and
 moderation state, never a wallet (kernel §D14), so a row states its names and

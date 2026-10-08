@@ -802,7 +802,7 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 
 // The rename form opens prefilled by the kernel's auto-bind preference, past
 // every name held here (§6.6): KEYT1 claims "twin", which KEYT2 holds, so it
-// is offered twin-2; a bound kernel is offered its petname. The roster is read
+// is offered twin2; a bound kernel is offered its petname. The roster is read
 // only for that form: a plain open renders without it.
 func TestInspectPrefillsSuggestion(t *testing.T) {
 	kernel := authKernel()
@@ -811,8 +811,8 @@ func TestInspectPrefillsSuggestion(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	if body := getBody(t, cl, srv.URL+"/admin/peers/KEYT1?form=admin-rename"); !strings.Contains(body, `name="new_name" type="text" class="mono" value="twin-2"`) {
-		t.Errorf("a discovered twin is offered twin-2: %s", body)
+	if body := getBody(t, cl, srv.URL+"/admin/peers/KEYT1?form=admin-rename"); !strings.Contains(body, `name="new_name" type="text" class="mono" value="twin2"`) {
+		t.Errorf("a discovered twin is offered twin2: %s", body)
 	}
 	if body := getBody(t, cl, srv.URL+"/admin/peers/KEYB?form=admin-rename"); !strings.Contains(body, `value="kernelc" required`) {
 		t.Errorf("a bound kernel is offered its petname: %s", body)

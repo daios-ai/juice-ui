@@ -1234,7 +1234,7 @@ func TestPoolEvidence(t *testing.T) {
 }
 
 // The prefill is the kernel's own auto-bind preference: petname > free
-// nickname > k-<key8>, suffixed -2, -3, … to the lowest free number.
+// nickname > k-<key8>, suffixed 2, 3, … to the lowest free number.
 func TestPetnameSuggestion(t *testing.T) {
 	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
 	taken := func(names ...string) func(string) bool {
@@ -1251,12 +1251,12 @@ func TestPetnameSuggestion(t *testing.T) {
 	}{
 		{"arfante", "arfante", taken("arfante"), "arfante"},
 		{"", "TitanPlus", taken(), "TitanPlus"},
-		{"", "TitanPlus", taken("TitanPlus"), "TitanPlus-2"},
-		{"", "TitanPlus", taken("TitanPlus", "TitanPlus-2"), "TitanPlus-3"},
-		{"", "TitanPlus", taken("TitanPlus", "TitanPlus-3"), "TitanPlus-2"},
-		{"", "behemoth", taken("behemoth"), "behemoth-2"},
+		{"", "TitanPlus", taken("TitanPlus"), "TitanPlus2"},
+		{"", "TitanPlus", taken("TitanPlus", "TitanPlus2"), "TitanPlus3"},
+		{"", "TitanPlus", taken("TitanPlus", "TitanPlus3"), "TitanPlus2"},
+		{"", "behemoth", taken("behemoth"), "behemoth2"},
 		{"", key, taken(), "k-X7lFapV-"},
-		{"", "", taken("k-X7lFapV-"), "k-X7lFapV--2"},
+		{"", "", taken("k-X7lFapV-"), "k-X7lFapV-2"},
 	}
 	for _, c := range cases {
 		if got := petnameSuggestion(c.petname, c.nickname, key, c.taken); got != c.want {
@@ -1658,19 +1658,38 @@ func TestActionRowLeadsWithTitle(t *testing.T) {
 	}
 }
 
-// A peer's action list leads each row with the action's title, the address
-// beneath it.
-func TestPeerActionsLeadWithTitle(t *testing.T) {
+// A peer's public action is a remote action before resolution, so the inspect
+// page lists it as the discovered row of the search results: title, R chip,
+// indicative price, address, and a link that resolves it (§6.2).
+func TestInspectListsActionsAsDiscoveredRows(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
+	i := client.Inspection{PublicKey: "KEYC", Actions: []client.PeerAction{{ActionID: "a2", Name: "seller@bee/greet", Title: "Greet a person", Description: "says hi", Price: 12, Indicative: true}}}
 	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_peer_actions", []client.PeerAction{{Name: "seller@bee/greet", Title: "Greet a person", Price: 12}}); err != nil {
+	p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+		Key: "KEYC", Inspection: i, Strip: inspectStrip(i), Actions: peerActionRows(i),
+	}}
+	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
 		t.Fatal(err)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, `<td>Greet a person<div class="small"><span class="ref mono">`) {
-		t.Errorf("a peer action row must lead with its title: %s", body)
+	body := rec.Body.String()
+	for _, want := range []string{`<div class="action-list">`, `<a class="action-title" href="/discovered?ref=seller%40bee%2fgreet" title="Greet a person">Greet a person</a>`, `title="Discovered — known through the network, not resolved here">R</span>`, `<span class="owner">seller@bee</span>/greet`, `<p class="action-desc">says hi</p>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("inspect actions missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "stats-table") || strings.Contains(body, "inactive") {
+		t.Errorf("no table and no dimming: %s", body)
+	}
+	// The verbs are buttons in the status card, after the facts, as on the
+	// user page; the strip sits in the header, left-aligned by .page-head.
+	if !strings.Contains(body, `<a class="btn" href="/admin/peers/KEYC?form=admin-rename" data-modal="form-admin-rename">Name</a>`) || strings.Contains(body, "btn-quiet\" href=\"/admin/peers/KEYC?form") {
+		t.Errorf("Name is a .btn in the card: %s", body)
+	}
+	if h, c := strings.Index(body, `class="stat-strip"`), strings.Index(body, `<div class="card">`); h < 0 || c < 0 || h > c {
+		t.Errorf("the strip belongs to the header, before the card: %s", body)
 	}
 }
 

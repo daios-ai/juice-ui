@@ -2,39 +2,45 @@
 {{$d := .Data}}
 {{$i := $d.Inspection}}
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
+{{/* The header is the row's anatomy (§5.11): name with its marks, key, about,
+     strip. The polled card below states what only the probe knows and holds
+     the verbs, as the user page does. */}}
 {{$n := nameOf $i.Petname $d.Key}}
-<h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
-  {{- if $i.Account}} <span class="pill">party</span>{{if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}{{end}}</h1>
-<p class="subtitle mono hash">{{$d.Key}}</p>
-{{if $i.About}}<p class="subtitle">{{$i.About}}</p>{{end}}
-
-{{/* Naming binds a PETNAME, exactly — the only way to name a kernel this node
-     has merely discovered (§13) — and keys on the public key, since an unbound
-     kernel has no name to key on. Suspension freezes a counterparty's account,
-     so it is offered only where one exists. There is no money gesture: a peer
-     holds no balance and is never credited (§6.6). */}}
-<div class="cluster">
-  <a class="btn-quiet" href="/admin/peers/{{$d.Key}}?form=admin-rename" data-modal="form-admin-rename">name this kernel</a>
-  {{if $i.Account}}{{if $i.Account.Suspended}}
-  <form method="post" action="/admin/peers/unsuspend">
-    {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Unsuspend</button>
-  </form>
-  {{else}}
-  <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
-    {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn-danger" type="submit">Suspend</button>
-  </form>
-  {{end}}{{end}}
+<div class="page-head">
+  <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
+    {{- if $i.Account}} <span class="pill">party</span>{{if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}{{end}}</h1>
+  <p class="subtitle mono hash">{{$d.Key}}</p>
+  {{if $i.About}}<p>{{$i.About}}</p>{{end}}
+  {{template "_kernel_strip" $d.Strip}}
 </div>
 
 <div class="card">
   <div id="inspect-status" hx-get="/admin/peers/{{$d.Key}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
     {{template "_inspect_status" $d}}
   </div>
+  {{/* Naming binds a PETNAME, exactly — the only way to name a kernel this
+       node has merely discovered (§13) — and keys on the public key, since an
+       unbound kernel has no name to key on. Suspension freezes a
+       counterparty's account, so it is offered only where one exists. There is
+       no money gesture: a peer holds no balance and is never credited (§6.6). */}}
+  <div class="cluster">
+    <a class="btn" href="/admin/peers/{{$d.Key}}?form=admin-rename" data-modal="form-admin-rename">Name</a>
+    {{if $i.Account}}{{if $i.Account.Suspended}}
+    <form method="post" action="/admin/peers/unsuspend">
+      {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Unsuspend</button>
+    </form>
+    {{else}}
+    <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
+      {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn-danger" type="submit">Suspend</button>
+    </form>
+    {{end}}{{end}}
+  </div>
 </div>
 
-
+{{/* A peer's public action is a remote action before resolution, so it is the
+     discovered row of the search results (§6.2): its link resolves it. */}}
 <h2>Public actions</h2>
-{{if $i.Actions}}{{template "_peer_actions" $i.Actions}}{{else}}<p class="muted">No public actions.</p>{{end}}
+{{if $d.Actions}}<div class="action-list">{{range $d.Actions}}{{template "_action_row" .}}{{end}}</div>{{else}}<p class="muted">No public actions.</p>{{end}}
 
 {{/* Evidence is signed and independently verifiable, so it is shown in two
      blocks that are never folded: what this kernel reports about its own
