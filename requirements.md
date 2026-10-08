@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.21.0
+Version: 0.22.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.22.0.** Seven restatements that had stopped tracking
+> their owner are removed or corrected, each fact left in one place: amounts
+> render in the kernel's form (§7, not six digits); visibility is set by
+> `PUT /v1/actions {target, …}` (§6.4); a discovered action resolves on open
+> (§6.2 alone); `peer_unreachable` names its peer from `meta.peer` (§10);
+> the catalog filter is `?owner=` (§6.2); `sys/random` and `sys/llm/embed`
+> are kernel natives, no longer open items (§10); and no normative sentence
+> or sketch carries `$` (§6.2).
 
 > **What changed in 0.21.0.** The UI follows kernel v0.15.11, where a peer
 > holds no account: a counterparty is a kernel a transaction here names
@@ -699,12 +708,6 @@ detectable.
   wallet names the kernel's address and offers the user their own (§6.5). A peer
   account holds no money on any path (kernel §D14), so no peer surface shows a
   balance or a top-up.
-* A **discovered** remote action is runnable from the UI as of 0.6.0: its
-  catalog price is indicative, but the run pins the catalog's `quote_hash`, so
-  terms that moved since the last discovery pass are refused before any funds
-  are locked rather than charged silently (§6.2). Resolution still happens as a
-  side effect of that first call; afterwards the cached proxy is an ordinary
-  priced card.
 
 ## 4. API contract the UI must honor
 
@@ -1017,8 +1020,8 @@ spend:
   perceive — and MUST NOT be presented as the amount a spend button authorizes
   unless that spend pins it (§6.2 quote pinning). A blank where a price belongs
   is not permitted: the kernel serves one for every row.
-* Catalog browse (`GET /v1/actions`, owner/name filters) MUST be available as the
-  secondary path and the per-owner listing.
+* Catalog browse (`GET /v1/actions`, the `?owner=` filter) MUST be available as
+  the secondary path and the per-owner listing.
 * On `ErrInvalidState` from `sys/lookup`, the omnibox MUST fall back to catalog
   search and MUST show a notice that semantic search is unavailable; it MUST NOT
   present a dead control. Discovery is mandatory regardless of embedder status.
@@ -1122,12 +1125,12 @@ spend:
 * The receipt MUST offer one-click re-run with the same args.
 
 ```text
-  lena/ocr-translate                     $0.012
+  lena@alpha/ocr-translate          0.012 USDC
   ─────────────────────────────────────────────
   document_url   [https://…            ]
   target_lang    [German             ▾ ]
 
-  [ Run ($0.012) ]
+  [ Run (0.012 USDC) ]
   ┌─ result ──────────────────────────────────┐
   │  [frozen form of the result]  Receipt · ▲ ▼ │
   └────────────────────────────────────────────┘
@@ -1146,7 +1149,8 @@ one question — what happened to the money — so no two may share a sentence:
   failure answers `execution_failed`), and a class explains nothing to a buyer.
   Each error class maps to exactly one sentence, in one place; a raw class MUST
   NOT reach a template (enforced by drift guard).
-* **parked** (`timeout`) → "Result pending — $N reserved". A call that was
+* **parked** (`timeout`) → "Result pending — N reserved", N through the money
+  helper (§7). A call that was
   dispatched but has no signed outcome yet is **not** a failure and **not** a
   refund: the kernel keeps the funds locked and retries. Verified live — the
   balance moves from available to locked, and `meta` carries `process_id` and
@@ -1261,8 +1265,8 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   actions, filter by state, and show kind, price, success rate, rating trend, a
   last-failure peek, an inline active/inactive toggle, and a **visibility**
   control (below).
-* **Visibility** MUST be set via `PUT /v1/actions/{id}` with
-  `{visibility: "private" | "local" | "public"}` — the kernel's three-way
+* **Visibility** MUST be set via `PUT /v1/actions` with
+  `{target, visibility: "private" | "local" | "public"}` — the kernel's three-way
   caller-scope (`private` owner-only, `local` any local caller of this kernel but
   never peers, `public` anyone and the only value served in manifests/gossip). It
   is a **three-way** selector, not a boolean toggle. No ACL, grant, or revoke
@@ -1885,9 +1889,9 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * no surface decorates a name: no template puts an `@` before a name, and the
   only `@` a template may carry joins an address (§4), enforced by a drift
   guard over the core and app templates;
-* the money unit: amounts scale by the world's `decimals` and always show six
-  fraction digits; an amount finer than the base unit is refused, not rounded;
-  and no template renders a currency symbol (§7, drift guard);
+* the money unit: amounts render through the one `money` helper in the
+  kernel's form (§7); an amount finer than the base unit is refused, not
+  rounded; and no template renders a currency symbol (drift guard);
 * the session pin: a login records the kernel's key and network fingerprint, an
   address that answers for another kernel ends the session, and a kernel that
   cannot identify itself cannot be signed in to (§5);
@@ -1974,8 +1978,6 @@ once its prerequisite is confirmed on the running kernel.
 * **Lookup operational status (Run).** Confirm whether `sys/lookup` has a
   configured embedder or returns `ErrInvalidState`. Does not gate discovery
   (mandatory); selects semantic ranking versus catalog fallback.
-* **Native additions (`sys/random`, `sys/llm/embed`).** Not in the final kernel
-  spec; conditional, not assumed. No current UI feature depends on them.
 * **The agents app's home path — deviates, and not ours to move.** The UI
   scaffolds `$JUICE_HOME/agent/agents/<handle>/`, which is what the juice-agent
   daemon's own specification (§11 there) says it reads, while
@@ -2183,9 +2185,8 @@ UI does not offer, so this is a defence, not a flow);
 `ErrInsufficientFunds` → a plain not-enough-balance message (how money enters is
 the wallet's disclosure, §6.5); `rail_stopped` → payments out are paused while a
 rail payment is blocked, and deposits, calls and reads continue;
-`peer_unreachable` → the peer was offline, the call refunded, retry later (the
-kernel sends no `meta` here, so the UI names the peer from the ref it submitted
-or names none);
+`peer_unreachable` → the peer named in `meta.peer` was offline, the call
+refunded, retry later;
 `peer_unfunded` → the serving kernel will not serve this one on credit — its limit
 is reached, or its provider cannot fund the work — nothing was charged, and this
 is never the caller's own balance (§6.6);

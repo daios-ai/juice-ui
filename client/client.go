@@ -259,7 +259,7 @@ type CreateActionInput struct {
 	WasmArtifact string `json:"wasm_artifact,omitempty"`
 }
 
-// UpdateActionInput is the body for PUT /v1/actions/{id}. All fields optional.
+// UpdateActionInput is the body for PUT /v1/actions. All fields but the target are optional.
 type UpdateActionInput struct {
 	// Target is the action id or owner/path this update names; set by UpdateAction.
 	Target       string          `json:"target"`
