@@ -143,14 +143,16 @@ func (i *Installation) Binary() string {
 	return ""
 }
 
-// World is the kernel home of this installation whose kernel answers at the
-// configured URL — kernels/<world>/config.json with a loopback listen_addr on
-// the URL's port, and a world file worlds/<world>.json, since `serve <world>`
-// is refused without one — or "" when no home matches. A home is what the
-// kernel is; its listen address is the one fact that ties it to the address
-// the UI calls. A home left from before homes were named for their world has
-// no world file and is passed over.
-func (i *Installation) World() string {
+// home is this installation's kernel home: the directory under kernels/ whose
+// config.json listens on loopback at the configured URL's port, its world being
+// the directory's name (ecosystem-standard §2). booted reports that a kernel
+// lives there — its database, juice.db, exists — which the kernel guarantees of
+// no boot it was not given the answers to (requirements: "nothing exists in the
+// home before those answers are in hand"). The database is looked for before
+// the configuration is read, so a damaged config.json cannot hide a kernel: a
+// directory holding juice.db whose config.json is missing or unreadable is an
+// error, since the UI can neither tell which port it serves nor create beside it.
+func (i *Installation) home() (world string, booted bool, err error) {
 	port := i.URL.Port()
 	if port == "" {
 		port = "80"
@@ -160,28 +162,34 @@ func (i *Installation) World() string {
 		if !e.IsDir() {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(i.Home, "worlds", e.Name()+".json")); err != nil {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(i.Home, "kernels", e.Name(), "config.json"))
-		if err != nil {
-			continue
-		}
+		dir := filepath.Join(i.Home, "kernels", e.Name())
+		db := exists(filepath.Join(dir, "juice.db"))
 		var c struct {
 			ListenAddr string `json:"listen_addr"`
 		}
-		if json.Unmarshal(b, &c) != nil {
+		b, rerr := os.ReadFile(filepath.Join(dir, "config.json"))
+		if rerr == nil {
+			rerr = json.Unmarshal(b, &c)
+		}
+		if rerr != nil {
+			if db {
+				return "", false, fmt.Errorf("%s holds a kernel (juice.db) whose config.json is missing or unreadable; restore it from your backup", dir)
+			}
 			continue
 		}
 		if c.ListenAddr == "" {
 			c.ListenAddr = ":4040" // the kernel's default
 		}
-		host, p, err := net.SplitHostPort(c.ListenAddr)
-		if err == nil && p == port && isLoopback(host) {
-			return e.Name()
+		if host, p, err := net.SplitHostPort(c.ListenAddr); err == nil && p == port && isLoopback(host) {
+			return e.Name(), db, nil
 		}
 	}
-	return ""
+	return "", false, nil
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Serving reports whether a kernel answers /health at the configured URL.
@@ -297,28 +305,43 @@ func untarJuice(tgz []byte) ([]byte, error) {
 	}
 }
 
-// Create makes this installation's kernel: it writes kernels/<world>/config.json
-// (the kernel's name, the UI's port, a log file) and serves it once with the
-// sys password and recovery public key in the child's environment, the kernel's
-// documented non-interactive first boot. The caller holds the recovery phrase;
-// the kernel never sees it and prints none. Create returns once the kernel
-// answers, or with the kernel's own last words if it exits first. Cleanup is
-// defined only for a failure before the child starts; once it has run, the
-// home is the kernel's and a partial boot is rerunnable by the kernel's own
-// contract.
+// Create is the first boot: it writes kernels/<world>/config.json — the
+// operator's word, written in advance (the kernel's documented non-interactive
+// first boot) — and serves it once with the sys password and recovery public
+// key in the child's environment. It succeeds once the kernel exists: it
+// answers, or its database does, since the kernel creates that only with its
+// answers in hand, enrolling the recovery key. A boot that leaves no database
+// was declined, and its last words are the error. The caller holds the
+// recovery phrase.
+//
+// It writes only where no kernel lives and deletes nothing. One first boot runs
+// at a time per installation, under first-boot.lock. A kernel's home — any
+// directory holding juice.db, whatever its configuration says — is refused, as
+// is one a server holds. A home with no kernel, left by a boot the kernel
+// declined, is rewritten: that is how a refused answer is corrected.
 func (i *Installation) Create(world, handle, password, recoveryKey string) error {
+	unlock, err := firstBootLock(filepath.Join(i.Home, "ui", "first-boot.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	dir := filepath.Join(i.Home, "kernels", world)
-	// A home that is already here is a first boot to rerun (World() found no
-	// servable home on this port, so this one has no world file yet) — unless
-	// it listens elsewhere, in which case it is another kernel's.
-	if b, err := os.ReadFile(filepath.Join(dir, "config.json")); err == nil {
-		var c struct {
-			ListenAddr string `json:"listen_addr"`
+	home, booted, err := i.home()
+	switch {
+	case err != nil:
+		return err
+	case booted:
+		return fmt.Errorf("a kernel already lives in %s; it is never created again", filepath.Join(i.Home, "kernels", home))
+	case exists(filepath.Join(dir, "juice.db")):
+		return fmt.Errorf("a kernel already lives in %s; it is never created again", dir)
+	case home != "" && home != world:
+		return fmt.Errorf("an unfinished kernel home %s listens on this port; finish it or remove it", filepath.Join(i.Home, "kernels", home))
+	}
+	if held, err := locked(filepath.Join(dir, "serve.lock")); err != nil || held {
+		if err == nil {
+			err = fmt.Errorf("a kernel holds %s", dir)
 		}
-		_ = json.Unmarshal(b, &c)
-		if c.ListenAddr != "" && c.ListenAddr != "127.0.0.1:"+i.URL.Port() {
-			return fmt.Errorf("a kernel home %s already exists, listening on %s", dir, c.ListenAddr)
-		}
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -329,15 +352,40 @@ func (i *Installation) Create(world, handle, password, recoveryKey string) error
 		"log_file":      filepath.Join(dir, "serve.log"),
 	})
 	if err := writeConfig(dir, cfg); err != nil {
-		os.RemoveAll(dir)
 		return err
 	}
 	done, err := i.serve(world, []string{"JUICE_BOOTSTRAP_PASSWORD=" + password, "JUICE_BOOTSTRAP_RECOVERY_KEY=" + recoveryKey}, nil, nil)
 	if err != nil {
-		os.RemoveAll(dir)
 		return err
 	}
-	return i.answers(done)
+	if err := i.answers(done); err != nil && !exists(filepath.Join(dir, "juice.db")) {
+		return err
+	}
+	// The kernel exists: it was given its answers and enrolled the recovery
+	// key. Whether it serves is the start's to report.
+	return nil
+}
+
+// firstBootLock takes the installation's first-boot lock without waiting: an
+// exclusive flock on path, in the UI's own state directory. flock conflicts
+// between open files even within one process, so it serializes first boots
+// across requests and UI processes alike.
+func firstBootLock(path string) (unlock func(), err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errors.New("a first boot is already running")
+		}
+		return nil, err
+	}
+	return func() { f.Close() }, nil
 }
 
 // answers returns once a started kernel answers, or with its own last words
@@ -378,9 +426,9 @@ func writeConfig(dir string, b []byte) error {
 // Schema of it (nil when absent), and the file's version: the SHA-256 of its
 // bytes, which Reconfigure is given back to refuse a stale edit.
 func (i *Installation) Config() (config, schema []byte, version string, err error) {
-	world := i.World()
-	if world == "" {
-		return nil, nil, "", errors.New("no kernel home here")
+	world, err := i.booted()
+	if err != nil {
+		return nil, nil, "", err
 	}
 	config, err = os.ReadFile(filepath.Join(i.Home, "kernels", world, "config.json"))
 	if err != nil {
@@ -388,6 +436,16 @@ func (i *Installation) Config() (config, schema []byte, version string, err erro
 	}
 	schema, _ = os.ReadFile(filepath.Join(i.Home, "schemas", "config.schema.json"))
 	return config, schema, fileVersion(config), nil
+}
+
+// booted is the world of this installation's kernel, or an error when no
+// kernel lives here: only a booted home's configuration is read or changed.
+func (i *Installation) booted() (string, error) {
+	world, booted, err := i.home()
+	if err == nil && !booted {
+		err = errors.New("no kernel lives here")
+	}
+	return world, err
 }
 
 func fileVersion(b []byte) string {
@@ -404,9 +462,9 @@ func fileVersion(b []byte) string {
 func (i *Installation) Reconfigure(version string, config []byte) error {
 	i.cfgMu.Lock()
 	defer i.cfgMu.Unlock()
-	world := i.World()
-	if world == "" {
-		return errors.New("no kernel home here")
+	world, err := i.booted()
+	if err != nil {
+		return err
 	}
 	dir := filepath.Join(i.Home, "kernels", world)
 	old, err := os.ReadFile(filepath.Join(dir, "config.json"))
@@ -434,6 +492,8 @@ func (i *Installation) Reconfigure(version string, config []byte) error {
 	return nil
 }
 
+// serveAnswering serves this installation's kernel home, detached, and returns
+// once it answers, or with its last words.
 func (i *Installation) serveAnswering(world string) error {
 	done, err := i.serve(world, nil, nil, nil)
 	if err != nil {
@@ -491,15 +551,6 @@ func locked(path string) (bool, error) {
 		return false, err
 	}
 	return false, syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-}
-
-// Start serves this installation's kernel home, detached from this process,
-// its output appended to kernel.log. It returns once the child is started;
-// Serving says when it answers. A child that fails at the serve lock is another
-// server already holding the home.
-func (i *Installation) Start(world string) error {
-	_, err := i.serve(world, nil, nil, nil)
-	return err
 }
 
 // serve starts `juice kernel serve <world>` with JUICE_HOME pinned and the
@@ -562,9 +613,11 @@ func (i *Installation) logTail() string {
 // Ensure runs the gate's loop until the kernel answers, reporting each state.
 // Each round classifies first: a kernel answering ends the loop; a kernel
 // elsewhere is waited for and never installed or started; only a loopback
-// kernel is installed, created (the caller closes created once the first boot
-// is acknowledged) or started.
-func (i *Installation) Ensure(ctx context.Context, report func(State, string), created <-chan struct{}) {
+// kernel is installed, created (by the first boot, which the caller runs while
+// NeedsCreate is reported) or started. Every state is re-examined each round,
+// so a kernel brought up by another program ends the loop as surely as one
+// this installation started.
+func (i *Installation) Ensure(ctx context.Context, report func(State, string)) {
 	wait := func(d time.Duration) bool {
 		select {
 		case <-ctx.Done():
@@ -594,25 +647,37 @@ func (i *Installation) Ensure(ctx context.Context, report func(State, string), c
 					return
 				}
 			}
-		case i.World() == "":
-			report(NeedsCreate, "")
-			select {
-			case <-ctx.Done():
-				return
-			case <-created:
-			}
 		default:
-			report(Starting, i.World())
-			if err := i.Start(i.World()); err != nil {
+			// A home with a kernel is started, never created again; one with
+			// none — absent, or left by a boot the kernel declined — awaits the
+			// first boot.
+			world, booted, err := i.home()
+			switch {
+			case err != nil:
 				report(Failed, err.Error())
-			} else {
-				for n := 0; n < 30 && !i.Serving(ctx); n++ {
+			case !booted:
+				report(NeedsCreate, "")
+				if !wait(time.Second) {
+					return
+				}
+				continue
+			default:
+				report(Starting, world)
+				// A server holding the home — booting, or starting — is waited
+				// for, never joined by a second: the lock, not a guess, says so.
+				held, err := locked(filepath.Join(i.Home, "kernels", world, "serve.lock"))
+				switch {
+				case err != nil:
+					report(Failed, err.Error())
+				case held:
 					if !wait(time.Second) {
 						return
 					}
-				}
-				if !i.Serving(ctx) {
-					report(Failed, "the kernel did not answer: "+i.logTail())
+					continue
+				default:
+					if err := i.serveAnswering(world); err != nil {
+						report(Failed, err.Error())
+					}
 				}
 			}
 			if !i.Serving(ctx) && !wait(10*time.Second) {

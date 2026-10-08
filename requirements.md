@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.18.0
+Version: 0.18.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.18.1.** The first boot can never touch an existing
+> kernel (§1): a home holding `juice.db` is a kernel, started and never created
+> again; the first boot writes only where none lives, deletes nothing, runs one
+> at a time, and answers with a redirect, so a re-sent form boots nothing.
 
 > **What changed in 0.18.0.** The superuser changes this installation's kernel
 > configuration from Admin (§6.6): a form generated from the kernel's schema of
@@ -491,14 +496,26 @@ kernel answers `/health`, when the application takes the listener:
   GitHub releases, refused without a matching SHA-256, tried with `--version`,
   renamed atomically into `bin/` (the contract of the kernel's own
   `install.sh`);
-* no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port →
-  **create**: a first-boot form (world, kernel name, superuser password; the
+* no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port, or
+  the one that does holds no kernel — no `juice.db`, which the kernel creates
+  only with its first boot's answers in hand → **create**: a first-boot form (world, kernel name, superuser password; the
   world one of those `juice kernel worlds` lists — the world files and the
   shipped worlds not yet written — each by its name, `play`
   preselected, a world the kernel would refuse shown disabled with its error,
   and only a listed, servable world accepted on the server) writes that home's `config.json` and serves
   the kernel once with the password and the superuser's recovery public key in
   the child's environment, the kernel's documented non-interactive first boot.
+  The first boot never touches a kernel: it writes `config.json` only into a
+  home holding no `juice.db` that no server holds (`serve.lock`), refuses any
+  directory holding `juice.db` whatever its configuration says, and deletes
+  nothing, even when it fails — a home the kernel declined is left for the
+  retry, which rewrites its answers. One first boot runs at a time per
+  installation, under an exclusive lock in the UI's own state directory. The
+  form is accepted only while the screen waits for it, and its outcome is
+  always reached by a redirect, so a reload, a back-navigation or a second
+  submit boots nothing. A boot that leaves `juice.db` has created the kernel —
+  its recovery key is enrolled — so the phrase is shown even if it then fails
+  to serve, which the start reports;
   The UI generates the recovery phrase as at signup, one for every attempt of
   the boot (a kernel that enrolled the key and then failed to serve keeps it),
   and shows it once the kernel answers, held in memory until acknowledged and
@@ -508,7 +525,9 @@ kernel answers `/health`, when the application takes the listener:
   `sys`, stands read-only above its password;
 * otherwise → **start** `juice kernel serve <world>`, detached so the kernel
   outlives the UI; the kernel's own lock makes this safe beside an operator's
-  start.
+  start. A home whose kernel does not start is reported with the kernel's own
+  words and never created again, and a directory holding `juice.db` whose
+  `config.json` is missing or unreadable is reported as such.
 
 The first boot is a local act: the form, its post and the phrase page are
 served only to a request from this machine (a loopback listener, a loopback

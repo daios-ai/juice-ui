@@ -26,12 +26,27 @@ type fakeSteps struct {
 	report  func(state, detail string)
 }
 
-func (f *fakeSteps) Ensure(ctx context.Context, report func(state, detail string), created <-chan struct{}) {
+func (f *fakeSteps) Ensure(ctx context.Context, report func(state, detail string)) {
 	f.mu.Lock()
 	f.report = report
 	f.mu.Unlock()
 	<-ctx.Done()
 }
+
+// say reports a state as the kernel loop would, once the loop has started.
+func (f *fakeSteps) say(state, detail string) {
+	for {
+		f.mu.Lock()
+		report := f.report
+		f.mu.Unlock()
+		if report != nil {
+			report(state, detail)
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func (f *fakeSteps) Create(world, handle, password, key string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -100,7 +115,7 @@ func TestGateScreenFollowsTheState(t *testing.T) {
 		"installing": "Installing the kernel", "starting": "Starting the kernel",
 		"waiting": "Waiting for", "failed": "could not bind",
 	} {
-		steps.report(state, map[string]string{"installing": "v0.15.6", "failed": "could not bind :4040"}[state])
+		steps.say(state, map[string]string{"installing": "v0.15.6", "failed": "could not bind :4040"}[state])
 		body := do(t, h, http.MethodGet, "/anything/at/all", nil, nil).Body.String()
 		if !strings.Contains(body, want) || !strings.Contains(body, `hx-get="/kernel/status"`) || !strings.Contains(body, "Juice installation") {
 			t.Errorf("%s: screen missing %q", state, want)
@@ -110,7 +125,7 @@ func TestGateScreenFollowsTheState(t *testing.T) {
 	if rec.Header().Get("HX-Redirect") != "" {
 		t.Error("no redirect before the kernel answers")
 	}
-	steps.report("serving", "")
+	steps.say("serving", "")
 	select {
 	case <-g.Ready():
 	default:
@@ -136,7 +151,7 @@ func TestGateScreenFollowsTheState(t *testing.T) {
 func TestGateFirstBootIsLocal(t *testing.T) {
 	g, steps := newGate(t, "127.0.0.1:8080")
 	h := g.Handler()
-	steps.report("needs-create", "")
+	steps.say("needs-create", "")
 	body := do(t, h, http.MethodGet, "/", nil, nil).Body.String()
 	if !strings.Contains(body, `action="/kernel/create"`) || !strings.Contains(body, `name="handle"`) || !strings.Contains(body, `<label>Superuser name</label><div class="box mono">sys</div>`) || !strings.Contains(body, `<option value="play" selected>play</option>`) ||
 		!strings.Contains(body, `<option value="arbitrum-one">arbitrum-one</option>`) || !strings.Contains(body, `<option value="bad" disabled>bad — parse world file</option>`) {
@@ -206,10 +221,10 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	go g.Run(ctx)
 	time.Sleep(20 * time.Millisecond)
 	h := g.Handler()
-	steps.report("needs-create", "")
+	steps.say("needs-create", "")
 	released := func() bool {
 		select {
-		case <-g.created:
+		case <-g.Ready():
 			return true
 		default:
 			return false
@@ -219,11 +234,17 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 		t.Fatal("an acknowledgement with no phrase pending releases nothing")
 	}
 	form := url.Values{"world": {"play"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
-	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("a failed boot re-renders the form: %d", rec.Code)
+	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("a failed boot redirects to the screen: %d", rec.Code)
+	}
+	if b := do(t, h, http.MethodGet, "/", nil, nil).Body.String(); !strings.Contains(b, "transport refused") || !strings.Contains(b, `action="/kernel/create"`) {
+		t.Fatalf("the screen shows the form with the failure: %s", b)
 	}
 	steps.err = nil
-	rec := do(t, h, http.MethodPost, "/kernel/create", form, nil)
+	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("a first boot answers with a redirect, never the phrase itself: %d", rec.Code)
+	}
+	rec := do(t, h, http.MethodGet, "/", nil, nil)
 	words := regexp.MustCompile(`<li>([a-z]+)</li>`).FindAllStringSubmatch(rec.Body.String(), -1)
 	var phrase []string
 	for _, m := range words {
@@ -242,6 +263,17 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	if len(steps.created) != 2 || steps.created[1] != "play/alpha/secret123" {
 		t.Errorf("Create called with %v", steps.created)
 	}
+	// The kernel answering does not hand the listener over while the phrase
+	// awaits acknowledgement.
+	steps.say("serving", "")
+	if released() {
+		t.Fatal("the application waits for the phrase to be acknowledged")
+	}
+	// The browser re-sending the form — a reload, a back-navigation, a second
+	// click — boots nothing while the phrase is pending.
+	if rec := do(t, h, http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusSeeOther || len(steps.created) != 2 {
+		t.Errorf("a re-sent first boot with a phrase pending: %d, Create calls %d", rec.Code, len(steps.created))
+	}
 	shown := "<li>" + phrase[0] + "</li>"
 	if b := do(t, h, http.MethodGet, "/elsewhere", nil, nil).Body.String(); !strings.Contains(b, shown) {
 		t.Error("every path keeps the phrase until it is acknowledged")
@@ -257,7 +289,7 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 		t.Errorf("acknowledgement redirects to the root: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 	if !released() {
-		t.Fatal("acknowledgement releases the loop")
+		t.Fatal("acknowledged, with the kernel serving, the application takes the listener")
 	}
 	if b := do(t, h, http.MethodGet, "/", nil, nil).Body.String(); strings.Contains(b, "phrase-words") {
 		t.Error("the phrase is dropped once acknowledged")
@@ -270,15 +302,33 @@ func TestGateHoldsThePhraseUntilAcknowledged(t *testing.T) {
 	}
 }
 
-// A Create the kernel refuses re-renders the form with the kernel's words.
+// A Create the kernel refuses comes back, after the redirect, as the form with
+// the kernel's words and the answers given.
 func TestGateShowsTheKernelsRefusal(t *testing.T) {
 	g, steps := newGate(t, "127.0.0.1:8080")
 	steps.err = errorString("the kernel did not start: bootstrap: kernel name refused")
-	steps.report("needs-create", "")
+	steps.say("needs-create", "")
 	form := url.Values{"world": {"play"}, "handle": {"Bad"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
-	rec := do(t, g.Handler(), http.MethodPost, "/kernel/create", form, nil)
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "kernel name refused") || !strings.Contains(rec.Body.String(), `action="/kernel/create"`) {
-		t.Errorf("refusal re-renders the form with the message: %d %s", rec.Code, rec.Body.String())
+	if rec := do(t, g.Handler(), http.MethodPost, "/kernel/create", form, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("a refused boot redirects: %d", rec.Code)
+	}
+	b := do(t, g.Handler(), http.MethodGet, "/", nil, nil).Body.String()
+	if !strings.Contains(b, "kernel name refused") || !strings.Contains(b, `action="/kernel/create"`) || !strings.Contains(b, `value="Bad"`) {
+		t.Errorf("the form with the refusal and its answers: %s", b)
+	}
+}
+
+// The first boot is accepted only while the gate waits for it: in any other
+// state a post is sent to the screen and nothing is created.
+func TestGateCreateOnlyWhileWaiting(t *testing.T) {
+	g, steps := newGate(t, "127.0.0.1:8080")
+	form := url.Values{"world": {"play"}, "handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
+	for _, st := range []string{"waiting", "installing", "starting", "failed"} {
+		steps.say(st, "")
+		rec := do(t, g.Handler(), http.MethodPost, "/kernel/create", form, nil)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" || len(steps.created) != 0 {
+			t.Errorf("%s: %d, Create calls %d", st, rec.Code, len(steps.created))
+		}
 	}
 }
 

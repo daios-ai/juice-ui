@@ -13,9 +13,9 @@ import (
 
 // Steps is what the gate drives: the kernel package's loop and first boot.
 type Steps interface {
-	// Ensure runs until the kernel answers, reporting each state; it blocks in
-	// the needs-create state until created is closed.
-	Ensure(ctx context.Context, report func(state, detail string), created <-chan struct{})
+	// Ensure runs until the kernel answers, reporting each state as the
+	// facts change.
+	Ensure(ctx context.Context, report func(state, detail string))
 	// Create makes this installation's kernel, enrolling recoveryKey for sys,
 	// and returns once it answers.
 	Create(world, handle, password, recoveryKey string) error
@@ -39,8 +39,6 @@ type Gate struct {
 	url     string
 	listen  string
 	log     *slog.Logger
-	created chan struct{}
-	once    sync.Once
 	ready   chan struct{}
 	readyMu sync.Once
 
@@ -48,8 +46,10 @@ type Gate struct {
 	state    string
 	detail   string
 	mnemonic string // the first boot's recovery phrase, one for every attempt
-	phrase   string // the mnemonic once the kernel answers, held until acknowledged
+	phrase   string // the mnemonic once the kernel exists, held until acknowledged
 	err      string // the last Create error, shown with the form
+	world    string // the last attempt's answers, refilled after its redirect
+	handle   string
 }
 
 // NewGate builds the gate for the kernel at url; listen is the UI's own address.
@@ -58,22 +58,34 @@ func NewGate(r *Renderer, steps Steps, url, listen string, log *slog.Logger) *Ga
 		log = slog.Default()
 	}
 	return &Gate{render: r, steps: steps, url: url, listen: listen, log: log,
-		created: make(chan struct{}), ready: make(chan struct{}), state: "waiting", detail: url}
+		ready: make(chan struct{}), state: "waiting", detail: url}
 }
 
 // Run drives the steps until the kernel answers.
-func (g *Gate) Run(ctx context.Context) { g.steps.Ensure(ctx, g.report, g.created) }
+func (g *Gate) Run(ctx context.Context) { g.steps.Ensure(ctx, g.report) }
 
-// Ready is closed once the kernel answers; the application then takes the
-// listener.
+// Ready is closed once the kernel answers and no recovery phrase this gate
+// generated awaits acknowledgement; the application then takes the listener.
 func (g *Gate) Ready() <-chan struct{} { return g.ready }
 
 func (g *Gate) report(state, detail string) {
 	g.mu.Lock()
+	changed := state != g.state || detail != g.detail
 	g.state, g.detail = state, detail
 	g.mu.Unlock()
-	g.log.Info("kernel gate", "state", state, "detail", detail)
-	if state == "serving" {
+	if changed {
+		g.log.Info("kernel gate", "state", state, "detail", detail)
+	}
+	g.settle()
+}
+
+// settle hands the listener to the application once both hold: the kernel
+// serves, and the phrase of a first boot this gate ran has been acknowledged.
+func (g *Gate) settle() {
+	g.mu.Lock()
+	done := g.state == "serving" && g.phrase == ""
+	g.mu.Unlock()
+	if done {
 		g.readyMu.Do(func() { close(g.ready) })
 	}
 }
@@ -145,7 +157,10 @@ func (g *Gate) view(r *http.Request) kernelView {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	v := kernelView{State: g.state, Detail: g.detail, URL: g.url, Local: g.local(r), Error: g.err,
-		Command: "juice kernel serve play", World: r.FormValue("world"), Handle: r.FormValue("handle")}
+		Command: "juice kernel serve play", World: g.world, Handle: g.handle}
+	if r.Method == http.MethodPost {
+		v.World, v.Handle = r.FormValue("world"), r.FormValue("handle")
+	}
 	if v.State == "needs-create" {
 		var err error
 		if v.Worlds, err = g.steps.Worlds(); err != nil {
@@ -172,7 +187,10 @@ func (g *Gate) getScreen(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gate) getStatus(w http.ResponseWriter, r *http.Request) {
 	v := g.view(r)
-	if v.State == "serving" {
+	g.mu.Lock()
+	phrase := g.phrase
+	g.mu.Unlock()
+	if v.State == "serving" && phrase == "" {
 		w.Header().Set("HX-Redirect", "/")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -185,9 +203,22 @@ func (g *Gate) renderPhrase(w http.ResponseWriter, phrase string) {
 		Data: recoveryPhraseView{Words: strings.Fields(phrase), Action: "/kernel/created"}})
 }
 
+// postCreate is the first boot, a state transition accepted only while the
+// gate waits for it; any other request — a reload, a back-navigation, a second
+// submit — is sent to the screen of what is current. Its outcome is always
+// reached by a redirect (Post/Redirect/Get), so the browser never holds a
+// request that would boot again. One first boot runs at a time per
+// installation; the kernel package serializes them.
 func (g *Gate) postCreate(w http.ResponseWriter, r *http.Request) {
 	if !g.local(r) || !g.sameOrigin(r) {
 		http.Error(w, "the kernel is created at this machine", http.StatusForbidden)
+		return
+	}
+	g.mu.Lock()
+	waiting := g.state == "needs-create" && g.phrase == ""
+	g.mu.Unlock()
+	if !waiting {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	world, handle := strings.TrimSpace(r.FormValue("world")), strings.TrimSpace(r.FormValue("handle"))
@@ -203,17 +234,18 @@ func (g *Gate) postCreate(w http.ResponseWriter, r *http.Request) {
 	case pw != pw2:
 		fail = "The passwords don't match."
 	}
-	if fail == "" {
-		fail = g.create(w, world, handle, pw)
-		if fail == "" {
-			return
-		}
+	if fail != "" { // nothing has happened: the form again, with its answers
+		g.mu.Lock()
+		g.err = fail
+		g.mu.Unlock()
+		_ = g.render.Render(w, http.StatusUnprocessableEntity, "kernel", Page{Title: "Juice installation", Data: g.view(r)})
+		return
 	}
+	fail = g.create(world, handle, pw)
 	g.mu.Lock()
-	g.err = fail
+	g.err, g.world, g.handle = fail, world, handle
 	g.mu.Unlock()
-	v := g.view(r)
-	_ = g.render.Render(w, http.StatusUnprocessableEntity, "kernel", Page{Title: "Juice installation", Data: v})
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // servable reports whether the kernel lists world and would serve it; the
@@ -228,8 +260,9 @@ func (g *Gate) servable(world string) bool {
 // here as at signup (recovery.go) and kept across failed attempts: a kernel
 // that enrolled the key and then failed to serve is no longer at its first
 // boot, ignores another key, and is recovered by this phrase alone. On success
-// it renders the phrase page; otherwise it returns what to show with the form.
-func (g *Gate) create(w http.ResponseWriter, world, handle, pw string) string {
+// the phrase is pending, for the screen to show; otherwise it returns what to
+// show with the form.
+func (g *Gate) create(world, handle, pw string) string {
 	g.mu.Lock()
 	if g.mnemonic == "" {
 		m, err := generateMnemonic()
@@ -249,17 +282,15 @@ func (g *Gate) create(w http.ResponseWriter, world, handle, pw string) string {
 		return err.Error()
 	}
 	g.mu.Lock()
-	g.phrase, g.err = mnemonic, ""
+	g.phrase = mnemonic
 	g.mu.Unlock()
-	g.renderPhrase(w, mnemonic)
 	return ""
 }
 
 // postCreated is the phrase's acknowledgement, under signup's rule: it counts
 // only while a phrase is pending and with the "I understand" box; otherwise
-// the root shows whatever is pending. Acknowledged, the phrase is dropped, the
-// loop resumes, and the root is served by the application once the kernel
-// answers.
+// the root shows whatever is pending. Acknowledged, the phrase is dropped and
+// the root is served by the application once the kernel answers.
 func (g *Gate) postCreated(w http.ResponseWriter, r *http.Request) {
 	if !g.local(r) || !g.sameOrigin(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -268,8 +299,8 @@ func (g *Gate) postCreated(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	if g.phrase != "" && r.FormValue("understand") != "" {
 		g.phrase = ""
-		g.once.Do(func() { close(g.created) })
 	}
 	g.mu.Unlock()
+	g.settle()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

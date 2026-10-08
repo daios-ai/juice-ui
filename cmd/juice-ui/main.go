@@ -164,8 +164,8 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 // own types.
 type steps struct{ *kernel.Installation }
 
-func (s steps) Ensure(ctx context.Context, report func(state, detail string), created <-chan struct{}) {
-	s.Installation.Ensure(ctx, func(st kernel.State, d string) { report(string(st), d) }, created)
+func (s steps) Ensure(ctx context.Context, report func(state, detail string)) {
+	s.Installation.Ensure(ctx, func(st kernel.State, d string) { report(string(st), d) })
 }
 
 func (s steps) Worlds() ([]server.World, error) {

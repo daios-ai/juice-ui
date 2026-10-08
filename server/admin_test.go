@@ -813,8 +813,8 @@ func (f *fakeConfig) Reconfigure(version string, cfg []byte) error {
 	return nil
 }
 
-const testConfigFile = `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"CK",
-"fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"OK"}}}}}`
+const testConfigFile = `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
+"fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"SECRET-ENDPOINT-KEY"}}}}}`
 
 const testConfigSchema = `{"type":"object","additionalProperties":false,"properties":{
 "$schema":{"type":"string"},"kernel_handle":{"type":"string"},"listen_addr":{"type":"string"},
@@ -870,7 +870,7 @@ func TestAdminConfigPage(t *testing.T) {
 			t.Errorf("page lacks %q", want)
 		}
 	}
-	for _, not := range []string{"CK", "OK", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`} {
+	for _, not := range []string{"SECRET-CREDENTIALS-KEY", "SECRET-ENDPOINT-KEY", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`} {
 		if strings.Contains(body, not) {
 			t.Errorf("page has %q", not)
 		}
@@ -919,14 +919,14 @@ func TestAdminConfigSave(t *testing.T) {
 	if f := configPost(t, cl, srv.URL, form); f != "success|Saved and restarted." {
 		t.Errorf("save flashed %q", f)
 	}
-	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"CK",
+	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
 		"auth_audience":"","credit_limit":null,"native":{"llm":{"endpoints":{"ollama":{"key":"sk"}}}}}`)
 
 	// The JSON editor cannot rename the kernel or drop a secret.
 	edited := strings.Replace(strings.Replace(shown, `"k"`, `"x"`, 1), `"fee_bps":2000,`, ``, 1)
 	configPost(t, cl, srv.URL, url.Values{"raw_args": {edited}})
-	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"CK",
-		"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"OK"}}}}}`)
+	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
+		"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"SECRET-ENDPOINT-KEY"}}}}}`)
 
 	stale := url.Values{"raw_args": {edited}, "version": {"v0"}}
 	if f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "changed since this page was loaded") {
