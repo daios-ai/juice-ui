@@ -43,10 +43,10 @@ type AdminUser struct {
 func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 
 // Peer is one row of the merged kernel roster: every kernel this one knows,
-// keyed by public key and excluding itself. HasAccount splits the two classes —
-// a COUNTERPARTY holds an account here, a DISCOVERED peer is a catalog entry the
-// discovery loop learned and nothing more, so it has no user row to suspend or
-// rename.
+// keyed by public key and excluding itself. Traded splits the two classes: a
+// COUNTERPARTY is a kernel a transaction here names, a DISCOVERED peer is a
+// catalog entry the discovery loop learned and nothing more. Either can be
+// named and suspended by key.
 //
 // A peer holds NO MONEY on any path (kernel §D14): a foreign call is funded by
 // the serving kernel and every obligation settles per call on the rail (§P10),
@@ -61,12 +61,12 @@ func (u AdminUser) Suspended() bool { return u.SuspendedAt != "" }
 // by key. Every URL, form and mutation keys on PublicKey — never on a displayed
 // name.
 type Peer struct {
-	Petname    string `json:"petname"`  // bound here; resolves; "" until bound
-	Nickname   string `json:"nickname"` // self-asserted by the remote; never resolves
-	About      string `json:"about"`    // the peer's sys description; counterparty prose
-	PublicKey  string `json:"public_key"`
-	HasAccount bool   `json:"has_account"` // counterparty (account here) vs discovered
-	Actions    int    `json:"actions"`     // public actions in its gossiped catalog
+	Petname   string `json:"petname"`  // bound here; resolves; "" until bound
+	Nickname  string `json:"nickname"` // self-asserted by the remote; never resolves
+	About     string `json:"about"`    // the peer's sys description; counterparty prose
+	PublicKey string `json:"public_key"`
+	Traded    bool   `json:"traded"`  // counterparty: a transaction here names it; else discovered
+	Actions   int    `json:"actions"` // public actions in its gossiped catalog
 	// LastSeen and LastContactFailedAt are the kernel's contact cache (§13):
 	// when a verified exchange last succeeded, and when one last failed. Raw
 	// RFC3339 facts, each "" until it has happened — the kernel states neither
@@ -138,18 +138,10 @@ type Reachability struct {
 	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }
 
-// PeerAccount is this kernel's account row for the inspected kernel, served
-// inline by the inspection and NULL for a kernel that holds no account here. Its
-// presence is what distinguishes a counterparty from a discovered peer on the
-// inspect page, so it is a pointer. It carries no balance: a peer account is
-// identity, attribution and moderation state, never a wallet (kernel §D14).
-type PeerAccount struct {
-	Suspended bool `json:"suspended"`
-}
-
 // Inspection is GET /v1/admin/peers/{key}/inspect — a remote kernel's identity, its
 // About (the peer's sys description), the public actions it serves, the evidence
-// this kernel retains about it, and our account with it, plus reachability.
+// this kernel retains about it, plus reachability. It states no suspension: that
+// is the kernel row's (PeerRecord), as is everything moderation.
 // Online and Source are top-level fields (verified live): Online is true only
 // when the live probe reached the peer; Source is "live" | "local" (last-known,
 // online=false) | "none" (a well-formed key this kernel has never learned — a
@@ -163,7 +155,6 @@ type Inspection struct {
 	About        string       `json:"about"`
 	Actions      []PeerAction `json:"actions"`
 	Evidence     []Evidence   `json:"evidence"`
-	Account      *PeerAccount `json:"account"` // nil ⇒ no billing account here
 	Online       bool         `json:"online"`
 	Source       string       `json:"source"` // "live" | "local" (last-known) | "none"
 	Reachability Reachability `json:"reachability"`
@@ -413,7 +404,7 @@ func (c *Client) AdminRenameUser(ctx context.Context, token, address, newName st
 // Amount is omitted when zero, which is the amount-less form: attributing a
 // payment already received whose sender was unknown.
 //
-// There is no peer form. A peer account is identity, not a wallet, and what a
+// There is no peer form. A peer holds no account here, and what a
 // peer owes closes when it pays — the chain payment where the world has one,
 // the buyer's own signed reveal where it has none, recorded by the seller's
 // kernel itself with no operator act (kernel §D23/§P10).
@@ -488,7 +479,7 @@ func (c *Client) AdminIdentity(ctx context.Context, token string) (Identity, err
 
 // There is no subscribe/unsubscribe: consuming a peer's actions needs no
 // relationship, and a proxy row is filled by resolve-on-use alone (juicedocs
-// §13). A peer account is provisioned by its first signed call — never by a
+// §13). A peer becomes known by its first signed call — never by a
 // deposit, which credits only users — and the durable lever is suspend; an
 // uncalled peer lapses through the kernel's retention.
 //
@@ -516,18 +507,23 @@ func (c *Client) AdminRenamePeer(ctx context.Context, token, key, petname string
 }
 
 // PeerRecord is GET /v1/admin/peers/{key}: this kernel's own row for a peer —
-// its names, the contact cache, and, for a counterparty, when its account was
-// provisioned (the relationship's start) and where it is paid. It carries no
-// balance (kernel §D14).
+// its names, where it is paid, when it became known here, the contact cache,
+// and its moderation. A peer holds no account and no balance here (kernel
+// §D14): suspension freezes this row.
 type PeerRecord struct {
 	Petname           string `json:"petname"`
 	Nickname          string `json:"nickname"`
 	PublicKey         string `json:"public_key"`
 	About             string `json:"about"`
 	BlockchainAddress string `json:"blockchain_address"`
-	CreatedAt         string `json:"created_at"`
+	FirstSeen         string `json:"first_seen"`
 	LastSeen          string `json:"last_seen"`
+	SuspendedAt       string `json:"suspended_at"`
 }
+
+// Suspended reports whether this kernel is frozen (its inbound calls are
+// refused): the kernel sets suspended_at only while it is.
+func (p PeerRecord) Suspended() bool { return p.SuspendedAt != "" }
 
 // AdminPeer reads this kernel's record of a peer by key (GET /v1/admin/peers/{key}).
 func (c *Client) AdminPeer(ctx context.Context, token, key string) (PeerRecord, error) {

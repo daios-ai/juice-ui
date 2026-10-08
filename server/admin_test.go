@@ -334,9 +334,9 @@ func TestAdminInspectRenders(t *testing.T) {
 	}
 }
 
-// A kernel with no account here carries no party mark, no position, and no
-// funding: a peer is never credited (§6.6).
-func TestAdminInspectAccountlessKernel(t *testing.T) {
+// A discovered kernel carries no party mark, no position and no funding — a
+// peer is never credited (§6.6) — and can still be suspended by key.
+func TestAdminInspectDiscoveredKernel(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -344,8 +344,13 @@ func TestAdminInspectAccountlessKernel(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	disc := getBody(t, cl, srv.URL+"/admin/peers/KEYT1")
-	if strings.Contains(disc, `<span class="pill">party</span>`) {
-		t.Errorf("a kernel with no account here is not a party: %s", disc)
+	if strings.Contains(disc, `<span class="pill">party</span>`) || !strings.Contains(disc, `action="/admin/peers/suspend"`) || !strings.Contains(disc, "<dt>Known since</dt><dd>2026-09-14</dd>") {
+		t.Errorf("a discovered kernel is not a party, is known since its row says, and can be suspended: %s", disc)
+	}
+	// A key this kernel has never learned has no row: a usable page, no error.
+	none := getBody(t, cl, srv.URL+"/admin/peers/KEYNONE")
+	if strings.Contains(none, "<h1>Error</h1>") || strings.Contains(none, "<dt>Known since</dt>") || !strings.Contains(none, `action="/admin/peers/suspend"`) {
+		t.Errorf("a stranger key renders without a row: %s", none)
 	}
 	if strings.Contains(disc, "owes us") || strings.Contains(disc, "we owe them") {
 		t.Error("a kernel we hold no account for must show no position")
@@ -372,11 +377,11 @@ func TestAdminInspectStatesModerationNotMoney(t *testing.T) {
 			t.Errorf("retired money or membership vocabulary still rendered: %q", gone)
 		}
 	}
-	// KEYS is suspended in the fake kernel and appears only under ?all=1, so the
-	// lookup behind this page must include suspended rows.
+	// KEYS is suspended in the fake kernel: its row says so, and the page offers
+	// the way back.
 	susp := getBody(t, cl, srv.URL+"/admin/peers/KEYS")
-	if !strings.Contains(susp, "suspended") {
-		t.Errorf("a suspended peer must say so: %s", susp)
+	if !strings.Contains(susp, `<span class="pill status-danger">suspended</span>`) || !strings.Contains(susp, `action="/admin/peers/unsuspend"`) {
+		t.Errorf("a suspended peer must say so and offer Unsuspend: %s", susp)
 	}
 }
 
@@ -846,7 +851,7 @@ func TestInspectCatalogCountsTheRoster(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
-	for _, want := range []string{"<dt>Catalog</dt><dd>4 public actions</dd>", `<p class="muted small">1 of 4 shown</p>`, "<dt>Party since</dt><dd>2026-09-14</dd>", `<a class="btn" href="/admin/peers/KEYB?form=admin-rename"`} {
+	for _, want := range []string{"<dt>Catalog</dt><dd>4 public actions</dd>", `<p class="muted small">1 of 4 shown</p>`, "<dt>Known since</dt><dd>2026-09-14</dd>", `<a class="btn" href="/admin/peers/KEYB?form=admin-rename"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("kernel page missing %q: %s", want, body)
 		}

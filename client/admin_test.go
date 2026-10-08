@@ -146,8 +146,8 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 	// The merged roster: a counterparty (has_account) beside a discovered kernel
 	// that carries a catalog and a last_seen but no account — shapes captured live
 	// 2026-08-06 on three throwaway kernels.
-	f.reply = `[{"petname":"peerb","nickname":"twin","public_key":"KEY","has_account":true,"actions":13,"last_seen":"2026-07-12T00:00:00Z"},
-	 {"nickname":"twin","public_key":"KEY2","has_account":false,"actions":7,"last_seen":"2026-07-13T00:00:00Z"}]`
+	f.reply = `[{"petname":"peerb","nickname":"twin","public_key":"KEY","traded":true,"actions":13,"last_seen":"2026-07-12T00:00:00Z"},
+	 {"nickname":"twin","public_key":"KEY2","traded":false,"actions":7,"last_seen":"2026-07-13T00:00:00Z"}]`
 	p, err := f.client().AdminListPeers(context.Background(), "tok", false)
 	if err != nil {
 		t.Fatal(err)
@@ -164,8 +164,8 @@ func TestAdminPeersAndIdentity(t *testing.T) {
 		t.Errorf("petname/nickname decode wrong: %+v", p)
 	}
 	// The two classes, and the advertised name repeating across distinct keys.
-	if !p[0].HasAccount || p[0].Actions != 13 || p[1].HasAccount || p[1].Actions != 7 {
-		t.Errorf("has_account/actions decode wrong: %+v", p)
+	if !p[0].Traded || p[0].Actions != 13 || p[1].Traded || p[1].Actions != 7 {
+		t.Errorf("traded/actions decode wrong: %+v", p)
 	}
 	if p[0].PublicKey == p[1].PublicKey {
 		t.Error("two rows sharing an advertised handle must stay key-distinct")
@@ -234,13 +234,14 @@ func TestAdminListPeersPagesToExhaustion(t *testing.T) {
 	}
 }
 
-// A peer's record is read by KEY on the peer route (never the users route) and
-// dates a counterparty's account; shape verified live 2026-10-08 (v0.15.6).
+// A peer's record is read by KEY on the peer route (never the users route): it
+// dates when the kernel became known here and carries its suspension; shape
+// verified live 2026-10-08 (v0.15.11).
 func TestAdminPeerRecord(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.replyFn = func(r *http.Request) string {
-		return `{"about":"","blockchain_address":"","created_at":"2026-09-23T13:38:52Z","last_seen":"2026-10-07T19:22:58Z","nickname":"arfante","petname":"arfante","public_key":"PKEY","suspended_at":null}`
+		return `{"about":"","blockchain_address":"","first_seen":"2026-09-23T13:38:52Z","last_seen":"2026-10-07T19:22:58Z","nickname":"arfante","petname":"arfante","public_key":"PKEY","suspended_at":"2026-10-08T19:20:10Z"}`
 	}
 	rec, err := f.client().AdminPeer(context.Background(), "tok", "PKEY")
 	if err != nil {
@@ -249,8 +250,11 @@ func TestAdminPeerRecord(t *testing.T) {
 	if f.lastPath != "/v1/admin/peers/PKEY" {
 		t.Errorf("peer record path = %q", f.lastPath)
 	}
-	if rec.CreatedAt != "2026-09-23T13:38:52Z" || rec.Petname != "arfante" {
+	if rec.FirstSeen != "2026-09-23T13:38:52Z" || rec.Petname != "arfante" || !rec.Suspended() {
 		t.Errorf("record = %+v", rec)
+	}
+	if (PeerRecord{}).Suspended() {
+		t.Error("no suspended_at means not suspended")
 	}
 }
 
@@ -279,7 +283,6 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	// — shapes captured live 2026-08-06.
 	f.reply = `{"handle":"k","public_key":"PKEY","about":"a test kernel","online":true,"source":"live",
 	 "actions":[{"name":"seller@bee/greet","title":"Greet a person","price":12,"description":"Greets a person."}],
-	 "account":{"available":5,"locked":0,"suspended":false},
 	 "evidence":[{"issuer_public_key":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
 	   "corroborated_uses":1,"avg_latency_ms":90760.5,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"version":"juice-kernel/dev","error":""}}`
@@ -299,11 +302,6 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	if len(insp.Actions) != 1 || insp.Actions[0].Name != "seller@bee/greet" || insp.Actions[0].Title != "Greet a person" || insp.Actions[0].Price != 12 {
 		t.Errorf("peer action not decoded: %+v", insp.Actions)
 	}
-	// The account arrives inline, so the page needs no roster scan. It is
-	// moderation state, never a balance: a peer holds no money (kernel §D14).
-	if insp.Account == nil || insp.Account.Suspended {
-		t.Errorf("account not decoded: %+v", insp.Account)
-	}
 	// avg_latency_ms is FRACTIONAL on the wire (690.5, 90760.5 — verified live).
 	// Decoding it into an integer field failed the whole inspection and rendered
 	// the generic error page, so it is not decoded at all; this fixture keeps a
@@ -313,15 +311,15 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 		t.Errorf("evidence not decoded: %+v", insp.Evidence)
 	}
 	// An unreachable peer carries a reason in reachability.error. A well-formed but
-	// wholly unknown key answers source="none" with no account (verified live).
-	f.reply = `{"handle":"k","public_key":"PKEY","online":false,"source":"none","account":null,
+	// wholly unknown key answers source="none" (verified live).
+	f.reply = `{"handle":"k","public_key":"PKEY","online":false,"source":"none",
 	 "reachability":{"path":"unreachable","error":"routing: not found"}}`
 	insp2, _ := f.client().AdminInspect(context.Background(), "tok", "PKEY")
 	if insp2.Online || insp2.Reachability.Error == "" {
 		t.Errorf("unreachable inspection must decode online=false + error: %+v", insp2)
 	}
-	if insp2.Source != "none" || insp2.Account != nil {
-		t.Errorf("a stranger key must decode source=none with no account: %+v", insp2)
+	if insp2.Source != "none" {
+		t.Errorf("a stranger key must decode source=none: %+v", insp2)
 	}
 }
 

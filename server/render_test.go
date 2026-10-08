@@ -1022,9 +1022,9 @@ func renderPeersPage(t *testing.T, peers []client.Peer, showSuspended bool) stri
 func TestKernelListOrderAndPills(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{
 		{Petname: "ka", PublicKey: "KA"},
-		{Petname: "pb", PublicKey: "KB", HasAccount: true},
+		{Petname: "pb", PublicKey: "KB", Traded: true},
 		{Petname: "kc", PublicKey: "KC"},
-		{Petname: "pd", PublicKey: "KD", HasAccount: true},
+		{Petname: "pd", PublicKey: "KD", Traded: true},
 	}, false)
 	last := -1
 	for _, name := range []string{">me<", ">pb<", ">pd<", ">ka<", ">kc<"} {
@@ -1094,8 +1094,8 @@ func TestNetworkFiguresAndGap(t *testing.T) {
 // it is named and suspended, and the row itself carries no verb (§5.5).
 func TestNamedRowsCarryNoVerbs(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{
-		{Petname: "active", PublicKey: "KF", HasAccount: true},
-		{Petname: "frozen", PublicKey: "KG", HasAccount: true, SuspendedAt: "2026-07-19T17:50:24Z"},
+		{Petname: "active", PublicKey: "KF", Traded: true},
+		{Petname: "frozen", PublicKey: "KG", Traded: true, SuspendedAt: "2026-07-19T17:50:24Z"},
 		{Nickname: "twin", PublicKey: "KT1", Actions: 13, LastSeen: "2026-08-06T00:04:34Z"},
 	}, true)
 	for _, key := range []string{"KF", "KG", "KT1"} {
@@ -1141,7 +1141,7 @@ func TestKeyRendersInOneSpelling(t *testing.T) {
 // the first; this kernel's row, built from identity, carries none.
 func TestKernelStripSlots(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{
-		{Petname: "pb", PublicKey: "KB", HasAccount: true, Actions: 4, LastSeen: "2026-08-04T09:54:01Z", LastContactFailedAt: "2026-08-04T10:00:00Z"},
+		{Petname: "pb", PublicKey: "KB", Traded: true, Actions: 4, LastSeen: "2026-08-04T09:54:01Z", LastContactFailedAt: "2026-08-04T10:00:00Z"},
 		{Petname: "kc", PublicKey: "KC", Actions: 0},
 	}, false)
 	if n := strings.Count(body, `class="stat-strip"`); n != 2 {
@@ -1171,7 +1171,7 @@ func TestNameOpenerOnlyOnUnboundRows(t *testing.T) {
 	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
 	body := renderPeersPage(t, []client.Peer{
 		{Nickname: "tk", PublicKey: key},
-		{Petname: "pb", PublicKey: "KB", HasAccount: true},
+		{Petname: "pb", PublicKey: "KB", Traded: true},
 	}, false)
 	want := `<a class="btn" href="/admin/peers/` + key + `?form=admin-rename">Name</a>`
 	if n, m := strings.Count(body, want), strings.Count(body, "?form=admin-rename"); n != 1 || m != 1 {
@@ -1182,7 +1182,7 @@ func TestNameOpenerOnlyOnUnboundRows(t *testing.T) {
 // The kernel page states its facts with labels, present ones only: status
 // once, version without the agent prefix, the roster's catalog count (the
 // inspection lists one page, so the list says N of M shown), the provider's
-// pooled report as Self-reported, and the date a counterparty's account began;
+// pooled report as Self-reported, and the date the kernel became known here;
 // no row reads none, no dash, no protocol strings, no strip; the verbs stand
 // in the card's stack (§6.6).
 func TestInspectStatesLabelledFacts(t *testing.T) {
@@ -1201,15 +1201,15 @@ func TestInspectStatesLabelledFacts(t *testing.T) {
 		}
 		return rec2.Body.String()
 	}
-	live := render(client.Inspection{PublicKey: "KEYC", Online: true, Source: "live", Account: &client.PeerAccount{},
+	live := render(client.Inspection{PublicKey: "KEYC", Online: true, Source: "live",
 		Actions:      []client.PeerAction{{ActionID: "a1"}, {ActionID: "a2"}},
 		Reachability: client.Reachability{Path: "direct", RTTMillis: 12, Version: "juice-kernel/v0.15.10", Protocols: []string{"/juice/fed/gossip/1"}},
 		Evidence: []client.Evidence{
 			{IssuerPublicKey: "KEYC", Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
 			{IssuerPublicKey: "KEYC", Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},
 			{IssuerPublicKey: "OTHER", Uses: 100, Successes: 0},
-		}}, client.PeerRecord{CreatedAt: "2026-09-23T13:38:52Z"}, 193)
-	for _, want := range []string{`<dt>Status</dt>`, `>direct · 12 ms<`, `<dt>Version</dt><dd class="mono">v0.15.10</dd>`, `<dt>Catalog</dt><dd>193 public actions</dd>`, `<dt>Self-reported</dt><dd>80% success over 10 runs · rating 55% (10 raters)</dd>`, `<dt>Party since</dt><dd>2026-09-23</dd>`, `<p class="muted small">2 of 193 shown</p>`, `<div class="card stack">`} {
+		}}, client.PeerRecord{FirstSeen: "2026-09-23T13:38:52Z"}, 193)
+	for _, want := range []string{`<dt>Status</dt>`, `>direct · 12 ms<`, `<dt>Version</dt><dd class="mono">v0.15.10</dd>`, `<dt>Catalog</dt><dd>193 public actions</dd>`, `<dt>Self-reported</dt><dd>80% success over 10 runs · rating 55% (10 raters)</dd>`, `<dt>Known since</dt><dd>2026-09-23</dd>`, `<p class="muted small">2 of 193 shown</p>`, `<div class="card stack">`} {
 		if !strings.Contains(live, want) {
 			t.Errorf("kernel page missing %q: %s", want, live)
 		}
@@ -1223,7 +1223,7 @@ func TestInspectStatesLabelledFacts(t *testing.T) {
 		}
 	}
 	quiet := render(client.Inspection{PublicKey: "KEYC", Reachability: client.Reachability{Path: "unreachable"}}, client.PeerRecord{}, 0)
-	for _, gone := range []string{"<dt>Version</dt>", "<dt>Catalog</dt>", "<dt>Self-reported</dt>", "<dt>Party since</dt>", " ms<", "shown</p>"} {
+	for _, gone := range []string{"<dt>Version</dt>", "<dt>Catalog</dt>", "<dt>Self-reported</dt>", "<dt>Known since</dt>", " ms<", "shown</p>"} {
 		if strings.Contains(quiet, gone) {
 			t.Errorf("an absent fact has no row: %q", gone)
 		}
@@ -1275,33 +1275,38 @@ func TestPetnameSuggestion(t *testing.T) {
 	}
 }
 
-// Suspension freezes a counterparty's account, so the peer's own page offers it
-// where an account exists and nowhere else, posting the KEY (§6.6).
-func TestInspectOffersSuspendForAParty(t *testing.T) {
+// A peer holds no account here: suspension freezes the kernel row, so every
+// kernel's page offers Suspend, or Unsuspend when the row is frozen, posting
+// the KEY; the party pill is the roster's class (§6.6).
+func TestInspectOffersSuspendOnEveryKernel(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	render := func(acct *client.PeerAccount) string {
-		rec := httptest.NewRecorder()
+	render := func(traded bool, rec client.PeerRecord) string {
+		rec2 := httptest.NewRecorder()
 		p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-			Key: "KEYC", Inspection: client.Inspection{Petname: "kernelc", Source: "live", Account: acct},
+			Key: "KEYC", Inspection: client.Inspection{Petname: "kernelc", Source: "live"}, Traded: traded, Record: rec,
 		}}
-		if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
+		if err := r.Render(rec2, 200, "admin_inspect", p); err != nil {
 			t.Fatalf("render: %v", err)
 		}
-		return rec.Body.String()
+		return rec2.Body.String()
 	}
-	active := render(&client.PeerAccount{})
-	if !strings.Contains(active, `action="/admin/peers/suspend"`) || !strings.Contains(active, `value="KEYC"`) || !strings.Contains(active, `<span class="pill">party</span>`) {
-		t.Errorf("a counterparty's page must mark it and offer Suspend by key: %s", active)
+	party := render(true, client.PeerRecord{FirstSeen: "2026-09-14T01:13:39Z"})
+	if !strings.Contains(party, `action="/admin/peers/suspend"`) || !strings.Contains(party, `value="KEYC"`) || !strings.Contains(party, `<span class="pill">party</span>`) {
+		t.Errorf("a counterparty's page must mark it and offer Suspend by key: %s", party)
 	}
-	if !strings.Contains(render(&client.PeerAccount{Suspended: true}), `action="/admin/peers/unsuspend"`) {
-		t.Error("a suspended counterparty's page must offer Unsuspend")
+	frozen := render(true, client.PeerRecord{SuspendedAt: "2026-08-01T00:00:00Z"})
+	if !strings.Contains(frozen, `action="/admin/peers/unsuspend"`) || !strings.Contains(frozen, `<span class="pill status-danger">suspended</span>`) {
+		t.Errorf("a suspended kernel's page must say so and offer Unsuspend: %s", frozen)
 	}
-	known := render(nil)
-	if strings.Contains(known, "/admin/peers/suspend") || strings.Contains(known, ">party<") {
-		t.Errorf("a kernel with no account here offers no suspension: %s", known)
+	known := render(false, client.PeerRecord{FirstSeen: "2026-09-14T01:13:39Z"})
+	if !strings.Contains(known, `action="/admin/peers/suspend"`) || strings.Contains(known, ">party<") {
+		t.Errorf("a discovered kernel is not a party but can be suspended: %s", known)
+	}
+	if strings.Contains(party+frozen+known, "account") {
+		t.Error("a peer holds no account here; the page must not say one")
 	}
 }
 
@@ -1363,7 +1368,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 // money on any path (kernel §D14), so a position or a credit figure here would
 // be a fabrication.
 func TestPeerCardCarriesContactNotMoney(t *testing.T) {
-	body := renderPeersPage(t, []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, LastSeen: "2026-07-12T00:00:00Z"}}, false)
+	body := renderPeersPage(t, []client.Peer{{Petname: "peerb", PublicKey: "KEY", Traded: true, LastSeen: "2026-07-12T00:00:00Z"}}, false)
 	if !strings.Contains(body, `title="Catalog verified`) {
 		t.Errorf("counterparty card missing the contact cache: %s", body)
 	}

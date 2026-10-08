@@ -8,7 +8,7 @@
 {{$n := nameOf $i.Petname $d.Key}}
 <div class="page-head">
   <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
-    {{- if $i.Account}} <span class="pill">party</span>{{if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}{{end}}</h1>
+    {{- if $d.Traded}} <span class="pill">party</span>{{end}}{{if $d.Record.Suspended}} <span class="pill status-danger">suspended</span>{{end}}</h1>
   <p class="subtitle mono hash">{{$d.Key}}</p>
   {{if $i.About}}<p>{{$i.About}}</p>{{end}}
 </div>
@@ -19,12 +19,12 @@
   </div>
   {{/* Naming binds a PETNAME, exactly — the only way to name a kernel this
        node has merely discovered (§13) — and keys on the public key, since an
-       unbound kernel has no name to key on. Suspension freezes a
-       counterparty's account, so it is offered only where one exists. There is
-       no money gesture: a peer holds no balance and is never credited (§6.6). */}}
+       unbound kernel has no name to key on. Suspension freezes the kernel row
+       and makes an unknown key known, so it is offered on every page. There is
+       no money gesture: a peer holds no account here (§6.6). */}}
   <div class="cluster">
     <a class="btn" href="/admin/peers/{{$d.Key}}?form=admin-rename" data-modal="form-admin-rename">Name</a>
-    {{if $i.Account}}{{if $i.Account.Suspended}}
+    {{if $d.Record.Suspended}}
     <form method="post" action="/admin/peers/unsuspend">
       {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Unsuspend</button>
     </form>
@@ -32,7 +32,7 @@
     <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
       {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn-danger" type="submit">Suspend</button>
     </form>
-    {{end}}{{end}}
+    {{end}}
   </div>
 </div>
 

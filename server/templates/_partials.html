@@ -655,7 +655,7 @@
   {{with .Version}}<dt>Version</dt><dd class="mono">{{.}}</dd>{{end}}
   {{with .Catalog}}<dt>Catalog</dt><dd>{{.}} public action{{if ne . 1}}s{{end}}</dd>{{end}}
   {{with .Report}}{{if gt .Uses 0}}<dt>Self-reported</dt><dd>{{pct .Successes .Uses}}% success over {{.Uses}} run{{if ne .Uses 1}}s{{end}}{{if gt .RatingCount 0}} · rating {{ratingPct .RatingMean .RatingCount}}% ({{.RatingCount}} rater{{if ne .RatingCount 1}}s{{end}}){{end}}</dd>{{end}}{{end}}
-  {{with .Record.CreatedAt}}<dt>Party since</dt><dd>{{shortDate .}}</dd>{{end}}
+  {{with .Record.FirstSeen}}<dt>Known since</dt><dd>{{shortDate .}}</dd>{{end}}
 </dl>
 {{end}}
 

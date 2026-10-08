@@ -51,8 +51,8 @@ type adminUserView struct {
 
 // adminPeersView drives the network page: this kernel's money, the money
 // awaiting the operator, and one ranked list of every kernel this one knows —
-// itself, then its counterparties (an account here), then the known network
-// (discovered, no account). Deposits is shown above the list because closing
+// itself, then its counterparties (a transaction here names them), then the
+// known network (discovered). Deposits is shown above the list because closing
 // an obligation is the one money verb left here.
 type adminPeersView struct {
 	depositForm
@@ -149,17 +149,17 @@ func petnameSuggestion(petname, nickname, key string, taken func(string) bool) s
 	}
 }
 
-// adminInspectView carries the inspected kernel. The billing account arrives
-// inline on the inspection itself (client.Inspection.Account), so the page needs
-// no roster scan: a nil account is a kernel that holds none here, which is a
-// fact about the peer and no longer an opening for a gesture — a peer is never
-// credited (§6.6). Suggestion is the rename form's prefill, computed only when
-// that form opens, because it needs the roster.
+// adminInspectView carries the inspected kernel. A peer holds no account here:
+// its moderation and its start are facts of the kernel row (Record), read for
+// every key, and its class (Traded) is the roster's. Suggestion is the rename
+// form's prefill, computed only when that form opens, because it needs the
+// roster.
 type adminInspectView struct {
 	Key        string
 	Inspection client.Inspection
 	Report     Report            // the provider's own evidence, pooled
-	Record     client.PeerRecord // this kernel's account row for a counterparty
+	Record     client.PeerRecord // this kernel's row for the peer: first seen, suspension
+	Traded     bool              // a transaction here names it (the roster's class)
 	Actions    []actionCardView  // the peer's public actions, as discovered rows
 	Catalog    int               // the roster's count of its public actions; 0 when unknown here
 	Version    string            // the peer's kernel version, without the agent prefix
@@ -404,7 +404,7 @@ func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 	}}
 	for _, class := range []string{classParty, classKnown} {
 		for _, p := range peers {
-			if p.HasAccount == (class == classParty) {
+			if p.Traded == (class == classParty) {
 				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.PublicKey), Strip: kernelStrip(p)})
 			}
 		}
@@ -431,15 +431,14 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		view.Report = poolEvidence(insp.SelfEvidence().Rows)
 		view.Actions = peerActionRows(insp)
 		view.Version = strings.TrimPrefix(insp.Reachability.Version, "juice-kernel/")
-		// A counterparty's account row dates the relationship; a kernel with no
-		// account here has no row to read.
-		if insp.Account != nil {
-			rec, e := s.client.AdminPeer(ctx, tok, key)
-			if e != nil {
-				return e
-			}
-			view.Record = rec
+		// The kernel row says when the peer became known and whether it is
+		// suspended; a key this kernel has never learned has no row, which is a
+		// fact of the page, not an error.
+		rec, e := s.client.AdminPeer(ctx, tok, key)
+		if e != nil && !errors.Is(e, client.ErrNotFound) {
+			return e
 		}
+		view.Record = rec
 		// The roster states the catalog's size: the inspection's own list is
 		// one page (verified live: 100 of 193). The rename form's prefill must
 		// also be free of every bound petname, suspended parties included, and
@@ -455,7 +454,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		taken := map[string]bool{}
 		for _, p := range peers {
 			if p.PublicKey == key {
-				view.Catalog = p.Actions
+				view.Catalog, view.Traded = p.Actions, p.Traded
 			} else if p.Petname != "" {
 				taken[p.Petname] = true
 			}

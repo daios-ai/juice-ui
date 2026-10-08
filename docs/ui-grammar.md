@@ -527,7 +527,8 @@ subscribe/unsubscribe verb**; the one opener is **inspect a kernel by key**,
 beside the Show/Hide-suspended toggle.
 
 A peer's row is `.rowable` and opens its page (`/admin/peers/{key}`), where it
-is named and, when it holds an account here, suspended; a suspended
+is named and suspended (suspension freezes the kernel row, so every kernel's
+page offers it); a suspended
 counterparty is dimmed (`.action-row.inactive`) and keeps its `suspended`
 danger pill. This kernel's row is titled with its own handle and links nowhere,
 because it is this page. A named row carries **no verb**, as a result row
@@ -577,9 +578,9 @@ held here (requirements §6.6).
 **Inspect** (`/admin/peers/{key}`) opens with the row's header in a
 `.page-head` — name with its marks, key, `about` — then one `.card.stack`
 holding the polled `kv` of labelled, present facts (Status; Version without
-the agent prefix; Catalog, the roster's count; Self-reported; Party since, a
-date; no `none`, no dash, no protocol strings) and a `.cluster` of buttons,
-`Name` (`.btn`) and `Suspend` (`.btn-danger`),
+the agent prefix; Catalog, the roster's count; Self-reported; Known since, a
+date from the kernel row; no `none`, no dash, no protocol strings) and a
+`.cluster` of buttons, `Name` (`.btn`) and `Suspend` or `Unsuspend`,
 as the user page's card does; then the kernel's **public actions** as
 **discovered `_action_row`s** (§5.5 — a remote action before resolution, its
 link resolving it), and **evidence** in **two blocks**, in the same

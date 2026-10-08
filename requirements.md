@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.20.0
+Version: 0.21.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.21.0.** The UI follows kernel v0.15.11, where a peer
+> holds no account: a counterparty is a kernel a transaction here names
+> (`traded`), suspension freezes the kernel row and is offered on every
+> kernel's page, and the page states when the kernel became known here
+> (`first_seen`). The account vocabulary leaves §6.6.
 
 > **What changed in 0.20.0.** A kernel row's facts are a strip in the action
 > strip's grammar (§6.6): catalog, catalog verified, last contact failed, with
@@ -1426,8 +1432,9 @@ symmetry, but because the kernel refuses anything else.
 **Peers.**
 
 * **The roster is the whole known network, as one list.** `/v1/admin/peers`
-  merges by public key, excluding this kernel, **counterparties** (`has_account`,
-  a bilateral position) and **discovered peers** (a catalog: action count). The
+  merges by public key, excluding this kernel, **counterparties** (`traded`: a
+  transaction here names the kernel) and **discovered peers** (a catalog:
+  action count). The
   page lists **this kernel first, then its counterparties, then the known
   network**, each class in the kernel's own order, as one paged list in the
   action row's grammar (§6.2) — tile, title line, key, `about`, strip — and
@@ -1461,9 +1468,9 @@ symmetry, but because the kernel refuses anything else.
   into its page with the rename form open; a named row and this kernel's row
   carry none, as a result row carries none.
 
-* **A peer row carries no money.** A peer account is identity, attribution and
-  moderation state, never a wallet: a foreign call is funded by the serving
-  kernel and every obligation settles per call on the rail (kernel §D14, §P10).
+* **A peer row carries no money.** A peer holds no account here at all
+  (kernel v0.15.11): a foreign call is funded by the serving kernel and every
+  obligation settles per call on the rail (kernel §D14, §P10).
   So a peer row states its names and its strip, and nothing else. A balance, a
   position or a credit figure here would be a fabrication.
 * **This kernel's own credit position is the money fact on this page.** It
@@ -1505,9 +1512,12 @@ symmetry, but because the kernel refuses anything else.
 * **Name and suspend live on the kernel's own page.** Naming binds a petname: the kernel binds one
   automatically only on this kernel's own first outbound use, so an explicit
   bind is the only way to name a kernel merely discovered, and without it the
-  operator is left typing a key. It is not account-dependent, while `suspend` on
-  an account-less key is refused, so suspend is offered only where an account
-  exists (the `party` pill), and returns to that page. **Inspect a
+  operator is left typing a key. Suspend freezes the **kernel row** and makes
+  an unknown key known, so it is offered on every kernel's page, and returns to
+  that page; the page reads the row (`GET /v1/admin/peers/{key}`) to say
+  whether the kernel is suspended, since the inspection never does, and a key
+  this kernel has never learned has no row, which is a usable page and not an
+  error. **Inspect a
   kernel by key** remains the way in for a key learned elsewhere (verified live:
   an unknown key still returns a usable page).
 * **A kernel is named on its own page.** The petname form lives on the inspect
@@ -1534,13 +1544,14 @@ symmetry, but because the kernel refuses anything else.
   list says `N of M shown`; the provider's own report pooled over its actions,
   labelled **Self-reported** because evidence is never a verdict (successes
   over uses, and the count-weighted mean rating, only where it has runs);
-  and, for a counterparty, the **date** its account here was provisioned
-  (`created_at` of `GET /v1/admin/peers/{key}`). Transport protocol strings
+  and the **date** the kernel became known here (`first_seen` of its row,
+  `GET /v1/admin/peers/{key}`, for every known kernel). Transport protocol strings
   are not shown, and no absent fact renders as a row, a dash or `none`. The
   verbs stand in a `.cluster` inside the card's `.stack`, separated from the
   facts by the stack's step and by nothing else. The header is the row's anatomy without the strip — name with its
   marks, key, `about` — and the card holds the facts and the verbs as buttons,
-  Name and, where an account exists, Suspend, as the user page does.
+  Name and Suspend (or Unsuspend), as the user page does. The `party` pill on
+  the page is the roster's class.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
   addresses a task to the kernel as `sys@<kernel>`, and it is listed in `sys`'s
   inbox and completed there like any other (§6.3); this page lists none. An

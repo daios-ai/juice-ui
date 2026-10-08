@@ -318,48 +318,53 @@ func authKernel() *httptest.Server {
 		  "created_at":"2026-09-14T01:13:39Z","peer":"KEYD"}]}`))
 	})
 	mux.HandleFunc("GET /v1/admin/peers", func(w http.ResponseWriter, r *http.Request) {
-		// The merged roster (verified live 2026-08-06): counterparties
-		// (has_account) and discovered kernels in one list keyed by public key,
+		// The merged roster (verified live 2026-10-08, v0.15.11): counterparties
+		// (traded) and discovered kernels in one list keyed by public key,
 		// this kernel excluded. A discovered row carries a catalog and a last_seen
 		// but no credit, and no PETNAME until one is bound — only its self-asserted
 		// nickname, which "twin" repeats across two keys, legally, so they must
 		// stay two rows. A suspended counterparty appears only under ?all=1.
-		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
-		  {"petname":"debtor","public_key":"KEYD","has_account":true,"actions":0},
-		  {"nickname":"twin","public_key":"KEYT1","has_account":false,"actions":13,"last_seen":"2026-08-06T00:04:34Z"},
-		  {"petname":"twin","nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
+		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","traded":true,"actions":4,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
+		  {"petname":"debtor","public_key":"KEYD","traded":true,"actions":0},
+		  {"nickname":"twin","public_key":"KEYT1","traded":false,"actions":13,"last_seen":"2026-08-06T00:04:34Z"},
+		  {"petname":"twin","nickname":"twin","public_key":"KEYT2","traded":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
 		if r.URL.Query().Get("all") == "1" {
-			rows += `,{"petname":"frozen","public_key":"KEYS","has_account":true,"suspended_at":"2026-08-01T00:00:00Z"}`
+			rows += `,{"petname":"frozen","public_key":"KEYS","traded":true,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
 		// A bare array: the kernel envelopes no list (API.md R6; verified live
 		// 2026-08-05 — an envelope here would silently render zero peers).
 		w.Write([]byte(`[` + rows + `]`))
 	})
 	mux.HandleFunc("GET /v1/admin/peers/{key}", func(w http.ResponseWriter, r *http.Request) {
-		// The peer's own record here: a counterparty's account is dated by
-		// created_at (verified live 2026-10-08).
-		w.Write([]byte(`{"petname":"peerb","nickname":"peerb","public_key":"` + r.PathValue("key") + `","about":"","blockchain_address":"",
-		 "created_at":"2026-09-14T01:13:39Z","last_seen":"2026-08-04T09:54:01Z","suspended_at":null}`))
+		// The kernel row: every known kernel has one, dated by first_seen and
+		// carrying its suspension; a never-learned key has none (verified live
+		// 2026-10-08, v0.15.11).
+		key := r.PathValue("key")
+		if key == "KEYNONE" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"code":"not_found","error":"kernel not found"}`))
+			return
+		}
+		suspended := "null"
+		if key == "KEYS" {
+			suspended = `"2026-08-01T00:00:00Z"`
+		}
+		w.Write([]byte(`{"petname":"peerb","nickname":"peerb","public_key":"` + key + `","about":"","blockchain_address":"",
+		 "first_seen":"2026-09-14T01:13:39Z","last_seen":"2026-08-04T09:54:01Z","suspended_at":` + suspended + `}`))
 	})
 	mux.HandleFunc("GET /v1/admin/peers/{key}/inspect", func(w http.ResponseWriter, r *http.Request) {
 		// online/source are TOP-LEVEL in the real response; reachability holds only
-		// the transport diagnostics. As of v0.12.8 an action is {name, description,
-		// price} only, the account arrives inline, and evidence carries both legs:
-		// the subject's own rows (issuer == public_key) and a third party's, whose
-		// corroborated_uses is the two-kernel link. Shapes captured live 2026-08-06.
+		// the transport diagnostics. An action is {name, description, price}, and
+		// evidence carries both legs: the subject's own rows (issuer == public_key)
+		// and a third party's, whose corroborated_uses is the two-kernel link. The
+		// inspection states no account and no suspension (v0.15.11): the kernel
+		// row does. KEYT* are discovered (source live); KEYNONE is a stranger key
+		// the kernel has never learned.
 		key := r.PathValue("key")
-		// account is null for a kernel that holds none here: KEYT* are discovered
-		// (source live), KEYNONE is a stranger key the kernel has never learned.
-		account := `{"suspended":false}`
-		switch {
-		case key == "KEYS":
-			account = `{"suspended":true}`
-		case key == "KEYNONE":
-			w.Write([]byte(`{"handle":"","public_key":"` + key + `","actions":[],"evidence":[],"account":null,
+		if key == "KEYNONE" {
+			w.Write([]byte(`{"handle":"","public_key":"` + key + `","actions":[],"evidence":[],
 			 "online":false,"source":"none","reachability":{"path":"unreachable","error":"routing: not found"}}`))
 			return
-		case strings.HasPrefix(key, "KEYT"):
-			account = "null"
 		}
 		// A discovered kernel is unbound: it has only its claim, "twin", which
 		// KEYT2 already holds here as a petname (roster above).
@@ -369,7 +374,6 @@ func authKernel() *httptest.Server {
 		}
 		w.Write([]byte(`{` + names + `,"public_key":"` + key + `","about":"a peer kernel",
 		 "actions":[{"action_id":"a2","name":"synth@kernelc/make","description":"synth","price":20,"indicative":true}],
-		 "account":` + account + `,
 		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
 		    "corroborated_uses":0,"avg_latency_ms":690.5,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
 		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
