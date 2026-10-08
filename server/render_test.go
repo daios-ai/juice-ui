@@ -1165,32 +1165,36 @@ func TestKernelStripSlots(t *testing.T) {
 }
 
 // Naming is offered where the gap is visible: a row titled by its key carries
-// the one quiet opener, into its page with the rename modal open; a named row
-// and this kernel's row carry nothing (§6.6).
+// the one verb, the same .btn as on the kernel's page, into its page with the
+// rename modal open; a named row and this kernel's row carry nothing (§6.6).
 func TestNameOpenerOnlyOnUnboundRows(t *testing.T) {
 	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
 	body := renderPeersPage(t, []client.Peer{
 		{Nickname: "tk", PublicKey: key},
 		{Petname: "pb", PublicKey: "KB", HasAccount: true},
 	}, false)
-	want := `<a class="btn-quiet" href="/admin/peers/` + key + `?form=admin-rename">name</a>`
+	want := `<a class="btn" href="/admin/peers/` + key + `?form=admin-rename">Name</a>`
 	if n, m := strings.Count(body, want), strings.Count(body, "?form=admin-rename"); n != 1 || m != 1 {
 		t.Errorf("exactly one name opener, on the unbound row: %d/%d: %s", n, m, body)
 	}
 }
 
 // The kernel page states its facts with labels, present ones only: status
-// once, version, catalog, the provider's pooled report, and a counterparty's
-// start; no row reads none, no dash, no protocol strings, no strip (§6.6).
+// once, version without the agent prefix, the roster's catalog count (the
+// inspection lists one page, so the list says N of M shown), the provider's
+// pooled report as Self-reported, and the date a counterparty's account began;
+// no row reads none, no dash, no protocol strings, no strip; the verbs stand
+// in the card's stack (§6.6).
 func TestInspectStatesLabelledFacts(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	render := func(i client.Inspection, rec client.PeerRecord) string {
+	render := func(i client.Inspection, rec client.PeerRecord, catalog int) string {
 		rec2 := httptest.NewRecorder()
 		p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-			Key: "KEYC", Inspection: i, Report: poolEvidence(i.SelfEvidence().Rows), Record: rec,
+			Key: "KEYC", Inspection: i, Report: poolEvidence(i.SelfEvidence().Rows), Record: rec, Catalog: catalog,
+			Actions: peerActionRows(i), Version: strings.TrimPrefix(i.Reachability.Version, "juice-kernel/"),
 		}}
 		if err := r.Render(rec2, 200, "admin_inspect", p); err != nil {
 			t.Fatalf("render: %v", err)
@@ -1204,8 +1208,8 @@ func TestInspectStatesLabelledFacts(t *testing.T) {
 			{IssuerPublicKey: "KEYC", Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
 			{IssuerPublicKey: "KEYC", Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},
 			{IssuerPublicKey: "OTHER", Uses: 100, Successes: 0},
-		}}, client.PeerRecord{CreatedAt: "2026-09-23T13:38:52Z"})
-	for _, want := range []string{`<dt>Status</dt>`, `>direct · 12 ms<`, `<dt>Version</dt><dd class="mono">juice-kernel/v0.15.10</dd>`, `<dt>Catalog</dt><dd>2 public actions</dd>`, `<dt>Reported</dt><dd>80% success over 10 runs · rating 55% (10 raters)</dd>`, `<dt>Party since</dt>`} {
+		}}, client.PeerRecord{CreatedAt: "2026-09-23T13:38:52Z"}, 193)
+	for _, want := range []string{`<dt>Status</dt>`, `>direct · 12 ms<`, `<dt>Version</dt><dd class="mono">v0.15.10</dd>`, `<dt>Catalog</dt><dd>193 public actions</dd>`, `<dt>Self-reported</dt><dd>80% success over 10 runs · rating 55% (10 raters)</dd>`, `<dt>Party since</dt><dd>2026-09-23</dd>`, `<p class="muted small">2 of 193 shown</p>`, `<div class="card stack">`} {
 		if !strings.Contains(live, want) {
 			t.Errorf("kernel page missing %q: %s", want, live)
 		}
@@ -1213,13 +1217,13 @@ func TestInspectStatesLabelledFacts(t *testing.T) {
 	if n := strings.Count(live, "direct"); n != 1 {
 		t.Errorf("reachability is stated once, got %d", n)
 	}
-	for _, gone := range []string{`class="stat-strip"`, "Petname</dt>", "Protocols", "/juice/fed/gossip/1", ">none<", ">—<"} {
+	for _, gone := range []string{`class="stat-strip"`, "Petname</dt>", "Protocols", "/juice/fed/gossip/1", ">none<", ">—<", "juice-kernel/", "13:38", "<dt>Reported</dt>"} {
 		if strings.Contains(live, gone) {
 			t.Errorf("kernel page must not render %q", gone)
 		}
 	}
-	quiet := render(client.Inspection{PublicKey: "KEYC", Reachability: client.Reachability{Path: "unreachable"}}, client.PeerRecord{})
-	for _, gone := range []string{"<dt>Version</dt>", "<dt>Catalog</dt>", "<dt>Reported</dt>", "<dt>Party since</dt>", " ms<"} {
+	quiet := render(client.Inspection{PublicKey: "KEYC", Reachability: client.Reachability{Path: "unreachable"}}, client.PeerRecord{}, 0)
+	for _, gone := range []string{"<dt>Version</dt>", "<dt>Catalog</dt>", "<dt>Self-reported</dt>", "<dt>Party since</dt>", " ms<", "shown</p>"} {
 		if strings.Contains(quiet, gone) {
 			t.Errorf("an absent fact has no row: %q", gone)
 		}

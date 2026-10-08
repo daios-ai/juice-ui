@@ -13,7 +13,7 @@
   {{if $i.About}}<p>{{$i.About}}</p>{{end}}
 </div>
 
-<div class="card">
+<div class="card stack">
   <div id="inspect-status" hx-get="/admin/peers/{{$d.Key}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
     {{template "_inspect_status" $d}}
   </div>
@@ -37,9 +37,12 @@
 </div>
 
 {{/* A peer's public action is a remote action before resolution, so it is the
-     discovered row of the search results (§6.2): its link resolves it. */}}
+     discovered row of the search results (§6.2): its link resolves it. The
+     inspection lists one page; the roster knows the whole count. */}}
 <h2>Public actions</h2>
-{{if $d.Actions}}<div class="action-list">{{range $d.Actions}}{{template "_action_row" .}}{{end}}</div>{{else}}<p class="muted">No public actions.</p>{{end}}
+{{if $d.Actions}}<div class="action-list">{{range $d.Actions}}{{template "_action_row" .}}{{end}}</div>
+{{if lt (len $d.Actions) $d.Catalog}}<p class="muted small">{{len $d.Actions}} of {{$d.Catalog}} shown</p>{{end}}
+{{else}}<p class="muted">No public actions.</p>{{end}}
 
 {{/* Evidence is signed and independently verifiable, so it is shown in two
      blocks that are never folded: what this kernel reports about its own

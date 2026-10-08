@@ -1457,9 +1457,9 @@ symmetry, but because the kernel refuses anything else.
   `about`, `petname` — is omitted, never rendered as an empty string or a
   placeholder.
   **A row carries a verb only where its gap is visible.** A row titled by its
-  key carries one quiet opener, `name`, into its page with the rename form
-  open; a named row and this kernel's row carry none, as a result row carries
-  none.
+  key carries one verb, `Name` — the same button as on the kernel's page —
+  into its page with the rename form open; a named row and this kernel's row
+  carry none, as a result row carries none.
 
 * **A peer row carries no money.** A peer account is identity, attribution and
   moderation state, never a wallet: a foreign call is funded by the serving
@@ -1526,13 +1526,19 @@ symmetry, but because the kernel refuses anything else.
 * **The inspect page states present facts, with labels.** A strip compares
   rows down a column; a page has one subject, so it carries no strip and
   states each fact in a labelled `kv`, present facts only: status (online or
-  offline, with the path and one ping's round trip, stated once), version,
-  catalog (its public action count), the provider's own report pooled over
-  its actions (successes over uses, and the count-weighted mean rating, only
-  where it has runs), and, for a counterparty, when its account here was
-  provisioned (`created_at` of `GET /v1/admin/peers/{key}`). Transport
-  protocol strings are not shown, and no absent fact renders as a row, a dash
-  or `none`. The header is the row's anatomy without the strip — name with its
+  offline, with the path and one ping's round trip, stated once); version,
+  without the `juice-kernel/` agent prefix; catalog, the **roster's**
+  `actions` count — the inspection's own list is one page (100, verified
+  live: arfante inspects as 100 of 193), so it is never counted as the
+  catalog, and when it holds fewer than the roster states, the public actions
+  list says `N of M shown`; the provider's own report pooled over its actions,
+  labelled **Self-reported** because evidence is never a verdict (successes
+  over uses, and the count-weighted mean rating, only where it has runs);
+  and, for a counterparty, the **date** its account here was provisioned
+  (`created_at` of `GET /v1/admin/peers/{key}`). Transport protocol strings
+  are not shown, and no absent fact renders as a row, a dash or `none`. The
+  verbs stand in a `.cluster` inside the card's `.stack`, separated from the
+  facts by the stack's step and by nothing else. The header is the row's anatomy without the strip — name with its
   marks, key, `about` — and the card holds the facts and the verbs as buttons,
   Name and, where an account exists, Suspend, as the user page does.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer

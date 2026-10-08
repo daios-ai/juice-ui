@@ -226,6 +226,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"ref":          r.refOf,
 		"price":        priceOf,
 		"shortTime":    shortTime,
+		"shortDate":    shortDate,
 		"relTime":      relTime,
 		"txAmount":     r.txAmount,
 		"txrow":        txRowOf,
@@ -828,6 +829,15 @@ func shortTime(ts string) string {
 		return ts
 	}
 	return ts[:10] + " " + ts[11:16]
+}
+
+// shortDate renders an RFC3339 timestamp as its date alone, for a fact whose
+// clock time says nothing (when a relationship began).
+func shortDate(ts string) string {
+	if len(ts) < 10 {
+		return ts
+	}
+	return ts[:10]
 }
 
 // relTime renders an RFC3339 timestamp as a coarse "time ago" for freshness signals

@@ -285,10 +285,14 @@ retired.
 ### 5.3 Commands are inline & quiet
 
 The `page-head` carries **no commands** — just the title. A command
-lives **inline, with the content it acts on**, as a single quiet affordance:
-`+ new action` above the actions list, `update account` by the identity card,
-`+ deposit credits` in the users section. All are `.btn-quiet` (or a plain link);
-none float, none are colored.
+lives **inline, with the content it acts on**. An opener that **adds** something
+is a single quiet affordance: `+ new action` above the actions list,
+`+ deposit credits` in the users section, `+ inspect a kernel by key` — all
+`.btn-quiet` (or a plain link); none float, none are colored. A **record's
+verb** — Name, Rename, Suspend, End — is a `.btn` (§5.1) wherever it appears,
+on the record's page or in its row, so one verb has one face. A `.cluster` of
+verbs is a child of a `.stack` (a `.card.stack`, a `form.stack`): that is what
+separates it from the content above, and nothing else does (§4).
 
 - When one group has several create paths, the quiet opener is a `+ new … `
   `[data-menu]` trigger opening a `.menu` (§5.12) of the methods — not a row of
@@ -527,10 +531,10 @@ is named and, when it holds an account here, suspended; a suspended
 counterparty is dimmed (`.action-row.inactive`) and keeps its `suspended`
 danger pill. This kernel's row is titled with its own handle and links nowhere,
 because it is this page. A named row carries **no verb**, as a result row
-carries none; a row titled by its key carries the one `.btn-quiet` opener,
-`name`, at the end of its title line (the price's slot, `margin-left: auto`),
-linking into its page with the rename modal open — the verb appears exactly
-where the gap it fills is visible.
+carries none; a row titled by its key carries the one verb, `Name` — the same
+`.btn` as on the kernel's page — at the end of its title line (the price's
+slot, `margin-left: auto`), linking into its page with the rename modal open:
+the verb appears exactly where the gap it fills is visible.
 
 **The key has one spelling**: `keyDisplay` (8 characters and `…`, the whole
 key in `title`). An unbound row's title is that spelling and the row has no
@@ -571,10 +575,11 @@ bound, else the nickname or `k-<key8>`, suffixed `2`, `3`, … past every name
 held here (requirements §6.6).
 
 **Inspect** (`/admin/peers/{key}`) opens with the row's header in a
-`.page-head` — name with its marks, key, `about` — then one `.card` holding
-the polled `kv` of labelled, present facts (Status, Version, Catalog,
-Reported, Party since; no `none`, no dash, no protocol strings) and a
-`.cluster` of buttons, `Name` (`.btn`) and `Suspend` (`.btn-danger`),
+`.page-head` — name with its marks, key, `about` — then one `.card.stack`
+holding the polled `kv` of labelled, present facts (Status; Version without
+the agent prefix; Catalog, the roster's count; Self-reported; Party since, a
+date; no `none`, no dash, no protocol strings) and a `.cluster` of buttons,
+`Name` (`.btn`) and `Suspend` (`.btn-danger`),
 as the user page's card does; then the kernel's **public actions** as
 **discovered `_action_row`s** (§5.5 — a remote action before resolution, its
 link resolving it), and **evidence** in **two blocks**, in the same

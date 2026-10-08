@@ -613,7 +613,8 @@
      (or the truncated key), and this kernel's own handle; a peer's nickname is
      its claim, so it trails in parentheses, inert (§6.6). The key renders in
      one spelling: as the title when unbound, else on the ref line. A row whose
-     title is a key carries the one verb that fills that gap, name. */}}
+     title is a key carries the one verb that fills that gap, Name — the same
+     button as on the kernel's page (§5.1). */}}
 {{define "_kernel_row"}}
 {{$current := eq .Class "current"}}
 <article class="action-row{{if not $current}} rowable{{end}}{{if .Suspended}} inactive{{end}}"{{if not $current}} tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
@@ -625,7 +626,7 @@
       {{- if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}
       {{- if $current}} <span class="pill">this kernel</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
       {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}
-      {{- if and (not $current) .Name.IsKey}} <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}?form=admin-rename">name</a>{{end}}
+      {{- if and (not $current) .Name.IsKey}} <a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>{{end}}
     </div>
     {{if not .Name.IsKey}}{{$k := nameOf "" .PublicKey}}<p class="action-ref fingerprint" title="{{$k.Title}}">{{$k.Text}}</p>{{end}}
     {{if .About}}<p class="action-desc">{{.About}}</p>{{end}}
@@ -651,10 +652,10 @@
     <span class="muted small"{{with $i.Reachability.Error}} title="{{.}}"{{end}}>{{if eq $i.Source "local"}}last-known data{{else}}unreachable{{end}}</span>
     {{end}}
   </dd>
-  {{with $i.Reachability.Version}}<dt>Version</dt><dd class="mono">{{.}}</dd>{{end}}
-  {{with len $i.Actions}}<dt>Catalog</dt><dd>{{.}} public action{{if ne . 1}}s{{end}}</dd>{{end}}
-  {{with .Report}}{{if gt .Uses 0}}<dt>Reported</dt><dd>{{pct .Successes .Uses}}% success over {{.Uses}} run{{if ne .Uses 1}}s{{end}}{{if gt .RatingCount 0}} · rating {{ratingPct .RatingMean .RatingCount}}% ({{.RatingCount}} rater{{if ne .RatingCount 1}}s{{end}}){{end}}</dd>{{end}}{{end}}
-  {{with .Record.CreatedAt}}<dt>Party since</dt><dd>{{shortTime .}}</dd>{{end}}
+  {{with .Version}}<dt>Version</dt><dd class="mono">{{.}}</dd>{{end}}
+  {{with .Catalog}}<dt>Catalog</dt><dd>{{.}} public action{{if ne . 1}}s{{end}}</dd>{{end}}
+  {{with .Report}}{{if gt .Uses 0}}<dt>Self-reported</dt><dd>{{pct .Successes .Uses}}% success over {{.Uses}} run{{if ne .Uses 1}}s{{end}}{{if gt .RatingCount 0}} · rating {{ratingPct .RatingMean .RatingCount}}% ({{.RatingCount}} rater{{if ne .RatingCount 1}}s{{end}}){{end}}</dd>{{end}}{{end}}
+  {{with .Record.CreatedAt}}<dt>Party since</dt><dd>{{shortDate .}}</dd>{{end}}
 </dl>
 {{end}}
 

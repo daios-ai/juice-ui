@@ -831,8 +831,25 @@ func TestInspectPrefillsSuggestion(t *testing.T) {
 	srv2 := httptest.NewServer(newTestHandler(t, broken.URL))
 	defer srv2.Close()
 	cl2 := loginClientAs(t, srv2.URL, "sys")
-	if body := getBody(t, cl2, srv2.URL+"/admin/peers/KEYT1"); !strings.Contains(body, "a peer kernel") {
-		t.Errorf("a plain open needs no roster: %s", body)
+	if body := getBody(t, cl2, srv2.URL+"/admin/peers/KEYT1"); !strings.Contains(body, "a peer kernel") || strings.Contains(body, "<dt>Catalog</dt>") {
+		t.Errorf("a plain open survives a failed roster read, without a catalog: %s", body)
+	}
+}
+
+// The catalog's size is the roster's count; the inspection's own list is one
+// page, so the page says how many of them it shows (§6.6).
+func TestInspectCatalogCountsTheRoster(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	body := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
+	for _, want := range []string{"<dt>Catalog</dt><dd>4 public actions</dd>", `<p class="muted small">1 of 4 shown</p>`, "<dt>Party since</dt><dd>2026-09-14</dd>", `<a class="btn" href="/admin/peers/KEYB?form=admin-rename"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("kernel page missing %q: %s", want, body)
+		}
 	}
 }
 

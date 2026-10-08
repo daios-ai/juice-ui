@@ -161,6 +161,8 @@ type adminInspectView struct {
 	Report     Report            // the provider's own evidence, pooled
 	Record     client.PeerRecord // this kernel's account row for a counterparty
 	Actions    []actionCardView  // the peer's public actions, as discovered rows
+	Catalog    int               // the roster's count of its public actions; 0 when unknown here
+	Version    string            // the peer's kernel version, without the agent prefix
 	Suggestion string
 	OpenForm   string
 	CSRFField  template.HTML
@@ -428,6 +430,7 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 		view.Inspection = insp
 		view.Report = poolEvidence(insp.SelfEvidence().Rows)
 		view.Actions = peerActionRows(insp)
+		view.Version = strings.TrimPrefix(insp.Reachability.Version, "juice-kernel/")
 		// A counterparty's account row dates the relationship; a kernel with no
 		// account here has no row to read.
 		if insp.Account != nil {
@@ -437,26 +440,34 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 			}
 			view.Record = rec
 		}
+		// The roster states the catalog's size: the inspection's own list is
+		// one page (verified live: 100 of 193). The rename form's prefill must
+		// also be free of every bound petname, suspended parties included, and
+		// of this kernel's own name, which it binds to its own key. Without the
+		// form the roster is best-effort: a page is never refused for it.
+		peers, e := s.client.AdminListPeers(ctx, tok, true)
+		if e != nil && view.OpenForm != "admin-rename" {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		taken := map[string]bool{}
+		for _, p := range peers {
+			if p.PublicKey == key {
+				view.Catalog = p.Actions
+			} else if p.Petname != "" {
+				taken[p.Petname] = true
+			}
+		}
 		if view.OpenForm != "admin-rename" {
 			return nil
 		}
-		// The prefill must be free here: every bound petname, suspended
-		// parties included, and this kernel's own name, which it binds to its
-		// own key.
 		id, e := s.client.AdminIdentity(ctx, tok)
 		if e != nil {
 			return e
 		}
-		peers, e := s.client.AdminListPeers(ctx, tok, true)
-		if e != nil {
-			return e
-		}
-		taken := map[string]bool{id.Handle: true}
-		for _, p := range peers {
-			if p.Petname != "" && p.PublicKey != key {
-				taken[p.Petname] = true
-			}
-		}
+		taken[id.Handle] = true
 		view.Suggestion = petnameSuggestion(insp.Petname, insp.Nickname, key, func(n string) bool { return taken[n] })
 		return nil
 	})
