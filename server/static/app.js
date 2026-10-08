@@ -401,13 +401,32 @@ function announce(text) {
   announce.timer = setTimeout(() => { region.replaceChildren(); }, 2000);
 }
 
+// copyText puts text on the clipboard: the async API where the page is a
+// secure context (https, or localhost), else the selection command, which
+// still works on a plain-http origin. Resolves to whether it succeeded.
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => false);
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.className = 'sr-only';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  return Promise.resolve(ok);
+}
+
 // Copy-to-clipboard: a [data-copy] control carries the whole value it copies —
 // a key, a hash, an address, the recovery phrase — so the clipboard holds what
 // a command takes, never the truncation on screen (the _copy partial).
 document.body.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-copy]');
-  if (!btn || !navigator.clipboard) return;
-  navigator.clipboard.writeText(btn.getAttribute('data-copy')).then(() => announce('Copied'));
+  if (!btn) return;
+  copyText(btn.getAttribute('data-copy')).then((ok) => announce(ok ? 'Copied' : 'Could not copy'));
 });
 
 // Search hints, the way a static site searches its index: the page loads the
