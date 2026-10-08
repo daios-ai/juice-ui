@@ -1571,8 +1571,8 @@ bilateral settlement to initiate, no settle route, and nothing here to press.
 **Configuration.** The kernel's settings are its `config.json`, applied by
 editing the file and restarting the kernel (kernel manual). The UI, which
 supervises this installation's kernel (§1), does both for the operator, on a
-page reached from `admin` that exists only when the kernel is this
-installation's. (`ecosystem-standard.md` §3 still names the first boot the
+page reached from `admin` and from the `admin config` command, both of which
+exist only when the kernel is this installation's. (`ecosystem-standard.md` §3 still names the first boot the
 file's only writer; the kernel manual has the operator edit it.)
 
 * The form is the kernel's own JSON Schema of the file,

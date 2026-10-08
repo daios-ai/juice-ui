@@ -875,8 +875,8 @@ func TestAdminConfigPage(t *testing.T) {
 			t.Errorf("page has %q", not)
 		}
 	}
-	if !strings.Contains(getBody(t, cl, srv.URL+"/admin"), `href="/admin/config"`) {
-		t.Error("admin must link the configuration")
+	if b := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(b, `href="/admin/config"`) || !strings.Contains(b, `"name":"admin config"`) {
+		t.Error("admin links the configuration, and the command registry lists it")
 	}
 }
 
@@ -948,7 +948,7 @@ func TestAdminConfigIsLocalAndSuperuserOnly(t *testing.T) {
 	resp, _ := cl.Get(srv.URL + "/admin/config")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound || strings.Contains(getBody(t, cl, srv.URL+"/admin"), "/admin/config") {
-		t.Error("a kernel elsewhere has no configuration page or link")
+		t.Error("a kernel elsewhere has no configuration page, link or command")
 	}
 
 	_, srv2, _ := configServer(t)

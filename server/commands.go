@@ -24,9 +24,10 @@ type Command struct {
 }
 
 // BuildCommands returns the command registry for a session. Admin verbs are
-// included only for the superuser; theme commands are generated from the shipped
-// theme list.
-func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
+// included only for the superuser, and the configuration only where its page
+// exists — this installation's kernel (configurable); theme commands are
+// generated from the shipped theme list.
+func BuildCommands(isSuperuser, configurable bool, themes []ANSIPalette) []Command {
 	cmds := []Command{
 		{Name: "home", Hint: "Balance, waiting tasks, and recent activity", Kind: "link", Href: "/"},
 		{Name: "browse", Hint: "Discover and run an action", Kind: "link", Href: "/browse"},
@@ -47,6 +48,9 @@ func BuildCommands(isSuperuser bool, themes []ANSIPalette) []Command {
 			Command{Name: "network", Hint: "Federation peers and this kernel's identity", Kind: "link", Href: "/admin/peers"},
 			Command{Name: "network inspect", Hint: "Inspect a kernel by key", Kind: "link", Href: "/admin/peers?form=admin-inspect"},
 		)
+		if configurable {
+			cmds = append(cmds, Command{Name: "admin config", Hint: "Change this kernel's configuration", Kind: "link", Href: "/admin/config"})
+		}
 	}
 	for _, t := range themes {
 		cmds = append(cmds, Command{

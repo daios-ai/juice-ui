@@ -782,7 +782,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Themes:       ThemeList(),
 		CSRFField:    csrf.TemplateField(r),
 		CSRFToken:    csrf.Token(r),
-		Commands:     template.JS(commandsJSON(BuildCommands(super, ThemeList()))),
+		Commands:     template.JS(commandsJSON(BuildCommands(super, s.config != nil, ThemeList()))),
 		Flash:        flash,
 		FlashKind:    flashKind,
 		AppNav:       s.appNav(r),

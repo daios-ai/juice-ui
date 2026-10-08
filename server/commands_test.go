@@ -9,14 +9,14 @@ import (
 func TestBuildCommandsGatesAdmin(t *testing.T) {
 	themes := ThemeList()
 
-	ordinary := BuildCommands(false, themes)
+	ordinary := BuildCommands(false, false, themes)
 	for _, c := range ordinary {
 		if strings.HasPrefix(c.Name, "admin ") {
 			t.Errorf("non-superuser registry must not contain admin command %q", c.Name)
 		}
 	}
 
-	super := BuildCommands(true, themes)
+	super := BuildCommands(true, false, themes)
 	var hasAdmin bool
 	for _, c := range super {
 		if strings.HasPrefix(c.Name, "admin ") {
@@ -32,7 +32,7 @@ func TestBuildCommandsGatesAdmin(t *testing.T) {
 }
 
 func TestBuildCommandsHasCoreVerbs(t *testing.T) {
-	cmds := BuildCommands(false, ThemeList())
+	cmds := BuildCommands(false, false, ThemeList())
 	want := []string{"browse", "workshop", "action create", "wallet", "tx list", "inbox", "settings"}
 	have := map[string]bool{}
 	for _, c := range cmds {
@@ -47,7 +47,7 @@ func TestBuildCommandsHasCoreVerbs(t *testing.T) {
 
 func TestBuildCommandsThemesMatchList(t *testing.T) {
 	themes := ThemeList()
-	cmds := BuildCommands(false, themes)
+	cmds := BuildCommands(false, false, themes)
 	themeCmds := map[string]Command{}
 	for _, c := range cmds {
 		if strings.HasPrefix(c.Name, "theme ") {
@@ -70,7 +70,7 @@ func TestBuildCommandsThemesMatchList(t *testing.T) {
 }
 
 func TestCommandsJSONValid(t *testing.T) {
-	out := commandsJSON(BuildCommands(true, ThemeList()))
+	out := commandsJSON(BuildCommands(true, false, ThemeList()))
 	var parsed []Command
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("commandsJSON is not valid JSON: %v", err)
@@ -84,15 +84,15 @@ func TestCommandsJSONValid(t *testing.T) {
 // entry that replaces it opens the inspect-by-key form (a whitelisted ?form
 // value, or the anchor would render a dialog that never opens).
 func TestBuildCommandsNoSubscription(t *testing.T) {
-	for _, c := range BuildCommands(true, ThemeList()) {
+	for _, c := range BuildCommands(true, false, ThemeList()) {
 		if strings.Contains(strings.ToLower(c.Name), "subscribe") {
 			t.Errorf("registry still offers a subscription verb: %q", c.Name)
 		}
 	}
 	var inspect *Command
-	for i, c := range BuildCommands(true, ThemeList()) {
+	for i, c := range BuildCommands(true, false, ThemeList()) {
 		if c.Name == "network inspect" {
-			inspect = &BuildCommands(true, ThemeList())[i]
+			inspect = &BuildCommands(true, false, ThemeList())[i]
 		}
 	}
 	if inspect == nil {
@@ -106,7 +106,7 @@ func TestBuildCommandsNoSubscription(t *testing.T) {
 // Every command is a link or a post, and a post carries exactly the one field
 // its submit button can send.
 func TestCommandsAreLinksOrPosts(t *testing.T) {
-	for _, c := range BuildCommands(true, ThemeList()) {
+	for _, c := range BuildCommands(true, false, ThemeList()) {
 		switch c.Kind {
 		case "link":
 			if c.Field != "" || c.Value != "" {
@@ -118,6 +118,26 @@ func TestCommandsAreLinksOrPosts(t *testing.T) {
 			}
 		default:
 			t.Errorf("command %q has kind %q", c.Name, c.Kind)
+		}
+	}
+}
+
+// The configuration command follows its page: listed for the superuser of this
+// installation's kernel, absent for anyone else and for a kernel elsewhere.
+func TestBuildCommandsConfigFollowsThePage(t *testing.T) {
+	has := func(cmds []Command) bool {
+		for _, c := range cmds {
+			if c.Name == "admin config" {
+				return c.Kind == "link" && c.Href == "/admin/config"
+			}
+		}
+		return false
+	}
+	for _, tc := range []struct {
+		super, configurable, want bool
+	}{{true, true, true}, {true, false, false}, {false, true, false}, {false, false, false}} {
+		if got := has(BuildCommands(tc.super, tc.configurable, ThemeList())); got != tc.want {
+			t.Errorf("superuser=%v configurable=%v: listed %v, want %v", tc.super, tc.configurable, got, tc.want)
 		}
 	}
 }
