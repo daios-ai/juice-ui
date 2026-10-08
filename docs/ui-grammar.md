@@ -36,7 +36,6 @@ Three laws underpin everything:
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action. The command registry's entries list first among them, marked `›` (`.menu-item.command`; a title row never carries the mark), at most three beside titles, twelve rows in all; `>` lists commands only (§5.9) |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
-| **Kernel card** | `.kernel-card` · `.banner` | this kernel's own identity on `network` (§5.11); peers are list rows |
 | Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a frozen form (§5.4) |
 | **Frozen form** | `.frozen` · `.field .box` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
@@ -514,21 +513,20 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 
 `admin` (users, money, access) and `network` (federation) are **two separate
 top-level nav entries** (`sys` only), not one page with a sub-nav — federation
-is a distinct concern. `network` owns the **this kernel** identity card. The
-`network` page is an inspect → confirm-what-is-owed journey, in card + table
-grammar:
-**this kernel** (identity to share) · the **roster** — every known kernel, under
-one `.tabs` filter (`counterparties | known network`, §5.2), paged and never
-polled. There is **no subscribe/unsubscribe verb**; the one opener is **inspect a
-kernel by key**.
+is a distinct concern. The `network` page leads with **this kernel's money**
+through `_figures` (§5.6), then the obligations, then **one list** of every
+known kernel in the action row's grammar (§5.5): **this kernel**, then its
+**counterparties**, then the **known network**, each class in the kernel's
+order, paged and never polled. A class is a neutral `.pill` on the title line —
+`current`, `party`; a known kernel carries no mark. There is **no
+subscribe/unsubscribe verb**; the one opener is **inspect a kernel by key**,
+beside the Show/Hide-suspended toggle.
 
-A peer is a list row (§5.5: tile, name line, facts, commands) with **two
-states**, the same relation §5.5 draws between a resolved and a discovered
-action row. A **counterparty** carries Inspect ·
-Suspend/Unsuspend. A **discovered** kernel carries the same `known network`
-`.chip.tag`, its action count and catalog freshness, and **no account-dependent
-verb** — its one gesture is **Name**, a `.btn-quiet` opener whose `?form=` link
-prefills the key (never `data-modal`, which would open the empty dialog).
+A row carries **no verb**, as a result row carries none: a peer's row is
+`.rowable` and opens its page (`/admin/peers/{key}`), where it is named and,
+when it holds an account here, suspended; a suspended counterparty is dimmed
+(`.action-row.inactive`) and keeps its `suspended` danger pill. This kernel's
+row is titled with its own handle and links nowhere, because it is this page.
 
 **Naming is a petname system** (kernel §13, after Stiegler), and the three name
 classes render differently because they are trusted differently:
@@ -554,7 +552,7 @@ what other kernels report on an **action's page**, below its ratings, the
 provider's block first. Evidence carries **no colour and no fill**: it is a
 trust fact, not a status, and never joins the first-party reputation strip.
 
-**Obligations** sit between the identity card and the roster: every cross-kernel
+**Obligations** sit between this kernel's figures and the list: every cross-kernel
 debt settles per call on the rail by a ticket both kernels name, so each row is
 one debt — the debtor, the ticket, what was owed, what the draw says must be
 paid — and one gesture: a `.btn-money` `Confirm (N)` behind `data-confirm`,
@@ -567,7 +565,7 @@ named on its inspect page, keyed on its public key. The two are separate because
 the kernel's two routes are.
 
 A counterparty carries **no money at all**: a peer account is identity and
-moderation state, never a wallet (kernel §D14), so a card states its names, its
+moderation state, never a wallet (kernel §D14), so a row states its names, its
 catalog count and the contact cache. The money on this page is this kernel's
 own — exposure against its credit limit, the rates, the operator split, solvency,
 and a rail halt as a `.banner-error` — plus the obligations above.
@@ -593,8 +591,6 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   and kernel-captured facts (ref, price, reputation, any money control) render
   **outside** it (the media is in the hero; the run form and its money control are
   a separate section below).
-- The same slot backs `.kernel-card`'s `.banner` (a 4:1 variant) for this
-  kernel's identity on `network`.
 
 ---
 

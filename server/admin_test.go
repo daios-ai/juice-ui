@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"reflect"
 	"strings"
@@ -117,10 +118,10 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		t.Error("/admin must not offer a retired admin withdraw")
 	}
 
-	// The peers page carries "This kernel" and highlights the peers nav entry.
+	// The peers page leads with this kernel's money and highlights its nav entry.
 	pbody := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(pbody, "This kernel") {
-		t.Error("/admin/peers must render the 'This kernel' identity card")
+	if !strings.Contains(pbody, `class="stat-row"`) || !strings.Contains(pbody, "owed to us") {
+		t.Error("/admin/peers must state this kernel's money through the figures")
 	}
 	if !strings.Contains(pbody, `href="/admin/peers" title="Network" aria-current="page"`) {
 		t.Error("/admin/peers must mark the network nav entry active")
@@ -161,10 +162,10 @@ func TestAdminPeersHasNoSubscriptionOrRoster(t *testing.T) {
 	if strings.Contains(body, "fund a peer by key") || strings.Contains(body, "fund a kernel by key") {
 		t.Error("the page-level fund-by-key opener is retired: inspect \u2192 fund covers an out-of-band key")
 	}
-	// Suspend is the one durable lever left on a counterparty: a peer holds no
-	// money here, so there is nothing to settle from this page (kernel §D14).
-	if !strings.Contains(body, "/admin/peers/suspend") {
-		t.Error("peer row missing the suspend lever")
+	// Suspend is the one durable lever left on a counterparty, on its own page;
+	// a peer holds no money here, so there is nothing to settle (kernel §D14).
+	if !strings.Contains(getBody(t, cl, srv.URL+"/admin/peers/KEYB"), "/admin/peers/suspend") {
+		t.Error("a counterparty's page is missing the suspend lever")
 	}
 	if strings.Contains(body, "/admin/peers/settle") {
 		t.Error("settlement is per call on the rail; the kernel serves no settle route")
@@ -333,10 +334,9 @@ func TestAdminInspectRenders(t *testing.T) {
 	}
 }
 
-// A kernel with no account here reads as discovered and offers the one gesture
-// that promotes it: fund, with its key prefilled. A stranger key (source "none")
-// is not part of the known network and must not claim to be.
-func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
+// A kernel with no account here carries no party mark, no position, and no
+// funding: a peer is never credited (§6.6).
+func TestAdminInspectAccountlessKernel(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -344,8 +344,8 @@ func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	disc := getBody(t, cl, srv.URL+"/admin/peers/KEYT1")
-	if !strings.Contains(disc, `<span class="chip" title="Discovered`) {
-		t.Errorf("an account-less known kernel must carry the known-network chip: %s", disc)
+	if strings.Contains(disc, `<span class="pill">party</span>`) {
+		t.Errorf("a kernel with no account here is not a party: %s", disc)
 	}
 	if strings.Contains(disc, "owes us") || strings.Contains(disc, "we owe them") {
 		t.Error("a kernel we hold no account for must show no position")
@@ -354,10 +354,6 @@ func TestAdminInspectDiscoveredAndStranger(t *testing.T) {
 	// naming a peer is refused unless it names the obligation it closes (§6.6).
 	if strings.Contains(disc, "fund this kernel") {
 		t.Error("a peer is not funded: its payments close obligations, they do not top up a balance")
-	}
-	stranger := getBody(t, cl, srv.URL+"/admin/peers/KEYNONE")
-	if strings.Contains(stranger, `<span class="chip" title="Discovered`) {
-		t.Error(`a source="none" key must not read as part of the known network`)
 	}
 }
 
@@ -619,10 +615,10 @@ func TestAdminUnknownUserOpIs404(t *testing.T) {
 	}
 }
 
-// A counterparty's name is the way into the one rename modal — no fourth command
-// in the peer card's foot (§6.6). It keys on the PUBLIC KEY: an unbound kernel
-// has no name to key on, and advertised names collide across kernels.
-func TestPeerAliasLinksToRename(t *testing.T) {
+// A peer's row opens its own page, which holds the one rename modal (§6.6). Both
+// key on the PUBLIC KEY: an unbound kernel has no name to key on, and
+// advertised names collide across kernels.
+func TestPeerRowLinksToItsPage(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -630,8 +626,11 @@ func TestPeerAliasLinksToRename(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(body, `/admin/peers/KEYB?form=admin-rename`) {
-		t.Errorf("the peer alias must link to the rename modal on the peer's page: %s", body)
+	if !strings.Contains(body, `data-href="/admin/peers/KEYB"`) {
+		t.Errorf("the peer row must open the peer's page: %s", body)
+	}
+	if !strings.Contains(getBody(t, cl, srv.URL+"/admin/peers/KEYB"), `/admin/peers/KEYB?form=admin-rename`) {
+		t.Error("the peer's page must open its rename modal, keyed on the key")
 	}
 	// The kernel serves users and peers on separate routes and refuses a target
 	// of the other kind, so the UI must never send a key to the users route.
@@ -640,32 +639,69 @@ func TestPeerAliasLinksToRename(t *testing.T) {
 	}
 }
 
-// The roster is one kernel list the UI partitions: the kernel pages before this
-// split, so the tab filters locally and the page slices what remains. An
-// unrecognised tab falls back to counterparties rather than showing nothing.
-func TestAdminPeersTabPartition(t *testing.T) {
+// The network list is this kernel, then its counterparties, then the known
+// network, each in the kernel's order, sliced into pages after ordering (§6.6).
+func TestAdminPeersListOrder(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	counter := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(counter, "peerb") || !strings.Contains(counter, "debtor") {
-		t.Error("counterparties tab must list the account-holding kernels")
+	body := getBody(t, cl, srv.URL+"/admin/peers")
+	last := -1
+	for _, mark := range []string{`title="KEY">kernel<`, `"/admin/peers/KEYB"`, `"/admin/peers/KEYD"`, `"/admin/peers/KEYT1"`, `"/admin/peers/KEYT2"`} {
+		i := strings.Index(body, mark)
+		if i <= last {
+			t.Fatalf("%s out of order: %s", mark, body)
+		}
+		last = i
 	}
-	if strings.Contains(counter, "KEYT1") {
-		t.Error("a discovered kernel must not appear among counterparties")
+}
+
+// This kernel's identity is the first row and the figures, so a failed read is
+// an error page, never a blank current row (§6.6).
+func TestAdminPeersRequiresIdentity(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	target, _ := url.Parse(kernel.URL)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/admin/kernel" {
+			http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer broken.Close()
+	srv := httptest.NewServer(newTestHandler(t, broken.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	resp, err := cl.Get(srv.URL + "/admin/peers")
+	if err != nil {
+		t.Fatal(err)
 	}
-	known := getBody(t, cl, srv.URL+"/admin/peers?tab=known")
-	if !strings.Contains(known, "KEYT1") || !strings.Contains(known, "KEYT2") {
-		t.Error("known-network tab must list the discovered kernels")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "<h1>Error</h1>") || strings.Contains(string(body), "action-list") {
+		t.Errorf("a failed identity read must be the error page: %s", body)
 	}
-	if strings.Contains(known, "KEYB") {
-		t.Error("a counterparty must not appear among discovered kernels")
-	}
-	if bogus := getBody(t, cl, srv.URL+"/admin/peers?tab=nonsense"); !strings.Contains(bogus, "peerb") {
-		t.Error("an unrecognised tab must fall back to counterparties")
+}
+
+// Suspending returns to the page the verb lives on: the peer's own.
+func TestAdminPeerSuspendReturnsToThePeer(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	page := getBody(t, cl, srv.URL+"/admin/peers/KEYB")
+	resp := postTo(t, cl, srv.URL+"/admin/peers/suspend", page, url.Values{"key": {"KEYB"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/peers/KEYB" {
+		t.Errorf("suspend = %d to %q, want 303 to /admin/peers/KEYB", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
 
@@ -766,9 +802,8 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 	}
 	// The discovered rows carry last_seen too (v0.12.24 stamps every row), so
 	// catalog freshness appears on both classes.
-	known := getBody(t, cl, srv.URL+"/admin/peers?tab=known")
-	if !strings.Contains(known, "catalog verified") {
-		t.Error("a discovery-only row carries last_seen and states it")
+	if n := strings.Count(body, "catalog verified"); n != 3 {
+		t.Errorf("every row with last_seen states it, got %d", n)
 	}
 }
 

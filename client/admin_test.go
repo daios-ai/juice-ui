@@ -281,8 +281,8 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	}
 	// The account arrives inline, so the page needs no roster scan. It is
 	// moderation state, never a balance: a peer holds no money (kernel §D14).
-	if insp.Account == nil || insp.Account.Suspended || insp.Discovered() {
-		t.Errorf("account not decoded, or a counterparty read as discovered: %+v", insp.Account)
+	if insp.Account == nil || insp.Account.Suspended {
+		t.Errorf("account not decoded: %+v", insp.Account)
 	}
 	// avg_latency_ms is FRACTIONAL on the wire (690.5, 90760.5 — verified live).
 	// Decoding it into an integer field failed the whole inspection and rendered
@@ -293,22 +293,15 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 		t.Errorf("evidence not decoded: %+v", insp.Evidence)
 	}
 	// An unreachable peer carries a reason in reachability.error. A well-formed but
-	// wholly unknown key answers source="none" with no account (verified live) — a
-	// stranger, NOT part of the known network.
+	// wholly unknown key answers source="none" with no account (verified live).
 	f.reply = `{"handle":"k","public_key":"PKEY","online":false,"source":"none","account":null,
 	 "reachability":{"path":"unreachable","error":"routing: not found"}}`
 	insp2, _ := f.client().AdminInspect(context.Background(), "tok", "PKEY")
 	if insp2.Online || insp2.Reachability.Error == "" {
 		t.Errorf("unreachable inspection must decode online=false + error: %+v", insp2)
 	}
-	if insp2.Discovered() {
-		t.Error(`source="none" must not read as discovered (positive predicate on source)`)
-	}
-	// A known kernel with no account here IS discovered — live or last-known alike.
-	for _, src := range []string{"live", "local"} {
-		if !(Inspection{Source: src}).Discovered() {
-			t.Errorf("account-less source=%q must read as discovered", src)
-		}
+	if insp2.Source != "none" || insp2.Account != nil {
+		t.Errorf("a stranger key must decode source=none with no account: %+v", insp2)
 	}
 }
 

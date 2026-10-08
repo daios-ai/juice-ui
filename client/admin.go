@@ -169,14 +169,6 @@ type Inspection struct {
 	Reachability Reachability `json:"reachability"`
 }
 
-// Discovered reports that this kernel is known through the discovery loop but
-// holds no account here. The predicate is POSITIVE on Source so that a future or
-// empty value never silently reads as discovered: a stranger key answers
-// source="none" with no account and is not part of the known network.
-func (i Inspection) Discovered() bool {
-	return i.Account == nil && (i.Source == "live" || i.Source == "local")
-}
-
 // SelfEvidence is the subject's own execution evidence — the rows it issued
 // about itself. Counted alone it is the execution summary: a remote call is
 // never double-counted (juicedocs §13). It shares IssuerEvidence with the

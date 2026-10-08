@@ -665,14 +665,12 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 
 /* Media slot (§5.13): a 16:9 image frame on the action card and hero. Holds a
    kernel image (later) or the deterministic cardArt fallback. Counterparty
-   content — inert, framed, chrome renders outside it. .wide is the 4:1 kernel
-   banner variant on network. */
+   content — inert, framed, chrome renders outside it. */
 .media {
   aspect-ratio: 16 / 9; border-radius: var(--radius);
   overflow: hidden; border: 1px solid var(--border);
   background: var(--surface-2); display: block;
 }
-.media.wide { aspect-ratio: 4 / 1; }
 .media svg, .media img { display: block; width: 100%; height: 100%; object-fit: cover; }
 /* The tile: the same art cropped square, the icon a list row leads with. */
 .media.tile { aspect-ratio: 1; width: 48px; flex: 0 0 48px; border-radius: var(--radius-s); }
@@ -699,11 +697,6 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .you-row:hover { border-color: var(--border-strong); text-decoration: none; }
 .you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: .82rem; color: var(--text-muted); }
 
-/* Kernel card — a peer kernel on network (banner via .media.wide). */
-.kernel-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: block; }
-.kernel-card:hover { border-color: var(--border-strong); text-decoration: none; }
-.kernel-card .media { border-radius: 0; border: none; border-bottom: 1px solid var(--border); margin: 0; }
-.kernel-body { padding: .75rem 1rem .85rem; }
 
 /* ---- chat app (list page → document-scrolled thread; app-scoped but in core
    CSS). The page is the scroll container, like every other page: the thread is

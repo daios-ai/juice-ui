@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.18.1
+Version: 0.19.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.19.0.** The network page reads like the search results
+> (§6.6): one list in the action row's grammar, this kernel first, then its
+> counterparties, then the known network, marked `current` and `party`. The
+> tabs, the identity card and the row verbs go: this kernel's money renders
+> through the figures, and a peer is named and suspended on its own page.
 
 > **What changed in 0.18.1.** The first boot can never touch an existing
 > kernel (§1): a home holding `juice.db` is a kernel, started and never created
@@ -1410,15 +1416,19 @@ symmetry, but because the kernel refuses anything else.
 
 **Peers.**
 
-* **The roster is the whole known network.** `/v1/admin/peers` merges by public
-  key, excluding this kernel, **counterparties** (`has_account`, a bilateral
-  position) and **discovered peers** (a catalog: action count).
-  Both render as the same list row (§6.2) under a `.tabs` filter
-  (`counterparties` | `known network`), paged and **not polled**. A discovered
-  card is the unresolved counterpart of a counterparty card, as §6.2's
-  discovered action card is of a resolved one: a `known network` chip and **no
-  account-dependent verbs** — verified live, `suspend` on an account-less key is
-  refused. The kernel's **contact cache** is served for every roster row, both
+* **The roster is the whole known network, as one list.** `/v1/admin/peers`
+  merges by public key, excluding this kernel, **counterparties** (`has_account`,
+  a bilateral position) and **discovered peers** (a catalog: action count). The
+  page lists **this kernel first, then its counterparties, then the known
+  network**, each class in the kernel's own order, as one paged list in the
+  action row's grammar (§6.2) — tile, title line, key, `about`, facts — and
+  **not polled**. A class is marked by a neutral pill on the title line:
+  `current` on this kernel, `party` on a counterparty; a known kernel carries no
+  mark. This kernel's title is its own handle, and its row links nowhere,
+  because it is this page; a peer's row opens its page. A row carries **no
+  verb**, as a result row carries none. The identity this kernel's row needs is
+  read before the page renders: a failed read is an error, never a blank row.
+  The kernel's **contact cache** is served for every roster row, both
   classes: `last_seen` (when a verified exchange last succeeded — catalog
   freshness) and `last_contact_failed_at` (when one last failed). Both render as
   muted dated text and never as a status pill, because the kernel states neither
@@ -1432,12 +1442,12 @@ symmetry, but because the kernel refuses anything else.
 * **A peer row carries no money.** A peer account is identity, attribution and
   moderation state, never a wallet: a foreign call is funded by the serving
   kernel and every obligation settles per call on the rail (kernel §D14, §P10).
-  So a counterparty card states its names, its catalog count and the contact
-  cache, and nothing else. A balance, a position or a credit figure here would
+  So a peer row states its names, the contact cache and, for the known network,
+  its catalog count, and nothing else. A balance, a position or a credit figure here would
   be a fabrication.
-* **This kernel's own credit position is the money fact on this page.** The
-  identity card states what this kernel has delivered to foreign buyers and not
-  been paid for, against the limit it set (`exposure` of `credit_limit`); the
+* **This kernel's own credit position is the money fact on this page.** It
+  renders through the figures (§5.6 of the grammar), above the list: what this
+  kernel has delivered to foreign buyers and not been paid for, against the limit it set (`exposure` of `credit_limit`); the
   rates it serves under (`fee_bps`, `remote_bps`, `import_bps`), its ticket face
   and the largest ticket it will take from a buyer (`lottery_max`, above which a
   call is refused with a signed rejection); the operator split of `sys` into earnings and money in transit; and the
@@ -1471,12 +1481,12 @@ symmetry, but because the kernel refuses anything else.
     name that resolves. It renders whole, in the provenance face.
   An unbound kernel therefore shows its truncated key and stays callable by it;
   it MUST NOT borrow the nickname to fill the gap.
-* **Name is the gesture a discovered card carries**, as a link to the kernel's
-  own page with the form open. It binds a petname: the kernel binds one
+* **Name and suspend live on the kernel's own page.** Naming binds a petname: the kernel binds one
   automatically only on this kernel's own first outbound use, so an explicit
   bind is the only way to name a kernel merely discovered, and without it the
   operator is left typing a key. It is not account-dependent, while `suspend` on
-  an account-less key is refused, so that verb stays off the card. **Inspect a
+  an account-less key is refused, so suspend is offered only where an account
+  exists (the `party` pill), and returns to that page. **Inspect a
   kernel by key** remains the way in for a key learned elsewhere (verified live:
   an unknown key still returns a usable page).
 * **A kernel is named on its own page.** The petname form lives on the inspect
@@ -1505,7 +1515,7 @@ symmetry, but because the kernel refuses anything else.
   action returns `ErrInvalidState`, "use admin suspend to block a peer"), so the
   UI MUST NOT offer lifecycle verbs — enable/disable, visibility, delete — on a
   proxy row anywhere it lists actions, including the superuser-scoped workshop.
-  The peer-level lever is suspend, on this page.
+  The peer-level lever is suspend, on the peer's page.
 * `peer_unfunded` on a run means **the serving kernel will not serve this one on
   credit** — its limit is reached, or its own provider cannot fund the work, a
   foreign call running on the seller's money — and MUST NOT be rendered as the

@@ -48,47 +48,38 @@ type adminUserView struct {
 	OpenForm string
 }
 
-// adminPeersView drives the merged roster: every kernel this one knows, split by
-// Tab into counterparties (an account here) and the known network (discovered,
-// no account). Both classes are the same card; the tab decides which facts and
-// verbs are true of it. Deposits is the money awaiting the operator, shown above
-// the roster because closing an obligation is the one money verb left here.
+// adminPeersView drives the network page: this kernel's money, the money
+// awaiting the operator, and one ranked list of every kernel this one knows —
+// itself, then its counterparties (an account here), then the known network
+// (discovered, no account). Deposits is shown above the list because closing
+// an obligation is the one money verb left here.
 type adminPeersView struct {
 	depositForm
 	Identity      client.Identity
 	Deposits      client.Deposits
 	Petnames      map[string]string // public key → bound petname, for naming a debtor
-	Peers         []client.Peer
-	Tab           string // "counterparties" | "known"
+	Kernels       []kernelRow
 	Pager         Pager
-	ShowSuspended bool // ?all=1 — counterparties list includes suspended rows
+	ShowSuspended bool // ?all=1 — the list includes suspended counterparties
 	CSRFField     template.HTML
 	OpenForm      string
 }
 
-// Known reports whether the discovered tab is selected — the templates switch
-// the card's facts and verbs on it.
-func (v adminPeersView) Known() bool { return v.Tab == tabKnown }
-
+// The classes of a kernel row, in list order.
 const (
-	tabCounterparties = "counterparties"
-	tabKnown          = "known"
+	classCurrent = "current"
+	classParty   = "party"
+	classKnown   = "known"
 )
 
-// peersHref builds a roster URL for one tab. Switching tabs drops the offset
-// (page 1 of a different list) and drops ?all=1, which is a counterparty-only
-// axis: suspension applies to accounts, and a discovered kernel has none.
-func peersHref(tab string, all bool) string {
-	q := url.Values{}
-	if tab == tabKnown {
-		q.Set("tab", tabKnown)
-	} else if all {
-		q.Set("all", "1")
-	}
-	if len(q) == 0 {
-		return "/admin/peers"
-	}
-	return "/admin/peers?" + q.Encode()
+// kernelRow is one kernel on the network list. Name is what its title shows:
+// a peer's petname or truncated key (nameOf), and for this kernel its own
+// handle — never stored as a petname, which is a name bound here for another
+// kernel, nor as a nickname, which is a peer's unverified claim.
+type kernelRow struct {
+	client.Peer
+	Class string
+	Name  Name
 }
 
 // adminInspectView carries the inspected kernel. The billing account arrives
@@ -270,13 +261,9 @@ func (s *Server) postAdminDeposit(w http.ResponseWriter, r *http.Request) {
 // the known network.
 func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	tab := tabCounterparties
-	if r.URL.Query().Get("tab") == tabKnown {
-		tab = tabKnown
-	}
-	showSuspended := tab == tabCounterparties && r.URL.Query().Get("all") == "1"
+	showSuspended := r.URL.Query().Get("all") == "1"
 	view := adminPeersView{
-		OpenForm: openForm(r, "admin"), Tab: tab, ShowSuspended: showSuspended,
+		OpenForm: openForm(r, "admin"), ShowSuspended: showSuspended,
 		CSRFField: csrf.TemplateField(r),
 		depositForm: depositForm{
 			// A held payment is attributed from its own row, so the reference it
@@ -287,9 +274,11 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Petnames = map[string]string{}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		if id, e := s.client.AdminIdentity(ctx, tok); e == nil {
-			view.Identity = id
+		id, e := s.client.AdminIdentity(ctx, tok)
+		if e != nil {
+			return e
 		}
+		view.Identity = id
 		// The money awaiting the operator: an obligation is closed here, and a
 		// held payment is attributed here (§6.6).
 		if d, e := s.client.AdminListDeposits(ctx, tok); e == nil {
@@ -300,13 +289,10 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
+		view.Kernels = kernelRows(id, p)
 		for _, peer := range p {
-			// Every known kernel names the debtor rows, whichever tab is showing.
 			if peer.Petname != "" {
 				view.Petnames[peer.PublicKey] = peer.Petname
-			}
-			if peer.HasAccount == (tab == tabCounterparties) {
-				view.Peers = append(view.Peers, peer)
 			}
 		}
 		return nil
@@ -315,10 +301,28 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offset := queryOffset(r)
-	start, end, hasNext := pageSlice(len(view.Peers), offset, pageSize)
-	view.Peers = view.Peers[start:end]
+	start, end, hasNext := pageSlice(len(view.Kernels), offset, pageSize)
+	view.Kernels = view.Kernels[start:end]
 	view.Pager = pageNav(r, offset, pageSize, hasNext)
 	s.renderPage(w, r, http.StatusOK, "admin_peers", "Peers", view)
+}
+
+// kernelRows lists this kernel, then its counterparties, then the known
+// network, each class in the kernel's own order (§6.6).
+func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
+	rows := []kernelRow{{
+		Peer:  client.Peer{PublicKey: id.PublicKey, About: id.About},
+		Class: classCurrent,
+		Name:  Name{Text: id.Handle, Title: id.PublicKey},
+	}}
+	for _, class := range []string{classParty, classKnown} {
+		for _, p := range peers {
+			if p.HasAccount == (class == classParty) {
+				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.PublicKey)})
+			}
+		}
+	}
+	return rows
 }
 
 // getAdminInspect renders a remote kernel's identity, reachability, the public
@@ -384,7 +388,7 @@ func (s *Server) postAdminPeerSuspend(w http.ResponseWriter, r *http.Request) {
 	if unsuspend {
 		verb = "unsuspended"
 	}
-	s.flashResult(w, r, err, "/admin/peers", "Peer "+verb+".")
+	s.flashResult(w, r, err, "/admin/peers/"+url.PathEscape(key), "Peer "+verb+".")
 }
 
 // Configuration is this installation's kernel configuration file, which the UI

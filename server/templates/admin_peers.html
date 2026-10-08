@@ -8,34 +8,24 @@
      continue (kernel §D23) — stated here, where those verbs are. */}}
 {{if $d.Identity.Stop}}<div class="banner banner-error" role="status">Payments out are paused — {{$d.Identity.Stop.Reason}}{{if $d.Identity.Stop.Since}} (since {{shortTime $d.Identity.Stop.Since}}){{end}}.</div>{{end}}
 
-<h2>This kernel</h2>
-<div class="kernel-card">
-  <span class="media wide">{{cardArt $d.Identity.PublicKey $d.Identity.Handle "kernel"}}</span>
-  <div class="kernel-body">
-    <div class="mono"><b>{{$d.Identity.Handle}}</b>{{if $d.Identity.Network}} <span class="muted small">{{$d.Identity.Network}}</span>{{end}}</div>
-    <div class="fingerprint">{{$d.Identity.PublicKey}}</div>
-    {{if $d.Identity.About}}<div class="small muted">{{$d.Identity.About}}</div>{{end}}
-    {{if $d.Identity.BlockchainAddress}}<div class="small muted">paid at <span class="mono">{{$d.Identity.BlockchainAddress}}</span></div>{{end}}
-    {{/* What this kernel has delivered to foreign buyers and not been paid for,
-         against the limit it set — one number for the whole kernel (§D14). */}}
-    <div class="small muted">owed to us <span class="mono">{{money $d.Identity.Exposure}}</span> of <span class="mono">{{money $d.Identity.CreditLimit}}</span> limit · ticket <span class="mono">{{money $d.Identity.Lottery}}</span>{{if $d.Identity.LotteryMax}}, taking up to <span class="mono">{{money $d.Identity.LotteryMax}}</span>{{end}}</div>
-    <div class="small muted">fee {{pct $d.Identity.FeeBps 10000}}% · serving {{pct $d.Identity.RemoteBps 10000}}% · import {{pct $d.Identity.ImportBps 10000}}%</div>
-    <div class="small muted">earned <span class="mono">{{money $d.Identity.Sys.Earnings}}</span> · in transit <span class="mono">{{money (sum (sum $d.Identity.Sys.PendingPayouts $d.Identity.Sys.HeldDeposits) $d.Identity.Sys.RefillLocks)}}</span></div>
-    <div class="small muted">user credits <span class="mono">{{money $d.Identity.Solvency.Liabilities}}</span> · money in <span class="mono">{{money $d.Identity.Solvency.Vault}}</span>{{if $d.Identity.Solvency.Gap}} · <span class="pill status-danger">gap {{money $d.Identity.Solvency.Gap}}</span>{{end}}</div>
-    {{if $d.Identity.Addrs}}
-    <details class="details-panel">
-      <summary>Listen addresses</summary>
-      <ul class="mono tiny">{{range $d.Identity.Addrs}}<li>{{.}}</li>{{end}}</ul>
-    </details>
-    {{end}}
-  </div>
-</div>
+{{/* This kernel's own money (§6.6): what it has delivered to foreign buyers
+     and not been paid for, against the limit it set (§D14); the operator split
+     of sys; and the solvency identity. */}}
+{{$i := $d.Identity}}
+{{template "_figures" (figures (figure $i.Exposure "owed to us" "") (figure $i.CreditLimit "credit limit" "") (figure $i.Sys.Earnings "earned" "credited") (figure (sum (sum $i.Sys.PendingPayouts $i.Sys.HeldDeposits) $i.Sys.RefillLocks) "in transit ◷" "escrow") (figure $i.Solvency.Liabilities "user credits" "") (figure $i.Solvency.Vault "money in" ""))}}
+<p class="small muted">ticket <span class="mono">{{money $i.Lottery}}</span>{{if $i.LotteryMax}}, taking up to <span class="mono">{{money $i.LotteryMax}}</span>{{end}} · fee {{pct $i.FeeBps 10000}}% · serving {{pct $i.RemoteBps 10000}}% · import {{pct $i.ImportBps 10000}}%{{if $i.Solvency.Gap}} · <span class="pill status-danger">gap {{money $i.Solvency.Gap}}</span>{{end}}</p>
+{{if $i.BlockchainAddress}}<p class="small muted">paid at <span class="mono">{{$i.BlockchainAddress}}</span></p>{{end}}
+{{if $i.Addrs}}
+<details class="details-panel">
+  <summary>Listen addresses</summary>
+  <ul class="mono tiny">{{range $i.Addrs}}<li>{{.}}</li>{{end}}</ul>
+</details>
+{{end}}
 
 {{/* Every cross-kernel debt settles on the rail per call, by a ticket both
      kernels name (kernel §P10). This is exposure itemised, and it is a reading
      rather than a worklist: an obligation closes when its buyer pays, and this
      kernel records that itself (§6.6). */}}
-{{if not $d.Known}}
 <h2>Owed to us</h2>
 {{if $d.Deposits.Owed}}
 <div class="table-scroll">
@@ -70,22 +60,19 @@
 </table>
 </div>
 {{end}}
-{{end}}
 
 <h2>Kernels</h2>
-{{/* One roster, two classes. Switching tabs starts at page one and drops the
-     suspended filter, which is a counterparty-only axis (§5.2). */}}
-<nav class="tabs control-tabs" aria-label="Filter kernels">
-  {{template "_tab" (tab "counterparties" (peersHref "counterparties" $d.ShowSuspended) (not $d.Known))}}
-  {{template "_tab" (tab "known network" (peersHref "known" false) $d.Known)}}
-  <a class="btn-quiet tabs-action" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
-</nav>
-{{if not $d.Known}}
+{{/* One list: this kernel, its counterparties, then the known network, each
+     class marked by a pill (§6.6). */}}
 <div class="row control-row">
   {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
+  <a class="btn-quiet" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
+</div>
+{{if $d.Kernels}}
+<div class="action-list">
+  {{range $d.Kernels}}{{template "_kernel_row" .}}{{end}}
 </div>
 {{end}}
-{{template "_peers" $d}}
 {{template "_pager" $d.Pager}}
 {{template "_form_admin_deposit" .}}
 

@@ -233,7 +233,6 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"tab":          tab,
 		"paneltab":     paneltab,
 		"actionsHref":  actionsHref,
-		"peersHref":    peersHref,
 		"runForm":      runForm,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,

@@ -4,8 +4,7 @@
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
 {{$n := nameOf $i.Petname $d.Key}}
 <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
-  {{- if $i.Account}}{{if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}
-  {{- else if $i.Discovered}} <span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}</h1>
+  {{- if $i.Account}} <span class="pill">party</span>{{if $i.Account.Suspended}} <span class="pill status-danger">suspended</span>{{end}}{{end}}</h1>
 <p class="subtitle mono hash">{{$d.Key}}</p>
 {{if $i.About}}<p class="subtitle">{{$i.About}}</p>{{end}}
 
@@ -35,10 +34,20 @@
 {{/* Naming is the one thing an operator does to a kernel from here. It binds a
      PETNAME, exactly — the only way to name a kernel this node has merely
      discovered (§13) — and keys on the public key, since an unbound kernel has
-     no name to key on. There is no money gesture: a peer holds no balance and
-     is never credited (§6.6). */}}
+     no name to key on. Suspension freezes a counterparty's account, so it is
+     offered only where one exists. There is no money gesture: a peer holds no
+     balance and is never credited (§6.6). */}}
 <div class="cluster">
   <a class="btn-quiet" href="/admin/peers/{{$d.Key}}?form=admin-rename" data-modal="form-admin-rename">name this kernel</a>
+  {{if $i.Account}}{{if $i.Account.Suspended}}
+  <form method="post" action="/admin/peers/unsuspend">
+    {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Unsuspend</button>
+  </form>
+  {{else}}
+  <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
+    {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn-danger" type="submit">Suspend</button>
+  </form>
+  {{end}}{{end}}
 </div>
 
 <dialog id="form-admin-rename" class="modal-form"{{if eq $d.OpenForm "admin-rename"}} open{{end}} aria-label="Name this kernel">

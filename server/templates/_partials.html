@@ -619,61 +619,31 @@
 {{- if .LastContactFailedAt}} · last contact failed {{relTime .LastContactFailedAt}}{{end -}}
 {{end}}
 
-{{define "_peers"}}
-{{if .Peers}}
-{{$known := .Known}}
-<div class="action-list">
-  {{range .Peers}}
-  {{$n := nameOf .Petname .PublicKey}}
-  <div class="action-row{{if .Suspended}} inactive{{end}}">
-    <span class="media tile">{{cardArt .PublicKey $n.Text "kernel"}}</span>
-    <div class="action-body">
-      {{/* The name that RESOLVES is the petname; an unbound kernel shows its
-           truncated key and stays callable by it. The rename link keys on the
-           public key, never on the displayed name — an unbound kernel has no
-           name to key on, and names collide across kernels (§6.6). */}}
-      <div class="row">
-        {{/* The petname resolves and links; the nickname is the kernel's own
-             claim, so it trails in parentheses, inert. */}}
-        <b class="ref mono grow"><a class="owner" href="/admin/peers/{{.PublicKey}}?form=admin-rename" title="{{$n.Title}}">{{$n.Text}}</a>{{if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}</b>
-        {{if $known}}<span class="chip" title="Discovered — known through the network, no account here">R</span>{{end}}
-        {{if .Suspended}}<span class="pill status-danger">suspended</span>{{end}}
-      </div>
-      <div class="fingerprint">{{truncate 16 .PublicKey}}</div>
-      {{if $known}}
-      <div class="small muted">{{.Actions}} actions{{template "_peer_contact" .}}</div>
-      <div class="cluster">
-        <a class="btn" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{/* Binding a petname is the only way to name a kernel merely
-             discovered — the kernel binds one automatically only on our own
-             first outbound use (§13). The peer's own page carries that form,
-             keyed on the public key. */}}
-        <a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>
-      </div>
-      {{else}}
-      {{/* A peer holds no money here: a foreign call is funded by the serving
-           kernel and settles per call on the rail (kernel §D14/§P10), so a
-           counterparty row carries contact facts, not a balance. */}}
-      <div class="small muted">{{template "_peer_contact" .}}</div>
-      <div class="cluster">
-        <a class="btn" href="/admin/peers/{{.PublicKey}}">Inspect</a>
-        {{if .Suspended}}
-        <form method="post" action="/admin/peers/unsuspend">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn" type="submit">Unsuspend</button>
-        </form>
-        {{else}}
-        <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
-          {{$.CSRFField}}<input type="hidden" name="key" value="{{.PublicKey}}"><button class="btn-danger" type="submit">Suspend</button>
-        </form>
-        {{end}}
-      </div>
-      {{end}}
+{{/* _kernel_row — one kernel on the network list, in the action row's grammar
+     (§5.5): tile, title line with its marks, key, about, facts. A peer row
+     links to its own page, where it is named and suspended; this kernel's row
+     links nowhere, because it is this page. Its title is the name bound here
+     (or the truncated key), and this kernel's own handle; a peer's nickname is
+     its claim, so it trails in parentheses, inert (§6.6). */}}
+{{define "_kernel_row"}}
+{{$current := eq .Class "current"}}
+<article class="action-row{{if not $current}} rowable{{end}}{{if .Suspended}} inactive{{end}}"{{if not $current}} tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
+  <span class="media tile">{{cardArt .PublicKey .Name.Text "kernel"}}</span>
+  <div class="action-body">
+    <div class="action-line">
+      {{if $current}}<span class="action-title mono" title="{{.Name.Title}}">{{.Name.Text}}</span>
+      {{- else}}<a class="action-title mono" href="/admin/peers/{{.PublicKey}}" title="{{.Name.Title}}">{{.Name.Text}}</a>{{end}}
+      {{- if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}
+      {{- if $current}} <span class="pill">current</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
+      {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}
     </div>
+    <p class="action-ref fingerprint">{{truncate 16 .PublicKey}}</p>
+    {{if .About}}<p class="action-desc">{{.About}}</p>{{end}}
+    {{- /* A catalog count is a fact of the known network; a counterparty row
+         states only the contact cache (§6.6). */}}
+    {{if not $current}}<p class="small muted">{{if eq .Class "known"}}{{.Actions}} actions{{end}}{{template "_peer_contact" .}}</p>{{end}}
   </div>
-  {{end}}
-</div>
-{{else if .Known}}<p class="muted">No kernels discovered yet.</p>
-{{else}}<p class="muted">No counterparties yet.</p>{{end}}
+</article>
 {{end}}
 
 {{/* _inspect_status — a peer's live reachability card, extracted so the inspect
