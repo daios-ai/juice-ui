@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -75,21 +76,96 @@ const (
 // kernelRow is one kernel on the network list. Name is what its title shows:
 // a peer's petname or truncated key (nameOf), and for this kernel its own
 // handle — never stored as a petname, which is a name bound here for another
-// kernel, nor as a nickname, which is a peer's unverified claim.
+// kernel, nor as a nickname, which is a peer's unverified claim. Strip is the
+// peer's facts in the stat strip's grammar; this kernel's row has none, since
+// the roster states nothing about it.
 type kernelRow struct {
 	client.Peer
 	Class string
 	Name  Name
+	Strip *KernelStrip
+}
+
+// KernelStrip is a kernel's facts as a stat strip (§5.5): fixed slots in a
+// fixed order so rows compare down the column. The roster yields the catalog
+// and the contact cache; the inspect page's live probe replaces the cache with
+// reachability and adds the provider's own report, pooled over its actions.
+type KernelStrip struct {
+	Actions int
+	Seen    string // last_seen, "" until an exchange has succeeded
+	Failed  string // last_contact_failed_at, "" until one has failed
+
+	Live        bool // the probe's slots below are present (inspect page)
+	Path        string
+	RTTMillis   int64
+	Uses        int64
+	Successes   int64
+	RatingCount int64
+	RatingMean  float64
+}
+
+func kernelStrip(p client.Peer) *KernelStrip {
+	return &KernelStrip{Actions: p.Actions, Seen: p.LastSeen, Failed: p.LastContactFailedAt}
+}
+
+func inspectStrip(i client.Inspection) KernelStrip {
+	s := KernelStrip{Actions: len(i.Actions), Live: true, Path: i.Reachability.Path, RTTMillis: i.Reachability.RTTMillis}
+	s.Uses, s.Successes, s.RatingCount, s.RatingMean = poolEvidence(i.SelfEvidence().Rows)
+	return s
+}
+
+// poolEvidence sums one issuer's rows: successes over uses, and the rating as
+// the count-weighted mean of the per-action means, since an unweighted mean of
+// means over-weights thinly rated actions. A zero count leaves the mean zero.
+func poolEvidence(rows []client.Evidence) (uses, successes, ratingCount int64, ratingMean float64) {
+	var weighted float64
+	for _, e := range rows {
+		uses += e.Uses
+		successes += e.Successes
+		ratingCount += e.RatingCount
+		weighted += e.RatingMean * float64(e.RatingCount)
+	}
+	if ratingCount > 0 {
+		ratingMean = weighted / float64(ratingCount)
+	}
+	return
+}
+
+// petnameSuggestion is the name the rename form opens with: the petname when
+// one is bound (a rename), else the kernel's own auto-bind preference (kernel
+// §D15) — the cached nickname when it is not key-shaped and free, else
+// k-<key8>, either suffixed -2, -3, … to the lowest free number — so an explicit
+// bind and an automatic one look alike. taken reports a name bound to another
+// kernel or held by this one. The kernel remains the validator.
+func petnameSuggestion(petname, nickname, key string, taken func(string) bool) string {
+	if petname != "" {
+		return petname
+	}
+	base := nickname
+	if base == "" || looksLikeKey(base) {
+		base = "k-" + key[:min(keyLen, len(key))]
+	}
+	if !taken(base) {
+		return base
+	}
+	for n := 2; ; n++ {
+		if s := fmt.Sprintf("%s-%d", base, n); !taken(s) {
+			return s
+		}
+	}
 }
 
 // adminInspectView carries the inspected kernel. The billing account arrives
 // inline on the inspection itself (client.Inspection.Account), so the page needs
 // no roster scan: a nil account is a kernel that holds none here, which is a
 // fact about the peer and no longer an opening for a gesture — a peer is never
-// credited (§6.6). The one verb here is naming it.
+// credited (§6.6). Suggestion is the rename form's prefill, computed only when
+// that form opens, because it needs the roster.
 type adminInspectView struct {
 	Key        string
 	Inspection client.Inspection
+	Strip      KernelStrip
+	Suggestion string
 	OpenForm   string
 	CSRFField  template.HTML
 }
@@ -318,7 +394,7 @@ func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 	for _, class := range []string{classParty, classKnown} {
 		for _, p := range peers {
 			if p.HasAccount == (class == classParty) {
-				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.PublicKey)})
+				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.PublicKey), Strip: kernelStrip(p)})
 			}
 		}
 	}
@@ -341,6 +417,28 @@ func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Inspection = insp
+		view.Strip = inspectStrip(insp)
+		if view.OpenForm != "admin-rename" {
+			return nil
+		}
+		// The prefill must be free here: every bound petname, suspended
+		// parties included, and this kernel's own name, which it binds to its
+		// own key.
+		id, e := s.client.AdminIdentity(ctx, tok)
+		if e != nil {
+			return e
+		}
+		peers, e := s.client.AdminListPeers(ctx, tok, true)
+		if e != nil {
+			return e
+		}
+		taken := map[string]bool{id.Handle: true}
+		for _, p := range peers {
+			if p.Petname != "" && p.PublicKey != key {
+				taken[p.Petname] = true
+			}
+		}
+		view.Suggestion = petnameSuggestion(insp.Petname, insp.Nickname, key, func(n string) bool { return taken[n] })
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {

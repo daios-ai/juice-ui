@@ -1034,8 +1034,8 @@ func TestKernelListOrderAndPills(t *testing.T) {
 		}
 		last = i
 	}
-	if n := strings.Count(body, `<span class="pill">current</span>`); n != 1 {
-		t.Errorf("exactly one current pill, got %d", n)
+	if n := strings.Count(body, `<span class="pill">this kernel</span>`); n != 1 {
+		t.Errorf("exactly one this-kernel pill, got %d", n)
 	}
 	if n := strings.Count(body, `<span class="pill">party</span>`); n != 2 {
 		t.Errorf("one party pill per counterparty, got %d", n)
@@ -1090,9 +1090,9 @@ func TestNetworkFiguresAndGap(t *testing.T) {
 	}
 }
 
-// A peer row is a results row: the whole row opens the peer's page, where it
-// is named and suspended, and the row itself carries no verb (§5.5).
-func TestPeerRowsCarryNoVerbs(t *testing.T) {
+// A named peer row is a results row: the whole row opens the peer's page, where
+// it is named and suspended, and the row itself carries no verb (§5.5).
+func TestNamedRowsCarryNoVerbs(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{
 		{Petname: "active", PublicKey: "KF", HasAccount: true},
 		{Petname: "frozen", PublicKey: "KG", HasAccount: true, SuspendedAt: "2026-07-19T17:50:24Z"},
@@ -1112,9 +1112,156 @@ func TestPeerRowsCarryNoVerbs(t *testing.T) {
 		t.Errorf("a suspended peer is dimmed and marked: %s", body)
 	}
 	// A known kernel states its catalog; last_seen is catalog freshness, not
-	// liveness: muted text, never a status pill.
-	if !strings.Contains(body, "13 actions") || !strings.Contains(body, "catalog verified") || strings.Contains(body, "status-credited") {
-		t.Errorf("a known row states its catalog and contact cache as text: %s", body)
+	// liveness: a strip slot with a tooltip, never a status pill.
+	if !strings.Contains(body, `#layers"/></svg> 13<`) || !strings.Contains(body, `title="Catalog verified`) || strings.Contains(body, "status-credited") {
+		t.Errorf("a known row states its catalog and contact cache in the strip: %s", body)
+	}
+}
+
+// The key renders in one spelling (§6.6): keyDisplay as the title when unbound,
+// else on the ref line; never both, and never a second truncation.
+func TestKeyRendersInOneSpelling(t *testing.T) {
+	const key = "lHynnkVtXrzrfAHCPgrjzctyjQqkehrUz0BZp7Pxnmw"
+	short := keyDisplay(key).Text
+	unbound := renderPeersPage(t, []client.Peer{{Nickname: "TitanPlus", PublicKey: key}}, false)
+	if n := strings.Count(unbound, short); n != 1 {
+		t.Errorf("an unbound row spells its key once, got %d: %s", n, unbound)
+	}
+	if strings.Contains(unbound, key[:16]+"<") || strings.Contains(unbound, `class="action-ref fingerprint" title="`+key+`"`) {
+		t.Errorf("an unbound row has no ref line: %s", unbound)
+	}
+	bound := renderPeersPage(t, []client.Peer{{Petname: "titan", PublicKey: key}}, false)
+	if !strings.Contains(bound, `<p class="action-ref fingerprint" title="`+key+`">`+short+`</p>`) {
+		t.Errorf("a bound row's ref line is the one key spelling: %s", bound)
+	}
+}
+
+// Every peer row ends with the kernel strip: three slots in one order, a muted
+// none where a slot has nothing, the separator between slots and never before
+// the first; this kernel's row, built from identity, carries none.
+func TestKernelStripSlots(t *testing.T) {
+	body := renderPeersPage(t, []client.Peer{
+		{Petname: "pb", PublicKey: "KB", HasAccount: true, Actions: 4, LastSeen: "2026-08-04T09:54:01Z", LastContactFailedAt: "2026-08-04T10:00:00Z"},
+		{Petname: "kc", PublicKey: "KC", Actions: 0},
+	}, false)
+	if n := strings.Count(body, `class="stat-strip"`); n != 2 {
+		t.Fatalf("one strip per peer row and none on this kernel's, got %d: %s", n, body)
+	}
+	last := -1
+	for _, slot := range []string{`title="Public actions in its catalog"`, `title="Catalog verified`, `title="Last contact failed"`, `title="Public actions in its catalog"`, `title="Catalog never verified"`, `title="No contact has failed"`} {
+		i := strings.Index(body[last+1:], slot)
+		if i < 0 {
+			t.Fatalf("slot %s missing or out of order: %s", slot, body)
+		}
+		last += 1 + i
+	}
+	if !strings.Contains(body, `<span class="muted" title="Catalog never verified">`) {
+		t.Error("an empty slot renders a muted none")
+	}
+	if strings.Contains(body, `"stat-strip">
+  ·`) || strings.Contains(body, "catalog verified") {
+		t.Errorf("no leading separator and no prose facts: %s", body)
+	}
+}
+
+// Naming is offered where the gap is visible: a row titled by its key carries
+// the one quiet opener, into its page with the rename modal open; a named row
+// and this kernel's row carry nothing (§6.6).
+func TestNameOpenerOnlyOnUnboundRows(t *testing.T) {
+	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
+	body := renderPeersPage(t, []client.Peer{
+		{Nickname: "tk", PublicKey: key},
+		{Petname: "pb", PublicKey: "KB", HasAccount: true},
+	}, false)
+	want := `<a class="btn-quiet" href="/admin/peers/` + key + `?form=admin-rename">name</a>`
+	if n, m := strings.Count(body, want), strings.Count(body, "?form=admin-rename"); n != 1 || m != 1 {
+		t.Errorf("exactly one name opener, on the unbound row: %d/%d: %s", n, m, body)
+	}
+}
+
+// The inspect page's strip replaces the contact cache with the live probe and
+// pools the provider's own report; rtt is omitted when the kernel did not ping.
+func TestInspectStripExtends(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(i client.Inspection) string {
+		rec := httptest.NewRecorder()
+		p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+			Key: "KEYC", Inspection: i, Strip: inspectStrip(i),
+		}}
+		if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return rec.Body.String()
+	}
+	live := render(client.Inspection{PublicKey: "KEYC", Online: true, Source: "live",
+		Actions:      []client.PeerAction{{ActionID: "a1"}, {ActionID: "a2"}},
+		Reachability: client.Reachability{Path: "direct", RTTMillis: 12, Protocols: []string{"/juice/fed/gossip/1"}},
+		Evidence: []client.Evidence{
+			{IssuerPublicKey: "KEYC", Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
+			{IssuerPublicKey: "KEYC", Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},
+			{IssuerPublicKey: "OTHER", Uses: 100, Successes: 0},
+		}})
+	for _, want := range []string{`#layers"/></svg> 2<`, `#arrow-left-right"/></svg> direct · 12 ms<`, `title="Success rate in the provider's own report — 10 runs"`, `> 80%<`, `title="Rating in the provider's own report — 10 raters"`, `> 55%<`} {
+		if !strings.Contains(live, want) {
+			t.Errorf("inspect strip missing %q: %s", want, live)
+		}
+	}
+	for _, gone := range []string{`title="Catalog verified`, `title="Last contact failed"`, "Petname</dt>", "Protocols", "/juice/fed/gossip/1"} {
+		if strings.Contains(live, gone) {
+			t.Errorf("inspect page must not render %q", gone)
+		}
+	}
+	quiet := render(client.Inspection{PublicKey: "KEYC", Reachability: client.Reachability{Path: "unreachable"}})
+	if !strings.Contains(quiet, `<span class="muted" title="Unreachable">`) || strings.Contains(quiet, " ms<") || !strings.Contains(quiet, `title="No runs in the provider's own report"`) {
+		t.Errorf("an unreachable, unreported kernel renders muted none slots: %s", quiet)
+	}
+}
+
+func TestPoolEvidence(t *testing.T) {
+	uses, successes, count, mean := poolEvidence([]client.Evidence{
+		{Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
+		{Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},
+	})
+	if uses != 10 || successes != 8 || count != 10 || mean != 0.55 {
+		t.Errorf("pooled = %d/%d, %d raters at %v; want 10/8, 10 at 0.55 (count-weighted, not 0.75)", uses, successes, count, mean)
+	}
+	if _, _, count, mean := poolEvidence(nil); count != 0 || mean != 0 {
+		t.Errorf("no rows pool to nothing, got %d at %v", count, mean)
+	}
+}
+
+// The prefill is the kernel's own auto-bind preference: petname > free
+// nickname > k-<key8>, suffixed -2, -3, … to the lowest free number.
+func TestPetnameSuggestion(t *testing.T) {
+	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
+	taken := func(names ...string) func(string) bool {
+		set := map[string]bool{}
+		for _, n := range names {
+			set[n] = true
+		}
+		return func(n string) bool { return set[n] }
+	}
+	cases := []struct {
+		petname, nickname string
+		taken             func(string) bool
+		want              string
+	}{
+		{"arfante", "arfante", taken("arfante"), "arfante"},
+		{"", "TitanPlus", taken(), "TitanPlus"},
+		{"", "TitanPlus", taken("TitanPlus"), "TitanPlus-2"},
+		{"", "TitanPlus", taken("TitanPlus", "TitanPlus-2"), "TitanPlus-3"},
+		{"", "TitanPlus", taken("TitanPlus", "TitanPlus-3"), "TitanPlus-2"},
+		{"", "behemoth", taken("behemoth"), "behemoth-2"},
+		{"", key, taken(), "k-X7lFapV-"},
+		{"", "", taken("k-X7lFapV-"), "k-X7lFapV--2"},
+	}
+	for _, c := range cases {
+		if got := petnameSuggestion(c.petname, c.nickname, key, c.taken); got != c.want {
+			t.Errorf("suggestion(%q, %q) = %q, want %q", c.petname, c.nickname, got, c.want)
+		}
 	}
 }
 
@@ -1207,7 +1354,7 @@ func TestInspectOfflineStranger(t *testing.T) {
 // be a fabrication.
 func TestPeerCardCarriesContactNotMoney(t *testing.T) {
 	body := renderPeersPage(t, []client.Peer{{Petname: "peerb", PublicKey: "KEY", HasAccount: true, LastSeen: "2026-07-12T00:00:00Z"}}, false)
-	if !strings.Contains(body, "catalog verified") {
+	if !strings.Contains(body, `title="Catalog verified`) {
 		t.Errorf("counterparty card missing the contact cache: %s", body)
 	}
 	for _, gone := range []string{"our credit there", "owes us", "we owe them", "position"} {

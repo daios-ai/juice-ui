@@ -780,30 +780,59 @@ func TestPeerContactTimestampsRenderAsDatedFacts(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(body, "catalog verified") {
-		t.Error("a row with last_seen states its catalog freshness")
-	}
-	if !strings.Contains(body, "last contact failed") {
-		t.Error("a row with last_contact_failed_at states it")
-	}
 	// Never a status pill — that would read as a verdict on availability.
 	for _, banned := range []string{`pill status-danger">offline`, `pill">unreachable`, ">offline<"} {
 		if strings.Contains(body, banned) {
 			t.Errorf("contact timestamps must not become a status signal: %q", banned)
 		}
 	}
-	// The debtor row has neither timestamp, so it states neither. Its own name
-	// proves the row rendered at all.
+	// The debtor row has neither timestamp, so both its slots are muted none.
+	// Its own name proves the row rendered at all.
 	if !strings.Contains(body, ">debtor<") {
 		t.Fatal("fixture changed: the debtor row is missing")
 	}
-	if strings.Count(body, "last contact failed") != 1 {
-		t.Errorf("only the one row with a failure states it, got %d", strings.Count(body, "last contact failed"))
-	}
 	// The discovered rows carry last_seen too (v0.12.24 stamps every row), so
 	// catalog freshness appears on both classes.
-	if n := strings.Count(body, "catalog verified"); n != 3 {
-		t.Errorf("every row with last_seen states it, got %d", n)
+	for want, n := range map[string]int{`title="Catalog verified`: 3, `title="Catalog never verified"`: 1, `title="Last contact failed"`: 1, `title="No contact has failed"`: 3} {
+		if got := strings.Count(body, want); got != n {
+			t.Errorf("%s: %d slots, want %d", want, got, n)
+		}
+	}
+}
+
+// The rename form opens prefilled by the kernel's auto-bind preference, past
+// every name held here (§6.6): KEYT1 claims "twin", which KEYT2 holds, so it
+// is offered twin-2; a bound kernel is offered its petname. The roster is read
+// only for that form: a plain open renders without it.
+func TestInspectPrefillsSuggestion(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClientAs(t, srv.URL, "sys")
+
+	if body := getBody(t, cl, srv.URL+"/admin/peers/KEYT1?form=admin-rename"); !strings.Contains(body, `name="new_name" type="text" class="mono" value="twin-2"`) {
+		t.Errorf("a discovered twin is offered twin-2: %s", body)
+	}
+	if body := getBody(t, cl, srv.URL+"/admin/peers/KEYB?form=admin-rename"); !strings.Contains(body, `value="kernelc" required`) {
+		t.Errorf("a bound kernel is offered its petname: %s", body)
+	}
+
+	target, _ := url.Parse(kernel.URL)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/admin/peers" {
+			http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer broken.Close()
+	srv2 := httptest.NewServer(newTestHandler(t, broken.URL))
+	defer srv2.Close()
+	cl2 := loginClientAs(t, srv2.URL, "sys")
+	if body := getBody(t, cl2, srv2.URL+"/admin/peers/KEYT1"); !strings.Contains(body, "a peer kernel") {
+		t.Errorf("a plain open needs no roster: %s", body)
 	}
 }
 

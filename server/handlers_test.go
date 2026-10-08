@@ -327,7 +327,7 @@ func authKernel() *httptest.Server {
 		rows := `{"petname":"peerb","nickname":"peerb","public_key":"KEYB","has_account":true,"actions":4,"last_seen":"2026-08-04T09:54:01Z","last_contact_failed_at":"2026-08-04T10:00:00Z"},
 		  {"petname":"debtor","public_key":"KEYD","has_account":true,"actions":0},
 		  {"nickname":"twin","public_key":"KEYT1","has_account":false,"actions":13,"last_seen":"2026-08-06T00:04:34Z"},
-		  {"nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
+		  {"petname":"twin","nickname":"twin","public_key":"KEYT2","has_account":false,"actions":7,"last_seen":"2026-08-06T00:04:35Z"}`
 		if r.URL.Query().Get("all") == "1" {
 			rows += `,{"petname":"frozen","public_key":"KEYS","has_account":true,"suspended_at":"2026-08-01T00:00:00Z"}`
 		}
@@ -355,7 +355,13 @@ func authKernel() *httptest.Server {
 		case strings.HasPrefix(key, "KEYT"):
 			account = "null"
 		}
-		w.Write([]byte(`{"petname":"kernelc","nickname":"selfname","public_key":"` + key + `","about":"a peer kernel",
+		// A discovered kernel is unbound: it has only its claim, "twin", which
+		// KEYT2 already holds here as a petname (roster above).
+		names := `"petname":"kernelc","nickname":"selfname"`
+		if strings.HasPrefix(key, "KEYT") {
+			names = `"petname":"","nickname":"twin"`
+		}
+		w.Write([]byte(`{` + names + `,"public_key":"` + key + `","about":"a peer kernel",
 		 "actions":[{"action_id":"a2","name":"synth@kernelc/make","description":"synth","price":20,"indicative":true}],
 		 "account":` + account + `,
 		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,

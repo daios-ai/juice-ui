@@ -614,17 +614,34 @@
 </tr>
 {{end}}
 
-{{define "_peer_contact"}}
-{{- if .LastSeen}} · catalog verified {{relTime .LastSeen}}{{end -}}
-{{- if .LastContactFailedAt}} · last contact failed {{relTime .LastContactFailedAt}}{{end -}}
+{{/* _kernel_strip — a kernel's facts in the stat strip's grammar (§5.5): icon
+     and value per slot, the meaning in the title, slots in one fixed order so
+     rows compare down the column, a muted "none" where a slot has nothing.
+     The roster yields the catalog and the contact cache, two dated facts and
+     never a verdict (§6.6); the inspect page's live probe replaces the cache
+     with reachability and adds the provider's own report. */}}
+{{define "_kernel_strip"}}
+<p class="stat-strip">
+  <span title="Public actions in its catalog"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#layers"/></svg> {{.Actions}}</span>
+  {{- if .Live}}
+  · {{if eq .Path "unreachable"}}<span class="muted" title="Unreachable"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#arrow-left-right"/></svg> none</span>{{else}}<span title="Reachability and one ping round trip"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#arrow-left-right"/></svg> {{if .Path}}{{.Path}}{{else}}reachable{{end}}{{if .RTTMillis}} · {{.RTTMillis}} ms{{end}}</span>{{end}}
+  · {{if gt .Uses 0}}<span title="Success rate in the provider's own report — {{.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .Successes .Uses}}%</span>{{else}}<span class="muted" title="No runs in the provider's own report"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none</span>{{end}}
+  · {{if gt .RatingCount 0}}<span title="Rating in the provider's own report — {{.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .RatingMean .RatingCount}}%</span>{{else}}<span class="muted" title="No ratings in the provider's own report"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none</span>{{end}}
+  {{- else}}
+  · {{if .Seen}}<span title="Catalog verified — last successful exchange"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{relTime .Seen}}</span>{{else}}<span class="muted" title="Catalog never verified"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
+  · {{if .Failed}}<span title="Last contact failed"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> {{relTime .Failed}}</span>{{else}}<span class="muted" title="No contact has failed"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg> none</span>{{end}}
+  {{- end}}
+</p>
 {{end}}
 
 {{/* _kernel_row — one kernel on the network list, in the action row's grammar
-     (§5.5): tile, title line with its marks, key, about, facts. A peer row
+     (§5.5): tile, title line with its marks, key, about, strip. A peer row
      links to its own page, where it is named and suspended; this kernel's row
      links nowhere, because it is this page. Its title is the name bound here
      (or the truncated key), and this kernel's own handle; a peer's nickname is
-     its claim, so it trails in parentheses, inert (§6.6). */}}
+     its claim, so it trails in parentheses, inert (§6.6). The key renders in
+     one spelling: as the title when unbound, else on the ref line. A row whose
+     title is a key carries the one verb that fills that gap, name. */}}
 {{define "_kernel_row"}}
 {{$current := eq .Class "current"}}
 <article class="action-row{{if not $current}} rowable{{end}}{{if .Suspended}} inactive{{end}}"{{if not $current}} tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
@@ -634,14 +651,13 @@
       {{if $current}}<span class="action-title mono" title="{{.Name.Title}}">{{.Name.Text}}</span>
       {{- else}}<a class="action-title mono" href="/admin/peers/{{.PublicKey}}" title="{{.Name.Title}}">{{.Name.Text}}</a>{{end}}
       {{- if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}
-      {{- if $current}} <span class="pill">current</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
+      {{- if $current}} <span class="pill">this kernel</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
       {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}
+      {{- if and (not $current) .Name.IsKey}} <a class="btn-quiet" href="/admin/peers/{{.PublicKey}}?form=admin-rename">name</a>{{end}}
     </div>
-    <p class="action-ref fingerprint">{{truncate 16 .PublicKey}}</p>
+    {{if not .Name.IsKey}}{{$k := nameOf "" .PublicKey}}<p class="action-ref fingerprint" title="{{$k.Title}}">{{$k.Text}}</p>{{end}}
     {{if .About}}<p class="action-desc">{{.About}}</p>{{end}}
-    {{- /* A catalog count is a fact of the known network; a counterparty row
-         states only the contact cache (§6.6). */}}
-    {{if not $current}}<p class="small muted">{{if eq .Class "known"}}{{.Actions}} actions{{end}}{{template "_peer_contact" .}}</p>{{end}}
+    {{if .Strip}}{{template "_kernel_strip" .Strip}}{{end}}
   </div>
 </article>
 {{end}}
@@ -651,8 +667,8 @@
      peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
+{{template "_kernel_strip" .Strip}}
 <dl class="kv">
-  <dt>Petname</dt><dd class="mono">{{if $i.Petname}}{{$i.Petname}}{{else}}<span class="muted">—</span>{{end}}</dd>
   <dt>Status</dt><dd>
     {{if $i.Online}}
     <span class="pill status-credited">online</span>
@@ -662,7 +678,6 @@
     <span class="muted small"{{with $i.Reachability.Error}} title="{{.}}"{{end}}>{{if eq $i.Source "local"}}last-known data{{else}}unreachable{{end}}</span>
     {{end}}
   </dd>
-  {{if $i.Reachability.Protocols}}<dt>Protocols</dt><dd class="mono tiny">{{range $i.Reachability.Protocols}}{{.}} {{end}}</dd>{{end}}
 </dl>
 {{end}}
 

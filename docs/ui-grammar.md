@@ -518,15 +518,42 @@ through `_figures` (§5.6), then the obligations, then **one list** of every
 known kernel in the action row's grammar (§5.5): **this kernel**, then its
 **counterparties**, then the **known network**, each class in the kernel's
 order, paged and never polled. A class is a neutral `.pill` on the title line —
-`current`, `party`; a known kernel carries no mark. There is **no
+`this kernel`, `party`; a known kernel carries no mark. There is **no
 subscribe/unsubscribe verb**; the one opener is **inspect a kernel by key**,
 beside the Show/Hide-suspended toggle.
 
-A row carries **no verb**, as a result row carries none: a peer's row is
-`.rowable` and opens its page (`/admin/peers/{key}`), where it is named and,
-when it holds an account here, suspended; a suspended counterparty is dimmed
-(`.action-row.inactive`) and keeps its `suspended` danger pill. This kernel's
-row is titled with its own handle and links nowhere, because it is this page.
+A peer's row is `.rowable` and opens its page (`/admin/peers/{key}`), where it
+is named and, when it holds an account here, suspended; a suspended
+counterparty is dimmed (`.action-row.inactive`) and keeps its `suspended`
+danger pill. This kernel's row is titled with its own handle and links nowhere,
+because it is this page. A named row carries **no verb**, as a result row
+carries none; a row titled by its key carries the one `.btn-quiet` opener,
+`name`, at the end of its title line (the price's slot, `margin-left: auto`),
+linking into its page with the rename modal open — the verb appears exactly
+where the gap it fills is visible.
+
+**The key has one spelling**: `keyDisplay` (8 characters and `…`, the whole
+key in `title`). An unbound row's title is that spelling and the row has no
+ref line; a named row's `.action-ref` is that spelling. `truncate` never
+touches a key.
+
+**The kernel strip** (`_kernel_strip`, `KernelStrip`) ends every peer row, in
+the `_stat_strip` grammar: icon and value per slot, the meaning in `title`,
+`·` between slots, a muted `none` where a slot has nothing. This kernel's row
+carries none — the roster states nothing about it.
+
+| slot | icon | row (roster) | inspect page (live probe) |
+|---|---|---|---|
+| catalog | `#layers` | public actions in its catalog | the same |
+| verified | `#clock` | `last_seen`, relative | — |
+| failed | `#x-mark` | `last_contact_failed_at`, relative | — |
+| reach | `#arrow-left-right` | — | `direct · 12 ms`; `none` when unreachable |
+| success | `#milestone` | — | Σsuccesses / Σuses over the provider's own rows |
+| rating | `#thumb-up` | — | count-weighted mean of the provider's own ratings |
+
+The strip keeps the action strip's flex rule: its guarantee is fixed slot
+order and fixed icons, not column alignment, and a grid variant would be a
+second layout of one component.
 
 **Naming is a petname system** (kernel §13, after Stiegler), and the three name
 classes render differently because they are trusted differently:
@@ -538,11 +565,16 @@ classes render differently because they are trusted differently:
 | **petname** | bound here, unique here, resolves | whole, in the provenance face |
 
 An unbound kernel therefore shows its truncated key, never its nickname. The
-displayed name links into the **one** rename modal (§5.8), keyed on the public
-key — an unbound kernel has no name to key on, and advertised names collide.
+**one** rename modal (§5.8) lives on the kernel's page, keyed on the public key
+— an unbound kernel has no name to key on, and advertised names collide. Its
+field opens prefilled by the kernel's auto-bind preference: the petname when
+bound, else the nickname or `k-<key8>`, suffixed `-2`, `-3`, … past every
+name held here (requirements §6.6).
 
-**Inspect** (`/admin/peers/{key}`) shows reachability (direct/relayed + rtt), the
-kernel's public actions, and **evidence** in **two blocks**, in the same
+**Inspect** (`/admin/peers/{key}`) leads with the verbs under the title, then
+the kernel strip (above) and a `kv` of present facts only — status with
+source and version; no dash for an absent petname, no protocol strings — then
+the kernel's public actions, and **evidence** in **two blocks**, in the same
 grouped-block grammar as the action stats table: the provider's own **report**
 ("reported by the provider"), then **counterparty experience** per issuer with
 its corroborated count. Each row names its subject action and states
@@ -565,8 +597,8 @@ named on its inspect page, keyed on its public key. The two are separate because
 the kernel's two routes are.
 
 A counterparty carries **no money at all**: a peer account is identity and
-moderation state, never a wallet (kernel §D14), so a row states its names, its
-catalog count and the contact cache. The money on this page is this kernel's
+moderation state, never a wallet (kernel §D14), so a row states its names and
+its strip. The money on this page is this kernel's
 own — exposure against its credit limit, the rates, the operator split, solvency,
 and a rail halt as a `.banner-error` — plus the obligations above.
 

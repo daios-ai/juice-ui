@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.19.0
+Version: 0.20.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.20.0.** A kernel row's facts are a strip in the action
+> strip's grammar (§6.6): catalog, catalog verified, last contact failed, with
+> a tooltip per slot; the inspect page's strip carries the live probe and the
+> provider's pooled report instead. The key renders in one spelling, the pill
+> reads `this kernel`, a row titled by its key carries the one `name` opener,
+> and the naming form opens prefilled by the kernel's own auto-bind rule.
 
 > **What changed in 0.19.0.** The network page reads like the search results
 > (§6.6): one list in the action row's grammar, this kernel first, then its
@@ -1421,30 +1428,42 @@ symmetry, but because the kernel refuses anything else.
   a bilateral position) and **discovered peers** (a catalog: action count). The
   page lists **this kernel first, then its counterparties, then the known
   network**, each class in the kernel's own order, as one paged list in the
-  action row's grammar (§6.2) — tile, title line, key, `about`, facts — and
+  action row's grammar (§6.2) — tile, title line, key, `about`, strip — and
   **not polled**. A class is marked by a neutral pill on the title line:
-  `current` on this kernel, `party` on a counterparty; a known kernel carries no
-  mark. This kernel's title is its own handle, and its row links nowhere,
-  because it is this page; a peer's row opens its page. A row carries **no
-  verb**, as a result row carries none. The identity this kernel's row needs is
-  read before the page renders: a failed read is an error, never a blank row.
-  The kernel's **contact cache** is served for every roster row, both
-  classes: `last_seen` (when a verified exchange last succeeded — catalog
-  freshness) and `last_contact_failed_at` (when one last failed). Both render as
-  muted dated text and never as a status pill, because the kernel states neither
-  as a verdict: it holds two timestamps that only ever move forward, and it
-  neither hides nor reorders a peer for having failed. The UI therefore reports
-  them and draws no conclusion about whether a peer is up — the call-and-see
-  rule below is unchanged. Every absent field — either timestamp, `about`,
-  `petname` — is omitted, never rendered as zero, an empty string, or a
+  `this kernel` on this kernel, `party` on a counterparty; a known kernel
+  carries no mark. This kernel's title is its own handle, and its row links
+  nowhere, because it is this page; a peer's row opens its page. The identity
+  this kernel's row needs is read before the page renders: a failed read is an
+  error, never a blank row.
+  **The key renders in one spelling.** The abbreviation exists for matching,
+  so a row never shows two of them: an unbound kernel's title is the
+  abbreviated key and the row has no ref line; a named kernel's ref line is
+  that same abbreviation. The whole key is recoverable from either.
+  **A peer row's facts are a strip**, in the action strip's grammar (§6.2):
+  icon and value per slot, the meaning in the tooltip, slots in one fixed
+  order so rows compare down the column — the catalog count (both classes),
+  then the kernel's **contact cache**: `last_seen` (when a verified exchange
+  last succeeded — catalog freshness) and `last_contact_failed_at` (when one
+  last failed). A slot with nothing to state renders a muted `none`, which is
+  the strip's positional convention and not the placeholder forbidden below.
+  The two timestamps are dated facts and never a status pill, because the
+  kernel states neither as a verdict: it holds two timestamps that only ever
+  move forward, and it neither hides nor reorders a peer for having failed.
+  The UI therefore reports them and draws no conclusion about whether a peer
+  is up — the call-and-see rule below is unchanged. This kernel's row carries
+  no strip: the roster states nothing about it. Every absent prose field —
+  `about`, `petname` — is omitted, never rendered as an empty string or a
   placeholder.
+  **A row carries a verb only where its gap is visible.** A row titled by its
+  key carries one quiet opener, `name`, into its page with the rename form
+  open; a named row and this kernel's row carry none, as a result row carries
+  none.
 
 * **A peer row carries no money.** A peer account is identity, attribution and
   moderation state, never a wallet: a foreign call is funded by the serving
   kernel and every obligation settles per call on the rail (kernel §D14, §P10).
-  So a peer row states its names, the contact cache and, for the known network,
-  its catalog count, and nothing else. A balance, a position or a credit figure here would
-  be a fabrication.
+  So a peer row states its names and its strip, and nothing else. A balance, a
+  position or a credit figure here would be a fabrication.
 * **This kernel's own credit position is the money fact on this page.** It
   renders through the figures (§5.6 of the grammar), above the list: what this
   kernel has delivered to foreign buyers and not been paid for, against the limit it set (`exposure` of `credit_limit`); the
@@ -1494,6 +1513,23 @@ symmetry, but because the kernel refuses anything else.
   unbound kernel has no name to key on, and advertised names collide. A user is
   renamed on the user page. The two forms are separate because the kernel's two
   routes are, and a single form would have to guess which namespace was meant.
+  **The form opens prefilled** by the kernel's own auto-bind preference (kernel
+  §D15), so an explicit bind and an automatic one look alike: the petname when
+  one is bound; else the nickname when it is not key-shaped and free; else
+  `k-<key8>`; either suffixed `-2`, `-3`, … to the lowest free number. Free
+  means bound to no other kernel here, suspended parties included, and not
+  this kernel's own name, which it binds to its own key. The roster is read
+  for that form alone. The kernel remains the validator: a rejection flashes
+  its message.
+* **The inspect page states present facts.** Its strip is the row's with the
+  live probe in place of the contact cache: the catalog, reachability (path and
+  one ping's round trip, omitted when the kernel did not ping), and the
+  provider's own report pooled over its actions — successes over uses, and the
+  count-weighted mean rating — each `none` when its denominator is zero. The
+  status line keeps online/offline, source and version. Transport protocol
+  strings are not shown, and no absent field renders as a dash. The verbs
+  (name; suspend where an account exists) sit under the title, before the
+  catalog.
 * **Work addressed to this kernel reaches its operator's inbox.** A peer
   addresses a task to the kernel as `sys@<kernel>`, and it is listed in `sys`'s
   inbox and completed there like any other (§6.3); this page lists none. An
