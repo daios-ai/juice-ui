@@ -2495,7 +2495,7 @@ func coerce(typ, val string) (json.RawMessage, error) {
 			return json.RawMessage(val), nil
 		}
 		return nil, fmt.Errorf("must be true or false")
-	case "object", "array":
+	case "json":
 		if !json.Valid([]byte(val)) {
 			return nil, fmt.Errorf("must be valid JSON")
 		}

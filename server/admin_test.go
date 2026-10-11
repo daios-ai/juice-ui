@@ -900,7 +900,8 @@ func (f *fakeConfig) Reconfigure(version string, cfg []byte) error {
 }
 
 const testConfigFile = `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
-"fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"SECRET-ENDPOINT-KEY"}}}}}`
+"fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":[
+	{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]},{"name":"b","key":"SECRET-B"}]}}}`
 
 const testConfigSchema = `{"type":"object","additionalProperties":false,"properties":{
 "$schema":{"type":"string"},"kernel_handle":{"type":"string"},"listen_addr":{"type":"string"},
@@ -909,7 +910,10 @@ const testConfigSchema = `{"type":"object","additionalProperties":false,"propert
 "native":{"type":"object","additionalProperties":false,"properties":{
 	"time":{"type":"object","additionalProperties":false,"properties":{"price":{"type":"integer"}}},
 	"llm":{"type":"object","additionalProperties":false,"properties":{
-		"endpoints":{"type":["object","null"],"additionalProperties":{"type":"object"}}}}}}}}`
+		"endpoints":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+			"name":{"type":"string"},"key":{"type":"string"},
+			"prices":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+				"model":{"type":"string"},"price":{"type":"integer"}}}}}}}}}}}}}`
 
 func configServer(t *testing.T) (*fakeConfig, *httptest.Server, *http.Client) {
 	t.Helper()
@@ -943,20 +947,21 @@ func configPost(t *testing.T, cl *http.Client, base string, form url.Values) str
 
 // The page is the kernel's schema filled from the file: the first boot's name
 // and the listen address read-only, every secret withheld, an endpoint's key
-// write-only, and the JSON editor holding the file itself.
+// write-only in its own row, and the JSON editor holding the file itself.
 func TestAdminConfigPage(t *testing.T) {
 	_, srv, cl := configServer(t)
 	body := getBody(t, cl, srv.URL+"/admin/config")
 	for _, want := range []string{
 		`name="f_/fee_bps"`, `value="2000"`, `<div class="box">k</div>`, `name="version" value="v1"`,
-		`name="s_native.llm.endpoints.ollama.key" type="password"`, `fee_bps&#34;: 2000`,
+		`name="f_/native/llm/endpoints/0/key" type="password" autocomplete="off" placeholder="configured ✓ (replace)"`,
+		`name="f_/native/llm/endpoints/1/key" type="password"`, `fee_bps&#34;: 2000`,
 		`<button class="btn" type="submit">Save and restart</button>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)
 		}
 	}
-	for _, not := range []string{"SECRET-CREDENTIALS-KEY", "SECRET-ENDPOINT-KEY", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`} {
+	for _, not := range []string{"SECRET", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`} {
 		if strings.Contains(body, not) {
 			t.Errorf("page has %q", not)
 		}
@@ -967,15 +972,20 @@ func TestAdminConfigPage(t *testing.T) {
 }
 
 // A save rewrites the file from the form. What the form cannot carry is kept:
-// the fixed keys, a secret left blank, and an empty value a blank input cannot
-// tell from absent. Nothing changed writes nothing; a refusal is shown as given.
+// the fixed keys, an endpoint key not replaced — by the endpoint's name, never
+// its row — and an empty value a blank input cannot tell from absent. Nothing
+// changed writes nothing; a refusal is shown as given.
 func TestAdminConfigSave(t *testing.T) {
 	fc, srv, cl := configServer(t)
 	fields := url.Values{"has_fields": {"1"},
 		"t_/fee_bps": {"integer"}, "f_/fee_bps": {"2000"}, "f_/auth_audience": {""}, "f_/credit_limit": {""},
 		"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"},
-		"t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"object"}, "f_/native/llm/endpoints": {`{"ollama":{}}`},
-		"s_native.llm.endpoints.ollama.key": {""}}
+		"t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"array"},
+		"t_/native/llm/endpoints/0": {"object"}, "f_/native/llm/endpoints/0/name": {"a"}, "f_/native/llm/endpoints/0/key": {""},
+		"t_/native/llm/endpoints/0/prices": {"array"}, "t_/native/llm/endpoints/0/prices/0": {"object"},
+		"f_/native/llm/endpoints/0/prices/0/model": {"m"},
+		"t_/native/llm/endpoints/0/prices/0/price": {"integer"}, "f_/native/llm/endpoints/0/prices/0/price": {"5"},
+		"t_/native/llm/endpoints/1": {"object"}, "f_/native/llm/endpoints/1/name": {"b"}, "f_/native/llm/endpoints/1/key": {""}}
 	wrote := func(want string) {
 		t.Helper()
 		var got, w any
@@ -986,40 +996,59 @@ func TestAdminConfigSave(t *testing.T) {
 		}
 		fc.wrote = ""
 	}
+	const head = `"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","auth_audience":"","credit_limit":null`
+	const fixed = head + `,"credentials_key":"SECRET-CREDENTIALS-KEY"`
 
 	if f := configPost(t, cl, srv.URL, fields); f != "info|Nothing changed." || fc.wrote != "" {
 		t.Errorf("unchanged form flashed %q, wrote %q", f, fc.wrote)
 	}
-	shown := `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{}}}}}`
-	if f := configPost(t, cl, srv.URL, url.Values{"raw_args": {shown}}); f != "info|Nothing changed." {
+	send := func(endpoints string) url.Values {
+		return url.Values{"raw_args": {`{` + head + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"endpoints":` + endpoints + `}}}`}}
+	}
+	shown := `[{"name":"a","prices":[{"model":"m","price":5}]},{"name":"b"}]`
+	if f := configPost(t, cl, srv.URL, send(shown)); f != "info|Nothing changed." {
 		t.Errorf("unchanged JSON flashed %q", f)
 	}
 
+	// A typed key replaces its endpoint's; a blank one keeps it.
 	form := url.Values{}
 	for k, v := range fields {
 		form[k] = v
 	}
 	form.Set("f_/fee_bps", "")
 	form.Del("f_/native/time/price")
-	form.Set("s_native.llm.endpoints.ollama.key", "sk")
+	form.Set("f_/native/llm/endpoints/1/key", "sk")
 	if f := configPost(t, cl, srv.URL, form); f != "success|Saved and restarted." {
 		t.Errorf("save flashed %q", f)
 	}
-	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
-		"auth_audience":"","credit_limit":null,"native":{"llm":{"endpoints":{"ollama":{"key":"sk"}}}}}`)
+	wrote(`{` + fixed + `,"native":{"llm":{"endpoints":[
+		{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]},{"name":"b","key":"sk"}]}}}`)
 
-	// The JSON editor cannot rename the kernel or drop a secret.
-	edited := strings.Replace(strings.Replace(shown, `"k"`, `"x"`, 1), `"fee_bps":2000,`, ``, 1)
-	configPost(t, cl, srv.URL, url.Values{"raw_args": {edited}})
-	wrote(`{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
-		"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":{"ollama":{"key":"SECRET-ENDPOINT-KEY"}}}}}`)
+	// A key follows its endpoint's name, not its row: reordered rows keep
+	// theirs, a removed endpoint takes its key, a renamed one has none, and
+	// the JSON editor cannot rename the kernel.
+	for _, c := range []struct{ sent, want string }{
+		{`[{"name":"b"},{"name":"a","prices":[{"model":"m","price":5}]}]`,
+			`[{"name":"b","key":"SECRET-B"},{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]}]`},
+		{`[{"name":"b"}]`, `[{"name":"b","key":"SECRET-B"}]`},
+		{`[{"name":"a","prices":[{"model":"m","price":5}]},{"name":"c"}]`,
+			`[{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]},{"name":"c"}]`},
+	} {
+		v := send(c.sent)
+		v.Set("raw_args", strings.Replace(v.Get("raw_args"), `"k"`, `"x"`, 1))
+		configPost(t, cl, srv.URL, v)
+		wrote(`{` + fixed + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"endpoints":` + c.want + `}}}`)
+	}
 
-	stale := url.Values{"raw_args": {edited}, "version": {"v0"}}
+	stale := send(shown)
+	stale.Set("version", "v0")
+	stale.Set("raw_args", strings.Replace(stale.Get("raw_args"), "2000", "1", 1))
 	if f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "changed since this page was loaded") {
 		t.Errorf("stale flashed %q", f)
 	}
 	fc.err = errors.New("the kernel did not start with this configuration; the previous one is restored: bad")
-	if f := configPost(t, cl, srv.URL, url.Values{"raw_args": {edited}}); !strings.Contains(f, "previous one is restored") {
+	stale.Set("version", "v1")
+	if f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "previous one is restored") {
 		t.Errorf("refusal flashed %q", f)
 	}
 }

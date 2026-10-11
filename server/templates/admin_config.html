@@ -11,14 +11,6 @@
   <input type="hidden" name="version" value="{{$d.Version}}">
   {{if not $d.Form.UseRawFallback}}{{template "_json_switch"}}{{end}}
   {{template "_form_fields" $d.Form}}
-  {{if $d.Secrets}}
-  <fieldset class="field group">
-    <legend>Secrets</legend>
-    {{range $d.Secrets}}
-    <div class="field"><label for="s_{{.}}" class="mono">{{.}}</label><input id="s_{{.}}" name="s_{{.}}" type="password" autocomplete="off" placeholder="configured ✓ (replace)"></div>
-    {{end}}
-  </fieldset>
-  {{end}}
   <div class="cluster"><button class="btn" type="submit">Save and restart</button></div>
 </form>
 {{end}}

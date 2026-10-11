@@ -10,15 +10,17 @@ import (
 
 // Field is one node of the run form, derived from a node of the input schema.
 // The form is the schema's tree (requirements.md §6.2): an object renders its
-// Fields as a group, an array its Rows, a map-shaped node a JSON editor, and
-// every other node one input.
+// Fields as a group, an array its Rows, a json node a JSON editor, and every
+// other node one input.
 type Field struct {
 	// Name is the property key; Path is the node's JSON Pointer (RFC 6901), the
 	// wire name under the f_/t_/n_ prefixes. An array element has no Name.
 	Name, Path string
-	Type       string // string | integer | number | boolean | object | array
-	Nullable   bool   // the schema admits null (`type: [T, "null"]`)
-	Required   bool
+	// Type is the schema's, or json for a node the schema leaves open — `{}`,
+	// an object without properties, an array without items — edited as JSON.
+	Type     string // string | integer | number | boolean | object | array | json
+	Nullable bool   // the schema admits null (`type: [T, "null"]`)
+	Required bool
 	// Title is the property's own short label, shown beside its key.
 	Title       string
 	Description string
@@ -33,13 +35,11 @@ type Field struct {
 	// argument — the model's selection (§6.2) — and is empty otherwise. A
 	// pre-filled field is still an ordinary field: it is editable, it is
 	// submitted like any other, and nothing about it is trusted.
-	Value  string
-	Fields []Field // an object's properties, in the order served
-	Rows   []Field // an array's elements, at Path/0, Path/1, …
-	// Map marks a node whose keys no field list can name — an object under
-	// `additionalProperties`, or an array without `items` — edited as JSON.
-	Map     bool
-	Example string          // a compact JSON skeleton: a Map node's placeholder
+	Value   string
+	Fields  []Field         // an object's properties, in the order served
+	Rows    []Field         // an array's elements, at Path/0, Path/1, …
+	Example string          // a compact JSON skeleton: a json node's placeholder
+	Secret  bool            // a write-only input, never filled (the configuration's keys)
 	items   json.RawMessage // an array's item schema, for one more row
 	// Frozen marks a node of the frozen form (§7): a JSON value — a result, a
 	// receipt's args, sealed partial_args — in the form's own anatomy, each
@@ -162,14 +162,6 @@ type schemaDoc struct {
 	Items       json.RawMessage   `json:"items"`
 	Properties  json.RawMessage   `json:"properties"`
 	Required    []string          `json:"required"`
-	// AdditionalProperties is false, absent, or a schema; a schema makes the
-	// object a map, whose keys no field list can name.
-	AdditionalProperties json.RawMessage `json:"additionalProperties"`
-}
-
-// isMap reports a schema under additionalProperties.
-func (d schemaDoc) isMap() bool {
-	return bytes.HasPrefix(bytes.TrimSpace(d.AdditionalProperties), []byte("{"))
 }
 
 // BuildForm parses an input_schema into a FormModel. Any schema that is not an
@@ -183,12 +175,11 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	if err := json.Unmarshal(inputSchema, &doc); err != nil {
 		return FormModel{UseRawFallback: true}
 	}
-	// No `properties` key at all is an UNCONSTRAINED object, and a schema under
-	// `additionalProperties` is a map — any keys are valid, so the completer
-	// needs the raw editor. An explicitly EMPTY `properties` on a closed object
-	// is the opposite claim: this input declares no fields, so there is nothing
-	// to collect and the form is its confirm button alone.
-	if doc.Type.Name != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 || doc.isMap() {
+	// No `properties` key at all is an UNCONSTRAINED object — any keys are
+	// valid, so the completer needs the raw editor. An explicitly EMPTY
+	// `properties` is the opposite claim: this input declares no fields, so
+	// there is nothing to collect and the form is its confirm button alone.
+	if doc.Type.Name != "object" || len(bytes.TrimSpace(doc.Properties)) == 0 {
 		return FormModel{UseRawFallback: true}
 	}
 	fields := childFields("", doc)
@@ -241,13 +232,13 @@ func buildField(path, name string, raw json.RawMessage, required bool) Field {
 		}
 	}
 	switch f.Type {
-	case "object":
-		if f.Fields = childFields(path, p); f.Fields == nil || p.isMap() {
-			f.Fields, f.Map, f.Example = nil, true, skeleton(raw)
+	case "", "object":
+		if f.Fields = childFields(path, p); f.Fields == nil {
+			f.Type, f.Example = "json", skeleton(raw)
 		}
 	case "array":
 		if len(bytes.TrimSpace(p.Items)) == 0 {
-			f.Map, f.Example = true, "[]"
+			f.Type, f.Example = "json", "[]"
 			break
 		}
 		f.items = p.Items
@@ -264,7 +255,7 @@ func (f *Field) addRow() {
 }
 
 // Fill pre-fills the form from a proposed args object (§6.2): scalars become
-// input values, an array gets one row per element, a Map node its JSON. A key
+// input values, an array gets one row per element, a json node its JSON. A key
 // the schema does not name is left to the raw editor.
 func (fm *FormModel) Fill(args json.RawMessage) {
 	var m map[string]json.RawMessage
@@ -284,7 +275,7 @@ func (f *Field) fill(v json.RawMessage) {
 		return
 	}
 	switch {
-	case f.Map:
+	case f.Type == "json":
 		f.Value = string(v)
 	case f.Type == "object":
 		var m map[string]json.RawMessage

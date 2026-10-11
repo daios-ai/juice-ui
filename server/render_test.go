@@ -2016,7 +2016,7 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 		"msgs":{"type":"array","title":"Messages","description":"M.","items":{"type":"object","properties":{
 			"role":{"type":"string","default":"user"},
 			"tags":{"type":"array","items":{"type":"string"}}}}},
-		"meta":{"type":"object","additionalProperties":{"type":"string"}}}}`))
+		"meta":{"type":"object"}}}`))
 	rec := httptest.NewRecorder()
 	if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
 		t.Fatal(err)
@@ -2030,7 +2030,7 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 		`<div class="rows" data-rows="/msgs/0/tags">`, `name="f_/msgs/0/tags/0"`,
 		`class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button>`,
 		`class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>`,
-		`name="f_/meta" placeholder="{}" rows="1"></textarea>`, `<input type="hidden" name="t_/meta" value="object">`,
+		`name="f_/meta" placeholder="{}" rows="1"></textarea>`, `<input type="hidden" name="t_/meta" value="json">`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("form missing %q:\n%s", want, body)

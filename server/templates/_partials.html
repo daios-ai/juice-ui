@@ -440,14 +440,14 @@
 {{/* _field — one node of the schema tree (§6.2). Its wire name is its JSON
      Pointer under f_ (value), t_ (type; a container's says how its children
      nest) and n_ (the null choice). An object is a group of its properties, an
-     array its rows, a Map node a JSON editor, anything else one input. An
+     array its rows, a json node a JSON editor, anything else one input. An
      array element has no name and renders label-less. A Frozen node is the
      same anatomy read-only (§7): no wire names, no buttons, each control a
      .box holding the value. */}}
 {{define "_field_name"}}{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}{{end}}
 {{define "_field_null"}}{{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Path}}" value="1"> null</label>{{end}}{{end}}
 {{define "_field"}}
-{{if or (eq .Type "object") (eq .Type "array")}}{{if not .Map}}
+{{if or (eq .Type "object") (eq .Type "array")}}
 <fieldset class="field group">
   {{if .Name}}<legend>{{template "_field_name" .}}</legend>{{end}}
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
@@ -462,8 +462,7 @@
   {{end}}
   {{template "_field_null" .}}
 </fieldset>
-{{end}}{{end}}
-{{if or .Map (and (ne .Type "object") (ne .Type "array"))}}
+{{else}}
 <div class="field">
   {{if .Name}}<label{{if not .Frozen}} for="f_{{.Path}}"{{end}}>{{template "_field_name" .}}</label>{{end}}
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
@@ -477,7 +476,7 @@
        like any other, and trusted no more than one typed by hand. A blank
        field is omitted, so an optional select leads with a blank choice; a
        schema default is a placeholder, never a value. */}}
-  {{if .Map}}
+  {{if eq .Type "json"}}
   <textarea id="f_{{.Path}}" name="f_{{.Path}}" placeholder="{{.Example}}" rows="1">{{$v}}</textarea>
   {{else if .Enum}}
   <select id="f_{{.Path}}" name="f_{{.Path}}">
@@ -488,6 +487,8 @@
   <select id="f_{{.Path}}" name="f_{{.Path}}">{{if not .Required}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
   {{else if or (eq .Type "integer") (eq .Type "number")}}
   <input id="f_{{.Path}}" name="f_{{.Path}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
+  {{else if .Secret}}
+  <input id="f_{{.Path}}" name="f_{{.Path}}" type="password" autocomplete="off"{{with .Default}} placeholder="{{.}}"{{end}}>
   {{else if .Input}}
   <input id="f_{{.Path}}" name="f_{{.Path}}" type="{{.Input}}"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
   {{else}}

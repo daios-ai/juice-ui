@@ -239,9 +239,11 @@ function wireRows(box) {
     }
   };
   rows().forEach(wire);
-  // A select keeps its choice: emptied, it would submit nothing it offers.
+  // A select keeps its choice: emptied, it would submit nothing it offers. A
+  // password's placeholder states what its own row holds, so a copy drops it.
   const clear = (row) => {
     for (const el of row.querySelectorAll('input:not([type=hidden]), textarea')) el.value = '';
+    for (const el of row.querySelectorAll('input[type=password]')) el.placeholder = '';
     for (const el of row.querySelectorAll('input[type=checkbox]')) el.checked = false;
     return row;
   };

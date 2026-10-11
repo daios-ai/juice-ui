@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.23.0
+Version: 0.24.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.24.0.** The UI follows kernel v0.15.13, whose schema
+> subset has one string per value: a map (`additionalProperties` as a schema)
+> is refused, `{}` and a bare object are leaves, and an optional property's
+> empty value is not its absence. The run form loses its map-shaped node; a
+> node the schema leaves open is a JSON editor sent as the JSON it holds
+> (§6.2). The configuration's endpoints are a list, each endpoint's key a
+> write-only input in its own row, kept by the endpoint's name (§6.6).
 
 > **What changed in 0.23.0.** One **copy control** (§7): wherever a key, a
 > hash, an address or the recovery phrase is named, an icon-only button
@@ -1088,16 +1096,17 @@ spend:
   `pattern` is anchored differently in HTML).
 * **The form is the schema's tree.** A nested object renders as a group of its
   properties under its label; an array as rows of its item, `max(minItems, 1)`
-  to start, with Add and Remove; a map-shaped node (a schema under
-  `additionalProperties`, or an array without `items`) as an empty JSON editor
-  whose placeholder is the shape. A field is named by its JSON Pointer
+  to start, with Add and Remove; a node the schema leaves open (`{}`, an
+  object without `properties`, an array without `items`) as an empty JSON
+  editor whose placeholder is the shape, its text sent as the JSON it holds. A field is named by its JSON Pointer
   (`f_/messages/0/content`), its type by `t_<path>` — a container's hint says
   how its children nest — and its null choice by `n_<path>`, which nulls the
   whole subtree. The args are rebuilt from the form alone, with no schema read
   at submit: an empty container is omitted, a row left blank is dropped and the
-  indices compact; an explicit `[]` or `{}` is typed in JSON mode. The map-shaped
-  input as a whole uses the raw editor; a closed object with no properties is a
-  confirm alone.
+  indices compact. An optional property's `""`, `[]` or `{}` is a value
+  distinct from its absence (kernel D4), which a blank input cannot carry, so
+  it is typed in JSON mode. A closed object with no properties is a confirm
+  alone.
 * **A run MUST pin the quote it was shown.** Every action read and every
   `sys/lookup` row carries `quote_hash`, a fingerprint of the quoted terms
   (price, title, description, schemas, effect). The form carries it as a hidden field
@@ -1665,10 +1674,13 @@ file's only writer; the kernel manual has the operator edit it.)
   itself.
 * `kernel_handle`, decided at first boot, and `listen_addr`, the port this UI
   finds its kernel by, are read-only. The file's secrets — the keys the kernel
-  gives no command-line flag: `credentials_key` and each
-  `native.llm.endpoints.<endpoint>.key` — are never shown; each endpoint key has
-  a write-only input, shown only as "configured ✓ (replace)", and one left blank
-  is kept.
+  gives no command-line flag: `credentials_key` and the `key` of each entry of
+  the `native.llm.endpoints` list — are never shown. `credentials_key` is kept
+  as saved. An endpoint's key is a write-only input in its own row, shown only
+  as "configured ✓ (replace)" where the file holds one; a row added by Add
+  claims none. A key is kept by the endpoint's **name**, never its row: a typed
+  key replaces it, a blank one keeps the saved key of that name, a removed
+  endpoint takes its key with it, and a renamed one has none until typed.
 * A field cleared is removed from the file, restoring the kernel's default; a
   blank field where the file holds an empty value is no change, since a blank
   input cannot tell the two apart. A form unchanged writes nothing.
@@ -2193,11 +2205,6 @@ once its prerequisite is confirmed on the running kernel.
   charge, so the daemon's replies are its declared outputs. A title differing
   alone — the kernel titled chat's rows with the last segment of their names —
   is sent alone, which keeps the action live and its grants intact.
-* **Kernel contract defects (informative).** `juicedocs/API.md` still describes
-  a parked call's `refund_eligible_at` and an automatic refund, which 4dbfedd
-  serves neither of; its R6 breaks off mid-sentence; and it says a task
-  addressed to a kernel names it alone, where the kernel refuses a bare name and
-  the operator is `sys@<kernel>`. The UI follows the measured kernel.
 
 **Error mapping (informative).** `ErrUnauthenticated` (incl. suspension) → clean
 logout with explanation; `ErrUnauthorized` → not-permitted message; `ErrNotFound`;

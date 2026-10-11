@@ -3917,8 +3917,8 @@ func TestCatalogDiscoveredRows(t *testing.T) {
 
 // The args are rebuilt from the form's pointers and hints alone: a nested
 // object, an array whose blank row is dropped and whose indices compact, a
-// null box that nulls its subtree, an escaped key, and an untouched optional
-// map, which is omitted like any blank field (§6.2).
+// null box that nulls its subtree, an escaped key, a JSON field sent as the
+// value it holds, and an untouched one, omitted like any blank field (§6.2).
 func TestBuildArgsRebuildsTheTree(t *testing.T) {
 	form := url.Values{
 		"has_fields":         {"1"},
@@ -3938,7 +3938,8 @@ func TestBuildArgsRebuildsTheTree(t *testing.T) {
 		"f_/options/tags/0": {""}, "t_/options/tags/0": {"string"},
 		"t_/tool":      {"object"},
 		"f_/tool/name": {"ignored"}, "t_/tool/name": {"string"}, "n_/tool": {"1"},
-		"f_/meta": {""}, "t_/meta": {"object"},
+		"f_/meta": {""}, "t_/meta": {"json"},
+		"f_/any": {"5"}, "t_/any": {"json"},
 		"f_/a~1b": {"slash"}, "t_/a~1b": {"string"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
@@ -3947,9 +3948,15 @@ func TestBuildArgsRebuildsTheTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"a/b":"slash","messages":[{"content":"hi","role":"user"},{"content":"later","role":"system"}],"options":{"depth":3},"tool":null}`
+	want := `{"a/b":"slash","any":5,"messages":[{"content":"hi","role":"user"},{"content":"later","role":"system"}],"options":{"depth":3},"tool":null}`
 	if string(raw) != want {
 		t.Errorf("args = %s\nwant %s", raw, want)
+	}
+	form = url.Values{"has_fields": {"1"}, "f_/any": {"{bad"}, "t_/any": {"json"}}
+	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := buildArgs(req); err == nil || !strings.Contains(err.Error(), "must be valid JSON") {
+		t.Errorf("invalid JSON = %v", err)
 	}
 }
 

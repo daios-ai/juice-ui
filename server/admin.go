@@ -532,30 +532,27 @@ type Configuration interface {
 type configView struct {
 	Form    FormModel
 	Version string
-	Secrets []string // replaceable secrets, by dotted path
 }
 
 // configFixed are kept as saved whatever the form says: the schema pointer,
-// the first boot's name, and listen_addr, the port this UI finds its kernel by
-// (kernel.World).
-var configFixed = []string{"$schema", "kernel_handle", "listen_addr"}
+// the first boot's name, listen_addr, the port this UI finds its kernel by
+// (kernel.World), and credentials_key, a secret never shown.
+var configFixed = []string{"$schema", "kernel_handle", "listen_addr", "credentials_key"}
 
-// secretPaths are the file's secrets present in cfg, by dotted path: the keys
-// the kernel gives no command-line flag, a command line being readable by every
-// user of the machine (kernel requirements, Config) — credentials_key and each
-// language-model endpoint's key.
-func secretPaths(cfg map[string]any) []string {
-	var out []string
-	if _, ok := cfg["credentials_key"]; ok {
-		out = append(out, "credentials_key")
-	}
-	eps, _ := getDotted(cfg, "native.llm.endpoints").(map[string]any)
-	for n, ep := range eps {
-		if ep, _ := ep.(map[string]any); ep != nil && ep["key"] != nil {
-			out = append(out, "native.llm.endpoints."+n+".key")
+// configured is the placeholder of an endpoint key the file holds.
+const configured = "configured ✓ (replace)"
+
+// endpoints are the file's language-model endpoints, `native.llm.endpoints`,
+// each holding its `name` and the key the kernel gives no command-line flag
+// (kernel requirements, Config).
+func endpoints(cfg map[string]any) []map[string]any {
+	list, _ := getDotted(cfg, "native.llm.endpoints").([]any)
+	out := make([]map[string]any, 0, len(list))
+	for _, e := range list {
+		if m, ok := e.(map[string]any); ok {
+			out = append(out, m)
 		}
 	}
-	sort.Strings(out)
 	return out
 }
 
@@ -568,9 +565,13 @@ func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	secrets := secretPaths(cfg)
-	for _, p := range secrets {
-		deleteDotted(cfg, p)
+	// A secret never reaches the page: credentials_key is dropped, and an
+	// endpoint key is withheld, its row saying only that it holds one.
+	delete(cfg, "credentials_key")
+	keyed := map[any]bool{}
+	for _, e := range endpoints(cfg) {
+		keyed[e["name"]] = e["key"] != nil
+		delete(e, "key")
 	}
 	shown, _ := json.MarshalIndent(cfg, "", "  ")
 	form := BuildForm(schema)
@@ -584,19 +585,38 @@ func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 			continue // editor metadata; a secret is never shown
 		}
 		f.Frozen = slices.Contains(configFixed, f.Name)
+		maskKeys(&f, keyed)
 		fields = append(fields, f)
 	}
 	form.Fields = fields
-	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{
-		Form: form, Version: version,
-		Secrets: slices.DeleteFunc(secrets, func(p string) bool { return p == "credentials_key" }),
-	})
+	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{Form: form, Version: version})
+}
+
+// maskKeys makes each endpoint row's key write-only, its placeholder saying so
+// where the file holds one for that endpoint's name.
+func maskKeys(f *Field, keyed map[any]bool) {
+	if f.Path == "/native/llm/endpoints" {
+		for _, row := range f.Rows {
+			i := slices.IndexFunc(row.Fields, func(c Field) bool { return c.Name == "name" })
+			for j := range row.Fields {
+				if k := &row.Fields[j]; k.Name == "key" {
+					k.Secret, k.Default = true, ""
+					if i >= 0 && keyed[row.Fields[i].Value] {
+						k.Default = configured
+					}
+				}
+			}
+		}
+	}
+	for i := range f.Fields {
+		maskKeys(&f.Fields[i], keyed)
+	}
 }
 
 // postAdminConfig writes the form over the file the page was rendered from and
 // restarts the kernel on it. What the form cannot carry is kept as saved: the
-// fixed keys, every secret not replaced, and an empty value a blank input
-// cannot tell from absent.
+// fixed keys, an endpoint key not replaced — matched by the endpoint's name,
+// never its row — and an empty value a blank input cannot tell from absent.
 func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 	const back = "/admin/config"
 	args, err := buildArgs(r)
@@ -616,15 +636,19 @@ func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
-	for _, p := range append(slices.Clone(configFixed), secretPaths(saved)...) {
+	for _, p := range configFixed {
 		deleteDotted(to, p)
 		if v := getDotted(saved, p); v != nil {
 			setDotted(to, p, v)
 		}
 	}
-	for key, v := range r.PostForm {
-		if p, ok := strings.CutPrefix(key, "s_"); ok && strings.TrimSpace(v[0]) != "" {
-			setDotted(to, p, v[0])
+	keys := map[any]any{}
+	for _, e := range endpoints(saved) {
+		keys[e["name"]] = e["key"]
+	}
+	for _, e := range endpoints(to) {
+		if _, typed := e["key"]; !typed && keys[e["name"]] != nil {
+			e["key"] = keys[e["name"]]
 		}
 	}
 	keepEmpty(saved, to)

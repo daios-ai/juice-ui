@@ -330,26 +330,33 @@ func TestBuildFormHints(t *testing.T) {
 }
 
 // The canonical "takes nothing" schema is a closed object with no properties;
-// a schema under additionalProperties is a map, whose keys no field list can
-// name.
-func TestBuildFormClosedEmptyAndMap(t *testing.T) {
+// a node the schema leaves open — `{}`, an object without properties, an
+// array without items — is a JSON editor with its shape as the placeholder.
+func TestBuildFormClosedEmptyAndOpen(t *testing.T) {
 	if fm := BuildForm(json.RawMessage(`{"additionalProperties":false,"properties":{},"type":"object"}`)); !fm.NoFields {
 		t.Errorf("a closed object with no properties takes nothing: %+v", fm)
 	}
-	if fm := BuildForm(json.RawMessage(`{"additionalProperties":{"type":"string"},"properties":{},"type":"object"}`)); !fm.UseRawFallback {
-		t.Errorf("a map-shaped object needs the raw editor: %+v", fm)
+	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{"any":{},"obj":{"type":"object"},"arr":{"type":"array"}}}`))
+	want := map[string]string{"any": "null", "obj": "{}", "arr": "[]"}
+	for _, f := range fm.Fields {
+		if f.Type != "json" || f.Example != want[f.Name] || f.Fields != nil || f.Rows != nil {
+			t.Errorf("%s = %+v: an open node is a JSON editor", f.Name, f)
+		}
+	}
+	if len(fm.Fields) != 3 {
+		t.Errorf("fields = %+v", fm.Fields)
 	}
 }
 
 // The form is the schema's tree: an object's properties nest under its path, an
-// array starts with max(minItems, 1) rows of its item, a map-shaped node is a
-// JSON editor with the shape as its placeholder, and keys are pointer-escaped.
+// array starts with max(minItems, 1) rows of its item, an open node is a JSON
+// editor with the shape as its placeholder, and keys are pointer-escaped.
 func TestBuildFormTree(t *testing.T) {
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
 		"a/b":{"type":"string","default":"x","format":"email"},
 		"date":{"type":"string","format":"date"},
 		"depth":{"type":"integer","exclusiveMinimum":0,"exclusiveMaximum":10},
-		"meta":{"type":"object","additionalProperties":{"type":"string"}},
+		"meta":{"type":"object"},
 		"msgs":{"type":"array","minItems":2,"items":{"type":"object","properties":{
 			"role":{"type":"string","enum":["user","system"]},
 			"tool":{"type":["object","null"],"properties":{"name":{"type":"string"}}}},"required":["role"]}},
@@ -371,8 +378,8 @@ func TestBuildFormTree(t *testing.T) {
 	if f := by["depth"]; f.Min != "1" || f.Max != "9" {
 		t.Errorf("depth = %+v: exclusive integer bounds shift by one", f)
 	}
-	if f := by["meta"]; !f.Map || f.Example != "{}" || f.Fields != nil {
-		t.Errorf("meta = %+v: a map node is a JSON editor", f)
+	if f := by["meta"]; f.Type != "json" || f.Example != "{}" || f.Fields != nil {
+		t.Errorf("meta = %+v: an object without properties is a JSON editor", f)
 	}
 	msgs := by["msgs"]
 	if !msgs.Required || len(msgs.Rows) != 2 || msgs.Rows[1].Path != "/msgs/1" || msgs.Rows[1].Name != "" {
@@ -388,7 +395,7 @@ func TestBuildFormTree(t *testing.T) {
 	if f := by["tags"]; len(f.Rows) != 1 || f.Rows[0].Type != "string" || f.Rows[0].Path != "/tags/0" {
 		t.Errorf("tags = %+v", f)
 	}
-	if f := by["loose"]; !f.Map || f.Example != "[]" {
+	if f := by["loose"]; f.Type != "json" || f.Example != "[]" {
 		t.Errorf("an array without items is a JSON editor: %+v", f)
 	}
 	for _, c := range []string{"plain", "a/b", "a~b", "~1/"} {
@@ -398,12 +405,12 @@ func TestBuildFormTree(t *testing.T) {
 	}
 }
 
-// A proposal fills the tree: scalars as text, one row per array element, a map
-// node as its JSON; a key the schema does not name is left alone.
+// A proposal fills the tree: scalars as text, one row per array element, an
+// open node as its JSON; a key the schema does not name is left alone.
 func TestFormFill(t *testing.T) {
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
 		"n":{"type":"integer"},
-		"meta":{"type":"object","additionalProperties":{"type":"string"}},
+		"meta":{"type":"object"},
 		"msgs":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}}}}`))
 	fm.Fill(json.RawMessage(`{"n":4,"meta":{"k":"v"},"msgs":[{"role":"user","content":"a"},{"role":"system","content":"b"}],"extra":1}`))
 	by := map[string]Field{}
@@ -411,7 +418,7 @@ func TestFormFill(t *testing.T) {
 		by[f.Name] = f
 	}
 	if by["n"].Value != "4" || by["meta"].Value != `{"k":"v"}` {
-		t.Errorf("scalars = %q, map = %q", by["n"].Value, by["meta"].Value)
+		t.Errorf("scalars = %q, open = %q", by["n"].Value, by["meta"].Value)
 	}
 	msgs := by["msgs"]
 	if len(msgs.Rows) != 2 || msgs.Rows[1].Path != "/msgs/1" || msgs.Rows[1].Fields[0].Value != "system" || msgs.Rows[0].Fields[1].Value != "a" {
