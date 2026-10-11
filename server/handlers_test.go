@@ -3940,6 +3940,7 @@ func TestBuildArgsRebuildsTheTree(t *testing.T) {
 		"f_/tool/name": {"ignored"}, "t_/tool/name": {"string"}, "n_/tool": {"1"},
 		"f_/meta": {""}, "t_/meta": {"json"},
 		"f_/any": {"5"}, "t_/any": {"json"},
+		"f_/none": {"null"}, "t_/none": {"json"},
 		"f_/a~1b": {"slash"}, "t_/a~1b": {"string"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
@@ -3948,7 +3949,7 @@ func TestBuildArgsRebuildsTheTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"a/b":"slash","any":5,"messages":[{"content":"hi","role":"user"},{"content":"later","role":"system"}],"options":{"depth":3},"tool":null}`
+	want := `{"a/b":"slash","any":5,"messages":[{"content":"hi","role":"user"},{"content":"later","role":"system"}],"none":null,"options":{"depth":3},"tool":null}`
 	if string(raw) != want {
 		t.Errorf("args = %s\nwant %s", raw, want)
 	}

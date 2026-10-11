@@ -406,19 +406,20 @@ func TestBuildFormTree(t *testing.T) {
 }
 
 // A proposal fills the tree: scalars as text, one row per array element, an
-// open node as its JSON; a key the schema does not name is left alone.
+// open node as its JSON, null included; a key the schema does not name is
+// left alone.
 func TestFormFill(t *testing.T) {
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
 		"n":{"type":"integer"},
-		"meta":{"type":"object"},
+		"meta":{"type":"object"},"any":{},
 		"msgs":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}}}}`))
-	fm.Fill(json.RawMessage(`{"n":4,"meta":{"k":"v"},"msgs":[{"role":"user","content":"a"},{"role":"system","content":"b"}],"extra":1}`))
+	fm.Fill(json.RawMessage(`{"n":4,"meta":{"k":"v"},"any":null,"msgs":[{"role":"user","content":"a"},{"role":"system","content":"b"}],"extra":1}`))
 	by := map[string]Field{}
 	for _, f := range fm.Fields {
 		by[f.Name] = f
 	}
-	if by["n"].Value != "4" || by["meta"].Value != `{"k":"v"}` {
-		t.Errorf("scalars = %q, open = %q", by["n"].Value, by["meta"].Value)
+	if by["n"].Value != "4" || by["meta"].Value != `{"k":"v"}` || by["any"].Value != "null" {
+		t.Errorf("scalars = %q, open = %q, %q", by["n"].Value, by["meta"].Value, by["any"].Value)
 	}
 	msgs := by["msgs"]
 	if len(msgs.Rows) != 2 || msgs.Rows[1].Path != "/msgs/1" || msgs.Rows[1].Fields[0].Value != "system" || msgs.Rows[0].Fields[1].Value != "a" {

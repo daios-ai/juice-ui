@@ -271,12 +271,14 @@ func (fm *FormModel) Fill(args json.RawMessage) {
 
 func (f *Field) fill(v json.RawMessage) {
 	v = bytes.TrimSpace(v)
+	if f.Type == "json" { // its text is the value, null included
+		f.Value = string(v)
+		return
+	}
 	if len(v) == 0 || string(v) == "null" {
 		return
 	}
 	switch {
-	case f.Type == "json":
-		f.Value = string(v)
 	case f.Type == "object":
 		var m map[string]json.RawMessage
 		_ = json.Unmarshal(v, &m)
