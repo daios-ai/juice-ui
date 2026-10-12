@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -36,6 +38,7 @@ type Field struct {
 	// pre-filled field is still an ordinary field: it is editable, it is
 	// submitted like any other, and nothing about it is trusted.
 	Value   string
+	Null    bool            // a nullable field filled with null: its null box is ticked
 	Fields  []Field         // an object's properties, in the order served
 	Rows    []Field         // an array's elements, at Path/0, Path/1, …
 	Example string          // a compact JSON skeleton: a json node's placeholder
@@ -254,52 +257,116 @@ func (f *Field) addRow() {
 	f.Rows = append(f.Rows, buildField(f.Path+"/"+strconv.Itoa(len(f.Rows)), "", f.items, false))
 }
 
-// Fill pre-fills the form from a proposed args object (§6.2): scalars become
-// input values, an array gets one row per element, a json node its JSON. A key
-// the schema does not name is left to the raw editor.
-func (fm *FormModel) Fill(args json.RawMessage) {
+// Fill pre-fills the form from an args object (§6.2): scalars become input
+// values, an array gets one row per element, a json node its JSON, a null a
+// ticked null box. It returns each value the form cannot hold exactly, as its
+// JSON Pointer and the reason, in pointer order: a key the form has no field
+// for, a value of another kind than its field's, a null where none is
+// admitted, and an empty value a blank control would drop. A proposal leaves
+// those to the raw editor; the JSON switch refuses to convert.
+func (fm *FormModel) Fill(args json.RawMessage) []string {
 	var m map[string]json.RawMessage
-	if json.Unmarshal(args, &m) != nil {
-		return
+	if json.Unmarshal(args, &m) != nil || m == nil {
+		return []string{"/: not a JSON object"}
 	}
-	for i := range fm.Fields {
-		if v, ok := m[fm.Fields[i].Name]; ok {
-			fm.Fields[i].fill(v)
-		}
-	}
+	return fillObject("", fm.Fields, m)
 }
 
-func (f *Field) fill(v json.RawMessage) {
+// fillObject fills fields from an object's members, reporting each member it
+// has no field for.
+func fillObject(path string, fields []Field, m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var inexact []string
+	for _, k := range keys {
+		i := slices.IndexFunc(fields, func(f Field) bool { return f.Name == k })
+		if i < 0 {
+			inexact = append(inexact, path+"/"+pointerEscape(k)+": the form has no field for it")
+			continue
+		}
+		inexact = append(inexact, fields[i].fill(m[k])...)
+	}
+	return inexact
+}
+
+// takes names what a field of each type holds, for a reason.
+var takes = map[string]string{
+	"string": "text", "integer": "an integer", "number": "a number",
+	"boolean": "true or false", "object": "an object", "array": "a list",
+}
+
+func (f *Field) fill(v json.RawMessage) []string {
 	v = bytes.TrimSpace(v)
 	if f.Type == "json" { // its text is the value, null included
 		f.Value = string(v)
-		return
+		return nil
 	}
-	if len(v) == 0 || string(v) == "null" {
-		return
-	}
-	switch {
-	case f.Type == "object":
-		var m map[string]json.RawMessage
-		_ = json.Unmarshal(v, &m)
-		for i := range f.Fields {
-			if c, ok := m[f.Fields[i].Name]; ok {
-				f.Fields[i].fill(c)
-			}
+	if string(v) == "null" {
+		if !f.Nullable {
+			return []string{f.Path + ": null is not admitted here"}
 		}
-	case f.Type == "array":
+		f.Null = true
+		return nil
+	}
+	wrong := []string{f.Path + ": the field takes " + takes[f.Type]}
+	switch f.Type {
+	case "object":
+		var m map[string]json.RawMessage
+		if json.Unmarshal(v, &m) != nil {
+			return wrong
+		}
+		if len(m) == 0 && !f.Required {
+			return []string{f.Path + ": an empty object can only be written in JSON"}
+		}
+		return fillObject(f.Path, f.Fields, m)
+	case "array":
 		var items []json.RawMessage
-		if json.Unmarshal(v, &items) != nil || len(items) == 0 {
-			return
+		if json.Unmarshal(v, &items) != nil {
+			return wrong
+		}
+		if len(items) == 0 {
+			if f.Required {
+				return nil
+			}
+			return []string{f.Path + ": an empty list can only be written in JSON"}
 		}
 		f.Rows = nil
+		var inexact []string
 		for _, it := range items {
 			f.addRow()
-			f.Rows[len(f.Rows)-1].fill(it)
+			inexact = append(inexact, f.Rows[len(f.Rows)-1].fill(it)...)
 		}
-	default:
-		f.Value = scalarText(v)
+		return inexact
 	}
+	// A scalar holds exactly the JSON kind its field submits.
+	text := scalarText(v)
+	var ok bool
+	switch f.Type {
+	case "string":
+		ok = v[0] == '"'
+		if ok && text == "" {
+			return []string{f.Path + ": an empty string can only be written in JSON"}
+		}
+	case "integer":
+		_, err := strconv.ParseInt(string(v), 10, 64)
+		ok = err == nil
+	case "number":
+		_, err := strconv.ParseFloat(string(v), 64)
+		ok = err == nil
+	case "boolean":
+		ok = string(v) == "true" || string(v) == "false"
+	}
+	if !ok {
+		return wrong
+	}
+	if f.Enum != nil && !slices.Contains(f.Enum, text) {
+		return []string{f.Path + ": not one of its choices"}
+	}
+	f.Value = text
+	return nil
 }
 
 // scalarText is a JSON scalar as a person would type it: a string without its

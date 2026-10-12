@@ -304,7 +304,7 @@
      toggle), one money-labeled button with progress, and the result BELOW the
      form. A task form is one-shot (disabled on success by app.js). */}}
 {{define "_call_form"}}
-<form class="card stack" method="post" action="{{.PostURL}}" data-json {{if .OneShot}}data-oneshot="true"{{end}}
+<form class="card stack" method="post" action="{{.PostURL}}" data-json data-to-json="/form/json" data-to-form="{{.FormURL}}" {{if .OneShot}}data-oneshot="true"{{end}}
       hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
       hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
   {{.CSRFField}}
@@ -318,22 +318,17 @@
   {{if .Locked}}<div class="frozen locked">{{template "_frozen" (frozen .Locked)}}</div>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="cluster">
-    {{/* Two-branch completion rule (requirements.md §6.3, the single statement):
-         an ORDINARY task completion (OneShot) is NEUTRAL and names NO amount —
-         the completer is doing requested work; the funds were reserved by
-         whoever created the task. A PAYMENT task (IsPayment: the target action
-         bears effect="transfer") IS a spend of the completer's own balance, so
-         it gets the money button — "Complete ($N)" for a sealed amount, bare
-         money "Complete" when the completer types the amount (wallet-send
-         pattern). A paid *run* names its price as before. */}}
-    {{$spend := or (and (gt .Price 0) (not .OneShot)) .IsPayment}}
-    <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if and (gt .Price 0) (not .OneShot)}} ({{money .Price}}){{else if and .IsPayment (gt .Payment 0)}} ({{money .Payment}}){{end}}</button>
+    {{/* A task completion (OneShot) is NEUTRAL and names no amount: it spends
+         nothing of the completer's, the requester's funds having been reserved
+         when the task was made (requirements.md §6.3). A paid run names its
+         price. */}}
+    {{$spend := and (gt .Price 0) (not .OneShot)}}
+    <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{money .Price}}){{end}}</button>
     {{if .DeclineID}}{{template "_decline_button" .DeclineID}}{{end}}
     <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
       <span class="bar" aria-hidden="true"></span><span>Running…</span>
     </div>
   </div>
-  {{if .IsPayment}}<p class="help muted flush">Paid from your balance{{if .PayTo}} to <span class="mono">{{.PayTo}}</span>{{end}}.</p>{{end}}
   {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
 {{if .DeclineID}}{{template "_task_decline" (declineForm .CSRFField .DeclineID)}}{{end}}
@@ -364,10 +359,10 @@
 {{end}}
 
 {{/* _task_asker names who asks for a task, from what its row names: the
-     creating action and its target when this kernel holds the task; the
-     holding kernel's name when another kernel holds it (the row then names no
-     action). Input: client.Task. */}}
-{{define "_task_asker"}}{{if .CreatedBy}}{{template "_ref" (ref .CreatedBy "")}} needs {{end}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
+     requester, whom the task acts for, then the creating action and its target
+     when this kernel holds the task, or the holding kernel's name when another
+     kernel holds it (the row then names no action). Input: client.Task. */}}
+{{define "_task_asker"}}<span class="mono">{{.Requester}}</span> · {{if .CreatedBy}}{{template "_ref" (ref .CreatedBy "")}} needs {{end}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
 
 {{/* _kernel_name renders a kernel as this kernel names it: a petname whole, a
      key truncated with the whole key in the title. Input: string. */}}
@@ -416,15 +411,18 @@
 </div>
 {{end}}
 
+{{/* _fields — a form's fields, also the JSON switch's answer when it converts
+     the editor's JSON into the form (§6.2). */}}
+{{define "_fields"}}{{range .Fields}}{{template "_field" .}}{{end}}{{end}}
+
 {{define "_form_fields"}}
 {{/* Nothing to collect: the schema is a well-formed object asking for no input,
      so the form is its confirm button alone. A raw-JSON box here would ask a
      person to author `{}` by hand (§10). */}}
 {{if .NoFields}}{{else}}
 {{if not .UseRawFallback}}
-<div data-fields class="stack">
-  {{range .Fields}}{{template "_field" .}}{{end}}
-</div>
+<div data-fields class="stack">{{template "_fields" .}}</div>
+<p class="error-text" role="alert" data-json-error hidden></p>
 {{end}}
 <div class="field" data-raw{{if not .UseRawFallback}} hidden{{end}}>
   {{if .UseRawFallback}}
@@ -445,13 +443,13 @@
      same anatomy read-only (§7): no wire names, no buttons, each control a
      .box holding the value. */}}
 {{define "_field_name"}}{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}{{end}}
-{{define "_field_null"}}{{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Path}}" value="1"> null</label>{{end}}{{end}}
+{{define "_field_null"}}{{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Path}}" value="1"{{if .Null}} checked{{end}}> null</label>{{end}}{{end}}
 {{define "_field"}}
 {{if or (eq .Type "object") (eq .Type "array")}}
 <fieldset class="field group">
   {{if .Name}}<legend>{{template "_field_name" .}}</legend>{{end}}
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
-  {{if not .Frozen}}<input type="hidden" name="t_{{.Path}}" value="{{.Type}}">{{end}}
+  {{if not .Frozen}}<input type="hidden" name="t_{{.Path}}" value="{{.Type}}">{{if .Required}}<input type="hidden" name="r_{{.Path}}" value="1">{{end}}{{end}}
   {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else if .Frozen}}
   <div class="rows">{{range .Rows}}{{template "_field" .}}{{end}}</div>
   {{else}}
@@ -474,17 +472,18 @@
   {{/* Value pre-fills a field where something already proposed an argument
        (§6.2). A pre-filled field is an ordinary field: editable, submitted
        like any other, and trusted no more than one typed by hand. A blank
-       field is omitted, so an optional select leads with a blank choice; a
+       field is omitted, so a select leads with a blank choice unless it is
+       required and holds a value: a row left untouched then stays blank. A
        schema default is a placeholder, never a value. */}}
   {{if eq .Type "json"}}
   <textarea id="f_{{.Path}}" name="f_{{.Path}}" placeholder="{{.Example}}" rows="1">{{$v}}</textarea>
   {{else if .Enum}}
   <select id="f_{{.Path}}" name="f_{{.Path}}">
-    {{if not .Required}}<option value=""></option>{{end}}
+    {{if or (not .Required) (eq $v "")}}<option value=""></option>{{end}}
     {{range .Enum}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
   </select>
   {{else if eq .Type "boolean"}}
-  <select id="f_{{.Path}}" name="f_{{.Path}}">{{if not .Required}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
+  <select id="f_{{.Path}}" name="f_{{.Path}}">{{if or (not .Required) (eq $v "")}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
   {{else if or (eq .Type "integer") (eq .Type "number")}}
   <input id="f_{{.Path}}" name="f_{{.Path}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
   {{else if .Secret}}

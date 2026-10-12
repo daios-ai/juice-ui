@@ -865,34 +865,44 @@ func TestAdminRenameUser(t *testing.T) {
 	}
 }
 
-// A waiting task carries the kernel-derived completion schema (allowed_input),
-// and an action carries its signed effect field — the only payment-task signal
-// (requirements.md §6.3).
-func TestTaskAllowedInputAndActionEffect(t *testing.T) {
+// A waiting task carries the kernel-derived completion schema (allowed_input)
+// and the requester it acts for (kernel D6).
+func TestTaskAllowedInputAndRequester(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	f.reply = `{"id":"S1","action":"sys/transfer","status":"waiting",
-	 "partial_args":{"target":"alice","amount":300},
+	f.reply = `{"id":"S1","action":"sys/transfer","status":"waiting","requester":"alice@k",
+	 "partial_args":{"target":"bob","amount":300},
 	 "allowed_input":{"type":"object","properties":{}}}`
 	st, err := f.client().GetTask(context.Background(), "tok", "S1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.AllowedInput) == 0 {
-		t.Errorf("allowed_input not decoded: %+v", st)
+	if len(st.AllowedInput) == 0 || st.Requester != "alice@k" {
+		t.Errorf("allowed_input or requester not decoded: %+v", st)
 	}
-	f.reply = `{"id":"a1","action":"sys/transfer","name":"transfer","effect":"transfer"}`
-	a, err := f.client().GetAction(context.Background(), "tok", "a1")
-	if err != nil {
+}
+
+// Requesters are read to exhaustion, and a decision posts the verb to the
+// requester's escaped address (kernel U52).
+func TestRequesters(t *testing.T) {
+	f := newFake()
+	defer f.close()
+	f.replyFn = func(r *http.Request) string {
+		if r.URL.Query().Get("offset") != "" && r.URL.Query().Get("offset") != "0" {
+			return `[]`
+		}
+		return `[{"requester":"mallory@bravo","status":"pending","since":"2026-08-06T09:30:00Z"}]`
+	}
+	rs, err := f.client().ListRequesters(context.Background(), "tok")
+	if err != nil || len(rs) != 1 || rs[0] != (Requester{"mallory@bravo", "pending", "2026-08-06T09:30:00Z"}) {
+		t.Fatalf("ListRequesters = %+v, %v", rs, err)
+	}
+	f.replyFn = nil
+	if err := f.client().DecideRequester(context.Background(), "tok", "a b@k", "block"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.IsTransfer() {
-		t.Errorf("effect not decoded: %+v", a)
-	}
-	f.reply = `{"id":"a2","action":"tom/greet","name":"greet"}`
-	b, _ := f.client().GetAction(context.Background(), "tok", "a2")
-	if b.IsTransfer() {
-		t.Errorf("ordinary action must not read as transfer: %+v", b)
+	if f.lastMethod != http.MethodPost || f.lastPath != "/v1/me/requesters/a%20b@k/block" {
+		t.Errorf("decision = %s %s", f.lastMethod, f.lastPath)
 	}
 }
 

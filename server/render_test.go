@@ -607,7 +607,7 @@ func TestCallFormComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, json.RawMessage(`{"to":"bob"}`), nil, false, 0, "", false)
+	cf := completeForm(template.HTML(`<input>`), "S1", 5, FormModel{UseRawFallback: true}, false, json.RawMessage(`{"to":"bob"}`), nil, false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestCallFormCarriesTheJSONToggle(t *testing.T) {
 	}
 	render := func(fm FormModel, approval bool) string {
 		rec := httptest.NewRecorder()
-		if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "S1", 0, fm, approval, json.RawMessage(`{"to":"bob"}`), nil, false, 0, "", false)); err != nil {
+		if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "S1", 0, fm, approval, json.RawMessage(`{"to":"bob"}`), nil, false)); err != nil {
 			t.Fatal(err)
 		}
 		return rec.Body.String()
@@ -682,7 +682,7 @@ func TestCallFormApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, json.RawMessage(`{"message":"hi"}`), nil, false, 0, "", false)
+	cf := completeForm(template.HTML(`<input>`), "S9", 1, FormModel{UseRawFallback: true}, true, json.RawMessage(`{"message":"hi"}`), nil, false)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -1546,41 +1546,6 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 	}
 }
 
-// A payment-task completion is a spend of the completer's own money: money
-// button naming the sealed amount, unnumbered money button when the completer
-// types it (§6.3 two-branch rule).
-func TestCallFormPayment(t *testing.T) {
-	r, err := NewRenderer(playKernel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	cf := completeForm(template.HTML(`<input>`), "SP", 0, FormModel{}, true,
-		json.RawMessage(`{"target":"alice","amount":300}`), nil,
-		true, 300, "alice", false)
-	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
-		t.Fatal(err)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "btn-money") || !strings.Contains(body, "Complete (300 credits)") {
-		t.Errorf("sealed payment must use the money button naming the amount: %s", body)
-	}
-	if !strings.Contains(body, "Paid from your balance") || !strings.Contains(body, "alice") {
-		t.Errorf("payment form must disclose whose funds move and to whom: %s", body)
-	}
-	// Typed amount: money button, no parenthesized figure (wallet-send pattern).
-	rec2 := httptest.NewRecorder()
-	cf2 := completeForm(template.HTML(`<input>`), "SP2", 0, FormModel{UseRawFallback: true}, false, nil, nil,
-		true, 0, "", false)
-	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
-		t.Fatal(err)
-	}
-	b2 := rec2.Body.String()
-	if !strings.Contains(b2, "btn-money") || strings.Contains(b2, "Complete ($") {
-		t.Errorf("typed-amount payment must be an unnumbered money button: %s", b2)
-	}
-}
-
 // A DISCOVERED lookup hit is rendered from the lookup row alone: nothing local
 // backs it, so the card states the kernel-qualified ref and the description and
 // stops there — no price, no reputation strip, no link to a local action page,
@@ -1744,6 +1709,70 @@ func TestFormFieldsNullableAndBounds(t *testing.T) {
 	}
 	if strings.Contains(body, `<option value="null"`) {
 		t.Error("null is not an enum option; the checkbox carries it")
+	}
+}
+
+// A required select leads with a blank choice until it holds a value, so a row
+// left untouched submits nothing: a select preselecting its first option would
+// send a value nobody chose.
+func TestRequiredSelectIsBlankUntilFilled(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fm := BuildForm(json.RawMessage(`{"properties":{
+		"kind":{"description":"K.","enum":["chat","embed"],"type":"string"},
+		"on":{"description":"O.","type":"boolean"}},"required":["kind","on"],"type":"object"}`))
+	render := func() string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	if body := render(); strings.Count(body, `<option value=""></option>`) != 2 {
+		t.Errorf("an empty required select must lead with a blank choice: %s", body)
+	}
+	fm.Fill(json.RawMessage(`{"kind":"embed","on":true}`))
+	body := render()
+	if strings.Contains(body, `<option value=""></option>`) {
+		t.Errorf("a filled required select offers no blank: %s", body)
+	}
+	if !strings.Contains(body, `<option value="embed" selected>`) || !strings.Contains(body, `<option value="true" selected>`) {
+		t.Errorf("a filled select keeps its value: %s", body)
+	}
+}
+
+// A required container carries r_, so a submit sends it even empty; a filled
+// null ticks its box; and a call form names its two JSON switch conversions
+// (§6.2).
+func TestFormWireForTheSwitch(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fm := BuildForm(json.RawMessage(`{"type":"object","required":["req"],"properties":{
+		"req":{"type":"array","items":{"type":"string"}},"opt":{"type":"array","items":{"type":"string"}},
+		"nul":{"type":["string","null"]}}}`))
+	fm.Fill(json.RawMessage(`{"nul":null}`))
+	cf := runForm(template.HTML(`<input>`), "A1", 0, fm, nil, false, "", "")
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<input type="hidden" name="r_/req" value="1">`,
+		`<input type="checkbox" name="n_/nul" value="1" checked> null`,
+		`data-to-json="/form/json" data-to-form="/actions/A1/form"`,
+		`data-json-error hidden`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("form lacks %q", want)
+		}
+	}
+	if strings.Contains(body, `name="r_/opt"`) {
+		t.Error("an optional container carries no r_")
 	}
 }
 
@@ -1983,7 +2012,7 @@ func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := completeForm(template.HTML(`<input>`), "T7", 0, FormModel{}, true, nil, nil, false, 0, "", true)
+	cf := completeForm(template.HTML(`<input>`), "T7", 0, FormModel{}, true, nil, nil, true)
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
 	}
@@ -1995,7 +2024,7 @@ func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
 		t.Errorf("the decline form must follow the call form, with a plain confirm: %s", body)
 	}
 	rec = httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "T8", 0, FormModel{}, true, nil, nil, false, 0, "", false)); err != nil {
+	if err := r.Fragment(rec, 200, "_call_form", completeForm(template.HTML(`<input>`), "T8", 0, FormModel{}, true, nil, nil, false)); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(rec.Body.String(), "decline") {

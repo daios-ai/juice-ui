@@ -14,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -217,12 +218,13 @@ func authKernel() *httptest.Server {
 		// Two waiting tasks spawned by the same creating action (sys/make) — the
 		// common case: one process fans out several tasks sharing one created_by.
 		w.Write([]byte(`[
-			{"id":"S1","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":5,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-01T00:00:00Z"},
-			{"id":"S2","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":3,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-02T00:00:00Z"}
+			{"id":"S1","required_caller":"alice@testnet","owner":"bob@testnet","requester":"bob@testnet","action":"alice@testnet/hello","price":5,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-01T00:00:00Z"},
+			{"id":"S2","required_caller":"alice@testnet","owner":"bob@testnet","requester":"bob@testnet","action":"alice@testnet/hello","price":3,"status":"waiting","created_by":"sys@testnet/make","created_at":"2026-01-02T00:00:00Z"}
 		]`))
 	})
+	mux.HandleFunc("GET /v1/me/requesters", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
+		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","required_caller":"alice@testnet","owner":"bob@testnet","requester":"bob@testnet","action":"alice@testnet/hello","price":5,"partial_args":{},"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/users", func(w http.ResponseWriter, r *http.Request) {
 		// A taken handle is TYPED as of v0.12.14 (verified live): 422
@@ -2575,40 +2577,39 @@ const heldKey = "K98AJeQ6631CO6LJ73nK2PiQW4qY3Nb3eqquXPHYNJ8"
 // taskRows are the tasks bob@testnet may list, one of each kind the inbox
 // distinguishes (requirements.md §6.3).
 var taskRows = map[string]string{
-	// A payment task: its target bears effect="transfer".
-	"SP": `{"id":"SP","required_caller":"bob@testnet","owner":"alice@testnet","action":"sys@testnet/transfer",
+	// A transfer task: its value was reserved from the requester at creation.
+	"SP": `{"id":"SP","required_caller":"bob@testnet","owner":"alice@testnet","requester":"alice@testnet","action":"sys@testnet/transfer",
 	  "price":0,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-01T00:00:00Z",
 	  "partial_args":{"target":"alice@testnet","amount":300},"allowed_input":{"type":"object","properties":{}}}`,
 	// An ordinary task on a PRIVATE target the completer cannot read.
-	"SO": `{"id":"SO","required_caller":"bob@testnet","owner":"alice@testnet","action":"alice@testnet/private-work",
+	"SO": `{"id":"SO","required_caller":"bob@testnet","owner":"alice@testnet","requester":"alice@testnet","action":"alice@testnet/private-work",
 	  "price":5,"status":"waiting","created_by":"sys@testnet/message","created_at":"2026-08-02T00:00:00Z",
 	  "partial_args":{"context":"sealed"},
 	  "allowed_input":{"type":"object","properties":{"answer":{"type":"string","description":"Your answer"}},"required":["answer"]}}`,
 	// A task another kernel holds for bob: no action, no creator, owner the holder.
-	"SH": `{"id":"SH","required_caller":"bob@testnet","owner":"` + heldKey + `",
+	"SH": `{"id":"SH","required_caller":"bob@testnet","owner":"` + heldKey + `","requester":"dan@bravo",
 	  "price":0,"status":"waiting","created_at":"2026-08-03T00:00:00Z",
 	  "partial_args":{"message":"from afar"},"allowed_input":{"type":"object"}}`,
 	// A task on another kernel's action: never read here.
-	"SR": `{"id":"SR","required_caller":"bob@testnet","owner":"alice@testnet","action":"vendor@bravo/thing",
+	"SR": `{"id":"SR","required_caller":"bob@testnet","owner":"alice@testnet","requester":"alice@testnet","action":"vendor@bravo/thing",
 	  "price":0,"status":"waiting","created_by":"alice@testnet/ask","created_at":"2026-08-04T00:00:00Z",
 	  "partial_args":{"note":"x"},"allowed_input":{"type":"object"}}`,
 	// Bob asked carol: his to withdraw, not to complete.
-	"SX": `{"id":"SX","required_caller":"carol@testnet","owner":"bob@testnet","action":"carol@testnet/review",
+	"SX": `{"id":"SX","required_caller":"carol@testnet","owner":"bob@testnet","requester":"bob@testnet","action":"carol@testnet/review",
 	  "price":7,"status":"waiting","created_by":"bob@testnet/ask","created_at":"2026-08-05T00:00:00Z",
 	  "partial_args":{},"allowed_input":{"type":"object"}}`,
 	// Done: history, no gesture.
-	"SD": `{"id":"SD","required_caller":"bob@testnet","owner":"alice@testnet","action":"alice@testnet/hello",
+	"SD": `{"id":"SD","required_caller":"bob@testnet","owner":"alice@testnet","requester":"alice@testnet","action":"alice@testnet/hello",
 	  "price":0,"status":"done","tx_id":"TD","created_at":"2026-07-01T00:00:00Z","partial_args":{}}`,
 }
 
-// taskRefReads and taskCancels record what the BFF asked of the task kernel.
-var taskRefReads, taskCancels []string
+// taskActionReads, taskCancels and taskDecisions record what the BFF asked of
+// the task kernel.
+var taskActionReads, taskCancels, taskDecisions []string
 
-// taskKernel serves taskRows to bob@testnet. A reference read answers the
-// transfer action with its effect and nothing else — a private action is not
-// served to him.
+// taskKernel serves taskRows and three requesters to bob@testnet.
 func taskKernel() *httptest.Server {
-	taskRefReads, taskCancels = nil, nil
+	taskActionReads, taskCancels, taskDecisions = nil, nil, nil
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -2630,6 +2631,18 @@ func taskKernel() *httptest.Server {
 	mux.HandleFunc("GET /v1/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(taskRows[r.PathValue("id")]))
 	})
+	mux.HandleFunc("GET /v1/me/requesters", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
+		w.Write([]byte(`[{"requester":"eve@testnet","status":"blocked","since":"2026-07-01T00:00:00Z"},
+		 {"requester":"alice@testnet","status":"approved","since":"2026-07-02T00:00:00Z"},
+		 {"requester":"mallory@bravo","status":"pending","since":"2026-08-06T09:30:00Z"}]`))
+	})
+	mux.HandleFunc("POST /v1/me/requesters/{address}/{verb}", func(w http.ResponseWriter, r *http.Request) {
+		taskDecisions = append(taskDecisions, r.PathValue("address")+" "+r.PathValue("verb"))
+		w.Write([]byte(`{"requester":"` + r.PathValue("address") + `","status":"approved","since":"2026-08-06T09:30:00Z"}`))
+	})
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		taskCancels = append(taskCancels, r.PathValue("id"))
 		w.Write([]byte(`{"id":"` + r.PathValue("id") + `","status":"cancelled"}`))
@@ -2645,18 +2658,7 @@ func taskKernel() *httptest.Server {
 		if pastEnd(w, r) {
 			return
 		}
-		ref := r.URL.Query().Get("ref")
-		if ref == "" {
-			w.Write([]byte(`[]`))
-			return
-		}
-		taskRefReads = append(taskRefReads, ref)
-		if ref == "sys@testnet/transfer" {
-			w.Write([]byte(`[{"id":"AT","action":"sys@testnet/transfer","name":"transfer","kind":"native",
-			 "active":true,"visibility":"local","price":0,"effect":"transfer",
-			 "input_schema":{"type":"object","properties":{"target":{"type":"string"},"amount":{"type":"integer"}}}}]`))
-			return
-		}
+		taskActionReads = append(taskActionReads, r.URL.RawQuery)
 		w.Write([]byte(`[]`))
 	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -2665,7 +2667,11 @@ func taskKernel() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func TestInboxTwoBranchCompletion(t *testing.T) {
+// Every completion is the neutral Complete naming no amount, a transfer task
+// included: answering a task spends nothing of the completer's (kernel U52),
+// so the inbox reads no action to tell the two apart. The card names the
+// requester the task acts for.
+func TestInboxCompletionIsNeutral(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -2673,20 +2679,11 @@ func TestInboxTwoBranchCompletion(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/inbox")
-
-	// Payment branch: the completion is a SPEND of the completer's own money —
-	// money button naming the sealed amount, recipient named in the provenance
-	// face (§6.3).
-	if !strings.Contains(page, "Complete (300 credits)") {
-		t.Errorf("payment task must render the money amount on the button: %s", page)
+	if strings.Contains(page, "btn-money") || strings.Contains(page, "Complete (") {
+		t.Errorf("no completion names an amount: %s", page)
 	}
-	if !strings.Contains(page, "Paid from your balance") || !strings.Contains(page, "alice") {
-		t.Errorf("payment task must disclose whose funds move and to whom: %s", page)
-	}
-	// Ordinary branch: neutral Complete, no amount — even though the target
-	// action is unreadable, the form renders from the task's allowed_input.
-	if !strings.Contains(page, `type="submit">Complete</button>`) {
-		t.Errorf("ordinary task must keep the neutral Complete: %s", page)
+	if !regexp.MustCompile(`(?s)<form[^>]*action="/inbox/SP/complete".*?<button class="btn" type="submit">Complete</button>`).MatchString(page) {
+		t.Errorf("a transfer task completes with the neutral Complete: %s", page)
 	}
 	if !strings.Contains(page, `name="f_/answer"`) {
 		t.Errorf("completion form must derive from allowed_input: %s", page)
@@ -2694,22 +2691,84 @@ func TestInboxTwoBranchCompletion(t *testing.T) {
 	if strings.Contains(page, "could not be found") {
 		t.Errorf("an unreadable target must not surface as an error: %s", page)
 	}
+	if len(taskActionReads) != 0 {
+		t.Errorf("the inbox reads no action: %v", taskActionReads)
+	}
+	if !strings.Contains(page, `<span class="mono">alice@testnet</span> · `) || !strings.Contains(page, `<span class="mono">dan@bravo</span> · `) {
+		t.Errorf("each card names its requester: %s", page)
+	}
+	if detail := getBody(t, cl, srv.URL+"/inbox/SO"); !strings.Contains(detail, `<span class="mono">alice@testnet</span> · `) {
+		t.Errorf("the task page names its requester: %s", detail)
+	}
 }
 
-// The effect is read by the row's action address, once per address, and only
-// for an address on this kernel: a reference to another kernel would dial it
-// and cache a proxy (§6.3).
-func TestInboxReadsEffectsOnlyForLocalAddresses(t *testing.T) {
+// The inbox lists requesters, pending first, each offering the decisions that
+// change its status; Block alone sits behind a confirm, an unknown verb is no
+// command, and a decision reaches the kernel by the requester's address.
+func TestInboxRequesters(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	_ = getBody(t, cl, srv.URL+"/inbox")
-	got := strings.Join(taskRefReads, ",")
-	if got != "sys@testnet/transfer,alice@testnet/private-work" {
-		t.Errorf("reference reads = %q, want the two local waiting targets once each", got)
+	page := getBody(t, cl, srv.URL+"/inbox")
+	cell := func(addr string) int { return strings.Index(page, `<td class="mono">`+addr+`</td>`) }
+	m, a, e := cell("mallory@bravo"), cell("alice@testnet"), cell("eve@testnet")
+	if m < 0 || a < m || e < a {
+		t.Errorf("requesters must list pending, approved, blocked: %d %d %d", m, a, e)
+	}
+	row := func(addr string) string {
+		i := cell(addr)
+		return page[i : i+strings.Index(page[i:], "</tr>")]
+	}
+	for addr, want := range map[string][]string{
+		"mallory@bravo": {"approve", "block"},
+		"alice@testnet": {"revoke", "block"},
+		"eve@testnet":   {"approve", "revoke"},
+	} {
+		r := row(addr)
+		for _, verb := range []string{"approve", "revoke", "block"} {
+			has := strings.Contains(r, `action="/inbox/requesters/`+addr+`/`+verb+`"`)
+			if has != slices.Contains(want, verb) {
+				t.Errorf("%s: %s offered = %v, want %v", addr, verb, has, !has)
+			}
+		}
+	}
+	if !strings.Contains(row("mallory@bravo"), `data-confirm="Block mallory@bravo?"`) || strings.Contains(row("eve@testnet"), "data-confirm") {
+		t.Error("only Block asks for a confirm")
+	}
+	if !strings.Contains(row("mallory@bravo"), `<span class="pill">pending</span>`) || !strings.Contains(row("mallory@bravo"), "2026-08-06") {
+		t.Error("a requester row names its status and since")
+	}
+
+	resp := postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/approve", page, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/inbox" {
+		t.Errorf("approve = %d → %q, want a redirect to the inbox", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/delete", page, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("an unknown verb = %d, want 404", resp.StatusCode)
+	}
+	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve" {
+		t.Errorf("decisions = %q", got)
+	}
+}
+
+// The attention badge counts the waiting tasks that require the viewer and
+// each pending requester, whose tasks are withheld.
+func TestTasksBadgeCountsPendingRequesters(t *testing.T) {
+	kernel := taskKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	// SP, SO, SH, SR wait on bob; mallory@bravo is pending.
+	if got := getBody(t, cl, srv.URL+"/inbox/badge"); got != "5" {
+		t.Errorf("badge = %q, want 5", got)
 	}
 }
 
@@ -3958,6 +4017,71 @@ func TestBuildArgsRebuildsTheTree(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if _, err := buildArgs(req); err == nil || !strings.Contains(err.Error(), "must be valid JSON") {
 		t.Errorf("invalid JSON = %v", err)
+	}
+}
+
+// A required container of an object being sent is sent even when nothing in
+// it was filled — empty, or holding its own required containers — since
+// absence is invalid for it; a wholly blank row and an optional empty
+// container are still dropped (§6.2).
+func TestBuildArgsSendsRequiredContainers(t *testing.T) {
+	form := url.Values{
+		"has_fields": {"1"},
+		"t_/eps":     {"array"}, "r_/eps": {"1"},
+		"t_/eps/0": {"object"}, "f_/eps/0/name": {"a"}, "t_/eps/0/name": {"string"},
+		"t_/eps/0/models": {"array"}, "r_/eps/0/models": {"1"},
+		"t_/eps/0/models/0": {"object"}, "f_/eps/0/models/0/kind": {""}, "t_/eps/0/models/0/kind": {"string"},
+		"t_/eps/1": {"object"}, "f_/eps/1/name": {""}, "t_/eps/1/name": {"string"},
+		"t_/eps/1/models": {"array"}, "r_/eps/1/models": {"1"},
+		"t_/opt": {"array"}, "f_/opt/0": {""}, "t_/opt/0": {"string"},
+		"t_/need": {"object"}, "r_/need": {"1"},
+		"t_/need/inner": {"object"}, "r_/need/inner": {"1"},
+		"t_/need/list": {"array"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	raw, err := buildArgs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"eps":[{"models":[],"name":"a"}],"need":{"inner":{}}}`
+	if string(raw) != want {
+		t.Errorf("args = %s\nwant %s", raw, want)
+	}
+}
+
+// The JSON switch converts what is on screen: form → JSON is the args a submit
+// would send, JSON → form the form's own fields filled exactly, or the switch
+// is refused with each value the form cannot hold (§6.2).
+func TestJSONSwitchConverts(t *testing.T) {
+	kernel := taskKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/inbox")
+	if !strings.Contains(page, `data-to-json="/form/json" data-to-form="/inbox/SO/form"`) {
+		t.Fatal("a completion form names its two conversions")
+	}
+
+	post := func(path string, v url.Values) (int, string) {
+		resp := postTo(t, cl, srv.URL+path, page, v)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := post("/form/json", url.Values{"has_fields": {"1"}, "f_/answer": {"yes"}, "t_/answer": {"string"}}); code != 200 || body != "{\n  \"answer\": \"yes\"\n}" {
+		t.Errorf("form → JSON = %d %q", code, body)
+	}
+	if code, body := post("/form/json", url.Values{"has_fields": {"1"}, "f_/n": {"x"}, "t_/n": {"integer"}}); code != 422 || !strings.Contains(body, "must be an integer") {
+		t.Errorf("a bad form = %d %q", code, body)
+	}
+	if code, body := post("/inbox/SO/form", url.Values{"raw_args": {`{"answer":"yes"}`}}); code != 200 || !strings.Contains(body, `name="f_/answer"`) || !strings.Contains(body, `>yes</textarea>`) {
+		t.Errorf("JSON → form = %d %s", code, body)
+	}
+	if code, body := post("/inbox/SO/form", url.Values{"raw_args": {`{"answer":"","extra":1}`}}); code != 422 ||
+		body != "/answer: an empty string can only be written in JSON; /extra: the form has no field for it.\n" {
+		t.Errorf("an inexact JSON = %d %q", code, body)
 	}
 }
 

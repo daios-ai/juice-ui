@@ -340,6 +340,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /actions/delete", s.requireAuth(s.postActionDelete))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
+	mux.HandleFunc("POST /actions/{id}/form", s.requireAuth(s.postActionForm))
 	mux.HandleFunc("POST /actions/{id}/update-price", s.requireAuth(s.postUpdateActionPrice))
 	mux.HandleFunc("POST /actions/{id}/update", s.requireAuth(s.postUpdateAction))
 
@@ -362,6 +363,9 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getTask))
 	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteTask))
 	mux.HandleFunc("POST /inbox/{id}/cancel", s.requireAuth(s.postCancelTask))
+	mux.HandleFunc("POST /inbox/{id}/form", s.requireAuth(s.postTaskForm))
+	mux.HandleFunc("POST /form/json", s.requireAuth(s.postFormJSON))
+	mux.HandleFunc("POST /inbox/requesters/{address}/{verb}", s.requireAuth(s.postRequester))
 
 	// Settings — account, preferences, connected accounts.
 	mux.HandleFunc("GET /settings", s.requireAuth(s.getSettings))
@@ -388,6 +392,8 @@ func New(o Options) (http.Handler, error) {
 	if s.config != nil {
 		mux.HandleFunc("GET /admin/config", s.requireSuperuser(s.getAdminConfig))
 		mux.HandleFunc("POST /admin/config", s.requireSuperuser(s.postAdminConfig))
+		mux.HandleFunc("POST /admin/config/json", s.requireSuperuser(s.postAdminConfigJSON))
+		mux.HandleFunc("POST /admin/config/form", s.requireSuperuser(s.postAdminConfigForm))
 	}
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a

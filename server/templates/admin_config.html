@@ -6,7 +6,7 @@
      Secrets are written here, never read. */}}
 <nav class="crumb"><a href="/admin">← admin</a></nav>
 <h1>Configuration</h1>
-<form class="card stack" method="post" action="/admin/config" data-json data-confirm="Restart the kernel to apply?">
+<form class="card stack" method="post" action="/admin/config" data-json data-to-json="/admin/config/json" data-to-form="/admin/config/form" data-confirm="Restart the kernel to apply?">
   {{.CSRFField}}
   <input type="hidden" name="version" value="{{$d.Version}}">
   {{if not $d.Form.UseRawFallback}}{{template "_json_switch"}}{{end}}

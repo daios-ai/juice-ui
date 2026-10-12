@@ -565,20 +565,36 @@ func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	// A secret never reaches the page: credentials_key is dropped, and an
-	// endpoint key is withheld, its row saying only that it holds one.
+	keyed := configShown(cfg)
+	form, _ := configForm(schema, cfg, keyed)
+	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{Form: form, Version: version})
+}
+
+// configShown withholds the file's secrets from what the page shows:
+// credentials_key, and each endpoint's key, its row saying only that it holds
+// one. It returns the endpoint names that held a key.
+func configShown(cfg map[string]any) map[string]bool {
 	delete(cfg, "credentials_key")
-	keyed := map[any]bool{}
+	keyed := map[string]bool{}
 	for _, e := range endpoints(cfg) {
-		keyed[e["name"]] = e["key"] != nil
+		if name, ok := e["name"].(string); ok {
+			keyed[name] = e["key"] != nil
+		}
 		delete(e, "key")
 	}
-	shown, _ := json.MarshalIndent(cfg, "", "  ")
+	return keyed
+}
+
+// configForm is the page's form over shown: the kernel's schema filled from
+// it, editor metadata and secrets left out, the fixed keys read-only and each
+// endpoint key write-only. The JSON editor opens on shown itself, never a
+// skeleton: what a save from it omits is removed. It returns what Fill could
+// not place exactly.
+func configForm(schema json.RawMessage, shown map[string]any, keyed map[string]bool) (FormModel, []string) {
+	raw, _ := json.MarshalIndent(shown, "", "  ")
 	form := BuildForm(schema)
-	form.Fill(shown)
-	// The JSON editor opens on the file itself, never a skeleton: what a save
-	// from it omits is removed.
-	form.Example = string(shown)
+	inexact := form.Fill(raw)
+	form.Example = string(raw)
 	fields := form.Fields[:0]
 	for _, f := range form.Fields {
 		if f.Name == "$schema" || f.Name == "credentials_key" {
@@ -589,12 +605,12 @@ func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 		fields = append(fields, f)
 	}
 	form.Fields = fields
-	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{Form: form, Version: version})
+	return form, inexact
 }
 
 // maskKeys makes each endpoint row's key write-only, its placeholder saying so
 // where the file holds one for that endpoint's name.
-func maskKeys(f *Field, keyed map[any]bool) {
+func maskKeys(f *Field, keyed map[string]bool) {
 	if f.Path == "/native/llm/endpoints" {
 		for _, row := range f.Rows {
 			i := slices.IndexFunc(row.Fields, func(c Field) bool { return c.Name == "name" })
@@ -613,10 +629,83 @@ func maskKeys(f *Field, keyed map[any]bool) {
 	}
 }
 
+// configNormal reads to as a save writes it over saved, keeping as saved what
+// the form cannot carry: the fixed keys, an endpoint key not replaced —
+// matched by the endpoint's name, never its row — and an empty value a blank
+// input cannot tell from absent. A save and both directions of the JSON switch
+// share it.
+func configNormal(saved, to map[string]any) {
+	for _, p := range configFixed {
+		deleteDotted(to, p)
+		if v := getDotted(saved, p); v != nil {
+			setDotted(to, p, v)
+		}
+	}
+	keys := map[string]any{}
+	for _, e := range endpoints(saved) {
+		if name, ok := e["name"].(string); ok {
+			keys[name] = e["key"]
+		}
+	}
+	for _, e := range endpoints(to) {
+		name, ok := e["name"].(string)
+		if _, typed := e["key"]; ok && !typed && keys[name] != nil {
+			e["key"] = keys[name]
+		}
+	}
+	keepEmpty(saved, to)
+}
+
+// configSwitch reads the file and the editor's JSON for the JSON switch, the
+// latter normalized as a save would read it.
+func (s *Server) configSwitch(args []byte) (saved, to map[string]any, schema json.RawMessage, err error) {
+	raw, schema, _, err := s.config.Config()
+	if err == nil {
+		err = decodeNumbers(raw, &saved)
+	}
+	if err == nil {
+		err = decodeNumbers(args, &to)
+	}
+	if err == nil {
+		configNormal(saved, to)
+	}
+	return saved, to, schema, err
+}
+
+// postAdminConfigJSON is the JSON switch's form → JSON direction: what Save
+// would write, its secrets withheld — the view the page opens on.
+func (s *Server) postAdminConfigJSON(w http.ResponseWriter, r *http.Request) {
+	args, err := buildArgs(r)
+	var to map[string]any
+	if err == nil {
+		_, to, _, err = s.configSwitch(args)
+	}
+	if err != nil {
+		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
+		return
+	}
+	configShown(to)
+	out, _ := json.Marshal(to)
+	writeJSONText(w, out)
+}
+
+// postAdminConfigForm is the JSON switch's JSON → form direction. The values a
+// save keeps by itself — the file's own empty values, shown blank — are left
+// out of the fill, so the form holds the JSON exactly or the switch is refused.
+func (s *Server) postAdminConfigForm(w http.ResponseWriter, r *http.Request) {
+	saved, to, schema, err := s.configSwitch([]byte(r.PostFormValue("raw_args")))
+	if err != nil {
+		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
+		return
+	}
+	keyed := configShown(to)
+	dropKept(saved, to)
+	form, inexact := configForm(schema, to, keyed)
+	s.renderFields(w, form, inexact)
+}
+
 // postAdminConfig writes the form over the file the page was rendered from and
-// restarts the kernel on it. What the form cannot carry is kept as saved: the
-// fixed keys, an endpoint key not replaced — matched by the endpoint's name,
-// never its row — and an empty value a blank input cannot tell from absent.
+// restarts the kernel on it, read through configNormal.
 func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 	const back = "/admin/config"
 	args, err := buildArgs(r)
@@ -636,22 +725,7 @@ func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
-	for _, p := range configFixed {
-		deleteDotted(to, p)
-		if v := getDotted(saved, p); v != nil {
-			setDotted(to, p, v)
-		}
-	}
-	keys := map[any]any{}
-	for _, e := range endpoints(saved) {
-		keys[e["name"]] = e["key"]
-	}
-	for _, e := range endpoints(to) {
-		if _, typed := e["key"]; !typed && keys[e["name"]] != nil {
-			e["key"] = keys[e["name"]]
-		}
-	}
-	keepEmpty(saved, to)
+	configNormal(saved, to)
 	if reflect.DeepEqual(saved, to) {
 		s.flashRedirect(w, r, back, "info", "Nothing changed.")
 		return
@@ -687,6 +761,25 @@ func keepEmpty(from, to map[string]any) {
 		tm, ok2 := t.(map[string]any)
 		if ok1 && ok2 {
 			keepEmpty(fm, tm)
+		}
+	}
+}
+
+// dropKept is keepEmpty's inverse: it removes from to each empty value from
+// holds equal at the same path, which keepEmpty puts back on every save.
+func dropKept(from, to map[string]any) {
+	for k, t := range to {
+		f, ok := from[k]
+		switch {
+		case !ok:
+		case isEmpty(t) && reflect.DeepEqual(f, t):
+			delete(to, k)
+		default:
+			fm, ok1 := f.(map[string]any)
+			tm, ok2 := t.(map[string]any)
+			if ok1 && ok2 {
+				dropKept(fm, tm)
+			}
 		}
 	}
 }

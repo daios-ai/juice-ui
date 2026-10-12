@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -10,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -901,7 +903,8 @@ func (f *fakeConfig) Reconfigure(version string, cfg []byte) error {
 
 const testConfigFile = `{"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","credentials_key":"SECRET-CREDENTIALS-KEY",
 "fee_bps":2000,"auth_audience":"","credit_limit":null,"native":{"time":{"price":0},"llm":{"endpoints":[
-	{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]},{"name":"b","key":"SECRET-B"}]}}}`
+	{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]},{"name":"b","models":[],"key":"SECRET-B"},
+	{"name":"c","enabled":false,"models":[]}]}}}`
 
 const testConfigSchema = `{"type":"object","additionalProperties":false,"properties":{
 "$schema":{"type":"string"},"kernel_handle":{"type":"string"},"listen_addr":{"type":"string"},
@@ -910,10 +913,12 @@ const testConfigSchema = `{"type":"object","additionalProperties":false,"propert
 "native":{"type":"object","additionalProperties":false,"properties":{
 	"time":{"type":"object","additionalProperties":false,"properties":{"price":{"type":"integer"}}},
 	"llm":{"type":"object","additionalProperties":false,"properties":{
-		"endpoints":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
-			"name":{"type":"string"},"key":{"type":"string"},
-			"prices":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
-				"model":{"type":"string"},"price":{"type":"integer"}}}}}}}}}}}}}`
+		"endpoints":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["models"],"properties":{
+			"name":{"type":"string"},"enabled":{"type":"boolean"},"protocol":{"type":"string","enum":["anthropic","openai"]},
+			"url":{"type":"string"},"key":{"type":"string"},
+			"models":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+				"name":{"type":"string"},"id":{"type":"string"},"kind":{"type":"string","enum":["chat","embed"]},
+				"max_tokens":{"type":"integer"},"price":{"type":"integer"}}}}}}}}}}}}}`
 
 func configServer(t *testing.T) (*fakeConfig, *httptest.Server, *http.Client) {
 	t.Helper()
@@ -954,7 +959,9 @@ func TestAdminConfigPage(t *testing.T) {
 	for _, want := range []string{
 		`name="f_/fee_bps"`, `value="2000"`, `<div class="box">k</div>`, `name="version" value="v1"`,
 		`name="f_/native/llm/endpoints/0/key" type="password" autocomplete="off" placeholder="configured ✓ (replace)"`,
-		`name="f_/native/llm/endpoints/1/key" type="password"`, `fee_bps&#34;: 2000`,
+		`name="f_/native/llm/endpoints/1/key" type="password"`, `name="f_/native/llm/endpoints/2/key" type="password" autocomplete="off">`,
+		`fee_bps&#34;: 2000`, `<input type="hidden" name="r_/native/llm/endpoints/1/models" value="1">`,
+		`data-to-json="/admin/config/json" data-to-form="/admin/config/form"`,
 		`<button class="btn" type="submit">Save and restart</button>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -982,10 +989,19 @@ func TestAdminConfigSave(t *testing.T) {
 		"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"},
 		"t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"array"},
 		"t_/native/llm/endpoints/0": {"object"}, "f_/native/llm/endpoints/0/name": {"a"}, "f_/native/llm/endpoints/0/key": {""},
-		"t_/native/llm/endpoints/0/prices": {"array"}, "t_/native/llm/endpoints/0/prices/0": {"object"},
-		"f_/native/llm/endpoints/0/prices/0/model": {"m"},
-		"t_/native/llm/endpoints/0/prices/0/price": {"integer"}, "f_/native/llm/endpoints/0/prices/0/price": {"5"},
-		"t_/native/llm/endpoints/1": {"object"}, "f_/native/llm/endpoints/1/name": {"b"}, "f_/native/llm/endpoints/1/key": {""}}
+		"t_/native/llm/endpoints/0/enabled": {"boolean"}, "f_/native/llm/endpoints/0/enabled": {"true"},
+		"f_/native/llm/endpoints/0/protocol": {"openai"}, "f_/native/llm/endpoints/0/url": {"https://a"},
+		"t_/native/llm/endpoints/0/models": {"array"}, "r_/native/llm/endpoints/0/models": {"1"}, "t_/native/llm/endpoints/0/models/0": {"object"},
+		"f_/native/llm/endpoints/0/models/0/name": {"m"}, "f_/native/llm/endpoints/0/models/0/id": {"m-1"},
+		"f_/native/llm/endpoints/0/models/0/kind":       {"chat"},
+		"t_/native/llm/endpoints/0/models/0/max_tokens": {"integer"}, "f_/native/llm/endpoints/0/models/0/max_tokens": {"1000"},
+		"t_/native/llm/endpoints/0/models/0/price": {"integer"}, "f_/native/llm/endpoints/0/models/0/price": {"5"},
+		"t_/native/llm/endpoints/1": {"object"}, "f_/native/llm/endpoints/1/name": {"b"}, "f_/native/llm/endpoints/1/key": {""},
+		"t_/native/llm/endpoints/1/models": {"array"}, "r_/native/llm/endpoints/1/models": {"1"},
+		"t_/native/llm/endpoints/1/models/0": {"object"}, "f_/native/llm/endpoints/1/models/0/kind": {""},
+		"t_/native/llm/endpoints/2": {"object"}, "f_/native/llm/endpoints/2/name": {"c"}, "f_/native/llm/endpoints/2/key": {""},
+		"t_/native/llm/endpoints/2/enabled": {"boolean"}, "f_/native/llm/endpoints/2/enabled": {"false"},
+		"t_/native/llm/endpoints/2/models": {"array"}, "r_/native/llm/endpoints/2/models": {"1"}}
 	wrote := func(want string) {
 		t.Helper()
 		var got, w any
@@ -1005,7 +1021,7 @@ func TestAdminConfigSave(t *testing.T) {
 	send := func(endpoints string) url.Values {
 		return url.Values{"raw_args": {`{` + head + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"endpoints":` + endpoints + `}}}`}}
 	}
-	shown := `[{"name":"a","prices":[{"model":"m","price":5}]},{"name":"b"}]`
+	shown := `[{"name":"a","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]},{"name":"b","models":[]},{"name":"c","enabled":false,"models":[]}]`
 	if f := configPost(t, cl, srv.URL, send(shown)); f != "info|Nothing changed." {
 		t.Errorf("unchanged JSON flashed %q", f)
 	}
@@ -1022,23 +1038,29 @@ func TestAdminConfigSave(t *testing.T) {
 		t.Errorf("save flashed %q", f)
 	}
 	wrote(`{` + fixed + `,"native":{"llm":{"endpoints":[
-		{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]},{"name":"b","key":"sk"}]}}}`)
+		{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]},{"name":"b","models":[],"key":"sk"},{"name":"c","enabled":false,"models":[]}]}}}`)
 
 	// A key follows its endpoint's name, not its row: reordered rows keep
 	// theirs, a removed endpoint takes its key, a renamed one has none, and
 	// the JSON editor cannot rename the kernel.
 	for _, c := range []struct{ sent, want string }{
-		{`[{"name":"b"},{"name":"a","prices":[{"model":"m","price":5}]}]`,
-			`[{"name":"b","key":"SECRET-B"},{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]}]`},
-		{`[{"name":"b"}]`, `[{"name":"b","key":"SECRET-B"}]`},
-		{`[{"name":"a","prices":[{"model":"m","price":5}]},{"name":"c"}]`,
-			`[{"name":"a","key":"SECRET-A","prices":[{"model":"m","price":5}]},{"name":"c"}]`},
+		{`[{"name":"b","models":[]},{"name":"a","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]}]`,
+			`[{"name":"b","models":[],"key":"SECRET-B"},{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]}]`},
+		{`[{"name":"b","models":[]}]`, `[{"name":"b","models":[],"key":"SECRET-B"}]`},
+		{`[{"name":"a","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]},{"name":"d"}]`,
+			`[{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","models":[{"name":"m","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]},{"name":"d"}]`},
 	} {
 		v := send(c.sent)
 		v.Set("raw_args", strings.Replace(v.Get("raw_args"), `"k"`, `"x"`, 1))
 		configPost(t, cl, srv.URL, v)
 		wrote(`{` + fixed + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"endpoints":` + c.want + `}}}`)
 	}
+
+	// An entry without a string name claims no key and receives none.
+	fc.file = strings.Replace(testConfigFile, `{"name":"c",`, `{"key":"SECRET-N",`, 1)
+	configPost(t, cl, srv.URL, send(`[{"enabled":false}]`))
+	wrote(`{` + fixed + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"endpoints":[{"enabled":false}]}}}`)
+	fc.file = testConfigFile
 
 	stale := send(shown)
 	stale.Set("version", "v0")
@@ -1050,6 +1072,54 @@ func TestAdminConfigSave(t *testing.T) {
 	stale.Set("version", "v1")
 	if f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "previous one is restored") {
 		t.Errorf("refusal flashed %q", f)
+	}
+}
+
+// The configuration's JSON switch reads both ways through the save's own
+// normalization: form → JSON is what Save would write with its secrets
+// withheld, and JSON → form fills the page's form exactly — the file's own
+// empty values included, since a save keeps them — or refuses (§6.2, §6.6).
+func TestAdminConfigSwitch(t *testing.T) {
+	_, srv, cl := configServer(t)
+	page := getBody(t, cl, srv.URL+"/admin/config")
+	post := func(path string, v url.Values) (int, string) {
+		resp := postTo(t, cl, srv.URL+path, page, v)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	// The form names b's key afresh and edits the fee; kernel_handle cannot move.
+	code, body := post("/admin/config/json", url.Values{"has_fields": {"1"},
+		"f_/kernel_handle": {"x"}, "t_/fee_bps": {"integer"}, "f_/fee_bps": {"7"},
+		"t_/native": {"object"}, "t_/native/llm": {"object"}, "t_/native/llm/endpoints": {"array"},
+		"t_/native/llm/endpoints/0": {"object"}, "f_/native/llm/endpoints/0/name": {"b"},
+		"t_/native/llm/endpoints/0/models": {"array"}, "r_/native/llm/endpoints/0/models": {"1"}})
+	var got map[string]any
+	if code != 200 || json.Unmarshal([]byte(body), &got) != nil {
+		t.Fatalf("form → JSON = %d %s", code, body)
+	}
+	want := `{"$schema":"s.json","auth_audience":"","credit_limit":null,"fee_bps":7,"kernel_handle":"k","listen_addr":"127.0.0.1:4040","native":{"llm":{"endpoints":[{"models":[],"name":"b"}]}}}`
+	var w any
+	json.Unmarshal([]byte(want), &w)
+	if !reflect.DeepEqual(got, w) || strings.Contains(body, "SECRET") {
+		t.Errorf("form → JSON = %s\nwant %s", body, want)
+	}
+
+	// The file's own JSON view converts back, empties and all, its secrets as
+	// placeholders; a new optional empty value and an unknown key do not.
+	shown := regexp.MustCompile(`(?s)<textarea name="raw_args"[^>]*>(.*?)</textarea>`).FindStringSubmatch(page)[1]
+	code, body = post("/admin/config/form", url.Values{"raw_args": {html.UnescapeString(shown)}})
+	if code != 200 || !strings.Contains(body, `placeholder="configured ✓ (replace)"`) || strings.Contains(body, "SECRET") || !strings.Contains(body, `<div class="box">k</div>`) {
+		t.Errorf("JSON → form = %d %s", code, body)
+	}
+	code, body = post("/admin/config/form", url.Values{"raw_args": {`{"log_file":"","nope":1}`}})
+	if code != 422 || body != "/log_file: the form has no field for it; /nope: the form has no field for it.\n" {
+		t.Errorf("an inexact JSON = %d %q", code, body)
+	}
+	code, body = post("/admin/config/form", url.Values{"raw_args": {`{"native":{"time":{}}}`}})
+	if code != 422 || !strings.Contains(body, "/native/time: an empty object can only be written in JSON") {
+		t.Errorf("a new optional empty = %d %q", code, body)
 	}
 }
 

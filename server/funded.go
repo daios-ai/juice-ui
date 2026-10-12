@@ -148,6 +148,7 @@ func (o Outcome) IsPeerRefused() bool { return o.Class == PeerRefused }
 type CallForm struct {
 	CSRFField  template.HTML
 	PostURL    string
+	FormURL    string          // the JSON switch's JSON → form conversion (§6.2)
 	Verb       string          // "Run" | "Complete"
 	Price      int64           // >0 → money button "Verb (N)"; 0 → plain "Verb"
 	Locked     json.RawMessage // a task's pre-bound args, shown read-only above the fields
@@ -158,15 +159,6 @@ type CallForm struct {
 	OneShot    bool   // completion is spent once (tasks); a run repeats (actions)
 	FirstPayee bool   // paid run: the viewer has never paid this owner (anti-phishing hint)
 	PayeeOwner string // owner named in the first-payment hint
-	// IsPayment marks a payment-task completion — a spend of the COMPLETER's
-	// own balance (the target action bears effect="transfer", §6.3). It flips
-	// the button to money: "Complete ($N)" when Payment names the sealed
-	// amount, bare "Complete" (money, wallet-send pattern) when the completer
-	// types the amount. PayTo is the sealed recipient for the provenance line.
-	// An ordinary task stays the neutral Complete naming no amount.
-	IsPayment bool
-	Payment   int64
-	PayTo     string
 	// QuoteHash pins the terms this form was RENDERED with (kernel §4). It rides
 	// as a hidden field and the handler reads it back from the request — never
 	// from a fresh read of the action, which would always match and silently
@@ -188,7 +180,7 @@ func (f CallForm) Structured() bool { return !f.IsApproval && len(f.Editable.Fie
 // firstPayee/payeeOwner drive the first-payment hint (§8.3) on a paid run.
 func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome, firstPayee bool, payeeOwner, quoteHash string) CallForm {
 	return CallForm{
-		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", Verb: "Run",
+		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", FormURL: "/actions/" + actionID + "/form", Verb: "Run",
 		QuoteHash: quoteHash,
 		Price:     price, Editable: editable, ResultID: "run-result", Outcome: outcome,
 		FirstPayee: firstPayee, PayeeOwner: payeeOwner,
@@ -199,12 +191,11 @@ func runForm(csrf template.HTML, actionID string, price int64, editable FormMode
 // render read-only above the editable fields). ResultID is per-task so many
 // inbox forms don't collide. locked is the task's partial_args. canDecline puts
 // Decline beside Complete.
-func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked json.RawMessage, outcome *Outcome, isPayment bool, payment int64, payTo string, canDecline bool) CallForm {
+func completeForm(csrf template.HTML, taskID string, price int64, editable FormModel, isApproval bool, locked json.RawMessage, outcome *Outcome, canDecline bool) CallForm {
 	f := CallForm{
-		CSRFField: csrf, PostURL: "/inbox/" + taskID + "/complete", Verb: "Complete",
+		CSRFField: csrf, PostURL: "/inbox/" + taskID + "/complete", FormURL: "/inbox/" + taskID + "/form", Verb: "Complete",
 		Price: price, Locked: locked, Editable: editable, IsApproval: isApproval,
 		ResultID: "task-result-" + taskID, Outcome: outcome, OneShot: true,
-		IsPayment: isPayment, Payment: payment, PayTo: payTo,
 	}
 	if canDecline {
 		f.DeclineID = taskID

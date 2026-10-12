@@ -244,7 +244,7 @@ func TestBuildTaskFormExtraKeysInPartial(t *testing.T) {
 // map — distinct from an absent one, which is an unconstrained object where the
 // raw editor is right (§10). Both shapes were observed live on v0.12.23.
 func TestEmptyPropertiesMeansNothingToFillNotFreeForm(t *testing.T) {
-	// Shape seen on a payment task's allowed_input.
+	// Shape seen on a transfer task's allowed_input.
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{},"required":null}`))
 	if !fm.NoFields {
 		t.Error("explicitly empty properties declares no fields")
@@ -407,13 +407,15 @@ func TestBuildFormTree(t *testing.T) {
 
 // A proposal fills the tree: scalars as text, one row per array element, an
 // open node as its JSON, null included; a key the schema does not name is
-// left alone.
+// left alone and reported.
 func TestFormFill(t *testing.T) {
 	fm := BuildForm(json.RawMessage(`{"type":"object","properties":{
 		"n":{"type":"integer"},
 		"meta":{"type":"object"},"any":{},
 		"msgs":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string"},"content":{"type":"string"}}}}}}`))
-	fm.Fill(json.RawMessage(`{"n":4,"meta":{"k":"v"},"any":null,"msgs":[{"role":"user","content":"a"},{"role":"system","content":"b"}],"extra":1}`))
+	if got := fm.Fill(json.RawMessage(`{"n":4,"meta":{"k":"v"},"any":null,"msgs":[{"role":"user","content":"a"},{"role":"system","content":"b"}],"extra":1}`)); strings.Join(got, ";") != "/extra: the form has no field for it" {
+		t.Errorf("reported %q", got)
+	}
 	by := map[string]Field{}
 	for _, f := range fm.Fields {
 		by[f.Name] = f
@@ -424,6 +426,48 @@ func TestFormFill(t *testing.T) {
 	msgs := by["msgs"]
 	if len(msgs.Rows) != 2 || msgs.Rows[1].Path != "/msgs/1" || msgs.Rows[1].Fields[0].Value != "system" || msgs.Rows[0].Fields[1].Value != "a" {
 		t.Errorf("rows = %+v", msgs.Rows)
+	}
+}
+
+// Fill reports each value the form cannot hold exactly — the JSON switch
+// refuses those rather than change the value (§6.2) — and holds the rest:
+// a required empty list is kept on submit, a json field holds any text, and a
+// nullable field holds null as its ticked box.
+func TestFormFillIsExactOrReports(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","required":["req"],"properties":{
+		"i":{"type":"integer"},"num":{"type":"number"},"b":{"type":"boolean"},
+		"s":{"type":"string"},"e":{"type":"string","enum":["x","y"]},
+		"o":{"type":"object","properties":{"k":{"type":"string"}}},
+		"opt":{"type":"array","items":{"type":"string"}},
+		"req":{"type":"array","items":{"type":"string"}},
+		"j":{},"nul":{"type":["string","null"]}}}`)
+	for _, c := range []struct{ args, want string }{
+		{`{"i":"5"}`, "/i: the field takes an integer"},
+		{`{"i":1.5}`, "/i: the field takes an integer"},
+		{`{"num":"2"}`, "/num: the field takes a number"},
+		{`{"b":"true"}`, "/b: the field takes true or false"},
+		{`{"s":5}`, "/s: the field takes text"},
+		{`{"s":""}`, "/s: an empty string can only be written in JSON"},
+		{`{"e":"z"}`, "/e: not one of its choices"},
+		{`{"s":{"a":1}}`, "/s: the field takes text"},
+		{`{"o":{}}`, "/o: an empty object can only be written in JSON"},
+		{`{"o":{"q":1}}`, "/o/q: the form has no field for it"},
+		{`{"opt":[]}`, "/opt: an empty list can only be written in JSON"},
+		{`{"i":null}`, "/i: null is not admitted here"},
+		{`[1]`, "/: not a JSON object"},
+		{`{"i":5,"num":2.5,"b":false,"s":"t","e":"y","o":{"k":"v"},"opt":["a"],"req":[],"j":{"x":[]},"nul":null}`, ""},
+	} {
+		fm := BuildForm(schema)
+		if got := strings.Join(fm.Fill(json.RawMessage(c.args)), "; "); got != c.want {
+			t.Errorf("Fill(%s) = %q, want %q", c.args, got, c.want)
+		}
+	}
+	fm := BuildForm(schema)
+	fm.Fill(json.RawMessage(`{"nul":null,"j":{"x":[]}}`))
+	for _, f := range fm.Fields {
+		if f.Name == "nul" && !f.Null || f.Name == "j" && f.Value != `{"x":[]}` {
+			t.Errorf("%s = %+v", f.Name, f)
+		}
 	}
 }
 

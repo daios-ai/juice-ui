@@ -1,7 +1,23 @@
 # Juice Web UI Requirements
 
-Version: 0.24.0
+Version: 0.25.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.25.0.** The UI follows kernel v0.16.0. A person decides
+> who may address tasks to them: the inbox lists every requester, pending ones
+> first, to approve, revoke or block, and a pending requester counts in the
+> attention badge, its tasks being withheld until approved (§6.1, §6.3). A card
+> names the task's requester, the party it acts for. Answering a task spends
+> nothing of the person who answers it, the requester's funds being reserved
+> when the task is made, so every completion is the neutral `Complete` and the
+> payment-task branch is gone (§6.3, §8). The language-model endpoints and
+> their models are edited on the configuration page, and an installation
+> upgraded from an older kernel edits them as a list replacing the kernel's
+> defaults whole (§6.6). A required select left untouched is blank, so a row
+> nobody filled is dropped rather than sent with its first option, and a
+> required list or object is sent even empty, so the configuration's
+> `"models": []` survives a save (§6.2). The JSON switch converts what is on
+> screen into the other view, exactly or not at all (§6.2, §6.6).
 
 > **What changed in 0.24.0.** The UI follows kernel v0.15.13, whose schema
 > subset has one string per value: a map (`additionalProperties` as a schema)
@@ -588,7 +604,9 @@ and **Admin**, both shown **only to the `sys` superuser**. Each maps to the same
 CLI concepts as before: `home` is the dashboard over the others; discovery +
 execution (`run` + the catalog) is reached from the search box on every page,
 whose results page is `browse`;
-`inbox` is `task` — work addressed to the user, carrying the sole attention badge;
+`inbox` is `task` — work addressed to the user, carrying the sole attention badge,
+which counts the waiting tasks addressed to the user and the requesters awaiting
+the user's decision (§6.3);
 `workshop` is the provider surface (`action` management + earnings + creation);
 `wallet` is money evidence (`user` balances + `process` lifetimes + the `tx`
 ledger + receipts); `settings` is account, preferences, and connected accounts;
@@ -1089,7 +1107,10 @@ spend:
   beside its key; `minimum`/`maximum`/`minLength`/`maxLength` become the
   input's bounds; `default` is the input's placeholder, never its value (it is
   an annotation no validator inserts, and a pre-filled value would be submitted
-  untyped); `format` `date`, `email` and `uri` set the input type (`date-time`
+  untyped); a select (an `enum` or a boolean) leads with a blank choice unless
+  it is required and already holds a value, so a row left untouched stays blank
+  rather than sending the first option nobody chose; `format` `date`, `email`
+  and `uri` set the input type (`date-time`
   is not mapped: `datetime-local` carries no zone and fails RFC 3339); an
   integer's exclusive bound becomes the next inclusive one. Nothing else is
   mapped (`multipleOf` would misread HTML's `step`, whose base is `min`;
@@ -1100,13 +1121,27 @@ spend:
   object without `properties`, an array without `items`) as an empty JSON
   editor whose placeholder is the shape, its text sent as the JSON it holds. A field is named by its JSON Pointer
   (`f_/messages/0/content`), its type by `t_<path>` — a container's hint says
-  how its children nest — and its null choice by `n_<path>`, which nulls the
-  whole subtree. The args are rebuilt from the form alone, with no schema read
-  at submit: an empty container is omitted, a row left blank is dropped and the
-  indices compact. An optional property's `""`, `[]` or `{}` is a value
-  distinct from its absence (kernel D4), which a blank input cannot carry, so
-  it is typed in JSON mode. A closed object with no properties is a confirm
-  alone.
+  how its children nest — its null choice by `n_<path>`, which nulls the
+  whole subtree, and a required container by `r_<path>`. The args are rebuilt
+  from the form alone, with no schema read at submit: an empty container is
+  omitted, a row left blank is dropped and the indices compact, except that a
+  required list or object of an object being sent is sent even when nothing in
+  it was filled — `[]`, or `{}` holding its own required containers — since
+  absence is invalid for it. An optional property's `""`, `[]` or `{}` is a
+  value distinct from its absence (kernel D4), which a blank input cannot
+  carry, so it is typed in JSON mode. A closed object with no properties is a
+  confirm alone.
+* **The JSON switch converts, exactly or not at all.** Switching turns what is
+  on screen into the other view, through the server's own transforms: form →
+  JSON is the args a submit would send (`POST /form/json`), JSON → form the
+  form's own fields filled from the editor (`POST /actions/{id}/form`,
+  `/inbox/{id}/form`). A switch never changes the value: when the form cannot
+  hold the JSON exactly — a key it has no field for, a value of another kind
+  than its field's (`"5"` for an integer), a value outside its choices, a null
+  where none is admitted, or an empty value a blank control would drop — the
+  view stays and each such value is named under the switch by its pointer. A
+  typed password never enters the JSON, so it holds the switch until it is
+  saved or cleared.
 * **A run MUST pin the quote it was shown.** Every action read and every
   `sys/lookup` row carries `quote_hash`, a fingerprint of the quoted terms
   (price, title, description, schemas, effect). The form carries it as a hidden field
@@ -1211,40 +1246,39 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   completable card; all other tasks MUST go to a history table, read with
   `?status=` from its tabs or `?all=1` (the kernel lists only open tasks
   otherwise), to exhaustion. A single task is `GET /v1/tasks/{id}`.
-* **Who asks** is what the row names. A row carries `created_by` (the creating
-  action) and `action` (the completion target) when this kernel holds the task;
-  a task held on another kernel is listed here without them, its `owner` the
-  holding kernel's name, rendered as every kernel name is (§6.6: a petname
-  whole, a key truncated). The card names what the row names and nothing else.
+* **Who asks** is what the row names. A row carries `requester`, the party the
+  task acts for and as whom its completion runs (kernel D6), named first; then
+  `created_by` (the creating action) and `action` (the completion target) when
+  this kernel holds the task; a task held on another kernel is listed here
+  without them, its `owner` the holding kernel's name, rendered as every kernel
+  name is (§6.6: a petname whole, a key truncated). The card names what the row
+  names and nothing else.
+* **Requesters (kernel U52).** A task from a requester the user has not
+  approved is withheld: it is not listed, and read by id it is not found. The
+  inbox MUST list `GET /v1/me/requesters` to exhaustion under "Requesters",
+  pending first, then approved, then blocked, each row naming the address, the
+  status and the date since, with the decisions that change its status
+  (`POST /v1/me/requesters/{address}/{approve|revoke|block}`): `Approve`
+  (primary), `Revoke` (secondary; back to pending, its tasks withheld again)
+  and `Block` (destructive, behind the plain confirm "Block {address}?", since
+  it declines the requester's waiting tasks and refuses new ones). A requester
+  has no content to show and no page of its own, so its row is where its
+  decisions stand. The status pill is neutral: it is no money state.
 * The completion form MUST be built from the task's own `allowed_input` (the
   kernel-derived completion schema on a waiting task), never by reading the
   target action: a task may be parked on a `private`/`local` action the
   completer can never read.
 * `partial_args` MUST render read-only; only `allowed_input` fields MUST be
   editable. When none are editable, the card MUST collapse to a single confirm.
-* **Completion is two-branch — this is the single statement of the rule; §7 and
-  §8 defer here.**
-  * An **ordinary task** stays **calm and free of funds-mechanics narration** —
-    no "parked," no "you pay N but it's reserved." The completer is doing
-    requested work, not authorizing a spend from their own wallet (the money was
-    reserved by whoever created the task), so the completion control is a
-    **neutral `Complete`** that names **no** amount — a `verb (N)` money button
-    here actively misleads. The card names only *who asks* and *what* and shows
-    the sealed `partial_args` as an inert read-only detail.
-  * A **payment task** IS a spend of the completer's own balance: a task on an
-    `effect="transfer"` action draws the `amount` from the completer at
-    completion (verified on 4dbfedd). The signal is the target action's
-    **signed contract field `effect`**, read by the task's `action` address
-    (`GET /v1/actions?ref=`), never the action's name. The read is made only
-    for an address on this kernel — the transfer action is `local`, so a
-    payment task always names one — and never dials a peer. Its confirm MUST be
-    the money button naming the amount — the sealed `partial_args.amount` when
-    bound, else the completer's own typed amount — and the card MUST name the
-    recipient (`partial_args.target`) in the provenance face; the §8 rule
-    (whose funds move, how much) applies in full, exactly as on a paid run.
-    The two branches MUST NOT blend: a card is one or the other, decided solely
-    by the kernel's `effect` field, never by name or heuristics. A row that
-    names no action here is an ordinary task.
+* **Completion is neutral — this is the single statement of the rule; §7 and
+  §8 defer here.** Answering a task spends nothing of the person who answers
+  it (kernel U52): its price was parked by whoever created it, and a transfer
+  task's value was reserved from its requester at creation and is paid on
+  completion. The completion control is therefore a **neutral `Complete`**
+  naming **no** amount, with no funds-mechanics narration — a `verb (N)` money
+  button here would state a spend that does not happen. The card names only
+  *who asks* and *what* and shows the sealed `partial_args` as an inert
+  read-only detail. No action is read to decide how a task renders.
 * Completion MUST POST to `/v1/tasks/{id}/complete` with `args` (default `{}`)
   and MUST render `{result, tx_id, trace_id, receipt_id, task_id}` through the
   run outcome display (§6.2). **A receipt is linked only when the reply names
@@ -1333,8 +1367,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   session?" — ending cancels waiting tasks and refunds parked prices — via
   `POST /v1/processes/{id}/end`). "locked" is not
   a user-facing label. Parked is the served `locked` whole: it also holds what a
-  call to another kernel stakes on its ticket (kernel P10), which no session
-  itemizes, and the UI states the total rather than computing a remainder.
+  call to another kernel stakes on its ticket (kernel P10) and the values the
+  user's waiting transfer tasks reserve (kernel D6), which no session itemizes,
+  and the UI states the total rather than computing a remainder.
 * **A session awaiting a peer's receipt is not force-endable.** The kernel
   refuses to end it (409), because the peer may already have earned the funds,
   so the control MUST be withheld wherever it appears — the wallet, the sessions
@@ -1372,8 +1407,8 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   they render as breakdown rows, zero-suppressed, and the payer named beside
   them is the transaction's **`caller`** — the immediate caller, whose
   balance the value actually leaves — never the `owner` that pays for
-  execution. The two differ exactly when a payment task settles inside someone
-  else's process (§6.3).
+  execution. The two differ exactly when a transfer task settles inside
+  someone else's process (§6.3).
 * **Registering a payout address takes the account's password**
   (`PUT /v1/me/blockchain-address {blockchain_address, signature,
   current_password}`), as a password change does. A wrong or missing one is the
@@ -1671,7 +1706,10 @@ file's only writer; the kernel manual has the operator edit it.)
 * The form is the kernel's own JSON Schema of the file,
   `$JUICE_HOME/schemas/config.schema.json`, rendered by the run form's
   components (§6.2) and filled from the file; its JSON switch opens on the file
-  itself.
+  itself. The switch converts through the save's own reading of the file
+  (`POST /admin/config/json`, `/admin/config/form`): form → JSON is what Save
+  would write, its secrets withheld; JSON → form holds the file's own empty
+  values, which a save keeps, while a new optional empty value stays in JSON.
 * `kernel_handle`, decided at first boot, and `listen_addr`, the port this UI
   finds its kernel by, are read-only. The file's secrets — the keys the kernel
   gives no command-line flag: `credentials_key` and the `key` of each entry of
@@ -1684,6 +1722,17 @@ file's only writer; the kernel manual has the operator edit it.)
 * A field cleared is removed from the file, restoring the kernel's default; a
   blank field where the file holds an empty value is no change, since a blank
   input cannot tell the two apart. A form unchanged writes nothing.
+* **An installation upgraded from an older kernel** has no
+  `native.llm.endpoints` in its file: the kernel writes the shipped endpoints
+  only on a first boot, so it serves on its defaults while the form, filled
+  from the file, shows an empty list. A list replaces its default whole
+  (kernel Config), so the first saved row replaces every default endpoint, and
+  the operator enters each endpoint to keep, `ollama` included, in the same
+  form. A list dropping `ollama` while the default bindings name it is refused
+  at boot and rolled back with the kernel's words; the other shipped endpoints
+  are disabled, so leaving them out changes no active native. The defaults are
+  not shown as rows: they are not the file, and an unchanged save would write
+  them.
 * A save is refused if the file changed since the page was read (its SHA-256).
   Otherwise the kernel is stopped by SIGTERM to the process id in its
   `serve.lock`, once the lock shows a server holds it and only for a positive
@@ -1707,9 +1756,8 @@ the transaction's `payment` (§6.5).
   renders everywhere. Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
-  price. No other button styles exist. (A task completion is two-branch per
-  §6.3: an ordinary completion is the neutral `Complete` naming no amount; a
-  **payment task** completion is a genuine spend and uses the money button.)
+  price. No other button styles exist. (A task completion is the neutral
+  `Complete` naming no amount, §6.3.)
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
@@ -1859,10 +1907,10 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    MUST key on kernel-captured fields (transaction parties, process owner, a
    task's `required_caller` and `action`), never on payload shape.
 2. Route every act that moves the user's own money — run (including a run of a
-   value-bearing action, which is how money is sent, §6.5), payment-task
-   completion (§6.3), force-end — through a confirm whose
-   button names the amount or refund. An ordinary task completion moves none of
-   the completer's money and stays neutral (§6.3, the single statement). No
+   value-bearing action, which is how money is sent, §6.5), force-end —
+   through a confirm whose button names the amount or refund. A task
+   completion moves none of the completer's money and stays neutral (§6.3, the
+   single statement). No
    spend MUST be reachable from a list view or by a GET.
 
    This binds the natives the UI runs **on a person's behalf, unasked**, to
@@ -1876,9 +1924,7 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    owner distinguished, in a confusable-distinct monospace face, with the owner
    profile one click away for a local owner and no link for another kernel's;
    show a first-time-payee hint on the run form.
-4. Show, on a payment-task card before the confirm, whose funds move, how much,
-   and the sealed `partial_args`; an ordinary task card shows the sealed
-   `partial_args` and who asks (§6.3).
+4. Show, on a task card, the sealed `partial_args` and who asks (§6.3).
 5. Render receipt-verification failures with the failed check named, and MUST NOT
    display `valid` except from the kernel's own per-check response.
 6. Hold no durable state but sessions, compose only documented HTTP calls, never
@@ -1897,10 +1943,14 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * JSON-Schema-to-form rendering, including `partial_args` lock-out on task cards
   and the `allowed_input`-sourced completion form (target action unreadable →
   form still renders);
-* the two completion branches: ordinary tasks neutral (no amount anywhere);
-  payment tasks render the money button naming the amount and the beneficiary
-  (§6.3), decided solely by the target action's signed `effect` field, read by
-  address and only for an address on this kernel;
+* the form wire and the JSON switch: a required container is sent even
+  empty and a blank row dropped; form → JSON is the submit's args; JSON →
+  form fills exactly or names each value it cannot hold; the configuration's
+  switch reads through the save's normalization, secrets withheld (§6.2, §6.6);
+* completion is neutral, a transfer task included, and no action is read to
+  render a task (§6.3); a card names its requester; requesters list pending
+  first with the decisions that change each status, Block alone behind a
+  confirm, and a pending requester counts in the badge (§6.1, §6.3);
 * decline: offered to the required caller and the owner of a waiting task and
   to nobody else; a task held on another kernel names its holder and links no
   receipt after completion (§6.3);
@@ -2163,9 +2213,7 @@ once its prerequisite is confirmed on the running kernel.
 * **The world's symbol (§7).** Confirmed on v0.14.2: `/health` carries `symbol`,
   and the kernel publishes the rendering the UI now follows.
 * **`allowed_input` on `/v1/tasks` (§6.3).** Every waiting task carries it
-  (4dbfedd), and the completion form derives from it alone. Nothing on a task
-  row marks a payment; payment tasks are detected by the target action's
-  `effect` field, read by the row's `action` address (§6.3).
+  (4dbfedd), and the completion form derives from it alone.
   An approval-only task serves an object with no fields, in either of two shapes
   observed live — `{"type":"object","properties":{},"required":null}` and
   `{"type":"object"}` — and both MUST collapse to the single confirm of §6.3,
@@ -2193,7 +2241,10 @@ once its prerequisite is confirmed on the running kernel.
   `409 process is closed` — and chat mints its verification task and every
   doorbell off the outbox seed trace, which settles when the seed call returns.
   Registration, and so the rooms gate, fail on this kernel until chat holds a
-  trace that is still live when it mints.
+  trace that is still live when it mints. Once it does, chat is the requester
+  of its verification task and doorbells, which are withheld from each member
+  until that member approves `chat@<kernel>` (kernel U52), so the fix carries
+  that approval in onboarding.
 * **Chat's contract follows the canonical form (apps).** The kernel stores
   every schema canonical — an object naming its properties closed with
   `additionalProperties: false` — and rewrites stored rows into it at boot

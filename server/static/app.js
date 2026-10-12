@@ -31,7 +31,6 @@ document.body.addEventListener("htmx:afterRequest", (e) => {
   const form = e.detail?.elt;
   if (e.detail?.successful && form?.matches?.("[data-reset-on-success]")) {
     form.reset();
-    for (const ta of form.querySelectorAll("textarea")) resizeTA(ta);
   }
 });
 
@@ -71,24 +70,6 @@ for (const sel of document.querySelectorAll("[data-theme-select]")) {
     else document.documentElement.removeAttribute("data-theme");
     sel.closest("form")?.requestSubmit();
   });
-}
-
-// Auto-resize textareas: grow with content up to 10 visible lines, then scroll.
-function resizeTA(ta) {
-  const cs = getComputedStyle(ta);
-  let lineH = parseFloat(cs.lineHeight);
-  if (isNaN(lineH)) lineH = parseFloat(cs.fontSize) * 1.4;
-  const padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-  const maxH = lineH * 10 + padV;
-  ta.style.height = 'auto';
-  const sh = ta.scrollHeight;
-  ta.style.height = Math.min(sh, maxH) + 'px';
-  ta.style.overflowY = sh > maxH ? 'auto' : 'hidden';
-}
-for (const ta of document.querySelectorAll('textarea')) {
-  ta.style.resize = 'none';
-  ta.addEventListener('input', () => resizeTA(ta));
-  resizeTA(ta);
 }
 
 // Floating menu: buttons with [data-menu="panel-id"] toggle fixed-position panels.
@@ -268,7 +249,6 @@ function wireRows(box) {
     }
     wire(row);
     box.appendChild(row);
-    for (const ta of row.querySelectorAll('textarea')) resizeTA(ta);
   });
 }
 // The index of a row: the segment after its array's path in its first named control.
@@ -277,9 +257,14 @@ function indexOf(row, path) {
   const m = el && el.name.slice(2).startsWith(path + '/') ? el.name.slice(2 + path.length + 1).split('/')[0] : '0';
   return Number(m) || 0;
 }
-for (const box of document.querySelectorAll('[data-rows]')) {
-  if (!box.parentElement.closest('[data-rows]')) wireRows(box);
+// Wires the outermost row containers under root: at load, and in fields the
+// JSON switch has just rendered.
+function wireRowsIn(root) {
+  for (const box of root.querySelectorAll('[data-rows]')) {
+    if (!box.parentElement.closest('[data-rows]')) wireRows(box);
+  }
 }
+wireRowsIn(document);
 
 // The JSON toggle: a [data-json] block holds its fields ([data-fields]) and its
 // JSON ([data-raw]); the toggle swaps them. In a form the hidden editor's
@@ -288,21 +273,66 @@ for (const box of document.querySelectorAll('[data-rows]')) {
 // the same control shows the raw JSON. Without script the block stays as the
 // server rendered it. A result arrives by htmx swap, so new content is wired
 // as it lands.
+//
+// A form names its two conversions (data-to-json, data-to-form): a switch
+// converts what is on screen into the other view exactly, or stays and shows
+// the server's reason (§6.2). A typed password never enters the JSON, so it
+// holds the switch until it is saved or cleared.
 function wireJSON(root) {
   for (const block of root.querySelectorAll('[data-json]')) {
     const toggle = block.querySelector('[data-json-switch]');
     const fields = block.querySelector('[data-fields]');
     const raw = block.querySelector('[data-raw]');
     if (!toggle || !fields || !raw) continue;
+    const editor = raw.querySelector('textarea');
+    const error = block.querySelector('[data-json-error]');
     const apply = (json) => {
       toggle.setAttribute('aria-checked', String(json));
       fields.hidden = json;
       raw.hidden = !json;
       for (const el of fields.querySelectorAll('input, select, textarea')) el.disabled = json;
       for (const el of block.querySelectorAll('[name=has_fields]')) el.disabled = json;
-      if (json) raw.querySelector('textarea')?.dispatchEvent(new Event('input'));
     };
-    toggle.addEventListener('click', () => apply(toggle.getAttribute('aria-checked') !== 'true'));
+    const say = (text) => {
+      error.textContent = text;
+      error.hidden = !text;
+      return !text;
+    };
+    const convert = async (json) => {
+      if (json && [...fields.querySelectorAll('input[type=password]')].some((el) => el.value)) {
+        return say('A typed key is never shown as JSON; save or clear it first.');
+      }
+      const body = new URLSearchParams();
+      if (json) {
+        for (const el of fields.querySelectorAll('[name]')) {
+          if (!el.disabled && !(el.type === 'checkbox' && !el.checked)) body.append(el.name, el.value);
+        }
+        body.append('has_fields', '1');
+      } else {
+        body.append('raw_args', editor.value);
+      }
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+      try {
+        const res = await fetch(json ? block.dataset.toJson : block.dataset.toForm, {
+          method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf },
+        });
+        const text = await res.text();
+        if (!res.ok) return say(text.trim());
+        if (json) {
+          editor.value = text;
+        } else {
+          fields.innerHTML = text;
+          wireRowsIn(fields);
+        }
+        return say('');
+      } catch {
+        return say('The server did not answer.');
+      }
+    };
+    toggle.addEventListener('click', async () => {
+      const json = toggle.getAttribute('aria-checked') !== 'true';
+      if (!block.dataset.toJson || await convert(json)) apply(json);
+    });
     apply(false);
   }
 }
@@ -352,9 +382,6 @@ export function openDialog(dlg) {
   if (!dlg || dlg.open) return;
   if (typeof dlg.showModal === 'function') dlg.showModal();
   else dlg.setAttribute('open', '');
-  // A textarea measured while its dialog was display:none had scrollHeight 0 and
-  // was pinned to one line; now that the dialog is visible, size it to its content.
-  for (const ta of dlg.querySelectorAll('textarea')) resizeTA(ta);
 }
 document.addEventListener('click', (e) => {
   const trigger = e.target.closest('[data-modal]');

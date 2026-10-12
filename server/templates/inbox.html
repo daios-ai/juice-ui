@@ -15,13 +15,36 @@
   {{$t := .Task}}
   <div class="task-card">
     <div class="task-ask">{{template "_task_asker" $t}}{{if $t.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
-    {{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price .Form.Editable .Form.IsApproval $t.PartialArgs nil .IsPayment .Payment .PayTo .CanDecline)}}
+    {{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price .Form.Editable .Form.IsApproval $t.PartialArgs nil .CanDecline)}}
   </div>
   {{end}}
 {{end}}
 </div>
 {{else}}
 <p class="muted">Nothing waiting for you.</p>
+{{end}}
+
+{{if $d.Requesters}}
+<h2>Requesters</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Requester</th><th>Status</th><th>Since</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Requesters}}
+  <tr>
+    <td class="mono">{{.Requester}}</td>
+    <td><span class="pill">{{.Status}}</span></td>
+    <td class="muted">{{shortDate .Since}}</td>
+    <td><div class="cluster">
+      {{if ne .Status "approved"}}<form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>{{end}}
+      {{if ne .Status "pending"}}<form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<button class="btn-quiet" type="submit">Revoke</button></form>{{end}}
+      {{if ne .Status "blocked"}}<form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>{{end}}
+    </div></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
 {{end}}
 
 <h2>History</h2>

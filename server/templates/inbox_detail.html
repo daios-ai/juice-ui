@@ -14,7 +14,7 @@
   </div>
   <div>
     <h3>Asked by</h3>
-    <p>{{if $t.CreatedBy}}{{template "_ref" (ref $t.CreatedBy "")}} · <span class="mono">{{$t.Owner}}</span>{{else}}{{template "_kernel_name" $t.Owner}}{{end}}</p>
+    <p>{{template "_task_asker" $t}}</p>
   </div>
   <div>
     <h3>Required caller</h3>
@@ -24,7 +24,7 @@
 
 {{if $d.CanComplete}}
 <h2>Complete</h2>
-{{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price $d.Form.Editable $d.Form.IsApproval $t.PartialArgs nil $d.IsPayment $d.Payment $d.PayTo $d.CanDecline)}}
+{{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price $d.Form.Editable $d.Form.IsApproval $t.PartialArgs nil $d.CanDecline)}}
 {{else if $d.CanDecline}}
 <div class="cluster">{{template "_decline_button" $t.ID}}</div>
 {{template "_task_decline" (declineForm $.CSRFField $t.ID)}}

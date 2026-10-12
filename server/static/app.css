@@ -561,12 +561,11 @@ input[type=search], textarea, select) {
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-s);
 }
-/* Textarea starts at exactly one line and autosizes (resizeTA in app.js grows
-   it to content; min-height is the one-line floor so an empty box isn't cramped).
-   line-height is explicit so the JS height math is deterministic. */
+/* A textarea sizes to its content (field-sizing), from a one-line floor so an
+   empty box isn't cramped, and its height can be dragged. */
 textarea {
-  resize: none; font-family: var(--font-mono); line-height: 1.5;
-  min-height: calc(1.5em + 1rem + 2px); overflow-y: hidden;
+  field-sizing: content; resize: vertical; font-family: var(--font-mono); line-height: 1.5;
+  min-height: calc(1.5em + 1rem + 2px);
 }
 .field-error input, .field-error textarea { border-color: var(--danger); }
 .error-text { color: var(--danger); font-size: .85rem; margin-top: .25rem; }
@@ -717,7 +716,8 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .msg-del { padding: 0 .2rem; opacity: 0; }
 .msg:hover .msg-del { opacity: .6; }
 .composer { display: flex; gap: .6rem; }
-.composer textarea { flex: 1 1 auto; }
+/* A message box grows to ten lines, then scrolls; it has no drag handle. */
+.composer textarea { flex: 1 1 auto; resize: none; max-height: calc(15em + 1rem + 2px); }
 /* Members disclosure lives in the room's crumb. */
 .thread-members { position: relative; }
 .thread-members > summary { list-style: none; cursor: pointer; }

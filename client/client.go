@@ -159,12 +159,6 @@ type Action struct {
 	// (R9), so a client can tell an action needs a grant, and of which kind.
 	AuthScheme    string `json:"auth_scheme,omitempty"`
 	RequiresGrant bool   `json:"requires_grant,omitempty"`
-	// Effect names a privileged execution effect from the action's signed
-	// contract — "transfer" on a value-bearing action (verified live 2026-08-03
-	// on sys/transfer), empty on every ordinary action. It is the ONLY signal
-	// that completing a task on this action spends the completer's own money
-	// (requirements.md §6.3): never key on the action's name.
-	Effect string `json:"effect,omitempty"`
 	// QuoteHash fingerprints the terms quoted here — action id, effect, title,
 	// description, both schemas, and price (kernel P2). Pin it on a run
 	// and a call whose terms moved is refused with terms_changed BEFORE funds are
@@ -216,10 +210,6 @@ func (a Action) Reports() []IssuerEvidence {
 	}
 	return out
 }
-
-// IsTransfer reports whether this action bears the value-transfer effect —
-// the payment-task signal (requirements.md §6.3, §6.5).
-func (a Action) IsTransfer() bool { return a.Effect == "transfer" }
 
 // Ref returns the action's address, owner@kernel/name, as the kernel serves it.
 func (a Action) Ref() string { return a.Action }
@@ -404,7 +394,8 @@ type Rating struct {
 type Task struct {
 	ID             string          `json:"id"`
 	RequiredCaller string          `json:"required_caller"` // the completer's address
-	Owner          string          `json:"owner"`           // who asked: the process owner, or the holding kernel
+	Owner          string          `json:"owner"`           // the payer: the process owner, or the holding kernel
+	Requester      string          `json:"requester"`       // whom the task acts for; completion runs as it (kernel D6)
 	Action         string          `json:"action"`
 	CreatedBy      string          `json:"created_by"`
 	Price          int64           `json:"price"`
@@ -1217,6 +1208,26 @@ func (c *Client) GetTask(ctx context.Context, token, id string) (Task, error) {
 	var t Task
 	err := c.do(ctx, http.MethodGet, "/v1/tasks/"+url.PathEscape(id), token, nil, &t)
 	return t, err
+}
+
+// Requester is one party that has addressed tasks to the caller: its tasks are
+// withheld until the caller approves it (GET /v1/me/requesters, kernel U52).
+type Requester struct {
+	Requester string `json:"requester"`
+	Status    string `json:"status"` // pending|approved|blocked
+	Since     string `json:"since"`
+}
+
+// ListRequesters lists, to exhaustion, everyone who has addressed tasks to the
+// caller.
+func (c *Client) ListRequesters(ctx context.Context, token string) ([]Requester, error) {
+	return listAll[Requester](ctx, c, token, "/v1/me/requesters", nil)
+}
+
+// DecideRequester approves, revokes (back to pending) or blocks a listed
+// requester; blocking declines its waiting tasks and refuses new ones.
+func (c *Client) DecideRequester(ctx context.Context, token, address, verb string) error {
+	return c.do(ctx, http.MethodPost, "/v1/me/requesters/"+url.PathEscape(address)+"/"+verb, token, nil, nil)
 }
 
 // CreateTaskInput is the body for POST /v1/tasks: a waiting task is a funded

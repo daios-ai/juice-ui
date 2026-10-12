@@ -204,18 +204,10 @@ type txView struct {
 }
 
 // taskEntry is one task as the inbox shows it: the row, its completion form,
-// the payment branch, and what the viewer may do with it.
+// and what the viewer may do with it.
 type taskEntry struct {
 	Task client.Task
 	Form TaskFormModel
-	// IsPayment marks a payment task: the target action bears the signed
-	// effect="transfer", so completing spends the COMPLETER's own money
-	// (requirements.md §6.3). Payment is the sealed amount (0 when the amount
-	// is left to the completer); PayTo the sealed recipient, both from
-	// partial_args. The two-branch button rule keys on these.
-	IsPayment bool
-	Payment   int64
-	PayTo     string
 	// CanComplete: the task waits on the viewer. CanDecline: the viewer is one
 	// of the two parties the kernel lets decline it — the one asked, or the one
 	// who asked (requirements.md §6.3).
@@ -232,10 +224,11 @@ type taskGroup struct {
 }
 
 type tasksView struct {
-	Me          string        // the viewer's address
-	InboxGroups []taskGroup   // waiting tasks that require this user, grouped by created_by
-	History     []client.Task // every other task the viewer may see
-	Filter      string        // status filter
+	Me          string             // the viewer's address
+	InboxGroups []taskGroup        // waiting tasks that require this user, grouped by created_by
+	History     []client.Task      // every other task the viewer may see
+	Requesters  []client.Requester // who has addressed tasks to the viewer, pending first
+	Filter      string             // status filter
 	Superuser   bool
 	Error       string
 }
@@ -959,14 +952,23 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		effects := effectReader{s: s, ctx: ctx, tok: tok}
+		if view.Requesters, e = s.client.ListRequesters(ctx, tok); e != nil {
+			return e
+		}
+		rq := view.Requesters
+		sort.SliceStable(rq, func(i, j int) bool {
+			if ri, rj := requesterRank[rq[i].Status], requesterRank[rq[j].Status]; ri != rj {
+				return ri < rj
+			}
+			return rq[i].Since < rq[j].Since
+		})
 		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
 		for _, t := range tasks {
 			if !t.Waiting() || t.RequiredCaller != me.Address {
 				view.History = append(view.History, t)
 				continue
 			}
-			entry := s.taskEntryOf(t, me.Address, effects.isTransfer(t.Action))
+			entry := s.taskEntryOf(t, me.Address)
 			i, ok := groupIdx[t.CreatedBy]
 			if !ok {
 				i = len(view.InboxGroups)
@@ -996,8 +998,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		effects := effectReader{s: s, ctx: ctx, tok: tok}
-		view = s.taskEntryOf(t, me.Address, effects.isTransfer(t.Action))
+		view = s.taskEntryOf(t, me.Address)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1008,62 +1009,14 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 
 // taskEntryOf builds what the inbox shows for one task: the completion form
 // from the task's own allowed_input (never the target action, which may be
-// private), the payment branch when the target bears the transfer effect, and
-// the two gestures the viewer may make.
-func (s *Server) taskEntryOf(t client.Task, me string, isTransfer bool) taskEntry {
-	e := taskEntry{
+// private), and the two gestures the viewer may make.
+func (s *Server) taskEntryOf(t client.Task, me string) taskEntry {
+	return taskEntry{
 		Task:        t,
 		Form:        BuildTaskForm(t.AllowedInput, t.PartialArgs),
 		CanComplete: t.Waiting() && t.RequiredCaller == me,
 		CanDecline:  t.Waiting() && (t.RequiredCaller == me || t.Owner == me),
 	}
-	if isTransfer {
-		e.IsPayment = true
-		e.Payment, e.PayTo = paymentFromArgs(t.PartialArgs)
-	}
-	return e
-}
-
-// effectReader answers whether a task's target action bears the transfer
-// effect — the one fact the payment branch keys on (requirements.md §6.3). A
-// task row names its action by address, so the action is read by reference,
-// once per address per request. Only an address on this kernel is read: the
-// transfer action is local, so a payment task always names one, and a
-// reference to another kernel would dial it. A row naming no action, or one the
-// viewer may not read, is an ordinary task.
-type effectReader struct {
-	s    *Server
-	ctx  context.Context
-	tok  string
-	seen map[string]bool
-}
-
-func (r *effectReader) isTransfer(ref string) bool {
-	if ref == "" || !r.s.identity.Local(ref) {
-		return false
-	}
-	if v, ok := r.seen[ref]; ok {
-		return v
-	}
-	a, found, err := r.s.client.ResolveRef(r.ctx, r.tok, ref)
-	v := err == nil && found && a.IsTransfer()
-	if r.seen == nil {
-		r.seen = map[string]bool{}
-	}
-	r.seen[ref] = v
-	return v
-}
-
-// paymentFromArgs extracts the sealed amount and recipient of a payment task
-// from its partial_args. A missing amount returns 0 — the completer types it,
-// and the money button stays unnumbered (§6.3).
-func paymentFromArgs(partial json.RawMessage) (amount int64, target string) {
-	var p struct {
-		Amount int64  `json:"amount"`
-		Target string `json:"target"`
-	}
-	_ = json.Unmarshal(partial, &p)
-	return p.Amount, p.Target
 }
 
 const (
@@ -1111,10 +1064,20 @@ func (s *Server) getTasksBadge(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
-			// A superuser lists everyone's tasks; the badge counts the viewer's.
+			requesters, e := s.client.ListRequesters(ctx, tok)
+			if e != nil {
+				return e
+			}
+			// A superuser lists everyone's tasks; the badge counts the viewer's,
+			// and each requester awaiting a decision, whose tasks are withheld.
 			n := 0
 			for _, t := range tasks {
 				if t.Waiting() && t.RequiredCaller == me.Address {
+					n++
+				}
+			}
+			for _, q := range requesters {
+				if q.Status == "pending" {
 					n++
 				}
 			}
@@ -2250,6 +2213,25 @@ func (s *Server) postCompleteTask(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/inbox", "success", "Task completed.")
 }
 
+// requesterRank orders the requesters list: who awaits a decision first.
+var requesterRank = map[string]int{"pending": 0, "approved": 1, "blocked": 2}
+
+// postRequester approves, revokes or blocks a requester (kernel U52); the
+// kernel refuses a requester it does not list, and the outcome comes back as
+// the flash on the inbox (post/redirect/get).
+func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
+	verb := r.PathValue("verb")
+	if verb != "approve" && verb != "revoke" && verb != "block" {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+	err := s.sessions.Do(ctx, func(tok string) error {
+		return s.client.DecideRequester(ctx, tok, r.PathValue("address"), verb)
+	})
+	s.flashResult(w, r, err, "/inbox", "Done.")
+}
+
 // postCancelTask declines a waiting task. The kernel decides who may (the one
 // asked, or the one who asked) and refuses a task no longer waiting; the
 // outcome comes back as the flash on the inbox (post/redirect/get).
@@ -2346,8 +2328,9 @@ func rawJSONOrEmpty(s string) (json.RawMessage, error) {
 //
 // A field is named by its JSON Pointer (`f_/messages/0/content`), its type by
 // `t_<path>` — a container's hint, `object` or `array`, says how its children
-// nest — and its null box by `n_<path>`. The tree is rebuilt from the form
-// alone, so no schema is read at submit (§6.2).
+// nest — its null box by `n_<path>`, and a required container by `r_<path>`.
+// The tree is rebuilt from the form alone, so no schema is read at submit
+// (§6.2).
 func buildArgs(r *http.Request) (json.RawMessage, error) {
 	if err := r.ParseForm(); err != nil {
 		return nil, err
@@ -2360,12 +2343,14 @@ func buildArgs(r *http.Request) (json.RawMessage, error) {
 	// and null is sent only when the person ticks the field's null box — never
 	// derived from a blank input, which would make omission impossible. A null
 	// box nulls its whole subtree.
-	hints := map[string]string{}
+	hints, required := map[string]string{}, map[string]bool{}
 	var nulls []string
 	for key := range r.Form {
 		switch {
 		case strings.HasPrefix(key, "t_"):
 			hints[key[2:]] = r.Form.Get(key)
+		case strings.HasPrefix(key, "r_"):
+			required[key[2:]] = true
 		case strings.HasPrefix(key, "n_"):
 			nulls = append(nulls, key[2:])
 		}
@@ -2396,11 +2381,71 @@ func buildArgs(r *http.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 	}
-	out, _ := finalize("", root, hints).(map[string]any)
-	if out == nil {
-		out = map[string]any{}
+	return json.Marshal(finalize("", root, hints, required, true))
+}
+
+// The JSON switch converts what is on screen into the other view exactly, or
+// refuses with the reason (§6.2). Form → JSON is the args a submit would send,
+// built by buildArgs alone; JSON → form is the form's own fields filled from
+// the editor, so each form's resource answers it with that form's schema.
+
+// postFormJSON is the form → JSON direction of an argument form.
+func (s *Server) postFormJSON(w http.ResponseWriter, r *http.Request) {
+	args, err := buildArgs(r)
+	if err != nil {
+		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
+		return
 	}
-	return json.Marshal(out)
+	writeJSONText(w, args)
+}
+
+// postActionForm is the JSON → form direction of an action's run form.
+func (s *Server) postActionForm(w http.ResponseWriter, r *http.Request) {
+	var form FormModel
+	err := s.sessions.Do(r.Context(), func(tok string) error {
+		a, e := s.client.GetAction(r.Context(), tok, r.PathValue("id"))
+		form = BuildForm(a.InputSchema)
+		return e
+	})
+	s.fillFields(w, r, form, err)
+}
+
+// postTaskForm is the JSON → form direction of a task's completion form.
+func (s *Server) postTaskForm(w http.ResponseWriter, r *http.Request) {
+	var form FormModel
+	err := s.sessions.Do(r.Context(), func(tok string) error {
+		t, e := s.client.GetTask(r.Context(), tok, r.PathValue("id"))
+		form = BuildTaskForm(t.AllowedInput, t.PartialArgs).Editable
+		return e
+	})
+	s.fillFields(w, r, form, err)
+}
+
+// fillFields fills form from the editor's JSON and answers its fields.
+func (s *Server) fillFields(w http.ResponseWriter, r *http.Request, form FormModel, err error) {
+	if err != nil {
+		http.Error(w, userMessage(err), http.StatusUnprocessableEntity)
+		return
+	}
+	s.renderFields(w, form, form.Fill(json.RawMessage(r.PostFormValue("raw_args"))))
+}
+
+// renderFields answers a form's fields, or — when the form cannot hold the
+// JSON exactly — each value it cannot hold, and the switch is refused.
+func (s *Server) renderFields(w http.ResponseWriter, form FormModel, inexact []string) {
+	if len(inexact) > 0 {
+		http.Error(w, strings.Join(inexact, "; ")+".", http.StatusUnprocessableEntity)
+		return
+	}
+	_ = s.render.Fragment(w, http.StatusOK, "_fields", form)
+}
+
+// writeJSONText answers a JSON value as the editor shows it.
+func writeJSONText(w http.ResponseWriter, v []byte) {
+	var out bytes.Buffer
+	_ = json.Indent(&out, v, "", "  ")
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out.Bytes())
 }
 
 // underAny reports whether path is one of the prefixes or beneath one.
@@ -2439,8 +2484,11 @@ func setAt(root map[string]any, path string, leaf json.RawMessage) error {
 
 // finalize prunes empty containers bottom-up and orders an array's elements by
 // index, so a row left blank is dropped and the indices compact. A container
-// is an array iff its hint says so. Nil means "nothing here".
-func finalize(path string, node any, hints map[string]string) any {
+// is an array iff its hint says so. Nil means "nothing here", except where keep
+// holds: the root, and a required container (`r_`) of an object being sent,
+// which is sent even when nothing in it was filled, absence being invalid for
+// it (§6.2).
+func finalize(path string, node any, hints map[string]string, required map[string]bool, keep bool) any {
 	m, ok := node.(map[string]any)
 	if !ok {
 		return node
@@ -2456,23 +2504,32 @@ func finalize(path string, node any, hints map[string]string) any {
 		arr := make([]any, 0, len(idx))
 		for _, i := range idx {
 			k := strconv.Itoa(i)
-			if v := finalize(path+"/"+k, m[k], hints); v != nil {
+			if v := finalize(path+"/"+k, m[k], hints, required, false); v != nil {
 				arr = append(arr, v)
 			}
 		}
-		if len(arr) == 0 {
+		if len(arr) == 0 && !keep {
 			return nil
 		}
 		return arr
 	}
 	obj := make(map[string]any, len(m))
 	for k, v := range m {
-		if v := finalize(path+"/"+pointerEscape(k), v, hints); v != nil {
+		if v := finalize(path+"/"+pointerEscape(k), v, hints, required, false); v != nil {
 			obj[k] = v
 		}
 	}
-	if len(obj) == 0 {
+	if len(obj) == 0 && !keep {
 		return nil
+	}
+	for p := range required {
+		i := strings.LastIndex(p, "/")
+		if i < 0 || p[:i] != path {
+			continue
+		}
+		if k := pointerUnescape(p[i+1:]); obj[k] == nil {
+			obj[k] = finalize(p, map[string]any{}, hints, required, true)
+		}
 	}
 	return obj
 }
