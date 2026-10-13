@@ -8,47 +8,45 @@
 {{/* The money acts of package wallet. Every sentence wallet.mjs may show is a
      data-say-* attribute here, so the script writes no prose (§6.5). */}}
 <div data-wallet data-prefix="{{$d.MessagePrefix}}"
-     data-say-none="No wallet found in this browser."
-     data-say-declined="You declined in your wallet."
-     data-say-chain="Your wallet is not on {{.KernelNet}}."
-     data-say-account="Switch your wallet to {{$d.MyAddress}}."
-     data-say-stale="Your address on file changed. Review again."
+     data-say-none="No crypto wallet found in this browser."
+     data-say-declined="You declined in your crypto wallet."
+     data-say-chain="Your crypto wallet is not on {{.KernelNet}}."
+     data-say-account="Switch your crypto wallet to {{$d.MyAddress}}."
+     data-say-stale="Your registered address changed. Review again."
      data-say-failed="Not sent.">
 
 {{template "_figures" (figures (figure $d.Available "available" "") (figure $d.Locked "parked ◷" "escrow"))}}
-{{/* Where money comes in, and where it goes out, differ by world: a world whose
-     money has no addresses has nothing to send from a user's side, and the
-     operator records payments in and out instead (kernel §D23). The world is
-     named in the sentence, because that is the fact deciding how this balance
-     moves — and the one thing a person cannot read off the figure (§7). */}}
-{{if $d.HasAddresses}}
-<p class="card-note">On {{.KernelNet}}, paid in at <span class="mono">{{$d.KernelAddress}}</span> {{template "_copy" (copyOf "address" $d.KernelAddress)}}{{if $d.Token}} in token <span class="mono">{{$d.Token}}</span> {{template "_copy" (copyOf "token" $d.Token)}}{{end}}</p>
-<h2>Your wallet</h2>
-<dl class="kv"><dt>Address</dt><dd>{{if $d.MyAddress}}<span class="mono">{{$d.MyAddress}}</span> {{template "_copy" (copyOf "address" $d.MyAddress)}}{{else}}None{{end}}</dd></dl>
-{{else}}
-<p class="card-note">On {{.KernelNet}}, the operator records money in and out.</p>
-{{end}}
-<p class="banner banner-error" role="alert" data-wallet-say hidden></p>
-<div class="cluster" data-wallet-choose hidden></div>
-<div class="row control-row">
-  {{if $d.CanWithdraw}}<a class="btn-quiet" href="/wallet?form=withdraw" data-modal="form-withdraw">+ withdraw</a>{{end}}
-  {{if $d.HasAddresses}}<a class="btn-quiet" href="/wallet?form=address" data-wallet-register>{{if $d.MyAddress}}change your address{{else}}+ register your address{{end}}</a>{{end}}
-</div>
 
-{{if and $d.Chain $d.MyAddress}}
-<section data-wallet-js hidden>
-<h2>Add funds</h2>
-<form class="stack" method="post" action="/wallet/fund/review">
-  {{.CSRFField}}
-  <div class="field">
-    <label for="fund-amt">Amount<span class="req">*</span></label>
-    <input id="fund-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
-  </div>
-  <div class="cluster"><button class="btn" type="submit">Review</button></div>
-</form>
-<p class="card-note">Send from this wallet only, never from an exchange.</p>
-</section>
+{{/* How money moves: the one explained block (requirements §6.5). Two names
+     throughout — the Juice wallet is this balance, the crypto wallet is the
+     person's own (MetaMask or similar) — and every fact labelled with one line
+     saying what it means. Where money has no addresses, the operator records
+     money in and out (kernel §D23), and the world is named because it decides
+     how this balance moves (§7). */}}
+<h2>How money moves</h2>
+<div class="card stack">
+{{if $d.HasAddresses}}
+  <h3>Your crypto wallet</h3>
+  <dl class="kv"><dt>Registered address</dt><dd>{{if $d.MyAddress}}<span class="mono">{{$d.MyAddress}}</span> {{template "_copy" (copyOf "address" $d.MyAddress)}}{{else}}None{{end}}</dd></dl>
+  <p class="help">Deposits must come from this address; withdrawals are paid to it.</p>
+  <h3>Juice on {{.KernelNet}}</h3>
+  <dl class="kv">
+    <dt>Deposit address</dt><dd><span class="mono">{{$d.KernelAddress}}</span> {{template "_copy" (copyOf "address" $d.KernelAddress)}}</dd>
+    {{if $d.Token}}<dt>Token</dt><dd><span class="mono">{{$d.Token}}</span> {{template "_copy" (copyOf "token" $d.Token)}}</dd>{{end}}
+  </dl>
+  <p class="help">Juice's own address, not yours; only this token is credited.</p>
+  <p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Send from your registered address only, never from an exchange.</p>
+{{else}}
+  <p class="help">On {{.KernelNet}}, the operator records money in and out.</p>
 {{end}}
+  <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
+  <div class="cluster" data-wallet-choose hidden></div>
+  <div class="cluster">
+    {{if and $d.Chain $d.MyAddress}}<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Add funds</a>{{end}}
+    {{if $d.CanWithdraw}}<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>{{end}}
+    {{if $d.HasAddresses}}<a class="btn" href="/wallet?form=address" data-wallet-register>{{if $d.MyAddress}}Change address{{else}}Connect crypto wallet{{end}}</a>{{end}}
+  </div>
+</div>
 
 <div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
 {{template "_open_sessions" .}}
@@ -76,12 +74,49 @@
 <div class="subhead"><h2>Recent activity</h2><a class="tabs-action muted small" href="/transactions">all transactions →</a></div>
 {{template "_activity" $d.Activity}}
 
+{{if and $d.Chain $d.MyAddress}}
+<dialog id="form-fund" class="modal-form"{{if eq $d.OpenForm "fund"}} open{{end}} aria-label="Add funds to your Juice wallet">
+  <div class="modal-head"><h2>Add funds to your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/wallet/fund/review">
+      {{.CSRFField}}
+      <dl class="kv"><dt>From</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd><dt>To</dt><dd>Juice wallet</dd></dl>
+      <div class="field">
+        <label for="fund-amt">Amount<span class="req">*</span></label>
+        <input id="fund-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
+      </div>
+      <div class="cluster">
+        <button class="btn" type="submit">Review</button>
+        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
+
+{{if and (eq $d.OpenForm "fund-review") $d.Chain $d.MyAddress}}
+<dialog id="form-fund-review" class="modal-form" open aria-label="Add funds to your Juice wallet">
+  <div class="modal-head"><h2>Add funds to your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body stack">
+    <p>Add {{money $d.Review.Amount}} to your Juice wallet?</p>
+    <dl class="kv"><dt>From</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd><dt>To</dt><dd>Juice wallet, via <span class="mono">{{$d.KernelAddress}}</span></dd></dl>
+    <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
+    <div class="cluster" data-wallet-choose hidden></div>
+    <div class="cluster">
+      <button class="btn-money" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Add funds ({{money $d.Review.Amount}})</button>
+      <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+    </div>
+  </div>
+</dialog>
+{{end}}
+
 {{if $d.CanWithdraw}}
-<dialog id="form-withdraw" class="modal-form"{{if eq $d.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">
-  <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-withdraw" class="modal-form"{{if eq $d.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw from your Juice wallet">
+  <div class="modal-head"><h2>Withdraw from your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/withdraw/review">
       {{.CSRFField}}
+      <dl class="kv"><dt>From</dt><dd>Juice wallet, <span class="money">{{money $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd>{{end}}</dl>
       <div class="field">
         <label for="wd-amt">Amount<span class="req">*</span></label>
         <input id="wd-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
@@ -97,18 +132,18 @@
 {{end}}
 
 {{if eq $d.OpenForm "withdraw-review"}}
-<dialog id="form-withdraw-review" class="modal-form" open aria-label="Withdraw">
-  <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-withdraw-review" class="modal-form" open aria-label="Withdraw from your Juice wallet">
+  <div class="modal-head"><h2>Withdraw from your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/withdraw">
       {{.CSRFField}}
       <input type="hidden" name="id" value="{{$d.Review.ID}}">
       <input type="hidden" name="amount" value="{{$d.Review.Typed}}">
       <input type="hidden" name="reason" value="{{$d.Review.Reason}}">
-      <p>Withdraw {{money $d.Review.Amount}}?</p>
-      {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd class="mono">{{$d.MyAddress}}</dd></dl>{{end}}
+      <p>Withdraw {{money $d.Review.Amount}} from your Juice wallet?</p>
+      {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd></dl>{{end}}
       <div class="cluster">
-        <button class="btn" type="submit">Withdraw ({{money $d.Review.Amount}})</button>
+        <button class="btn-money" type="submit">Withdraw ({{money $d.Review.Amount}})</button>
         <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
       </div>
     </form>
@@ -116,25 +151,9 @@
 </dialog>
 {{end}}
 
-{{if and (eq $d.OpenForm "fund-review") $d.Chain $d.MyAddress}}
-<dialog id="form-fund-review" class="modal-form" open aria-label="Add funds">
-  <div class="modal-head"><h2>Add funds</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body stack">
-    <p>Add {{money $d.Review.Amount}} to Juice?</p>
-    <dl class="kv"><dt>From</dt><dd class="mono">{{$d.MyAddress}}</dd><dt>To</dt><dd class="mono">{{$d.KernelAddress}}</dd></dl>
-    <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
-    <div class="cluster" data-wallet-choose hidden></div>
-    <div class="cluster">
-      <button class="btn" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Add funds ({{money $d.Review.Amount}})</button>
-      <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
-    </div>
-  </div>
-</dialog>
-{{end}}
-
 {{if $d.HasAddresses}}
-<dialog id="form-address" class="modal-form"{{if eq $d.OpenForm "address"}} open{{end}} aria-label="Your address">
-  <div class="modal-head"><h2>Your address</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-address" class="modal-form"{{if eq $d.OpenForm "address"}} open{{end}} aria-label="Registered address">
+  <div class="modal-head"><h2>Registered address</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
     <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
     {{if $d.Message}}

@@ -2349,7 +2349,7 @@ var formWhitelist = map[string]map[string]bool{
 	"action":        {"action-create": true, "action-import": true},
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
-	"wallet":        {"withdraw": true, "address": true},
+	"wallet":        {"fund": true, "withdraw": true, "address": true},
 	"admin":         {"admin-deposit": true, "admin-inspect": true},
 	"admin-user":    {"admin-rename": true},
 	"admin-peer":    {"admin-rename": true},

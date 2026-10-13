@@ -911,8 +911,8 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	}
 }
 
-// On a proven chain the wallet adds funds and withdraws through reviews that
-// name the amount on a neutral button; the transfer is built at send time from
+// On a proven chain the wallet adds funds and withdraws, two symmetric openers
+// whose reviews name the amount on the money button; the transfer is built at send time from
 // a fresh read of the registered address, and a withdrawal carries the id its
 // review minted (requirements §6.5).
 func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
@@ -943,13 +943,17 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/wallet")
-	for _, want := range []string{"Add funds", "Send from this wallet only, never from an exchange.", `src="/wallet/wallet.mjs"`, "user: U1\naddress: \""} {
+	for _, want := range []string{"How money moves", "Registered address", "Deposit address",
+		`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Send from your registered address only, never from an exchange.`,
+		`<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Add funds</a>`,
+		`<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>`,
+		`src="/wallet/wallet.mjs"`, "user: U1\naddress: \""} {
 		if !strings.Contains(page, want) {
 			t.Errorf("wallet lacks %q", want)
 		}
 	}
 	if strings.Contains(page, "btn-money") {
-		t.Error("no wallet act pays a provider, so none carries the accent")
+		t.Error("an opener moves no money, so the page carries no accent until a review")
 	}
 	review := func(path, amount string) string {
 		resp := postTo(t, cl, srv.URL+path, page, url.Values{"amount": {amount}})
@@ -957,8 +961,8 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return string(b)
 	}
-	if body := review("/wallet/fund/review", "1.5"); !strings.Contains(body, `<button class="btn" type="button" data-wallet-send data-amount="1.5">Add funds (1.50 USDT0)</button>`) {
-		t.Errorf("fund review must name the amount on a neutral button: %s", body)
+	if body := review("/wallet/fund/review", "1.5"); !strings.Contains(body, `<button class="btn-money" type="button" data-wallet-send data-amount="1.5">Add funds (1.50 USDT0)</button>`) {
+		t.Errorf("fund review must name the amount on the money button: %s", body)
 	}
 	if body := review("/wallet/fund", "1.5"); body != `{"from":"0xalice","to":"0x5fbdb2315678afecb367f032d93f642f64180aa3","data":"`+wallet.TransferData("0xvault", 1500000)+`","chainId":"0x7a69"}`+"\n" {
 		t.Errorf("fund tx = %s", body)
@@ -971,7 +975,7 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 
 	body := review("/wallet/withdraw/review", "2")
 	m := regexp.MustCompile(`name="id" value="([0-9a-f-]{36})"`).FindStringSubmatch(body)
-	if m == nil || !strings.Contains(body, `<button class="btn" type="submit">Withdraw (2.00 USDT0)</button>`) {
+	if m == nil || !strings.Contains(body, `<button class="btn-money" type="submit">Withdraw (2.00 USDT0)</button>`) {
 		t.Fatalf("withdraw review must mint an id and name the amount: %s", body)
 	}
 	resp := postTo(t, cl, srv.URL+"/wallet/withdraw", page, url.Values{"id": {m[1]}, "amount": {"2"}})

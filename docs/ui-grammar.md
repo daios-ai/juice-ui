@@ -177,11 +177,14 @@ visible string is exactly one register:
   labels, columns, chips, and just-in-time affordances already carry it. Cut it, or
   turn it into structure.
 
-**One exception, by principle:** a sentence that prevents a money loss the UI
-cannot observe is admitted at its point of consequence. Exactly one meets it —
-"Send from this wallet only, never from an exchange." beside Add funds — since a
-payment from an exchange is held for the operator and nothing on screen would
-show why.
+**One exception, by principle:** money that can be lost in a way the UI cannot
+observe is explained where it moves. The wallet's **How money moves** card is
+that one block (requirements §6.5): the registered address and the deposit
+address and token, each labelled with one `.help` line saying what it is, and a
+`.banner-error` warning led by the `#alert` icon — "Send from your registered
+address only, never from an exchange." — since a payment from an exchange is
+held for the operator and nothing else on screen would show why. No other
+surface carries explanation.
 
 Empty states name the absence in one phrase ("No connected accounts yet."), never a
 lecture on how the list will fill. Field `help` states what to type or the single
@@ -230,14 +233,10 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, add funds, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | Cancel, remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
-
-A move between the person's own balance and their own wallet — **adding funds,
-withdrawing** — pays no provider, so its confirm is the neutral `.btn` that still
-names the amount, `Withdraw (N)`, as force-end's danger button names its refund.
 
 **One geometry, one row, one look.**
 - No size modifier exists: every button, in a table cell or a card, has the

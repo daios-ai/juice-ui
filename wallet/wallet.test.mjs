@@ -1,7 +1,7 @@
 // node --test wallet/wallet.test.mjs — wallet.mjs against a fake EIP-1193 provider.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hexUTF8, discover, register, fetchTx, send } from './wallet.mjs';
+import { hexUTF8, discover, holding, register, fetchTx, send } from './wallet.mjs';
 
 // provider answers each method from a table: a value, or a function of params;
 // an Error-like {code} is thrown. calls records every request.
@@ -82,4 +82,13 @@ test('fetchTx posts the amount with the CSRF header and maps 409 to stale', asyn
   assert.equal(seen.init.body.get('amount'), '10.00');
   await assert.rejects(fetchTx(async () => ({ ok: false, status: 409 }), '1', 'T'), { kind: 'stale' });
   await assert.rejects(fetchTx(async () => ({ ok: false, status: 500 }), '1', 'T'), { kind: 'failed' });
+});
+
+test('holding picks the wallet already connected to the address, asking nothing', async () => {
+  const a = provider({ eth_accounts: ['0xother'] });
+  const b = provider({ eth_accounts: ['0xABC'] });
+  const c = provider({ eth_accounts: { code: 4100 } });
+  assert.equal(await holding([{ provider: c }, { provider: a }, { provider: b }], '0xabc'), b);
+  assert.equal(await holding([{ provider: a }], '0xabc'), undefined);
+  assert.ok([a, b, c].every((p) => p.calls.every((x) => x.method === 'eth_accounts')));
 });

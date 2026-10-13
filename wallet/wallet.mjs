@@ -18,6 +18,16 @@ export function discover(win, ms = 300) {
   return new Promise((ok) => setTimeout(() => { win.removeEventListener('eip6963:announceProvider', on); ok(found); }, ms));
 }
 
+// holding returns the first wallet among found whose connected accounts hold
+// address. eth_accounts asks nothing of the person: a wallet not yet connected
+// to this page answers none, and the caller falls back to asking.
+export async function holding(found, address) {
+  for (const f of found) {
+    const accounts = await f.provider.request({ method: 'eth_accounts' }).catch(() => []);
+    if (accounts.some((a) => same(a, address))) return f.provider;
+  }
+}
+
 // register signs the kernel's registration message, prefix + the address as
 // the wallet returns it, which is also the address the form then sends.
 export async function register(p, prefix) {
@@ -65,9 +75,10 @@ async function bind(doc) {
     box.textContent = root.getAttribute('data-say-' + kind);
     box.hidden = false;
   };
-  const pick = async (el) => {
+  const pick = async (el, address) => {
     const found = await discover(window);
-    if (found.length < 2) return found[0]?.provider;
+    const held = address && await holding(found, address);
+    if (held || found.length < 2) return held || found[0]?.provider;
     const box = near(el).querySelector('[data-wallet-choose]');
     return new Promise((ok) => {
       box.replaceChildren(...found.map((f) => {
@@ -85,15 +96,17 @@ async function bind(doc) {
     for (const box of root.querySelectorAll('[data-wallet-say]')) box.hidden = true;
     el.disabled = true; // one flow per click: a second click cannot send twice
     try {
-      const p = await pick(el);
       if (el.hasAttribute('data-wallet-send')) {
-        if (!p) throw fail('none');
         const csrf = doc.querySelector('meta[name="csrf-token"]').content;
-        await send(p, await fetchTx(fetch, el.dataset.amount, csrf));
+        const tx = await fetchTx(fetch, el.dataset.amount, csrf);
+        const p = await pick(el, tx.from);
+        if (!p) throw fail('none');
+        await send(p, tx);
         el.closest('dialog').close(); // stays disabled: this review is spent
         announce('Transaction submitted');
         return;
       }
+      const p = await pick(el);
       const dlg = doc.getElementById('form-address');
       if (p) {
         const { address, signature } = await register(p, root.dataset.prefix);

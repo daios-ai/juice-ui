@@ -3,16 +3,19 @@
 Version: 0.26.0
 Status: design draft — endpoint surface gated against the running kernel
 
-> **What changed in 0.26.0.** The wallet connects the person's own browser
+> **What changed in 0.26.0.** The wallet connects the person's own crypto
 > wallet (§6.5): it registers the address withdrawals go to by signing the
 > kernel's registration message, adds funds by asking that wallet to send the
-> token to the kernel's vault, and withdraws through a review that names the
-> amount. The UI proves the world's chain by recomputing its network
-> fingerprint, builds the transfer from a fresh read of the registered address,
-> and states only what the wallet or the kernel established. The code that
-> moves money lives in one package, `wallet/`, and a drift test confines the
-> two kernel mutations to it (§2). One sentence is admitted that the copy rule
-> otherwise forbids, because it prevents a loss the UI cannot observe (§6.5).
+> token to the kernel's deposit address, and withdraws to it. Two names hold
+> throughout — the *Juice wallet* is the balance here, the *crypto wallet* the
+> person's own — and one box, *How money moves*, labels every address with
+> what it is and warns against paying from an exchange. Add funds and Withdraw
+> are symmetric: each opens a dialog stating From and To, and its review's
+> confirm is the money button naming the amount (§7). The UI proves the
+> world's chain by recomputing its network fingerprint, builds the transfer
+> from a fresh read of the registered address, and states only what the wallet
+> or the kernel established. The code that moves money lives in one package,
+> `wallet/`, and a drift test confines the two kernel mutations to it (§2).
 
 > **What changed in 0.25.0.** The UI follows kernel v0.16.0. A person decides
 > who may address tasks to them: the inbox lists every requester, pending ones
@@ -1428,30 +1431,43 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   balance the value actually leaves — never the `owner` that pays for
   execution. The two differ exactly when a transfer task settles inside
   someone else's process (§6.3).
-* **The person's own browser wallet does the chain work.** The UI holds no key, runs no relayer and keeps no payment state;
-  every figure it shows is one the kernel serves, so the wallet's on-chain
-  balance is not shown and no QR code is drawn (the wallet has both).
+* **The person's own crypto wallet does the chain work.** The UI holds no key,
+  runs no relayer and keeps no payment state; every figure it shows is one the
+  kernel serves, so the crypto wallet's on-chain balance is not shown and no QR
+  code is drawn (the wallet has both). Two names hold on every surface: the
+  **Juice wallet** is the balance here, the **crypto wallet** the person's own
+  (MetaMask or similar).
+  * **How money moves** is the wallet's one explained block, and the only
+    place the copy discipline admits explanation (§7 grammar): the registered
+    address (the person's) and the deposit address and token (Juice's), each
+    with its copy control and one line saying what it is, and a warning banner
+    with the alert icon: "Send from your registered address only, never from
+    an exchange." — a payment from an exchange is held for the operator, a
+    loss nothing on screen would otherwise show. Below it stand the two
+    symmetric commands, **Add funds** and **Withdraw** (neutral, since they
+    open a dialog), and **Connect crypto wallet** / **Change address**.
   * **Register:** the wallet signs, EIP-191, the kernel's registration message —
     `juice address registration`, `kernel: <public key>`, `user: <account id>`,
     `address: <address>`, four lines, no trailing newline — with the address
     exactly as the request sends it. Without JavaScript the page shows that
     message for a typed address, to be signed elsewhere and pasted.
-  * **Add funds** is offered only on a world whose chain the UI has proved:
-    `/health` serves no chain id, so the UI recomputes
+  * **Add funds** ("to your Juice wallet") is offered only on a world whose
+    chain the UI has proved: `/health` serves no chain id, so the UI recomputes
     `sha256(JCS({chain_id, name, rail, token}))` for the chains of the shipped
     worlds and accepts one only on an exact match with `network_fingerprint`.
-    A review names the amount; its button fetches the ERC-20 transfer built
-    from a fresh read of the registered address (refused if it changed) and
-    asks the wallet to send it on that chain from that address. A hash is a
-    submission, announced "Transaction submitted", never a credit.
-  * **Withdraw** goes through a review naming the amount and the destination,
-    whose confirm carries the id minted for it.
+    Its dialog states From (crypto wallet, the registered address) and To
+    (Juice wallet); its review names the amount, and the confirm fetches the
+    ERC-20 transfer built from a fresh read of the registered address, picks
+    the installed wallet already connected to that address (listing the
+    wallets only when none is), and asks it to send on that chain from that
+    address. A hash is a submission, announced "Transaction submitted", never
+    a credit; a reload never reopens a spent review.
+  * **Withdraw** ("from your Juice wallet") states From (Juice wallet, its
+    available balance) and To (crypto wallet, where the world has addresses);
+    its review names the amount, and its confirm carries the id minted for it.
   * An outcome names a cause only where the wallet's error establishes one
     (EIP-1193 4001 declined, 4902 unknown chain); any other refusal is "Not
-    sent." **One sentence is admitted** that the copy discipline otherwise
-    forbids, because it prevents a loss the UI cannot observe — a payment from
-    an exchange is held for the operator: "Send from this wallet only, never
-    from an exchange."
+    sent."
 * **Registering a payout address takes the account's password**
   (`PUT /v1/me/blockchain-address {blockchain_address, signature,
   current_password}`), as a password change does. A wrong or missing one is the
@@ -1792,13 +1808,12 @@ the transaction's `payment` (§6.5).
 
 * **The accent is exclusive.** The accent MUST appear only on the control that authorizes a
   settling `Call` paying a provider — the terminal, priced, parties-visible
-  confirm. A control that opens a confirm or otherwise moves no money MUST NOT use
+  confirm — or an irreversible move of the person's own money in or out of
+  Juice: the confirm that adds funds or withdraws (§6.5). A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
   as `verb (N)` (e.g. "Run (133.000000)") — the same figure the money helper
-  renders everywhere. A move between the person's own balance and their own
-  wallet — adding funds, withdrawing — pays no provider: its confirm is the
-  neutral button, still naming the amount (`Withdraw (N)`). Primary
+  renders everywhere (`Add funds (N)`, `Withdraw (N)`). Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist. (A task completion is the neutral
@@ -2005,7 +2020,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   (§6.5); the registration message is the kernel's four lines; the chain is
   accepted only on an exact fingerprint match; the transfer is ERC-20
   `transfer(vault, amount)` built from a fresh read and refused when the
-  registration changed; reviews name the amount on a neutral button; and only
+  registration changed; reviews name the amount on the money button, the
+  openers stay neutral; and only
   `wallet/` calls the two money mutations (drift guard); a `transfer <tx>` reason links only for the account debited, and a
   transaction's `payment` state renders as served (§6.5);
 * the run primitive: cost preview, the priced confirm, process auto-closure, and
