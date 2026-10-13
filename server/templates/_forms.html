@@ -99,7 +99,7 @@
       {{template "_form_schemas" $c}}
       <div class="cluster">
         <button class="btn" type="submit">Create action</button>
-        <a class="btn" href="/workshop" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
@@ -177,7 +177,7 @@
       {{template "_form_auth" (authPanel "i")}}
       <div class="cluster">
         <button class="btn" type="submit">Import</button>
-        <a class="btn" href="/workshop" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
@@ -202,7 +202,7 @@
       <div class="field"><label for="u-new2">Confirm new password</label><input id="u-new2" name="confirm_password" type="password" autocomplete="new-password" minlength="8"></div>
       <div class="cluster">
         <button class="btn" type="submit">Save changes</button>
-        <a class="btn" href="/settings" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
@@ -244,7 +244,7 @@
       <div class="field"><label for="dep-reason">Reason (optional)</label><input id="dep-reason" name="reason" type="text"></div>
       <div class="cluster">
         <button class="btn-money" type="submit">Record payment</button>
-        <a class="btn" href="{{.Data.Back}}" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>

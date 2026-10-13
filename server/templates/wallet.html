@@ -87,7 +87,7 @@
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Review</button>
-        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
@@ -104,7 +104,7 @@
     <div class="cluster" data-wallet-choose hidden></div>
     <div class="cluster">
       <button class="btn-money" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Add funds ({{money $d.Review.Amount}})</button>
-      <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+      <button type="button" class="btn" data-modal-close>Cancel</button>
     </div>
   </div>
 </dialog>
@@ -124,7 +124,7 @@
       <div class="field"><label for="wd-why">Reason (optional)</label><input id="wd-why" name="reason" type="text"></div>
       <div class="cluster">
         <button class="btn" type="submit">Review</button>
-        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
@@ -144,7 +144,7 @@
       {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd></dl>{{end}}
       <div class="cluster">
         <button class="btn-money" type="submit">Withdraw ({{money $d.Review.Amount}})</button>
-        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
@@ -178,7 +178,7 @@
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Register</button>
-        <a class="btn-quiet" href="/wallet" data-modal-close>Cancel</a>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
   </div>
