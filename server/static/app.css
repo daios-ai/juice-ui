@@ -458,7 +458,7 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .auth-panel { margin-top: .5rem; margin-bottom: 1rem; }
 .auth-panel summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
 /* A label/value list of kernel facts (an account's balances). */
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: 0; align-items: baseline; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: 0; }
 .kv dt { font-weight: 600; }
 .kv dd { margin: 0; }
 .parties { width: auto; }

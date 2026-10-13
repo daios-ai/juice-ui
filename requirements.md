@@ -1438,16 +1438,16 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   and the two acts are **Deposit** and **Withdraw** everywhere — title,
   buttons, dialogs, confirms.
   * **Deposits and withdrawals** is the wallet's one explained block, and the
-    only place the copy discipline admits explanation (grammar §3). Under
-    "Your crypto wallet": its address with **Change**, or "Not connected yet."
-    with **Connect crypto wallet**. Under "Juice server <kernel>, on the
-    <world> network": the deposit address and the token, by symbol and
-    contract. Then a warning banner with the alert icon, in plain words: "Only
-    send money from your crypto wallet above, never from an exchange or any
-    other wallet. Money from anywhere else won't show up in your balance.
-    Withdrawals are always paid back to that same wallet." — a payment from
-    an exchange is held for the operator, a loss nothing on screen would
-    otherwise show. Below stand the two symmetric commands, **Deposit** and
+    only place the copy discipline admits explanation (grammar §3). First a
+    warning banner with the alert icon, in plain words: "Only send money from
+    your crypto wallet, never from an exchange or any other wallet. Money from
+    anywhere else won't show up in your balance. Withdrawals are always paid
+    back to that same wallet." — a payment from an exchange is held for the
+    operator, a loss nothing on screen would otherwise show. Then three rows:
+    **Your crypto address** (or "Not connected yet."), **Juice deposit
+    address** — the server's, shared by every account, so never labelled
+    "yours" — and **Token**, by symbol and contract. Then one row of commands:
+    **Change address** (or **Connect crypto wallet**), **Deposit** and
     **Withdraw**, neutral since they open a dialog.
   * **Register:** the wallet signs, EIP-191, the kernel's registration message —
     `juice address registration`, `kernel: <public key>`, `user: <account id>`,

@@ -943,9 +943,9 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/wallet")
-	for _, want := range []string{"<h2>Deposits and withdrawals</h2>", "<h3>Juice server tango, on the anvil network</h3>",
-		"Deposit address", "USDT0 · ", `data-wallet-register>Change</a>`,
-		`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Only send money from your crypto wallet above, never from an exchange or any other wallet.`,
+	for _, want := range []string{"<h2>Deposits and withdrawals</h2>", "<dt>Your crypto address</dt>", "<dt>Juice deposit address</dt>",
+		"USDT0 · ", `data-wallet-register>Change address</a>`,
+		`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Only send money from your crypto wallet, never from an exchange or any other wallet.`,
 		`<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Deposit</a>`,
 		`<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>`,
 		`src="/wallet/wallet.mjs"`, "user: U1\naddress: \""} {

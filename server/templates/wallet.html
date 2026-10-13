@@ -18,27 +18,27 @@
 {{template "_figures" (figures (figure $d.Available "available" "") (figure $d.Locked "parked ◷" "escrow"))}}
 
 {{/* Deposits and withdrawals: the wallet's one explained block (requirements
-     §6.5), in plain words. The crypto wallet is the person's own (MetaMask or
-     similar); the Juice balance is this one. Where money has no addresses, the
+     §6.5), in plain words. Your crypto address is the person's own (MetaMask
+     or similar); the Juice deposit address is the server's, shared by every
+     account, never "yours". Where money has no addresses, the
      operator records money in and out (kernel §D23), and the world is named
      because it decides how this balance moves (§7). */}}
 <h2>Deposits and withdrawals</h2>
 <div class="card stack">
 {{if $d.HasAddresses}}
-  <h3>Your crypto wallet</h3>
-  <dl class="kv"><dt>Address</dt><dd>{{if $d.MyAddress}}{{template "_addr" (copyOf "address" $d.MyAddress)}} <a class="btn" href="/wallet?form=address" data-wallet-register>Change</a>{{else}}Not connected yet. <a class="btn" href="/wallet?form=address" data-wallet-register>Connect crypto wallet</a>{{end}}</dd></dl>
-  <h3>Juice server {{.KernelHandle}}, on the {{.KernelNet}} network</h3>
+  <p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Only send money from your crypto wallet, never from an exchange or any other wallet. Money from anywhere else won't show up in your balance. Withdrawals are always paid back to that same wallet.</p>
   <dl class="kv">
-    <dt>Deposit address</dt><dd>{{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd>
+    <dt>Your crypto address</dt><dd>{{if $d.MyAddress}}{{template "_addr" (copyOf "address" $d.MyAddress)}}{{else}}Not connected yet.{{end}}</dd>
+    <dt>Juice deposit address</dt><dd>{{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd>
     {{if $d.Token}}<dt>Token</dt><dd>{{$d.Symbol}} · {{template "_addr" (copyOf "token" $d.Token)}}</dd>{{end}}
   </dl>
-  <p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Only send money from your crypto wallet above, never from an exchange or any other wallet. Money from anywhere else won't show up in your balance. Withdrawals are always paid back to that same wallet.</p>
 {{else}}
   <p class="help">On {{.KernelNet}}, the operator records money in and out.</p>
 {{end}}
   <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
   <div class="cluster" data-wallet-choose hidden></div>
   <div class="cluster">
+    {{if $d.HasAddresses}}<a class="btn" href="/wallet?form=address" data-wallet-register>{{if $d.MyAddress}}Change address{{else}}Connect crypto wallet{{end}}</a>{{end}}
     {{if and $d.Chain $d.MyAddress}}<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Deposit</a>{{end}}
     {{if $d.CanWithdraw}}<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>{{end}}
   </div>
@@ -148,8 +148,8 @@
 {{end}}
 
 {{if $d.HasAddresses}}
-<dialog id="form-address" class="modal-form"{{if eq $d.OpenForm "address"}} open{{end}} aria-label="Registered address">
-  <div class="modal-head"><h2>Registered address</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-address" class="modal-form"{{if eq $d.OpenForm "address"}} open{{end}} aria-label="Your crypto address">
+  <div class="modal-head"><h2>Your crypto address</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
     <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
     {{if $d.Message}}

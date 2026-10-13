@@ -179,10 +179,10 @@ visible string is exactly one register:
 
 **One exception, by principle:** money that can be lost in a way the UI cannot
 observe is explained where it moves, in a person's words. The wallet's
-**Deposits and withdrawals** card is that one block (requirements §6.5): your
-crypto wallet's address, the Juice server's deposit address and token, and a
+**Deposits and withdrawals** card is that one block (requirements §6.5): a
 `.banner-error` warning led by the `#alert` icon — "Only send money from your
-crypto wallet above, never from an exchange or any other wallet. …" — since a
+crypto wallet, never from an exchange or any other wallet. …" — then your
+crypto address, the Juice deposit address and the token, since a
 payment from an exchange is held for the operator and nothing else on screen
 would show why. No other surface carries explanation.
 
