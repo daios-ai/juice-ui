@@ -296,6 +296,11 @@
      truncated or inside prose. The commands take the whole value; the screen
      shows what a person can match by eye. Build it with `copyOf what value`;
      the acknowledgement is the one aria-live region (§7). */}}
+{{/* _addr — a chain address as wallets show it, 0x7099…79c8, the whole value in
+     its title and in the copy control beside it. Build it with
+     `copyOf what value`. */}}
+{{define "_addr"}}<span class="mono" title="{{.Value}}">{{shortAddr .Value}}</span> {{template "_copy" .}}{{end}}
+
 {{define "_copy"}}<button type="button" class="btn-quiet copy" data-copy="{{.Value}}" aria-label="Copy {{.What}}" title="Copy {{.What}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#copy"/></svg></button>{{end}}
 
 {{/* _call_form — THE run/complete form. Running an action and completing a task

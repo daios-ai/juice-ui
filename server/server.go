@@ -18,6 +18,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
+	"github.com/daios-ai/juice-ui/wallet"
 	"github.com/gorilla/csrf"
 )
 
@@ -346,8 +347,12 @@ func New(o Options) (http.Handler, error) {
 
 	// Wallet — balances, open processes, ledger (evidence).
 	mux.HandleFunc("GET /wallet", s.requireAuth(s.getWallet))
+	mux.HandleFunc("POST /wallet/withdraw/review", s.requireAuth(s.postWithdrawReview))
 	mux.HandleFunc("POST /wallet/withdraw", s.requireAuth(s.postWithdraw))
+	mux.HandleFunc("POST /wallet/fund/review", s.requireAuth(s.postFundReview))
+	mux.HandleFunc("POST /wallet/fund", s.requireAuth(s.postFund))
 	mux.HandleFunc("POST /wallet/address", s.requireAuth(s.postRegisterAddress))
+	mux.Handle("GET /wallet/wallet.mjs", wallet.Script)
 	mux.HandleFunc("GET /processes", s.requireAuth(s.getProcesses))
 	mux.HandleFunc("GET /processes/{id}", s.requireAuth(s.getProcess))
 	mux.HandleFunc("POST /processes/{id}/end", s.requireAuth(s.postEnd))
@@ -996,20 +1001,6 @@ func sidebarFromRequest(r *http.Request) string {
 		return "collapsed"
 	}
 	return ""
-}
-
-// newUUID returns a random UUID v4. The kernel requires a caller-minted UUID for
-// a withdrawal, and that id IS the row: replaying it returns the same row rather
-// than paying twice (kernel §D23).
-func newUUID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return ""
-	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	h := hex.EncodeToString(b[:])
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
 }
 
 // newID returns a random hex id for request correlation.

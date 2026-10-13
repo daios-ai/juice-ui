@@ -214,6 +214,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"download":     resultDownload,
 		"statusClass":  statusClass,
 		"truncate":     truncate,
+		"shortAddr":    shortAddr,
 		"costOf":       costOf,
 		"buildForm":    BuildForm, // lets templates derive a FormModel from a raw schema
 		"pct":          pct,
@@ -426,6 +427,16 @@ func truncate(n int, s string) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// shortAddr abbreviates a chain address the way wallets do, 0x7099…79c8: enough
+// to match by eye, the whole value in its title and its copy control (_addr).
+// Anything that is not a 0x address passes unchanged.
+func shortAddr(a string) string {
+	if len(a) != 42 || !strings.HasPrefix(a, "0x") {
+		return a
+	}
+	return a[:6] + "…" + a[38:]
 }
 
 // pct formats the ratio n/d as a whole-number percentage string (e.g. "97").

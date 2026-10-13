@@ -692,6 +692,41 @@ func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 	}
 }
 
+// Cancel is one control everywhere: a real neutral button that closes its
+// dialog (grammar §5.1), never a link styled as one — the dialog's × link is
+// the no-JS way out.
+func TestCancelIsOneButton(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	apps, _ := filepath.Glob("../apps/*/templates/*.html")
+	cancelRe := regexp.MustCompile(`<(\w+)([^>]*)>\s*Cancel\s*</\w+>`)
+	for _, f := range append(core, apps...) {
+		b, err := fs.ReadFile(tmplFS, f)
+		if err != nil {
+			b, err = os.ReadFile(f)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range cancelRe.FindAllStringSubmatch(string(b), -1) {
+			if m[1] != "button" || !strings.Contains(m[2], `type="button"`) || !strings.Contains(m[2], `class="btn"`) {
+				t.Errorf("%s: %s — Cancel is <button type=\"button\" class=\"btn\"> (grammar §5.1)", f, m[0])
+			}
+		}
+	}
+}
+
+// A chain address renders as wallets show it, through _addr (0x7099…79c8 with
+// the whole value copyable), never raw as element text (requirements §7).
+func TestChainAddressesRenderShort(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	raw := regexp.MustCompile(`>\{\{[$\w.]*\.(BlockchainAddress|MyAddress|KernelAddress|Token|Party)\}\}<`)
+	for _, f := range core {
+		if m := raw.FindString(string(mustRead(t, f))); m != "" {
+			t.Errorf("%s: %q renders a chain address whole — use the _addr partial", f, m)
+		}
+	}
+}
+
 // A JSON value a person reads renders only through the frozen form (§7): the
 // `json` helper appears in no template outside `_value_block`, and the row
 // attributes the shared mechanism replaced do not return.

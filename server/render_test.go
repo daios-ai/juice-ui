@@ -2124,3 +2124,14 @@ func TestResultDownload(t *testing.T) {
 		t.Error("no transaction, no download")
 	}
 }
+
+func TestShortAddrAbbreviatesAChainAddressOnly(t *testing.T) {
+	if got := shortAddr("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"); got != "0x7099…79C8" {
+		t.Errorf("shortAddr = %q", got)
+	}
+	for _, s := range []string{"0xvault", "alice@k", ""} {
+		if got := shortAddr(s); got != s {
+			t.Errorf("shortAddr(%q) = %q, want it unchanged", s, got)
+		}
+	}
+}
