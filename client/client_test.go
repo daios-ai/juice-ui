@@ -383,7 +383,7 @@ func TestListProcessesAsksForClosedOnesWhenAll(t *testing.T) {
 func TestRegisterAddressSendsThePassword(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"blockchain_address":"0xabc","attributed":2}`
+	f.reply = `{"blockchain_address":"0xabc","attributed":[{"amount":3,"from":"sys@k","to":"a@k"},{"amount":4,"from":"sys@k","to":"a@k"}]}`
 	got, err := f.client().RegisterAddress(context.Background(), "tok", "0xABC", "sig", "pw")
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +397,7 @@ func TestRegisterAddressSendsThePassword(t *testing.T) {
 			t.Errorf("body %s lacks %s", body, want)
 		}
 	}
-	if got.Address != "0xabc" || got.Attributed != 2 {
+	if got.Address != "0xabc" || len(got.Attributed) != 2 {
 		t.Errorf("result = %+v", got)
 	}
 }

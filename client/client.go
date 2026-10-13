@@ -871,11 +871,11 @@ func listAll[T any](ctx context.Context, c *Client, token, path string, q url.Va
 }
 
 // AddressResult is the outcome of registering a payout address: the canonical
-// form the kernel stored, and how many payments already received from that
-// sender it attributed to the caller.
+// form the kernel stored, and the ledger entries crediting the payments already
+// received from that sender (an array, measured on v0.16.0).
 type AddressResult struct {
-	Address    string `json:"blockchain_address"`
-	Attributed int    `json:"attributed"`
+	Address    string        `json:"blockchain_address"`
+	Attributed []LedgerEntry `json:"attributed"`
 }
 
 // RegisterAddress proves control of a payout address. The signature is over the

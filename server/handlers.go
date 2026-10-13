@@ -19,6 +19,7 @@ import (
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
+	"github.com/daios-ai/juice-ui/wallet"
 	"github.com/gorilla/csrf"
 	"golang.org/x/text/unicode/norm"
 )
@@ -1779,7 +1780,8 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 // ---- processes ----
 
 // walletView backs the wallet page: balances, open processes (each force-endable
-// unless it awaits a peer's receipt), and the activity list.
+// unless it awaits a peer's receipt), the activity list, and the money acts of
+// package wallet. A review names the amount a confirm will move.
 type walletView struct {
 	Available int64
 	Locked    int64
@@ -1791,13 +1793,28 @@ type walletView struct {
 	// contract that money is; both are empty on a world whose money has no
 	// addresses, where the operator records money in and out (kernel §D23).
 	// MyAddress is the caller's own registered payout address, empty until they
-	// prove one. WithdrawalID is minted per render so a double submit replays to
-	// the same row rather than paying twice.
+	// prove one. Chain says the world's chain is proven (wallet.ChainOf), the one
+	// state in which a browser wallet is asked to add funds.
 	KernelAddress string
 	Token         string
 	MyAddress     string
 	Withdrawals   []client.Withdrawal
-	WithdrawalID  string
+	Chain         bool
+	// MessagePrefix is the registration message up to its address, completed by
+	// wallet.mjs; Message is the whole of it for an address typed without JS.
+	MessagePrefix string
+	SignAddress   string
+	Message       string
+	Review        walletReview
+}
+
+// walletReview is what a review dialog confirms: the parsed amount it names,
+// the typed one it resubmits, and for a withdrawal the id minted for it.
+type walletReview struct {
+	Amount int64
+	Typed  string
+	ID     string
+	Reason string
 }
 
 // HasAddresses reports a world whose money has addresses: only there does a
@@ -1809,21 +1826,30 @@ func (v walletView) HasAddresses() bool { return v.KernelAddress != "" }
 func (v walletView) CanWithdraw() bool { return !v.HasAddresses() || v.MyAddress != "" }
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
+	s.renderWallet(w, r, openForm(r, "wallet"), walletReview{})
+}
+
+// renderWallet renders the wallet page with the named dialog open.
+func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form string, review walletReview) {
 	ctx := r.Context()
 	id := s.kernelIdentity(ctx)
-	view := walletView{
-		OpenForm:      openForm(r, "wallet"),
-		KernelAddress: id.BlockchainAddress,
-		Token:         id.Token,
-		WithdrawalID:  newUUID(),
-	}
+	_, chain := wallet.ChainOf(id)
+	view := walletView{OpenForm: form, KernelAddress: id.BlockchainAddress, Token: id.Token, Chain: chain, Review: review}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
 			return e
 		}
 		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.BlockchainAddress
-		view.Withdrawals, _ = s.client.ListWithdrawals(ctx, tok)
+		view.MessagePrefix = wallet.Message(id.PublicKey, me.ID, "")
+		if a := strings.TrimSpace(r.URL.Query().Get("address")); a != "" && form == "address" {
+			view.SignAddress, view.Message = a, wallet.Message(id.PublicKey, me.ID, a)
+		}
+		// An unread list is not an empty one: a table claiming no withdrawals
+		// while money is in flight would misstate it.
+		if view.Withdrawals, e = s.client.ListWithdrawals(ctx, tok); e != nil {
+			return e
+		}
 		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
 			view.Open = procs
 		}
@@ -1895,25 +1921,100 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "home", "Home", view, view.Available)
 }
 
+// walletAmount reads a review's typed amount, flashing a refusal back to the
+// wallet; ok is false when it did.
+func (s *Server) walletAmount(w http.ResponseWriter, r *http.Request) (typed string, amount int64, ok bool) {
+	typed = strings.TrimSpace(r.FormValue("amount"))
+	amount, err := s.parseAmount(typed)
+	if err == nil && amount <= 0 {
+		err = errors.New("enter an amount")
+	}
+	if err != nil {
+		s.flashRedirect(w, r, "/wallet", "error", capitalize(err.Error())+".")
+	}
+	return typed, amount, err == nil
+}
+
+// postWithdrawReview renders the confirm that names the amount, minting the
+// withdrawal's id so a double submit replays to one row (kernel §D23).
+func (s *Server) postWithdrawReview(w http.ResponseWriter, r *http.Request) {
+	if typed, amount, ok := s.walletAmount(w, r); ok {
+		s.renderWallet(w, r, "withdraw-review", walletReview{Amount: amount, Typed: typed, ID: wallet.NewWithdrawalID(), Reason: strings.TrimSpace(r.FormValue("reason"))})
+	}
+}
+
+// postFundReview renders the confirm that names the amount to add; the
+// transfer itself is fetched at send time (postFund).
+func (s *Server) postFundReview(w http.ResponseWriter, r *http.Request) {
+	if typed, amount, ok := s.walletAmount(w, r); ok {
+		s.renderWallet(w, r, "fund-review", walletReview{Amount: amount, Typed: typed})
+	}
+}
+
+// postFund answers wallet.mjs with the transfer to send, built from a fresh read
+// of the registered address, so its from is the address on file now, which the
+// browser holds the wallet to; nothing fundable on file is 409.
+func (s *Server) postFund(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	amount, err := s.parseAmount(r.FormValue("amount"))
+	var tx wallet.Tx
+	if err == nil {
+		err = s.sessions.Do(ctx, func(tok string) error {
+			me, e := s.client.Me(ctx, tok)
+			if e == nil {
+				tx, e = wallet.FundTx(s.kernelIdentity(ctx), me, amount)
+			}
+			return e
+		})
+	}
+	switch {
+	case errors.Is(err, wallet.ErrNoFunding):
+		w.WriteHeader(http.StatusConflict)
+	case err != nil:
+		w.WriteHeader(http.StatusBadGateway)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tx)
+	}
+}
+
+// walletMessage is the sentence for a refused money act: the kernel's mapped
+// message, except a 409, whose text names a CLI command; wallet's own refusals
+// are written as sentences.
+func walletMessage(err error) string {
+	ke, ok := client.AsKernelError(err)
+	switch {
+	case !ok:
+		return err.Error()
+	case ke.Kind == client.KindInvalidState:
+		return "Register your address first."
+	case ke.Kind == client.KindUnauthorized:
+		return "The signature was not made by that address."
+	}
+	return userMessage(err)
+}
+
 func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	amount, err := s.parseAmount(r.FormValue("amount"))
-	if err != nil {
-		s.flashRedirect(w, r, "/wallet", "error", capitalize(err.Error())+".")
-		return
-	}
-	id := strings.TrimSpace(r.FormValue("id"))
-	if amount <= 0 || id == "" {
-		s.flashRedirect(w, r, "/wallet", "error", "Enter an amount to withdraw.")
-		return
-	}
 	var wd client.Withdrawal
-	err = s.sessions.Do(ctx, func(tok string) error {
-		out, e := s.client.Withdraw(ctx, tok, id, amount, strings.TrimSpace(r.FormValue("reason")))
-		wd = out
-		return e
-	})
-	s.flashResult(w, r, err, "/wallet", "Withdrew "+s.render.money(wd.Amount)+".")
+	if err == nil {
+		err = s.sessions.Do(ctx, func(tok string) error {
+			var e error
+			wd, e = wallet.Withdraw(ctx, s.client, tok, r.FormValue("id"), amount, strings.TrimSpace(r.FormValue("reason")))
+			return e
+		})
+	}
+	switch {
+	case isAuthErr(err):
+		s.handleErr(w, r, err)
+	case err != nil:
+		s.flashRedirect(w, r, "/wallet", "error", walletMessage(err))
+	case wd.Status == "blocked":
+		s.flashRedirect(w, r, "/wallet", "error", "Withdrawal blocked.")
+	default:
+		s.flashRedirect(w, r, "/wallet", "success", "Withdrawal "+wd.Status+".")
+	}
 }
 
 // postRegisterAddress registers the address the caller is paid at, proving
@@ -1922,20 +2023,14 @@ func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
 // theirs; registering also attributes payments already received from it.
 func (s *Server) postRegisterAddress(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	address := strings.TrimSpace(r.FormValue("address"))
-	signature := strings.TrimSpace(r.FormValue("signature"))
-	password := r.FormValue("current_password")
-	if address == "" || signature == "" || password == "" {
-		s.flashRedirect(w, r, "/wallet", "error", "An address, its signature and your password are all required.")
-		return
-	}
 	// The kernel answers a wrong password with 401, which sessions.Do would read
 	// as an expired session and sign the person out. The kernel's answer is kept
 	// aside instead, exactly as a password change does (postSettings).
 	var res client.AddressResult
 	var apiErr error
 	outerErr := s.sessions.Do(ctx, func(tok string) error {
-		res, apiErr = s.client.RegisterAddress(ctx, tok, address, signature, password)
+		res, apiErr = wallet.Register(ctx, s.client, tok, strings.TrimSpace(r.FormValue("address")),
+			strings.TrimSpace(r.FormValue("signature")), r.FormValue("current_password"))
 		return nil
 	})
 	if outerErr != nil {
@@ -1943,7 +2038,7 @@ func (s *Server) postRegisterAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if apiErr != nil {
-		msg := userMessage(apiErr)
+		msg := walletMessage(apiErr)
 		if ke, ok := client.AsKernelError(apiErr); ok && ke.Kind == client.KindUnauthenticated {
 			msg = "Current password is incorrect."
 		}
@@ -1951,8 +2046,8 @@ func (s *Server) postRegisterAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg := "Address registered."
-	if res.Attributed > 0 {
-		msg = fmt.Sprintf("Address registered; %d earlier payment(s) credited.", res.Attributed)
+	if n := len(res.Attributed); n > 0 {
+		msg = fmt.Sprintf("Address registered; %d earlier payment(s) credited.", n)
 	}
 	s.flashRedirect(w, r, "/wallet", "success", msg)
 }

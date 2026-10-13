@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/wallet"
 )
 
 // authKernel is a fake kernel sufficient to drive the PKCE login flow and a few
@@ -78,6 +79,7 @@ func authKernel() *httptest.Server {
 	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
 	})
+	mux.HandleFunc("GET /v1/withdrawals", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","description":"","available":500,"locked":0,
 		 "connectors":[{"directory":"sys@testnet","connections":[{"provider":"gmail.com","actions":1,"unused":false,"provider_key":"oauth:G","created_at":"2024-01-01T00:00:00Z"}],
@@ -896,9 +898,8 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	if !strings.Contains(body, "form-withdraw") || !strings.Contains(body, "form-address") {
 		t.Error("an address world offers withdraw and register")
 	}
-	// The id is minted here so a double submit replays to one row.
-	if !strings.Contains(body, `name="id" value="`) {
-		t.Error("the withdrawal form must carry a minted id")
+	if strings.Contains(body, "Add funds") {
+		t.Error("a chain the fingerprint does not prove is never asked to send")
 	}
 	// The world's own scale and symbol: 5000000 base units at six decimals is
 	// 5.00 USDC, and the trailing zeros stop at the two-digit floor.
@@ -907,6 +908,79 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	}
 	if !strings.Contains(body, "manual:W1") {
 		t.Error("the withdrawals table must show the payment that settled it")
+	}
+}
+
+// On a proven chain the wallet adds funds and withdraws through reviews that
+// name the amount on a neutral button; the transfer is built at send time from
+// a fresh read of the registered address, and a withdrawal carries the id its
+// review minted (requirements §6.5).
+func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
+	registered, sent := "0xalice", ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","handle":"tango","public_key":"PK","network":"anvil","network_fingerprint":"7d16b1469f57f12eb983417f64de442bdb7b06909e26a65daa8bcd311bb80d9b","decimals":6,"symbol":"USDT0","token":"0x5fbdb2315678afecb367f032d93f642f64180aa3","blockchain_address":"0xvault"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"redirect":"?code=C"}`)) })
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"id":"U1","address":"alice@tango","available":5000000,"locked":0,"blockchain_address":%q}`, registered)
+	})
+	mux.HandleFunc("POST /v1/withdrawals", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sent = string(b)
+		w.Write([]byte(`{"id":"x","status":"submitted"}`))
+	})
+	for _, path := range []string{"/v1/withdrawals", "/v1/processes", "/v1/ledger", "/v1/tasks", "/v1/actions"} {
+		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	}
+	kernel := httptest.NewServer(mux)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	page := getBody(t, cl, srv.URL+"/wallet")
+	for _, want := range []string{"Add funds", "Send from this wallet only, never from an exchange.", `src="/wallet/wallet.mjs"`, "user: U1\naddress: \""} {
+		if !strings.Contains(page, want) {
+			t.Errorf("wallet lacks %q", want)
+		}
+	}
+	if strings.Contains(page, "btn-money") {
+		t.Error("no wallet act pays a provider, so none carries the accent")
+	}
+	review := func(path, amount string) string {
+		resp := postTo(t, cl, srv.URL+path, page, url.Values{"amount": {amount}})
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	if body := review("/wallet/fund/review", "1.5"); !strings.Contains(body, `<button class="btn" type="button" data-wallet-send data-amount="1.5">Add funds (1.50 USDT0)</button>`) {
+		t.Errorf("fund review must name the amount on a neutral button: %s", body)
+	}
+	if body := review("/wallet/fund", "1.5"); body != `{"from":"0xalice","to":"0x5fbdb2315678afecb367f032d93f642f64180aa3","data":"`+wallet.TransferData("0xvault", 1500000)+`","chainId":"0x7a69"}`+"\n" {
+		t.Errorf("fund tx = %s", body)
+	}
+	registered = ""
+	if resp := postTo(t, cl, srv.URL+"/wallet/fund", page, url.Values{"amount": {"1.5"}}); resp.StatusCode != http.StatusConflict {
+		t.Errorf("a registration changed since the review must refuse the send, got %d", resp.StatusCode)
+	}
+	registered = "0xalice"
+
+	body := review("/wallet/withdraw/review", "2")
+	m := regexp.MustCompile(`name="id" value="([0-9a-f-]{36})"`).FindStringSubmatch(body)
+	if m == nil || !strings.Contains(body, `<button class="btn" type="submit">Withdraw (2.00 USDT0)</button>`) {
+		t.Fatalf("withdraw review must mint an id and name the amount: %s", body)
+	}
+	resp := postTo(t, cl, srv.URL+"/wallet/withdraw", page, url.Values{"id": {m[1]}, "amount": {"2"}})
+	resp.Body.Close()
+	if sent != `{"amount":2000000,"id":"`+m[1]+`"}` || !strings.Contains(getBody(t, cl, srv.URL+"/wallet"), "Withdrawal submitted.") {
+		t.Errorf("withdraw sent %s", sent)
+	}
+	if body := getBody(t, cl, srv.URL+"/wallet?form=address&address=0xAbC"); !strings.Contains(body, "address: 0xAbC</div>") || !strings.Contains(body, `value="0xAbC"`) {
+		t.Errorf("without JS the typed address gets its message: %s", body)
 	}
 }
 
@@ -3618,7 +3692,12 @@ func TestRegisterAddressWrongPasswordKeepsTheSession(t *testing.T) {
 			w.Write([]byte(`{"code":"unauthenticated","error":"invalid current password"}`))
 			return
 		}
-		w.Write([]byte(`{"blockchain_address":"0xalice","attributed":1}`))
+		if strings.Contains(sent, `"signature":"forged"`) {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"code":"unauthorized","error":"signature was not made by that address"}`))
+			return
+		}
+		w.Write([]byte(`{"blockchain_address":"0xalice","attributed":[{"amount":5,"from":"sys@testnet","to":"alice@testnet"}]}`))
 	})
 	for _, path := range []string{"/v1/withdrawals", "/v1/processes", "/v1/transactions", "/v1/ledger", "/v1/tasks", "/v1/actions"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
@@ -3653,6 +3732,13 @@ func TestRegisterAddressWrongPasswordKeepsTheSession(t *testing.T) {
 	}
 
 	form.Set("current_password", "right-password")
+	form.Set("signature", "forged")
+	resp = postTo(t, cl, srv.URL+"/wallet/address", after, form)
+	resp.Body.Close()
+	if forged := getBody(t, cl, srv.URL+"/wallet"); !strings.Contains(forged, "The signature was not made by that address.") {
+		t.Errorf("a signature by another key must say so: %s", forged)
+	}
+	form.Set("signature", "sig")
 	resp = postTo(t, cl, srv.URL+"/wallet/address", after, form)
 	resp.Body.Close()
 	if ok := getBody(t, cl, srv.URL+"/wallet"); !strings.Contains(ok, "Address registered; 1 earlier payment(s) credited.") {

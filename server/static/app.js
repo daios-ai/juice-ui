@@ -419,7 +419,7 @@ for (const dlg of document.querySelectorAll('dialog.modal-form[open], dialog.dra
 // announce puts one ephemeral acknowledgement in the single polite aria-live
 // region (§7): it replaces what the region held, so there is no stack and no
 // history, and it clears itself.
-function announce(text) {
+export function announce(text) {
   const region = document.getElementById('live-region');
   if (!region) return;
   const toast = document.createElement('div');
