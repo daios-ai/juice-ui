@@ -14,7 +14,7 @@
 {{$i := $d.Identity}}
 {{template "_figures" (figures (figure $i.Exposure "owed to us" "") (figure $i.CreditLimit "credit limit" "") (figure $i.Sys.Earnings "earned" "credited") (figure (sum (sum $i.Sys.PendingPayouts $i.Sys.HeldDeposits) $i.Sys.RefillLocks) "in transit ◷" "escrow") (figure $i.Solvency.Liabilities "user credits" "") (figure $i.Solvency.Vault "money in" ""))}}
 <p class="small muted">ticket <span class="mono">{{money $i.Lottery}}</span>{{if $i.LotteryMax}}, taking up to <span class="mono">{{money $i.LotteryMax}}</span>{{end}} · fee {{pct $i.FeeBps 10000}}% · serving {{pct $i.RemoteBps 10000}}% · import {{pct $i.ImportBps 10000}}%{{if $i.Solvency.Gap}} · <span class="pill status-danger">gap {{money $i.Solvency.Gap}}</span>{{end}}</p>
-{{if $i.BlockchainAddress}}<p class="small muted">paid at <span class="mono">{{$i.BlockchainAddress}}</span> {{template "_copy" (copyOf "address" $i.BlockchainAddress)}}</p>{{end}}
+{{if $i.BlockchainAddress}}<p class="small muted">paid at {{template "_addr" (copyOf "address" $i.BlockchainAddress)}}</p>{{end}}
 {{if $i.Addrs}}
 <details class="details-panel">
   <summary>Listen addresses</summary>
@@ -49,7 +49,7 @@
   <tbody>
   {{range $d.Deposits.Held}}
   <tr>
-    <td class="mono" title="{{.Party}}">{{truncate 14 .Party}} {{template "_copy" (copyOf "address" .Party)}}</td>
+    <td>{{template "_addr" (copyOf "address" .Party)}}</td>
     <td class="money">{{money .Amount}}</td>
     <td class="mono muted" title="{{.TxHash}}">{{truncate 12 .TxHash}} {{template "_copy" (copyOf "hash" .TxHash)}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>

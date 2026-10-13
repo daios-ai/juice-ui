@@ -715,6 +715,18 @@ func TestCancelIsOneButton(t *testing.T) {
 	}
 }
 
+// A chain address renders as wallets show it, through _addr (0x7099…79c8 with
+// the whole value copyable), never raw as element text (requirements §7).
+func TestChainAddressesRenderShort(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	raw := regexp.MustCompile(`>\{\{[$\w.]*\.(BlockchainAddress|MyAddress|KernelAddress|Token|Party)\}\}<`)
+	for _, f := range core {
+		if m := raw.FindString(string(mustRead(t, f))); m != "" {
+			t.Errorf("%s: %q renders a chain address whole — use the _addr partial", f, m)
+		}
+	}
+}
+
 // A JSON value a person reads renders only through the frozen form (§7): the
 // `json` helper appears in no template outside `_value_block`, and the row
 // attributes the shared mechanism replaced do not return.

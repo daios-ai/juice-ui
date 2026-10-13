@@ -1921,7 +1921,9 @@ the transaction's `payment` (§6.5).
   `aria-label` naming what it copies) puts it on the clipboard, acknowledged
   through the `aria-live` region. A record id needs none: the kernel resolves
   any prefix of four or more hex digits, so the shown prefix is already a
-  valid argument.
+  valid argument. A chain address renders as wallets show it,
+  `0x7099…79c8`, beside its copy control; it is written whole only where the
+  whole text is the point, the registration message a person signs (§6.5).
 * **Feedback.** There MUST be no notification feed, bell list, or toast stack;
   outcomes render in place. The UI MUST provide exactly one polite `aria-live`
   region for ephemeral acknowledgement of the user's own just-completed action

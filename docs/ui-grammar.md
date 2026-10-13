@@ -634,6 +634,11 @@ and a rail halt as a `.banner-error` — plus the obligations above.
   way a page yields a value the commands take whole (requirements.md §7);
   "Copied" is announced through the live region, never on the button. A
   record id gets none, since the kernel resolves a prefix.
+- **A chain address** — a wallet's, a vault's, a token contract — renders as
+  wallets show it, `0x7099…79c8`, through the one `_addr` partial (the
+  `shortAddr` helper, the whole value in its `title` and its copy control);
+  `TestChainAddressesRenderShort` fails on one rendered whole. The whole text
+  appears only where it is the point: the registration message to sign.
 
 ### 5.13 Media slot
 

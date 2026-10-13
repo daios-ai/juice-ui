@@ -11,7 +11,7 @@
      data-say-none="No crypto wallet found in this browser."
      data-say-declined="You declined in your crypto wallet."
      data-say-chain="Your crypto wallet is not on {{.KernelNet}}."
-     data-say-account="Switch your crypto wallet to {{$d.MyAddress}}."
+     data-say-account="Switch your crypto wallet to {{shortAddr $d.MyAddress}}."
      data-say-stale="Your registered address changed. Review again."
      data-say-failed="Not sent.">
 
@@ -27,12 +27,12 @@
 <div class="card stack">
 {{if $d.HasAddresses}}
   <h3>Your crypto wallet</h3>
-  <dl class="kv"><dt>Registered address</dt><dd>{{if $d.MyAddress}}<span class="mono">{{$d.MyAddress}}</span> {{template "_copy" (copyOf "address" $d.MyAddress)}}{{else}}None{{end}}</dd></dl>
+  <dl class="kv"><dt>Registered address</dt><dd>{{if $d.MyAddress}}{{template "_addr" (copyOf "address" $d.MyAddress)}}{{else}}None{{end}}</dd></dl>
   <p class="help">Deposits must come from this address; withdrawals are paid to it.</p>
   <h3>Juice on {{.KernelNet}}</h3>
   <dl class="kv">
-    <dt>Deposit address</dt><dd><span class="mono">{{$d.KernelAddress}}</span> {{template "_copy" (copyOf "address" $d.KernelAddress)}}</dd>
-    {{if $d.Token}}<dt>Token</dt><dd><span class="mono">{{$d.Token}}</span> {{template "_copy" (copyOf "token" $d.Token)}}</dd>{{end}}
+    <dt>Deposit address</dt><dd>{{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd>
+    {{if $d.Token}}<dt>Token</dt><dd>{{template "_addr" (copyOf "token" $d.Token)}}</dd>{{end}}
   </dl>
   <p class="help">Juice's own address, not yours; only this token is credited.</p>
   <p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Send from your registered address only, never from an exchange.</p>
@@ -80,7 +80,7 @@
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/fund/review">
       {{.CSRFField}}
-      <dl class="kv"><dt>From</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd><dt>To</dt><dd>Juice wallet</dd></dl>
+      <dl class="kv"><dt>From</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>Juice wallet</dd></dl>
       <div class="field">
         <label for="fund-amt">Amount<span class="req">*</span></label>
         <input id="fund-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
@@ -99,7 +99,7 @@
   <div class="modal-head"><h2>Add funds to your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
     <p>Add {{money $d.Review.Amount}} to your Juice wallet?</p>
-    <dl class="kv"><dt>From</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd><dt>To</dt><dd>Juice wallet, via <span class="mono">{{$d.KernelAddress}}</span></dd></dl>
+    <dl class="kv"><dt>From</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>Juice wallet, via {{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd></dl>
     <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
     <div class="cluster" data-wallet-choose hidden></div>
     <div class="cluster">
@@ -116,7 +116,7 @@
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/withdraw/review">
       {{.CSRFField}}
-      <dl class="kv"><dt>From</dt><dd>Juice wallet, <span class="money">{{money $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd>{{end}}</dl>
+      <dl class="kv"><dt>From</dt><dd>Juice wallet, <span class="money">{{money $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd>{{end}}</dl>
       <div class="field">
         <label for="wd-amt">Amount<span class="req">*</span></label>
         <input id="wd-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
@@ -141,7 +141,7 @@
       <input type="hidden" name="amount" value="{{$d.Review.Typed}}">
       <input type="hidden" name="reason" value="{{$d.Review.Reason}}">
       <p>Withdraw {{money $d.Review.Amount}} from your Juice wallet?</p>
-      {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>crypto wallet <span class="mono">{{$d.MyAddress}}</span></dd></dl>{{end}}
+      {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd></dl>{{end}}
       <div class="cluster">
         <button class="btn-money" type="submit">Withdraw ({{money $d.Review.Amount}})</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
