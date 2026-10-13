@@ -365,7 +365,7 @@ func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"network":"play","network_fingerprint":"ef1f",
-	 "blockchain_address":"","finalized":null,
+	 "blockchain_address":"","finalized":{"token":5000000,"block":12},
 	 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
 	 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
 	 "custody":{"checked":false,"difference":0,"ok":false},
@@ -384,9 +384,11 @@ func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	if id.Sys.Earnings != 170 || id.Solvency.Liabilities != 8126 || id.Solvency.Gap != 0 {
 		t.Errorf("operator split or solvency decode wrong: %+v", id)
 	}
-	// Absent while nothing is wrong: a halt and a chain reading are both optional.
-	if id.Stop != nil || id.Finalized != nil || id.Custody.Checked {
-		t.Errorf("optional rail state must stay absent: %+v", id)
+	// Absent while nothing is wrong. The chain reading, whose token a chain kernel
+	// serves as a number (seen live 2026-10-13), is not decoded at all: the UI
+	// shows none of it, so it cannot fail the page.
+	if id.Stop != nil {
+		t.Errorf("a halt must stay absent: %+v", id)
 	}
 }
 

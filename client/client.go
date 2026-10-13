@@ -123,10 +123,9 @@ type HTTPSpec struct {
 }
 
 // Action carries both id (for management) and action (its address,
-// owner@kernel/name, for calling) per R8. For kind=http, Source is a JSON-encoded descriptor string
-// (present on single reads, omitted on list reads); do not interpret it for
-// display. Instead, kind=http reads carry a decomposed HTTP object (absent for
-// other kinds), which is the structured view the UI renders. The owner is the
+// owner@kernel/name, for calling) per R8. A kind=http read carries a
+// decomposed HTTP object (absent for other kinds), which is the structured view
+// the UI renders. The owner is the
 // address's first segment; the kernel serves no separate owner field.
 type Action struct {
 	ID     string `json:"id"`
@@ -143,16 +142,14 @@ type Action struct {
 	// `public`. Empty on a legacy kernel; treat empty as "private" (the default).
 	Visibility string `json:"visibility"`
 	// Discovered marks a catalog row this kernel knows only through gossip
-	// from a peer (kernel D16): it has no local id, RemoteActionID is the
-	// peer's own id for it, and its price is indicative until resolution.
-	Discovered     bool            `json:"discovered,omitempty"`
-	RemoteActionID string          `json:"remote_action_id,omitempty"`
-	Price          int64           `json:"price"`
-	Description    string          `json:"description"`
-	InputSchema    json.RawMessage `json:"input_schema,omitempty"`
-	OutputSchema   json.RawMessage `json:"output_schema,omitempty"`
-	Source         json.RawMessage `json:"source,omitempty"`
-	HTTP           *HTTPSpec       `json:"http,omitempty"`
+	// from a peer (kernel D16): it has no local id, and its price is
+	// indicative until resolution.
+	Discovered   bool            `json:"discovered,omitempty"`
+	Price        int64           `json:"price"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	HTTP         *HTTPSpec       `json:"http,omitempty"`
 	// AuthScheme is the upstream auth scheme (e.g. "delegated_bearer"), and
 	// RequiresGrant reports whether a per-caller grant is needed to run the action.
 	// The kernel exposes these even though the auth config/secrets stay write-only
@@ -171,7 +168,6 @@ type Action struct {
 	// on every sys/lookup row — never on a list row (verified live).
 	Evidence  *ActionEvidence `json:"evidence,omitempty"`
 	CreatedAt string          `json:"created_at"`
-	UpdatedAt string          `json:"updated_at"`
 }
 
 // ActionEvidence is the evidence block of an action read: this kernel's own
@@ -182,7 +178,6 @@ type ActionEvidence struct {
 	LocalExperience  *Stats     `json:"local_experience"`
 	ProviderReported *Evidence  `json:"provider_reported"`
 	ObservedByOthers []Evidence `json:"observed_by_others"`
-	RetainedCap      int        `json:"retained_cap"`
 }
 
 // Experience is this kernel's own record of the action, nil where it holds none
@@ -281,7 +276,6 @@ type Process struct {
 	AwaitingReceipt      bool   `json:"awaiting_receipt"`
 	AwaitingReceiptSince string `json:"awaiting_receipt_since,omitempty"`
 	CreatedAt            string `json:"created_at"`
-	EndedAt              string `json:"ended_at"`
 }
 
 // Endable reports a process its owner may force-end: open, and not awaiting a
@@ -316,34 +310,29 @@ type TransactionRating struct {
 // kernel as a party is its name alone), and the action by its address as it
 // was when the call was made; the kernel never returns raw user ids.
 type Transaction struct {
-	ID            string             `json:"id"`
-	ProcessID     string             `json:"process_id"`
-	TraceID       string             `json:"trace_id"`
-	ParentTraceID string             `json:"parent_trace_id"`
-	Owner         string             `json:"owner"`
-	Caller        string             `json:"caller"`
-	Target        string             `json:"target"`
-	ActionID      string             `json:"action_id"`
-	Action        string             `json:"action"`
-	Args          json.RawMessage    `json:"args"`
-	Result        json.RawMessage    `json:"result"`
-	Status        string             `json:"status"`
-	Gross         int64              `json:"gross"`
-	Net           int64              `json:"net"`
-	Fee           int64              `json:"fee"`
-	Refund        int64              `json:"refund"`
-	Reason        string             `json:"reason"`
-	Rating        *TransactionRating `json:"rating"`
-	StartedAt     string             `json:"started_at"`
-	EndedAt       string             `json:"ended_at"`
+	ID        string             `json:"id"`
+	ProcessID string             `json:"process_id"`
+	TraceID   string             `json:"trace_id"`
+	Owner     string             `json:"owner"`
+	Caller    string             `json:"caller"`
+	Target    string             `json:"target"`
+	ActionID  string             `json:"action_id"`
+	Action    string             `json:"action"`
+	Args      json.RawMessage    `json:"args"`
+	Result    json.RawMessage    `json:"result"`
+	Status    string             `json:"status"`
+	Gross     int64              `json:"gross"`
+	Net       int64              `json:"net"`
+	Fee       int64              `json:"fee"`
+	Reason    string             `json:"reason"`
+	Rating    *TransactionRating `json:"rating"`
+	StartedAt string             `json:"started_at"`
 	// A cross-kernel call carries the peer's signed receipt and the TicketID both
 	// kernels know its obligation by (kernel §P10). On such a call Net is the
 	// obligation returned to the caller and Fee the import fee retained here —
 	// NOT the provider's revenue, which is the peer's own economics inside
 	// RemoteReceiptJSON. RemoteReceiptHash is set iff the call crossed a boundary.
-	RemoteActionID    string `json:"remote_action_id,omitempty"`
 	RemoteReceiptHash string `json:"remote_receipt_hash,omitempty"`
-	RemoteSignerKey   string `json:"remote_signer_key,omitempty"`
 	TicketID          string `json:"ticket_id,omitempty"`
 	// Payment is set on a transfer to a user of another kernel: the state of this
 	// kernel's payment to that kernel (pending, announced). It says the money
@@ -372,7 +361,6 @@ type Stats struct {
 	RatingCount     int64   `json:"rating_count"`
 	LatencyEstimate float64 `json:"latency_estimate"`
 	RatingEstimate  float64 `json:"rating_estimate"`
-	LastUsedAt      string  `json:"last_used_at"`
 }
 
 // Rating is one entry of GET /v1/actions/{id}/ratings (list may be null): the
@@ -421,7 +409,6 @@ type TaskCompleteReply struct {
 	TxID      string          `json:"tx_id"`
 	TraceID   string          `json:"trace_id"`
 	ReceiptID string          `json:"receipt_id"`
-	TaskID    string          `json:"task_id"`
 }
 
 // ImportResult is the response of POST /v1/actions/import. Go's JSON decoding is
@@ -448,9 +435,8 @@ type ImportRejection struct {
 // document because the kernel folded a form into its schema subset (a 3.0
 // nullable, say). The operation is installed; the note says what changed.
 type ImportNotice struct {
-	Key      string `json:"key"`
-	Location string `json:"location"`
-	Note     string `json:"note"`
+	Key  string `json:"key"`
+	Note string `json:"note"`
 }
 
 // Health is GET /health (open): the identity banner a client pins before it
@@ -794,13 +780,11 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 // the rail; Reason names the transaction that caused the movement, or the
 // obligation it settles.
 type LedgerEntry struct {
-	Amount      int64  `json:"amount"`
-	Reason      string `json:"reason,omitempty"`
-	ExternalKey string `json:"external_key,omitempty"`
-	Operator    string `json:"operator,omitempty"`
-	From        string `json:"from,omitempty"`
-	To          string `json:"to,omitempty"`
-	CreatedAt   string `json:"created_at"`
+	Amount    int64  `json:"amount"`
+	Reason    string `json:"reason,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 // Withdrawal is one payout of the caller's own credits. The id is minted by the
@@ -808,16 +792,14 @@ type LedgerEntry struct {
 // A withdrawal snapshots its destination when it is made: registering another
 // address never redirects one already under way (kernel §D23).
 type Withdrawal struct {
-	ID          string `json:"id"`
-	Kind        string `json:"kind"`
-	Amount      int64  `json:"amount"`
-	Credit      int64  `json:"credit"`
-	Status      string `json:"status"`
-	TxHash      string `json:"tx_hash,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	FinalizedAt string `json:"finalized_at,omitempty"`
-	Party       string `json:"party,omitempty"`
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Amount    int64  `json:"amount"`
+	Status    string `json:"status"`
+	TxHash    string `json:"tx_hash,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	CreatedAt string `json:"created_at"`
+	Party     string `json:"party,omitempty"`
 }
 
 // Withdraw pays credits out to the address the caller registered. The id is the

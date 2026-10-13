@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.26.0
+Version: 0.26.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.26.1.** The client decodes only what the UI reads, and
+> a contract test holds it against the kernel this installation runs (§9):
+> a field the kernel sends with another type, or no longer sends, fails
+> `make check` rather than a page. It was prompted by a chain kernel serving
+> `finalized.token` as a number, which failed the whole admin identity over a
+> field nothing displayed.
 
 > **What changed in 0.26.0.** The wallet connects the person's own crypto
 > wallet (§6.5): it registers the address withdrawals go to by signing the
@@ -1999,7 +2006,17 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
 
 Every production `.go` file has a `_test.go` file with independent tests.
 `go test ./...` passes without network access; the kernel API is faked as an
-`httptest.Server`. Required coverage:
+`httptest.Server`, except in one test. Required coverage:
+
+* the kernel contract (`client/contract_test.go`): the installed kernel binary,
+  on throwaway loopback kernels — two federated play kernels and one on a local
+  anvil chain with juice-rail's mocks — is driven into the states that fill
+  optional fields, and every reply is decoded through the client. A call that
+  fails to decode fails the test, as does a client response type no reply
+  decoded into or a field no reply carried, save the types the rig cannot
+  reach, each named with its reason. It skips, naming what is missing, without
+  the binary, anvil, cast or the mocks. The client declares only fields the UI
+  reads: a field nothing reads is a decode hazard, not documentation;
 
 * the typed API client and error mapping (§10 error mapping);
 * session lifecycle: PKCE handshake, single-flight refresh rotation, logout

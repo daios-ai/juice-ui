@@ -26,14 +26,12 @@ import (
 // answers 404 "… is not a user here" for a peer key, so there is no second
 // record shape to discriminate.
 type AdminUser struct {
-	ID          string `json:"id"`
 	Address     string `json:"address"`
 	Description string `json:"description"`
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
 	SuspendedAt string `json:"suspended_at,omitempty"`
 	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
 }
 
 // Suspended reports whether the user is currently suspended. Detection is by
@@ -131,11 +129,10 @@ type Evidence struct {
 // Reachability holds the transport diagnostics only. Online/Source are NOT here —
 // the kernel returns them at the top level of the inspection (see Inspection).
 type Reachability struct {
-	Path      string   `json:"path"` // "direct" | "relayed" | "unreachable" | …
-	RTTMillis int64    `json:"rtt_millis"`
-	Version   string   `json:"version"` // the peer's agent string, juice-kernel/<version>
-	Protocols []string `json:"protocols"`
-	Error     string   `json:"error,omitempty"` // why an unreachable peer could not be dialled
+	Path      string `json:"path"` // "direct" | "relayed" | "unreachable" | …
+	RTTMillis int64  `json:"rtt_millis"`
+	Version   string `json:"version"`         // the peer's agent string, juice-kernel/<version>
+	Error     string `json:"error,omitempty"` // why an unreachable peer could not be dialled
 }
 
 // Inspection is GET /v1/admin/peers/{key}/inspect — a remote kernel's identity, its
@@ -212,9 +209,7 @@ type IssuerEvidence struct {
 // in transit on the rail (open payouts, deposits nobody has claimed, fuel locks)
 // — money held on sys and never spendable (kernel §D3). Solvency is the identity
 // every user credit is backed by cash: Liabilities − Vault must be zero, and Gap
-// names the difference when a record has been broken by hand. Custody compares
-// that vault against the rail's own finalized reads and is reported only at a
-// valid cut, so Checked says whether the comparison ran at all. Stop is present
+// names the difference when a record has been broken by hand. Stop is present
 // only while outgoing rail work is halted, and names why.
 //
 // Exposure is what this kernel has delivered to foreign buyers and not been paid
@@ -225,19 +220,15 @@ type IssuerEvidence struct {
 // changes it (kernel §P10). The three bps rates are the money rules it serves
 // under.
 type Identity struct {
-	Handle             string   `json:"handle"`
-	PublicKey          string   `json:"public_key"`
-	About              string   `json:"about"` // sys's description — what the network reads about us
-	Addrs              []string `json:"addrs"`
-	Network            string   `json:"network"`
-	NetworkFingerprint string   `json:"network_fingerprint"`
-	BlockchainAddress  string   `json:"blockchain_address"` // where this kernel is paid; "" on a world without addresses
+	Handle            string   `json:"handle"`
+	PublicKey         string   `json:"public_key"`
+	About             string   `json:"about"` // sys's description — what the network reads about us
+	Addrs             []string `json:"addrs"`
+	BlockchainAddress string   `json:"blockchain_address"` // where this kernel is paid; "" on a world without addresses
 
-	Finalized *RailHoldings `json:"finalized"` // nil until a chain rail has read a block
-	Sys       SysFunds      `json:"sys"`
-	Solvency  Solvency      `json:"solvency"`
-	Custody   Custody       `json:"custody"`
-	Stop      *RailStop     `json:"stop"` // nil unless outgoing rail work is halted
+	Sys      SysFunds  `json:"sys"`
+	Solvency Solvency  `json:"solvency"`
+	Stop     *RailStop `json:"stop"` // nil unless outgoing rail work is halted
 
 	Lottery     int64 `json:"lottery"`
 	LotteryMax  int64 `json:"lottery_max"`
@@ -246,13 +237,6 @@ type Identity struct {
 	FeeBps      int64 `json:"fee_bps"`
 	RemoteBps   int64 `json:"remote_bps"`
 	ImportBps   int64 `json:"import_bps"`
-}
-
-// RailHoldings is what the rail holds for this kernel at a finalized block.
-type RailHoldings struct {
-	Token string `json:"token"`
-	Gas   string `json:"gas"`
-	Block int64  `json:"block"`
 }
 
 // SysFunds splits the operator's balance: what it earned, and what is in transit
@@ -270,15 +254,6 @@ type Solvency struct {
 	Liabilities int64 `json:"liabilities"`
 	Vault       int64 `json:"vault"`
 	Gap         int64 `json:"gap"`
-}
-
-// Custody compares the kernel's own vault figure against the rail's finalized
-// reads. Checked is false when no valid cut was available, and then Difference
-// and OK say nothing.
-type Custody struct {
-	Checked    bool  `json:"checked"`
-	Difference int64 `json:"difference"`
-	OK         bool  `json:"ok"`
 }
 
 // RailStop is a halt on outgoing rail work: deposits, paid work and reads
@@ -307,7 +282,6 @@ type HeldDeposit struct {
 	ID        string `json:"id"`
 	Kind      string `json:"kind"`
 	Amount    int64  `json:"amount"`
-	Credit    int64  `json:"credit"`
 	Status    string `json:"status"`
 	TxHash    string `json:"tx_hash"`
 	CreatedAt string `json:"created_at"`
@@ -517,7 +491,6 @@ type PeerRecord struct {
 	About             string `json:"about"`
 	BlockchainAddress string `json:"blockchain_address"`
 	FirstSeen         string `json:"first_seen"`
-	LastSeen          string `json:"last_seen"`
 	SuspendedAt       string `json:"suspended_at"`
 }
 

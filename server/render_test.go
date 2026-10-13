@@ -1209,7 +1209,7 @@ func TestInspectStatesLabelledFacts(t *testing.T) {
 	}
 	live := render(client.Inspection{PublicKey: "KEYC", Online: true, Source: "live",
 		Actions:      []client.PeerAction{{ActionID: "a1"}, {ActionID: "a2"}},
-		Reachability: client.Reachability{Path: "direct", RTTMillis: 12, Version: "juice-kernel/v0.15.10", Protocols: []string{"/juice/fed/gossip/1"}},
+		Reachability: client.Reachability{Path: "direct", RTTMillis: 12, Version: "juice-kernel/v0.15.10"},
 		Evidence: []client.Evidence{
 			{IssuerPublicKey: "KEYC", Uses: 6, Successes: 6, RatingCount: 1, RatingMean: 1},
 			{IssuerPublicKey: "KEYC", Uses: 4, Successes: 2, RatingCount: 9, RatingMean: 0.5},

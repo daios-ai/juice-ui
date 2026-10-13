@@ -162,7 +162,7 @@ func TestListActionsEncodesOwnerAndDecodesDiscovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(acts) != 1 || !acts[0].Discovered || acts[0].RemoteActionID != "R9" || acts[0].ID != "" {
+	if len(acts) != 1 || !acts[0].Discovered || acts[0].ID != "" {
 		t.Fatalf("acts = %+v", acts)
 	}
 	for _, p := range paths {
@@ -501,7 +501,7 @@ func TestCompleteTaskAlwaysSendsArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TxID != "t1" || r.TaskID != "s1" || r.ReceiptID != "r1" {
+	if r.TxID != "t1" || r.ReceiptID != "r1" {
 		t.Errorf("reply = %+v", r)
 	}
 	if !strings.Contains(string(f.lastBody), `"args":{}`) {
@@ -547,7 +547,7 @@ func TestImportInstallsAnApplicationByName(t *testing.T) {
 	if len(res.Rejected) != 1 || res.Rejected[0].Key != "noDesc" || res.Rejected[0].Location != "GET /pets" {
 		t.Errorf("a rejected operation must be carried with its place and reason: %+v", res.Rejected)
 	}
-	if len(res.Notices) != 1 || res.Notices[0].Key != "index" || res.Notices[0].Location != "GET /" || !strings.Contains(res.Notices[0].Note, "nullable") {
+	if len(res.Notices) != 1 || res.Notices[0].Key != "index" || !strings.Contains(res.Notices[0].Note, "nullable") {
 		t.Errorf("a notice must be carried with its place and note: %+v", res.Notices)
 	}
 	if res.Created[0].Title != "Pets" {
