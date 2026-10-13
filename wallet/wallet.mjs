@@ -56,6 +56,9 @@ async function bind(doc) {
   if (!root) return;
   const { announce, openDialog } = await import('/static/app.js');
   for (const el of root.querySelectorAll('[data-wallet-js]')) el.hidden = false;
+  // A review is rendered by a POST; replacing its URL makes a reload GET the
+  // wallet, never the review again, so a reload can offer no second send.
+  if (location.pathname !== '/wallet') history.replaceState(null, '', '/wallet');
   const near = (el) => el.closest('dialog') || root;
   const say = (kind, el) => {
     const box = near(el).querySelector('[data-wallet-say]');
@@ -80,13 +83,14 @@ async function bind(doc) {
     if (!el) return;
     e.preventDefault();
     for (const box of root.querySelectorAll('[data-wallet-say]')) box.hidden = true;
+    el.disabled = true; // one flow per click: a second click cannot send twice
     try {
       const p = await pick(el);
       if (el.hasAttribute('data-wallet-send')) {
-        if (!p) return say('none', el);
+        if (!p) throw fail('none');
         const csrf = doc.querySelector('meta[name="csrf-token"]').content;
         await send(p, await fetchTx(fetch, el.dataset.amount, csrf));
-        el.closest('dialog').close();
+        el.closest('dialog').close(); // stays disabled: this review is spent
         announce('Transaction submitted');
         return;
       }
@@ -100,7 +104,9 @@ async function bind(doc) {
       } else say('none', dlg);
       openDialog(dlg);
       dlg.querySelector('[name="current_password"]').focus();
+      el.disabled = false;
     } catch (err) {
+      el.disabled = false;
       say(err.kind || 'failed', el);
     }
   });
