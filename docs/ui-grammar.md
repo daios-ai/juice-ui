@@ -178,13 +178,13 @@ visible string is exactly one register:
   turn it into structure.
 
 **One exception, by principle:** money that can be lost in a way the UI cannot
-observe is explained where it moves. The wallet's **How money moves** card is
-that one block (requirements §6.5): the registered address and the deposit
-address and token, each labelled with one `.help` line saying what it is, and a
-`.banner-error` warning led by the `#alert` icon — "Send from your registered
-address only, never from an exchange." — since a payment from an exchange is
-held for the operator and nothing else on screen would show why. No other
-surface carries explanation.
+observe is explained where it moves, in a person's words. The wallet's
+**Deposits and withdrawals** card is that one block (requirements §6.5): your
+crypto wallet's address, the Juice server's deposit address and token, and a
+`.banner-error` warning led by the `#alert` icon — "Only send money from your
+crypto wallet above, never from an exchange or any other wallet. …" — since a
+payment from an exchange is held for the operator and nothing else on screen
+would show why. No other surface carries explanation.
 
 Empty states name the absence in one phrase ("No connected accounts yet."), never a
 lecture on how the list will fill. Field `help` states what to type or the single
@@ -233,7 +233,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, add funds, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |

@@ -1793,10 +1793,11 @@ type walletView struct {
 	// contract that money is; both are empty on a world whose money has no
 	// addresses, where the operator records money in and out (kernel §D23).
 	// MyAddress is the caller's own registered payout address, empty until they
-	// prove one. Chain says the world's chain is proven (wallet.ChainOf), the one
-	// state in which a browser wallet is asked to add funds.
+	// prove one. Symbol names the token. Chain says the world's chain is proven
+	// (wallet.ChainOf), the one state in which a crypto wallet is asked to deposit.
 	KernelAddress string
 	Token         string
+	Symbol        string
 	MyAddress     string
 	Withdrawals   []client.Withdrawal
 	Chain         bool
@@ -1834,7 +1835,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 	ctx := r.Context()
 	id := s.kernelIdentity(ctx)
 	_, chain := wallet.ChainOf(id)
-	view := walletView{OpenForm: form, KernelAddress: id.BlockchainAddress, Token: id.Token, Chain: chain, Review: review}
+	view := walletView{OpenForm: form, KernelAddress: id.BlockchainAddress, Token: id.Token, Symbol: id.Symbol, Chain: chain, Review: review}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
@@ -1943,7 +1944,7 @@ func (s *Server) postWithdrawReview(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// postFundReview renders the confirm that names the amount to add; the
+// postFundReview renders the confirm that names the amount to deposit; the
 // transfer itself is fetched at send time (postFund).
 func (s *Server) postFundReview(w http.ResponseWriter, r *http.Request) {
 	if typed, amount, ok := s.walletAmount(w, r); ok {

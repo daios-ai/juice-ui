@@ -17,34 +17,30 @@
 
 {{template "_figures" (figures (figure $d.Available "available" "") (figure $d.Locked "parked ◷" "escrow"))}}
 
-{{/* How money moves: the one explained block (requirements §6.5). Two names
-     throughout — the Juice wallet is this balance, the crypto wallet is the
-     person's own (MetaMask or similar) — and every fact labelled with one line
-     saying what it means. Where money has no addresses, the operator records
-     money in and out (kernel §D23), and the world is named because it decides
-     how this balance moves (§7). */}}
-<h2>How money moves</h2>
+{{/* Deposits and withdrawals: the wallet's one explained block (requirements
+     §6.5), in plain words. The crypto wallet is the person's own (MetaMask or
+     similar); the Juice balance is this one. Where money has no addresses, the
+     operator records money in and out (kernel §D23), and the world is named
+     because it decides how this balance moves (§7). */}}
+<h2>Deposits and withdrawals</h2>
 <div class="card stack">
 {{if $d.HasAddresses}}
   <h3>Your crypto wallet</h3>
-  <dl class="kv"><dt>Registered address</dt><dd>{{if $d.MyAddress}}{{template "_addr" (copyOf "address" $d.MyAddress)}}{{else}}None{{end}}</dd></dl>
-  <p class="help">Deposits must come from this address; withdrawals are paid to it.</p>
-  <h3>Juice on {{.KernelNet}}</h3>
+  <dl class="kv"><dt>Address</dt><dd>{{if $d.MyAddress}}{{template "_addr" (copyOf "address" $d.MyAddress)}} <a class="btn" href="/wallet?form=address" data-wallet-register>Change</a>{{else}}Not connected yet. <a class="btn" href="/wallet?form=address" data-wallet-register>Connect crypto wallet</a>{{end}}</dd></dl>
+  <h3>Juice server {{.KernelHandle}}, on the {{.KernelNet}} network</h3>
   <dl class="kv">
     <dt>Deposit address</dt><dd>{{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd>
-    {{if $d.Token}}<dt>Token</dt><dd>{{template "_addr" (copyOf "token" $d.Token)}}</dd>{{end}}
+    {{if $d.Token}}<dt>Token</dt><dd>{{$d.Symbol}} · {{template "_addr" (copyOf "token" $d.Token)}}</dd>{{end}}
   </dl>
-  <p class="help">Juice's own address, not yours; only this token is credited.</p>
-  <p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Send from your registered address only, never from an exchange.</p>
+  <p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Only send money from your crypto wallet above, never from an exchange or any other wallet. Money from anywhere else won't show up in your balance. Withdrawals are always paid back to that same wallet.</p>
 {{else}}
   <p class="help">On {{.KernelNet}}, the operator records money in and out.</p>
 {{end}}
   <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
   <div class="cluster" data-wallet-choose hidden></div>
   <div class="cluster">
-    {{if and $d.Chain $d.MyAddress}}<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Add funds</a>{{end}}
+    {{if and $d.Chain $d.MyAddress}}<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Deposit</a>{{end}}
     {{if $d.CanWithdraw}}<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>{{end}}
-    {{if $d.HasAddresses}}<a class="btn" href="/wallet?form=address" data-wallet-register>{{if $d.MyAddress}}Change address{{else}}Connect crypto wallet{{end}}</a>{{end}}
   </div>
 </div>
 
@@ -75,12 +71,12 @@
 {{template "_activity" $d.Activity}}
 
 {{if and $d.Chain $d.MyAddress}}
-<dialog id="form-fund" class="modal-form"{{if eq $d.OpenForm "fund"}} open{{end}} aria-label="Add funds to your Juice wallet">
-  <div class="modal-head"><h2>Add funds to your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-fund" class="modal-form"{{if eq $d.OpenForm "fund"}} open{{end}} aria-label="Deposit">
+  <div class="modal-head"><h2>Deposit</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/fund/review">
       {{.CSRFField}}
-      <dl class="kv"><dt>From</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>Juice wallet</dd></dl>
+      <dl class="kv"><dt>From</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>your Juice balance</dd></dl>
       <div class="field">
         <label for="fund-amt">Amount<span class="req">*</span></label>
         <input id="fund-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
@@ -95,15 +91,15 @@
 {{end}}
 
 {{if and (eq $d.OpenForm "fund-review") $d.Chain $d.MyAddress}}
-<dialog id="form-fund-review" class="modal-form" open aria-label="Add funds to your Juice wallet">
-  <div class="modal-head"><h2>Add funds to your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-fund-review" class="modal-form" open aria-label="Deposit">
+  <div class="modal-head"><h2>Deposit</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
-    <p>Add {{money $d.Review.Amount}} to your Juice wallet?</p>
-    <dl class="kv"><dt>From</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>Juice wallet, via {{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd></dl>
+    <p>Deposit {{money $d.Review.Amount}}?</p>
+    <dl class="kv"><dt>From</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>your Juice balance, via {{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd></dl>
     <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
     <div class="cluster" data-wallet-choose hidden></div>
     <div class="cluster">
-      <button class="btn-money" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Add funds ({{money $d.Review.Amount}})</button>
+      <button class="btn-money" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Deposit ({{money $d.Review.Amount}})</button>
       <button type="button" class="btn" data-modal-close>Cancel</button>
     </div>
   </div>
@@ -111,12 +107,12 @@
 {{end}}
 
 {{if $d.CanWithdraw}}
-<dialog id="form-withdraw" class="modal-form"{{if eq $d.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw from your Juice wallet">
-  <div class="modal-head"><h2>Withdraw from your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-withdraw" class="modal-form"{{if eq $d.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">
+  <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/withdraw/review">
       {{.CSRFField}}
-      <dl class="kv"><dt>From</dt><dd>Juice wallet, <span class="money">{{money $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd>{{end}}</dl>
+      <dl class="kv"><dt>From</dt><dd>your Juice balance, <span class="money">{{money $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd>{{end}}</dl>
       <div class="field">
         <label for="wd-amt">Amount<span class="req">*</span></label>
         <input id="wd-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
@@ -132,16 +128,16 @@
 {{end}}
 
 {{if eq $d.OpenForm "withdraw-review"}}
-<dialog id="form-withdraw-review" class="modal-form" open aria-label="Withdraw from your Juice wallet">
-  <div class="modal-head"><h2>Withdraw from your Juice wallet</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
+<dialog id="form-withdraw-review" class="modal-form" open aria-label="Withdraw">
+  <div class="modal-head"><h2>Withdraw</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/withdraw">
       {{.CSRFField}}
       <input type="hidden" name="id" value="{{$d.Review.ID}}">
       <input type="hidden" name="amount" value="{{$d.Review.Typed}}">
       <input type="hidden" name="reason" value="{{$d.Review.Reason}}">
-      <p>Withdraw {{money $d.Review.Amount}} from your Juice wallet?</p>
-      {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd></dl>{{end}}
+      <p>Withdraw {{money $d.Review.Amount}}?</p>
+      {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd></dl>{{end}}
       <div class="cluster">
         <button class="btn-money" type="submit">Withdraw ({{money $d.Review.Amount}})</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>

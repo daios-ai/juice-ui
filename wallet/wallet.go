@@ -70,7 +70,7 @@ type Tx struct {
 }
 
 // ErrNoFunding refuses a transfer the kernel would not credit to the caller.
-var ErrNoFunding = errors.New("adding funds needs a registered address on a proven chain")
+var ErrNoFunding = errors.New("a deposit needs a registered address on a proven chain")
 
 // FundTx builds the transfer from what the kernel says now: h and me must be
 // fresh reads, so a registration changed since the review is refused.

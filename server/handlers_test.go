@@ -898,7 +898,7 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	if !strings.Contains(body, "form-withdraw") || !strings.Contains(body, "form-address") {
 		t.Error("an address world offers withdraw and register")
 	}
-	if strings.Contains(body, "Add funds") {
+	if strings.Contains(body, `data-modal="form-fund"`) {
 		t.Error("a chain the fingerprint does not prove is never asked to send")
 	}
 	// The world's own scale and symbol: 5000000 base units at six decimals is
@@ -911,7 +911,7 @@ func TestWalletOffersWithdrawalOnAnAddressWorld(t *testing.T) {
 	}
 }
 
-// On a proven chain the wallet adds funds and withdraws, two symmetric openers
+// On a proven chain the wallet deposits and withdraws, two symmetric openers
 // whose reviews name the amount on the money button; the transfer is built at send time from
 // a fresh read of the registered address, and a withdrawal carries the id its
 // review minted (requirements §6.5).
@@ -943,9 +943,10 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/wallet")
-	for _, want := range []string{"How money moves", "Registered address", "Deposit address",
-		`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Send from your registered address only, never from an exchange.`,
-		`<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Add funds</a>`,
+	for _, want := range []string{"<h2>Deposits and withdrawals</h2>", "<h3>Juice server tango, on the anvil network</h3>",
+		"Deposit address", "USDT0 · ", `data-wallet-register>Change</a>`,
+		`<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Only send money from your crypto wallet above, never from an exchange or any other wallet.`,
+		`<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Deposit</a>`,
 		`<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>`,
 		`src="/wallet/wallet.mjs"`, "user: U1\naddress: \""} {
 		if !strings.Contains(page, want) {
@@ -961,7 +962,7 @@ func TestWalletFundsAndWithdrawsThroughReviews(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return string(b)
 	}
-	if body := review("/wallet/fund/review", "1.5"); !strings.Contains(body, `<button class="btn-money" type="button" data-wallet-send data-amount="1.5">Add funds (1.50 USDT0)</button>`) {
+	if body := review("/wallet/fund/review", "1.5"); !strings.Contains(body, `<button class="btn-money" type="button" data-wallet-send data-amount="1.5">Deposit (1.50 USDT0)</button>`) {
 		t.Errorf("fund review must name the amount on the money button: %s", body)
 	}
 	if body := review("/wallet/fund", "1.5"); body != `{"from":"0xalice","to":"0x5fbdb2315678afecb367f032d93f642f64180aa3","data":"`+wallet.TransferData("0xvault", 1500000)+`","chainId":"0x7a69"}`+"\n" {

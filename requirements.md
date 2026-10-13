@@ -5,12 +5,11 @@ Status: design draft — endpoint surface gated against the running kernel
 
 > **What changed in 0.26.0.** The wallet connects the person's own crypto
 > wallet (§6.5): it registers the address withdrawals go to by signing the
-> kernel's registration message, adds funds by asking that wallet to send the
-> token to the kernel's deposit address, and withdraws to it. Two names hold
-> throughout — the *Juice wallet* is the balance here, the *crypto wallet* the
-> person's own — and one box, *How money moves*, labels every address with
-> what it is and warns against paying from an exchange. Add funds and Withdraw
-> are symmetric: each opens a dialog stating From and To, and its review's
+> kernel's registration message, deposits by asking that wallet to send the
+> token to the kernel's deposit address, and withdraws to it. One box,
+> *Deposits and withdrawals*, says in plain words whose each address is and
+> warns against paying from an exchange. Deposit and Withdraw are symmetric:
+> each opens a dialog stating From and To, and its review's
 > confirm is the money button naming the amount (§7). The UI proves the
 > world's chain by recomputing its network fingerprint, builds the transfer
 > from a fresh read of the registered address, and states only what the wallet
@@ -1434,36 +1433,40 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 * **The person's own crypto wallet does the chain work.** The UI holds no key,
   runs no relayer and keeps no payment state; every figure it shows is one the
   kernel serves, so the crypto wallet's on-chain balance is not shown and no QR
-  code is drawn (the wallet has both). Two names hold on every surface: the
-  **Juice wallet** is the balance here, the **crypto wallet** the person's own
-  (MetaMask or similar).
-  * **How money moves** is the wallet's one explained block, and the only
-    place the copy discipline admits explanation (§7 grammar): the registered
-    address (the person's) and the deposit address and token (Juice's), each
-    with its copy control and one line saying what it is, and a warning banner
-    with the alert icon: "Send from your registered address only, never from
-    an exchange." — a payment from an exchange is held for the operator, a
-    loss nothing on screen would otherwise show. Below it stand the two
-    symmetric commands, **Add funds** and **Withdraw** (neutral, since they
-    open a dialog), and **Connect crypto wallet** / **Change address**.
+  code is drawn (the wallet has both). The words are a person's: the **crypto
+  wallet** is theirs (MetaMask or similar), the **Juice balance** is this one,
+  and the two acts are **Deposit** and **Withdraw** everywhere — title,
+  buttons, dialogs, confirms.
+  * **Deposits and withdrawals** is the wallet's one explained block, and the
+    only place the copy discipline admits explanation (grammar §3). Under
+    "Your crypto wallet": its address with **Change**, or "Not connected yet."
+    with **Connect crypto wallet**. Under "Juice server <kernel>, on the
+    <world> network": the deposit address and the token, by symbol and
+    contract. Then a warning banner with the alert icon, in plain words: "Only
+    send money from your crypto wallet above, never from an exchange or any
+    other wallet. Money from anywhere else won't show up in your balance.
+    Withdrawals are always paid back to that same wallet." — a payment from
+    an exchange is held for the operator, a loss nothing on screen would
+    otherwise show. Below stand the two symmetric commands, **Deposit** and
+    **Withdraw**, neutral since they open a dialog.
   * **Register:** the wallet signs, EIP-191, the kernel's registration message —
     `juice address registration`, `kernel: <public key>`, `user: <account id>`,
     `address: <address>`, four lines, no trailing newline — with the address
     exactly as the request sends it. Without JavaScript the page shows that
     message for a typed address, to be signed elsewhere and pasted.
-  * **Add funds** ("to your Juice wallet") is offered only on a world whose
+  * **Deposit** is offered only on a world whose
     chain the UI has proved: `/health` serves no chain id, so the UI recomputes
     `sha256(JCS({chain_id, name, rail, token}))` for the chains of the shipped
     worlds and accepts one only on an exact match with `network_fingerprint`.
-    Its dialog states From (crypto wallet, the registered address) and To
-    (Juice wallet); its review names the amount, and the confirm fetches the
+    Its dialog states From (your crypto wallet, the registered address) and
+    To (your Juice balance); its review names the amount, and the confirm fetches the
     ERC-20 transfer built from a fresh read of the registered address, picks
     the installed wallet already connected to that address (listing the
     wallets only when none is), and asks it to send on that chain from that
     address. A hash is a submission, announced "Transaction submitted", never
     a credit; a reload never reopens a spent review.
-  * **Withdraw** ("from your Juice wallet") states From (Juice wallet, its
-    available balance) and To (crypto wallet, where the world has addresses);
+  * **Withdraw** states From (your Juice balance, what is available) and To
+    (your crypto wallet, where the world has addresses);
     its review names the amount, and its confirm carries the id minted for it.
   * An outcome names a cause only where the wallet's error establishes one
     (EIP-1193 4001 declined, 4902 unknown chain); any other refusal is "Not
@@ -1809,11 +1812,11 @@ the transaction's `payment` (§6.5).
 * **The accent is exclusive.** The accent MUST appear only on the control that authorizes a
   settling `Call` paying a provider — the terminal, priced, parties-visible
   confirm — or an irreversible move of the person's own money in or out of
-  Juice: the confirm that adds funds or withdraws (§6.5). A control that opens a confirm or otherwise moves no money MUST NOT use
+  Juice: the confirm of a deposit or a withdrawal (§6.5). A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
   as `verb (N)` (e.g. "Run (133.000000)") — the same figure the money helper
-  renders everywhere (`Add funds (N)`, `Withdraw (N)`). Primary
+  renders everywhere (`Deposit (N)`, `Withdraw (N)`). Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist. (A task completion is the neutral
