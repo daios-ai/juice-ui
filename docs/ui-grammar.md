@@ -247,8 +247,9 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
   no command drops below its row. A quiet text command never shares a row with
   buttons; navigation inside such a row (`Inspect`, `Rename`) is a `.btn`.
 - One command has one look and one label everywhere: Suspend is `.btn-danger`,
-  Unsuspend `.btn`, ending a session `End · refund N` (`.btn-danger`). There is
-  no quiet-danger tier.
+  Unsuspend `.btn`, ending a session `End · refund N` (`.btn-danger`, the one
+  `_end` partial; `End` alone when nothing is refunded). There is no
+  quiet-danger tier.
 - `TestButtonsHaveOneGeometryAndOneLook` enforces this on every template.
 
 **Rules.** These are the *only* button styles. The money tier is the **authorizing
@@ -432,7 +433,10 @@ separates it from the content above, and nothing else does (§4).
   `.stat` blocks — the label muted on top, the amount in mono coloured by its
   signal (`sig-credited` with a `+`, `sig-escrow`), and a quiet link to the
   records behind it when there are any. Wallet, home, workshop earnings and a
-  session's funds all render through it; no page draws its own figures.
+  session's funds all render through it; no page draws its own figures. An
+  account's locked balance is one helper, `lockedFigure`: `parked ◷` (escrow)
+  for everyone, `locked ◷` unsignalled for the operator, whose locked also holds
+  payouts in transit.
 
 - `.pill` — bordered, `currentColor`. State variants:
   `.status-credited / -refunded / -escrow / -danger`.
@@ -516,7 +520,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 |---|---|
 | Flash bar | one-shot result of the last action, top of content |
 | `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as a frozen form (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row |
-| `.banner` (`-info`/`-error`) | inline notice |
+| `.banner` (`-info`/`-error`) | inline notice. A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
 | `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `inbox` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact. **Every** nav badge is the `_badge_poll` partial: htmx re-fetches its endpoint on the **one** configured interval (`badge_interval_seconds`, default 30s), body = bare count, **empty when zero** (`.badge:empty` hides it). Rendered identically in the sidebar and the mobile tab bar |
@@ -618,7 +622,9 @@ A counterparty carries **no money at all**: a peer account is identity and
 moderation state, never a wallet (kernel §D14), so a row states its names and
 its strip. The money on this page is this kernel's
 own — exposure against its credit limit, the rates, the operator split, solvency,
-and a rail halt as a `.banner-error` — plus the obligations above.
+the vault's holdings at the last finalized block (token and native coin, a
+snapshot, as served), and a rail halt as a `.banner-error` warning — plus the
+obligations above.
 
 ### 5.12 Menus & icons
 

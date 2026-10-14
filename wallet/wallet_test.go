@@ -48,6 +48,12 @@ func TestChainOfProvesTheChainByTheFingerprint(t *testing.T) {
 	}
 }
 
+func TestNativeNamesTheFeeCoin(t *testing.T) {
+	if Native(137) != "POL" || Native(31337) != "ETH" || Native(1) != "" {
+		t.Errorf("natives = %q %q %q", Native(137), Native(31337), Native(1))
+	}
+}
+
 func TestTransferDataIsERC20Transfer(t *testing.T) {
 	// cast calldata "transfer(address,uint256)" 0xd1572fc3bd9ebbab2dfd173504c6e7f82bad21ca 5000000
 	want := "0xa9059cbb000000000000000000000000d1572fc3bd9ebbab2dfd173504c6e7f82bad21ca00000000000000000000000000000000000000000000000000000000004c4b40"

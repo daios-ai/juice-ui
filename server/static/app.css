@@ -662,6 +662,9 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .banner { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .7rem 1rem; color: var(--text-muted); }
 .banner-error { border-color: var(--danger); color: var(--danger); }
 .banner-info  { border-color: var(--border-strong); color: var(--text-muted); }
+/* A banner in page flow owns its spacing, as h2, .subhead and .details-panel
+   do; inside a .stack the stack spaces it. */
+.container > .banner { margin-bottom: 1rem; }
 
 .muted { color: var(--text-muted); }
 .score { color: var(--text-muted); font-size: .85rem; }

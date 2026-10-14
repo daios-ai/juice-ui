@@ -4,7 +4,7 @@
   <h1>Home</h1>
 </div>
 
-{{template "_figures" (figures (linkedFigure $d.Available "available" "" "wallet" "/wallet") (linkedFigure $d.Locked "parked ◷" "escrow" "open sessions" "/processes"))}}
+{{template "_figures" (figures (linked (figure $d.Available "available" "") "wallet" "/wallet") (linked (lockedFigure $d.Locked $d.Superuser) "open sessions" "/processes"))}}
 
 {{/* Completing a task stays in the inbox, so spending has one surface; here
      each row only links to it (requirements.md §6.1). */}}

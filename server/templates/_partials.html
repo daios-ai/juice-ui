@@ -61,7 +61,8 @@
 {{/* _figures — THE headline money figures (§5.6), one block each on every
      page that leads with money: the label, the mono amount coloured by its
      signal, and a link to the records behind it when there are any. Build with
-     `figures` of `figure`/`linkedFigure`. */}}
+     `figures` of `figure` (or `lockedFigure`, an account's locked), each
+     optionally `linked`. */}}
 {{define "_figures"}}
 <div class="stat-row">
   {{range .}}
@@ -88,16 +89,20 @@
         <span class="sig-escrow mono">◷ {{money (sum .Available .Locked)}} parked</span>{{if .AwaitingReceipt}} · <span class="sig-escrow">awaiting a remote receipt</span>{{end}}
       </div>
     </div>
-    {{if .Endable}}
-    <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session?">
-      {{$.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
-    </form>
-    {{end}}
+    {{template "_end" (endOf . $.CSRFField)}}
   </div>
   {{end}}
 </div>
 {{else}}<p class="muted">No open sessions.</p>{{end}}
 {{end}}
+
+{{/* _end — THE force-end control, wherever a session is listed or shown: the
+     plain confirm, then the session's price back to its owner. Offered only on
+     an endable session (open, not awaiting a peer's receipt, §6.5); it states a
+     refund only when there is one. Takes endOf. */}}
+{{define "_end"}}{{if .P.Endable}}<form method="post" action="/processes/{{.P.ID}}/end" data-confirm="End this session?">
+  {{.CSRF}}<button class="btn-danger" type="submit">End{{with sum .P.Available .P.Locked}} · refund {{money .}}{{end}}</button>
+</form>{{end}}{{end}}
 
 {{/* _activity — the ledger preview: every movement between accounts,
      settlement included, so it alone is the activity (§6.5). Takes []entryRow. */}}
@@ -260,13 +265,15 @@
 
 {{/* _activity_entry — one row of the wallet's activity: a ledger entry, what
      moved between the viewer and one other account, and why (§6.5). The reason
-     is a transaction's id, linked to its receipt, or the text the kernel gave. */}}
+     is a transaction's id, linked to its receipt, or the text the kernel gave.
+     A side the kernel leaves absent is money crossing in or out of Juice; an
+     entry from the viewer to the viewer moves nothing and takes no sign. */}}
 {{define "_activity_entry"}}
 {{$e := .Entry}}
 <tr>
-  <td>{{if .Credited}}from{{else}}to{{end}} {{if .Counterpart}}{{.Counterpart}}{{else}}<span class="muted">—</span>{{end}}</td>
+  <td>{{if .Self}}{{.Counterpart}}{{else}}{{if .Credited}}from{{else}}to{{end}} {{if .Counterpart}}{{.Counterpart}}{{else}}outside Juice{{end}}{{end}}</td>
   <td class="mono">{{if .TxID}}<a href="/transactions/{{.TxID}}">{{truncate 8 .TxID}}</a>{{else if .Note}}<span class="muted" title="{{.Note}}">{{.Note}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
-  <td class="money">{{if .Credited}}<span class="sig-credited">+{{money $e.Amount}}</span>{{else}}−{{money $e.Amount}}{{end}}</td>
+  <td class="money">{{if .Self}}<span class="muted">{{money $e.Amount}}</span>{{else if .Credited}}<span class="sig-credited">+{{money $e.Amount}}</span>{{else}}−{{money $e.Amount}}{{end}}</td>
   <td class="muted">{{shortTime $e.CreatedAt}}</td>
 </tr>
 {{end}}

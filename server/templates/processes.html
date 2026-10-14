@@ -17,11 +17,7 @@
     <td><span class="pill {{statusClass .Status}}">{{.Status}}</span>{{if .AwaitingReceipt}} <span class="sig-escrow" title="Awaiting a remote receipt">awaiting</span>{{end}}</td>
     <td class="money">{{money (sum .Available .Locked)}}</td>
     <td>
-      {{if .Endable}}
-      <form method="post" action="/processes/{{.ID}}/end" data-confirm="End this session?">
-        {{$d.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum .Available .Locked)}}</button>
-      </form>
-      {{end}}
+      {{template "_end" (endOf . $d.CSRFField)}}
     </td>
   </tr>
   {{end}}

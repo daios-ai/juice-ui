@@ -1852,7 +1852,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 			return e
 		}
 		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
-			view.Open = procs
+			view.Open = ownSessions(procs, me.Address)
 		}
 		// The ledger journals every movement between accounts — deposits,
 		// withdrawals, transfers, delivered value, and what each settlement paid
@@ -1877,9 +1877,23 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 type homeView struct {
 	Available int64
 	Locked    int64
+	Superuser bool
 	Waiting   []client.Task
 	Open      []client.Process
 	Activity  []entryRow
+}
+
+// ownSessions keeps the viewer's own open sessions. A superuser lists every
+// account's, but the wallet and the dashboard are the viewer's money — the
+// inbox's rule for tasks; the sessions page is where every account's are read.
+func ownSessions(procs []client.Process, me string) []client.Process {
+	var own []client.Process
+	for _, p := range procs {
+		if p.Owner == me {
+			own = append(own, p)
+		}
+	}
+	return own
 }
 
 // homePreview is how many rows each dashboard section shows.
@@ -1887,7 +1901,7 @@ const homePreview = 5
 
 func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var view homeView
+	view := homeView{Superuser: s.isSuperuser(r)}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.client.Me(ctx, tok)
 		if e != nil {
@@ -1905,7 +1919,8 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
-			view.Open = procs[:min(len(procs), homePreview)]
+			own := ownSessions(procs, me.Address)
+			view.Open = own[:min(len(own), homePreview)]
 		}
 		// The ledger, not the transaction list: the kernel pages transactions
 		// before its party filter, so a short page could hide the viewer's rows;

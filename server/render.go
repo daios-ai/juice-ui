@@ -223,6 +223,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"nameOf":       nameOf,
 		"kernelName":   keyDisplay,
 		"copyOf":       copyOf,
+		"endOf":        endOf,
 		"obligation":   obligation,
 		"declineForm":  declineForm,
 		"ref":          r.refOf,
@@ -240,7 +241,8 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
 		"figure":       figure,
-		"linkedFigure": linkedFigure,
+		"linked":       linked,
+		"lockedFigure": lockedFigure,
 		"figures":      figures,
 		"badge":        badge,
 		"cardArt":      CardArt,
@@ -525,6 +527,16 @@ type copyView struct {
 // copyOf builds that pairing (template helper).
 func copyOf(what, value string) copyView { return copyView{What: what, Value: value} }
 
+// endView is what the one End control renders from: the session, and the CSRF
+// field its form posts with.
+type endView struct {
+	P    client.Process
+	CSRF template.HTML
+}
+
+// endOf builds that pairing (template helper).
+func endOf(p client.Process, csrf template.HTML) endView { return endView{P: p, CSRF: csrf} }
+
 // nameOf picks the name to show for a kernel: its petname when one is bound,
 // else its truncated key. A nickname is never chosen — it does not resolve, so
 // showing it where a name is expected would invite typing something the
@@ -662,13 +674,26 @@ type Figure struct {
 	Href   string
 }
 
-// figure builds a Figure (template helper); linkedFigure adds its link.
+// figure builds a Figure (template helper); linked adds its link.
 func figure(amount int64, label, signal string) Figure {
 	return Figure{Amount: amount, Label: label, Signal: signal}
 }
 
-func linkedFigure(amount int64, label, signal, link, href string) Figure {
-	return Figure{Amount: amount, Label: label, Signal: signal, Link: link, Href: href}
+// linked adds to f a link to the records behind it.
+func linked(f Figure, link, href string) Figure {
+	f.Link, f.Href = link, href
+	return f
+}
+
+// lockedFigure is the account's served `locked`, whole (§6.5): for everyone it
+// is parked — what open sessions, a ticket's stake and waiting transfer tasks
+// reserve. The operator's also holds payouts in transit on the rail, sys being
+// the clearing account, so it takes the kernel's own word and no escrow signal.
+func lockedFigure(amount int64, operator bool) Figure {
+	if operator {
+		return figure(amount, "locked ◷", "")
+	}
+	return figure(amount, "parked ◷", "escrow")
 }
 
 // figures collects Figures for the _figures partial (template helper).
@@ -910,8 +935,13 @@ func txRowOf(tx client.Transaction, viewer string) txRow { return txRow{Tx: tx, 
 // entryRow bundles a ledger entry with the viewer's perspective, so the
 // activity list renders a movement without the template deciding sign or party.
 type entryRow struct {
-	Entry       client.LedgerEntry
-	Credited    bool   // the amount arrived in the viewer's balance
+	Entry    client.LedgerEntry
+	Credited bool // the amount arrived in the viewer's balance
+	// Self marks an entry from the viewer to the viewer, which moves nothing.
+	// Only the operator has them: sys is both an account and the clearing
+	// account, so a deposit credited to sys, and the first leg of its own
+	// withdrawal (into transit), are sys → sys (§6.5).
+	Self        bool
 	Counterpart string // the other side's address; "" where the money crossed the rail
 	// TxID is the reason when it names a transaction of the viewer's, the link
 	// to its receipt; Note is any other reason (an obligation's ticket, the
@@ -932,7 +962,8 @@ var transferReason = regexp.MustCompile(`^transfer ([0-9a-f]{8}-[0-9a-f]{4}-[0-9
 // entryRowOf reads the movement from the kernel's own from/to projection: the
 // viewer is on one side, and the counterpart is the other.
 func entryRowOf(e client.LedgerEntry, viewer string) entryRow {
-	r := entryRow{Entry: e, Credited: e.To == viewer, Counterpart: e.To}
+	r := entryRow{Entry: e, Self: e.From == viewer && e.To == viewer, Counterpart: e.To}
+	r.Credited = e.To == viewer && !r.Self
 	if r.Credited {
 		r.Counterpart = e.From
 	}

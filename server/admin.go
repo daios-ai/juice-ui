@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/wallet"
 	"github.com/gorilla/csrf"
 )
 
@@ -57,6 +58,7 @@ type adminUserView struct {
 type adminPeersView struct {
 	depositForm
 	Identity      client.Identity
+	Native        string // the fee coin of the proven chain the vault is on; "" if none is proven
 	Deposits      client.Deposits
 	Petnames      map[string]string // public key → bound petname, for naming a debtor
 	Kernels       []kernelRow
@@ -360,6 +362,9 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	view.Petnames = map[string]string{}
+	if chain, ok := wallet.ChainOf(s.kernelIdentity(ctx)); ok {
+		view.Native = wallet.Native(chain)
+	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		id, e := s.client.AdminIdentity(ctx, tok)
 		if e != nil {

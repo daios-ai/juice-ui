@@ -30,8 +30,12 @@ func Message(kernelKey, userID, address string) string {
 }
 
 // chains bounds the search in ChainOf: the worlds the kernel ships, and anvil's
-// default for the local rig. A row is accepted only when the fingerprint proves it.
-var chains = []int64{137, 42161, 421614, 31337}
+// default for the local rig. A row is accepted only when the fingerprint proves
+// it. Each names its native coin, the one the vault pays fees in.
+var chains = []struct {
+	id     int64
+	native string
+}{{137, "POL"}, {42161, "ETH"}, {421614, "ETH"}, {31337, "ETH"}}
 
 // ChainOf proves the chain id of the kernel's world. /health serves no chain id,
 // but its network fingerprint is sha256(JCS({chain_id, name, rail, token})), so
@@ -41,18 +45,28 @@ func ChainOf(h client.Health) (int64, bool) {
 	if h.BlockchainAddress == "" {
 		return 0, false
 	}
-	for _, id := range chains {
+	for _, c := range chains {
 		b, _ := json.Marshal(struct {
 			ChainID int64  `json:"chain_id"`
 			Name    string `json:"name"`
 			Rail    string `json:"rail"`
 			Token   string `json:"token"`
-		}{id, h.Network, "evm", h.Token})
+		}{c.id, h.Network, "evm", h.Token})
 		if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) == h.NetworkFingerprint {
-			return id, true
+			return c.id, true
 		}
 	}
 	return 0, false
+}
+
+// Native names the native coin of a chain ChainOf proved, "" for any other.
+func Native(chainID int64) string {
+	for _, c := range chains {
+		if c.id == chainID {
+			return c.native
+		}
+	}
+	return ""
 }
 
 // TransferData is the calldata of ERC-20 transfer(to, amount).

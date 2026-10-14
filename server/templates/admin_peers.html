@@ -5,8 +5,9 @@
 </div>
 
 {{/* A halt refuses outgoing rail work while deposits, paid work and reads
-     continue (kernel §D23) — stated here, where those verbs are. */}}
-{{if $d.Identity.Stop}}<div class="banner banner-error" role="status">Payments out are paused — {{$d.Identity.Stop.Reason}}{{if $d.Identity.Stop.Since}} (since {{shortTime $d.Identity.Stop.Since}}){{end}}.</div>{{end}}
+     continue (kernel §D23) — stated here, where those verbs are, as a warning:
+     led by #alert. Its reason is the kernel's, naming what to top up. */}}
+{{if $d.Identity.Stop}}<div class="banner banner-error" role="status"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Payments out are paused — {{$d.Identity.Stop.Reason}}{{if $d.Identity.Stop.Since}} (since {{shortTime $d.Identity.Stop.Since}}){{end}}.</div>{{end}}
 
 {{/* This kernel's own money (§6.6): what it has delivered to foreign buyers
      and not been paid for, against the limit it set (§D14); the operator split
@@ -15,6 +16,10 @@
 {{template "_figures" (figures (figure $i.Exposure "owed to us" "") (figure $i.CreditLimit "credit limit" "") (figure $i.Sys.Earnings "earned" "credited") (figure (sum (sum $i.Sys.PendingPayouts $i.Sys.HeldDeposits) $i.Sys.RefillLocks) "in transit ◷" "escrow") (figure $i.Solvency.Liabilities "user credits" "") (figure $i.Solvency.Vault "money in" ""))}}
 <p class="small muted">ticket <span class="mono">{{money $i.Lottery}}</span>{{if $i.LotteryMax}}, taking up to <span class="mono">{{money $i.LotteryMax}}</span>{{end}} · fee {{pct $i.FeeBps 10000}}% · serving {{pct $i.RemoteBps 10000}}% · import {{pct $i.ImportBps 10000}}%{{if $i.Solvency.Gap}} · <span class="pill status-danger">gap {{money $i.Solvency.Gap}}</span>{{end}}</p>
 {{if $i.BlockchainAddress}}<p class="small muted">paid at {{template "_addr" (copyOf "address" $i.BlockchainAddress)}}</p>{{end}}
+{{/* What the vault held at the last finalized block — a snapshot the kernel
+     read, not a live balance: the token, and the native coin its payouts burn
+     in fees, as served. */}}
+{{with $i.Finalized}}<p class="small muted">at finalized block {{.Block}}: <span class="mono">{{money .Token}}</span> and <span class="mono">{{.Gas}}{{with $d.Native}} {{.}}{{end}}</span></p>{{end}}
 {{if $i.Addrs}}
 <details class="details-panel">
   <summary>Listen addresses</summary>

@@ -797,7 +797,7 @@ type Withdrawal struct {
 	Amount    int64  `json:"amount"`
 	Status    string `json:"status"`
 	TxHash    string `json:"tx_hash,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Reason    string `json:"reason,omitempty"` // the kernel's, why a payout is blocked; the person's own goes on the ledger entry
 	CreatedAt string `json:"created_at"`
 	Party     string `json:"party,omitempty"`
 }

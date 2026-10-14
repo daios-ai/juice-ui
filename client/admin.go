@@ -209,8 +209,10 @@ type IssuerEvidence struct {
 // in transit on the rail (open payouts, deposits nobody has claimed, fuel locks)
 // — money held on sys and never spendable (kernel §D3). Solvency is the identity
 // every user credit is backed by cash: Liabilities − Vault must be zero, and Gap
-// names the difference when a record has been broken by hand. Stop is present
-// only while outgoing rail work is halted, and names why.
+// names the difference when a record has been broken by hand. Finalized is what
+// the vault holds at the last finalized block, present once a chain rail has
+// read one. Stop is present only while outgoing rail work is halted, and names
+// why.
 //
 // Exposure is what this kernel has delivered to foreign buyers and not been paid
 // for, against the CreditLimit it set — one number for the whole kernel, so
@@ -226,9 +228,10 @@ type Identity struct {
 	Addrs             []string `json:"addrs"`
 	BlockchainAddress string   `json:"blockchain_address"` // where this kernel is paid; "" on a world without addresses
 
-	Sys      SysFunds  `json:"sys"`
-	Solvency Solvency  `json:"solvency"`
-	Stop     *RailStop `json:"stop"` // nil unless outgoing rail work is halted
+	Finalized *RailHoldings `json:"finalized"` // nil until a chain rail has read a block
+	Sys       SysFunds      `json:"sys"`
+	Solvency  Solvency      `json:"solvency"`
+	Stop      *RailStop     `json:"stop"` // nil unless outgoing rail work is halted
 
 	Lottery     int64 `json:"lottery"`
 	LotteryMax  int64 `json:"lottery_max"`
@@ -237,6 +240,16 @@ type Identity struct {
 	FeeBps      int64 `json:"fee_bps"`
 	RemoteBps   int64 `json:"remote_bps"`
 	ImportBps   int64 `json:"import_bps"`
+}
+
+// RailHoldings is what the vault holds at a finalized block. Token is in the
+// world's base units, a JSON number; Gas is the chain's native coin as the
+// kernel writes it, a decimal string in whole units (measured on v0.16.0:
+// "9.999953481381553915"), shown as served.
+type RailHoldings struct {
+	Token int64  `json:"token"`
+	Gas   string `json:"gas"`
+	Block int64  `json:"block"`
 }
 
 // SysFunds splits the operator's balance: what it earned, and what is in transit

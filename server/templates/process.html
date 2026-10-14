@@ -9,11 +9,7 @@
   {{template "_figures" (figures (figure $d.Process.Available "available" "") (figure $d.Process.Locked "parked ◷" "escrow"))}}
   {{template "_process_await" $d}}
   {{if $d.Process.Endable}}
-  <div class="cluster">
-    <form method="post" action="/processes/{{$d.Process.ID}}/end" data-confirm="End this session?">
-      {{.CSRFField}}<button class="btn-danger" type="submit">End · refund {{money (sum $d.Process.Available $d.Process.Locked)}}</button>
-    </form>
-  </div>
+  <div class="cluster">{{template "_end" (endOf $d.Process .CSRFField)}}</div>
   {{end}}
 </div>
 

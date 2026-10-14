@@ -9,7 +9,7 @@
 
 {{/* Earnings — folded from your transactions in the BFF (never kernel settlement). */}}
 {{$calls := "calls"}}{{if eq $d.Earnings.Count 1}}{{$calls = "call"}}{{end}}
-{{template "_figures" (figures (linkedFigure $d.MonthEarned "this month" "credited" (printf "%d %s all-time" $d.Earnings.Count $calls) "/transactions") (linkedFigure $d.User.Locked "parked ◷" "escrow" "open sessions" "/wallet") (linkedFigure $d.Earnings.Earned "all time" "credited" "full ledger" "/transactions"))}}
+{{template "_figures" (figures (linked (figure $d.MonthEarned "this month" "credited") (printf "%d %s all-time" $d.Earnings.Count $calls) "/transactions") (linked (lockedFigure $d.User.Locked $d.Superuser) "open sessions" "/wallet") (linked (figure $d.Earnings.Earned "all time" "credited") "full ledger" "/transactions"))}}
 
 <div class="subhead">
   <h2>{{if eq $d.Scope "all"}}All actions{{else}}Your actions{{end}}</h2>

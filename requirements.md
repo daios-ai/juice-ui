@@ -1,7 +1,21 @@
 # Juice Web UI Requirements
 
-Version: 0.26.1
+Version: 0.27.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.27.0.** The first real payout on Polygon, made by the
+> operator, showed what the money pages left unsaid. An entry from an account
+> to itself — the operator's, `sys` being the clearing account through which
+> rail money is booked — moves nothing and now takes no sign; money crossing in
+> or out of Juice names that crossing instead of an em dash (§6.5). A blocked
+> payout states the kernel's reason under its status; the operator's locked
+> balance, which also holds payouts in transit, is labelled `locked` without the
+> escrow signal on every page that shows it (§6.5). The wallet and the dashboard
+> list the viewer's own sessions, and the one End control states a refund only
+> when there is one. The network page states what the vault held at the last
+> finalized block — the token and the native coin its payouts spend in fees —
+> and its halt banner is a warning led by `#alert`, spaced from the figures
+> (§6.6).
 
 > **What changed in 0.26.1.** The client decodes only what the UI reads, and
 > a contract test holds it against the kernel this installation runs (§9):
@@ -1393,11 +1407,26 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   **available** and **parked** (all locked funds; the open-sessions list itemizes
   them, each with the `End · refund N` control behind the plain confirm "End this
   session?" — ending cancels waiting tasks and refunds parked prices — via
-  `POST /v1/processes/{id}/end`). "locked" is not
-  a user-facing label. Parked is the served `locked` whole: it also holds what a
+  `POST /v1/processes/{id}/end`). "locked" is
+  a user-facing label only for the operator (below). Parked is the served `locked` whole: it also holds what a
   call to another kernel stakes on its ticket (kernel P10) and the values the
   user's waiting transfer tasks reserve (kernel D6), which no session itemizes,
-  and the UI states the total rather than computing a remainder.
+  and the UI states the total rather than computing a remainder. The control
+  states a refund only when there is one (`End` alone on a session holding
+  nothing, which still releases its waiting tasks), and is one component
+  wherever a session is listed or shown.
+* **The operator's locked is not parked.** `sys` is the clearing account: each
+  payout's first leg moves the amount to sys, where it is in transit on the
+  rail until the payment is final (`sys.pending_payouts`). So the operator's
+  `locked` mixes escrow and transit, and the UI cannot split it without
+  arithmetic. For a superuser the figure is labelled **locked**, the kernel's
+  word, without the escrow signal — on the wallet, the dashboard and the
+  workshop alike; the network page's `in transit` figure itemises the transit
+  part. Every other account sees **parked**.
+* **The wallet and the dashboard are the viewer's own money.** They list the
+  viewer's own open sessions — a superuser is served every account's — the
+  dashboard taking its five after that filter; the sessions page is where every
+  account's are read.
 * **A session awaiting a peer's receipt is not force-endable.** The kernel
   refuses to end it (409), because the peer may already have earned the funds,
   so the control MUST be withheld wherever it appears — the wallet, the sessions
@@ -1415,7 +1444,11 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   d59742b). An account's balance is the sum of its entries, so the entries alone
   are the account's activity. Each row states the counterpart from the viewer's
   side (`to vendor`, `from sys`), the signed amount, and the time; an absent
-  side is the rail and renders as an em dash. The wallet shows the most recent
+  side is money crossing in or out of Juice and renders as `outside Juice`
+  (`to outside Juice · fuel`). An entry from the viewer to the viewer moves
+  nothing — only the operator has them: a deposit credited to `sys`, and the
+  first leg of its own withdrawal — so it names the account alone and its
+  amount carries no sign. The wallet shows the most recent
   10; the call history is the transactions page.
 * **A reason is an id or it is text, and never prose the UI writes.** An
   entry's `reason` names the transaction that caused it — linked to its
@@ -1487,7 +1520,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   to go: on a world without addresses the operator records it (it lands
   `confirmed`, `tx_hash` `manual:<id>`), and on a world with addresses it waits
   for the user's registered address. Only the address form depends on the
-  world. The withdrawals table is read on every world, to exhaustion.
+  world. The withdrawals table is read on every world, to exhaustion. A row's
+  `reason` is the kernel's — why a payout is blocked, e.g. its vault short of
+  the native coin — and renders under its status as the text it is.
 * **Sending money is running an action; it gets no surface of its own.** The
   kernel moves value through `sys/transfer`, an ordinary priced action with no
   special privileges (kernel §9: any provider could have supplied an equivalent),
@@ -1607,8 +1642,12 @@ symmetry, but because the kernel refuses anything else.
   and the largest ticket it will take from a buyer (`lottery_max`, above which a
   call is refused with a signed rejection); the operator split of `sys` into earnings and money in transit; and the
   solvency identity, whose `gap` MUST carry a danger pill when it is non-zero.
-  A rail halt (`stop`) MUST render as a banner naming its reason, on this page
-  because the money verbs it refuses are here.
+  A rail halt (`stop`) MUST render as a warning banner, led by `#alert`, naming
+  its reason, on this page because the money verbs it refuses are here. Where
+  the world has addresses, the page states what the vault held at the last
+  finalized block (`finalized`): the token in its unit and the native coin its
+  payouts spend in fees, as the kernel writes it, named by the chain's coin
+  (POL on Polygon) — a snapshot at that block, never a live balance.
 * **There is no subscription.** A peer row comes into being by use — a first
   inbound call, or an outbound call that resolves and caches a proxy (peering is
   handshake-free). The page therefore offers **no subscribe or unsubscribe
@@ -2073,7 +2112,15 @@ Every production `.go` file has a `_test.go` file with independent tests.
   to pay it, and the token is named where the world has one (§6.5);
 * the activity is the ledger: each entry states its counterpart, sign and
   reason, a transaction id linking to its receipt and any other reason inert
-  text (§6.5);
+  text; an absent side reads `outside Juice`, and a self-entry carries no sign
+  (§6.5);
+* the End control is one component that states a refund only when there is
+  one; the wallet and the dashboard list the viewer's own sessions, the
+  dashboard filtering before it takes five; the operator's locked figure reads
+  `locked` without the escrow signal on every page that shows it; a blocked
+  payout's reason renders (§6.5);
+* the network page's halt banner is led by `#alert`, a banner in page flow owns
+  its spacing, and the vault's finalized holdings render as served (§6.6);
 * what is known about an action comes from its detail read: the strip is
   `local_experience`, other kernels' reports render under their issuers with
   the provider first, and nothing reads a stats route (§6.2);

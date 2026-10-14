@@ -365,7 +365,7 @@ func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"handle":"k","public_key":"PK","addrs":[],"network":"play","network_fingerprint":"ef1f",
-	 "blockchain_address":"","finalized":{"token":5000000,"block":12},
+	 "blockchain_address":"","finalized":{"token":5000000,"gas":"0.0421","block":12},
 	 "sys":{"earnings":170,"pending_payouts":0,"held_deposits":0,"refill_locks":0},
 	 "solvency":{"liabilities":8126,"vault":8126,"gap":0},
 	 "custody":{"checked":false,"difference":0,"ok":false},
@@ -384,9 +384,11 @@ func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 	if id.Sys.Earnings != 170 || id.Solvency.Liabilities != 8126 || id.Solvency.Gap != 0 {
 		t.Errorf("operator split or solvency decode wrong: %+v", id)
 	}
-	// Absent while nothing is wrong. The chain reading, whose token a chain kernel
-	// serves as a number (seen live 2026-10-13), is not decoded at all: the UI
-	// shows none of it, so it cannot fail the page.
+	// The chain reading: a number of base units for the token (a string here
+	// failed the whole identity live, 2026-10-13) and the native coin as written.
+	if f := id.Finalized; f == nil || f.Token != 5000000 || f.Gas != "0.0421" || f.Block != 12 {
+		t.Errorf("finalized decode wrong: %+v", id.Finalized)
+	}
 	if id.Stop != nil {
 		t.Errorf("a halt must stay absent: %+v", id)
 	}

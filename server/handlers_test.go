@@ -3819,9 +3819,14 @@ func newHomeKernel(t *testing.T) *homeKernel {
 		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
+		// Another account's sessions first, as a superuser is served them: the
+		// dashboard keeps the viewer's own, and only then takes five.
 		var rows []string
+		for i := 0; i < 3; i++ {
+			rows = append(rows, fmt.Sprintf(`{"id":"Q%d000000","owner":"bob@testnet","status":"open","available":10,"locked":0}`, i))
+		}
 		for i := 0; i < 7; i++ {
-			rows = append(rows, fmt.Sprintf(`{"id":"P%d000000","status":"open","available":10,"locked":0}`, i))
+			rows = append(rows, fmt.Sprintf(`{"id":"P%d000000","owner":"alice@testnet","status":"open","available":10,"locked":0}`, i))
 		}
 		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
@@ -3892,6 +3897,9 @@ func TestHomeIsTheDashboard(t *testing.T) {
 	}
 	if n := strings.Count(page, `<a class="mono" href="/processes/P`); n != 5 {
 		t.Errorf("home shows %d open sessions, want 5", n)
+	}
+	if strings.Contains(page, `href="/processes/Q`) {
+		t.Error("the dashboard lists only the viewer's own sessions")
 	}
 	for _, q := range k.taskQueries {
 		if !strings.Contains(q, "status=waiting") || strings.Contains(q, "all=1") {

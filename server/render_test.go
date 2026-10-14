@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -1906,6 +1907,140 @@ func TestWalletWithholdsForceEndWhileAwaitingAReceipt(t *testing.T) {
 	}
 }
 
+// One End control serves every page that lists or shows a session: it states a
+// refund only when there is one, since ending a session holding nothing still
+// releases its waiting tasks.
+func TestEndStatesARefundOnlyWhenThereIsOne(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(p client.Process) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_end", endOf(p, "<input>")); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	if got := render(client.Process{ID: "P1", Status: "open", Available: 3, Locked: 2}); !strings.Contains(got, ">End · refund 5 credits</button>") {
+		t.Errorf("a session holding money states its refund: %s", got)
+	}
+	if got := render(client.Process{ID: "P2", Status: "open"}); !strings.Contains(got, ">End</button>") || strings.Contains(got, "refund") {
+		t.Errorf("a session holding nothing offers End alone: %s", got)
+	}
+	if got := render(client.Process{ID: "P3", Status: "closed", Locked: 2}); strings.Contains(got, "<form") {
+		t.Errorf("a closed session offers no End: %s", got)
+	}
+}
+
+// A blocked payout says why, in the kernel's words, under its status.
+func TestWalletStatesWhyAPayoutIsBlocked(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	v := walletView{Withdrawals: []client.Withdrawal{{ID: "W1", Amount: 1, Status: "blocked", Reason: "native currency too low, top up"}}}
+	if err := r.Render(rec, 200, "wallet", Page{Me: "me@testnet", Data: v}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Body.String(), `<div class="small muted">native currency too low, top up</div>`) {
+		t.Errorf("the block's reason must render under the status: %s", rec.Body.String())
+	}
+}
+
+// An account's locked balance is parked — escrow — for everyone but the
+// operator, whose locked also holds payouts in transit on the rail: the
+// kernel's word, and no escrow signal, on every page that shows it (§6.5).
+func TestLockedFigureFollowsTheAccount(t *testing.T) {
+	if f := lockedFigure(5, false); f.Label != "parked ◷" || f.Signal != "escrow" {
+		t.Errorf("a person's locked is parked escrow: %+v", f)
+	}
+	if f := lockedFigure(5, true); f.Label != "locked ◷" || f.Signal != "" {
+		t.Errorf("the operator's locked is locked, unsignalled: %+v", f)
+	}
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]any{"wallet": walletView{Superuser: true}, "home": homeView{Superuser: true}, "workshop": actionsView{Superuser: true}} {
+		rec := httptest.NewRecorder()
+		if err := r.Render(rec, 200, name, Page{Me: "sys@testnet", IsSuperuser: true, Data: data}); err != nil {
+			t.Fatal(err)
+		}
+		if body := rec.Body.String(); !strings.Contains(body, `<div class="label">locked ◷</div>`) || strings.Contains(body, "parked ◷") {
+			t.Errorf("%s: the operator's figure reads locked: %s", name, body)
+		}
+	}
+}
+
+// The ledger names money crossing in or out of Juice, and an entry from the
+// viewer to the viewer — the operator's, sys being the clearing account —
+// moves nothing, so it takes no sign and no direction (§6.5).
+func TestActivityNamesTheCrossingAndSignsNoSelfEntry(t *testing.T) {
+	if row := entryRowOf(client.LedgerEntry{From: "sys@t", To: "sys@t", Amount: 1, Reason: "I want it back."}, "sys@t"); !row.Self || row.Credited || row.Note != "I want it back." {
+		t.Errorf("a self-entry is neither credit nor debit: %+v", row)
+	}
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	rows := []entryRow{
+		entryRowOf(client.LedgerEntry{From: "sys@t", To: "sys@t", Amount: 1, Reason: "I want it back."}, "sys@t"),
+		entryRowOf(client.LedgerEntry{From: "sys@t", Amount: 2, Reason: "fuel"}, "sys@t"),
+		entryRowOf(client.LedgerEntry{To: "sys@t", Amount: 3}, "sys@t"),
+	}
+	if err := r.Fragment(rec, 200, "_activity", rows); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<td>sys@t</td>`, `<span class="muted">1 credits</span>`,
+		`<td>to outside Juice</td>`, `−2 credits`,
+		`<td>from outside Juice</td>`, `+3 credits`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("activity missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "+1 credits") || strings.Contains(body, "−1 credits") {
+		t.Errorf("a self-entry carries no sign: %s", body)
+	}
+}
+
+// The network page states a halt as a warning, led by #alert and spaced from
+// the figures, and what the vault held at the last finalized block: the token
+// and the native coin, as served (§6.6).
+func TestNetworkPageStatesTheHaltAndTheVault(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := client.Identity{Handle: "me", PublicKey: "PK", BlockchainAddress: "0xvault",
+		Stop:      &client.RailStop{Reason: "native currency too low, top up"},
+		Finalized: &client.RailHoldings{Token: 4, Gas: "9.999953481381553915", Block: 9}}
+	rec := httptest.NewRecorder()
+	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{
+		Identity: id, Native: "POL", Kernels: kernelRows(id, nil)}}
+	if err := r.Render(rec, 200, "admin_peers", p); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<div class="banner banner-error" role="status"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Payments out are paused — native currency too low, top up.</div>`,
+		`at finalized block 9: <span class="mono">4 credits</span> and <span class="mono">9.999953481381553915 POL</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("network page missing %q: %s", want, body)
+		}
+	}
+	css, err := os.ReadFile("static/app.css")
+	if err != nil || !strings.Contains(string(css), ".container > .banner { margin-bottom: 1rem; }") {
+		t.Error("a banner in page flow owns its spacing")
+	}
+}
+
 // On a world whose money has addresses the pay-in disclosure names the token
 // contract money is paid in, and a withdrawal waits for a registered address.
 func TestWalletNamesTheTokenOnAnAddressedWorld(t *testing.T) {
@@ -1979,7 +2114,7 @@ func TestFiguresAreBlocks(t *testing.T) {
 	if err := r.Fragment(rec, 200, "_figures", figures(
 		figure(5, "available", ""),
 		figure(1, "parked ◷", "escrow"),
-		linkedFigure(2, "this month", "credited", "full ledger", "/transactions"),
+		linked(figure(2, "this month", "credited"), "full ledger", "/transactions"),
 	)); err != nil {
 		t.Fatal(err)
 	}
