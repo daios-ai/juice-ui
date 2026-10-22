@@ -1,7 +1,18 @@
 # Juice Web UI Requirements
 
-Version: 0.28.0
+Version: 0.29.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.29.0.** The agents app makes an agent's session (§5,
+> §6.1). New agent takes the handle and a kernel password: it creates the
+> account when the kernel has none, signs the login in as `juice auth login`
+> would — the kernel record when absent or moved, the credential file under
+> its lock — makes the home and starts the daemon; the password is kept
+> nowhere. Sign in, on a stopped agent, replaces the session alone, so an
+> agent made at the command line, or one whose session died, is served from
+> the page. The session, the home and the credential change only while no
+> daemon of that login is alive: a daemon draining after Stop is still
+> running, and Sign in and Delete are refused until it has exited.
 
 > **What changed in 0.28.0.** The agents app follows juice-agent 0.5.0 (§6.1):
 > an agent's home is `$JUICE_HOME/agents/<login>/`, named by its login
@@ -836,8 +847,12 @@ This UI runs in **service** mode — it authenticates browser people over the
 network and holds each one's kernel tokens in its own server-side session — and
 the two are not the same client.
 
-So the UI reads the `kernels` half of the client records and **never reads or
-writes `client/credentials/`**. Two consequences make this a rule rather than a
+So the UI reads the `kernels` half of the client records and **never reads a
+credential**. It writes one only for an agent's login, at the operator's act
+(New agent, Sign in in §6.1), from a password typed in that act and kept
+nowhere, and the kernel record it writes when that kernel is absent or has
+moved is the one `juice kernel add` would. A browser visitor's session never
+reaches the store. Two consequences make this a rule rather than a
 preference. An installation is one operating-system user's state (§1 of that
 document), so tokens placed there are the operator's; a service that wrote its
 visitors' sessions into that store would let every visitor act as the operator's
@@ -936,9 +951,14 @@ kernel and world is in use, and keys everything durable by
   process on the host. The agents app is one: it keeps an agent's home at
   `$JUICE_HOME/agents/<login>/` (ecosystem-standard §2), edits its `agent.md`
   and optional `config.json`, a blank `config.json` being no file, and runs
-  `juice-agent serve <login>`. The daemon's session is the operator's
-  `juice auth login <login>`, never the UI's, which writes no credentials
-  (§5). A stopped agent shows the daemon's `error:` line from its current run.
+  `juice-agent serve <login>`. The daemon's session is the login's own, made
+  as `juice auth login <login>` would (§5): New agent creates the account
+  when the kernel has none and the session, from the handle and a kernel
+  password; Sign in, on a stopped agent, the session alone, which is how an
+  agent made at the command line or one whose session died is served from
+  the page. An agent is running until its process has exited, and Sign in
+  and Delete are refused while it is. A stopped agent shows the daemon's
+  `error:` line from its current run.
 * The task badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting tasks whose `required_caller` is the

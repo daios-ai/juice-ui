@@ -53,10 +53,27 @@
 <div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=config" data-modal="form-config">Edit</a></div>
 {{if $d.Config}}<pre class="json">{{$d.Config}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
 
+{{if not $d.Running}}
 <h2>Danger</h2>
 <div class="cluster">
   <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
 </div>
+{{end}}
+
+<dialog id="form-signin" class="modal-form"{{if eq $d.OpenForm "signin"}} open{{end}} aria-label="Sign in">
+  <div class="modal-head"><h2>Sign in {{$h}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    {{with $d.Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/signin">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="signin-password">Kernel password</label>
+        <input id="signin-password" type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </div>
+</dialog>
 
 {{/* ---- edit modals (agent.md / config.json) ---- */}}
 <dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit agent.md">

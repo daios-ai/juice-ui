@@ -14,6 +14,7 @@ type fakeManaged struct {
 	mu      sync.Mutex
 	isAlive bool
 	stops   int
+	drain   bool // a daemon that keeps running after SIGTERM to finish its tasks
 }
 
 func (m *fakeManaged) alive() bool {
@@ -26,7 +27,7 @@ func (m *fakeManaged) stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stops++
-	m.isAlive = false
+	m.isAlive = m.drain
 	return nil
 }
 
@@ -120,6 +121,26 @@ func TestSupervisorStopSignals(t *testing.T) {
 	// Stopping an unknown or already-stopped handle is a no-op.
 	if err := s.stop("a"); err != nil {
 		t.Fatalf("double stop: %v", err)
+	}
+}
+
+// A signalled daemon that is still draining is still running: it is not
+// relaunched, and it is reported stopped only once its process has exited.
+func TestSupervisorStopKeepsADrainingDaemon(t *testing.T) {
+	l := &fakeLauncher{}
+	s := newSupervisor(l)
+	_ = s.start("a", "a@k", "")
+	l.procs[0].drain = true
+	_ = s.stop("a")
+	if !s.running("a") {
+		t.Fatal("a draining daemon is alive, so running")
+	}
+	if _ = s.start("a", "a@k", ""); len(l.started) != 1 {
+		t.Fatal("a draining daemon must not be relaunched")
+	}
+	l.procs[0].kill()
+	if s.running("a") {
+		t.Fatal("want not running once the process has exited")
 	}
 }
 

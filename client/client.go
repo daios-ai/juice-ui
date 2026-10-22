@@ -47,6 +47,9 @@ func New(baseURL string, hc *http.Client) *Client {
 	return &Client{baseURL: baseURL, http: hc}
 }
 
+// BaseURL is the kernel's endpoint as this client dials it.
+func (c *Client) BaseURL() string { return c.baseURL }
+
 // ---- DTOs (snake_case wire tags; structured fields stay inline JSON, R4.1/R4.2) ----
 
 // Tokens is an access/refresh token pair. Stored server-side only (R1.2).

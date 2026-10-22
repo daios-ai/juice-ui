@@ -29,12 +29,17 @@
 <dialog id="form-agent-create" class="modal-form"{{if $d.OpenForm}} open{{end}} aria-label="New agent">
   <div class="modal-head"><h2>New agent</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
+    {{with $d.Error}}{{template "_error" .}}{{end}}
     <form class="stack" method="post" action="/agents">
       {{.CSRFField}}
       <div class="field">
         <label for="agent-handle">Handle</label>
         <p class="help">Lowercase, digits, - or _.</p>
-        <input id="agent-handle" type="text" name="handle" placeholder="research" required>
+        <input id="agent-handle" type="text" name="handle" placeholder="research" value="{{$d.Handle}}" required>
+      </div>
+      <div class="field">
+        <label for="agent-password">Kernel password</label>
+        <input id="agent-password" type="password" name="password" autocomplete="new-password" required>
       </div>
       <button class="btn" type="submit">Create</button>
     </form>

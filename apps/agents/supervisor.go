@@ -26,8 +26,8 @@ type managed interface {
 
 // osLauncher runs the real juice-agent binary as `juice-agent serve <login>`
 // (agent requirements.md §11), with JUICE_HOME pinned so the child reads the
-// homes and the client records of this installation. The daemon holds its own
-// session, made by `juice auth login <login>`; the UI passes it nothing.
+// homes and the client records of this installation, its session among them;
+// the UI passes it nothing.
 type osLauncher struct {
 	bin  string // resolved juice-agent path; "" when not found
 	home string // JUICE_HOME handed to the child (the juice-family root)
@@ -140,11 +140,11 @@ func (s *supervisor) start(handle, login, logPath string) error {
 	return nil
 }
 
-// stop signals handle's daemon and drops it from the table.
+// stop signals handle's daemon. The entry stays until the process has exited,
+// so a daemon draining its tasks after SIGTERM is still running.
 func (s *supervisor) stop(handle string) error {
 	s.mu.Lock()
 	m := s.live[handle]
-	delete(s.live, handle)
 	s.mu.Unlock()
 	if m == nil {
 		return nil

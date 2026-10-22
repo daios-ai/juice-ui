@@ -53,6 +53,9 @@ func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"status":"ok","handle":"alpha","public_key":"abc","network":"play","network_fingerprint":"ef1f","decimals":6,"blockchain_address":"0xdead"}`
+	if got := f.client().BaseURL(); got != f.srv.URL {
+		t.Fatalf("BaseURL = %q, want the endpoint dialled %q", got, f.srv.URL)
+	}
 	h, err := f.client().Health(context.Background())
 	if err != nil {
 		t.Fatalf("Health: %v", err)

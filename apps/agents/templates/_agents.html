@@ -13,6 +13,7 @@
 {{else}}
 <span class="muted small">stopped</span>
 <form method="post" action="/agents/{{.Handle}}/start">{{.CSRF}}<button class="btn" type="submit">Start</button></form>
+<a class="btn" href="/agents/{{.Handle}}?form=signin" data-modal="form-signin">Sign in</a>
 {{with .LastLine}}<span class="muted small">{{.}}</span>{{end}}
 {{end}}
 {{end}}

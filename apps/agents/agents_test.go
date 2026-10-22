@@ -239,42 +239,112 @@ func TestGetIndexRendersList(t *testing.T) {
 	}
 }
 
-func TestPostCreateValidatesAndScaffolds(t *testing.T) {
-	a, _, cap := testApp(t)
-	// Invalid handle → error flash, nothing created.
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=Bad%21"))
-	if cap.flashKind != "error" {
-		t.Fatalf("bad handle flash = %q, want error", cap.flashKind)
+// refused reads the New agent dialog as it came back: open, at 422, with its
+// reason and the handle as typed, and never the password.
+func refused(t *testing.T, cap *capture, handle string) string {
+	t.Helper()
+	v, ok := cap.data.(listView)
+	if !ok || cap.page != "agents" || cap.status != http.StatusUnprocessableEntity || !v.OpenForm || v.Handle != handle || v.Error == "" {
+		t.Fatalf("want the dialog back open at 422 with the handle kept, got %s %d %+v", cap.page, cap.status, cap.data)
 	}
-	if _, err := os.Stat(filepath.Join(a.root, "Bad!")); !os.IsNotExist(err) {
-		t.Fatal("invalid handle should create nothing")
+	return v.Error
+}
+
+// Ill-formed input is refused before any kernel call: an invalid handle, a
+// sigiled one (refused, not rewritten to the bare one — §4; rewriting it would
+// make "@research" and "research" the same name here and nowhere else), a home
+// that exists, and no password.
+func TestPostCreateRefusesBeforeTheKernel(t *testing.T) {
+	a, k, _, cap := kernelApp(t)
+	_ = a.create("taken")
+	for _, c := range []struct{ body, handle, msg string }{
+		{"handle=Bad%21&password=pw", "Bad!", "lowercase"},
+		{"handle=%40research&password=pw", "@research", "lowercase"},
+		{"handle=taken&password=pw", "taken", "already exists"},
+		{"handle=research", "research", "password"},
+	} {
+		a.postCreate(httptest.NewRecorder(), postForm("/agents", c.body))
+		if msg := refused(t, cap, c.handle); !strings.Contains(msg, c.msg) {
+			t.Fatalf("%s: error = %q, want %q", c.body, msg, c.msg)
+		}
 	}
-	// A sigiled handle is refused, not rewritten to the bare one (§4): rewriting
-	// it would make "@research" and "research" the same name here and nowhere
-	// else, which is the dialect the kernel's grammar forbids.
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=%40research"))
-	if cap.flashKind != "error" {
-		t.Fatalf("sigiled handle flash = %q, want error", cap.flashKind)
+	if len(k.paths) != 0 {
+		t.Fatalf("no kernel call before the input is whole: %v", k.paths)
 	}
 	if _, err := os.Stat(filepath.Join(a.root, "research@testnet")); !os.IsNotExist(err) {
-		t.Fatal("sigiled handle should create nothing")
-	}
-	// Bare handle → created, success flash to detail.
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research"))
-	if cap.flashKind != "success" || cap.flashTo != "/agents/research" {
-		t.Fatalf("create flash = %q to %q", cap.flashKind, cap.flashTo)
-	}
-	if _, err := os.Stat(filepath.Join(a.root, "research@testnet")); err != nil {
-		t.Fatalf("home not created: %v", err)
+		t.Fatal("a refused create makes no home")
 	}
 }
 
-func TestPostCreateDuplicate(t *testing.T) {
-	a, _, cap := testApp(t)
+// New agent creates the account, signs it in, makes the home and starts the
+// daemon; a handle the kernel already holds is adopted, not created twice.
+func TestPostCreateMakesAccountSessionHomeAndStarts(t *testing.T) {
+	a, k, fl, cap := kernelApp(t)
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=pw"))
+	if cap.flashKind != "success" || cap.flashTo != "/agents/research" {
+		t.Fatalf("create flash = %q to %q (%+v)", cap.flashKind, cap.flashTo, cap.data)
+	}
+	if len(k.created) != 1 || k.created[0] != "research@testnet" {
+		t.Fatalf("created = %v", k.created)
+	}
+	if _, err := os.Stat(a.credPath("research")); err != nil {
+		t.Fatal("the session must be written")
+	}
+	if _, err := os.Stat(filepath.Join(a.root, "research@testnet", agentFile)); err != nil {
+		t.Fatal("the home must be made")
+	}
+	if len(fl.started) != 1 || fl.started[0].login != "research@testnet" {
+		t.Fatalf("the daemon must start: %+v", fl.started)
+	}
+	// An account the kernel holds already: adopted on its password.
+	k.me = "taken@testnet"
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=taken&password=pw"))
+	if cap.flashKind != "success" || !a.exists("taken") {
+		t.Fatalf("adopting an existing account: %q %+v", cap.flashKind, cap.data)
+	}
+}
+
+// A wrong password comes back in the dialog as the kernel's refusal, and
+// nothing is made.
+func TestPostCreateWrongPassword(t *testing.T) {
+	a, _, fl, cap := kernelApp(t)
+	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=nope"))
+	if msg := refused(t, cap, "research"); msg != "Password is incorrect." {
+		t.Fatalf("error = %q", msg)
+	}
+	if a.exists("research") || len(fl.started) != 0 {
+		t.Fatal("a refused sign-in makes no home and starts nothing")
+	}
+}
+
+// Sign in replaces a stopped agent's session alone; while its daemon is alive
+// it is refused, and a wrong password returns the dialog open.
+func TestPostSignIn(t *testing.T) {
+	a, _, fl, cap := kernelApp(t)
 	_ = a.create("research")
-	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research"))
-	if cap.flashKind != "error" || !strings.Contains(cap.flashMsg, "already") {
-		t.Fatalf("duplicate flash = %q %q", cap.flashKind, cap.flashMsg)
+	post := func(body string) {
+		req := postForm("/agents/research/signin", body)
+		req.SetPathValue("handle", "research")
+		a.postSignIn(httptest.NewRecorder(), req)
+	}
+	post("password=pw")
+	if cap.flashKind != "success" || cap.flashMsg != "Signed in." {
+		t.Fatalf("sign in: %q %q", cap.flashKind, cap.flashMsg)
+	}
+	if _, err := os.Stat(a.credPath("research")); err != nil {
+		t.Fatal("the session must be written")
+	}
+	post("password=nope")
+	v, ok := cap.data.(detailView)
+	if !ok || cap.status != http.StatusUnprocessableEntity || v.OpenForm != "signin" || v.Error != "Password is incorrect." {
+		t.Fatalf("want the dialog back open at 422, got %d %+v", cap.status, cap.data)
+	}
+	_ = a.sup.start("research", "research@testnet", "")
+	fl.procs[0].drain = true
+	_ = a.sup.stop("research")
+	post("password=pw")
+	if cap.flashKind != "error" || cap.flashMsg != "Stop the agent first." {
+		t.Fatalf("a draining daemon is alive: %q %q", cap.flashKind, cap.flashMsg)
 	}
 }
 
@@ -413,21 +483,32 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 	}
 }
 
-func TestPostDeleteStopsAndRemoves(t *testing.T) {
+// Delete is refused while the daemon is alive — stopped or not, a draining
+// process still reads its home and its credential — and removes home, log and
+// credential once it has exited.
+func TestPostDeleteRequiresStopped(t *testing.T) {
 	a, fl, cap := testApp(t)
+	a.client = t.TempDir()
 	_ = a.create("research")
+	_ = writeCredential(a.credPath("research"), client.Tokens{}, "P1")
 	_ = a.sup.start("research", "research@testnet", "")
+	fl.procs[0].drain = true
+	_ = a.sup.stop("research")
 	req := postForm("/agents/research/delete", "")
 	req.SetPathValue("handle", "research")
 	a.postDelete(httptest.NewRecorder(), req)
+	if cap.flashKind != "error" || !a.exists("research") {
+		t.Fatalf("delete while alive: %q %q", cap.flashKind, cap.flashMsg)
+	}
+	fl.procs[0].kill()
+	a.postDelete(httptest.NewRecorder(), req)
 	if cap.flashKind != "success" {
-		t.Fatalf("delete flash = %q", cap.flashKind)
+		t.Fatalf("delete flash = %q %q", cap.flashKind, cap.flashMsg)
 	}
-	if fl.procs[0].stops != 1 {
-		t.Error("delete should stop a running agent")
-	}
-	if _, err := os.Stat(filepath.Join(a.root, "research@testnet")); !os.IsNotExist(err) {
-		t.Error("home not removed on delete")
+	for _, p := range []string{filepath.Join(a.root, "research@testnet"), a.credPath("research")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s not removed on delete", p)
+		}
 	}
 }
 
@@ -498,8 +579,8 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 	if len(auth) != 0 {
 		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
 	}
-	if len(superuser) != 8 {
-		t.Errorf("every route must be gated: %d of 8", len(superuser))
+	if len(superuser) != 9 {
+		t.Errorf("every route must be gated: %d of 9", len(superuser))
 	}
 }
 

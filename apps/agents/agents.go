@@ -13,10 +13,13 @@
 //   - starts `juice-agent serve <login>` as a supervised child and stops it
 //     with SIGTERM; "running" is whether the tracked child is alive.
 //
-// The daemon holds its own session, made by the operator with
-// `juice auth login <login>`; the UI never reads or writes client credentials
-// (requirements.md §5). A daemon that exits states why in its log, and the page
-// shows that line.
+// The daemon holds its own session in the installation's client records. The
+// UI makes that session as `juice auth login <login>` would — from a password
+// typed at New agent or Sign in and kept nowhere — and never reads one
+// (requirements.md §5, ecosystem-standard §4). A daemon that exits states why
+// in its log, and the page shows that line. The session, the home and the
+// credential are written or removed only while no daemon of that login is
+// alive.
 package agents
 
 import (
@@ -73,10 +76,11 @@ var (
 // Agents is the app. Its only mutable runtime state is the supervisor's process
 // table; nothing is persisted (no app-state, no store).
 type Agents struct {
-	deps apps.Deps
-	root string      // $JUICE_HOME/agents; overridable in tests
-	logs string      // $JUICE_HOME/ui/agents, one <login>.log per daemon run
-	sup  *supervisor // process supervision; overridable in tests (fake launcher)
+	deps   apps.Deps
+	root   string      // $JUICE_HOME/agents; overridable in tests
+	logs   string      // $JUICE_HOME/ui/agents, one <login>.log per daemon run
+	client string      // $JUICE_HOME/client, the records an agent's session lives in
+	sup    *supervisor // process supervision; overridable in tests (fake launcher)
 }
 
 // New constructs the app. Root and supervisor resolve on Start.
@@ -112,6 +116,7 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("GET /agents/{handle}", d.RequireSuperuser(a.getDetail))
 	mux.HandleFunc("GET /agents/{handle}/status", d.RequireSuperuser(a.getStatus))
 	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireSuperuser(a.postSaveFile))
+	mux.HandleFunc("POST /agents/{handle}/signin", d.RequireSuperuser(a.postSignIn))
 	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
 	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
@@ -126,6 +131,9 @@ func (a *Agents) Start(ctx context.Context) error {
 	home := filepath.Dir(a.root)
 	if a.logs == "" {
 		a.logs = filepath.Join(home, "ui", "agents")
+	}
+	if a.client == "" {
+		a.client = filepath.Join(home, "client")
 	}
 	if a.sup == nil {
 		a.sup = newSupervisor(osLauncher{bin: agentBin(home), home: home})
@@ -255,14 +263,16 @@ func (a *Agents) writeFile(handle, file, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-// remove deletes handle's home and the log of its last run.
+// remove deletes handle's home, the log of its last run and its credential.
 func (a *Agents) remove(handle string) error {
 	dir, err := a.agentDir(handle)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(a.logPath(handle)); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, p := range []string{a.logPath(handle), a.credPath(handle)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return os.RemoveAll(dir)
 }
@@ -298,6 +308,8 @@ func (a *Agents) status(r *http.Request, handle string) status {
 type listView struct {
 	Agents   []status
 	OpenForm bool
+	Error    string // why the New agent dialog came back open
+	Handle   string // the handle as typed, kept in that dialog
 }
 
 type detailView struct {
@@ -305,6 +317,7 @@ type detailView struct {
 	Agent    string // agent.md
 	Config   string // config.json; "" when absent
 	OpenForm string // the ?form= value; selects which dialog renders [open]
+	Error    string // why the Sign in dialog came back open
 
 	// An agent IS a user: it holds its own principal on this kernel, funded like
 	// anybody's, and spends it (ecosystem-standard §6). Account is that account
@@ -325,34 +338,77 @@ type detailView struct {
 // ---- handlers ----
 
 func (a *Agents) getIndex(w http.ResponseWriter, r *http.Request) {
+	a.renderList(w, r, http.StatusOK, listView{OpenForm: r.URL.Query().Get("form") == "agent-create"})
+}
+
+func (a *Agents) renderList(w http.ResponseWriter, r *http.Request, code int, v listView) {
 	rows, err := a.list(r)
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	a.deps.RenderPage(w, r, http.StatusOK, "agents", "agents", listView{
-		Agents:   rows,
-		OpenForm: r.URL.Query().Get("form") == "agent-create",
-	})
+	v.Agents = rows
+	a.deps.RenderPage(w, r, code, "agents", "agents", v)
 }
 
+// postCreate makes an agent from a handle and its kernel password: the account
+// when the kernel has none, the session, the home, and the daemon. Each refusal
+// returns the dialog open with the handle kept and the password gone.
 func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 	// Taken as typed: a sigiled handle is ill-formed input, not a handle silently
 	// meaning the bare one (requirements.md §4; the chat daemon's checkHandles
 	// refuses it the same way at its own boundary).
-	handle := strings.TrimSpace(r.FormValue("handle"))
-	if !validHandle(handle) {
-		a.deps.FlashRedirect(w, r, "/agents", "error", "A handle is lowercase letters, digits, - or _.")
+	handle, password := strings.TrimSpace(r.FormValue("handle")), r.FormValue("password")
+	refuse := func(msg string) {
+		a.renderList(w, r, http.StatusUnprocessableEntity, listView{OpenForm: true, Error: msg, Handle: handle})
+	}
+	switch {
+	case !validHandle(handle):
+		refuse("A handle is lowercase letters, digits, - or _.")
+		return
+	case a.exists(handle):
+		refuse("That handle already exists.")
+		return
+	case password == "":
+		refuse("Kernel password is required.")
+		return
+	}
+	ctx := r.Context()
+	// Headless, as the chat account: no recovery key. A handle the kernel
+	// already holds is adopted, and the password proves it on sign-in.
+	if _, err := a.deps.Client.CreateUser(ctx, a.deps.Address(handle), password, ""); err != nil && !accountExists(err) {
+		refuse(signInMessage(err))
+		return
+	}
+	if err := a.signIn(ctx, handle, password); err != nil {
+		refuse(signInMessage(err))
 		return
 	}
 	if err := a.create(handle); err != nil {
-		if errors.Is(err, errExists) {
-			a.deps.FlashRedirect(w, r, "/agents", "error", "That handle already exists.")
-			return
-		}
 		a.deps.HandleErr(w, r, err)
 		return
 	}
+	if err := a.launch(handle); err != nil {
+		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
+		return
+	}
 	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Agent created.")
+}
+
+// accountExists reads the kernel's refusal of a handle it already holds.
+func accountExists(err error) bool {
+	ke, ok := client.AsKernelError(err)
+	return ok && ke.Kind == client.KindInvalidInput && strings.Contains(ke.KernelMessage, "already exists")
+}
+
+// signInMessage is a refused sign-in as the dialog states it.
+func signInMessage(err error) string {
+	if errors.Is(err, client.ErrUnauthenticated) {
+		return "Password is incorrect."
+	}
+	if ke, ok := client.AsKernelError(err); ok {
+		return ke.UserMessage()
+	}
+	return err.Error()
 }
 
 func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
@@ -361,17 +417,41 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r)
 		return
 	}
+	a.renderDetail(w, r, http.StatusOK, handle, r.URL.Query().Get("form"), "")
+}
+
+func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string) {
 	agent, _ := a.readFile(handle, agentFile)
 	config, _ := a.readFile(handle, configFile)
 	account, activity := a.account(r, handle)
-	a.deps.RenderPage(w, r, http.StatusOK, "agent", "agents", detailView{
+	a.deps.RenderPage(w, r, code, "agent", "agents", detailView{
 		status:   a.status(r, handle),
 		Agent:    agent,
 		Config:   config,
-		OpenForm: r.URL.Query().Get("form"),
+		OpenForm: form,
+		Error:    errMsg,
 		Account:  account,
 		Activity: activity,
 	})
+}
+
+// postSignIn replaces the agent's session while no daemon of it is alive, for
+// an agent whose session died or whose account was made at the command line.
+func (a *Agents) postSignIn(w http.ResponseWriter, r *http.Request) {
+	handle := r.PathValue("handle")
+	if !a.exists(handle) {
+		a.notFound(w, r)
+		return
+	}
+	if a.sup.running(handle) {
+		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
+		return
+	}
+	if err := a.signIn(r.Context(), handle, r.FormValue("password")); err != nil {
+		a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "signin", signInMessage(err))
+		return
+	}
+	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Signed in.")
 }
 
 func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +479,10 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r)
 		return
 	}
-	_ = a.sup.stop(handle)
+	if a.sup.running(handle) {
+		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
+		return
+	}
 	if err := a.remove(handle); err != nil {
 		a.deps.HandleErr(w, r, err)
 		return
@@ -407,8 +490,12 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 	a.deps.FlashRedirect(w, r, "/agents", "success", "Agent deleted.")
 }
 
-// postStart spawns `juice-agent serve <login>`; the daemon brings its own
-// session, and a refusal is read back from its log by the status.
+// launch spawns `juice-agent serve <login>`; the daemon brings its own session,
+// and a refusal is read back from its log by the status.
+func (a *Agents) launch(handle string) error {
+	return a.sup.start(handle, a.deps.Address(handle), a.logPath(handle))
+}
+
 func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 	handle := r.PathValue("handle")
 	if !a.exists(handle) {
@@ -416,7 +503,7 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	back := returnPath(r, "/agents/"+handle)
-	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
+	if err := a.launch(handle); err != nil {
 		a.deps.FlashRedirect(w, r, back, "error", "Could not start: "+err.Error())
 		return
 	}
