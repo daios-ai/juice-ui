@@ -2,9 +2,11 @@ package agents
 
 import (
 	"errors"
-	"strings"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeManaged is an in-memory stand-in for a running daemon.
@@ -42,15 +44,15 @@ type fakeLauncher struct {
 	err     error
 }
 
-type startRec struct{ handle, password string }
+type startRec struct{ login, logPath string }
 
-func (l *fakeLauncher) start(handle, password string) (managed, error) {
+func (l *fakeLauncher) start(login, logPath string) (managed, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.err != nil {
 		return nil, l.err
 	}
-	l.started = append(l.started, startRec{handle, password})
+	l.started = append(l.started, startRec{login, logPath})
 	m := &fakeManaged{isAlive: true}
 	l.procs = append(l.procs, m)
 	return m, nil
@@ -59,14 +61,14 @@ func (l *fakeLauncher) start(handle, password string) (managed, error) {
 func TestSupervisorStartTracksAndRuns(t *testing.T) {
 	l := &fakeLauncher{}
 	s := newSupervisor(l)
-	if err := s.start("research", "pw"); err != nil {
+	if err := s.start("research", "research@k", "/logs/research@k.log"); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if !s.running("research") {
-		t.Fatal("want running after start")
+		t.Fatal("want running after start, tracked by handle")
 	}
-	if len(l.started) != 1 || l.started[0] != (startRec{"research", "pw"}) {
-		t.Fatalf("launcher not called with handle+password: %+v", l.started)
+	if len(l.started) != 1 || l.started[0] != (startRec{"research@k", "/logs/research@k.log"}) {
+		t.Fatalf("launcher not called with login+log: %+v", l.started)
 	}
 	if s.running("other") {
 		t.Fatal("unrelated handle should not be running")
@@ -76,13 +78,13 @@ func TestSupervisorStartTracksAndRuns(t *testing.T) {
 func TestSupervisorReflectsExitAndReaps(t *testing.T) {
 	l := &fakeLauncher{}
 	s := newSupervisor(l)
-	_ = s.start("a", "pw")
+	_ = s.start("a", "a@k", "")
 	l.procs[0].kill() // process dies on its own
 	if s.running("a") {
 		t.Fatal("want not running after the process exits")
 	}
 	// Reaped: the table no longer holds it, and a relaunch spawns a fresh proc.
-	if err := s.start("a", "pw2"); err != nil {
+	if err := s.start("a", "a@k", ""); err != nil {
 		t.Fatalf("relaunch: %v", err)
 	}
 	if len(l.started) != 2 {
@@ -93,8 +95,8 @@ func TestSupervisorReflectsExitAndReaps(t *testing.T) {
 func TestSupervisorStartIsIdempotent(t *testing.T) {
 	l := &fakeLauncher{}
 	s := newSupervisor(l)
-	_ = s.start("a", "pw")
-	if err := s.start("a", "pw"); err != nil {
+	_ = s.start("a", "a@k", "")
+	if err := s.start("a", "a@k", ""); err != nil {
 		t.Fatalf("second start: %v", err)
 	}
 	if len(l.started) != 1 {
@@ -105,7 +107,7 @@ func TestSupervisorStartIsIdempotent(t *testing.T) {
 func TestSupervisorStopSignals(t *testing.T) {
 	l := &fakeLauncher{}
 	s := newSupervisor(l)
-	_ = s.start("a", "pw")
+	_ = s.start("a", "a@k", "")
 	if err := s.stop("a"); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -124,8 +126,8 @@ func TestSupervisorStopSignals(t *testing.T) {
 func TestSupervisorStopAll(t *testing.T) {
 	l := &fakeLauncher{}
 	s := newSupervisor(l)
-	_ = s.start("a", "pw")
-	_ = s.start("b", "pw")
+	_ = s.start("a", "a@k", "")
+	_ = s.start("b", "b@k", "")
 	s.stopAll()
 	for i, p := range l.procs {
 		if p.stops != 1 {
@@ -140,7 +142,7 @@ func TestSupervisorStopAll(t *testing.T) {
 func TestSupervisorStartError(t *testing.T) {
 	l := &fakeLauncher{err: errors.New("boom")}
 	s := newSupervisor(l)
-	if err := s.start("a", "pw"); err == nil {
+	if err := s.start("a", "a@k", ""); err == nil {
 		t.Fatal("want start error surfaced")
 	}
 	if s.running("a") {
@@ -148,32 +150,48 @@ func TestSupervisorStartError(t *testing.T) {
 	}
 }
 
-// The serve grammar is the one thing about the daemon this package cannot
-// discover at runtime: a wrong argv exits with usage, which start() cannot tell
-// from a healthy spawn. Pinned here against juice-agent v0.2.0
-// (`juice-agent serve [handle]`, handles bare, --password-stdin).
-func TestServeArgsMatchesDaemonGrammar(t *testing.T) {
-	got := serveArgs("research")
-	want := []string{"serve", "--password-stdin", "research"}
-	if len(got) != len(want) {
-		t.Fatalf("serveArgs = %q, want %q", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("serveArgs = %q, want %q", got, want)
-		}
-	}
-	// The handle is passed bare: the sigil belonged to the superseded grammar.
-	for _, a := range got {
-		if strings.HasPrefix(a, "@") {
-			t.Fatalf("handle must be bare, got %q in %q", a, got)
-		}
+func TestOsLauncherRejectsMissingBinary(t *testing.T) {
+	// No exec occurs: an empty bin path is refused before spawning.
+	if _, err := (osLauncher{}).start("a@k", ""); err == nil {
+		t.Fatal("want error when the juice-agent binary is not resolved")
 	}
 }
 
-func TestOsLauncherRejectsMissingBinary(t *testing.T) {
-	// No exec occurs: an empty bin path is refused before spawning.
-	if _, err := (osLauncher{}).start("a", "pw"); err == nil {
-		t.Fatal("want error when the juice-agent binary is not resolved")
+// The daemon is run as `serve <login>` with its output in a log of this run
+// alone: a second start truncates it, so an old refusal never outlives a later
+// run, and only the daemon's own `error:` line reads as an exit reason.
+func TestOsLauncherLogIsTheCurrentRun(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "juice-agent")
+	log := filepath.Join(dir, "logs", "a@k.log")
+	run := func(script string) {
+		t.Helper()
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		m, err := osLauncher{bin: bin, home: dir}.start("a@k", log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for deadline := time.Now().Add(5 * time.Second); m.alive(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("child did not exit")
+			}
+		}
+	}
+	run(`echo "$1 $2 $JUICE_HOME"; echo "error: no session for $2" >&2; exit 1`)
+	b, _ := os.ReadFile(log)
+	if want := "serve a@k " + dir + "\n"; string(b[:len(want)]) != want {
+		t.Fatalf("argv/env = %q, want prefix %q", b, want)
+	}
+	if got := exitError(log); got != "error: no session for a@k" {
+		t.Fatalf("exitError = %q", got)
+	}
+	run(`echo '{"event":"stopped"}'`)
+	if got := exitError(log); got != "" {
+		t.Fatalf("a later run must replace the old refusal, got %q", got)
+	}
+	if got := exitError(filepath.Join(dir, "absent.log")); got != "" {
+		t.Fatalf("no log states no reason, got %q", got)
 	}
 }

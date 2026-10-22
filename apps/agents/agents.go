@@ -1,26 +1,22 @@
 // Package agents is the juice-ui app for managing juice-agents — the sibling
-// juice-family daemon (repo juice-agent) that logs into the kernel as an ordinary
-// user and solves tasks with the action catalog. One binary hosts many named
-// agents, each isolated in its own home under $JUICE_HOME/agent/agents/<handle>/
-// (persona.md, knowledge.md, memory.md, config.json, data/).
+// juice-family daemon (repo juice-agent) that acts as one kernel login and
+// answers the tasks addressed to it. Each agent lives in its own home,
+// $JUICE_HOME/agents/<login>/, the login being handle@kernel (agent
+// requirements.md §11, ecosystem-standard §2).
 //
 // Unlike apps/chat, this app has no dedicated kernel account: it is a local
 // filesystem editor and child-process supervisor, not a kernel-HTTP feature. It
 //
-//   - manages the agent homes (create scaffolds blank persona/knowledge/memory;
-//     the daemon dumps a standard config.json on first serve — the UI never owns
-//     that schema);
-//   - edits persona.md/knowledge.md/config.json in place;
-//   - browses the learned memory.md (read-only — the daemon owns it);
-//   - starts/stops the daemon as a supervised child process. The daemon has no
-//     stop command or status endpoint (agent requirements.md §11), so start spawns
-//     `juice-agent serve --password-stdin <handle>` (see serveArgs) and stop sends
-//     SIGTERM; "running" is whether the tracked child is alive.
+//   - creates a home with a blank agent.md;
+//   - edits agent.md and the optional config.json, which the daemon never
+//     writes (a blank config.json is no file: the daemon's defaults);
+//   - starts `juice-agent serve <login>` as a supervised child and stops it
+//     with SIGTERM; "running" is whether the tracked child is alive.
 //
-// The agent's kernel password is required to start it. It lives only in the start
-// request body, is piped to the child's stdin, and is then discarded — never
-// persisted, never logged, never rendered. A UI restart therefore stops every
-// agent and needs the password re-entered to restart it.
+// The daemon holds its own session, made by the operator with
+// `juice auth login <login>`; the UI never reads or writes client credentials
+// (requirements.md §5). A daemon that exits states why in its log, and the page
+// shows that line.
 package agents
 
 import (
@@ -50,14 +46,10 @@ var tmplFS embed.FS
 // $JUICE_HOME/bin, then PATH).
 const binEnv = "JUICE_AGENT_BIN"
 
-// The fixed per-agent files (agent requirements.md §11). memory.md is learned by
-// the daemon and shown read-only; config.json is dumped by the daemon on first
-// serve and edited here only when present.
+// The files of an agent home the UI edits (agent requirements.md §11).
 const (
-	personaFile   = "persona.md"
-	knowledgeFile = "knowledge.md"
-	memoryFile    = "memory.md"
-	configFile    = "config.json"
+	agentFile  = "agent.md"
+	configFile = "config.json"
 )
 
 // agentsIcon is the app's own nav icon (a small robot), inline so no core sprite
@@ -69,11 +61,7 @@ const agentsIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0
 // '..', making path traversal impossible before the containment check in agentDir.
 var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
-// scaffold is written blank on create; editable are the files the UI may write.
-var (
-	scaffold = []string{personaFile, knowledgeFile, memoryFile}
-	editable = map[string]bool{personaFile: true, knowledgeFile: true, configFile: true}
-)
+var editable = map[string]bool{agentFile: true, configFile: true}
 
 var (
 	errBadHandle = errors.New("invalid agent handle")
@@ -86,7 +74,8 @@ var (
 // table; nothing is persisted (no app-state, no store).
 type Agents struct {
 	deps apps.Deps
-	root string      // $JUICE_HOME/agent/agents; overridable in tests
+	root string      // $JUICE_HOME/agents; overridable in tests
+	logs string      // $JUICE_HOME/ui/agents, one <login>.log per daemon run
 	sup  *supervisor // process supervision; overridable in tests (fake launcher)
 }
 
@@ -128,14 +117,17 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
 }
 
-// Start resolves the agent root (sibling of the UI home) and the supervisor. Both
-// are left untouched when already set (tests inject them).
+// Start resolves the agent root, the log directory and the supervisor. Each is
+// left untouched when already set (tests inject them).
 func (a *Agents) Start(ctx context.Context) error {
 	if a.root == "" {
 		a.root = defaultRoot(a.deps.Home)
 	}
+	home := filepath.Dir(a.root)
+	if a.logs == "" {
+		a.logs = filepath.Join(home, "ui", "agents")
+	}
 	if a.sup == nil {
-		home := juiceRoot(a.root)
 		a.sup = newSupervisor(osLauncher{bin: agentBin(home), home: home})
 	}
 	return nil
@@ -151,13 +143,15 @@ func (a *Agents) Stop(ctx context.Context) error {
 
 // ---- store (filesystem, traversal-guarded) ----
 
-// agentDir resolves handle's home under root, rejecting anything that is not a
-// direct, validly-named child of root.
+// agentDir resolves handle's home under root, named by its login on this
+// kernel, rejecting anything that is not a direct, validly-named child of root
+// and any handle while the kernel's name is unknown.
 func (a *Agents) agentDir(handle string) (string, error) {
-	if !validHandle(handle) {
+	login := a.deps.Address(handle)
+	if !validHandle(handle) || login == "" {
 		return "", errBadHandle
 	}
-	dir := filepath.Join(a.root, handle)
+	dir := filepath.Join(a.root, login)
 	if filepath.Dir(dir) != filepath.Clean(a.root) {
 		return "", errBadHandle
 	}
@@ -166,8 +160,14 @@ func (a *Agents) agentDir(handle string) (string, error) {
 
 func validHandle(h string) bool { return len(h) <= 64 && handleRe.MatchString(h) }
 
-// list returns the agents under root, newest state of "running" per the supervisor.
-func (a *Agents) list() ([]agentRow, error) {
+// logPath is where handle's daemon writes its current run.
+func (a *Agents) logPath(handle string) string {
+	return filepath.Join(a.logs, a.deps.Address(handle)+".log")
+}
+
+// list returns this kernel's agents under root: the homes named by one of its
+// logins, the page reading each account on this kernel.
+func (a *Agents) list(r *http.Request) ([]status, error) {
 	entries, err := os.ReadDir(a.root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -175,20 +175,21 @@ func (a *Agents) list() ([]agentRow, error) {
 		}
 		return nil, err
 	}
-	var out []agentRow
+	suffix := strings.TrimPrefix(a.deps.Address("x"), "x")
+	var out []status
 	for _, e := range entries {
-		if !e.IsDir() || !validHandle(e.Name()) {
+		h, ok := strings.CutSuffix(e.Name(), suffix)
+		if !e.IsDir() || suffix == "" || !ok || !validHandle(h) {
 			continue
 		}
-		out = append(out, agentRow{Handle: e.Name(), Running: a.sup.running(e.Name())})
+		out = append(out, a.status(r, h))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
 	return out, nil
 }
 
-// create scaffolds a new home with blank persona/knowledge/memory, never
-// truncating a pre-existing file. config.json is left to the daemon's first-serve
-// dump.
+// create makes a new home holding a blank agent.md, never truncating one that
+// exists. config.json stays absent: the daemon's defaults.
 func (a *Agents) create(handle string) error {
 	dir, err := a.agentDir(handle)
 	if err != nil {
@@ -200,15 +201,12 @@ func (a *Agents) create(handle string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	for _, f := range scaffold {
-		fh, err := os.OpenFile(filepath.Join(dir, f), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			if os.IsExist(err) {
-				continue
-			}
-			return err
-		}
-		_ = fh.Close()
+	f, err := os.OpenFile(filepath.Join(dir, agentFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+	if f != nil {
+		_ = f.Close()
 	}
 	return nil
 }
@@ -230,9 +228,9 @@ func (a *Agents) readFile(handle, file string) (string, error) {
 	return string(b), nil
 }
 
-// writeFile writes one editable file (memory.md is not editable). config.json must
-// parse as JSON — the UI rejects malformed config exactly as the daemon does,
-// never inventing config of its own.
+// writeFile writes one editable file. A blank config.json removes the file,
+// restoring the daemon's defaults; any other config.json must parse as JSON —
+// the UI rejects malformed config as the daemon does, never inventing its own.
 func (a *Agents) writeFile(handle, file, content string) error {
 	if !editable[file] {
 		return errBadHandle
@@ -244,15 +242,26 @@ func (a *Agents) writeFile(handle, file, content string) error {
 	if _, err := os.Stat(dir); err != nil {
 		return errNotFound
 	}
+	path := filepath.Join(dir, file)
+	if file == configFile && strings.TrimSpace(content) == "" {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
 	if file == configFile && !json.Valid([]byte(content)) {
 		return errBadConfig
 	}
-	return os.WriteFile(filepath.Join(dir, file), []byte(content), 0o600)
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
+// remove deletes handle's home and the log of its last run.
 func (a *Agents) remove(handle string) error {
 	dir, err := a.agentDir(handle)
 	if err != nil {
+		return err
+	}
+	if err := os.Remove(a.logPath(handle)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return os.RemoveAll(dir)
@@ -269,38 +278,33 @@ func (a *Agents) exists(handle string) bool {
 
 // ---- view models ----
 
-type agentRow struct {
-	Handle  string
-	Running bool
-	CSRF    template.HTML // the row's status cell carries a Stop form (rendered outside the Page envelope)
+// status is an agent's state as the shared _agent_status fragment renders it,
+// in a list row, in the polled fragment and on the detail page alike.
+type status struct {
+	Handle   string
+	Running  bool
+	CSRF     template.HTML // the fragment carries its own Stop/Start form (rendered outside the Page envelope)
+	LastLine string        // the daemon's exit error from its current run, when stopped
 }
 
-// startForm is the shared "Start" modal model (list rows and the detail page render
-// the same _agent_start partial, so the control is identical everywhere).
-type startForm struct {
-	Handle    string
-	CSRF      template.HTML
-	Open      bool   // server-render [open] for the ?form=start no-JS path
-	CloseHref string // where the no-JS close link points
+func (a *Agents) status(r *http.Request, handle string) status {
+	st := status{Handle: handle, Running: a.sup.running(handle), CSRF: a.deps.CSRFField(r)}
+	if !st.Running {
+		st.LastLine = exitError(a.logPath(handle))
+	}
+	return st
 }
 
 type listView struct {
-	Agents   []agentRow
-	Starts   []startForm // one Start modal per agent, keyed by handle
+	Agents   []status
 	OpenForm bool
 }
 
 type detailView struct {
-	Handle    string
-	Running   bool
-	Persona   string
-	Knowledge string
-	Memory    string
-	Config    string
-	HasConfig bool
-	OpenForm  string        // the ?form= value; selects which dialog renders [open]
-	CSRF      template.HTML // for the status fragment rendered inline (no Page envelope)
-	Start     startForm     // the shared Start modal
+	status
+	Agent    string // agent.md
+	Config   string // config.json; "" when absent
+	OpenForm string // the ?form= value; selects which dialog renders [open]
 
 	// An agent IS a user: it holds its own principal on this kernel, funded like
 	// anybody's, and spends it (ecosystem-standard §6). Account is that account
@@ -318,30 +322,15 @@ type detailView struct {
 	Activity []client.Transaction
 }
 
-type statusView struct {
-	Handle  string
-	Running bool
-	CSRF    template.HTML // the status fragment carries a Stop form (polled outside the Page envelope)
-}
-
 // ---- handlers ----
 
 func (a *Agents) getIndex(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.list()
+	rows, err := a.list(r)
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	// Each row's status cell renders the same _agent_status fragment (Stop form +
-	// Start trigger) as the detail page, so it needs a CSRF field and a Start modal.
-	csrf := a.deps.CSRFField(r)
-	starts := make([]startForm, len(rows))
-	for i := range rows {
-		rows[i].CSRF = csrf
-		starts[i] = startForm{Handle: rows[i].Handle, CSRF: csrf, CloseHref: "/agents"}
-	}
 	a.deps.RenderPage(w, r, http.StatusOK, "agents", "agents", listView{
 		Agents:   rows,
-		Starts:   starts,
 		OpenForm: r.URL.Query().Get("form") == "agent-create",
 	})
 }
@@ -372,28 +361,16 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r)
 		return
 	}
-	persona, _ := a.readFile(handle, personaFile)
-	knowledge, _ := a.readFile(handle, knowledgeFile)
-	memory, _ := a.readFile(handle, memoryFile)
+	agent, _ := a.readFile(handle, agentFile)
 	config, _ := a.readFile(handle, configFile)
-	dir, _ := a.agentDir(handle)
-	_, statErr := os.Stat(filepath.Join(dir, configFile))
-	csrf := a.deps.CSRFField(r)
-	open := r.URL.Query().Get("form")
 	account, activity := a.account(r, handle)
 	a.deps.RenderPage(w, r, http.StatusOK, "agent", "agents", detailView{
-		Handle:    handle,
-		Account:   account,
-		Activity:  activity,
-		Running:   a.sup.running(handle),
-		Persona:   persona,
-		Knowledge: knowledge,
-		Memory:    memory,
-		Config:    config,
-		HasConfig: statErr == nil,
-		OpenForm:  open,
-		CSRF:      csrf,
-		Start:     startForm{Handle: handle, CSRF: csrf, Open: open == "start", CloseHref: "/agents/" + handle},
+		status:   a.status(r, handle),
+		Agent:    agent,
+		Config:   config,
+		OpenForm: r.URL.Query().Get("form"),
+		Account:  account,
+		Activity: activity,
 	})
 }
 
@@ -430,9 +407,8 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 	a.deps.FlashRedirect(w, r, "/agents", "success", "Agent deleted.")
 }
 
-// postStart spawns the daemon. The password is read from the body, handed to the
-// supervisor (which pipes it to the child's stdin), and then out of scope — it is
-// never persisted, logged, or rendered.
+// postStart spawns `juice-agent serve <login>`; the daemon brings its own
+// session, and a refusal is read back from its log by the status.
 func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 	handle := r.PathValue("handle")
 	if !a.exists(handle) {
@@ -440,12 +416,7 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	back := returnPath(r, "/agents/"+handle)
-	password := r.FormValue("password")
-	if password == "" {
-		a.deps.FlashRedirect(w, r, back, "error", "The agent's kernel password is required to start it.")
-		return
-	}
-	if err := a.sup.start(handle, password); err != nil {
+	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
 		a.deps.FlashRedirect(w, r, back, "error", "Could not start: "+err.Error())
 		return
 	}
@@ -469,11 +440,7 @@ func (a *Agents) getStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	_ = a.deps.RenderFragment(w, http.StatusOK, "_agent_status", statusView{
-		Handle:  handle,
-		Running: a.sup.running(handle),
-		CSRF:    a.deps.CSRFField(r),
-	})
+	_ = a.deps.RenderFragment(w, http.StatusOK, "_agent_status", a.status(r, handle))
 }
 
 func (a *Agents) notFound(w http.ResponseWriter, r *http.Request) {
@@ -501,11 +468,11 @@ func returnPath(r *http.Request, fallback string) string {
 
 // ---- root/binary resolution ----
 
-// defaultRoot resolves $JUICE_HOME/agent/agents from the UI home ($JUICE_HOME/ui),
+// defaultRoot resolves $JUICE_HOME/agents from the UI home ($JUICE_HOME/ui),
 // falling back to JUICE_HOME / ~/.juice when home is empty.
 func defaultRoot(home string) string {
 	if home != "" {
-		return filepath.Join(filepath.Dir(home), "agent", "agents")
+		return filepath.Join(filepath.Dir(home), "agents")
 	}
 	base := os.Getenv("JUICE_HOME")
 	if base == "" {
@@ -513,12 +480,8 @@ func defaultRoot(home string) string {
 			base = filepath.Join(h, ".juice")
 		}
 	}
-	return filepath.Join(base, "agent", "agents")
+	return filepath.Join(base, "agents")
 }
-
-// juiceRoot is the JUICE_HOME handed to a spawned daemon: the grandparent of the
-// agents root ($JUICE_HOME/agent/agents -> $JUICE_HOME).
-func juiceRoot(root string) string { return filepath.Dir(filepath.Dir(root)) }
 
 // agentBin resolves the juice-agent executable: the explicit override, else
 // the installation's own bin/, which is where the installer puts the family's
@@ -542,8 +505,8 @@ func agentBin(juiceHome string) string {
 // directory on this machine and may name no principal at all — never created,
 // or created on another kernel — and the page must still render.
 //
-// The home is named by the agent's bare handle, as the juice-agent daemon names
-// it; the principal is that handle's address on this kernel. Nothing is computed
+// The principal is the handle's address on this kernel, the login its home is
+// named by. Nothing is computed
 // here. The balance is the kernel's row for that address and the rows are the
 // transactions it serves this viewer; the page arranges them and states no
 // figure the kernel did not.

@@ -1,11 +1,10 @@
 {{/*
   Status fragment: rendered in each list row and in the detail page's status
-  block, and polled at both (hx-get /agents/<h>/status). It carries the Stop form
-  and the Start trigger, so it is rendered with a CSRF field threaded into its view
-  model (agentRow.CSRF / statusView.CSRF / detailView.CSRF) rather than the Page
-  envelope's .CSRFField. Both controls are wired via app.js delegated listeners, so
-  they work after an htmx swap. The Start trigger opens the per-handle modal
-  (form-start-<handle>) rendered by _agent_start on the same page.
+  block, and polled at both (hx-get /agents/<h>/status), always from the one
+  status view. It carries its own Stop or Start form, so the CSRF field is
+  threaded into that view rather than taken from the Page envelope. A stopped
+  agent shows its daemon's exit error from the current run, the daemon's own
+  words, as inert text.
 */}}
 {{define "_agent_status"}}
 {{if .Running}}
@@ -13,27 +12,7 @@
 <form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}?">{{.CSRF}}<button class="btn-danger" type="submit">Stop</button></form>
 {{else}}
 <span class="muted small">stopped</span>
-<a class="btn" href="/agents/{{.Handle}}?form=start" data-modal="form-start-{{.Handle}}">Start…</a>
+<form method="post" action="/agents/{{.Handle}}/start">{{.CSRF}}<button class="btn" type="submit">Start</button></form>
+{{with .LastLine}}<span class="muted small">{{.}}</span>{{end}}
 {{end}}
-{{end}}
-
-{{/*
-  Start modal (shared by the list and the detail page). The password is posted to
-  the daemon and never stored; the field has no caption — the label is the whole
-  statement (grammar §3).
-*/}}
-{{define "_agent_start"}}
-<dialog id="form-start-{{.Handle}}" class="modal-form"{{if .Open}} open{{end}} aria-label="Start agent">
-  <div class="modal-head"><h2>Start {{.Handle}}</h2><a class="modal-close" href="{{.CloseHref}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/agents/{{.Handle}}/start">
-      {{.CSRF}}
-      <div class="field">
-        <label for="pw-{{.Handle}}">Kernel password</label>
-        <input id="pw-{{.Handle}}" type="password" name="password" autocomplete="off" required>
-      </div>
-      <button class="btn" type="submit">Start</button>
-    </form>
-  </div>
-</dialog>
 {{end}}

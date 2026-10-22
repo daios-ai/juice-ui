@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.27.0
+Version: 0.28.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.28.0.** The agents app follows juice-agent 0.5.0 (§6.1):
+> an agent's home is `$JUICE_HOME/agents/<login>/`, named by its login
+> `handle@kernel`, and the app edits its `agent.md` and optional `config.json`.
+> The daemon runs as `juice-agent serve <login>` on the session the operator
+> made with `juice auth login`, so Start asks for no password, and a stopped
+> agent shows its daemon's exit error from the current run. The UI stops
+> gracefully on SIGTERM, stopping every app, so the daemons it started end
+> with it rather than running unsupervised. The open item on the agent's home
+> path is closed (§10).
 
 > **What changed in 0.27.0.** The first real payout on Polygon, made by the
 > operator, showed what the money pages left unsaid. An entry from an account
@@ -923,7 +933,12 @@ kernel and world is in use, and keys everything durable by
   entry to anyone else. That authority is the operator's machine, which no
   kernel account confers: on a shared root, an ordinary session could otherwise
   edit and stop another person's agent, and anyone signed in could start a
-  process on the host.
+  process on the host. The agents app is one: it keeps an agent's home at
+  `$JUICE_HOME/agents/<login>/` (ecosystem-standard §2), edits its `agent.md`
+  and optional `config.json`, a blank `config.json` being no file, and runs
+  `juice-agent serve <login>`. The daemon's session is the operator's
+  `juice auth login <login>`, never the UI's, which writes no credentials
+  (§5). A stopped agent shows the daemon's `error:` line from its current run.
 * The task badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting tasks whose `required_caller` is the
@@ -2196,13 +2211,6 @@ once its prerequisite is confirmed on the running kernel.
 * **Lookup operational status (Run).** Confirm whether `sys/lookup` has a
   configured embedder or returns `ErrInvalidState`. Does not gate discovery
   (mandatory); selects semantic ranking versus catalog fallback.
-* **The agents app's home path — deviates, and not ours to move.** The UI
-  scaffolds `$JUICE_HOME/agent/agents/<handle>/`, which is what the juice-agent
-  daemon's own specification (§11 there) says it reads, while
-  `ecosystem-standard.md` §2 gives components `$JUICE_HOME/agents/<name>/`. The
-  UI writes the files a daemon reads, so it must follow that daemon and cannot
-  lead it: the move belongs to the agent's repository first, and this line
-  stands until it happens.
 * **The planner (§6.2).** Confirmed on 25c07cd against a local model:
   `sys/llm/decide` takes `{messages, actions}` and answers
   `{action, args, message?}` — `message` optional and usually absent. It selects

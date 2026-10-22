@@ -45,55 +45,32 @@
 <p class="muted">No account on this kernel yet.</p>
 {{end}}
 
-<h2>Persona</h2>
-<div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=persona" data-modal="form-persona">Edit</a></div>
-{{if $d.Persona}}<pre class="json">{{$d.Persona}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
-
-<h2>Knowledge</h2>
-<div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=knowledge" data-modal="form-knowledge">Edit</a></div>
-{{if $d.Knowledge}}<pre class="json">{{$d.Knowledge}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
-
-<h2>Memory</h2>
-{{if $d.Memory}}<pre class="json">{{$d.Memory}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
+<h2>Agent file</h2>
+<div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
+{{if $d.Agent}}<pre class="json">{{$d.Agent}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
 
 <h2>Config</h2>
-{{if $d.HasConfig}}
 <div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=config" data-modal="form-config">Edit</a></div>
-<pre class="json">{{$d.Config}}</pre>
-{{else}}
-<p class="muted">No config yet.</p>
-{{end}}
+{{if $d.Config}}<pre class="json">{{$d.Config}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
 
 <h2>Danger</h2>
 <div class="cluster">
   <form method="post" action="/agents/{{$h}}/delete" data-confirm="Delete {{$h}}?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete agent</button></form>
 </div>
 
-{{/* ---- edit modals (persona / knowledge / config) ---- */}}
-<dialog id="form-persona" class="modal-form"{{if eq $d.OpenForm "persona"}} open{{end}} aria-label="Edit persona">
-  <div class="modal-head"><h2>Edit persona.md</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+{{/* ---- edit modals (agent.md / config.json) ---- */}}
+<dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit agent.md">
+  <div class="modal-head"><h2>Edit agent.md</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
-    <form class="stack" method="post" action="/agents/{{$h}}/files/persona.md">
+    <form class="stack" method="post" action="/agents/{{$h}}/files/agent.md">
       {{.CSRFField}}
-      <div class="field"><textarea name="content" rows="1" aria-label="persona.md">{{$d.Persona}}</textarea></div>
+      <div class="field"><textarea name="content" rows="1" aria-label="agent.md">{{$d.Agent}}</textarea></div>
       <button class="btn" type="submit">Save</button>
     </form>
   </div>
 </dialog>
 
-<dialog id="form-knowledge" class="modal-form"{{if eq $d.OpenForm "knowledge"}} open{{end}} aria-label="Edit knowledge">
-  <div class="modal-head"><h2>Edit knowledge.md</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/agents/{{$h}}/files/knowledge.md">
-      {{.CSRFField}}
-      <div class="field"><textarea name="content" rows="1" aria-label="knowledge.md">{{$d.Knowledge}}</textarea></div>
-      <button class="btn" type="submit">Save</button>
-    </form>
-  </div>
-</dialog>
-
-{{if $d.HasConfig}}
-<dialog id="form-config" class="modal-form"{{if eq $d.OpenForm "config"}} open{{end}} aria-label="Edit config">
+<dialog id="form-config" class="modal-form"{{if eq $d.OpenForm "config"}} open{{end}} aria-label="Edit config.json">
   <div class="modal-head"><h2>Edit config.json</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/agents/{{$h}}/files/config.json">
@@ -103,8 +80,4 @@
     </form>
   </div>
 </dialog>
-{{end}}
-
-{{/* ---- start modal (shared with the list; kernel password piped to the daemon) ---- */}}
-{{template "_agent_start" $d.Start}}
 {{end}}

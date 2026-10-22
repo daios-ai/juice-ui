@@ -30,7 +30,7 @@ type capture struct {
 func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 	t.Helper()
 	fl := &fakeLauncher{}
-	a := &Agents{root: t.TempDir(), sup: newSupervisor(fl)}
+	a := &Agents{root: t.TempDir(), logs: t.TempDir(), sup: newSupervisor(fl)}
 	cap := &capture{}
 	a.deps = apps.Deps{
 		Me:        func(r *http.Request) string { return "sys@testnet" },
@@ -65,12 +65,14 @@ func postForm(path, body string) *http.Request {
 
 // ---- store ----
 
+// A home is named by the agent's login and holds a blank agent.md; config.json
+// stays absent (the daemon's defaults) and nothing else is written.
 func TestCreateScaffolds(t *testing.T) {
 	a, _, _ := testApp(t)
 	if err := a.create("research"); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(a.root, "research")
+	dir := filepath.Join(a.root, "research@testnet")
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		t.Fatalf("home not a dir: %v", err)
@@ -78,21 +80,12 @@ func TestCreateScaffolds(t *testing.T) {
 	if info.Mode().Perm() != 0o700 {
 		t.Errorf("home perm = %o, want 700", info.Mode().Perm())
 	}
-	for _, f := range scaffold {
-		fi, err := os.Stat(filepath.Join(dir, f))
-		if err != nil {
-			t.Fatalf("scaffold %s missing: %v", f, err)
-		}
-		if fi.Size() != 0 {
-			t.Errorf("%s not blank", f)
-		}
-		if fi.Mode().Perm() != 0o600 {
-			t.Errorf("%s perm = %o, want 600", f, fi.Mode().Perm())
-		}
+	fi, err := os.Stat(filepath.Join(dir, agentFile))
+	if err != nil || fi.Size() != 0 || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("agent.md must exist, blank, 0600: %v %+v", err, fi)
 	}
-	// The UI must not write config.json — the daemon dumps it on first serve.
-	if _, err := os.Stat(filepath.Join(dir, configFile)); !os.IsNotExist(err) {
-		t.Error("config.json should not be created by the UI")
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("only agent.md is written, got %d entries", len(entries))
 	}
 }
 
@@ -101,15 +94,15 @@ func TestCreateExistingIsRefusedWithoutTruncation(t *testing.T) {
 	if err := a.create("x"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.writeFile("x", personaFile, "hand-authored"); err != nil {
+	if err := a.writeFile("x", agentFile, "hand-authored"); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.create("x"); err != errExists {
 		t.Fatalf("second create = %v, want errExists", err)
 	}
-	got, _ := a.readFile("x", personaFile)
+	got, _ := a.readFile("x", agentFile)
 	if got != "hand-authored" {
-		t.Fatalf("persona was clobbered: %q", got)
+		t.Fatalf("agent.md was clobbered: %q", got)
 	}
 }
 
@@ -117,9 +110,8 @@ func TestWriteAndReadEditableFiles(t *testing.T) {
 	a, _, _ := testApp(t)
 	_ = a.create("x")
 	cases := map[string]string{
-		personaFile:   "You are helpful.",
-		knowledgeFile: "- fact one",
-		configFile:    `{"max_turns":8}`,
+		agentFile:  "You are helpful.",
+		configFile: `{"max_turns":8}`,
 	}
 	for f, content := range cases {
 		if err := a.writeFile("x", f, content); err != nil {
@@ -129,6 +121,16 @@ func TestWriteAndReadEditableFiles(t *testing.T) {
 		if err != nil || got != content {
 			t.Fatalf("read %s = %q (%v), want %q", f, got, err, content)
 		}
+	}
+	// A blank config.json is no file: the daemon's defaults.
+	if err := a.writeFile("x", configFile, " \n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(a.root, "x@testnet", configFile)); !os.IsNotExist(err) {
+		t.Fatal("a blank config.json must remove the file")
+	}
+	if err := a.writeFile("x", configFile, ""); err != nil {
+		t.Fatalf("blanking an absent config: %v", err)
 	}
 }
 
@@ -145,21 +147,16 @@ func TestWriteConfigRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestMemoryIsNotWritable(t *testing.T) {
-	a, _, _ := testApp(t)
-	_ = a.create("x")
-	if err := a.writeFile("x", memoryFile, "tamper"); err == nil {
-		t.Fatal("memory.md must not be writable via the UI")
-	}
-}
-
 func TestListSorted(t *testing.T) {
 	a, _, _ := testApp(t)
 	_ = a.create("zebra")
 	_ = a.create("alpha")
-	// A stray non-agent file under root is ignored.
+	// A stray file, another kernel's agent and a bare-named home are not this
+	// kernel's agents.
 	_ = os.WriteFile(filepath.Join(a.root, "notes.txt"), []byte("x"), 0o600)
-	rows, err := a.list()
+	_ = os.Mkdir(filepath.Join(a.root, "beta@other"), 0o700)
+	_ = os.Mkdir(filepath.Join(a.root, "gamma"), 0o700)
+	rows, err := a.list(httptest.NewRequest(http.MethodGet, "/agents", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,11 +168,15 @@ func TestListSorted(t *testing.T) {
 func TestRemove(t *testing.T) {
 	a, _, _ := testApp(t)
 	_ = a.create("x")
+	_ = os.WriteFile(a.logPath("x"), []byte("error: x\n"), 0o600)
 	if err := a.remove("x"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(a.root, "x")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(a.root, "x@testnet")); !os.IsNotExist(err) {
 		t.Fatal("home not removed")
+	}
+	if _, err := os.Stat(a.logPath("x")); !os.IsNotExist(err) {
+		t.Fatal("the run log goes with the agent")
 	}
 }
 
@@ -203,10 +204,19 @@ func TestAgentDirRejectsTraversal(t *testing.T) {
 			t.Errorf("agentDir(%q) accepted a bad handle", h)
 		}
 	}
-	// A valid handle resolves to a direct child of root.
+	// A valid handle resolves to its login, a direct child of root.
 	dir, err := a.agentDir("ok")
-	if err != nil || filepath.Dir(dir) != filepath.Clean(a.root) {
+	if err != nil || dir != filepath.Join(a.root, "ok@testnet") {
 		t.Fatalf("agentDir(ok) = %q, %v", dir, err)
+	}
+}
+
+// While the kernel's name is unknown there is no login, so no home is named.
+func TestAgentDirRefusesUnknownKernel(t *testing.T) {
+	a, _, _ := testApp(t)
+	a.deps.Address = func(string) string { return "" }
+	if _, err := a.agentDir("ok"); err != errBadHandle {
+		t.Fatalf("agentDir with no kernel name = %v, want errBadHandle", err)
 	}
 }
 
@@ -223,13 +233,9 @@ func TestGetIndexRendersList(t *testing.T) {
 	if !ok || len(lv.Agents) != 1 || lv.Agents[0].Handle != "research" {
 		t.Fatalf("listView = %+v", cap.data)
 	}
-	// Each row carries a CSRF field (its status cell holds the inline Stop form) and
-	// a matching Start modal, so the list controls mirror the detail page.
+	// Each row carries a CSRF field: its status cell holds the Start/Stop form.
 	if lv.Agents[0].CSRF == "" {
-		t.Error("row missing CSRF for its inline Stop form")
-	}
-	if len(lv.Starts) != 1 || lv.Starts[0].Handle != "research" {
-		t.Fatalf("Starts = %+v, want one for research", lv.Starts)
+		t.Error("row missing CSRF for its inline form")
 	}
 }
 
@@ -250,7 +256,7 @@ func TestPostCreateValidatesAndScaffolds(t *testing.T) {
 	if cap.flashKind != "error" {
 		t.Fatalf("sigiled handle flash = %q, want error", cap.flashKind)
 	}
-	if _, err := os.Stat(filepath.Join(a.root, "research")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(a.root, "research@testnet")); !os.IsNotExist(err) {
 		t.Fatal("sigiled handle should create nothing")
 	}
 	// Bare handle → created, success flash to detail.
@@ -258,7 +264,7 @@ func TestPostCreateValidatesAndScaffolds(t *testing.T) {
 	if cap.flashKind != "success" || cap.flashTo != "/agents/research" {
 		t.Fatalf("create flash = %q to %q", cap.flashKind, cap.flashTo)
 	}
-	if _, err := os.Stat(filepath.Join(a.root, "research")); err != nil {
+	if _, err := os.Stat(filepath.Join(a.root, "research@testnet")); err != nil {
 		t.Fatalf("home not created: %v", err)
 	}
 }
@@ -284,7 +290,7 @@ func TestGetDetailNotFoundAndFound(t *testing.T) {
 	// Existing agent → detail page with files.
 	cap.err = nil
 	_ = a.create("research")
-	_ = a.writeFile("research", personaFile, "hello")
+	_ = a.writeFile("research", agentFile, "hello")
 	req = httptest.NewRequest(http.MethodGet, "/agents/research", nil)
 	req.SetPathValue("handle", "research")
 	a.getDetail(httptest.NewRecorder(), req)
@@ -292,33 +298,30 @@ func TestGetDetailNotFoundAndFound(t *testing.T) {
 		t.Fatalf("unexpected err: %v", cap.err)
 	}
 	dv, ok := cap.data.(detailView)
-	if !ok || dv.Handle != "research" || dv.Persona != "hello" {
+	if !ok || dv.Handle != "research" || dv.Agent != "hello" || dv.Config != "" {
 		t.Fatalf("detailView = %+v", cap.data)
-	}
-	if dv.HasConfig {
-		t.Error("HasConfig should be false before the daemon dumps config")
 	}
 }
 
 func TestPostSaveFile(t *testing.T) {
 	a, _, cap := testApp(t)
 	_ = a.create("research")
-	// Save persona.
-	req := postForm("/agents/research/files/persona.md", "content=You+are+concise.")
+	// Save agent.md.
+	req := postForm("/agents/research/files/agent.md", "content=You+are+concise.")
 	req.SetPathValue("handle", "research")
-	req.SetPathValue("file", personaFile)
+	req.SetPathValue("file", agentFile)
 	a.postSaveFile(httptest.NewRecorder(), req)
 	if cap.flashKind != "success" {
 		t.Fatalf("save flash = %q", cap.flashKind)
 	}
-	if got, _ := a.readFile("research", personaFile); got != "You are concise." {
-		t.Fatalf("persona = %q", got)
+	if got, _ := a.readFile("research", agentFile); got != "You are concise." {
+		t.Fatalf("agent.md = %q", got)
 	}
-	// memory.md is not an editable target → not found, unchanged.
+	// A file of the earlier layout is not an editable target → not found.
 	cap.err = nil
 	req = postForm("/agents/research/files/memory.md", "content=tamper")
 	req.SetPathValue("handle", "research")
-	req.SetPathValue("file", memoryFile)
+	req.SetPathValue("file", "memory.md")
 	a.postSaveFile(httptest.NewRecorder(), req)
 	if cap.err == nil {
 		t.Fatal("saving memory.md should be rejected")
@@ -334,39 +337,61 @@ func TestPostSaveFile(t *testing.T) {
 	}
 }
 
-func TestPostStartPipesPasswordAndNeverLeaks(t *testing.T) {
+// Start asks for nothing: the daemon is run as the agent's login, with its own
+// session, and writes this run's log where the status reads it back.
+func TestPostStartRunsTheLogin(t *testing.T) {
 	a, fl, cap := testApp(t)
 	_ = a.create("research")
-	const secret = "s3cret-pass-xyz"
-
-	// Missing password → refused, launcher untouched.
-	req := postForm("/agents/research/start", "password=")
+	req := postForm("/agents/research/start", "")
 	req.SetPathValue("handle", "research")
 	a.postStart(httptest.NewRecorder(), req)
-	if cap.flashKind != "error" || len(fl.started) != 0 {
-		t.Fatalf("empty password should refuse: kind=%q started=%d", cap.flashKind, len(fl.started))
+	if cap.flashKind != "success" || len(fl.started) != 1 {
+		t.Fatalf("start: kind=%q started=%d", cap.flashKind, len(fl.started))
 	}
-
-	// With password → launched; the password reaches the launcher (child stdin)…
-	req = postForm("/agents/research/start", "password="+secret)
-	req.SetPathValue("handle", "research")
-	a.postStart(httptest.NewRecorder(), req)
-	if len(fl.started) != 1 || fl.started[0].password != secret {
-		t.Fatalf("password not handed to launcher: %+v", fl.started)
+	if got := fl.started[0]; got != (startRec{"research@testnet", a.logPath("research")}) {
+		t.Fatalf("launcher got %+v", got)
 	}
 	if !a.sup.running("research") {
-		t.Fatal("want running after start")
+		t.Fatal("want running after start, tracked by handle")
 	}
-	// …and never appears in what the user sees.
-	if strings.Contains(cap.flashMsg, secret) {
-		t.Fatalf("password leaked into flash: %q", cap.flashMsg)
+}
+
+// One status shape renders everywhere the fragment does — a list row, the
+// polled fragment and the detail page — and a stopped agent carries its
+// daemon's exit error from the current run.
+func TestStatusShapeIsShared(t *testing.T) {
+	a, _, cap := testApp(t)
+	_ = a.create("research")
+	_ = os.WriteFile(a.logPath("research"), []byte("{\"event\":\"login\"}\nerror: no session for research@testnet\n"), 0o600)
+	const want = "error: no session for research@testnet"
+
+	a.getIndex(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/agents", nil))
+	if lv := cap.data.(listView); lv.Agents[0].LastLine != want {
+		t.Errorf("list row LastLine = %q", lv.Agents[0].LastLine)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/agents/research/status", nil)
+	req.SetPathValue("handle", "research")
+	a.getStatus(httptest.NewRecorder(), req)
+	if st := cap.data.(status); st.LastLine != want {
+		t.Errorf("fragment LastLine = %q", st.LastLine)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/agents/research", nil)
+	req.SetPathValue("handle", "research")
+	a.getDetail(httptest.NewRecorder(), req)
+	if dv := cap.data.(detailView); dv.LastLine != want {
+		t.Errorf("detail LastLine = %q", dv.LastLine)
+	}
+	// A running agent states no exit.
+	_ = a.sup.start("research", "research@testnet", a.logPath("research"))
+	if st := a.status(req, "research"); !st.Running || st.LastLine != "" {
+		t.Errorf("running status = %+v", st)
 	}
 }
 
 func TestPostStopAndStatusFragment(t *testing.T) {
 	a, _, cap := testApp(t)
 	_ = a.create("research")
-	_ = a.sup.start("research", "pw")
+	_ = a.sup.start("research", "research@testnet", "")
 
 	// Status fragment reflects running.
 	req := httptest.NewRequest(http.MethodGet, "/agents/research/status", nil)
@@ -375,7 +400,7 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 	if cap.fragment != "_agent_status" {
 		t.Fatalf("fragment = %q", cap.fragment)
 	}
-	if sv, ok := cap.data.(statusView); !ok || !sv.Running {
+	if sv, ok := cap.data.(status); !ok || !sv.Running {
 		t.Fatalf("statusView = %+v", cap.data)
 	}
 
@@ -391,7 +416,7 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 func TestPostDeleteStopsAndRemoves(t *testing.T) {
 	a, fl, cap := testApp(t)
 	_ = a.create("research")
-	_ = a.sup.start("research", "pw")
+	_ = a.sup.start("research", "research@testnet", "")
 	req := postForm("/agents/research/delete", "")
 	req.SetPathValue("handle", "research")
 	a.postDelete(httptest.NewRecorder(), req)
@@ -401,7 +426,7 @@ func TestPostDeleteStopsAndRemoves(t *testing.T) {
 	if fl.procs[0].stops != 1 {
 		t.Error("delete should stop a running agent")
 	}
-	if _, err := os.Stat(filepath.Join(a.root, "research")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(a.root, "research@testnet")); !os.IsNotExist(err) {
 		t.Error("home not removed on delete")
 	}
 }
@@ -447,11 +472,8 @@ func TestReturnPath(t *testing.T) {
 }
 
 func TestDefaultRoot(t *testing.T) {
-	if got := defaultRoot("/home/u/.juice/ui"); got != filepath.FromSlash("/home/u/.juice/agent/agents") {
+	if got := defaultRoot("/home/u/.juice/ui"); got != filepath.FromSlash("/home/u/.juice/agents") {
 		t.Fatalf("defaultRoot = %q", got)
-	}
-	if got := juiceRoot(filepath.FromSlash("/home/u/.juice/agent/agents")); got != filepath.FromSlash("/home/u/.juice") {
-		t.Fatalf("juiceRoot = %q", got)
 	}
 }
 
@@ -509,7 +531,7 @@ func TestAgentViewCarriesNoAccountWithoutAKernel(t *testing.T) {
 	}
 }
 
-// The agent's home is named by its bare handle; its principal is that handle's
+// The agent's home is named by its login; its principal is that handle's
 // address on this kernel, and that address is what the account read and the
 // activity rows key on — a row names its own action, so none is re-read.
 func TestAgentActivityIsReadByAddress(t *testing.T) {

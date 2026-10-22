@@ -18,7 +18,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -81,7 +83,7 @@ func wire(cfg Config, log *slog.Logger) (*wiring, error) {
 	ch := chat.New()
 	w.apps = append(w.apps, ch)
 	appTemplates = append(appTemplates, ch.Templates())
-	// The agents app manages sibling juice-agents (files under $JUICE_HOME/agent
+	// The agents app manages sibling juice-agents (homes under $JUICE_HOME/agents
 	// and their serve processes). It owns no kernel account and no persisted state.
 	ag := agents.New()
 	w.apps = append(w.apps, ag)
@@ -237,8 +239,28 @@ func main() {
 	}
 	sw.Store(gate.Behind(handler))
 	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
-	if err := <-served; err != nil {
+	// SIGTERM or SIGINT ends the UI gracefully, so each app stops what it owns:
+	// the agents app signals the daemons it started, which would otherwise
+	// outlive the UI unsupervised.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	select {
+	case err := <-served:
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
+	case <-ctx.Done():
+	}
+	shutdown(srv, w.apps, log)
+}
+
+// shutdown drains the listener, then stops every app, all within one deadline.
+func shutdown(srv *http.Server, mods []apps.App, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+	for _, a := range mods {
+		if err := a.Stop(ctx); err != nil {
+			log.Warn("app stop failed", "app", a.Slug(), "err", err)
+		}
 	}
 }

@@ -26,8 +26,6 @@
 <p class="muted">No agents yet.</p>
 {{end}}
 
-{{range $d.Starts}}{{template "_agent_start" .}}{{end}}
-
 <dialog id="form-agent-create" class="modal-form"{{if $d.OpenForm}} open{{end}} aria-label="New agent">
   <div class="modal-head"><h2>New agent</h2><a class="modal-close" href="/agents" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">

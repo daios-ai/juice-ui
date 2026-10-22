@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/kernel"
 	"github.com/daios-ai/juice-ui/server"
 )
@@ -264,5 +266,24 @@ func TestStepsCarryTheKernelsWorlds(t *testing.T) {
 	want := []server.World{{Name: "play"}, {Name: "bad", Error: "parse world file"}}
 	if err != nil || !slices.Equal(ws, want) {
 		t.Errorf("Worlds = %+v, %v", ws, err)
+	}
+}
+
+// stopApp records that shutdown stopped it.
+type stopApp struct {
+	apps.App
+	stopped bool
+}
+
+func (a *stopApp) Slug() string                   { return "stub" }
+func (a *stopApp) Stop(ctx context.Context) error { a.stopped = true; return nil }
+
+// A graceful shutdown stops every app, so the agents app's daemons are
+// signalled rather than left running unsupervised.
+func TestShutdownStopsEveryApp(t *testing.T) {
+	a, b := &stopApp{}, &stopApp{}
+	shutdown(&http.Server{}, []apps.App{a, b}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !a.stopped || !b.stopped {
+		t.Fatalf("stopped = %v, %v; want both", a.stopped, b.stopped)
 	}
 }

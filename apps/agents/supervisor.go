@@ -2,9 +2,10 @@ package agents
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -12,9 +13,9 @@ import (
 // launcher spawns a juice-agent daemon. It is an interface so tests inject a
 // fake and never exec a real binary (offline, deterministic).
 type launcher interface {
-	// start launches the daemon for handle, feeding password to its stdin. The
+	// start launches `juice-agent serve <login>` with its output in logPath. The
 	// returned managed is nil only when err != nil.
-	start(handle, password string) (managed, error)
+	start(login, logPath string) (managed, error)
 }
 
 // managed is one running daemon under supervision.
@@ -23,52 +24,35 @@ type managed interface {
 	alive() bool // whether the process is still running
 }
 
-// osLauncher runs the real juice-agent binary. The invocation is serveArgs,
-// which reads one password line from stdin, logs in, and serves until SIGTERM
-// (draining, exit 0). JUICE_HOME is pinned so the child reads the same homes the
-// UI manages.
+// osLauncher runs the real juice-agent binary as `juice-agent serve <login>`
+// (agent requirements.md §11), with JUICE_HOME pinned so the child reads the
+// homes and the client records of this installation. The daemon holds its own
+// session, made by `juice auth login <login>`; the UI passes it nothing.
 type osLauncher struct {
-	bin  string // resolved juice-agent path; "" when not found on PATH
+	bin  string // resolved juice-agent path; "" when not found
 	home string // JUICE_HOME handed to the child (the juice-family root)
 }
 
-// serveArgs is the daemon's serve invocation, defined once so the grammar has a
-// single site. Verified against juice-agent v0.2.0 (2026-08-26), whose usage is
-// `juice-agent serve [handle]`: the subcommand comes first and the handle is
-// bare. An earlier daemon took a sigiled handle first (`@h serve`), which this
-// binary answers with usage and exit 2 — a start that reports success and an
-// agent that never serves.
-//
-// The flag precedes the handle so the call holds under either argument-parsing
-// convention. v0.2.0 accepts both orders, but a stdlib flag parser stops at the
-// first positional and would drop a trailing --password-stdin, leaving the
-// daemon waiting on a password it can never read.
-func serveArgs(handle string) []string {
-	return []string{"serve", "--password-stdin", handle}
-}
-
-func (l osLauncher) start(handle, password string) (managed, error) {
+// start truncates the log, so it holds this run alone, and hands it to the
+// child as stdout and stderr; the child keeps its own descriptor.
+func (l osLauncher) start(login, logPath string) (managed, error) {
 	if l.bin == "" {
 		return nil, fmt.Errorf("juice-agent binary not found (install it or set %s)", binEnv)
 	}
-	cmd := exec.Command(l.bin, serveArgs(handle)...)
-	cmd.Env = append(os.Environ(), "JUICE_HOME="+l.home)
-	// The child logs JSON to stderr and never prints the password; we drop both
-	// streams so nothing sensitive is captured and the UI's own logs stay clean.
-	cmd.Stdout, cmd.Stderr = nil, nil
-	stdin, err := cmd.StdinPipe()
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(logPath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
+	cmd := exec.Command(l.bin, "serve", login)
+	cmd.Env = append(os.Environ(), "JUICE_HOME="+l.home)
+	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
 		return nil, err
 	}
-	// Best-effort: a child that dies before reading yields EPIPE, which surfaces
-	// as "not running" on the next status poll — nothing to log here.
-	_, _ = io.WriteString(stdin, password+"\n")
-	_ = stdin.Close()
-
 	p := &osProc{cmd: cmd}
 	go func() {
 		_ = cmd.Wait()
@@ -77,6 +61,18 @@ func (l osLauncher) start(handle, password string) (managed, error) {
 		p.mu.Unlock()
 	}()
 	return p, nil
+}
+
+// exitError is the daemon's exit reason from its current run: the log's last
+// non-empty line when it is the daemon's `error: …` line, else "". A daemon
+// that was stopped ends on its own "stopped" event, which states no reason.
+func exitError(logPath string) string {
+	b, _ := os.ReadFile(logPath)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if last := lines[len(lines)-1]; strings.HasPrefix(last, "error:") {
+		return last
+	}
+	return ""
 }
 
 type osProc struct {
@@ -102,8 +98,7 @@ func (p *osProc) stop() error {
 }
 
 // supervisor tracks the running daemons by handle. It is the app's only mutable
-// runtime state; nothing here is persisted, so a UI restart stops every agent
-// (the operator restarts them) — the password is never held at rest.
+// runtime state; nothing here is persisted, so a UI restart stops every agent.
 type supervisor struct {
 	mu   sync.Mutex
 	l    launcher
@@ -129,14 +124,15 @@ func (s *supervisor) running(handle string) bool {
 	return true
 }
 
-// start launches handle if it is not already running (idempotent).
-func (s *supervisor) start(handle, password string) error {
+// start launches handle's daemon as login if it is not already running
+// (idempotent).
+func (s *supervisor) start(handle, login, logPath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if m := s.live[handle]; m != nil && m.alive() {
 		return nil
 	}
-	m, err := s.l.start(handle, password)
+	m, err := s.l.start(login, logPath)
 	if err != nil {
 		return err
 	}
