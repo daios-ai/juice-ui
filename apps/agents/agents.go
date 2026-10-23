@@ -470,7 +470,8 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		refuse(signInMessage(err))
 		return
 	}
-	if err := a.signIn(ctx, handle, password); err != nil {
+	token, err := a.signIn(ctx, handle, password)
+	if err != nil {
 		refuse(signInMessage(err))
 		return
 	}
@@ -478,11 +479,17 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		a.deps.HandleErr(w, r, err)
 		return
 	}
+	// A member of chat from the start, as the agent itself (requirements
+	// §6.7). The agent exists either way; a failed join is done by hand.
+	made := "Agent created."
+	if err := a.joinChat(ctx, token, handle); err != nil {
+		made = "Agent created; not connected to chat: " + err.Error()
+	}
 	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
 		return
 	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Agent created.")
+	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", made)
 }
 
 // accountExists reads the kernel's refusal of a handle it already holds.
@@ -682,7 +689,7 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pw := r.FormValue("password"); pw != "" {
-		if err := a.signIn(r.Context(), handle, pw); err != nil {
+		if _, err := a.signIn(r.Context(), handle, pw); err != nil {
 			a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "start", signInMessage(err))
 			return
 		}

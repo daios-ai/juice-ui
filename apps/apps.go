@@ -81,6 +81,9 @@ type NavEntry struct {
 	// registered a watcher under its slug that answers the key "badge" (see
 	// Watcher). False ⇒ the badge is static (Badge only).
 	Live bool
+	// Lead places the entry before the core groups: the app is where a
+	// session lands.
+	Lead bool
 }
 
 // Watcher answers one watch of the page's heartbeat — kind:key:shown, the
@@ -194,6 +197,11 @@ type Deps struct {
 	// Logger is the core's structured logger, for an app's background work (e.g.
 	// service-account provisioning). May be nil in tests.
 	Logger *slog.Logger
+
+	// FormArgs decodes a [data-json] form into the JSON value it describes:
+	// the typed fields by their JSON Pointer names, or the raw editor's
+	// text, as the run form's own decoding does (requirements §6.2).
+	FormArgs func(r *http.Request) (json.RawMessage, error)
 
 	// ConfigEditor edits a JSON configuration file through the form of its
 	// JSON Schema, as the kernel's configuration page does (requirements

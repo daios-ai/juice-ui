@@ -76,8 +76,8 @@ func wire(cfg Config, log *slog.Logger) (*wiring, error) {
 	w.identity = server.NewKernelIdentity(w.kernel, cfg.KernelPublicKey, cfg.BadgeInterval, log)
 
 	// App modules. Each is self-contained; the core only knows the apps.App
-	// seam. Chat runs the in-process chat application, which provisions its own
-	// service account on first run and persists it in state.json — no chat
+	// seam. Chat is where a session lands; it provisions its own service
+	// account on first run and persists it in state.json — no chat
 	// configuration required.
 	var appTemplates []fs.FS
 	ch := chat.New()

@@ -1,0 +1,46 @@
+{{/* _entry — one thing said in a room: who, when, and the body by its kind:
+     a sentence, a form (a JSON Schema, filled and sent as a message), or
+     any other value as the view. */}}
+{{define "_entry"}}
+<div class="msg" id="e-{{.Entry.Seq}}">
+  <span class="avatar" aria-hidden="true">{{initial .Entry.Author}}</span>
+  <div class="msg-body">
+    <div class="msg-who"><span class="h mono">{{.Entry.Author}}</span><span class="muted small">{{shortTime .Entry.At}}</span></div>
+    {{if eq .Kind "text"}}<p class="msg-text">{{.Text}}</p>
+    {{else if eq .Kind "form"}}
+    <form class="card stack" method="post" action="/chat/room/{{.RoomID}}/message" data-json
+          hx-post="/chat/room/{{.RoomID}}/message" hx-include="#chat-after" hx-target="#chat-messages" hx-swap="beforeend">
+      {{.CSRF}}
+      {{template "_json_switch"}}
+      {{template "_form_fields" (buildForm .Entry.Body)}}
+      <button class="btn" type="submit">Send</button>
+    </form>
+    {{else}}{{template "_value_block" (valueBlock .Entry.Body "")}}{{end}}
+  </div>
+</div>
+{{end}}
+
+{{/* The composer's answer and the poll: new entries append, the cursor and
+     the watch advance, a shown refusal clears. */}}
+{{define "_chat_poll"}}
+{{range .Cards}}{{template "_entry" .}}{{end}}
+{{template "_chat_cursor" .}}
+{{end}}
+
+{{/* The heartbeat's answer: the same, wrapped so the entries land inside the
+     stack (an appended out-of-band element inserts its children). */}}
+{{define "_chat_tick"}}
+<div hx-swap-oob="beforeend:#chat-messages">{{range .Cards}}{{template "_entry" .}}{{end}}</div>
+{{template "_chat_cursor" .}}
+{{end}}
+
+{{define "_chat_cursor"}}
+<input type="hidden" id="chat-after" name="after" value="{{.After}}" hx-swap-oob="true">
+<input type="hidden" id="watch-chat-room" name="watch" value="chat:{{.RoomID}}:{{.After}}" hx-swap-oob="true">
+<p class="error-text" id="chat-error" role="alert" hidden hx-swap-oob="true"></p>
+{{end}}
+
+{{/* A refused post: the reason beside the composer, nothing appended. */}}
+{{define "_chat_refused"}}
+<p class="error-text" id="chat-error" role="alert" hx-swap-oob="true">{{.Error}}</p>
+{{end}}

@@ -674,6 +674,7 @@ func (s *Server) appDeps() apps.Deps {
 		PublicURL:         s.publicURL,
 		StatePath:         s.appStore.path,
 		Home:              s.home,
+		FormArgs:          buildArgs,
 		ConfigEditor: func(schema json.RawMessage, hidden ...string) apps.ConfigEditor {
 			return s.editor(schema, hidden...)
 		},
@@ -713,13 +714,14 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 		{Slug: "wallet", Label: "Wallet", Href: "/wallet", Icon: iconWallet},
 		{Slug: "settings", Label: "Settings", Href: "/settings", Icon: iconYou},
 	}
-	// App entries (chat, agents) fold in after the core groups.
+	// App entries fold in after the core groups, except a leading one
+	// (chat), which goes first: it is where a session lands.
 	me := s.sessions.Address(r.Context())
 	super := s.isSuperuser(r)
 	firstApp := true
 	for _, f := range s.apps {
 		for _, e := range f.Nav(me, super) {
-			nav = append(nav, NavItem{
+			item := NavItem{
 				Slug:   e.Slug,
 				Label:  e.Label,
 				Href:   e.Href,
@@ -727,10 +729,14 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 				Badge:  e.Badge,
 				Live:   e.Live,
 				Active: e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
-
-				Divider: firstApp, // separate the apps group from the core groups
-			})
+			}
+			if e.Lead {
+				nav = append([]NavItem{item}, nav...)
+				continue
+			}
+			item.Divider = firstApp // separate the apps group from the core groups
 			firstApp = false
+			nav = append(nav, item)
 		}
 	}
 	if super {

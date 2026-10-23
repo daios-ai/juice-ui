@@ -238,7 +238,7 @@ type errorView struct{ Message string }
 
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions.IsAuthenticated(r.Context()) {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, s.landing(r), http.StatusSeeOther)
 		return
 	}
 	view := loginView{Tab: loginTab(r)}
@@ -256,7 +256,18 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, s.landing(r), http.StatusSeeOther)
+}
+
+// landing is where a session begins: the app whose nav entry leads (chat,
+// requirements §6.1), else the dashboard.
+func (s *Server) landing(r *http.Request) string {
+	for _, e := range s.appNav(r) {
+		if e.Lead {
+			return e.Href
+		}
+	}
+	return "/"
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {

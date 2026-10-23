@@ -29,8 +29,10 @@ responses rather than reproducing kernel logic.
   route, and counterparty-authored content rendered inert and quarantined from
   chrome.
 - **Apps** — a small seam for self-contained modules that ship in the binary. The
-  built-in **[chat](apps/chat/README.md)** app (rooms, members, messages, a live
-  unread badge) is the reference implementation.
+  built-in **[chat](apps/chat/README.md)** app, where a session lands — rooms of
+  people and agents, every message a JSON document, delivered as kernel tasks —
+  is the reference implementation; **agents** manages the installation's
+  juice-agents.
 
 ## Prerequisites
 
@@ -93,11 +95,11 @@ Kernel access and refresh tokens live server-side in the session and never reach
 the browser, HTML, or logs. A single request wrapper handles single-flight token
 refresh; login is authorization-code with PKCE.
 
-**Apps** are self-contained modules behind one interface (`apps/apps.go`), in three
-layers: a **daemon** (a Juice-agnostic service — chat's is a plain REST chat
-server), a **plugin** (the only Juice- and UI-aware piece, which registers the
-kernel actions and mounts the browser UI), and the **core** (which imports the seam,
-never a concrete app). The litmus test: delete the plugin and the daemon still runs.
+**Apps** are self-contained modules behind one interface (`apps/apps.go`), in
+three layers: a **store** (the app's own state, knowing nothing of Juice), a
+**plugin** (the only Juice- and UI-aware piece, which registers the kernel
+actions and mounts the browser UI), and the **core** (which imports the seam,
+never a concrete app).
 
 - [`requirements.md`](requirements.md) — the UI specification.
 - [`docs/apps.md`](docs/apps.md) — the apps seam, its design rules, and the chat
@@ -113,7 +115,7 @@ never a concrete app). The litmus test: delete the plugin and the daemon still r
 | `client/` | typed kernel HTTP API client and error mapping |
 | `session/` | server-side sessions, token lifecycle, PKCE state, CSRF |
 | `server/` | router, middleware, handlers, rendering (+ `templates/`, `static/`) |
-| `apps/` | the app seam; `apps/chat/` (the plugin) and `apps/chat/daemon/` (the service) |
+| `apps/` | the app seam; `apps/chat/` (the conversation) and `apps/agents/` (the installation's agents) |
 | `docs/` | apps, ui-grammar, and configuration docs |
 | `juicedocs/` | a vendored copy of the kernel's API + requirements — the authoritative kernel reference |
 | `e2e/` | a live end-to-end flow harness |

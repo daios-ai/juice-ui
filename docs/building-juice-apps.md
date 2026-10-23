@@ -70,8 +70,9 @@ cheap, and both surprised us on the first app:
   you nothing.** So never build on a shared *priced* action and assume it's cheap (a
   0-balance service account 402s the moment an operator prices it); instead **create
   your own private, price-0, owner-only action** that does the same thing. You control
-  your actions' prices; you do not control `sys@<kernel>/*`'s. (`chat@<kernel>/outbox` replaced a
-  per-deployment `sys@<kernel>/message` toll exactly this way.)
+  your actions' prices; you do not control `sys@<kernel>/*`'s. (Chat creates its
+  tasks through the capability of the member's own call to its free `msg/post`,
+  never through `sys@<kernel>/message`.)
 
 - **Actions can be private.** An action you own but never publish is callable only by
   you — perfect for an app's internal machinery. Create it, `enable` it, and simply
@@ -109,8 +110,8 @@ processes, and a funding source. Design with them in view:
   4dbfedd — so a task is minted *during* the call that funds it, through that
   call's capability. Holding a process open with a never-completed "sentinel"
   task does not keep its root trace mint-able: the trace settles when the call
-  returns. Chat's seed/outbox depended on that and is blocked on it
-  (`requirements.md` §10).
+  returns. Chat's first design depended on that and failed; chat now delivers
+  a post as tasks created during the post itself (`requirements.md` §6.7).
 
 ## 5. Identity durability is a correctness concern, not configuration
 

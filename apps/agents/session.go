@@ -16,32 +16,67 @@ import (
 // `juice auth login` would: the kernel in client/config.json, the session in
 // client/credentials/<login>.json (ecosystem-standard §4). The password is
 // used once and kept nowhere. Nothing is written unless the kernel answered
-// a session for exactly that login.
-func (a *Agents) signIn(ctx context.Context, handle, password string) error {
+// a session for exactly that login. It returns the access token, for what
+// the UI does as the agent right after.
+func (a *Agents) signIn(ctx context.Context, handle, password string) (string, error) {
 	login := a.deps.Address(handle)
 	verifier, err := session.NewVerifier()
 	if err != nil {
-		return err
+		return "", err
 	}
 	code, err := a.deps.Client.Authorize(ctx, login, password, session.Challenge(verifier))
 	if err != nil {
-		return err
+		return "", err
 	}
 	toks, err := a.deps.Client.ExchangeCode(ctx, code, verifier)
 	if err != nil {
-		return err
+		return "", err
 	}
 	me, err := a.deps.Client.Me(ctx, toks.AccessToken)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if me.Address != login {
-		return fmt.Errorf("signed in as %s, not %s", me.Address, login)
+		return "", fmt.Errorf("signed in as %s, not %s", me.Address, login)
 	}
 	if err := a.recordKernel(ctx); err != nil {
-		return err
+		return "", err
 	}
-	return writeCredential(a.credPath(handle), toks, me.ID)
+	return toks.AccessToken, writeCredential(a.credPath(handle), toks, me.ID)
+}
+
+// chatHandle is the chat app's account on this kernel.
+const chatHandle = "chat"
+
+// joinChat makes the agent a member of chat as any member joins, with the
+// agent's own session: approve chat as a requester, register, complete the
+// verification task, connect the key. The agent is then addressed in rooms
+// and can post. A join that fails is done by command line, as chat's index
+// says.
+func (a *Agents) joinChat(ctx context.Context, token, handle string) error {
+	chat := a.deps.Address(chatHandle)
+	if err := a.deps.Client.DecideRequester(ctx, token, chat, "approve"); err != nil {
+		return fmt.Errorf("approve chat: %w", err)
+	}
+	args, _ := json.Marshal(map[string]string{"handle": a.deps.Address(handle)})
+	reply, err := a.deps.Client.Run(ctx, token, chat+"/register", args, "")
+	if err != nil {
+		return fmt.Errorf("register: %w", err)
+	}
+	var res struct {
+		APIKey string `json:"api_key"`
+		TaskID string `json:"task_id"`
+	}
+	if err := json.Unmarshal(reply.Result, &res); err != nil || res.APIKey == "" || res.TaskID == "" {
+		return fmt.Errorf("register: no key returned")
+	}
+	if _, err := a.deps.Client.CompleteTask(ctx, token, res.TaskID, nil); err != nil {
+		return fmt.Errorf("verification: %w", err)
+	}
+	if _, err := a.deps.Client.ConnectGrant(ctx, token, chat+"/msg", "", res.APIKey); err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	return nil
 }
 
 // credPath is the credential file of handle's login.

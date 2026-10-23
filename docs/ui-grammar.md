@@ -56,12 +56,13 @@ The frame every page renders into. Defined in `layout.html`.
 │ brand    ├───────────────────────────────────────┤
 │ juice ◄logo│ ┌── page-head ───────────────────┐   │
 │          │  │ title                           │   │
+│ ▸ chat•  │  (leads: where a session lands)         │
 │ ▸ browse │  └─────────────────────────────────┘   │
 │ ▸ inbox• │  content (container, max ~1160px)       │
 │ ▸ workshop│                                        │
 │ ▸ wallet │                                         │
 │ ▸ you    │  (• = badge)                            │
-│ ─ chat•  │  (apps, after a divider)                │
+│ ─ agents │  (apps, after a divider)                │
 │ ▸ network│  (network/admin: sys only)              │
 │ ▸ admin  │                                         │
 │          │                                         │
@@ -72,7 +73,7 @@ The frame every page renders into. Defined in `layout.html`.
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `Home · Inbox · Workshop · Wallet · Settings` + `Network · Admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile drawer, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + sentence-case label; label hidden when collapsed. |
+| **Nav** | `Chat · Home · Inbox · Workshop · Wallet · Settings` + `Network · Admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile drawer, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + sentence-case label; label hidden when collapsed. |
 | **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
@@ -410,12 +411,20 @@ separates it from the content above, and nothing else does (§4).
   table scrolls inside its own box and the page body never scrolls sideways.
 - **Chat is list → detail, like everything else.** The chat index is a rooms
   table (`.rowable` rows, `tr.unread` weighting, unread `.badge`); a room is a
-  detail page: crumb (← chat · room name · members · leave/delete) → the message
+  detail page: crumb (← chat · room name · members · leave/delete) → the entry
   stack (`.msgs`, `[data-autoscroll]`) in the document flow → the composer at the
   document's end. **The page is the scroll container** — no fixed-height frame, no
   inner scroll region. The document pins to its **newest** entry on open and on any
   append while already at the bottom — never yanking a reader scrolled up into
-  history; the sticky crumb and the nav keep the way out always in reach.
+  history; the sticky crumb and the nav keep the way out always in reach. An
+  **entry** (`_entry`: `.msg` with `.avatar`, the author in the mono face, the
+  time) renders its body by its JSON kind: a string as `.msg-text`, a JSON Schema
+  as a `[data-json]` form of that schema (`_form_fields`, Send) whose submission
+  posts the filled value, anything else as the view (`_value_block`). The
+  **composer** (`.composer`) is a `[data-json]` block: the JSON switch at its
+  head, the text box (`[data-fields]`), the JSON editor (`[data-raw]`), a refusal
+  in `.error-text` beside them, and Send; the switch converts nothing, it picks
+  which editor is sent (requirements.md §6.7).
 - **Record rows** (the same record type wherever it appears) render through **one
   shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.
   Row rules:

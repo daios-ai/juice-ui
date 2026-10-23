@@ -2,7 +2,8 @@
 
 Juice-ui has a small core BFF (the CLI-mirroring surface: `run`, `action`,
 `process`, `tx`, `task`, `user`, `admin`, `peers`) plus **apps** that don't belong
-in that surface — the first is **chat** (`apps/chat`). An app is a self-contained
+in that surface — **chat** (`apps/chat`), the surface a session lands on, and
+**agents** (`apps/agents`). An app is a self-contained
 unit that plugs into the core through one seam, so the core never grows an app's
 weight and an app never reaches into the core.
 
@@ -32,18 +33,17 @@ Two properties, on two different axes:
 Five rules govern every app. They are what keep the codebase modular without the
 core rotting into a monolith; read them before touching this seam.
 
-1. **Dependency direction is law.** *daemon* (a self-contained service) ← *plugin*
+1. **Dependency direction is law.** *store* (the app's own state) ← *plugin*
    (the App: the only Juice + UI-aware piece) ← *core* (imports only the `apps`
    seam, never a concrete app). An app imports `client`, `session`, `apps` — never
    `server`. The arrows never reverse.
-2. **Litmus test: delete the plugin and the daemon still runs.** A daemon (e.g.
-   `apps/chat/daemon`) is a plain REST service that knows nothing about Juice — auth
-   is *injected* into it as a hook, not imported. If a daemon needs the plugin to
-   compile or run, the boundary has leaked.
-3. **Ownership split.** The daemon owns *domain state* (its store, its REST
-   contract, its list ordering). The plugin owns *Juice/UI integration* (kernel
-   actions, grants, identity, templates, the nav badge). Neither reaches across:
-   the plugin never writes the daemon's tables; the daemon never mints a grant.
+2. **Litmus test: the store knows nothing of Juice.** Chat's `store.go` is SQL
+   over rooms, members, entries, keys and cursors, and decides who may do what by
+   membership alone; it compiles and is tested without a kernel. If the store
+   needs the plugin, the boundary has leaked.
+3. **Ownership split.** The store owns *domain state* and its invariants, each
+   as one transaction. The plugin owns *Juice/UI integration* (kernel actions,
+   grants, identity, templates, the nav badge, the kernel's dispatches).
 4. **The caller is who the kernel says.** A `delegated_bearer` action carries the
    key the caller connected on `apps.CallerKeyHeader`; the app resolves that key to
    the caller and trusts nothing else in the request.
@@ -178,12 +178,9 @@ CSRF-protected.
 ```
 apps               ← the seam (leaf; imports client, session)
   ↑        ↑
-server   apps/chat        (the UI plugin; consumes the seam)
+server   apps/chat, apps/agents   (the apps; consume the seam)
   ↑        ↑
 cmd/juice-ui               (wires a []App into server.New)
-
-apps/chat/daemon   ← the chat application: imports only client, session (not the
-                     seam or server); run in-process by the plugin, testable alone.
 ```
 
 `server` imports `apps` (for the interface, `Deps`, and the app config store). The
@@ -218,12 +215,11 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
 4. Wire it in `cmd/juice-ui/main.go`: construct it, pass `Templates()` to
    `server.NewRenderer`, add it to the `Apps` slice.
 5. State: keep the core BFF stateless. An app that needs a kernel identity, its own
-   actions, and durable state should be a **Juice user run in-process** (its own
-   `daemon` subpackage) that authenticates as a service account, registers free
-   (price-0) actions, and projects its own ledger — as `apps/chat/daemon` does. It
-   **self-provisions** its account on first run and persists the password via
-   `SaveAppState`, so there are no per-app env vars. The UI plugin stays thin: it
-   reads from the in-process app and issues writes as the signed-in user.
+   actions, and durable state is a **Juice user run in-process** that authenticates
+   as a service account, registers free (price-0) actions, and keeps its own store
+   — as `apps/chat` does. It **self-provisions** its account on first run and
+   persists the password via `SaveAppState`, so there are no per-app env vars. The
+   plugin reads its store and issues writes as the signed-in user.
 6. Badge (optional): to show a live attention count on the nav entry, add a `GET
    /<slug>/badge` route (auth-gated) honouring the endpoint contract above and set
    `NavEntry.BadgeURL`. Durable data goes under `Deps.DataDir`, not the config dir.
@@ -233,54 +229,34 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
 
 ## Reference implementation: chat
 
-Chat is the worked example — a real **application on top of Juice** — in two parts,
-both under `apps/chat/`, with **zero chat-specific code in juice-ui core**.
+Chat is the worked example — a real **application on top of Juice** — with
+**zero chat-specific code in juice-ui core**. Its rules are `requirements.md`
+§6.7; this is how it sits on the seam.
 
-### 1. The chat daemon (`apps/chat/daemon`)
-
-A self-contained, **Juice-agnostic REST chat server** — rooms, membership, an
-append-only message log, per-user unread — over a durable SQLite store. It knows
-nothing of a kernel, tokens, or grants: **caller authentication is injected** (an
-auth hook handed to `New`), and the admin read routes are gated by an **admin
-secret**, so the same service could run standalone behind any auth layer.
-`store.go` is the (history-only) store; `daemon.go` the REST handlers; `client.go`
-the typed REST `Client` the plugin depends on (wired in-process by an in-memory
-transport, so the REST contract is exercised without a socket).
-
-- **Synchronous identity + authorization.** Each state-changing op is a fixed
-  write route (`/create-room`, `/message`, …). The caller is whatever the injected
-  auth hook returns (in juice-ui, the store resolving, by hash, the key the kernel
-  injects for that user's `delegated_bearer` grant), so the daemon
-  authorizes *at the door* — creator-only admin ops, member-only posting — and
-  returns a real success or a typed failure, never a hollow ack.
-- **Durable, indexed, incremental.** The store is the source of truth (the kernel
-  ledger is demoted to an audit trail). Reads are bounded range scans over a
-  monotonic per-room sequence — never a full-log read — and unread is a count past
-  each user's read watermark.
-
-### 2. The UI-integration plugin (`apps/chat`, the `apps.App`)
-
-The only Juice- and UI-aware piece; it crosses both boundaries and touches neither
-side's internals.
-
-- **Self-provisions.** On `Start` it loads (or generates + persists) the `chat@<kernel>`
-  account password *and* the daemon admin secret via `LoadAppState`/`SaveAppState`,
-  and opens the store beside `state.json` (in-memory when there is no persistent
-  config). No chat environment variables — one launch and chat works.
-- **Owns the `chat@<kernel>` account via `apps.ServiceAccount`.** It hands the seam the
-  handle, the persisted password, and its action-registration as the `setup`
-  callback; the seam does provisioning, auth, backoff, self-heal, and diagnostics
-  (see above). None of that lifecycle code lives in the plugin.
-- **Registers the surface** (its `setup`). As `chat@<kernel>`, it registers each `chat@<kernel>/*`
-  action with `delegated_bearer` auth, pointing the `source` at the daemon's
-  matching write route, and publishes it — reconciling a stale action left by an
-  earlier build. It mounts the daemon's write routes under the CSRF-exempt
-  `/_kernel/chat/` prefix.
-- **Reads** rooms/messages via the daemon's REST `Client`; **writes** by running
-  `chat@<kernel>/*` as the signed-in user. The kernel dials the daemon synchronously and
-  injects the caller's token, so the write is applied (or rejected) by the time
-  `run` returns — no polling.
-
-This is the model for the next app: a durable REST service behind a `Client`, plus
-a thin Juice-aware plugin that self-provisions and connects per-user
-`delegated_bearer` grants for synchronous identity at the door.
+- **Three files.** `store.go` is the state (SQLite: rooms, members, entries,
+  keys, cursors, the deliveries a member holds), every rule that must hold
+  together one transaction, and no kernel knowledge. `deliver.go` is routing by
+  name and the delivery of a post as kernel tasks. `chat.go` is the App:
+  lifecycle, the five actions and their reconciliation, the kernel's dispatches
+  under `/_kernel/chat/`, the browser routes, the badge and the heartbeat
+  watcher.
+- **Self-provisions.** On `Start` it loads, or generates and persists, the
+  `chat@<kernel>` password and the upstream secret its private actions carry,
+  and opens the store in the component home (in memory when there is no
+  persistent state).
+- **Owns `chat@<kernel>` via `apps.ServiceAccount`**, handing it the action
+  reconciliation as the `setup` callback. The reconcile pushes a changed
+  contract whole, a title alone, and deletes any other action chat owns; the
+  write-only auth is forced through by the revision kept in app state (above).
+- **Identity at the door.** `msg/post` is `delegated_bearer` on
+  `apps.CallerKeyHeader`; the store resolves the injected key to the member.
+  `validate` and `reply` are the onwards of tasks and carry chat's bearer, so
+  only the kernel completing a task reaches them. `register` and `index` are
+  open.
+- **Tasks are the delivery.** A post creates, through the capability the kernel
+  injected into that dispatch (`client.CallbackCreateTask`), one task per
+  recipient, and completing it is the answer. No seed trace, no sentinel, no
+  app-side notification: the kernel's one signal to a member is a task.
+- **The browser is a member.** Every post from the page runs `msg/post` as the
+  viewer, so a person and an agent take one path; rooms and membership are the
+  viewer's own writes on the store.
