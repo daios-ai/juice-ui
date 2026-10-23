@@ -510,6 +510,8 @@ func TestViewKeepsOrderAndTypes(t *testing.T) {
 // a required child of a sent object, a row under minItems, or any node
 // holding a value — so an optional object stays closed until it is in use,
 // and a required array with minItems 0 is content with its blank row (§6.2).
+// A demanded row holding nothing is unsettled whatever its item demands,
+// since submit drops a blank row.
 func TestNodesOpenWhileUnsettled(t *testing.T) {
 	schema := func(minItems int) json.RawMessage {
 		return json.RawMessage(`{"type":"object","properties":{
@@ -553,6 +555,20 @@ func TestNodesOpenWhileUnsettled(t *testing.T) {
 	}
 	if got := open(fill(0, `{"to":{"name":"x"},"meta":{"tag":"t"},"nul":{"x":"y"}}`)); got != "" {
 		t.Errorf("meta in use and complete: open = %q", got)
+	}
+	loose := func(minItems int) json.RawMessage {
+		return json.RawMessage(`{"type":"object","properties":{"items":{"type":"array","minItems":` + strconv.Itoa(minItems) +
+			`,"items":{"type":"object","properties":{"k":{"type":"string"}}}}},"required":["items"]}`)
+	}
+	if fm := BuildForm(loose(1)); !fm.Fields[0].Open {
+		t.Error("a demanded row of an item demanding nothing is blank, so the array opens")
+	}
+	if fm := BuildForm(loose(0)); fm.Fields[0].Open {
+		t.Error("under minItems 0 the blank row is not demanded")
+	}
+	fm = BuildForm(loose(1))
+	if inexact := fm.Fill(json.RawMessage(`{"items":[{"k":"v"}]}`)); inexact != nil || fm.Fields[0].Open {
+		t.Errorf("a row holding a value settles the array: inexact = %v, open = %v", inexact, fm.Fields[0].Open)
 	}
 	if s := (Field{Type: "object"}).Size(); s != "0 fields" {
 		t.Errorf("Size = %q", s)

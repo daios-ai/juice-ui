@@ -151,8 +151,9 @@ func (f *Field) holds() bool {
 // node is sent when demanded or when it holds a value, and a required rule
 // binds only under a node being sent — JSON Schema's `required` applies to an
 // object that is present, and an empty container is omitted on submit
-// (§6.2). It reports whether f is unsettled: demanded and empty, or sent and
-// holding an unsettled node. A named container opens while unsettled; an
+// (§6.2). It reports whether f is unsettled: demanded and empty — a scalar
+// without a value, a row holding nothing, which submit drops and `minItems`
+// then misses — or sent and holding an unsettled node. A named container opens while unsettled; an
 // unnamed one — the root, an array's element — has no summary to fold behind
 // and is always open. A view demands nothing, so its named nodes close (§7).
 func (f *Field) settle(demanded bool) bool {
@@ -166,7 +167,8 @@ func (f *Field) settle(demanded bool) bool {
 		}
 	case f.Type == "array":
 		for i := range f.Rows {
-			unsettled = f.Rows[i].settle(sent && i < f.MinItems) || unsettled
+			demanded := sent && i < f.MinItems
+			unsettled = f.Rows[i].settle(demanded) || demanded && !f.Rows[i].holds() || unsettled
 		}
 	default:
 		unsettled = demanded && f.Value == ""

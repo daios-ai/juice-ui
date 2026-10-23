@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.32.0
+Version: 0.32.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.32.1.** A demanded row holding nothing is empty, so a
+> required array whose item demands no field opens under `minItems` until its
+> row holds a value; submit drops a blank row, which `minItems` then misses
+> (§6.2).
 
 > **What changed in 0.32.0.** The **view** is the name of the read-only
 > rendering of a JSON value, until now the frozen form (§7). A named nested
@@ -1253,7 +1258,8 @@ spend:
   properties that folds behind its label, open while a field it demands is
   still empty: a required key counts once its object is sent — the root, a
   required child of a sent object, or any object holding a value — and a row
-  once it is under the array's `minItems`; an array as rows of its item,
+  once it is under the array's `minItems`, a demanded row holding nothing
+  being empty whatever its item demands; an array as rows of its item,
   `max(minItems, 1)` to start, with Add and Remove, an element never folding; a node the schema leaves open (`{}`, an
   object without `properties`, an array without `items`) as an empty JSON
   editor whose placeholder is the shape, its text sent as the JSON it holds. A field is named by its JSON Pointer
