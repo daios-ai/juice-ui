@@ -1,7 +1,19 @@
 # Juice Web UI Requirements
 
-Version: 0.30.1
+Version: 0.31.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.31.0.** One heartbeat per page. A signed-in page makes
+> one request per lane — every 3 s, and every badge interval — carrying a
+> hidden watch for each widget that waits for something (the task and app
+> badges, an agent's status, a conversation's tail, a parked process, a
+> peer's card), naming what it shows; the reply swaps only the widgets whose
+> truth differs, so an unchanged control is never replaced under a click.
+> The six pollers each widget kept, their fragment routes and the
+> kernel-gone sign-out of the browser heartbeat fold into it (§6.1). Start
+> and Stop carry no banner: the status block is the statement. The kernel
+> gate's own poll is the one exception, since it runs before a session
+> exists.
 
 > **What changed in 0.30.1.** The kernel record the agents app keeps is keyed
 > by the kernel's key alone, as `juice kernel add` keys it: a record with the
@@ -746,7 +758,8 @@ detectable.
     htmx swap fragments.
   * **Interactivity:** **htmx** plus small vanilla ES modules — no build step, no
     Node, no SPA framework. Handlers return HTML fragments; htmx performs swaps
-    and the nav-badge polling (on a configurable interval). Vanilla JS is limited
+    and the page's heartbeat (one request per lane, every 3 s and every badge
+    interval, carrying each widget's watch). Vanilla JS is limited
     to the schema→form renderer, the theme toggle, a tab-visibility signal, and
     the wallet module (`wallet/wallet.mjs`, §6.5), which speaks EIP-6963 and
     EIP-1193 to the person's browser wallet and is tested with `node:test`
@@ -979,7 +992,9 @@ kernel and world is in use, and keys everything durable by
   a last run that ended with the daemon's `run juice auth login` advice —
   which is how an agent made at the command line or one whose session died
   is served from the page. Start and Delete are refused while the agent runs,
-  and no credential is written then. A stopped agent shows the daemon's
+  and no credential is written then, and neither carries a banner: the status
+  block, refreshed by the page's heartbeat and never while unchanged, is the
+  statement. A stopped agent shows the daemon's
   `error:` line from its current run. The agent's page shows its account;
   its history is the transactions page, since the kernel filters
   transactions by process and not by party.
@@ -987,9 +1002,10 @@ kernel and world is in use, and keys everything durable by
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting tasks whose `required_caller` is the
   signed-in user (a superuser lists everyone's), sourced from
-  a single server-side poll of `GET /v1/tasks?status=waiting` per session (a
-  per-session cache whose TTL matches the configured badge poll interval), fanned
-  out to open tabs — not one polling loop per tab.
+  a single server-side read of `GET /v1/tasks?status=waiting` per session (a
+  per-session cache whose TTL is the badge interval), carried to every open
+  page by its heartbeat and swapped only when the count changed — not one
+  polling loop per widget.
 * All create and edit operations MUST open **floating modal forms** — native
   `<dialog>` elements opened client-side with `showModal()`. Each modal trigger
   MUST also be a real link (`?form=NAME`); without JavaScript the server renders

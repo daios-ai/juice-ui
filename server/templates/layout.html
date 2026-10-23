@@ -37,7 +37,7 @@
       <nav class="nav" aria-label="Primary">
         {{range .Nav}}
         {{if .Divider}}<div class="nav-sep" role="presentation"></div>{{end}}
-        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
+        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .Live}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge badge-{{.Slug}}" aria-label="{{.Label}}">{{if .Badge}}{{.Badge}}{{end}}</span></span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
         {{end}}
       </nav>
 
@@ -67,7 +67,7 @@
         <a href="?menu=open#nav-drawer" class="menu-trigger" data-modal="nav-drawer" aria-haspopup="dialog" aria-label="Menu">
           <span class="ico-badge-wrap">
             <svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
-            {{template "_badge_poll" (badge "/inbox/badge" "Waiting tasks" 0 .BadgeSecs)}}
+            <span class="badge badge-inbox" aria-label="Waiting tasks"></span>
           </span>
         </a>
         <form class="omni" method="get" action="/browse" role="search">
@@ -127,7 +127,14 @@
   </dialog>
   {{end}}
 
-  {{if .Me}}<div hidden aria-hidden="true" hx-get="/health" hx-trigger="every {{.BadgeSecs}}s" hx-swap="none"></div>{{end}}
+  {{/* The heartbeat: one request per lane carrying every watch on the page
+       (tick.go). A widget that waits for something holds a hidden input
+       naming what it shows; the reply swaps only what changed. */}}
+  {{if .Me}}
+  <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every 3s" hx-include="input[name=watch]" hx-swap="none"></div>
+  <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every {{.BadgeSecs}}s" hx-include="input[name=slow]" hx-swap="none"></div>
+  {{range .Nav}}{{if .Live}}<input type="hidden" id="watch-{{.Slug}}" name="slow" value="{{.Slug}}:badge:{{.Badge}}">{{end}}{{end}}
+  {{end}}
   <dialog id="modal-backdrop" class="modal-confirm" aria-labelledby="modal-msg">
     <div class="modal-box">
       <p id="modal-msg" class="modal-msg"></p>

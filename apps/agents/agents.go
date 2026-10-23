@@ -123,7 +123,7 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("GET /agents", d.RequireSuperuser(a.getIndex))
 	mux.HandleFunc("POST /agents", d.RequireSuperuser(a.postCreate))
 	mux.HandleFunc("GET /agents/{handle}", d.RequireSuperuser(a.getDetail))
-	mux.HandleFunc("GET /agents/{handle}/status", d.RequireSuperuser(a.getStatus))
+	d.Watch("agent", a.watch)
 	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireSuperuser(a.postSaveFile))
 	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
 	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
@@ -308,6 +308,10 @@ type status struct {
 	// session to serve on — no credential file, or the last run ended with the
 	// daemon's own advice to log in. With a session, Start is one click.
 	AskPassword bool
+	// State is the one word the page's heartbeat carries for this agent —
+	// running, ask or stopped — so the block is swapped only when it changes.
+	State string
+	OOB   bool // a heartbeat answer: the block replaces itself in place
 }
 
 func (a *Agents) status(r *http.Request, handle string) (status, error) {
@@ -318,7 +322,30 @@ func (a *Agents) status(r *http.Request, handle string) (status, error) {
 		_, statErr := os.Stat(a.credPath(handle))
 		st.AskPassword = os.IsNotExist(statErr) || strings.Contains(st.LastLine, "juice auth login")
 	}
+	switch {
+	case running:
+		st.State = "running"
+	case st.AskPassword:
+		st.State = "ask"
+	default:
+		st.State = "stopped"
+	}
 	return st, err
+}
+
+// watch answers the heartbeat for one agent: its status block when its state
+// differs from the one shown, nothing otherwise, and nothing to anyone but
+// the operator (the routes it mirrors are the operator's).
+func (a *Agents) watch(r *http.Request, handle, shown string) (template.HTML, error) {
+	if !a.deps.Superuser(r) || !a.exists(handle) {
+		return "", nil
+	}
+	st, err := a.status(r, handle)
+	if err != nil || st.State == shown {
+		return "", err
+	}
+	st.OOB = true
+	return a.deps.Fragment("_agent_status", st)
 }
 
 // running is whether a daemon serves handle: one holds the home's lock, or a
@@ -528,7 +555,7 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if running {
-		a.deps.FlashRedirect(w, r, back, "success", "Starting…")
+		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
 	if pw := r.FormValue("password"); pw != "" {
@@ -541,7 +568,7 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		a.deps.FlashRedirect(w, r, back, "error", "Could not start: "+err.Error())
 		return
 	}
-	a.deps.FlashRedirect(w, r, back, "success", "Starting…")
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // postStop signals the daemon serving handle, whoever started it: the process
@@ -566,21 +593,7 @@ func (a *Agents) postStop(w http.ResponseWriter, r *http.Request) {
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	a.deps.FlashRedirect(w, r, returnPath(r, "/agents/"+handle), "success", "Stopping…")
-}
-
-// getStatus serves the htmx status fragment the detail page polls.
-func (a *Agents) getStatus(w http.ResponseWriter, r *http.Request) {
-	handle := r.PathValue("handle")
-	if !validHandle(handle) {
-		http.NotFound(w, r)
-		return
-	}
-	st, err := a.status(r, handle)
-	if a.deps.HandleErrFragment(w, r, err) {
-		return
-	}
-	_ = a.deps.RenderFragment(w, http.StatusOK, "_agent_status", st)
+	http.Redirect(w, r, returnPath(r, "/agents/"+handle), http.StatusSeeOther)
 }
 
 func (a *Agents) notFound(w http.ResponseWriter, r *http.Request) {

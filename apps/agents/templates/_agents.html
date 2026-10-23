@@ -1,15 +1,19 @@
 {{/*
-  Status fragment: rendered in each list row and in the detail page's status
-  block, and polled at both (hx-get /agents/<h>/status), always from the one
-  status view. It carries its own Stop or Start form, so the CSRF field is
-  threaded into that view rather than taken from the Page envelope. A stopped
-  agent shows its daemon's exit error from the current run, the daemon's own
-  words, as inert text. Start is one click while the login has a session; with
-  none it opens the password dialog, which is on the agent page: there the
-  trigger opens it in place, and in a list row the anchor navigates to the page
-  with it open (the UI's modal fallback, app.js).
+  Status block: rendered in each list row and on the detail page from the one
+  status view, and kept current by the page's heartbeat: the block carries a
+  watch naming its state, and the heartbeat's answer is this same block with
+  hx-swap-oob, replacing itself in place only when the state changed. It
+  carries its own Stop or Start form, so the CSRF field is threaded into the
+  view rather than taken from the Page envelope. A stopped agent shows its
+  daemon's exit error from the current run, the daemon's own words, as inert
+  text. Start is one click while the login has a session; with none it opens
+  the password dialog, which is on the agent page: there the trigger opens it
+  in place, and in a list row the anchor navigates to the page with it open
+  (the UI's modal fallback, app.js).
 */}}
 {{define "_agent_status"}}
+<div class="row compact" id="agent-status-{{.Handle}}"{{if .OOB}} hx-swap-oob="true"{{end}}>
+<input type="hidden" name="watch" value="agent:{{.Handle}}:{{.State}}">
 {{if .Running}}
 <span class="pill">running</span>
 <form method="post" action="/agents/{{.Handle}}/stop" data-confirm="Stop {{.Handle}}?">{{.CSRF}}<button class="btn-danger" type="submit">Stop</button></form>
@@ -18,4 +22,5 @@
 {{if .AskPassword}}<a class="btn" href="/agents/{{.Handle}}?form=start" data-modal="form-start">Start</a>{{else}}<form method="post" action="/agents/{{.Handle}}/start">{{.CSRF}}<button class="btn" type="submit">Start</button></form>{{end}}
 {{with .LastLine}}<span class="muted small">{{.}}</span>{{end}}
 {{end}}
+</div>
 {{end}}

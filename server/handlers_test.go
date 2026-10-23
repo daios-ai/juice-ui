@@ -1467,7 +1467,7 @@ func TestHtmxAuthLossRedirectsViaHeader(t *testing.T) {
 	defer k.Close()
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/inbox/badge", nil) // requireAuth-gated
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/tick", nil) // requireAuth-gated
 	req.Header.Set("HX-Request", "true")
 	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := cl.Do(req)
@@ -1480,9 +1480,9 @@ func TestHtmxAuthLossRedirectsViaHeader(t *testing.T) {
 	}
 }
 
-// TestHealthHeartbeatLogsOutWhenKernelDown: an authenticated heartbeat whose kernel
-// has gone away is logged out cleanly (HX-Redirect to /login).
-func TestHealthHeartbeatLogsOutWhenKernelDown(t *testing.T) {
+// TestTickLogsOutWhenKernelDown: a page's heartbeat whose kernel has gone away
+// is logged out cleanly (HX-Redirect to /login).
+func TestTickLogsOutWhenKernelDown(t *testing.T) {
 	base := authKernel()
 	defer base.Close()
 	var down atomic.Bool
@@ -1499,7 +1499,7 @@ func TestHealthHeartbeatLogsOutWhenKernelDown(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	down.Store(true) // the kernel goes away after the session exists
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/health", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/tick", nil)
 	req.Header.Set("HX-Request", "true")
 	resp, err := cl.Do(req)
 	if err != nil {
@@ -2845,9 +2845,14 @@ func TestTasksBadgeCountsPendingRequesters(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	// SP, SO, SH, SR wait on bob; mallory@bravo is pending.
-	if got := getBody(t, cl, srv.URL+"/inbox/badge"); got != "5" {
+	// SP, SO, SH, SR wait on bob; mallory@bravo is pending. The heartbeat
+	// answers the badge when the page shows another count, and nothing when it
+	// shows this one; an unknown kind is ignored.
+	if got := getBody(t, cl, srv.URL+"/tick?slow=inbox:badge:0&slow=nobody:x:y"); !strings.Contains(got, ">5</span>") || !strings.Contains(got, `value="inbox:badge:5"`) {
 		t.Errorf("badge = %q, want 5", got)
+	}
+	if got := getBody(t, cl, srv.URL+"/tick?slow=inbox:badge:5"); strings.TrimSpace(got) != "" {
+		t.Errorf("an unchanged badge must not be swapped, got %q", got)
 	}
 }
 

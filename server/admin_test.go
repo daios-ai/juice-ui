@@ -229,25 +229,26 @@ func TestAdminPeersIsNotPolled(t *testing.T) {
 	if strings.Contains(body, `hx-get="/admin/peers`) {
 		t.Errorf("the roster must not poll itself: %s", body)
 	}
-	// The inspect status card keeps its poll (it also freshens the sync cache).
-	if ibody := getBody(t, cl, srv.URL+"/admin/peers/KEYB"); !strings.Contains(ibody, `hx-get="/admin/peers/KEYB"`) {
-		t.Error("the inspect status card must still poll")
+	// The inspect status card is kept current by the heartbeat's slow lane (it
+	// also freshens the sync cache): it carries its watch, not a poll of its own.
+	if ibody := getBody(t, cl, srv.URL+"/admin/peers/KEYB"); !strings.Contains(ibody, `name="slow" value="peer:KEYB"`) || strings.Contains(ibody, `hx-get="/admin/peers/KEYB"`) {
+		t.Error("the inspect status card must carry its watch and no poll")
 	}
 }
 
-// TestAdminInspectHTMXReturnsStatusFragment checks item 2: an htmx poll of an
-// inspect page gets just the reachability status card.
-func TestAdminInspectHTMXReturnsStatusFragment(t *testing.T) {
+// TestPeerWatcherAnswersTheStatusCard: the heartbeat's peer watch answers
+// just the reachability status card, replacing itself in place.
+func TestPeerWatcherAnswersTheStatusCard(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	resp := htmxGet(t, cl, srv.URL+"/admin/peers/KEYC")
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	s := string(body)
+	s := getBody(t, cl, srv.URL+"/tick?slow=peer:KEYC")
+	if !strings.Contains(s, `<div id="inspect-status" hx-swap-oob="true">`) || !strings.Contains(s, `name="slow" value="peer:KEYC"`) {
+		t.Errorf("the answer must be the card replacing itself with its watch: %s", s)
+	}
 	if !strings.Contains(s, "direct") {
 		t.Errorf("htmx inspect fragment must carry reachability: %s", s)
 	}

@@ -121,14 +121,14 @@ func (c *Chat) Slug() string { return "chat" }
 
 // Nav contributes the "chat" sidebar entry. Its badge is the count of the user's
 // outstanding chat doorbell tasks — the core task badge (all tasks) filtered to
-// chat, one source of truth. The count is filled by the /chat/badge poll (Nav has
-// no session token to read the kernel tasks at render time), so the initial value
-// is 0 and the poll corrects it within the badge interval.
+// chat, one source of truth. The count is filled by the heartbeat (Nav has no
+// session token to read the kernel tasks at render time), so the initial value
+// is 0 and the first slow tick corrects it.
 func (c *Chat) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" {
 		return nil
 	}
-	return []apps.NavEntry{{Slug: "chat", Label: "Chat", Href: "/chat", Icon: chatIcon, Match: "/chat", BadgeURL: "/chat/badge"}}
+	return []apps.NavEntry{{Slug: "chat", Label: "Chat", Href: "/chat", Icon: chatIcon, Match: "/chat", Live: true}}
 }
 
 func (c *Chat) Templates() fs.FS { return tmplFS }
@@ -140,7 +140,7 @@ func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	c.deps = d
 	mux.HandleFunc("GET /chat", d.RequireAuth(c.getIndex))
 	mux.HandleFunc("POST /chat/connect", d.RequireAuth(c.postConnect))
-	mux.HandleFunc("GET /chat/badge", d.RequireAuth(c.getBadge))
+	d.Watch("chat", c.watch)
 	mux.HandleFunc("GET /chat/room/{id}", d.RequireAuth(c.getRoom))
 	mux.HandleFunc("GET /chat/room/{id}/messages", d.RequireAuth(c.getMessages))
 	mux.HandleFunc("POST /chat/rooms", d.RequireAuth(c.postCreateRoom))
@@ -988,15 +988,29 @@ func (c *Chat) getIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getBadge serves the chat nav-badge fragment the core polls: the count of the
-// user's outstanding chat doorbells (bare number, empty when zero — the core
-// task-badge contract). It is the core task badge filtered to chat — one source
-// of truth (the doorbell tasks), never a separate watermark.
-func (c *Chat) getBadge(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, n := c.chatUnread(r); n > 0 {
-		fmt.Fprintf(w, "%d", n)
+// watch answers the heartbeat: the key "badge" with the nav badge when the
+// count of the user's chat doorbells differs from the one shown, and a room id
+// with the messages after the shown seq, appended to the conversation, plus
+// the cursor and the deletions — nothing when nothing changed. The visible-tab dismiss keys on
+// X-Visible, as the conversation's poll did.
+func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) {
+	if key == "badge" {
+		_, n := c.chatUnread(r)
+		if strconv.Itoa(n) == shown {
+			return "", nil
+		}
+		return apps.Badge("chat", "Chat", n), nil
 	}
+	me := c.deps.Me(r)
+	if r.Header.Get("X-Visible") != "0" {
+		c.dismiss(r, me, key)
+	}
+	after, _ := strconv.ParseInt(shown, 10, 64)
+	v := c.pollView(r, me, key, after)
+	if !v.HadAdded && len(v.Deleted) == 0 {
+		return "", nil
+	}
+	return c.deps.Fragment("_chat_tick", v)
 }
 
 // chatUnread reads the signed-in user's outstanding chat doorbells straight from
@@ -1075,6 +1089,12 @@ func (c *Chat) getMessages(w http.ResponseWriter, r *http.Request) {
 // submit; `after` arrives via FormValue (GET query or POST body).
 func (c *Chat) writePoll(w http.ResponseWriter, r *http.Request, me, id string) {
 	after, _ := strconv.ParseInt(r.FormValue("after"), 10, 64)
+	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_poll", c.pollView(r, me, id, after))
+}
+
+// pollView is the messages of a room after a seq, with the cursor advanced
+// past them and the ids deleted since, for the poll fragments.
+func (c *Chat) pollView(r *http.Request, me, id string, after int64) msgsView {
 	added, deleted, _ := c.dc.Poll(r.Context(), me, id, after)
 	for _, m := range added {
 		if m.Seq > after {
@@ -1082,11 +1102,11 @@ func (c *Chat) writePoll(w http.ResponseWriter, r *http.Request, me, id string) 
 		}
 	}
 	csrf := c.deps.CSRFField(r)
-	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_poll", msgsView{
+	return msgsView{
 		RoomID: id, Me: me, CSRF: csrf,
 		Cards: makeCards(added, me, id, csrf), After: after,
 		HadAdded: len(added) > 0, Deleted: deleted,
-	})
+	}
 }
 
 func htmxReq(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }

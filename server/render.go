@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -39,14 +40,14 @@ func StaticFS() fs.FS {
 // drift (the old layout hand-duplicated them). Icon is the full inline <svg> so a
 // core sprite entry and an app's inline icon render uniformly.
 type NavItem struct {
-	Slug     string
-	Label    string
-	Href     string
-	Icon     template.HTML
-	Active   bool
-	Badge    int    // static count (apps); 0 hides
-	BadgeURL string // polled badge endpoint; "" for none
-	Divider  bool   // render a separator before this entry (marks the apps group)
+	Slug    string
+	Label   string
+	Href    string
+	Icon    template.HTML
+	Active  bool
+	Badge   int  // the count shown; 0 hides
+	Live    bool // the badge is kept current by the heartbeat under this slug
+	Divider bool // render a separator before this entry (marks the apps group)
 }
 
 // Page is the data passed to the layout for a full-page render.
@@ -70,7 +71,7 @@ type Page struct {
 	Flash        string          // transient user message
 	FlashKind    string          // "success" | "error" | "info" | ""
 	AppNav       []apps.NavEntry // sidebar entries contributed by apps
-	BadgeSecs    int             // nav-badge poll interval in seconds (tasks + apps)
+	BadgeSecs    int             // the heartbeat's slow lane, in seconds (badges, receipts, peers)
 	Path         string          // current path, for links that must return to it
 	MenuOpen     bool            // ?menu=open: server-render the nav drawer [open] (no-JS path)
 	Data         any             // page-specific view model
@@ -244,7 +245,6 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"linked":       linked,
 		"lockedFigure": lockedFigure,
 		"figures":      figures,
-		"badge":        badge,
 		"cardArt":      CardArt,
 		"initial":      initial,
 		"authPanel":    newAuthPanel,
@@ -349,14 +349,23 @@ func (r *Renderer) Render(w http.ResponseWriter, status int, page string, p Page
 
 // Fragment writes a single named partial, for htmx swaps.
 func (r *Renderer) Fragment(w http.ResponseWriter, status int, name string, data any) error {
-	var buf bytes.Buffer
-	if err := r.partials.ExecuteTemplate(&buf, name, data); err != nil {
-		return fmt.Errorf("render fragment %s: %w", name, err)
+	h, err := r.HTML(name, data)
+	if err != nil {
+		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_, err := buf.WriteTo(w)
+	_, err = io.WriteString(w, string(h))
 	return err
+}
+
+// HTML renders a single named partial to markup, for a heartbeat answer.
+func (r *Renderer) HTML(name string, data any) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := r.partials.ExecuteTemplate(&buf, name, data); err != nil {
+		return "", fmt.Errorf("render fragment %s: %w", name, err)
+	}
+	return template.HTML(buf.String()), nil
 }
 
 // ---- template helpers ----
@@ -827,22 +836,6 @@ func actionsHref(scope, filter string) string {
 // badgeView is the model for the _badge_poll partial: a nav attention badge that
 // htmx re-fetches on a fixed interval. Count is the initial server-rendered value
 // (so a no-JS client still sees it); the poll then overwrites it.
-type badgeView struct {
-	URL   string
-	Label string
-	Count int
-	Every int // poll interval, seconds
-}
-
-// badge builds a badgeView for the template, defaulting the interval defensively
-// so a mis-plumbed 0 never yields an invalid "every 0s" trigger.
-func badge(url, label string, count, secs int) badgeView {
-	if secs < 1 {
-		secs = 30
-	}
-	return badgeView{URL: url, Label: label, Count: count, Every: secs}
-}
-
 // KindBadge is the single-letter attribute chip for an action's execution kind.
 // R (remote) is the notable one and stands out by weight (a filled chip), not
 // color — every theme hue is reserved for a money/trust signal.

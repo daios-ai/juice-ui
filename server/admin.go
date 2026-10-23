@@ -424,63 +424,9 @@ func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 func (s *Server) getAdminInspect(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx := r.Context()
-	view := adminInspectView{
-		Key: key, OpenForm: openForm(r, "admin-peer"), CSRFField: csrf.TemplateField(r),
-	}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		insp, e := s.client.AdminInspect(ctx, tok, key)
-		if e != nil {
-			return e
-		}
-		view.Inspection = insp
-		view.Report = poolEvidence(insp.SelfEvidence().Rows)
-		view.Actions = peerActionRows(insp)
-		view.Version = strings.TrimPrefix(insp.Reachability.Version, "juice-kernel/")
-		// The kernel row says when the peer became known and whether it is
-		// suspended; a key this kernel has never learned has no row, which is a
-		// fact of the page, not an error.
-		rec, e := s.client.AdminPeer(ctx, tok, key)
-		if e != nil && !errors.Is(e, client.ErrNotFound) {
-			return e
-		}
-		view.Record = rec
-		// The roster states the catalog's size: the inspection's own list is
-		// one page (verified live: 100 of 193). The rename form's prefill must
-		// also be free of every bound petname, suspended parties included, and
-		// of this kernel's own name, which it binds to its own key. Without the
-		// form the roster is best-effort: a page is never refused for it.
-		peers, e := s.client.AdminListPeers(ctx, tok, true)
-		if e != nil && view.OpenForm != "admin-rename" {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		taken := map[string]bool{}
-		for _, p := range peers {
-			if p.PublicKey == key {
-				view.Catalog, view.Traded = p.Actions, p.Traded
-			} else if p.Petname != "" {
-				taken[p.Petname] = true
-			}
-		}
-		if view.OpenForm != "admin-rename" {
-			return nil
-		}
-		id, e := s.client.AdminIdentity(ctx, tok)
-		if e != nil {
-			return e
-		}
-		taken[id.Handle] = true
-		view.Suggestion = petnameSuggestion(insp.Petname, insp.Nickname, key, func(n string) bool { return taken[n] })
-		return nil
-	})
+	view, err := s.inspectView(ctx, key, openForm(r, "admin-peer"))
+	view.CSRFField = csrf.TemplateField(r)
 	if s.handleErrFragment(w, r, err) {
-		return
-	}
-	// An htmx poll refreshes just the reachability/status card.
-	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_inspect_status", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "admin_inspect", "Inspect", view)

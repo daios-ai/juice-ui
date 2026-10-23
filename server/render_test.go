@@ -778,46 +778,12 @@ func TestRenderFragment(t *testing.T) {
 	}
 }
 
-// TestBadgeHelper checks the interval default (a mis-plumbed 0 must not yield an
-// invalid "every 0s" htmx trigger).
-func TestBadgeHelper(t *testing.T) {
-	if got := badge("/x", "l", 0, 0).Every; got != 30 {
-		t.Errorf("badge interval defaulted to %d, want 30", got)
-	}
-	b := badge("/inbox/badge", "Waiting", 4, 15)
-	if b.Every != 15 || b.Count != 4 || b.URL != "/inbox/badge" {
-		t.Errorf("badge = %+v", b)
-	}
-}
-
-// TestBadgePollFragment checks the reusable poller partial: htmx attributes + the
-// interval, the count when > 0, and an empty body when 0 (so .badge:empty hides it).
-func TestBadgePollFragment(t *testing.T) {
-	r, err := NewRenderer(playKernel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_badge_poll", badge("/chat/badge", "chat", 3, 15)); err != nil {
-		t.Fatal(err)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{`hx-get="/chat/badge"`, `every 15s`, `hx-swap="innerHTML"`, `>3<`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("badge fragment missing %q: %s", want, body)
-		}
-	}
-	rec = httptest.NewRecorder()
-	_ = r.Fragment(rec, 200, "_badge_poll", badge("/chat/badge", "chat", 0, 15))
-	if strings.Contains(rec.Body.String(), ">0<") {
-		t.Errorf("zero badge should render empty, got %q", rec.Body.String())
-	}
-}
-
-// TestLayoutRendersBadgePollers proves the layout polls every badge — the core
-// tasks badge and each app badge — on the configured interval, in both the sidebar
-// and the mobile tab bar.
-func TestLayoutRendersBadgePollers(t *testing.T) {
+// TestLayoutRendersTheHeartbeat proves a signed-in page carries the two tick
+// elements — the fast lane and the slow lane on the configured interval — one
+// slow watch per live nav entry, once, and a static badge span per copy of the
+// entry (sidebar, drawer, and the mobile trigger for the inbox), with no poller
+// of its own anywhere.
+func TestLayoutRendersTheHeartbeat(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
@@ -827,8 +793,8 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 		Me:        "me@testnet",
 		BadgeSecs: 15,
 		Nav: []NavItem{
-			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), BadgeURL: "/inbox/badge"},
-			{Slug: "chat", Label: "chat", Href: "/chat", Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, BadgeURL: "/chat/badge"},
+			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), Live: true},
+			{Slug: "chat", Label: "chat", Href: "/chat", Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, Live: true},
 		},
 		Data: struct{ Message string }{"x"},
 	}
@@ -836,18 +802,27 @@ func TestLayoutRendersBadgePollers(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if strings.Count(body, `hx-get="/inbox/badge"`) < 2 {
-		t.Errorf("tasks badge poller must appear in sidebar AND drawer: %s", body)
+	for _, want := range []string{
+		`hx-get="/tick" hx-trigger="every 3s" hx-include="input[name=watch]" hx-swap="none"`,
+		`hx-get="/tick" hx-trigger="every 15s" hx-include="input[name=slow]" hx-swap="none"`,
+	} {
+		if strings.Count(body, want) != 1 {
+			t.Errorf("want one %q: %s", want, body)
+		}
 	}
-	if !strings.Contains(body, `hx-get="/chat/badge"`) {
-		t.Errorf("app badge poller missing: %s", body)
+	if strings.Count(body, `id="watch-inbox" name="slow" value="inbox:badge:0"`) != 1 || strings.Count(body, `id="watch-chat" name="slow" value="chat:badge:2"`) != 1 {
+		t.Errorf("one slow watch per live entry: %s", body)
 	}
-	// tasks(sidebar+drawer+menu button) + chat(sidebar+drawer) = 5 pollers, all on 15s.
-	if n := strings.Count(body, `every 15s`); n < 5 {
-		t.Errorf("configured interval applied to %d pollers, want >= 5: %s", n, body)
+	if strings.Count(body, `class="badge badge-inbox"`) < 3 {
+		t.Errorf("the inbox badge must stand in the sidebar, the drawer and the mobile trigger: %s", body)
 	}
-	if strings.Contains(body, `id="inbox-badge"`) {
-		t.Error("legacy inbox-badge id should be gone")
+	if strings.Count(body, `class="badge badge-chat" aria-label="chat">2</span>`) < 2 {
+		t.Errorf("the app badge must stand in the sidebar and the drawer with its count: %s", body)
+	}
+	for _, gone := range []string{`hx-get="/inbox/badge"`, `hx-get="/chat/badge"`, `hx-get="/health"`, `hx-trigger="load`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("no poller of its own: %q in %s", gone, body)
+		}
 	}
 }
 
@@ -919,9 +894,8 @@ func TestActionDetailNeverGuessesAvailability(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: actionView{
-		Action:    client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10},
-		Form:      BuildForm(nil),
-		BadgeSecs: 15,
+		Action: client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10},
+		Form:   BuildForm(nil),
 	}}
 	if err := r.Render(rec, 200, "action_detail", p); err != nil {
 		t.Fatal(err)
@@ -950,8 +924,7 @@ func TestProcessAwaitingReceiptPolls(t *testing.T) {
 	render := func(awaiting bool) string {
 		rec := httptest.NewRecorder()
 		p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: processView{
-			Process:   client.Process{ID: "p1", Status: "open", AwaitingReceipt: awaiting, AwaitingReceiptSince: "2026-07-12T00:00:00Z"},
-			BadgeSecs: 15,
+			Process: client.Process{ID: "p1", Status: "open", AwaitingReceipt: awaiting, AwaitingReceiptSince: "2026-07-12T00:00:00Z"},
 		}}
 		if err := r.Render(rec, 200, "process", p); err != nil {
 			t.Fatalf("render awaiting=%v: %v", awaiting, err)
@@ -959,15 +932,15 @@ func TestProcessAwaitingReceiptPolls(t *testing.T) {
 		return rec.Body.String()
 	}
 	parked := render(true)
-	if !strings.Contains(parked, `hx-get="/processes/p1"`) || !strings.Contains(parked, "every 15s") {
-		t.Errorf("awaiting-receipt banner must poll /processes/p1 every 15s: %s", parked)
+	if !strings.Contains(parked, `name="slow" value="process:p1:awaiting"`) || strings.Contains(parked, `hx-get="/processes/p1"`) {
+		t.Errorf("awaiting-receipt banner must carry its slow watch and no poll of its own: %s", parked)
 	}
 	if !strings.Contains(parked, "Awaiting remote receipt") {
 		t.Errorf("awaiting-receipt banner text missing: %s", parked)
 	}
 	settled := render(false)
-	if strings.Contains(settled, `hx-get="/processes/p1"`) {
-		t.Error("settled process must NOT carry the awaiting-receipt poller")
+	if strings.Contains(settled, `value="process:p1:awaiting"`) {
+		t.Error("settled process must NOT carry the awaiting-receipt watch")
 	}
 }
 
@@ -1317,9 +1290,9 @@ func TestInspectOffersSuspendOnEveryKernel(t *testing.T) {
 	}
 }
 
-// TestInspectStatusPolls checks item 2: the inspect status card is an htmx-polled
-// fragment so an open inspect view is a live monitor.
-func TestInspectStatusPolls(t *testing.T) {
+// TestInspectStatusIsWatched: the inspect status card carries its slow watch and
+// no poll of its own, so an open inspect view is a live monitor by the heartbeat.
+func TestInspectStatusIsWatched(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
@@ -1333,8 +1306,8 @@ func TestInspectStatusPolls(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `id="inspect-status"`) || !strings.Contains(body, `hx-get="/admin/peers/KEYC"`) || !strings.Contains(body, "every 15s") {
-		t.Errorf("inspect status card must be an htmx-polled fragment: %s", body)
+	if !strings.Contains(body, `id="inspect-status"`) || !strings.Contains(body, `name="slow" value="peer:KEYC"`) || strings.Contains(body, `hx-get="/admin/peers/KEYC"`) {
+		t.Errorf("inspect status card must carry its slow watch and no poll of its own: %s", body)
 	}
 }
 

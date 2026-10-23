@@ -15,9 +15,7 @@
       <div class="action-line">
         <a class="action-title ref mono" href="/agents/{{.Handle}}"><span class="owner">{{.Handle}}</span></a>
       </div>
-      <div class="row compact" id="agent-status-{{.Handle}}"
-           hx-get="/agents/{{.Handle}}/status" hx-trigger="every 3s"
-           hx-target="#agent-status-{{.Handle}}" hx-swap="innerHTML">{{template "_agent_status" .}}</div>
+      {{template "_agent_status" .}}
     </div>
   </article>
   {{end}}

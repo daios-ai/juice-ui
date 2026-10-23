@@ -14,9 +14,7 @@
 </div>
 
 <div class="card stack">
-  <div id="inspect-status" hx-get="/admin/peers/{{$d.Key}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="innerHTML" hx-target="this">
-    {{template "_inspect_status" $d}}
-  </div>
+  <div id="inspect-status">{{template "_inspect_status" $d}}</div>
   {{/* Naming binds a PETNAME, exactly — the only way to name a kernel this
        node has merely discovered (§13) — and keys on the public key, since an
        unbound kernel has no name to key on. Suspension freezes the kernel row

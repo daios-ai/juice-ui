@@ -58,6 +58,11 @@ func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 		},
 	}
 	a.deps.HandleErrFragment = a.deps.HandleErr
+	a.deps.Superuser = func(*http.Request) bool { return true }
+	a.deps.Fragment = func(name string, data any) (template.HTML, error) {
+		cap.fragment, cap.data = name, data
+		return template.HTML("<" + name + ">"), nil
+	}
 	return a, fl, cap
 }
 
@@ -338,8 +343,8 @@ func TestPostStartWithPassword(t *testing.T) {
 		t.Fatalf("want the Start dialog back open at 422 and nothing spawned, got %d %+v", cap.status, cap.data)
 	}
 	post("password=pw")
-	if cap.flashKind != "success" || len(fl.started) != 1 {
-		t.Fatalf("start with a password: %q %q started=%d", cap.flashKind, cap.flashMsg, len(fl.started))
+	if cap.err != nil || len(fl.started) != 1 {
+		t.Fatalf("start with a password: %v started=%d", cap.err, len(fl.started))
 	}
 	st, err := os.Stat(a.credPath("research"))
 	if err != nil {
@@ -348,8 +353,8 @@ func TestPostStartWithPassword(t *testing.T) {
 	fl.procs[0].drain = true
 	_ = a.sup.stop("research", 0)
 	post("password=pw")
-	if cap.flashKind != "success" || len(fl.started) != 1 {
-		t.Fatalf("a draining daemon is alive: no second spawn, got %q started=%d", cap.flashKind, len(fl.started))
+	if len(fl.started) != 1 {
+		t.Fatalf("a draining daemon is alive: no second spawn, started=%d", len(fl.started))
 	}
 	if st2, _ := os.Stat(a.credPath("research")); st2.ModTime() != st.ModTime() {
 		t.Fatal("no credential is written while the agent runs")
@@ -422,9 +427,10 @@ func TestPostStartRunsTheLogin(t *testing.T) {
 	_ = a.create("research")
 	req := postForm("/agents/research/start", "")
 	req.SetPathValue("handle", "research")
-	a.postStart(httptest.NewRecorder(), req)
-	if cap.flashKind != "success" || len(fl.started) != 1 {
-		t.Fatalf("start: kind=%q started=%d", cap.flashKind, len(fl.started))
+	rec := httptest.NewRecorder()
+	a.postStart(rec, req)
+	if rec.Code != http.StatusSeeOther || cap.flashMsg != "" || len(fl.started) != 1 {
+		t.Fatalf("start: code=%d flash=%q started=%d", rec.Code, cap.flashMsg, len(fl.started))
 	}
 	if got := fl.started[0]; got != (startRec{"research@testnet", a.logPath("research")}) {
 		t.Fatalf("launcher got %+v", got)
@@ -447,12 +453,21 @@ func TestStatusShapeIsShared(t *testing.T) {
 	if lv := cap.data.(listView); lv.Agents[0].LastLine != want {
 		t.Errorf("list row LastLine = %q", lv.Agents[0].LastLine)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/agents/research/status", nil)
-	req.SetPathValue("handle", "research")
-	a.getStatus(httptest.NewRecorder(), req)
-	if st := cap.data.(status); st.LastLine != want {
-		t.Errorf("fragment LastLine = %q", st.LastLine)
+	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
+	if h, _ := a.watch(req, "research", "running"); h != "<_agent_status>" {
+		t.Fatalf("watch = %q", h)
 	}
+	if st := cap.data.(status); st.LastLine != want || st.State != "ask" || !st.OOB {
+		t.Errorf("heartbeat status = %+v", st)
+	}
+	if h, _ := a.watch(req, "research", "ask"); h != "" {
+		t.Errorf("an unchanged state must not be swapped, got %q", h)
+	}
+	a.deps.Superuser = func(*http.Request) bool { return false }
+	if h, _ := a.watch(req, "research", "running"); h != "" {
+		t.Errorf("nothing to anyone but the operator, got %q", h)
+	}
+	a.deps.Superuser = func(*http.Request) bool { return true }
 	req = httptest.NewRequest(http.MethodGet, "/agents/research", nil)
 	req.SetPathValue("handle", "research")
 	a.getDetail(httptest.NewRecorder(), req)
@@ -471,18 +486,17 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 	_ = a.create("research")
 	_ = a.sup.start("research", "research@testnet", "")
 
-	// Status fragment reflects running.
-	req := httptest.NewRequest(http.MethodGet, "/agents/research/status", nil)
-	req.SetPathValue("handle", "research")
-	a.getStatus(httptest.NewRecorder(), req)
+	// The heartbeat reports running.
+	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
+	_, _ = a.watch(req, "research", "stopped")
 	if cap.fragment != "_agent_status" {
 		t.Fatalf("fragment = %q", cap.fragment)
 	}
-	if sv, ok := cap.data.(status); !ok || !sv.Running {
+	if sv, ok := cap.data.(status); !ok || !sv.Running || sv.State != "running" {
 		t.Fatalf("statusView = %+v", cap.data)
 	}
 
-	// Stop.
+	// Stop: a plain redirect, no banner; the heartbeat states what follows.
 	req = postForm("/agents/research/stop", "")
 	req.SetPathValue("handle", "research")
 	a.postStop(httptest.NewRecorder(), req)
@@ -536,7 +550,7 @@ func TestNavIsOperatorOnly(t *testing.T) {
 		t.Fatal("an ordinary account must not be offered a host-acting app")
 	}
 	entries := a.Nav("sys", true)
-	if len(entries) != 1 || entries[0].Href != "/agents" || entries[0].BadgeURL != "" {
+	if len(entries) != 1 || entries[0].Href != "/agents" || entries[0].Live {
 		t.Fatalf("nav = %+v", entries)
 	}
 }
@@ -582,13 +596,14 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 			auth = append(auth, "x")
 			return h
 		},
+		Watch: func(string, apps.Watcher) {},
 	}
 	New().Mount(http.NewServeMux(), d)
 	if len(auth) != 0 {
 		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
 	}
-	if len(superuser) != 8 {
-		t.Errorf("every route must be gated: %d of 8", len(superuser))
+	if len(superuser) != 7 {
+		t.Errorf("every route must be gated: %d of 7", len(superuser))
 	}
 }
 
@@ -694,16 +709,16 @@ func TestRunningByTheLock(t *testing.T) {
 		h(httptest.NewRecorder(), req)
 	}
 	post("/agents/research/start", a.postStart)
-	if len(fl.started) != 0 || cap.flashKind != "success" {
-		t.Fatalf("Start on a served agent spawns nothing: started=%d %q", len(fl.started), cap.flashKind)
+	if len(fl.started) != 0 || cap.err != nil {
+		t.Fatalf("Start on a served agent spawns nothing: started=%d %v", len(fl.started), cap.err)
 	}
 	post("/agents/research/delete", a.postDelete)
 	if cap.flashKind != "error" || !a.exists("research") {
 		t.Fatalf("Delete on a served agent is refused: %q", cap.flashKind)
 	}
 	post("/agents/research/stop", a.postStop)
-	if cap.err != nil || cap.flashMsg != "Stopping…" {
-		t.Fatalf("Stop: %v %q", cap.err, cap.flashMsg)
+	if cap.err != nil {
+		t.Fatalf("Stop: %v", cap.err)
 	}
 	if err := sleep.Wait(); err == nil || !strings.Contains(err.Error(), "terminated") {
 		t.Fatalf("the process in the lock must get SIGTERM, got %v", err)

@@ -85,15 +85,15 @@ func TestNavGatedOnAuthAndBadge(t *testing.T) {
 	if n := c.Nav("", false); n != nil {
 		t.Fatalf("anonymous Nav = %v, want nil", n)
 	}
-	// The entry advertises the poll endpoint; the badge itself is filled by the
-	// /chat/badge poll (which counts the user's chat doorbell tasks), not computed
-	// at render time — so the initial Badge is 0 regardless of unread.
+	// The entry is live: the badge is filled by the heartbeat (which counts the
+	// user's chat doorbell tasks), not computed at render time — so the initial
+	// Badge is 0 regardless of unread.
 	n := c.Nav("alice", false)
 	if len(n) != 1 || n[0].Href != "/chat" || n[0].Match != "/chat" || n[0].Icon == "" || n[0].Badge != 0 {
 		t.Fatalf("Nav = %+v", n)
 	}
-	if n[0].BadgeURL != "/chat/badge" {
-		t.Errorf("Nav BadgeURL = %q, want /chat/badge", n[0].BadgeURL)
+	if !n[0].Live {
+		t.Errorf("Nav entry must be live: %+v", n[0])
 	}
 }
 
@@ -864,7 +864,7 @@ func (f *fakeKernel) enableCount() int  { f.mu.Lock(); defer f.mu.Unlock(); retu
 // TestGetBadge checks the nav badge fragment: the count of the user's outstanding
 // chat doorbell tasks (bare number; empty when zero). It reads the kernel tasks —
 // the single source of truth — filtered to chat, ignoring other tasks.
-func TestGetBadge(t *testing.T) {
+func TestWatchBadge(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	f.tasksJSON = `[
@@ -876,21 +876,64 @@ func TestGetBadge(t *testing.T) {
 	sm := scs.New()
 	c.deps = apps.Deps{Address: testAddress, Client: cl, Sessions: session.NewManager(sm, cl)}
 
-	body := func() string {
-		rec := httptest.NewRecorder()
+	answer := func(shown string) string {
+		var got template.HTML
 		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
-			c.getBadge(w, r)
+			got, _ = c.watch(r, "badge", shown)
 		}))
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/chat/badge", nil))
-		return strings.TrimSpace(rec.Body.String())
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/tick", nil))
+		return string(got)
 	}
-	if got := body(); got != "2" {
+	if got := answer("0"); !strings.Contains(got, ">2</span>") || !strings.Contains(got, `value="chat:badge:2"`) {
 		t.Errorf("badge = %q, want 2 (two chat doorbell rooms; the someone task ignored)", got)
 	}
-	f.tasksJSON = `[]` // no doorbells → empty body (hidden by .badge:empty)
-	if got := body(); got != "" {
-		t.Errorf("zero badge = %q, want empty", got)
+	if got := answer("2"); got != "" {
+		t.Errorf("a badge already showing 2 must not be swapped, got %q", got)
+	}
+	f.tasksJSON = `[]` // no doorbells → the badge empties
+	if got := answer("2"); !strings.Contains(got, `hx-swap-oob="outerHTML:.badge-chat"></span>`) || !strings.Contains(got, `value="chat:badge:0"`) {
+		t.Errorf("zero badge = %q, want empty count", got)
+	}
+}
+
+// The room watch appends the messages after the shown seq as self-targeting
+// cards and advances the cursor; with nothing new it answers nothing.
+func TestWatchRoomAppendsNewCards(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	st := mustStore(t)
+	r, _ := st.CreateRoom("bob@testnet", "n", []string{"alice@testnet"})
+	st.PostMessage("bob@testnet", r.ID, "hi")
+	c := New()
+	c.daemon = daemon.New(st, "s", "vs", noAuth, nil)
+	c.dc = daemon.NewClient(c.daemon)
+	cl := client.New(f.url, nil)
+	sm := scs.New()
+	var name string
+	var view msgsView
+	c.deps = apps.Deps{
+		Address:   testAddress,
+		Me:        func(*http.Request) string { return "alice@testnet" },
+		CSRFField: func(*http.Request) template.HTML { return "" },
+		Fragment:  func(n string, data any) (template.HTML, error) { name, view = n, data.(msgsView); return "<tick>", nil },
+		Client:    cl,
+		Sessions:  session.NewManager(sm, cl),
+	}
+	answer := func(shown string) string {
+		var got template.HTML
+		h := sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			_ = c.deps.Sessions.Login(req.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "alice@testnet", session.Pin{})
+			got, _ = c.watch(req, r.ID, shown)
+		}))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/tick", nil))
+		return string(got)
+	}
+	if got := answer("0"); got != "<tick>" || name != "_chat_tick" || len(view.Cards) != 1 || view.After == 0 || view.RoomID != r.ID {
+		t.Fatalf("first watch: %q %q %+v", got, name, view)
+	}
+	if got := answer(strconv.FormatInt(view.After, 10)); got != "" {
+		t.Fatalf("nothing new must answer nothing, got %q", got)
 	}
 }
 

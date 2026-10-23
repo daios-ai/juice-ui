@@ -24,12 +24,11 @@
   {{end}}
 </nav>
 
-<div class="msgs" id="chat-messages" data-autoscroll
-     hx-get="/chat/room/{{$rid}}/messages" hx-include="#chat-after"
-     hx-trigger="every 4s" hx-target="#chat-messages" hx-swap="beforeend">
+<div class="msgs" id="chat-messages" data-autoscroll>
   {{range $d.Msgs.Cards}}{{template "_chat_message" .}}{{else}}<p class="muted" id="chat-empty">No messages yet.</p>{{end}}
 </div>
 <input type="hidden" id="chat-after" name="after" value="{{$d.Msgs.After}}">
+<input type="hidden" id="watch-chat-room" name="watch" value="chat:{{$rid}}:{{$d.Msgs.After}}">
 
 <form class="composer" method="post" action="/chat/room/{{$rid}}/message"
       hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"

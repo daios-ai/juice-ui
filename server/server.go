@@ -60,12 +60,13 @@ type Server struct {
 	secure     bool
 	publicURL  string // configured absolute base URL; "" → derive from the request
 	apps       []apps.App
-	appStore   *appStore       // per-app persisted state (state.json), keyed by kernel
-	home       string          // component home dir handed to apps
-	badgeTTL   time.Duration   // nav-badge poll interval + task-badge cache TTL
-	identity   *KernelIdentity // which kernel this UI is for, and its money unit
-	kernelName string          // the kernel's name in the client records, for the chrome
-	config     Configuration   // this installation's kernel configuration; nil = none
+	appStore   *appStore               // per-app persisted state (state.json), keyed by kernel
+	home       string                  // component home dir handed to apps
+	badgeTTL   time.Duration           // the heartbeat's slow lane, and the task badge's cache TTL
+	watchers   map[string]apps.Watcher // the heartbeat's watchers by kind (tick.go)
+	identity   *KernelIdentity         // which kernel this UI is for, and its money unit
+	kernelName string                  // the kernel's name in the client records, for the chrome
+	config     Configuration           // this installation's kernel configuration; nil = none
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
@@ -271,7 +272,11 @@ func New(o Options) (http.Handler, error) {
 		identity:   o.Identity,
 		kernelName: o.KernelName,
 		config:     o.Config,
+		watchers:   map[string]apps.Watcher{},
 	}
+	s.watch("inbox", s.watchInbox)
+	s.watch("process", s.watchProcess)
+	s.watch("peer", s.watchPeer)
 	as, err := newAppStore(o.StatePath, o.Identity.recorded)
 	if err != nil {
 		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
@@ -292,7 +297,8 @@ func New(o Options) (http.Handler, error) {
 	})
 
 	// Public auth routes.
-	mux.HandleFunc("GET /health", s.getHealth) // open liveness probe + browser heartbeat
+	mux.HandleFunc("GET /health", s.getHealth)            // open liveness probe
+	mux.HandleFunc("GET /tick", s.requireAuth(s.getTick)) // the page's heartbeat (tick.go)
 	mux.HandleFunc("GET /login", s.getLogin)
 	mux.HandleFunc("POST /login", s.postLogin)
 	mux.HandleFunc("POST /signup", s.postSignup)
@@ -364,7 +370,6 @@ func New(o Options) (http.Handler, error) {
 
 	// Inbox — tasks addressed to you.
 	mux.HandleFunc("GET /inbox", s.requireAuth(s.getTasks))
-	mux.HandleFunc("GET /inbox/badge", s.requireAuth(s.getTasksBadge))
 	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getTask))
 	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteTask))
 	mux.HandleFunc("POST /inbox/{id}/cancel", s.requireAuth(s.postCancelTask))
@@ -652,6 +657,9 @@ func (s *Server) appDeps() apps.Deps {
 		RenderFragment: func(w http.ResponseWriter, status int, name string, data any) error {
 			return s.render.Fragment(w, status, name, data)
 		},
+		Fragment:          s.render.HTML,
+		Watch:             s.watch,
+		Superuser:         s.isSuperuser,
 		HandleErr:         s.handleErr,
 		HandleErrFragment: s.handleErrFragment,
 		FlashRedirect:     s.flashRedirect,
@@ -697,7 +705,7 @@ var (
 func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	nav := []NavItem{
 		{Slug: "home", Label: "Home", Href: "/", Icon: iconHome},
-		{Slug: "inbox", Label: "Inbox", Href: "/inbox", Icon: iconInbox, BadgeURL: "/inbox/badge"},
+		{Slug: "inbox", Label: "Inbox", Href: "/inbox", Icon: iconInbox, Live: true},
 		{Slug: "workshop", Label: "Workshop", Href: "/workshop", Icon: iconWorkshop},
 		{Slug: "wallet", Label: "Wallet", Href: "/wallet", Icon: iconWallet},
 		{Slug: "settings", Label: "Settings", Href: "/settings", Icon: iconYou},
@@ -709,13 +717,13 @@ func (s *Server) buildNav(r *http.Request, active string) []NavItem {
 	for _, f := range s.apps {
 		for _, e := range f.Nav(me, super) {
 			nav = append(nav, NavItem{
-				Slug:     e.Slug,
-				Label:    e.Label,
-				Href:     e.Href,
-				Icon:     e.Icon,
-				Badge:    e.Badge,
-				BadgeURL: e.BadgeURL,
-				Active:   e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
+				Slug:   e.Slug,
+				Label:  e.Label,
+				Href:   e.Href,
+				Icon:   e.Icon,
+				Badge:  e.Badge,
+				Live:   e.Live,
+				Active: e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
 
 				Divider: firstApp, // separate the apps group from the core groups
 			})
@@ -801,11 +809,6 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Data:         data,
 	}
 }
-
-// badgeSecs is the poll interval in whole seconds — the same value the nav badges
-// use — for the federation and call-gate live pollers that carry it in view data
-// (a standalone fragment has no Page envelope to read .BadgeSecs from).
-func (s *Server) badgeSecs() int { return int(s.badgeTTL / time.Second) }
 
 // activeGroup maps a request path to the nav group it belongs to, for
 // aria-current highlighting.

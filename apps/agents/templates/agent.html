@@ -7,11 +7,7 @@
 </div>
 
 <h2>Status</h2>
-<div id="agent-status" class="row compact"
-     hx-get="/agents/{{$h}}/status" hx-trigger="every 3s"
-     hx-target="#agent-status" hx-swap="innerHTML">
-  {{template "_agent_status" $d}}
-</div>
+{{template "_agent_status" $d}}
 
 {{/* An agent IS a user: it holds its own principal on this kernel, funded like
      anybody's, and spends it (ecosystem-standard §6). The card is the kernel's

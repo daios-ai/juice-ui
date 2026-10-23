@@ -1,8 +1,3 @@
-{{/* _badge_poll — a nav attention badge that htmx re-fetches every .Every seconds
-     from .URL. Body is the initial count (empty when zero; .badge:empty hides it),
-     which the poll then overwrites. Build the model with the `badge` helper. */}}
-{{define "_badge_poll"}}<span class="badge" hx-get="{{.URL}}" hx-trigger="load, every {{.Every}}s" hx-swap="innerHTML" aria-label="{{.Label}}">{{if .Count}}{{.Count}}{{end}}</span>{{end}}
-
 {{/* _media — the 16:9 image slot (§5.13). A kernel image later (ROADMAP);
      the deterministic cardArt fallback until then. Takes an Action. */}}
 {{define "_media"}}<span class="media">{{cardArt .ID .Action .Kind}}</span>{{end}}
@@ -548,7 +543,7 @@
 {{range .Nav}}
 {{if .Divider}}<div class="menu-divider"></div>{{end}}
 <a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>
-  {{if .BadgeURL}}<span class="ico-badge-wrap">{{.Icon}}{{template "_badge_poll" (badge .BadgeURL .Label .Badge $.BadgeSecs)}}</span>
+  {{if .Live}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge badge-{{.Slug}}" aria-label="{{.Label}}">{{if .Badge}}{{.Badge}}{{end}}</span></span>
   {{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>
   {{else}}{{.Icon}}{{end}}
   {{.Label}}
@@ -660,6 +655,7 @@
      peer-sync cache. */}}
 {{define "_inspect_status"}}
 {{$i := .Inspection}}
+<input type="hidden" name="slow" value="peer:{{.Key}}">
 {{/* A detail page states each fact with a label, present facts only: no row
      reads none, and reachability is stated once (§6.6). */}}
 <dl class="kv">
@@ -710,7 +706,8 @@
      the processView. */}}
 {{define "_process_await"}}
 {{if .Process.AwaitingReceipt}}
-<div id="process-await" hx-get="/processes/{{.Process.ID}}" hx-trigger="every {{.BadgeSecs}}s" hx-swap="outerHTML" hx-target="this">
+<div id="process-await">
+  <input type="hidden" name="slow" value="process:{{.Process.ID}}:awaiting">
   <p class="banner banner-info">Awaiting remote receipt{{if .Process.AwaitingReceiptSince}} since {{shortTime .Process.AwaitingReceiptSince}}{{end}}.</p>
 </div>
 {{else}}

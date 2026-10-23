@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -60,11 +61,27 @@ func TestAppInterface(t *testing.T) {
 	}
 }
 
-// TestNavEntryCarriesBadgeURL documents the seam field an app sets to get a live,
-// core-polled badge.
-func TestNavEntryCarriesBadgeURL(t *testing.T) {
-	e := NavEntry{Slug: "chat", BadgeURL: "/chat/badge", Badge: 3}
-	if e.BadgeURL != "/chat/badge" || e.Badge != 3 {
+// TestNavEntryCarriesLive documents the seam field an app sets to have its
+// badge kept current by the heartbeat, under its slug.
+func TestNavEntryCarriesLive(t *testing.T) {
+	e := NavEntry{Slug: "chat", Live: true, Badge: 3}
+	if !e.Live || e.Badge != 3 {
 		t.Fatalf("NavEntry badge fields = %+v", e)
+	}
+}
+
+// Badge is the heartbeat's answer for a nav badge: every copy of the badge by
+// class, and the watch input naming the count now shown; empty when zero so
+// the badge hides.
+func TestBadgeAnswer(t *testing.T) {
+	got := string(Badge("chat", "Chat", 3))
+	for _, want := range []string{`class="badge badge-chat"`, `aria-label="Chat"`, `hx-swap-oob="outerHTML:.badge-chat"`, `>3</span>`,
+		`id="watch-chat" name="slow" value="chat:badge:3" hx-swap-oob="true"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Badge missing %q: %s", want, got)
+		}
+	}
+	if got := string(Badge("inbox", "Waiting tasks", 0)); !strings.Contains(got, `hx-swap-oob="outerHTML:.badge-inbox"></span>`) || !strings.Contains(got, `value="inbox:badge:0"`) {
+		t.Errorf("zero badge must render empty: %s", got)
 	}
 }

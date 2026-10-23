@@ -15,10 +15,12 @@ package apps
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
@@ -75,11 +77,30 @@ type NavEntry struct {
 	Match  string        // path prefix for the active state, e.g. "/chat"
 	Active bool          // computed by the core against the request path
 	Badge  int           // app-scoped attention count (e.g. unread); the initial server-rendered value
-	// BadgeURL, when set, is an authenticated GET fragment endpoint the core polls
-	// (on the configured interval) to keep the badge live without a page reload.
-	// Contract: return text/html whose body is the bare count, empty when zero.
-	// Convention "/" + Slug + "/badge". Empty ⇒ the badge is static (Badge only).
-	BadgeURL string
+	// Live says the badge is kept current by the page's heartbeat: the app
+	// registered a watcher under its slug that answers the key "badge" (see
+	// Watcher). False ⇒ the badge is static (Badge only).
+	Live bool
+}
+
+// Watcher answers one watch of the page's heartbeat — kind:key:shown, the
+// kind being the app's slug — with the out-of-band fragment that brings the
+// page to the truth, or "" when the page already shows it (shown is the state
+// the page rendered, so an unchanged widget is never swapped under a click).
+// A watcher gates itself as its routes do.
+type Watcher func(r *http.Request, key, shown string) (template.HTML, error)
+
+// Badge is the out-of-band answer for a nav badge: every copy of the badge
+// (`.badge-<slug>`, the sidebar and the mobile trigger) and the watch input
+// that names the count now shown. Empty when zero, so `.badge:empty` hides it.
+func Badge(slug, label string, n int) template.HTML {
+	count := ""
+	if n > 0 {
+		count = strconv.Itoa(n)
+	}
+	return template.HTML(fmt.Sprintf(`<span class="badge badge-%[1]s" aria-label="%[2]s" hx-swap-oob="outerHTML:.badge-%[1]s">%[3]s</span>`+
+		`<input type="hidden" id="watch-%[1]s" name="slow" value="%[1]s:badge:%[4]d" hx-swap-oob="true">`,
+		slug, template.HTMLEscapeString(label), count, n))
 }
 
 // Deps is the core capability surface handed to a app at Mount time. It
@@ -97,6 +118,16 @@ type Deps struct {
 
 	// RenderFragment renders a single named partial (for htmx swaps).
 	RenderFragment func(w http.ResponseWriter, status int, name string, data any) error
+
+	// Fragment renders a single named partial to markup, for a watcher's answer.
+	Fragment func(name string, data any) (template.HTML, error)
+
+	// Watch registers the app's watcher for the page's heartbeat, under a kind
+	// (the app's slug). See Watcher.
+	Watch func(kind string, fn Watcher)
+
+	// Superuser reports whether the request's session is the operator's.
+	Superuser func(r *http.Request) bool
 
 	// HandleErr maps an error to a full error page (or a login redirect on an
 	// expired session) and reports whether it handled a non-nil error.

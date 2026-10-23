@@ -153,7 +153,6 @@ type actionView struct {
 	Proposed        bool
 	ProposedMessage string
 	CSRFField       template.HTML // carried so the polled _action_run fragment's form keeps its token
-	BadgeSecs       int
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -185,7 +184,6 @@ type processView struct {
 	Process      client.Process
 	Transactions []client.Transaction
 	Me           string // the viewer's address
-	BadgeSecs    int    // poll interval for the self-terminating awaiting-receipt poll
 }
 
 type transactionsView struct {
@@ -1037,62 +1035,8 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 		return
 	}
-	if r.Header.Get("HX-Request") == "true" && s.sessions.IsAuthenticated(r.Context()) {
-		_ = s.sessions.Logout(r.Context())
-		w.Header().Set("HX-Redirect", "/login")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_, _ = w.Write([]byte("kernel unreachable"))
-}
-
-func (s *Server) getTasksBadge(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	sm := s.sessions.SCS()
-
-	// Use int64 (Unix nanos) for the timestamp — gob can encode basic types
-	// without registration; time.Time stored as interface{} would need gob.Register.
-	cachedAtNano := sm.GetInt64(ctx, sessionKeyBadgeAt)
-	count := sm.GetInt(ctx, sessionKeyBadgeCount)
-	if time.Since(time.Unix(0, cachedAtNano)) > s.badgeTTL {
-		_ = s.sessions.Do(ctx, func(tok string) error {
-			me, e := s.client.Me(ctx, tok)
-			if e != nil {
-				return e
-			}
-			tasks, e := s.client.ListTasks(ctx, tok, "waiting")
-			if e != nil {
-				return e
-			}
-			requesters, e := s.client.ListRequesters(ctx, tok)
-			if e != nil {
-				return e
-			}
-			// A superuser lists everyone's tasks; the badge counts the viewer's,
-			// and each requester awaiting a decision, whose tasks are withheld.
-			n := 0
-			for _, t := range tasks {
-				if t.Waiting() && t.RequiredCaller == me.Address {
-					n++
-				}
-			}
-			for _, q := range requesters {
-				if q.Status == "pending" {
-					n++
-				}
-			}
-			count = n
-			sm.Put(ctx, sessionKeyBadgeCount, n)
-			sm.Put(ctx, sessionKeyBadgeAt, time.Now().UnixNano())
-			return nil
-		})
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if count > 0 {
-		fmt.Fprintf(w, "%d", count)
-	}
 }
 
 // ---- action detail & run ----
@@ -1129,7 +1073,6 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 			NeedsConnect: needsConnect(a, grantedRefs(me)),
 			OpenForm:     openForm(r, "action-detail"),
 			CSRFField:    csrf.TemplateField(r),
-			BadgeSecs:    s.badgeSecs(),
 		}
 		// Ratings: fetch all, slice one page here (uniform with the other lists).
 		ratingsOffset := queryOffset(r)
@@ -2114,17 +2057,10 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Process = p
 		view.Me = s.sessions.Address(ctx)
-		view.BadgeSecs = s.badgeSecs()
 		view.Transactions, _ = s.client.ListTransactions(ctx, tok, id, 0)
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
-		return
-	}
-	// A process parked on a remote receipt polls this handler; return just the
-	// awaiting-receipt region so it self-terminates when the receipt settles.
-	if isHTMX(r) {
-		_ = s.render.Fragment(w, http.StatusOK, "_process_await", view)
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "process", "Session", view)
