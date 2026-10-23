@@ -322,7 +322,7 @@
   {{if .Structured}}{{template "_json_switch"}}{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
-  {{if .Locked}}<div class="frozen locked">{{template "_frozen" (frozen .Locked)}}</div>{{end}}
+  {{if .Locked}}<div class="view locked">{{template "_view" (view .Locked)}}</div>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
   <div class="cluster">
     {{/* A task completion (OneShot) is NEUTRAL and names no amount: it spends
@@ -445,35 +445,27 @@
 {{/* _field — one node of the schema tree (§6.2). Its wire name is its JSON
      Pointer under f_ (value), t_ (type; a container's says how its children
      nest) and n_ (the null choice). An object is a group of its properties, an
-     array its rows, a json node a JSON editor, anything else one input. An
-     array element has no name and renders label-less. A Frozen node is the
-     same anatomy read-only (§7): no wire names, no buttons, each control a
-     .box holding the value. */}}
+     array its rows, a json node a JSON editor, anything else one input. A
+     named container folds behind its summary, open while it is unsettled
+     (Field.Open); an array element has no name, so it is a plain group and
+     renders label-less. A ReadOnly node is the same anatomy read-only (§7):
+     no wire names, no buttons, each control a .box holding the value, and a
+     container's summary names its size. */}}
 {{define "_field_name"}}{{if .Title}}{{.Title}} <span class="mono muted small">{{.Name}}</span>{{else}}{{.Name}}{{end}}{{if .Required}} <span class="req" title="required">*</span>{{end}}{{end}}
 {{define "_field_null"}}{{if .Nullable}}<label class="check"><input type="checkbox" name="n_{{.Path}}" value="1"{{if .Null}} checked{{end}}> null</label>{{end}}{{end}}
 {{define "_field"}}
 {{if or (eq .Type "object") (eq .Type "array")}}
-<fieldset class="field group">
-  {{if .Name}}<legend>{{template "_field_name" .}}</legend>{{end}}
-  {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
-  {{if not .Frozen}}<input type="hidden" name="t_{{.Path}}" value="{{.Type}}">{{if .Required}}<input type="hidden" name="r_{{.Path}}" value="1">{{end}}{{end}}
-  {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else if .Frozen}}
-  <div class="rows">{{range .Rows}}{{template "_field" .}}{{end}}</div>
-  {{else}}
-  <div class="rows" data-rows="{{.Path}}">
-    {{range .Rows}}<div class="row compact" data-row><div class="stretch">{{template "_field" .}}</div><button type="button" class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></div>{{end}}
-  </div>
-  <button type="button" class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>
-  {{end}}
-  {{template "_field_null" .}}
-</fieldset>
+{{if .Name}}<details class="field group"{{if .Open}} open{{end}}>
+  <summary>{{template "_field_name" .}}{{if .ReadOnly}} <span class="muted small">{{.Size}}</span>{{end}}</summary>
+  {{template "_node" .}}
+</details>{{else}}<div class="field group">{{template "_node" .}}</div>{{end}}
 {{else}}
 <div class="field">
-  {{if .Name}}<label{{if not .Frozen}} for="f_{{.Path}}"{{end}}>{{template "_field_name" .}}</label>{{end}}
+  {{if .Name}}<label{{if not .ReadOnly}} for="f_{{.Path}}"{{end}}>{{template "_field_name" .}}</label>{{end}}
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
   {{$v := .Value}}
-  {{if .Frozen}}
-  {{if .Long}}<details class="frozen-fold"><summary>{{truncate 80 $v}}</summary><div class="box">{{$v}}</div></details>{{else if eq .Type "null"}}<div class="box muted">{{$v}}</div>{{else if eq .Type "raw"}}<pre class="json">{{$v}}</pre>{{else}}<div class="box">{{$v}}</div>{{end}}
+  {{if .ReadOnly}}
+  {{if .Long}}<details class="fold"><summary>{{truncate 80 $v}}</summary><div class="box">{{$v}}</div></details>{{else if eq .Type "null"}}<div class="box muted">{{$v}}</div>{{else if eq .Type "raw"}}<pre class="json">{{$v}}</pre>{{else}}<div class="box">{{$v}}</div>{{end}}
   {{else}}
   <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
   {{/* Value pre-fills a field where something already proposed an argument
@@ -506,16 +498,33 @@
 {{end}}
 {{end}}
 
-{{/* _frozen — a JSON value as a frozen form (§7): the root object's fields
+{{/* _node — a container's body: its help, its type hints, an object's
+     properties or an array's rows (with Add and Remove when editable), and
+     its null choice. */}}
+{{define "_node"}}
+  {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
+  {{if not .ReadOnly}}<input type="hidden" name="t_{{.Path}}" value="{{.Type}}">{{if .Required}}<input type="hidden" name="r_{{.Path}}" value="1">{{end}}{{end}}
+  {{if eq .Type "object"}}{{range .Fields}}{{template "_field" .}}{{end}}{{else if .ReadOnly}}
+  <div class="rows">{{range .Rows}}{{template "_field" .}}{{end}}</div>
+  {{else}}
+  <div class="rows" data-rows="{{.Path}}">
+    {{range .Rows}}<div class="row compact" data-row><div class="stretch">{{template "_field" .}}</div><button type="button" class="btn-icon" data-row-remove aria-label="Remove"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></button></div>{{end}}
+  </div>
+  <button type="button" class="btn-icon" data-row-add aria-label="Add"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg></button>
+  {{end}}
+  {{template "_field_null" .}}
+{{end}}
+
+{{/* _view — a JSON value as the view (§7): the root object's fields
      directly, any other value one label-less box. _value_block adds the raw
-     JSON behind the JSON toggle, and the download when the value is a
+     JSON behind the JSON switch, and the download when the value is a
      transaction's result. */}}
-{{define "_frozen"}}{{if and (eq .Type "object") .Fields}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}{{template "_field" .}}{{end}}{{end}}
-{{define "_value_block"}}<div class="frozen" data-json>{{template "_json_switch"}}<div data-fields>{{template "_frozen" .Root}}</div><div data-raw hidden><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</div></div>{{end}}
+{{define "_view"}}{{if and (eq .Type "object") .Fields}}{{range .Fields}}{{template "_field" .}}{{end}}{{else}}{{template "_field" .}}{{end}}{{end}}
+{{define "_value_block"}}<div class="view" data-json>{{template "_json_switch"}}<div data-fields>{{template "_view" .Root}}</div><div data-raw hidden><pre class="json">{{json .Raw}}</pre>{{if .Download}}<p class="flush"><a href="{{.Download}}" download>Download</a></p>{{end}}</div></div>{{end}}
 
 {{/* _json_switch — THE JSON switch (§5.4): a switch at the top right of a
      [data-json] block, swapping its [data-fields] for its [data-raw] — the
-     editor in a form, the raw JSON of a frozen form. */}}
+     editor in a form, the raw JSON of a view. */}}
 {{define "_json_switch"}}<button type="button" class="switch" role="switch" aria-checked="false" data-json-switch>JSON</button>{{end}}
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
@@ -558,7 +567,7 @@
 {{if .Receipt}}
 <div class="outcome {{if .Receipt.Valid}}success{{else}}failed{{end}}" role="status">
   <strong>{{if .Receipt.Valid}}Receipt verified.{{else}}Verification failed.{{end}}</strong>
-  <div class="frozen">{{template "_frozen" (frozen .Receipt.Checks)}}</div>
+  <div class="view">{{template "_view" (view .Receipt.Checks)}}</div>
 </div>
 {{else if .ReceiptMsg}}
 <div class="banner banner-info" role="status">{{.ReceiptMsg}}</div>

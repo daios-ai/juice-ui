@@ -269,7 +269,7 @@ wireRowsIn(document);
 // The JSON toggle: a [data-json] block holds its fields ([data-fields]) and its
 // JSON ([data-raw]); the toggle swaps them. In a form the hidden editor's
 // inputs are disabled so only the visible one submits and has_fields tells the
-// server which it was (the kernel validates either, R2.5); on a frozen form
+// server which it was (the kernel validates either, R2.5); on a view
 // the same control shows the raw JSON. Without script the block stays as the
 // server rendered it. A result arrives by htmx swap, so new content is wired
 // as it lands.

@@ -4214,7 +4214,7 @@ func TestResultDownloadIsAnAttachment(t *testing.T) {
 	}
 	// The receipt page renders both values as trees, escaped, and offers the download.
 	page := getBody(t, cl, srv.URL+"/transactions/T1")
-	for _, want := range []string{`<label>q</label>`, `<div class="box">&lt;b&gt;x&lt;/b&gt;</div>`, `<legend>items</legend>`, `<div class="rows">`, `<div class="box muted">null</div>`, `href="/transactions/T1/result.json" download`, "line1\nline2", `data-json-switch`} {
+	for _, want := range []string{`<label>q</label>`, `<div class="box">&lt;b&gt;x&lt;/b&gt;</div>`, `<summary>items <span class="muted small">2 items</span></summary>`, `<div class="rows">`, `<div class="box muted">null</div>`, `href="/transactions/T1/result.json" download`, "line1\nline2", `data-json-switch`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("receipt page missing %q", want)
 		}

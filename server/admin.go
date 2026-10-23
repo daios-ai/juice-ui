@@ -551,7 +551,7 @@ func configForm(schema json.RawMessage, shown map[string]any, keyed map[string]b
 		if f.Name == "$schema" || f.Name == "credentials_key" {
 			continue // editor metadata; a secret is never shown
 		}
-		f.Frozen = slices.Contains(configFixed, f.Name)
+		f.ReadOnly = slices.Contains(configFixed, f.Name)
 		maskKeys(&f, keyed)
 		fields = append(fields, f)
 	}

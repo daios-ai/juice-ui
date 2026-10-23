@@ -44,24 +44,35 @@ type Field struct {
 	Example string          // a compact JSON skeleton: a json node's placeholder
 	Secret  bool            // a write-only input, never filled (the configuration's keys)
 	items   json.RawMessage // an array's item schema, for one more row
-	// Frozen marks a node of the frozen form (§7): a JSON value — a result, a
-	// receipt's args, sealed partial_args — in the form's own anatomy, each
-	// control a read-only box. Long marks a frozen string past longText, folded.
-	Frozen, Long bool
+	// MinItems is an array's schema minItems: the rows the kernel demands once
+	// the array is sent.
+	MinItems int
+	// ReadOnly marks a node of the view (§7) — a JSON value: a result, a
+	// receipt's args, sealed partial_args — or a fixed key of the config form,
+	// in the form's own anatomy, each control a read-only box with no wire name.
+	// Long marks a read-only string past longText, folded.
+	ReadOnly, Long bool
+	// Open says a container renders open: an unnamed node always, a named one
+	// while unsettled (settle).
+	Open bool
 }
 
-// longText is the length past which a frozen string folds, so a page body or a
-// compiled artifact does not push the rest of the result off screen.
+// longText is the length past which a read-only string folds, so a page body
+// or a compiled artifact does not push the rest of the result off screen.
 const longText = 800
 
-// Frozen builds the frozen form of a JSON value. Object keys keep the order
+// View builds the view of a JSON value (§7). Object keys keep the order
 // served; a number keeps its literal text; null, `{}` and `[]` are words in a
 // box; empty or invalid input is `raw`, shown as it came.
-func Frozen(raw json.RawMessage) Field { return frozenField("", raw) }
+func View(raw json.RawMessage) Field {
+	f := viewField("", raw)
+	f.settle(true)
+	return f
+}
 
-func frozenField(name string, raw json.RawMessage) Field {
+func viewField(name string, raw json.RawMessage) Field {
 	raw = bytes.TrimSpace(raw)
-	f := Field{Name: name, Frozen: true}
+	f := Field{Name: name, ReadOnly: true}
 	if len(raw) == 0 || !json.Valid(raw) {
 		f.Type, f.Value = "raw", string(raw)
 		return f
@@ -77,7 +88,7 @@ func frozenField(name string, raw json.RawMessage) Field {
 		_ = json.Unmarshal(raw, &m)
 		f.Type = "object"
 		for _, k := range keys {
-			f.Fields = append(f.Fields, frozenField(k, m[k]))
+			f.Fields = append(f.Fields, viewField(k, m[k]))
 		}
 	case '[':
 		var items []json.RawMessage
@@ -88,7 +99,7 @@ func frozenField(name string, raw json.RawMessage) Field {
 		}
 		f.Type = "array"
 		for _, it := range items {
-			f.Rows = append(f.Rows, frozenField("", it))
+			f.Rows = append(f.Rows, viewField("", it))
 		}
 	case '"':
 		f.Type = "string"
@@ -102,6 +113,73 @@ func frozenField(name string, raw json.RawMessage) Field {
 		f.Type, f.Value = "number", string(raw)
 	}
 	return f
+}
+
+// Size names a container's extent for its summary: "3 fields", "1 item".
+func (f Field) Size() string {
+	n, word := len(f.Fields), "field"
+	if f.Type == "array" {
+		n, word = len(f.Rows), "item"
+	}
+	if n != 1 {
+		word += "s"
+	}
+	return strconv.Itoa(n) + " " + word
+}
+
+// holds reports whether a value sits anywhere under f: the node is in use, so
+// it will be sent.
+func (f *Field) holds() bool {
+	if f.Null || f.Value != "" {
+		return true
+	}
+	for i := range f.Fields {
+		if f.Fields[i].holds() {
+			return true
+		}
+	}
+	for i := range f.Rows {
+		if f.Rows[i].holds() {
+			return true
+		}
+	}
+	return false
+}
+
+// settle decides Open for f and every node under it. demanded says f must be
+// sent: it is the root, or its parent is sent and the schema requires it. A
+// node is sent when demanded or when it holds a value, and a required rule
+// binds only under a node being sent — JSON Schema's `required` applies to an
+// object that is present, and an empty container is omitted on submit
+// (§6.2). It reports whether f is unsettled: demanded and empty, or sent and
+// holding an unsettled node. A named container opens while unsettled; an
+// unnamed one — the root, an array's element — has no summary to fold behind
+// and is always open. A view demands nothing, so its named nodes close (§7).
+func (f *Field) settle(demanded bool) bool {
+	unsettled := false
+	sent := demanded || f.holds()
+	switch {
+	case f.Null:
+	case f.Type == "object":
+		for i := range f.Fields {
+			unsettled = f.Fields[i].settle(sent && f.Fields[i].Required) || unsettled
+		}
+	case f.Type == "array":
+		for i := range f.Rows {
+			unsettled = f.Rows[i].settle(sent && i < f.MinItems) || unsettled
+		}
+	default:
+		unsettled = demanded && f.Value == ""
+	}
+	f.Open = f.Name == "" || unsettled
+	return unsettled
+}
+
+// settle settles each root field by its own requiredness: the root is sent.
+func settle(fields []Field) {
+	for i := range fields {
+		fields[i].settle(fields[i].Required)
+	}
 }
 
 // FormModel is the server-side model the run form is rendered from (R6.5.4). The
@@ -189,6 +267,7 @@ func BuildForm(inputSchema json.RawMessage) FormModel {
 	if fields == nil {
 		return FormModel{NoFields: true}
 	}
+	settle(fields)
 	return FormModel{Fields: fields, Example: SchemaExample(inputSchema)}
 }
 
@@ -223,7 +302,7 @@ func buildField(path, name string, raw json.RawMessage, required bool) Field {
 		Title: p.Title, Description: p.Description, Enum: enumStrings(p.Enum),
 		Min: string(p.Minimum), Max: string(p.Maximum),
 		MinLength: string(p.MinLength), MaxLength: string(p.MaxLength),
-		Default: scalarText(p.Default), Input: inputType(p.Format),
+		Default: scalarText(p.Default), Input: inputType(p.Format), MinItems: p.MinItems,
 	}
 	// HTML has no exclusive bound; for an integer the next value is exact.
 	if f.Type == "integer" {
@@ -269,7 +348,9 @@ func (fm *FormModel) Fill(args json.RawMessage) []string {
 	if json.Unmarshal(args, &m) != nil || m == nil {
 		return []string{"/: not a JSON object"}
 	}
-	return fillObject("", fm.Fields, m)
+	inexact := fillObject("", fm.Fields, m)
+	settle(fm.Fields)
+	return inexact
 }
 
 // fillObject fills fields from an object's members, reporting each member it
@@ -529,72 +610,33 @@ func enumStrings(raw []json.RawMessage) []string {
 	return out
 }
 
-// LockedField is a pre-filled field from the task's partial_args, shown
-// read-only so the completer understands the pre-set context.
-type LockedField struct {
-	Name  string
-	Value string // compact JSON representation of the value
-}
-
-// TaskFormModel splits a task's input into what the creator already bound
-// (Locked) and what the required caller must still supply (Editable).
-// IsApproval is true when there are no editable fields and the user only
-// needs to confirm.
+// TaskFormModel is a task's completion form: what the required caller must
+// still supply (Editable), or IsApproval when nothing is left to fill and the
+// completer only confirms. What the creator bound (partial_args) renders as
+// the view above it (_call_form).
 type TaskFormModel struct {
 	Editable   FormModel
-	Locked     []LockedField
 	IsApproval bool
 }
 
 // BuildTaskForm derives a completion form from the task's allowed_input and
-// partial_args. Fields present in partial_args are moved to Locked; fields
-// absent remain in Editable. Nil or invalid partial_args is treated as empty
-// (all fields editable).
+// partial_args: a field present in partial_args is sealed and leaves the
+// form. Nil or invalid partial_args is treated as empty (all fields editable).
 func BuildTaskForm(inputSchema, partialArgs json.RawMessage) TaskFormModel {
 	full := BuildForm(inputSchema)
-
-	// Parse partial_args into a map. Any failure → treat as empty.
 	bound := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(partialArgs)) > 0 {
 		_ = json.Unmarshal(partialArgs, &bound)
 	}
-
 	if len(bound) == 0 {
 		// An empty-object schema with nothing pre-bound is still an approval: the
 		// kernel is asking for a confirmation, not for input.
 		return TaskFormModel{Editable: full, IsApproval: full.NoFields}
 	}
-
-	// Split schema fields into locked (present in partial_args) and editable.
-	var locked []LockedField
-	var editFields []Field
-	inSchema := make(map[string]bool, len(full.Fields))
-	for _, f := range full.Fields {
-		inSchema[f.Name] = true
-		if val, ok := bound[f.Name]; ok {
-			locked = append(locked, LockedField{Name: f.Name, Value: string(val)})
-		} else {
-			editFields = append(editFields, f)
-		}
-	}
-	// Include bound keys not in the schema (no type info, show raw value).
-	for _, k := range orderedKeys(partialArgs) {
-		if !inSchema[k] {
-			locked = append(locked, LockedField{Name: k, Value: string(bound[k])})
-		}
-	}
-
-	editFM := FormModel{
-		Fields:         editFields,
-		UseRawFallback: full.UseRawFallback,
-		NoFields:       full.NoFields,
-		Example:        full.Example,
-	}
-	// Approval: nothing meaningful is left for the completer to fill. This covers
-	// a structured schema with every field locked AND a free-form schema whose
-	// pre-bound args already carry the payload (e.g. sys/sink with `message`
-	// locked) — in both cases we show just the acknowledge button, not a dead raw
-	// box. We are inside the len(bound) > 0 branch, so args are already pre-bound.
-	isApproval := len(editFields) == 0
-	return TaskFormModel{Editable: editFM, Locked: locked, IsApproval: isApproval}
+	full.Fields = slices.DeleteFunc(full.Fields, func(f Field) bool { _, ok := bound[f.Name]; return ok })
+	// Nothing left to fill is an approval: a structured schema with every field
+	// sealed, and a free-form schema whose pre-bound args already carry the
+	// payload (sys/sink with `message` sealed) — the acknowledge button alone,
+	// not a dead raw box.
+	return TaskFormModel{Editable: full, IsApproval: len(full.Fields) == 0}
 }

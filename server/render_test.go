@@ -625,8 +625,8 @@ func TestCallFormComplete(t *testing.T) {
 	}
 	// Sealed args render as a read-only dl (the completed part), separated from the
 	// editable part — same anatomy as the run form.
-	if !strings.Contains(body, `class="frozen locked"`) || !strings.Contains(body, "<label>to</label>") || !strings.Contains(body, `<div class="box">bob</div>`) {
-		t.Errorf("locked args must render as a frozen form: %s", body)
+	if !strings.Contains(body, `class="view locked"`) || !strings.Contains(body, "<label>to</label>") || !strings.Contains(body, `<div class="box">bob</div>`) {
+		t.Errorf("locked args must render as the view: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "prefilled") || strings.Contains(strings.ToLower(body), "remaining args") {
 		t.Error("locked args carry no verbal label — the visual contrast is the signposting")
@@ -661,7 +661,7 @@ func TestCallFormCarriesTheJSONToggle(t *testing.T) {
 	if !strings.Contains(body, toggle) || !strings.Contains(body, `name="has_fields"`) || !strings.Contains(body, `data-json `) {
 		t.Errorf("structured form must carry the JSON toggle and the has_fields marker: %s", body)
 	}
-	if strings.Index(body, toggle) > strings.Index(body, `class="frozen locked"`) {
+	if strings.Index(body, toggle) > strings.Index(body, `class="view locked"`) {
 		t.Error("the toggle sits at the top of the block, before the sealed part")
 	}
 	if strings.Contains(body, "data-raw-seg") || strings.Contains(body, "field-switch") || strings.Contains(body, "aria-pressed") {
@@ -2140,10 +2140,12 @@ func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
 	}
 }
 
-// The run form renders the schema's tree: a nested object as a group under its
-// legend, an array as rows that name their path (a nested array its own), a map
-// node as an empty JSON editor with the shape as placeholder, a default as a
-// placeholder and never a value, and only grammar buttons.
+// The run form renders the schema's tree: a named container as a group that
+// folds behind its summary, open while a field it demands is empty and closed
+// otherwise, an element as a plain group, an array as rows that name their
+// path (a nested array its own), a map node as an empty JSON editor with the
+// shape as placeholder, a default as a placeholder and never a value, and only
+// grammar buttons.
 func TestFormFieldsRenderTheTree(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -2153,14 +2155,17 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 		"msgs":{"type":"array","title":"Messages","description":"M.","items":{"type":"object","properties":{
 			"role":{"type":"string","default":"user"},
 			"tags":{"type":"array","items":{"type":"string"}}}}},
-		"meta":{"type":"object"}}}`))
+		"meta":{"type":"object"},
+		"to":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},"required":["to"]}`))
 	rec := httptest.NewRecorder()
 	if err := r.Fragment(rec, 200, "_form_fields", fm); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`<fieldset class="field group">`, `<legend>Messages <span class="mono muted small">msgs</span></legend>`,
+		`<details class="field group">` + "\n" + `  <summary>Messages <span class="mono muted small">msgs</span></summary>`,
+		`<div class="field group">` + "\n  \n  " + `<input type="hidden" name="t_/msgs/0" value="object">`,
+		`<details class="field group" open>` + "\n" + `  <summary>to <span class="req" title="required">*</span></summary>`,
 		`<input type="hidden" name="t_/msgs" value="array">`, `<div class="rows" data-rows="/msgs">`, `data-row>`,
 		`<input type="hidden" name="t_/msgs/0" value="object">`,
 		`name="f_/msgs/0/role" rows="1" placeholder="user"></textarea>`,
@@ -2176,13 +2181,17 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 	if strings.Contains(body, `>user</textarea>`) {
 		t.Error("a default is a placeholder, never a value")
 	}
+	if strings.Contains(body, "<fieldset") || strings.Contains(body, "<legend") {
+		t.Error("a group is a details, not a fieldset")
+	}
 }
 
-// The frozen form: a result in the form's own anatomy, read-only — labels over
-// boxes, a nested object a group under its legend, an array its rows, the words
-// for null and booleans, a long string folded, nothing submittable, the JSON
-// behind a disclosure, and a Download only where a transaction exists.
-func TestValueBlockRendersAFrozenForm(t *testing.T) {
+// The view: a result in the form's own anatomy, read-only — labels over
+// boxes, a named container a closed group whose summary names it and its
+// size, an element an open plain group, an array its rows, the words for null
+// and booleans, a long string folded, nothing submittable, the JSON behind
+// the switch, and a Download only where a transaction exists.
+func TestValueBlockRendersAView(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
@@ -2198,22 +2207,29 @@ func TestValueBlockRendersAFrozenForm(t *testing.T) {
 	body := render(`{"z":"a\nb","list":[1,true,null],"empty":{},"long":"`+long+`","n":{"k":"<i>"}}`, "/transactions/T1/result.json")
 	for _, want := range []string{
 		`<label>z</label>`, `<div class="box">a` + "\n" + `b</div>`,
-		`<legend>list</legend>`, `<div class="rows">`, `<div class="box">1</div>`, `<div class="box">true</div>`, `<div class="box muted">null</div>`,
+		`<details class="field group">` + "\n" + `  <summary>list <span class="muted small">3 items</span></summary>`,
+		`<div class="rows">`, `<div class="box">1</div>`, `<div class="box">true</div>`, `<div class="box muted">null</div>`,
 		`<label>empty</label>`, `<div class="box muted">{}</div>`,
-		`<details class="frozen-fold"><summary>` + strings.Repeat("x", 80) + `…</summary><div class="box">` + long + `</div></details>`,
-		`<legend>n</legend>`, `<label>k</label>`, `<div class="box">&lt;i&gt;</div>`,
-		`<div class="frozen" data-json><button type="button" class="switch" role="switch" aria-checked="false" data-json-switch>JSON</button><div data-fields>`,
+		`<details class="fold"><summary>` + strings.Repeat("x", 80) + `…</summary><div class="box">` + long + `</div></details>`,
+		`<summary>n <span class="muted small">1 field</span></summary>`, `<label>k</label>`, `<div class="box">&lt;i&gt;</div>`,
+		`<div class="view" data-json><button type="button" class="switch" role="switch" aria-checked="false" data-json-switch>JSON</button><div data-fields>`,
 		`<div data-raw hidden><pre class="json">`,
 		`<a href="/transactions/T1/result.json" download>Download</a>`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("frozen form missing %q:\n%s", want, body)
+			t.Errorf("view missing %q:\n%s", want, body)
 		}
 	}
 	if strings.Contains(body, "<input") || strings.Contains(body, "data-row") {
-		t.Errorf("a frozen form has no control and no row mechanism: %s", body)
+		t.Errorf("a view has no control and no row mechanism: %s", body)
 	}
-	if strings.Index(body, `<label>z</label>`) > strings.Index(body, `<legend>list</legend>`) {
+	if strings.Contains(body, " open>") || strings.Contains(body, "<fieldset") {
+		t.Errorf("a named container of a view is closed: %s", body)
+	}
+	if l := render(`[{"k":1}]`, ""); strings.Count(l, `<div class="field group">`) != 2 || strings.Index(l, `<div class="rows">`) > strings.LastIndex(l, `<div class="field group">`) || strings.Contains(l, "<details") {
+		t.Errorf("a root list and its element are open plain groups: %s", l)
+	}
+	if strings.Index(body, `<label>z</label>`) > strings.Index(body, `<summary>list `) {
 		t.Error("keys keep the order served")
 	}
 	if b := render(`"plain"`, ""); strings.Contains(b, "Download") || strings.Contains(b, "<label") || !strings.Contains(b, `<div class="box">plain</div>`) {

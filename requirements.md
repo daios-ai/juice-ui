@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.31.1
+Version: 0.32.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.32.0.** The **view** is the name of the read-only
+> rendering of a JSON value, until now the frozen form (§7). A named nested
+> node of the form and of the view folds behind its name, as a `details`:
+> closed in the view, where its summary names its size; closed in the form
+> unless a field it demands is still empty, a required key counting once its
+> object is sent and a row once it is under the array's `minItems` (§6.2);
+> the root and an array's elements never fold. The fold is presentation: the
+> args are rebuilt from the form alone, folded or not, and the JSON switch
+> reads every field. A field inside a list's element keeps its spacing.
 
 > **What changed in 0.31.1.** The agent's heartbeat token names the exit
 > line it shows as well as its state, so a start that fails between two
@@ -192,7 +202,7 @@ Status: design draft — endpoint surface gated against the running kernel
 > a submit button bound to the page's one command form. The registry stays
 > inert, server-built JSON, admin verbs for `sys` only.
 
-> **What changed in 0.15.0.** One **frozen form** renders every JSON value a
+> **What changed in 0.15.0.** One **view** (then the frozen form) renders every JSON value a
 > person reads — a run or task result, a receipt's args and result, a task's
 > sealed `partial_args`, the receipt-verification checks (§7): the run form's
 > own anatomy, read-only, so a result looks like the form that produced it;
@@ -1240,8 +1250,11 @@ spend:
   mapped (`multipleOf` would misread HTML's `step`, whose base is `min`;
   `pattern` is anchored differently in HTML).
 * **The form is the schema's tree.** A nested object renders as a group of its
-  properties under its label; an array as rows of its item, `max(minItems, 1)`
-  to start, with Add and Remove; a node the schema leaves open (`{}`, an
+  properties that folds behind its label, open while a field it demands is
+  still empty: a required key counts once its object is sent — the root, a
+  required child of a sent object, or any object holding a value — and a row
+  once it is under the array's `minItems`; an array as rows of its item,
+  `max(minItems, 1)` to start, with Add and Remove, an element never folding; a node the schema leaves open (`{}`, an
   object without `properties`, an array without `items`) as an empty JSON
   editor whose placeholder is the shape, its text sent as the JSON it holds. A field is named by its JSON Pointer
   (`f_/messages/0/content`), its type by `t_<path>` — a container's hint says
@@ -1308,7 +1321,7 @@ spend:
 
   [ Run (0.012 USDC) ]
   ┌─ result ──────────────────────────────────┐
-  │  [frozen form of the result]  Receipt · ▲ ▼ │
+  │  [view of the result]         Receipt · ▲ ▼ │
   └────────────────────────────────────────────┘
 ```
 
@@ -1355,7 +1368,7 @@ one question — what happened to the money — so no two may share a sentence:
   click accepts the new terms (§6.2 quote pinning). Not a failure: nothing was
   locked, so nothing was refunded.
 * success → no sentence: the panel's styling says it, and it holds the result
-  as a frozen form (§7), its JSON behind the JSON toggle and a Download of the
+  as the view (§7), its JSON behind the JSON toggle and a Download of the
   transaction's result; then, below a rule, a receipt
   summary (gross paid / net to provider / fee captioned "on value added"); an
   inline rate control (0/1 + optional note).
@@ -1636,7 +1649,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   own `action` address, captured with the call, so no action is re-read and a
   deleted one still names itself), status, and cost breakdown.
 * The receipt page MUST show parties (buyer/seller, viewer's role highlighted),
-  action ref, args and result as frozen forms (§7, the result with its
+  action ref, args and result as views (§7, the result with its
   Download: `GET /transactions/{id}/result.json`, served as an attachment),
   gross/fee/net (fee captioned "on value
   added"), failure `reason` when present, and the buyer's rating block.
@@ -1952,14 +1965,15 @@ the transaction's `payment` (§6.5).
 * **Money and identity typography.** Money, IDs, hashes, and `owner/name` MUST
   render in **monospace with tabular figures** (the provenance face), regardless
   of the surrounding proportional chrome.
-* **The frozen form is the one rendering of a JSON value a person reads** — a
+* **The view is the one rendering of a JSON value a person reads** — a
   result, a receipt's args and result, a task's sealed `partial_args`, the
   receipt-verification checks. It is the run form's anatomy (§6.2) read-only,
   so a result looks like the form that produced it: a key is a label over a
   box with the input's geometry, in the read-only register (no fill, a hairline
   border) so it cannot be taken for an input, holding the value's text with
   its line breaks;
-  a nested object is a group under its legend; an array is its rows; a number
+  a nested object or array is a group that folds behind its name and its
+  size, closed; an array's element and the root never fold; a number
   is its literal, a boolean, `null`, `{}` and `[]` their words, muted. Keys
   keep the order served. A string past 800 characters folds (closed) behind its
   first line. Nothing is submittable. The raw JSON sits behind the same JSON
@@ -2093,7 +2107,7 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
 
 1. Render every counterparty-authored string escaped and quarantined from chrome:
    no markdown, no auto-links, no bold, no the accent, never adjacent to or styled like
-   a button; a result, args or sealed `partial_args` only through the frozen form
+   a button; a result, args or sealed `partial_args` only through the view
    (§7), whose structure is the JSON type and never the value: no value is
    linked, formatted or turned into an icon, a boolean is its word. The chrome
    vocabulary defined in §7 MUST NOT be applied to counterparty content. Trust affordances
@@ -2145,7 +2159,10 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * CSRF protection on every state-changing route;
 * JSON-Schema-to-form rendering, including `partial_args` lock-out on task cards
   and the `allowed_input`-sourced completion form (target action unreadable →
-  form still renders);
+  form still renders); the fold of a named nested node: open in the form while
+  a field it demands is empty, with an optional object closed until in use and
+  a required array content with its blank row under `minItems` 0, closed in the
+  view with its size in its summary, an element and the root never folded;
 * the form wire and the JSON switch: a required container is sent even
   empty and a blank row dropped; form → JSON is the submit's args; JSON →
   form fills exactly or names each value it cannot hold; the configuration's

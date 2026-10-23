@@ -210,7 +210,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"sub":          func(a, b int64) int64 { return a - b },
 		"json":         prettyJSON,
 		"jsonEdit":     jsonEdit,
-		"frozen":       Frozen,
+		"view":         View,
 		"valueBlock":   valueBlock,
 		"download":     resultDownload,
 		"statusClass":  statusClass,
@@ -384,7 +384,7 @@ func indentJSON(raw json.RawMessage, empty string) string {
 	return buf.String()
 }
 
-// ValueBlock drives _value_block: a value as its frozen form, its raw JSON
+// ValueBlock drives _value_block: a value as its view, its raw JSON
 // behind the disclosure, and the download route when it is a transaction's
 // result.
 type ValueBlock struct {
@@ -394,7 +394,7 @@ type ValueBlock struct {
 }
 
 func valueBlock(raw json.RawMessage, download string) ValueBlock {
-	return ValueBlock{Root: Frozen(raw), Raw: raw, Download: download}
+	return ValueBlock{Root: View(raw), Raw: raw, Download: download}
 }
 
 // resultDownload is the download route of a transaction's result, or "" when

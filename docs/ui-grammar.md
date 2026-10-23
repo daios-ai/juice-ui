@@ -36,9 +36,9 @@ Three laws underpin everything:
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action. The command registry's entries list first among them, marked `›` (`.menu-item.command`; a title row never carries the mark), at most three beside titles, twelve rows in all; `>` lists commands only (§5.9) |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
-| Field | `.field` + inputs/select/textarea · `fieldset.group` (a nested node) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
-| **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a frozen form (§5.4) |
-| **Frozen form** | `.frozen` · `.field .box` · `.frozen-fold` · `_frozen` / `_value_block` partials (the `_field` partial with `Frozen` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
+| Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
+| **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
+| **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -331,7 +331,7 @@ separates it from the content above, and nothing else does (§4).
   pre-filled.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
   (action run **and** task completion), always inline (never a modal): optional
-  **locked block** (a task's pre-bound args as a frozen form, `.frozen.locked`,
+  **locked block** (a task's pre-bound args as the view, `.view.locked`,
   no verbal label — the sealed half of the form), the **editable input**, **one
   button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
@@ -339,15 +339,17 @@ separates it from the content above, and nothing else does (§4).
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the JSON toggle), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.
-  Structured means the schema's whole tree: a nested object is a
-  `fieldset.group` under its `legend`, an array its `[data-rows]` with Add and
-  Remove, a map-shaped node an empty JSON textarea with the shape as its
+  Structured means the schema's whole tree: a nested object or array is a
+  `details.group` under its `summary`, closed unless a field it demands is
+  still empty (a required key of an object being sent, a row under
+  `minItems`), an element a `div.group`, an array's rows `[data-rows]` with
+  Add and Remove, a map-shaped node an empty JSON textarea with the shape as its
   placeholder; a field's wire name is its JSON Pointer (`f_/messages/0/content`,
   `t_` the type hint, `n_` the null box; `requirements.md` §6.2).
 - **JSON switch** (`.switch`, `_json_switch`: the label `JSON` and a track
   with a knob, `role="switch"`, at the top right of a `[data-json]` block) is
   the one way to see a block as JSON: on a structured form it swaps the fields
-  for the raw editor; on a frozen form it swaps the fields for the raw JSON (and
+  for the raw editor; on a view it swaps the fields for the raw JSON (and
   its Download). A binary view whose off-state has no name is what `.tabs`
   (§5.2) cannot express; the switch is the component for it. No "edit as JSON"
   button, no disclosure for JSON, no underlined word.
@@ -519,7 +521,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | Element | Use |
 |---|---|
 | Flash bar | one-shot result of the last action, top of content |
-| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as a frozen form (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row |
+| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as the view (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row |
 | `.banner` (`-info`/`-error`) | inline notice. A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
@@ -675,8 +677,8 @@ obligations above.
   a **payment task** completion is a genuine spend and uses the money button
   naming the amount (§5.1, requirements.md §6.3).
 - Counterparty content (names, descriptions, args, results, reasons) renders
-  **inert**: escaped, no chrome, no accent; a JSON value only through the frozen
-  form (`_frozen` / `_value_block`), which is structure by JSON type and
+  **inert**: escaped, no chrome, no accent; a JSON value only through the view
+  (`_view` / `_value_block`), which is structure by JSON type and
   interprets nothing. Trust affordances key on kernel-captured fields, never
   payload shape.
 - No spend reachable from a list view or a GET; money moves only through a
@@ -714,7 +716,7 @@ obligations above.
   (only an identity or a scope note), any prose note (`.help` / `.card-note`) that
   swells into a paragraph, and any **`¤` character, `$` before a figure, or
   hard-coded `step` on an amount input** (`TestMoneyGrammar`), any `{{json …}}`
-  outside `_value_block` (`TestJSONRendersThroughTheFrozenForm`), and the retired
+  outside `_value_block` (`TestJSONRendersThroughTheView`), and the retired
   `data-param-*` row attributes — money is the
   world's unit and symbol through the `money` helper, the step is the world's
   through `{{amountStep}}`, and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the

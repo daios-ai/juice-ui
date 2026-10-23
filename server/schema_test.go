@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -142,9 +143,6 @@ func TestBuildTaskFormAllEditable(t *testing.T) {
 	if sfm.IsApproval {
 		t.Error("should not be approval")
 	}
-	if len(sfm.Locked) != 0 {
-		t.Errorf("expected 0 locked, got %d", len(sfm.Locked))
-	}
 	if len(sfm.Editable.Fields) != 2 {
 		t.Errorf("expected 2 editable, got %d", len(sfm.Editable.Fields))
 	}
@@ -156,9 +154,6 @@ func TestBuildTaskFormPartialLock(t *testing.T) {
 	sfm := BuildTaskForm(schema, partial)
 	if sfm.IsApproval {
 		t.Error("should not be approval — b is still editable")
-	}
-	if len(sfm.Locked) != 1 || sfm.Locked[0].Name != "a" || sfm.Locked[0].Value != `"hello"` {
-		t.Errorf("locked wrong: %+v", sfm.Locked)
 	}
 	if len(sfm.Editable.Fields) != 1 || sfm.Editable.Fields[0].Name != "b" {
 		t.Errorf("editable wrong: %+v", sfm.Editable.Fields)
@@ -172,9 +167,6 @@ func TestBuildTaskFormAllLocked(t *testing.T) {
 	if !sfm.IsApproval {
 		t.Error("all fields locked → IsApproval should be true")
 	}
-	if len(sfm.Locked) != 2 {
-		t.Errorf("expected 2 locked, got %d", len(sfm.Locked))
-	}
 	if len(sfm.Editable.Fields) != 0 {
 		t.Errorf("expected 0 editable, got %d", len(sfm.Editable.Fields))
 	}
@@ -186,9 +178,6 @@ func TestBuildTaskFormInvalidPartial(t *testing.T) {
 		sfm := BuildTaskForm(schema, bad)
 		if sfm.IsApproval {
 			t.Error("invalid partial_args should produce all-editable form")
-		}
-		if len(sfm.Locked) != 0 {
-			t.Errorf("invalid partial_args should produce 0 locked, got %d", len(sfm.Locked))
 		}
 		if len(sfm.Editable.Fields) != 1 {
 			t.Errorf("invalid partial_args should keep all fields editable")
@@ -207,9 +196,6 @@ func TestBuildTaskFormFreeFormLockedIsApproval(t *testing.T) {
 	}
 	if len(sfm.Editable.Fields) != 0 {
 		t.Errorf("free-form approval has no editable fields, got %d", len(sfm.Editable.Fields))
-	}
-	if len(sfm.Locked) != 1 {
-		t.Errorf("the pre-bound key is locked, expected 1, got %d", len(sfm.Locked))
 	}
 }
 
@@ -231,11 +217,8 @@ func TestBuildTaskFormExtraKeysInPartial(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"a":{"type":"string"}}}`)
 	partial := json.RawMessage(`{"a":"v","extra":true}`)
 	sfm := BuildTaskForm(schema, partial)
-	if !sfm.IsApproval {
-		t.Error("all schema fields locked → IsApproval should be true")
-	}
-	if len(sfm.Locked) != 2 {
-		t.Errorf("both schema and extra keys locked, expected 2, got %d", len(sfm.Locked))
+	if !sfm.IsApproval || len(sfm.Editable.Fields) != 0 {
+		t.Error("all schema fields sealed → IsApproval should be true")
 	}
 }
 
@@ -276,9 +259,6 @@ func TestApprovalCollapsesForBothKernelShapes(t *testing.T) {
 	sealed := BuildTaskForm(json.RawMessage(`{"type":"object"}`), json.RawMessage(`{"message":"please review"}`))
 	if !sealed.IsApproval {
 		t.Error("a free-form task whose payload is sealed is an approval")
-	}
-	if len(sealed.Locked) != 1 {
-		t.Errorf("the sealed payload renders read-only, got %d locked", len(sealed.Locked))
 	}
 }
 
@@ -471,13 +451,23 @@ func TestFormFillIsExactOrReports(t *testing.T) {
 	}
 }
 
-// The frozen form keeps the kernel's own order and types: keys as served,
-// numbers as written, booleans and null as words, a long string folded, empty
-// containers as words, empty or invalid input raw.
-func TestFrozenKeepsOrderAndTypes(t *testing.T) {
-	f := Frozen(json.RawMessage(`{"z":1.50,"a":[true,null,"x"],"m":{"k":"v"},"e":{},"l":[]}`))
-	if f.Type != "object" || len(f.Fields) != 5 || !f.Frozen {
+// The view keeps the kernel's own order and types: keys as served, numbers
+// as written, booleans and null as words, a long string folded, empty
+// containers as words, empty or invalid input raw. Its named containers are
+// closed, the root and an element open (§7).
+func TestViewKeepsOrderAndTypes(t *testing.T) {
+	f := View(json.RawMessage(`{"z":1.50,"a":[true,null,"x"],"m":{"k":"v"},"e":{},"l":[]}`))
+	if f.Type != "object" || len(f.Fields) != 5 || !f.ReadOnly || !f.Open {
 		t.Fatalf("root = %+v", f)
+	}
+	if arr, m := f.Fields[1], f.Fields[2]; arr.Open || m.Open || !arr.Rows[0].Open {
+		t.Errorf("a named container of the view is closed, an element open: %v %v %v", arr.Open, m.Open, arr.Rows[0].Open)
+	}
+	if arr, m := f.Fields[1], f.Fields[2]; arr.Size() != "3 items" || m.Size() != "1 field" {
+		t.Errorf("sizes = %q %q", arr.Size(), m.Size())
+	}
+	if l := View(json.RawMessage(`[{"k":1}]`)); !l.Open || !l.Rows[0].Open || l.Rows[0].Fields[0].Name != "k" {
+		t.Errorf("a root list and its element are open: %+v", l)
 	}
 	names := []string{}
 	for _, c := range f.Fields {
@@ -493,7 +483,7 @@ func TestFrozenKeepsOrderAndTypes(t *testing.T) {
 	if arr.Type != "array" || len(arr.Rows) != 3 || arr.Rows[0].Value != "true" || arr.Rows[1].Type != "null" || arr.Rows[2].Type != "string" || arr.Rows[2].Name != "" {
 		t.Errorf("array = %+v", arr.Rows)
 	}
-	if m := f.Fields[2]; m.Type != "object" || m.Fields[0].Name != "k" || m.Fields[0].Value != "v" || !m.Fields[0].Frozen {
+	if m := f.Fields[2]; m.Type != "object" || m.Fields[0].Name != "k" || m.Fields[0].Value != "v" || !m.Fields[0].ReadOnly {
 		t.Errorf("nested object = %+v", m)
 	}
 	if e, l := f.Fields[3], f.Fields[4]; e.Type != "null" || e.Value != "{}" || l.Type != "null" || l.Value != "[]" {
@@ -501,16 +491,70 @@ func TestFrozenKeepsOrderAndTypes(t *testing.T) {
 	}
 	long := strings.Repeat("é", longText+1)
 	b, _ := json.Marshal(long)
-	if v := Frozen(b); !v.Long || v.Value != long {
+	if v := View(b); !v.Long || v.Value != long {
 		t.Errorf("a string past %d characters folds: %+v", longText, v.Long)
 	}
-	if v := Frozen(json.RawMessage(`"short"`)); v.Long || v.Type != "string" {
+	if v := View(json.RawMessage(`"short"`)); v.Long || v.Type != "string" {
 		t.Error("a short string does not fold")
 	}
-	if v := Frozen(nil); v.Type != "raw" || v.Value != "" {
+	if v := View(nil); v.Type != "raw" || v.Value != "" {
 		t.Errorf("empty = %+v", v)
 	}
-	if v := Frozen(json.RawMessage(`{broken`)); v.Type != "raw" || v.Value != "{broken" {
+	if v := View(json.RawMessage(`{broken`)); v.Type != "raw" || v.Value != "{broken" {
 		t.Errorf("invalid = %+v", v)
+	}
+}
+
+// A named container of the form opens while unsettled: a field it demands is
+// still empty. A required rule binds only under a node being sent — the root,
+// a required child of a sent object, a row under minItems, or any node
+// holding a value — so an optional object stays closed until it is in use,
+// and a required array with minItems 0 is content with its blank row (§6.2).
+func TestNodesOpenWhileUnsettled(t *testing.T) {
+	schema := func(minItems int) json.RawMessage {
+		return json.RawMessage(`{"type":"object","properties":{
+			"to":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
+			"meta":{"type":"object","properties":{"tag":{"type":"string"},"note":{"type":"string"}},"required":["tag"]},
+			"items":{"type":"array","minItems":` + strconv.Itoa(minItems) + `,"items":{"type":"object","properties":{"k":{"type":"string"}},"required":["k"]}},
+			"nul":{"type":["object","null"],"properties":{"x":{"type":"string"}},"required":["x"]}
+		},"required":["to","items","nul"]}`)
+	}
+	open := func(fm FormModel) string {
+		var names []string
+		for _, f := range fm.Fields {
+			if f.Open {
+				names = append(names, f.Name)
+			}
+		}
+		return strings.Join(names, ",")
+	}
+	fm := BuildForm(schema(1))
+	if got := open(fm); got != "to,items,nul" {
+		t.Errorf("built with minItems 1: open = %q, want to (name empty), items (its first row is demanded), nul (x empty)", got)
+	}
+	if !fm.Fields[2].Rows[0].Open {
+		t.Error("an element is open whatever it holds")
+	}
+	if got := open(BuildForm(schema(0))); got != "to,nul" {
+		t.Errorf("built with minItems 0: open = %q, want to,nul — the kernel accepts the empty list", got)
+	}
+	fill := func(min int, args string) FormModel {
+		fm := BuildForm(schema(min))
+		if inexact := fm.Fill(json.RawMessage(args)); inexact != nil {
+			t.Fatalf("Fill(%s) = %v", args, inexact)
+		}
+		return fm
+	}
+	if got := open(fill(1, `{"to":{"name":"x"},"items":[{"k":"v"}],"nul":null}`)); got != "" {
+		t.Errorf("every demand met: open = %q, want none (null ticked settles nul)", got)
+	}
+	if got := open(fill(0, `{"to":{"name":"x"},"meta":{"note":"n"},"nul":{"x":"y"}}`)); got != "meta" {
+		t.Errorf("a note puts meta in use, so its tag is demanded: open = %q", got)
+	}
+	if got := open(fill(0, `{"to":{"name":"x"},"meta":{"tag":"t"},"nul":{"x":"y"}}`)); got != "" {
+		t.Errorf("meta in use and complete: open = %q", got)
+	}
+	if s := (Field{Type: "object"}).Size(); s != "0 fields" {
+		t.Errorf("Size = %q", s)
 	}
 }
