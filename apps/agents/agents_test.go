@@ -1,12 +1,15 @@
 package agents
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/alexedwards/scs/v2"
@@ -30,7 +33,7 @@ type capture struct {
 func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 	t.Helper()
 	fl := &fakeLauncher{}
-	a := &Agents{root: t.TempDir(), logs: t.TempDir(), sup: newSupervisor(fl)}
+	a := &Agents{root: t.TempDir(), logs: t.TempDir(), client: t.TempDir(), sup: newSupervisor(fl)}
 	cap := &capture{}
 	a.deps = apps.Deps{
 		Me:        func(r *http.Request) string { return "sys@testnet" },
@@ -54,6 +57,7 @@ func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 			cap.flashTo, cap.flashKind, cap.flashMsg = to, kind, msg
 		},
 	}
+	a.deps.HandleErrFragment = a.deps.HandleErr
 	return a, fl, cap
 }
 
@@ -317,34 +321,38 @@ func TestPostCreateWrongPassword(t *testing.T) {
 	}
 }
 
-// Sign in replaces a stopped agent's session alone; while its daemon is alive
-// it is refused, and a wrong password returns the dialog open.
-func TestPostSignIn(t *testing.T) {
+// Start with a password makes the login's session first, then spawns; a wrong
+// password returns the Start dialog open and spawns nothing; while a daemon is
+// alive the post is a no-op and writes no credential.
+func TestPostStartWithPassword(t *testing.T) {
 	a, _, fl, cap := kernelApp(t)
 	_ = a.create("research")
 	post := func(body string) {
-		req := postForm("/agents/research/signin", body)
+		req := postForm("/agents/research/start", body)
 		req.SetPathValue("handle", "research")
-		a.postSignIn(httptest.NewRecorder(), req)
-	}
-	post("password=pw")
-	if cap.flashKind != "success" || cap.flashMsg != "Signed in." {
-		t.Fatalf("sign in: %q %q", cap.flashKind, cap.flashMsg)
-	}
-	if _, err := os.Stat(a.credPath("research")); err != nil {
-		t.Fatal("the session must be written")
+		a.postStart(httptest.NewRecorder(), req)
 	}
 	post("password=nope")
 	v, ok := cap.data.(detailView)
-	if !ok || cap.status != http.StatusUnprocessableEntity || v.OpenForm != "signin" || v.Error != "Password is incorrect." {
-		t.Fatalf("want the dialog back open at 422, got %d %+v", cap.status, cap.data)
+	if !ok || cap.status != http.StatusUnprocessableEntity || v.OpenForm != "start" || v.Error != "Password is incorrect." || len(fl.started) != 0 {
+		t.Fatalf("want the Start dialog back open at 422 and nothing spawned, got %d %+v", cap.status, cap.data)
 	}
-	_ = a.sup.start("research", "research@testnet", "")
-	fl.procs[0].drain = true
-	_ = a.sup.stop("research")
 	post("password=pw")
-	if cap.flashKind != "error" || cap.flashMsg != "Stop the agent first." {
-		t.Fatalf("a draining daemon is alive: %q %q", cap.flashKind, cap.flashMsg)
+	if cap.flashKind != "success" || len(fl.started) != 1 {
+		t.Fatalf("start with a password: %q %q started=%d", cap.flashKind, cap.flashMsg, len(fl.started))
+	}
+	st, err := os.Stat(a.credPath("research"))
+	if err != nil {
+		t.Fatal("the session must be written before the spawn")
+	}
+	fl.procs[0].drain = true
+	_ = a.sup.stop("research", 0)
+	post("password=pw")
+	if cap.flashKind != "success" || len(fl.started) != 1 {
+		t.Fatalf("a draining daemon is alive: no second spawn, got %q started=%d", cap.flashKind, len(fl.started))
+	}
+	if st2, _ := os.Stat(a.credPath("research")); st2.ModTime() != st.ModTime() {
+		t.Fatal("no credential is written while the agent runs")
 	}
 }
 
@@ -421,7 +429,7 @@ func TestPostStartRunsTheLogin(t *testing.T) {
 	if got := fl.started[0]; got != (startRec{"research@testnet", a.logPath("research")}) {
 		t.Fatalf("launcher got %+v", got)
 	}
-	if !a.sup.running("research") {
+	if !a.sup.alive("research") {
 		t.Fatal("want running after start, tracked by handle")
 	}
 }
@@ -453,7 +461,7 @@ func TestStatusShapeIsShared(t *testing.T) {
 	}
 	// A running agent states no exit.
 	_ = a.sup.start("research", "research@testnet", a.logPath("research"))
-	if st := a.status(req, "research"); !st.Running || st.LastLine != "" {
+	if st, _ := a.status(req, "research"); !st.Running || st.LastLine != "" {
 		t.Errorf("running status = %+v", st)
 	}
 }
@@ -478,7 +486,7 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 	req = postForm("/agents/research/stop", "")
 	req.SetPathValue("handle", "research")
 	a.postStop(httptest.NewRecorder(), req)
-	if a.sup.running("research") {
+	if a.sup.alive("research") {
 		t.Fatal("want not running after stop")
 	}
 }
@@ -493,7 +501,7 @@ func TestPostDeleteRequiresStopped(t *testing.T) {
 	_ = writeCredential(a.credPath("research"), client.Tokens{}, "P1")
 	_ = a.sup.start("research", "research@testnet", "")
 	fl.procs[0].drain = true
-	_ = a.sup.stop("research")
+	_ = a.sup.stop("research", 0)
 	req := postForm("/agents/research/delete", "")
 	req.SetPathValue("handle", "research")
 	a.postDelete(httptest.NewRecorder(), req)
@@ -579,8 +587,8 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 	if len(auth) != 0 {
 		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
 	}
-	if len(superuser) != 9 {
-		t.Errorf("every route must be gated: %d of 9", len(superuser))
+	if len(superuser) != 8 {
+		t.Errorf("every route must be gated: %d of 8", len(superuser))
 	}
 }
 
@@ -607,26 +615,22 @@ func TestAgentViewCarriesNoAccountWithoutAKernel(t *testing.T) {
 	if v.Account != nil {
 		t.Errorf("no kernel means no account read, not an invented one: %+v", v.Account)
 	}
-	if len(v.Activity) != 0 {
-		t.Errorf("and no activity: %+v", v.Activity)
-	}
 }
 
 // The agent's home is named by its login; its principal is that handle's
-// address on this kernel, and that address is what the account read and the
-// activity rows key on — a row names its own action, so none is re-read.
-func TestAgentActivityIsReadByAddress(t *testing.T) {
+// address on this kernel, and the page reads that one row and nothing else:
+// the kernel filters transactions by process, not by party, so its history is
+// the transactions page, never a scan of the whole ledger here.
+func TestAgentAccountIsOneReadByAddress(t *testing.T) {
 	mux := http.NewServeMux()
-	var asked string
+	var paths []string
 	mux.HandleFunc("GET /v1/admin/users/{address}", func(w http.ResponseWriter, r *http.Request) {
-		asked = r.PathValue("address")
+		paths = append(paths, r.URL.Path)
 		w.Write([]byte(`{"address":"research@testnet","available":3000000,"locked":0}`))
 	})
-	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"T1","action_id":"A1","action":"sys@testnet/time","owner":"research@testnet",
-		 "caller":"research@testnet","target":"sys@testnet","status":"success","started_at":"2026-09-14T10:00:00Z"},
-		 {"id":"T2","action_id":"A1","action":"sys@testnet/time","owner":"research@elsewhere",
-		 "caller":"research@elsewhere","target":"sys@testnet","status":"success","started_at":"2026-09-14T10:00:00Z"}]`))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		http.NotFound(w, r)
 	})
 	kernel := httptest.NewServer(mux)
 	defer kernel.Close()
@@ -650,14 +654,98 @@ func TestAgentActivityIsReadByAddress(t *testing.T) {
 	if !ok {
 		t.Fatalf("view = %T", cap.data)
 	}
-	if asked != "research@testnet" {
-		t.Errorf("the account is read by address, got %q", asked)
+	if len(paths) != 1 || paths[0] != "/v1/admin/users/research@testnet" {
+		t.Errorf("one read, by address: %v", paths)
 	}
 	if v.Account == nil || v.Account.Available != 3000000 {
 		t.Fatalf("the agent's account must be read: %+v", v.Account)
 	}
-	if len(v.Activity) != 1 || v.Activity[0].ID != "T1" {
-		t.Fatalf("only the agent's own rows, by address: %+v", v.Activity)
+}
+
+// Running is the daemon's own word, its lock in the home, whoever started it:
+// a locked home is running with no child of ours, Start spawns nothing, Delete
+// is refused, and Stop signals the process the lock names. A lock nobody holds
+// is a stale number; a lock that cannot be read is an error, never "stopped".
+func TestRunningByTheLock(t *testing.T) {
+	a, fl, cap := testApp(t)
+	_ = a.create("research")
+	dir, _ := a.agentDir("research")
+	lock := filepath.Join(dir, "serve.lock")
+	sleep := exec.Command("sleep", "30")
+	if err := sleep.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sleep.Process.Kill(); _ = sleep.Wait() }()
+	f, err := os.OpenFile(lock, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%d\n", sleep.Process.Pid)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if running, err := a.running("research"); err != nil || !running {
+		t.Fatalf("a held lock is running: %v %v", running, err)
+	}
+	post := func(path string, h http.HandlerFunc) {
+		req := postForm(path, "")
+		req.SetPathValue("handle", "research")
+		h(httptest.NewRecorder(), req)
+	}
+	post("/agents/research/start", a.postStart)
+	if len(fl.started) != 0 || cap.flashKind != "success" {
+		t.Fatalf("Start on a served agent spawns nothing: started=%d %q", len(fl.started), cap.flashKind)
+	}
+	post("/agents/research/delete", a.postDelete)
+	if cap.flashKind != "error" || !a.exists("research") {
+		t.Fatalf("Delete on a served agent is refused: %q", cap.flashKind)
+	}
+	post("/agents/research/stop", a.postStop)
+	if cap.err != nil || cap.flashMsg != "Stopping…" {
+		t.Fatalf("Stop: %v %q", cap.err, cap.flashMsg)
+	}
+	if err := sleep.Wait(); err == nil || !strings.Contains(err.Error(), "terminated") {
+		t.Fatalf("the process in the lock must get SIGTERM, got %v", err)
+	}
+	// Released: the number is stale, nobody serves.
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	if running, err := a.running("research"); err != nil || running {
+		t.Fatalf("a free lock is stopped: %v %v", running, err)
+	}
+	// A held lock naming no process is an error on Stop, not a stop.
+	_ = f.Truncate(0)
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	post("/agents/research/stop", a.postStop)
+	if cap.err == nil || !strings.Contains(cap.err.Error(), "names no process") {
+		t.Fatalf("want an error for a blank pid, got %v", cap.err)
+	}
+	// An unreadable lock is an error, in the list and in the fragment.
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = os.Chmod(lock, 0)
+	cap.err = nil
+	a.getIndex(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/agents", nil))
+	if cap.err == nil {
+		t.Fatal("an unreadable lock must fail the page, not read as stopped")
+	}
+}
+
+// Start asks for the password only when the login has no session to serve
+// on: no credential file, or a last run ended on the daemon's own advice.
+func TestStartAsksForThePasswordWithoutASession(t *testing.T) {
+	a, _, _ := testApp(t)
+	_ = a.create("research")
+	req := httptest.NewRequest(http.MethodGet, "/agents/research", nil)
+	if st, _ := a.status(req, "research"); !st.AskPassword {
+		t.Fatal("no credential: ask")
+	}
+	_ = writeCredential(a.credPath("research"), client.Tokens{AccessToken: "t"}, "P1")
+	if st, _ := a.status(req, "research"); st.AskPassword {
+		t.Fatal("a credential and a clean log: one click")
+	}
+	_ = os.WriteFile(a.logPath("research"), []byte("error: no session for research@testnet: run juice auth login research@testnet\n"), 0o600)
+	if st, _ := a.status(req, "research"); !st.AskPassword {
+		t.Fatal("the daemon said to log in: ask")
 	}
 }
 

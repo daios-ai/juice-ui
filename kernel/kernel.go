@@ -337,7 +337,7 @@ func (i *Installation) Create(world, handle, password, recoveryKey string) error
 	case home != "" && home != world:
 		return fmt.Errorf("an unfinished kernel home %s listens on this port; finish it or remove it", filepath.Join(i.Home, "kernels", home))
 	}
-	if held, err := locked(filepath.Join(dir, "serve.lock")); err != nil || held {
+	if held, err := Locked(filepath.Join(dir, "serve.lock")); err != nil || held {
 		if err == nil {
 			err = fmt.Errorf("a kernel holds %s", dir)
 		}
@@ -506,7 +506,7 @@ func (i *Installation) serveAnswering(world string) error {
 // returns once the lock is free. The lock, not the number, says whether a
 // kernel holds the home (ecosystem-standard §3).
 func stop(lock string) error {
-	held, err := locked(lock)
+	held, err := Locked(lock)
 	if err != nil {
 		return err
 	}
@@ -524,7 +524,7 @@ func stop(lock string) error {
 				return errors.New("the kernel did not stop within 30 seconds")
 			}
 			time.Sleep(100 * time.Millisecond)
-			if held, err = locked(lock); err != nil {
+			if held, err = Locked(lock); err != nil {
 				return err
 			}
 		}
@@ -532,10 +532,10 @@ func stop(lock string) error {
 	return nil
 }
 
-// locked reports whether a server holds the exclusive flock on path: the lock
+// Locked reports whether a server holds the exclusive flock on path: the lock
 // is tried without blocking and released at once. A missing file is held by
 // nobody; any error but contention is returned, never read as an answer.
-func locked(path string) (bool, error) {
+func Locked(path string) (bool, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -665,7 +665,7 @@ func (i *Installation) Ensure(ctx context.Context, report func(State, string)) {
 				report(Starting, world)
 				// A server holding the home — booting, or starting — is waited
 				// for, never joined by a second: the lock, not a guess, says so.
-				held, err := locked(filepath.Join(i.Home, "kernels", world, "serve.lock"))
+				held, err := Locked(filepath.Join(i.Home, "kernels", world, "serve.lock"))
 				switch {
 				case err != nil:
 					report(Failed, err.Error())

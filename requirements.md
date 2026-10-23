@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.29.0
+Version: 0.30.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.30.0.** An agent is running when its daemon says so
+> (§6.1): juice-agent 0.6.0 holds `serve.lock` in the agent's home for as long
+> as it serves, as a kernel holds its own, so an agent served from a terminal
+> is seen, stopped and protected like one the UI started, and Stop signals
+> the process in the lock. Start is one button: one click while the login has
+> a session, a password dialog when it has none; Sign in is gone. A daemon
+> outlives the UI, as the kernel does, and the next UI finds it through its
+> lock. The agent page shows the account and no longer scans the kernel's
+> whole transaction history for ten rows.
 
 > **What changed in 0.29.0.** The agents app makes an agent's session (§5,
 > §6.1). New agent takes the handle and a kernel password: it creates the
@@ -849,7 +859,7 @@ the two are not the same client.
 
 So the UI reads the `kernels` half of the client records and **never reads a
 credential**. It writes one only for an agent's login, at the operator's act
-(New agent, Sign in in §6.1), from a password typed in that act and kept
+(New agent, or Start when the login has no session, §6.1), from a password typed in that act and kept
 nowhere, and the kernel record it writes when that kernel is absent or has
 moved is the one `juice kernel add` would. A browser visitor's session never
 reaches the store. Two consequences make this a rule rather than a
@@ -951,14 +961,23 @@ kernel and world is in use, and keys everything durable by
   process on the host. The agents app is one: it keeps an agent's home at
   `$JUICE_HOME/agents/<login>/` (ecosystem-standard §2), edits its `agent.md`
   and optional `config.json`, a blank `config.json` being no file, and runs
-  `juice-agent serve <login>`. The daemon's session is the login's own, made
-  as `juice auth login <login>` would (§5): New agent creates the account
-  when the kernel has none and the session, from the handle and a kernel
-  password; Sign in, on a stopped agent, the session alone, which is how an
-  agent made at the command line or one whose session died is served from
-  the page. An agent is running until its process has exited, and Sign in
-  and Delete are refused while it is. A stopped agent shows the daemon's
-  `error:` line from its current run.
+  `juice-agent serve <login>` detached, so the daemon outlives the UI as the
+  kernel does. An agent is running when a daemon holds `serve.lock` in its
+  home (juice-agent 0.6.0 §11, as a kernel holds its own, ecosystem-standard
+  §3), whoever started it, or when a child the UI just spawned has not yet
+  taken the lock; a lock whose state cannot be read is an error, never
+  "stopped". Stop signals the process named in the lock. The daemon's session
+  is the login's own, made as `juice auth login <login>` would (§5): New agent
+  creates the account when the kernel has none and the session, from the
+  handle and a kernel password; Start is one click while the login has a
+  session and asks for the password when it has none — no credential file, or
+  a last run that ended with the daemon's `run juice auth login` advice —
+  which is how an agent made at the command line or one whose session died
+  is served from the page. Start and Delete are refused while the agent runs,
+  and no credential is written then. A stopped agent shows the daemon's
+  `error:` line from its current run. The agent's page shows its account;
+  its history is the transactions page, since the kernel filters
+  transactions by process and not by party.
 * The task badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting tasks whose `required_caller` is the

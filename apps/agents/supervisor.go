@@ -1,13 +1,17 @@
 package agents
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/daios-ai/juice-ui/kernel"
 )
 
 // launcher spawns a juice-agent daemon. It is an interface so tests inject a
@@ -50,6 +54,7 @@ func (l osLauncher) start(login, logPath string) (managed, error) {
 	cmd := exec.Command(l.bin, "serve", login)
 	cmd.Env = append(os.Environ(), "JUICE_HOME="+l.home)
 	cmd.Stdout, cmd.Stderr = f, f
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // outlives the UI, as the kernel does
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -61,6 +66,27 @@ func (l osLauncher) start(login, logPath string) (managed, error) {
 		p.mu.Unlock()
 	}()
 	return p, nil
+}
+
+// held reports whether a daemon holds home's serve.lock. The lock, not the
+// number in it, says whether a daemon serves (agent requirements §11), and an
+// error is an unknown state, never "nobody".
+func held(home string) (bool, error) {
+	return kernel.Locked(filepath.Join(home, "serve.lock"))
+}
+
+// lockedPid is the process id written in home's serve.lock, read only once the
+// lock has refused us; a file naming no process is an error, not a stale number.
+func lockedPid(home string) (int, error) {
+	b, err := os.ReadFile(filepath.Join(home, "serve.lock"))
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 { // 0 and below name process groups
+		return 0, fmt.Errorf("serve.lock names no process: %q", strings.TrimSpace(string(b)))
+	}
+	return pid, nil
 }
 
 // exitError is the daemon's exit reason from its current run: the log's last
@@ -97,8 +123,10 @@ func (p *osProc) stop() error {
 	return p.cmd.Process.Signal(syscall.SIGTERM)
 }
 
-// supervisor tracks the running daemons by handle. It is the app's only mutable
-// runtime state; nothing here is persisted, so a UI restart stops every agent.
+// supervisor tracks the daemons this UI spawned, by handle. It answers one
+// question the lock cannot: a child spawned a moment ago is alive but has not
+// yet opened its session and taken the lock. Nothing here is persisted; a
+// daemon outlives the UI and is found again through its lock.
 type supervisor struct {
 	mu   sync.Mutex
 	l    launcher
@@ -109,8 +137,9 @@ func newSupervisor(l launcher) *supervisor {
 	return &supervisor{l: l, live: map[string]managed{}}
 }
 
-// running reports whether handle's daemon is alive, reaping a since-exited entry.
-func (s *supervisor) running(handle string) bool {
+// alive reports whether a child this UI spawned for handle is still running,
+// reaping a since-exited entry.
+func (s *supervisor) alive(handle string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.live[handle]
@@ -140,9 +169,17 @@ func (s *supervisor) start(handle, login, logPath string) error {
 	return nil
 }
 
-// stop signals handle's daemon. The entry stays until the process has exited,
-// so a daemon draining its tasks after SIGTERM is still running.
-func (s *supervisor) stop(handle string) error {
+// stop signals the daemon serving handle: the process holding its lock when pid
+// names one, else the child this UI spawned. A process already gone is stopped.
+// The entry stays until the child has exited, so a daemon draining its tasks
+// after SIGTERM is still running.
+func (s *supervisor) stop(handle string, pid int) error {
+	if pid > 0 {
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+		return nil
+	}
 	s.mu.Lock()
 	m := s.live[handle]
 	s.mu.Unlock()
@@ -150,15 +187,4 @@ func (s *supervisor) stop(handle string) error {
 		return nil
 	}
 	return m.stop()
-}
-
-// stopAll signals every running daemon; used on UI shutdown.
-func (s *supervisor) stopAll() {
-	s.mu.Lock()
-	ms := s.live
-	s.live = map[string]managed{}
-	s.mu.Unlock()
-	for _, m := range ms {
-		_ = m.stop()
-	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,13 +66,13 @@ func TestSupervisorStartTracksAndRuns(t *testing.T) {
 	if err := s.start("research", "research@k", "/logs/research@k.log"); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !s.running("research") {
-		t.Fatal("want running after start, tracked by handle")
+	if !s.alive("research") {
+		t.Fatal("want alive after start, tracked by handle")
 	}
 	if len(l.started) != 1 || l.started[0] != (startRec{"research@k", "/logs/research@k.log"}) {
 		t.Fatalf("launcher not called with login+log: %+v", l.started)
 	}
-	if s.running("other") {
+	if s.alive("other") {
 		t.Fatal("unrelated handle should not be running")
 	}
 }
@@ -81,7 +82,7 @@ func TestSupervisorReflectsExitAndReaps(t *testing.T) {
 	s := newSupervisor(l)
 	_ = s.start("a", "a@k", "")
 	l.procs[0].kill() // process dies on its own
-	if s.running("a") {
+	if s.alive("a") {
 		t.Fatal("want not running after the process exits")
 	}
 	// Reaped: the table no longer holds it, and a relaunch spawns a fresh proc.
@@ -109,17 +110,17 @@ func TestSupervisorStopSignals(t *testing.T) {
 	l := &fakeLauncher{}
 	s := newSupervisor(l)
 	_ = s.start("a", "a@k", "")
-	if err := s.stop("a"); err != nil {
+	if err := s.stop("a", 0); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	if l.procs[0].stops != 1 {
 		t.Fatalf("want one stop signal, got %d", l.procs[0].stops)
 	}
-	if s.running("a") {
+	if s.alive("a") {
 		t.Fatal("want not running after stop")
 	}
 	// Stopping an unknown or already-stopped handle is a no-op.
-	if err := s.stop("a"); err != nil {
+	if err := s.stop("a", 0); err != nil {
 		t.Fatalf("double stop: %v", err)
 	}
 }
@@ -131,32 +132,16 @@ func TestSupervisorStopKeepsADrainingDaemon(t *testing.T) {
 	s := newSupervisor(l)
 	_ = s.start("a", "a@k", "")
 	l.procs[0].drain = true
-	_ = s.stop("a")
-	if !s.running("a") {
+	_ = s.stop("a", 0)
+	if !s.alive("a") {
 		t.Fatal("a draining daemon is alive, so running")
 	}
 	if _ = s.start("a", "a@k", ""); len(l.started) != 1 {
 		t.Fatal("a draining daemon must not be relaunched")
 	}
 	l.procs[0].kill()
-	if s.running("a") {
+	if s.alive("a") {
 		t.Fatal("want not running once the process has exited")
-	}
-}
-
-func TestSupervisorStopAll(t *testing.T) {
-	l := &fakeLauncher{}
-	s := newSupervisor(l)
-	_ = s.start("a", "a@k", "")
-	_ = s.start("b", "b@k", "")
-	s.stopAll()
-	for i, p := range l.procs {
-		if p.stops != 1 {
-			t.Fatalf("proc %d: want one stop, got %d", i, p.stops)
-		}
-	}
-	if s.running("a") || s.running("b") {
-		t.Fatal("want none running after stopAll")
 	}
 }
 
@@ -166,7 +151,7 @@ func TestSupervisorStartError(t *testing.T) {
 	if err := s.start("a", "a@k", ""); err == nil {
 		t.Fatal("want start error surfaced")
 	}
-	if s.running("a") {
+	if s.alive("a") {
 		t.Fatal("failed start must not be tracked as running")
 	}
 }
@@ -211,6 +196,13 @@ func TestOsLauncherLogIsTheCurrentRun(t *testing.T) {
 	run(`echo '{"event":"stopped"}'`)
 	if got := exitError(log); got != "" {
 		t.Fatalf("a later run must replace the old refusal, got %q", got)
+	}
+	// Detached: the child leads its own session, so it outlives the UI and a
+	// signal to the UI's terminal never reaches it.
+	run(`echo "$$ $(ps -o sid= -p $$ | tr -d ' ')"`)
+	b, _ = os.ReadFile(log)
+	if pid, sid, _ := strings.Cut(strings.TrimSpace(string(b)), " "); pid != sid {
+		t.Fatalf("child pid %s must lead session %s", pid, sid)
 	}
 	if got := exitError(filepath.Join(dir, "absent.log")); got != "" {
 		t.Fatalf("no log states no reason, got %q", got)

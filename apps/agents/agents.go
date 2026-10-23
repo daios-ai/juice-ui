@@ -10,16 +10,23 @@
 //   - creates a home with a blank agent.md;
 //   - edits agent.md and the optional config.json, which the daemon never
 //     writes (a blank config.json is no file: the daemon's defaults);
-//   - starts `juice-agent serve <login>` as a supervised child and stops it
-//     with SIGTERM; "running" is whether the tracked child is alive.
+//   - starts `juice-agent serve <login>` detached, and stops the daemon
+//     serving a login with SIGTERM, whoever started it.
+//
+// "Running" is the daemon's own word: it holds `serve.lock` in its home for as
+// long as it serves (agent requirements §11, as a kernel holds its home,
+// ecosystem-standard §3), so an agent served from a terminal is seen, stopped
+// and protected like one the UI started. The UI keeps only the children it
+// spawned, for the moment before a child takes the lock. A daemon outlives the
+// UI, as the kernel does.
 //
 // The daemon holds its own session in the installation's client records. The
 // UI makes that session as `juice auth login <login>` would — from a password
-// typed at New agent or Sign in and kept nowhere — and never reads one
-// (requirements.md §5, ecosystem-standard §4). A daemon that exits states why
-// in its log, and the page shows that line. The session, the home and the
-// credential are written or removed only while no daemon of that login is
-// alive.
+// typed at New agent, or at Start when the login has none, and kept nowhere —
+// and never reads one (requirements.md §5, ecosystem-standard §4). A daemon
+// that exits states why in its log, and the page shows that line. The session,
+// the home and the credential are written or removed only while no daemon of
+// that login is alive.
 package agents
 
 import (
@@ -37,6 +44,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
@@ -80,7 +88,8 @@ type Agents struct {
 	root   string      // $JUICE_HOME/agents; overridable in tests
 	logs   string      // $JUICE_HOME/ui/agents, one <login>.log per daemon run
 	client string      // $JUICE_HOME/client, the records an agent's session lives in
-	sup    *supervisor // process supervision; overridable in tests (fake launcher)
+	sup    *supervisor // the children this UI spawned; overridable in tests (fake launcher)
+	mu     sync.Mutex  // one lifecycle post at a time (create, start, stop, delete)
 }
 
 // New constructs the app. Root and supervisor resolve on Start.
@@ -116,7 +125,6 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("GET /agents/{handle}", d.RequireSuperuser(a.getDetail))
 	mux.HandleFunc("GET /agents/{handle}/status", d.RequireSuperuser(a.getStatus))
 	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireSuperuser(a.postSaveFile))
-	mux.HandleFunc("POST /agents/{handle}/signin", d.RequireSuperuser(a.postSignIn))
 	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
 	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
@@ -141,13 +149,9 @@ func (a *Agents) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop signals every running agent on graceful shutdown.
-func (a *Agents) Stop(ctx context.Context) error {
-	if a.sup != nil {
-		a.sup.stopAll()
-	}
-	return nil
-}
+// Stop stops nothing: a daemon outlives the UI as the kernel does, detached in
+// its own session, and the next UI finds it through its lock.
+func (a *Agents) Stop(ctx context.Context) error { return nil }
 
 // ---- store (filesystem, traversal-guarded) ----
 
@@ -190,7 +194,11 @@ func (a *Agents) list(r *http.Request) ([]status, error) {
 		if !e.IsDir() || suffix == "" || !ok || !validHandle(h) {
 			continue
 		}
-		out = append(out, a.status(r, h))
+		st, err := a.status(r, h)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
 	return out, nil
@@ -295,14 +303,34 @@ type status struct {
 	Running  bool
 	CSRF     template.HTML // the fragment carries its own Stop/Start form (rendered outside the Page envelope)
 	LastLine string        // the daemon's exit error from its current run, when stopped
+
+	// AskPassword: Start opens the password dialog, because the login has no
+	// session to serve on — no credential file, or the last run ended with the
+	// daemon's own advice to log in. With a session, Start is one click.
+	AskPassword bool
 }
 
-func (a *Agents) status(r *http.Request, handle string) status {
-	st := status{Handle: handle, Running: a.sup.running(handle), CSRF: a.deps.CSRFField(r)}
-	if !st.Running {
+func (a *Agents) status(r *http.Request, handle string) (status, error) {
+	running, err := a.running(handle)
+	st := status{Handle: handle, Running: running, CSRF: a.deps.CSRFField(r)}
+	if !running {
 		st.LastLine = exitError(a.logPath(handle))
+		_, statErr := os.Stat(a.credPath(handle))
+		st.AskPassword = os.IsNotExist(statErr) || strings.Contains(st.LastLine, "juice auth login")
 	}
-	return st
+	return st, err
+}
+
+// running is whether a daemon serves handle: one holds the home's lock, or a
+// child this UI spawned a moment ago is alive and has not taken it yet. An
+// unreadable lock is an error, never "stopped".
+func (a *Agents) running(handle string) (bool, error) {
+	dir, err := a.agentDir(handle)
+	if err != nil {
+		return false, err
+	}
+	h, err := held(dir)
+	return h || a.sup.alive(handle), err
 }
 
 type listView struct {
@@ -329,10 +357,6 @@ type detailView struct {
 	// alone reach it), so the read is an ordinary superuser read of a user row,
 	// not the UI holding somebody else's credential.
 	Account *client.AdminUser
-	// Activity is what this agent has been party to, as the kernel serves it to
-	// the viewer. It is the point of the section: an operator can raise an agent
-	// and, without this, never see what it spends.
-	Activity []client.Transaction
 }
 
 // ---- handlers ----
@@ -354,6 +378,8 @@ func (a *Agents) renderList(w http.ResponseWriter, r *http.Request, code int, v 
 // when the kernel has none, the session, the home, and the daemon. Each refusal
 // returns the dialog open with the handle kept and the password gone.
 func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	// Taken as typed: a sigiled handle is ill-formed input, not a handle silently
 	// meaning the bare one (requirements.md §4; the chat daemon's checkHandles
 	// refuses it the same way at its own boundary).
@@ -387,7 +413,7 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		a.deps.HandleErr(w, r, err)
 		return
 	}
-	if err := a.launch(handle); err != nil {
+	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
 		return
 	}
@@ -421,37 +447,20 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string) {
+	st, err := a.status(r, handle)
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
 	agent, _ := a.readFile(handle, agentFile)
 	config, _ := a.readFile(handle, configFile)
-	account, activity := a.account(r, handle)
 	a.deps.RenderPage(w, r, code, "agent", "agents", detailView{
-		status:   a.status(r, handle),
+		status:   st,
 		Agent:    agent,
 		Config:   config,
 		OpenForm: form,
 		Error:    errMsg,
-		Account:  account,
-		Activity: activity,
+		Account:  a.account(r, handle),
 	})
-}
-
-// postSignIn replaces the agent's session while no daemon of it is alive, for
-// an agent whose session died or whose account was made at the command line.
-func (a *Agents) postSignIn(w http.ResponseWriter, r *http.Request) {
-	handle := r.PathValue("handle")
-	if !a.exists(handle) {
-		a.notFound(w, r)
-		return
-	}
-	if a.sup.running(handle) {
-		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
-		return
-	}
-	if err := a.signIn(r.Context(), handle, r.FormValue("password")); err != nil {
-		a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "signin", signInMessage(err))
-		return
-	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Signed in.")
 }
 
 func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {
@@ -473,13 +482,23 @@ func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {
 	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Saved.")
 }
 
+// The lifecycle posts run one at a time under a.mu, so two posts for one
+// handle — a stale Start carrying a password against a Delete, two Starts —
+// cannot interleave between the running check and the act.
+
 func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	handle := r.PathValue("handle")
 	if !a.exists(handle) {
 		a.notFound(w, r)
 		return
 	}
-	if a.sup.running(handle) {
+	running, err := a.running(handle)
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
+	if running {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
 		return
 	}
@@ -490,33 +509,63 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 	a.deps.FlashRedirect(w, r, "/agents", "success", "Agent deleted.")
 }
 
-// launch spawns `juice-agent serve <login>`; the daemon brings its own session,
-// and a refusal is read back from its log by the status.
-func (a *Agents) launch(handle string) error {
-	return a.sup.start(handle, a.deps.Address(handle), a.logPath(handle))
-}
-
+// postStart spawns `juice-agent serve <login>` unless a daemon already serves
+// it. A password in the post makes the login's session first (an agent with
+// none, or whose session died); a refusal returns the dialog open and spawns
+// nothing. The daemon brings its own session, and a refusal of its own is read
+// back from its log by the status.
 func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	handle := r.PathValue("handle")
 	if !a.exists(handle) {
 		a.notFound(w, r)
 		return
 	}
 	back := returnPath(r, "/agents/"+handle)
-	if err := a.launch(handle); err != nil {
+	running, err := a.running(handle)
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
+	if running {
+		a.deps.FlashRedirect(w, r, back, "success", "Starting…")
+		return
+	}
+	if pw := r.FormValue("password"); pw != "" {
+		if err := a.signIn(r.Context(), handle, pw); err != nil {
+			a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "start", signInMessage(err))
+			return
+		}
+	}
+	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
 		a.deps.FlashRedirect(w, r, back, "error", "Could not start: "+err.Error())
 		return
 	}
 	a.deps.FlashRedirect(w, r, back, "success", "Starting…")
 }
 
+// postStop signals the daemon serving handle, whoever started it: the process
+// in the home's lock, else the child this UI spawned.
 func (a *Agents) postStop(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	handle := r.PathValue("handle")
-	if !validHandle(handle) {
+	dir, err := a.agentDir(handle)
+	if err != nil {
 		a.notFound(w, r)
 		return
 	}
-	_ = a.sup.stop(handle)
+	var pid int
+	h, err := held(dir)
+	if err == nil && h {
+		pid, err = lockedPid(dir)
+	}
+	if err == nil {
+		err = a.sup.stop(handle, pid)
+	}
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
 	a.deps.FlashRedirect(w, r, returnPath(r, "/agents/"+handle), "success", "Stopping…")
 }
 
@@ -527,7 +576,11 @@ func (a *Agents) getStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	_ = a.deps.RenderFragment(w, http.StatusOK, "_agent_status", a.status(r, handle))
+	st, err := a.status(r, handle)
+	if a.deps.HandleErrFragment(w, r, err) {
+		return
+	}
+	_ = a.deps.RenderFragment(w, http.StatusOK, "_agent_status", st)
 }
 
 func (a *Agents) notFound(w http.ResponseWriter, r *http.Request) {
@@ -587,52 +640,24 @@ func agentBin(juiceHome string) string {
 	return ""
 }
 
-// account reads the agent's kernel account and what it has been party to, with
-// the viewer's own token. Both are best-effort decoration: an agent home is a
-// directory on this machine and may name no principal at all — never created,
-// or created on another kernel — and the page must still render.
-//
-// The principal is the handle's address on this kernel, the login its home is
-// named by. Nothing is computed
-// here. The balance is the kernel's row for that address and the rows are the
-// transactions it serves this viewer; the page arranges them and states no
-// figure the kernel did not.
-func (a *Agents) account(r *http.Request, handle string) (*client.AdminUser, []client.Transaction) {
+// account reads the agent's kernel account with the viewer's own token: the
+// kernel's row for the handle's address on this kernel, the login its home is
+// named by. It is best-effort decoration — a home is a directory on this
+// machine and may name no principal at all, never created or created on
+// another kernel — and the page must still render, saying so. The kernel
+// filters transactions by process, not by party, so the agent's history is not
+// read here; the transactions page holds it.
+func (a *Agents) account(r *http.Request, handle string) *client.AdminUser {
 	if a.deps.Sessions == nil || a.deps.Client == nil {
-		return nil, nil // no kernel to ask: the section says there is no account
+		return nil // no kernel to ask: the section says there is no account
 	}
 	ctx := r.Context()
-	address := a.deps.Address(handle)
 	var acct *client.AdminUser
-	var rows []client.Transaction
 	_ = a.deps.Sessions.Do(ctx, func(tok string) error {
-		u, err := a.deps.Client.AdminGetUser(ctx, tok, address)
-		if err != nil {
-			return nil // no principal by that name: the section says so
+		if u, err := a.deps.Client.AdminGetUser(ctx, tok, a.deps.Address(handle)); err == nil {
+			acct = &u
 		}
-		acct = &u
-		// The whole history, because the kernel filters transactions by process
-		// and not by party: a bounded read would be the most recent N rows of
-		// the WHOLE kernel, and an idle agent would then be reported as having
-		// done nothing, which is a false statement about money rather than a
-		// short list.
-		txs, err := a.deps.Client.ListTransactions(ctx, tok, "", 0)
-		if err != nil {
-			return nil
-		}
-		for _, t := range txs {
-			if t.Owner == address || t.Caller == address || t.Target == address {
-				rows = append(rows, t)
-			}
-			if len(rows) == agentActivityRows {
-				break
-			}
-		}
-		return nil
+		return nil // no principal by that name: the section says so
 	})
-	return acct, rows
+	return acct
 }
-
-// agentActivityRows is how much of an agent's history the page shows before
-// sending the reader to the ledger that holds all of it.
-const agentActivityRows = 10
