@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.30.0
+Version: 0.30.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.30.1.** The kernel record the agents app keeps is keyed
+> by the kernel's key alone, as `juice kernel add` keys it: a record with the
+> same key is the same kernel and is refreshed from `/health`, so a record an
+> older client wrote with fewer fields no longer reads as another kernel.
 
 > **What changed in 0.30.0.** An agent is running when its daemon says so
 > (§6.1): juice-agent 0.6.0 holds `serve.lock` in the agent's home for as long

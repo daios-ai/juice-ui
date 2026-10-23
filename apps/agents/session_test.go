@@ -137,9 +137,10 @@ func TestSignInWritesTheClientRecords(t *testing.T) {
 	}
 }
 
-// The kernel record follows `juice kernel add`: an existing file keeps its other
-// kernels and `current`; the same key on the same world at another address has
-// moved and gets the new endpoint; another key or world under that name is
+// The kernel record follows `juice kernel add`: a kernel is its key. A record
+// with the same key is the same kernel, refreshed from /health — a moved
+// endpoint, a field an older client never stored, a stale symbol — while
+// `current` and the other kernels are kept; a record with another key is
 // refused and nothing is written, the credential included.
 func TestRecordKernelFollowsKernelAdd(t *testing.T) {
 	a, k, _, _ := kernelApp(t)
@@ -149,7 +150,7 @@ func TestRecordKernelFollowsKernelAdd(t *testing.T) {
 		_ = os.MkdirAll(a.client, 0o700)
 		_ = os.WriteFile(path, []byte(`{"current":"alice@other","kernels":{"other":{"endpoint":"http://o","public_key":"O"},"testnet":`+rec+`}}`), 0o600)
 	}
-	write(`{"endpoint":"http://old:1","public_key":"KEY","world_fingerprint":"FP","network":"play","decimals":6}`)
+	write(`{"endpoint":"http://old:1","public_key":"KEY","network":"play","decimals":6,"symbol":"fUSDT"}`)
 	if err := a.signIn(context.Background(), "research", "pw"); err != nil {
 		t.Fatal(err)
 	}
@@ -157,26 +158,21 @@ func TestRecordKernelFollowsKernelAdd(t *testing.T) {
 	if cfg["current"] != "alice@other" || cfg["kernels"].(map[string]any)["other"].(map[string]any)["public_key"] != "O" {
 		t.Fatalf("other fields must be kept: %v", cfg)
 	}
-	if rec := kernelRecord(t, a); rec["endpoint"] != k.srv.URL || rec["decimals"] != 6.0 {
-		t.Fatalf("a moved kernel gets its endpoint updated: %v", rec)
+	rec := kernelRecord(t, a)
+	if rec["endpoint"] != k.srv.URL || rec["world_fingerprint"] != "FP" || rec["symbol"] != "fUSD" || len(rec) != 6 {
+		t.Fatalf("the same key is refreshed from /health: %v", rec)
 	}
-	for _, rec := range []string{
-		`{"endpoint":"` + k.srv.URL + `","public_key":"OTHER","world_fingerprint":"FP"}`,
-		`{"endpoint":"` + k.srv.URL + `","public_key":"KEY","world_fingerprint":"OTHER"}`,
-	} {
-		write(rec)
-		_ = os.Remove(a.credPath("research"))
-		before, _ := os.ReadFile(path)
-		if err := a.signIn(context.Background(), "research", "pw"); err == nil || !strings.Contains(err.Error(), "another kernel") {
-			t.Fatalf("want refusal, got %v", err)
-		}
-		after, _ := os.ReadFile(path)
-		if string(before) != string(after) {
-			t.Fatal("a refused record must not be written")
-		}
-		if _, err := os.Stat(a.credPath("research")); !os.IsNotExist(err) {
-			t.Fatal("no credential on a refused kernel record")
-		}
+	write(`{"endpoint":"` + k.srv.URL + `","public_key":"OTHER","world_fingerprint":"FP"}`)
+	_ = os.Remove(a.credPath("research"))
+	before, _ := os.ReadFile(path)
+	if err := a.signIn(context.Background(), "research", "pw"); err == nil || !strings.Contains(err.Error(), "another key") {
+		t.Fatalf("want refusal, got %v", err)
+	}
+	if after, _ := os.ReadFile(path); string(before) != string(after) {
+		t.Fatal("a refused record must not be written")
+	}
+	if _, err := os.Stat(a.credPath("research")); !os.IsNotExist(err) {
+		t.Fatal("no credential on a refused kernel record")
 	}
 }
 

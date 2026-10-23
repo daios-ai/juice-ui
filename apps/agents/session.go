@@ -49,13 +49,14 @@ func (a *Agents) credPath(handle string) string {
 	return filepath.Join(a.client, "credentials", a.deps.Address(handle)+".json")
 }
 
-// recordKernel records this kernel in client/config.json under the name it
-// calls itself, by the rule of `juice kernel add` (ecosystem-standard §4): an
-// absent kernel is added; the same key on the same world at another address
-// has moved, so its endpoint is updated; any other record under that name is
-// refused. `current` and every other field are kept. The read-modify-write
-// holds the installation's config.json.lock, as the command line does, and
-// the file is written by temp file and rename.
+// recordKernel records the kernel the UI talks to in client/config.json, by
+// the rule of `juice kernel add` (ecosystem-standard §4): a kernel is its key.
+// No record under the name it calls itself: add one. A record with that key:
+// the same kernel, so its facts are refreshed from /health — it may have
+// moved, and an older client may have stored fewer of them. A record with
+// another key: refused. `current` and every other field are kept. The
+// read-modify-write holds the installation's config.json.lock, as the command
+// line does, and the file is written by temp file and rename.
 func (a *Agents) recordKernel(ctx context.Context) error {
 	h, err := a.deps.Client.Health(ctx)
 	if err != nil {
@@ -87,18 +88,11 @@ func (a *Agents) recordKernel(ctx context.Context) error {
 			return err
 		}
 	}
-	endpoint := a.deps.Client.BaseURL()
-	switch rec := kernels[h.Handle]; {
-	case rec == nil:
-		kernels[h.Handle] = map[string]any{"endpoint": endpoint, "public_key": h.PublicKey, "world_fingerprint": h.NetworkFingerprint,
-			"network": h.Network, "decimals": h.Decimals, "symbol": h.Symbol}
-	case rec["public_key"] != h.PublicKey || rec["world_fingerprint"] != h.NetworkFingerprint:
-		return fmt.Errorf("kernel %s is recorded for another kernel", h.Handle)
-	case rec["endpoint"] == endpoint:
-		return nil
-	default:
-		rec["endpoint"] = endpoint
+	if rec := kernels[h.Handle]; rec != nil && rec["public_key"] != h.PublicKey {
+		return fmt.Errorf("kernel %s is recorded with another key", h.Handle)
 	}
+	kernels[h.Handle] = map[string]any{"endpoint": a.deps.Client.BaseURL(), "public_key": h.PublicKey,
+		"world_fingerprint": h.NetworkFingerprint, "network": h.Network, "decimals": h.Decimals, "symbol": h.Symbol}
 	cfg["kernels"], _ = json.Marshal(kernels)
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	tmp, err := os.CreateTemp(a.client, "config.json.*")
