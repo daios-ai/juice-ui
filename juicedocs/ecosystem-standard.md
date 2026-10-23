@@ -26,14 +26,14 @@ keeps clusters apart from users. Only the terms are ours.
 
 ```
 $JUICE_HOME/
-  bin/                   the family's executables, where the installer puts them
+  bin/                   the family's executables, where the installer puts them and runs each one's setup
   worlds/<world>.json    one network's definition: its money, and the servers to meet it through
-  schemas/               the JSON Schema of config.json and world files, rewritten every serve
+  schemas/               one JSON Schema per configuration file and for world files, rewritten by setup
   kernels/<world>/       one kernel: juice.db, config.json, the rail key and its records,
                          serve.lock, cache/
   client/config.json     the kernels this client knows, and which login is selected
   client/credentials/    one file per login, named handle@kernel, 0600, holding its tokens
-  agents/<name>/         one agent: its configuration, persona, knowledge, memory, conversations
+  agents/<name>/         one agent: its configuration, persona, knowledge, memory, conversations, serve.lock
   services/<name>/       one installed service: its executable state and private configuration
   ui/                    the interface's own state
 ```
@@ -49,12 +49,37 @@ never removes an agent's memory, a service's state, or the interface's history. 
 directory holding no state at all: the programs are replaceable, so an installer overwrites them
 and a person deletes them without losing anything.
 
-## 3. Kernels
+## 3. Configuration
+
+Every component is configured by one `config.json` in its own directory. The file's JSON Schema is
+`schemas/<component>.schema.json`, and the file's first key, `$schema`, names it, so an editor completes the keys and marks a mistake as it is typed. The schema
+describes every setting and states its default, in the schema subset `requirements.md` D4 defines.
+The defaults are one value in the program, from which the schema is generated, so schema, file and
+program cannot disagree; the only settings without a default are those first start asks for or
+creates. A key left out of the file takes its default: the file is laid over the defaults as a JSON
+Merge Patch (RFC 7396), an object merging key by key and a list replacing the whole default list;
+`null` is refused. First start writes every key with its default, so every setting is visible in
+the file. That pins the defaults of the release that wrote it: a later release's new default
+reaches a file that omits the key and not one that lists the old value. A file with a key the
+schema does not know, or a value it refuses, stops the start, naming the key.
+
+A component writes three kinds of file outside its own directory. Its schemas are generated from
+the binary and are never edited. They belong to that version and are rewritten whenever it is set
+up. Shipped defaults, such as the worlds, are written once if absent. After that they are the
+operator's, and an upgrade never overwrites them. Configuration and client records are written by
+the component's own workflows, such as first boot and registration, and never by an upgrade.
+
+A component that writes schemas or shipped defaults has a `setup` command, hidden from its help,
+that writes the schemas and the missing defaults. The installer runs it after placing the binary,
+and the component runs it at every start. After a successful installation, `schemas/` holds the
+installed binary's schemas. For the kernel the command is `juice kernel setup`.
+
+## 4. Kernels
 
 `juice kernel serve <world>` serves `kernels/<world>/`. The world is a file in `worlds/`, named by
 that file: the name may hold letters, digits, dot, dash and underscore, up to 64 characters, and may
-not begin with a dot. The worlds this installation's binary ships are written into `worlds/` the
-first time it serves and never overwritten, so an operator's edit — their own node, their own
+not begin with a dot. The worlds this installation's binary ships are written into `worlds/` by
+setup and never overwritten, so an operator's edit — their own node, their own
 meeting point — outlives an upgrade, and a network this build does not ship is a file they add.
 `juice kernel worlds` lists them, the shipped ones included before anything has served, so a
 program can offer the choice before the first boot.
@@ -86,7 +111,7 @@ Removing a kernel is not a lifecycle verb. Its directory holds a ledger, a signi
 key and possibly unsettled obligations, so it is archived or destroyed deliberately by the operator,
 never as a step in switching kernels.
 
-## 4. Client records
+## 5. Client records
 
 `client/config.json`:
 
@@ -145,7 +170,7 @@ lock on that file. `config.json` is written by temp file and rename. A session i
 `juice` command line or by writing those two files. Executables go to `$JUICE_HOME/bin`, which is
 where the installer puts them and where a component looks for a sibling program.
 
-## 5. Releasing a credential
+## 6. Releasing a credential
 
 The kernel listens on plain HTTP on its own machine, as Ollama, Jupyter, MySQL and PostgreSQL over
 TCP do. A client sends a stored credential only to the address recorded for that login's kernel, and
@@ -163,13 +188,14 @@ token.
 A login is two ordinary local names with an `@` between them, because it becomes a file under
 `credentials/` and a name free to hold a separator would address something else.
 
-## 6. Components
+## 7. Components
 
 **Agents** are users. An agent holds its own principal on every kernel it works on, created and
 funded like any other, and never the operator's. It names its login explicitly. Its persona,
 knowledge, memory, conversations and tasks live under `agents/<name>/` and survive any kernel it
-used; what it remembers about a kernel is keyed by the tuple in §4, so a stale memory is detectable
-rather than silently wrong.
+used; what it remembers about a kernel is keyed by the tuple in §5, so a stale memory is detectable
+rather than silently wrong. One daemon serves an agent's home, enforced by `serve.lock` in that
+home exactly as for a kernel (§4).
 
 **Services** are ordinary HTTP servers, installed once under `services/<name>/` and listening on a
 port of their own. Installation and registration are separate acts: a service is installed once, and
@@ -183,11 +209,31 @@ Registration is by adapter. An OpenAPI document installed with `action import` i
 gets identity-preserving reconciliation across upgrades. A service that is not representable that
 way is registered by ordinary action creation. Neither is a requirement of being a service.
 
+Once registered, a service shows up on the kernel as an **application**: a set of actions that
+share a name prefix, `owner@kernel/<name>/...`. The kernel keeps no record of the grouping. The
+only rule is that `owner@kernel/<name>` resolves to `owner@kernel/<name>/index` (U50); the rest is
+convention. The index we recommend is a free action that explains the application: its description
+says what it is for, and its output says how to use it and which actions to call, so an agent can
+read it and go from there. When an OpenAPI document has an operation keyed `index`, the import
+makes it the index. An owner may instead make the index the application's main action, or a
+composite that calls the others and charges one price. Programs must not depend on any of these
+forms, and must not expect the index to list the members; the members are found by their prefix.
+
+An application that relays several conversations to one agent sets `thread_id` in the task's
+`partial_args`: a string the application chooses, one per conversation. The receiving action
+declares `thread_id` in its input schema; `sys/sink` accepts any object, while `sys/message`
+cannot carry it. An agent groups tasks by requester, `created_by` and `thread_id`. Without a
+`thread_id`, tasks from a requester who is also the owner form one conversation per `created_by`,
+and every other task is a conversation of its own. A task from another kernel arrives without
+`created_by`, so there the key is requester and `thread_id`. The kernel attests the requester, so
+a `thread_id` is trusted only within one requester, and one application cannot join another's
+conversations.
+
 **The interface** is a client like any other. It reads the same logins, shows which one is in use,
 and checks `/health` before it trusts. A port number is a default, never an identity: an interface
 that dials a port without checking will talk to whichever kernel holds it.
 
-## 7. Migration
+## 8. Migration
 
 A kernel made before kernels were named, at `$JUICE_HOME/kernel/`, moves to `kernels/<name>/` on the
 first boot after the upgrade. It is one rename: both paths are under one root, so the move either
