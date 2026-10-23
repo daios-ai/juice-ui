@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.31.0
+Version: 0.31.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.31.1.** The agent's heartbeat token names the exit
+> line it shows as well as its state, so a start that fails between two
+> ticks is reported; Delete holds the home's `serve.lock` through the
+> removal, so a daemon started from a terminal meanwhile is refused by its
+> own rule and none is left holding a deleted lock (§6.1).
 
 > **What changed in 0.31.0.** One heartbeat per page. A signed-in page makes
 > one request per lane — every 5 s, and every badge interval — carrying a
@@ -993,8 +999,9 @@ kernel and world is in use, and keys everything durable by
   which is how an agent made at the command line or one whose session died
   is served from the page. Start and Delete are refused while the agent runs,
   and no credential is written then, and neither carries a banner: the status
-  block, refreshed by the page's heartbeat and never while unchanged, is the
-  statement. A stopped agent shows the daemon's
+  block, refreshed by the page's heartbeat and never while unchanged in state
+  or exit line, is the statement. Delete holds `serve.lock` through the
+  removal, so no daemon takes it meanwhile. A stopped agent shows the daemon's
   `error:` line from its current run. The agent's page shows its account;
   its history is the transactions page, since the kernel filters
   transactions by process and not by party.

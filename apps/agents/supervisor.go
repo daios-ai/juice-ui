@@ -75,6 +75,27 @@ func held(home string) (bool, error) {
 	return kernel.Locked(filepath.Join(home, "serve.lock"))
 }
 
+// errHeld: a daemon holds the home's lock.
+var errHeld = errors.New("a daemon holds serve.lock")
+
+// hold takes home's serve.lock — the daemon's own lock, so a daemon that starts
+// meanwhile is refused by its own rule — and returns the file holding it, held
+// until closed. errHeld when a daemon holds it.
+func hold(home string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(home, "serve.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errHeld
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
 // lockedPid is the process id written in home's serve.lock, read only once the
 // lock has refused us; a file naming no process is an error, not a stale number.
 func lockedPid(home string) (int, error) {

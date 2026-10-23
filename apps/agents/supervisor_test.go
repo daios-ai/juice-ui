@@ -6,9 +6,43 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// hold takes the home's lock and keeps it until closed: a second hold, and the
+// probe, see it held; a daemon's lock refuses hold with errHeld; a home with no
+// lock file yet is free. (Delete holds it through the removal.)
+func TestHoldTakesTheLockUntilClosed(t *testing.T) {
+	home := t.TempDir()
+	f, err := hold(home)
+	if err != nil {
+		t.Fatalf("a home with no lock file is free: %v", err)
+	}
+	if _, err := hold(home); !errors.Is(err, errHeld) {
+		t.Fatalf("second hold = %v, want errHeld", err)
+	}
+	if h, err := held(home); err != nil || !h {
+		t.Fatalf("held = %v %v", h, err)
+	}
+	_ = f.Close()
+	if h, err := held(home); err != nil || h {
+		t.Fatalf("after close held = %v %v", h, err)
+	}
+	// The daemon's own lock (the real thing: another open file description).
+	d, _ := os.OpenFile(filepath.Join(home, "serve.lock"), os.O_RDWR, 0o600)
+	defer d.Close()
+	if err := syscall.Flock(int(d.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hold(home); !errors.Is(err, errHeld) {
+		t.Fatalf("hold against a daemon = %v, want errHeld", err)
+	}
+	if _, err := hold(filepath.Join(home, "absent")); err == nil || errors.Is(err, errHeld) {
+		t.Fatalf("a missing home is an error, not held: %v", err)
+	}
+}
 
 // fakeManaged is an in-memory stand-in for a running daemon.
 type fakeManaged struct {

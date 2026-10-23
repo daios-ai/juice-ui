@@ -34,6 +34,8 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"hash/fnv"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -308,8 +310,9 @@ type status struct {
 	// session to serve on — no credential file, or the last run ended with the
 	// daemon's own advice to log in. With a session, Start is one click.
 	AskPassword bool
-	// State is the one word the page's heartbeat carries for this agent —
-	// running, ask or stopped — so the block is swapped only when it changes.
+	// State is the token the page's heartbeat carries for this agent: the
+	// state word — running, ask or stopped — and, when the block shows an exit
+	// line, a digest of it; the block is swapped only when either changes.
 	State string
 	OOB   bool // a heartbeat answer: the block replaces itself in place
 }
@@ -329,6 +332,11 @@ func (a *Agents) status(r *http.Request, handle string) (status, error) {
 		st.State = "ask"
 	default:
 		st.State = "stopped"
+	}
+	if st.LastLine != "" {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(st.LastLine))
+		st.State += fmt.Sprintf(".%08x", h.Sum32())
 	}
 	return st, err
 }
@@ -521,14 +529,26 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w, r)
 		return
 	}
-	running, err := a.running(handle)
+	dir, err := a.agentDir(handle)
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	if running {
+	// The home's lock is held through the removal — a daemon started meanwhile
+	// is refused by its own rule, and none is left holding a deleted lock — once
+	// no child of ours is on its way to taking it.
+	if a.sup.alive(handle) {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
 		return
 	}
+	lock, err := hold(dir)
+	if errors.Is(err, errHeld) {
+		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
+		return
+	}
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
+	defer lock.Close()
 	if err := a.remove(handle); err != nil {
 		a.deps.HandleErr(w, r, err)
 		return

@@ -457,12 +457,23 @@ func TestStatusShapeIsShared(t *testing.T) {
 	if h, _ := a.watch(req, "research", "running"); h != "<_agent_status>" {
 		t.Fatalf("watch = %q", h)
 	}
-	if st := cap.data.(status); st.LastLine != want || st.State != "ask" || !st.OOB {
+	st := cap.data.(status)
+	if st.LastLine != want || !strings.HasPrefix(st.State, "ask.") || !st.OOB {
 		t.Errorf("heartbeat status = %+v", st)
 	}
-	if h, _ := a.watch(req, "research", "ask"); h != "" {
+	if h, _ := a.watch(req, "research", st.State); h != "" {
 		t.Errorf("an unchanged state must not be swapped, got %q", h)
 	}
+	// The same state with another exit line is a change: the token names the
+	// line too, so a failed start between two ticks is not hidden.
+	_ = os.WriteFile(a.logPath("research"), []byte("error: another juice-agent is already serving research@testnet\n"), 0o600)
+	if h, _ := a.watch(req, "research", st.State); h != "<_agent_status>" {
+		t.Errorf("a new exit line must be swapped, got %q", h)
+	}
+	if st2 := cap.data.(status); st2.State == st.State || !strings.HasPrefix(st2.State, "ask.") {
+		t.Errorf("token = %q, was %q", st2.State, st.State)
+	}
+	_ = os.WriteFile(a.logPath("research"), []byte("{\"event\":\"login\"}\nerror: no session for research@testnet\n"), 0o600)
 	a.deps.Superuser = func(*http.Request) bool { return false }
 	if h, _ := a.watch(req, "research", "running"); h != "" {
 		t.Errorf("nothing to anyone but the operator, got %q", h)
