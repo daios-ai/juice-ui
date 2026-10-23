@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -485,10 +487,38 @@ type configView struct {
 	Version string
 }
 
-// configFixed are kept as saved whatever the form says: the schema pointer,
-// the first boot's name, listen_addr, the port this UI finds its kernel by
-// (kernel.World), and credentials_key, a secret never shown.
-var configFixed = []string{"$schema", "kernel_handle", "listen_addr", "credentials_key"}
+// configEditor edits a JSON configuration file through the form of its JSON
+// Schema (§6.6): the kernel's config.json and an agent's. A hidden key is
+// never shown and kept as saved; a fixed key is shown read-only and kept as
+// saved. The hooks are the kernel's secrets: shown withholds them from what
+// the page shows and names what to mask, mask makes those inputs write-only,
+// keep puts back what the form could not carry. An app edits its file through
+// apps.ConfigEditor, which this satisfies.
+type configEditor struct {
+	s      *Server
+	schema json.RawMessage
+	hidden []string
+	fixed  []string
+	shown  func(cfg map[string]any) map[string]bool
+	mask   func(f *Field, keyed map[string]bool)
+	keep   func(saved, to map[string]any)
+}
+
+// editor is the editor of a file without secrets.
+func (s *Server) editor(schema json.RawMessage, hidden ...string) configEditor {
+	return configEditor{s: s, schema: schema, hidden: hidden}
+}
+
+// kernelEditor edits the kernel's file: the schema pointer and credentials_key
+// hidden; kernel_handle, the first boot's name, and listen_addr, the port this
+// UI finds its kernel by (kernel.World), read-only; each endpoint key, which
+// the kernel gives no command-line flag, write-only and kept by its name.
+func (s *Server) kernelEditor(schema json.RawMessage) configEditor {
+	e := s.editor(schema, "$schema", "credentials_key")
+	e.fixed = []string{"kernel_handle", "listen_addr"}
+	e.shown, e.mask, e.keep = configShown, maskKeys, keepKeys
+	return e
+}
 
 // configured is the placeholder of an endpoint key the file holds.
 const configured = "configured ✓ (replace)"
@@ -509,15 +539,13 @@ func endpoints(cfg map[string]any) []map[string]any {
 
 func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 	raw, schema, version, err := s.config.Config()
-	var cfg map[string]any
+	var form FormModel
 	if err == nil {
-		err = decodeNumbers(raw, &cfg)
+		form, err = s.kernelEditor(schema).page(raw)
 	}
 	if s.handleErr(w, r, err) {
 		return
 	}
-	keyed := configShown(cfg)
-	form, _ := configForm(schema, cfg, keyed)
 	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{Form: form, Version: version})
 }
 
@@ -534,29 +562,6 @@ func configShown(cfg map[string]any) map[string]bool {
 		delete(e, "key")
 	}
 	return keyed
-}
-
-// configForm is the page's form over shown: the kernel's schema filled from
-// it, editor metadata and secrets left out, the fixed keys read-only and each
-// endpoint key write-only. The JSON editor opens on shown itself, never a
-// skeleton: what a save from it omits is removed. It returns what Fill could
-// not place exactly.
-func configForm(schema json.RawMessage, shown map[string]any, keyed map[string]bool) (FormModel, []string) {
-	raw, _ := json.MarshalIndent(shown, "", "  ")
-	form := BuildForm(schema)
-	inexact := form.Fill(raw)
-	form.Example = string(raw)
-	fields := form.Fields[:0]
-	for _, f := range form.Fields {
-		if f.Name == "$schema" || f.Name == "credentials_key" {
-			continue // editor metadata; a secret is never shown
-		}
-		f.ReadOnly = slices.Contains(configFixed, f.Name)
-		maskKeys(&f, keyed)
-		fields = append(fields, f)
-	}
-	form.Fields = fields
-	return form, inexact
 }
 
 // maskKeys makes each endpoint row's key write-only, its placeholder saying so
@@ -580,18 +585,9 @@ func maskKeys(f *Field, keyed map[string]bool) {
 	}
 }
 
-// configNormal reads to as a save writes it over saved, keeping as saved what
-// the form cannot carry: the fixed keys, an endpoint key not replaced —
-// matched by the endpoint's name, never its row — and an empty value a blank
-// input cannot tell from absent. A save and both directions of the JSON switch
-// share it.
-func configNormal(saved, to map[string]any) {
-	for _, p := range configFixed {
-		deleteDotted(to, p)
-		if v := getDotted(saved, p); v != nil {
-			setDotted(to, p, v)
-		}
-	}
+// keepKeys keeps an endpoint key not replaced — matched by the endpoint's
+// name, never its row.
+func keepKeys(saved, to map[string]any) {
 	keys := map[string]any{}
 	for _, e := range endpoints(saved) {
 		if name, ok := e["name"].(string); ok {
@@ -604,84 +600,185 @@ func configNormal(saved, to map[string]any) {
 			e["key"] = keys[name]
 		}
 	}
+}
+
+// decode reads the file as a JSON object, an empty file being {}.
+func (c configEditor) decode(file []byte) (map[string]any, error) {
+	if len(bytes.TrimSpace(file)) == 0 {
+		return map[string]any{}, nil
+	}
+	var m map[string]any
+	err := decodeNumbers(file, &m)
+	return m, err
+}
+
+// Form is the page's form over the file; Version is the file's SHA-256, which
+// the form carries and a save is refused without.
+func (c configEditor) Form(file []byte) (any, error) { return c.page(file) }
+
+func (c configEditor) Version(file []byte) string {
+	sum := sha256.Sum256(file)
+	return hex.EncodeToString(sum[:])
+}
+
+func (c configEditor) page(file []byte) (FormModel, error) {
+	saved, err := c.decode(file)
+	if err != nil {
+		return FormModel{}, err
+	}
+	form, _ := c.form(saved)
+	return form, nil
+}
+
+// form is the schema filled from what the page shows of saved: hidden keys and
+// secrets left out, fixed keys read-only, secret inputs write-only. The JSON
+// editor opens on the shown file itself, never a skeleton: what a save from it
+// omits is removed. It returns what Fill could not place exactly.
+func (c configEditor) form(saved map[string]any) (FormModel, []string) {
+	var keyed map[string]bool
+	if c.shown != nil {
+		keyed = c.shown(saved)
+	}
+	raw, _ := json.MarshalIndent(saved, "", "  ")
+	form := BuildForm(c.schema)
+	inexact := form.Fill(raw)
+	form.Example = "" // never BuildForm's skeleton: an absent file opens on nothing
+	if len(saved) > 0 {
+		form.Example = string(raw)
+	}
+	fields := form.Fields[:0]
+	for _, f := range form.Fields {
+		if slices.Contains(c.hidden, f.Name) {
+			continue
+		}
+		f.ReadOnly = slices.Contains(c.fixed, f.Name)
+		if c.mask != nil {
+			c.mask(&f, keyed)
+		}
+		fields = append(fields, f)
+	}
+	form.Fields = fields
+	return form, inexact
+}
+
+// normal reads to as a save writes it over saved, keeping as saved what the
+// form cannot carry: the hidden and fixed keys, the keep hook's secrets, and
+// an empty value a blank input cannot tell from absent. A save and both
+// directions of the JSON switch share it.
+func (c configEditor) normal(saved, to map[string]any) {
+	for _, p := range slices.Concat(c.hidden, c.fixed) {
+		deleteDotted(to, p)
+		if v := getDotted(saved, p); v != nil {
+			setDotted(to, p, v)
+		}
+	}
+	if c.keep != nil {
+		c.keep(saved, to)
+	}
 	keepEmpty(saved, to)
 }
 
-// configSwitch reads the file and the editor's JSON for the JSON switch, the
-// latter normalized as a save would read it.
-func (s *Server) configSwitch(args []byte) (saved, to map[string]any, schema json.RawMessage, err error) {
-	raw, schema, _, err := s.config.Config()
-	if err == nil {
-		err = decodeNumbers(raw, &saved)
+// read decodes the file and the editor's args, the latter normalized as a save
+// would read it; either empty is {}.
+func (c configEditor) read(args, file []byte) (saved, to map[string]any, err error) {
+	if saved, err = c.decode(file); err == nil {
+		to, err = c.decode(args)
 	}
 	if err == nil {
-		err = decodeNumbers(args, &to)
+		c.normal(saved, to)
 	}
-	if err == nil {
-		configNormal(saved, to)
-	}
-	return saved, to, schema, err
+	return saved, to, err
 }
 
-// postAdminConfigJSON is the JSON switch's form → JSON direction: what Save
-// would write, its secrets withheld — the view the page opens on.
-func (s *Server) postAdminConfigJSON(w http.ResponseWriter, r *http.Request) {
+// Read is what the post would write over the file — the form or the JSON,
+// read through normal — and whether it differs from the file.
+func (c configEditor) Read(r *http.Request, file []byte) ([]byte, bool, error) {
+	args, err := buildArgs(r)
+	var saved, to map[string]any
+	if err == nil {
+		saved, to, err = c.read(args, file)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	out, _ := json.MarshalIndent(to, "", "  ")
+	return out, !reflect.DeepEqual(saved, to), nil
+}
+
+// ToJSON is the JSON switch's form → JSON direction: what a save would write,
+// its secrets withheld — the view the page opens on.
+func (c configEditor) ToJSON(w http.ResponseWriter, r *http.Request, file []byte) {
 	args, err := buildArgs(r)
 	var to map[string]any
 	if err == nil {
-		_, to, _, err = s.configSwitch(args)
+		_, to, err = c.read(args, file)
 	}
 	if err != nil {
 		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
 		return
 	}
-	configShown(to)
+	if c.shown != nil {
+		c.shown(to)
+	}
 	out, _ := json.Marshal(to)
 	writeJSONText(w, out)
 }
 
-// postAdminConfigForm is the JSON switch's JSON → form direction. The values a
-// save keeps by itself — the file's own empty values, shown blank — are left
-// out of the fill, so the form holds the JSON exactly or the switch is refused.
-func (s *Server) postAdminConfigForm(w http.ResponseWriter, r *http.Request) {
-	saved, to, schema, err := s.configSwitch([]byte(r.PostFormValue("raw_args")))
+// ToForm is the JSON switch's JSON → form direction. The values a save keeps
+// by itself — the file's own empty values, shown blank — are left out of the
+// fill, so the form holds the JSON exactly or the switch is refused.
+func (c configEditor) ToForm(w http.ResponseWriter, r *http.Request, file []byte) {
+	saved, to, err := c.read([]byte(r.PostFormValue("raw_args")), file)
 	if err != nil {
 		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
 		return
 	}
-	keyed := configShown(to)
 	dropKept(saved, to)
-	form, inexact := configForm(schema, to, keyed)
-	s.renderFields(w, form, inexact)
+	form, inexact := c.form(to)
+	c.s.renderFields(w, form, inexact)
+}
+
+// kernelFile is the kernel's file and its editor for the switch's handlers,
+// or a 422 naming why there is none.
+func (s *Server) kernelFile(w http.ResponseWriter) ([]byte, configEditor, bool) {
+	raw, schema, _, err := s.config.Config()
+	if err != nil {
+		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
+		return nil, configEditor{}, false
+	}
+	return raw, s.kernelEditor(schema), true
+}
+
+func (s *Server) postAdminConfigJSON(w http.ResponseWriter, r *http.Request) {
+	if raw, e, ok := s.kernelFile(w); ok {
+		e.ToJSON(w, r, raw)
+	}
+}
+
+func (s *Server) postAdminConfigForm(w http.ResponseWriter, r *http.Request) {
+	if raw, e, ok := s.kernelFile(w); ok {
+		e.ToForm(w, r, raw)
+	}
 }
 
 // postAdminConfig writes the form over the file the page was rendered from and
-// restarts the kernel on it, read through configNormal.
+// restarts the kernel on it; the kernel refuses a stale version.
 func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 	const back = "/admin/config"
-	args, err := buildArgs(r)
-	var to, saved map[string]any
+	raw, schema, _, err := s.config.Config()
+	var out []byte
+	var changed bool
 	if err == nil {
-		err = decodeNumbers(args, &to)
+		out, changed, err = s.kernelEditor(schema).Read(r, raw)
 	}
 	if err != nil {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
-	raw, _, _, err := s.config.Config()
-	if err == nil {
-		err = decodeNumbers(raw, &saved)
-	}
-	if err != nil {
-		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
-		return
-	}
-	configNormal(saved, to)
-	if reflect.DeepEqual(saved, to) {
+	if !changed {
 		s.flashRedirect(w, r, back, "info", "Nothing changed.")
 		return
 	}
-	out, _ := json.MarshalIndent(to, "", "  ")
 	if err := s.config.Reconfigure(r.PostFormValue("version"), append(out, '\n')); err != nil {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return

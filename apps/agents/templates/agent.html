@@ -35,9 +35,17 @@
 <div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
 {{if $d.Agent}}<pre class="json">{{$d.Agent}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
 
+{{/* config.json as the form of the daemon's own schema of it, as the kernel's
+     configuration page edits its file (§6.1, §6.6): a save writes the file,
+     which the daemon reads at its next start. */}}
 <h2>Config</h2>
-<div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=config" data-modal="form-config">Edit</a></div>
-{{if $d.Config}}<pre class="json">{{$d.Config}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
+<form class="card stack" method="post" action="/agents/{{$h}}/config" data-json data-to-json="/agents/{{$h}}/config/json" data-to-form="/agents/{{$h}}/config/form">
+  {{.CSRFField}}
+  <input type="hidden" name="version" value="{{$d.Version}}">
+  {{if not $d.Config.UseRawFallback}}{{template "_json_switch"}}{{end}}
+  {{template "_form_fields" $d.Config}}
+  <div class="cluster"><button class="btn" type="submit">Save</button></div>
+</form>
 
 {{if not $d.Running}}
 <h2>Danger</h2>
@@ -61,7 +69,7 @@
   </div>
 </dialog>
 
-{{/* ---- edit modals (agent.md / config.json) ---- */}}
+{{/* ---- edit modal (agent.md) ---- */}}
 <dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit agent.md">
   <div class="modal-head"><h2>Edit agent.md</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
@@ -73,14 +81,4 @@
   </div>
 </dialog>
 
-<dialog id="form-config" class="modal-form"{{if eq $d.OpenForm "config"}} open{{end}} aria-label="Edit config.json">
-  <div class="modal-head"><h2>Edit config.json</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/agents/{{$h}}/files/config.json">
-      {{.CSRFField}}
-      <div class="field"><textarea name="content" rows="1" aria-label="config.json">{{$d.Config}}</textarea></div>
-      <button class="btn" type="submit">Save</button>
-    </form>
-  </div>
-</dialog>
 {{end}}

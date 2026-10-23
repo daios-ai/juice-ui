@@ -1167,3 +1167,66 @@ func TestCopyControlCarriesTheWholeKey(t *testing.T) {
 		t.Error("a copy control carries the value itself, never a selector")
 	}
 }
+
+// The editor an app gets edits a file without secrets through the same rules
+// as the kernel's page (§6.6): the hidden key is left out of the form and
+// kept as saved, an empty file is {}, a save carries what the form holds and
+// drops what it cleared, the version is the file's SHA-256, and the JSON
+// direction is what a save would write. The schema is juice-agent 0.7.0's.
+func TestDepsConfigEditor(t *testing.T) {
+	const schema = `{"type":"object","additionalProperties":false,"properties":{
+		"$schema":{"type":"string","default":"../../schemas/juice-agent.schema.json","description":"The JSON Schema describing this file, for editors."},
+		"reason":{"type":"string","description":"Reasoning action."},
+		"max_turns":{"type":"integer","default":32,"description":"Maximum reasoning turns per job."},
+		"rate_tasks":{"type":"boolean","default":true,"description":"Whether to rate."}}}`
+	e := (&Server{}).editor(json.RawMessage(schema), "$schema")
+	file := []byte("{\n  \"$schema\": \"../../schemas/juice-agent.schema.json\",\n  \"reason\": \"sys@k/llm/chat\",\n  \"max_turns\": 32\n}\n")
+
+	form, err := e.Form(file)
+	fm, _ := form.(FormModel)
+	if err != nil || len(fm.Fields) != 3 || fm.Fields[1].Name != "max_turns" || fm.Fields[1].Value != "32" || strings.Contains(fm.Example, "$schema") == false {
+		t.Fatalf("Form = %+v, %v", form, err)
+	}
+	for _, f := range fm.Fields {
+		if f.Name == "$schema" {
+			t.Error("the hidden key is not a field")
+		}
+	}
+	if e.Version(file) != e.Version(file) || e.Version(file) == e.Version([]byte("{}")) || len(e.Version(file)) != 64 {
+		t.Error("Version is the file's digest")
+	}
+	if form, err := e.Form(nil); err != nil || len(form.(FormModel).Fields) != 3 || form.(FormModel).Example != "" {
+		t.Errorf("an absent file is {} with an empty editor: %+v %v", form, err)
+	}
+	if form, err := (&Server{}).editor(nil, "$schema").Form(nil); err != nil || !form.(FormModel).UseRawFallback || form.(FormModel).Example != "" {
+		t.Errorf("no schema and no file: the JSON editor alone, empty: %+v %v", form, err)
+	}
+
+	post := func(v url.Values) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(v.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return r
+	}
+	to, changed, err := e.Read(post(url.Values{"has_fields": {"1"}, "t_/max_turns": {"integer"}, "f_/max_turns": {"8"}, "f_/reason": {""}, "t_/rate_tasks": {"boolean"}, "f_/rate_tasks": {"false"}}), file)
+	if err != nil || !changed || string(to) != "{\n  \"$schema\": \"../../schemas/juice-agent.schema.json\",\n  \"max_turns\": 8,\n  \"rate_tasks\": false\n}" {
+		t.Errorf("Read = %s, %v, %v", to, changed, err)
+	}
+	_, changed, err = e.Read(post(url.Values{"has_fields": {"1"}, "t_/max_turns": {"integer"}, "f_/max_turns": {"32"}, "f_/reason": {"sys@k/llm/chat"}}), file)
+	if err != nil || changed {
+		t.Errorf("the same values: changed = %v, %v", changed, err)
+	}
+	if _, _, err = e.Read(post(url.Values{"has_fields": {"1"}, "t_/max_turns": {"integer"}, "f_/max_turns": {"x"}}), file); err == nil {
+		t.Error("a non-integer is refused")
+	}
+
+	w := httptest.NewRecorder()
+	e.ToJSON(w, post(url.Values{"raw_args": {""}}), nil)
+	if w.Code != 200 || w.Body.String() != "{}" {
+		t.Errorf("an empty editor over no file is {}: %d %q", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	e.ToJSON(w, post(url.Values{"raw_args": {`{"$schema":"other","max_turns":8}`}}), file)
+	if w.Code != 200 || w.Body.String() != "{\n  \"$schema\": \"../../schemas/juice-agent.schema.json\",\n  \"max_turns\": 8\n}" {
+		t.Errorf("ToJSON = %d %q", w.Code, w.Body.String())
+	}
+}

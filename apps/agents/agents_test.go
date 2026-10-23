@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -28,14 +29,42 @@ type capture struct {
 	data                         any
 	err                          error
 	flashTo, flashKind, flashMsg string
+
+	// The editor the app asked for, and what it was handed: the fake answers
+	// a form naming the file, a version of its length, and a fixed write.
+	schema  string
+	hidden  []string
+	file    string
+	to      string // what Read answers; "" answers unchanged
+	switchd string // ToJSON / ToForm, with the file they were given
+}
+
+func (c *capture) Form(file []byte) (any, error) {
+	c.file = string(file)
+	return "form of " + c.file, nil
+}
+func (c *capture) Version(file []byte) string { return fmt.Sprint("v", len(file)) }
+func (c *capture) Read(r *http.Request, file []byte) ([]byte, bool, error) {
+	c.file = string(file)
+	return []byte(c.to), c.to != "", nil
+}
+func (c *capture) ToJSON(w http.ResponseWriter, r *http.Request, file []byte) {
+	c.switchd = "json:" + string(file)
+}
+func (c *capture) ToForm(w http.ResponseWriter, r *http.Request, file []byte) {
+	c.switchd = "form:" + string(file)
 }
 
 func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
 	t.Helper()
 	fl := &fakeLauncher{}
-	a := &Agents{root: t.TempDir(), logs: t.TempDir(), client: t.TempDir(), sup: newSupervisor(fl)}
+	a := &Agents{root: t.TempDir(), logs: t.TempDir(), client: t.TempDir(), schema: filepath.Join(t.TempDir(), schemaFile), sup: newSupervisor(fl)}
 	cap := &capture{}
 	a.deps = apps.Deps{
+		ConfigEditor: func(schema json.RawMessage, hidden ...string) apps.ConfigEditor {
+			cap.schema, cap.hidden = string(schema), hidden
+			return cap
+		},
 		Me:        func(r *http.Request) string { return "sys@testnet" },
 		Address:   func(h string) string { return h + "@testnet" },
 		CSRFField: func(r *http.Request) template.HTML { return template.HTML("<input name=csrf>") },
@@ -118,41 +147,15 @@ func TestCreateExistingIsRefusedWithoutTruncation(t *testing.T) {
 func TestWriteAndReadEditableFiles(t *testing.T) {
 	a, _, _ := testApp(t)
 	_ = a.create("x")
-	cases := map[string]string{
-		agentFile:  "You are helpful.",
-		configFile: `{"max_turns":8}`,
+	if err := a.writeFile("x", agentFile, "You are helpful."); err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	for f, content := range cases {
-		if err := a.writeFile("x", f, content); err != nil {
-			t.Fatalf("write %s: %v", f, err)
-		}
-		got, err := a.readFile("x", f)
-		if err != nil || got != content {
-			t.Fatalf("read %s = %q (%v), want %q", f, got, err, content)
-		}
+	if got, err := a.readFile("x", agentFile); err != nil || got != "You are helpful." {
+		t.Fatalf("read = %q (%v)", got, err)
 	}
-	// A blank config.json is no file: the daemon's defaults.
-	if err := a.writeFile("x", configFile, " \n"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(a.root, "x@testnet", configFile)); !os.IsNotExist(err) {
-		t.Fatal("a blank config.json must remove the file")
-	}
-	if err := a.writeFile("x", configFile, ""); err != nil {
-		t.Fatalf("blanking an absent config: %v", err)
-	}
-}
-
-func TestWriteConfigRejectsInvalidJSON(t *testing.T) {
-	a, _, _ := testApp(t)
-	_ = a.create("x")
-	_ = a.writeFile("x", configFile, `{"ok":true}`)
-	if err := a.writeFile("x", configFile, "not json"); err != errBadConfig {
-		t.Fatalf("write bad config = %v, want errBadConfig", err)
-	}
-	got, _ := a.readFile("x", configFile)
-	if got != `{"ok":true}` {
-		t.Fatalf("invalid config overwrote the file: %q", got)
+	// config.json is not the file route's: it has the editor (§6.1).
+	if err := a.writeFile("x", configFile, "{}"); err != errBadHandle {
+		t.Fatalf("writeFile(config.json) = %v, want refused", err)
 	}
 }
 
@@ -381,7 +384,7 @@ func TestGetDetailNotFoundAndFound(t *testing.T) {
 		t.Fatalf("unexpected err: %v", cap.err)
 	}
 	dv, ok := cap.data.(detailView)
-	if !ok || dv.Handle != "research" || dv.Agent != "hello" || dv.Config != "" {
+	if !ok || dv.Handle != "research" || dv.Agent != "hello" || dv.Config != "form of " || dv.Version != "v0" {
 		t.Fatalf("detailView = %+v", cap.data)
 	}
 }
@@ -409,14 +412,104 @@ func TestPostSaveFile(t *testing.T) {
 	if cap.err == nil {
 		t.Fatal("saving memory.md should be rejected")
 	}
-	// Invalid config → error flash, not saved.
-	cap.flashKind = ""
-	req = postForm("/agents/research/files/config.json", "content=nope")
+	// config.json is not this route's.
+	cap.err = nil
+	req = postForm("/agents/research/files/config.json", "content={}")
 	req.SetPathValue("handle", "research")
 	req.SetPathValue("file", configFile)
 	a.postSaveFile(httptest.NewRecorder(), req)
-	if cap.flashKind != "error" {
-		t.Fatalf("bad config flash = %q", cap.flashKind)
+	if cap.err == nil {
+		t.Fatal("config.json is saved by its own handler alone")
+	}
+}
+
+// config.json is edited as the form of the daemon's schema of it (§6.1,
+// §6.6): the page carries the editor's form over the file and its version;
+// a save writes what the editor reads, whole, by rename; a stale version, an
+// unchanged form and an unreadable file write nothing; a running agent's flash
+// says the file applies at its next start; the switch gets the file.
+func TestConfigIsTheDaemonsSchemaForm(t *testing.T) {
+	a, _, cap := testApp(t)
+	_ = a.create("research")
+	dir, _ := a.agentDir("research")
+	path := filepath.Join(dir, configFile)
+	_ = os.WriteFile(a.schema, []byte(`{"type":"object"}`), 0o600)
+	_ = os.WriteFile(path, []byte(`{"max_turns":32}`), 0o600)
+
+	get := func() detailView {
+		req := httptest.NewRequest(http.MethodGet, "/agents/research", nil)
+		req.SetPathValue("handle", "research")
+		a.getDetail(httptest.NewRecorder(), req)
+		dv, _ := cap.data.(detailView)
+		return dv
+	}
+	dv := get()
+	if cap.schema != `{"type":"object"}` || strings.Join(cap.hidden, ",") != "$schema" {
+		t.Errorf("the editor is the daemon's schema with $schema hidden: %q %v", cap.schema, cap.hidden)
+	}
+	if dv.Config != `form of {"max_turns":32}` || dv.Version != "v16" {
+		t.Errorf("Config = %v, Version = %q", dv.Config, dv.Version)
+	}
+
+	post := func(body string, h http.HandlerFunc) {
+		cap.flashKind, cap.flashMsg, cap.err = "", "", nil
+		req := postForm("/agents/research/config", body)
+		req.SetPathValue("handle", "research")
+		h(httptest.NewRecorder(), req)
+	}
+	cap.to = `{"max_turns": 8}`
+	post("version=v16", a.postConfig)
+	if b, _ := os.ReadFile(path); cap.flashKind != "success" || cap.flashMsg != "Saved." || string(b) != "{\"max_turns\": 8}\n" {
+		t.Errorf("save: flash %q %q, file %q", cap.flashKind, cap.flashMsg, b)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, configFile+".*")); len(left) != 0 {
+		t.Errorf("a temp file remains: %v", left)
+	}
+	post("version=v16", a.postConfig)
+	if cap.flashKind != "error" || !strings.Contains(cap.flashMsg, "reload it") {
+		t.Errorf("a stale version: flash %q %q", cap.flashKind, cap.flashMsg)
+	}
+	cap.to = ""
+	post("version=v17", a.postConfig)
+	if cap.flashKind != "info" || cap.flashMsg != "Nothing changed." {
+		t.Errorf("unchanged: flash %q %q", cap.flashKind, cap.flashMsg)
+	}
+	post("", a.postConfigJSON)
+	post("", a.postConfigForm)
+	if cap.switchd != "form:{\"max_turns\": 8}\n" {
+		t.Errorf("the switch reads the file: %q", cap.switchd)
+	}
+
+	// A running agent applies the file at its next start.
+	lock, err := hold(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(lock, "%d\n", os.Getpid())
+	cap.to = `{"max_turns": 9}`
+	post("version=v17", a.postConfig)
+	lock.Close()
+	if cap.flashKind != "success" || cap.flashMsg != "Saved; the agent applies it at its next start." {
+		t.Errorf("running: flash %q %q", cap.flashKind, cap.flashMsg)
+	}
+
+	// An unreadable file is an error, never an empty form saved over.
+	_ = os.Remove(path)
+	_ = os.Mkdir(path, 0o700)
+	if get(); cap.err == nil {
+		t.Error("an unreadable config.json renders an error")
+	}
+	post("version=v0", a.postConfig)
+	if cap.err == nil || cap.flashKind != "" {
+		t.Errorf("an unreadable config.json is not saved over: err %v, flash %q", cap.err, cap.flashKind)
+	}
+
+	// No schema yet: the editor is asked with none.
+	_ = os.Remove(path)
+	_ = os.Remove(a.schema)
+	cap.err = nil
+	if get(); cap.schema != "" || cap.err != nil {
+		t.Errorf("without a schema file the editor gets none: %q %v", cap.schema, cap.err)
 	}
 }
 
@@ -613,8 +706,8 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 	if len(auth) != 0 {
 		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
 	}
-	if len(superuser) != 7 {
-		t.Errorf("every route must be gated: %d of 7", len(superuser))
+	if len(superuser) != 10 {
+		t.Errorf("every route must be gated: %d of 10", len(superuser))
 	}
 }
 

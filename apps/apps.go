@@ -194,4 +194,22 @@ type Deps struct {
 	// Logger is the core's structured logger, for an app's background work (e.g.
 	// service-account provisioning). May be nil in tests.
 	Logger *slog.Logger
+
+	// ConfigEditor edits a JSON configuration file through the form of its
+	// JSON Schema, as the kernel's configuration page does (requirements
+	// §6.6). A hidden key is never shown and kept as saved.
+	ConfigEditor func(schema json.RawMessage, hidden ...string) ConfigEditor
+}
+
+// ConfigEditor is the editing of one configuration file: Form is the model
+// for {{template "_form_fields" .}} in a [data-json] form carrying Version in
+// its `version` field; Read is what a post would write over the file and
+// whether it differs; ToJSON and ToForm answer the form's JSON switch. An
+// empty file is {}.
+type ConfigEditor interface {
+	Form(file []byte) (any, error)
+	Version(file []byte) string
+	Read(r *http.Request, file []byte) (to []byte, changed bool, err error)
+	ToJSON(w http.ResponseWriter, r *http.Request, file []byte)
+	ToForm(w http.ResponseWriter, r *http.Request, file []byte)
 }

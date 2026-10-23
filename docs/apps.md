@@ -77,6 +77,12 @@ shared shell and htmx fragments without importing `server`. It also carries:
   over `state.json`. An app provisions and remembers its own state (e.g. a
   service-account password) here, so onboarding needs **no per-app environment
   variables** — a new app adds a JSON key, never a new env var.
+- **`ConfigEditor(schema, hidden...)`** — the editing of a JSON configuration
+  file through the form of its JSON Schema, the kernel's configuration page's
+  own editor (requirements §6.6): `Form` for `{{template "_form_fields" .}}`
+  in a `[data-json]` form carrying `Version` in its `version` field, `Read` for
+  the save, `ToJSON` and `ToForm` for the switch. The agents app edits an
+  agent's `config.json` with it.
 - **`PublicURL`** — the BFF's absolute base URL. An app that registers `kind=http`
   actions builds their callback source from it under the CSRF-exempt `/_kernel/`
   prefix (e.g. `PublicURL + "/_kernel/<slug>/ack"`).

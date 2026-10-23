@@ -8,14 +8,16 @@
 // filesystem editor and child-process supervisor, not a kernel-HTTP feature. It
 //
 //   - creates a home with a blank agent.md;
-//   - edits agent.md and the optional config.json, which the daemon never
-//     writes (a blank config.json is no file: the daemon's defaults);
+//   - edits agent.md, and config.json through the form of the daemon's own
+//     schema of it, $JUICE_HOME/schemas/juice-agent.schema.json, written at
+//     every start (agent requirements §11); the daemon reads the file at its
+//     next start;
 //   - starts `juice-agent serve <login>` detached, and stops the daemon
 //     serving a login with SIGTERM, whoever started it.
 //
 // "Running" is the daemon's own word: it holds `serve.lock` in its home for as
 // long as it serves (agent requirements §11, as a kernel holds its home,
-// ecosystem-standard §3), so an agent served from a terminal is seen, stopped
+// ecosystem-standard §4), so an agent served from a terminal is seen, stopped
 // and protected like one the UI started. The UI keeps only the children it
 // spawned, for the moment before a child takes the lock. A daemon outlives the
 // UI, as the kernel does.
@@ -32,7 +34,6 @@ package agents
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -59,10 +60,12 @@ var tmplFS embed.FS
 // $JUICE_HOME/bin, then PATH).
 const binEnv = "JUICE_AGENT_BIN"
 
-// The files of an agent home the UI edits (agent requirements.md §11).
+// The files of an agent home the UI edits (agent requirements.md §11), and
+// the daemon's schema of the second.
 const (
 	agentFile  = "agent.md"
 	configFile = "config.json"
+	schemaFile = "juice-agent.schema.json"
 )
 
 // agentsIcon is the app's own nav icon (a small robot), inline so no core sprite
@@ -74,13 +77,13 @@ const agentsIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0
 // '..', making path traversal impossible before the containment check in agentDir.
 var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
-var editable = map[string]bool{agentFile: true, configFile: true}
+var editable = map[string]bool{agentFile: true}
 
 var (
 	errBadHandle = errors.New("invalid agent handle")
-	errBadConfig = errors.New("config.json must be valid JSON")
 	errExists    = errors.New("agent already exists")
 	errNotFound  = errors.New("no such agent")
+	errStale     = errors.New("the configuration changed since this page was loaded; reload it")
 )
 
 // Agents is the app. Its only mutable runtime state is the supervisor's process
@@ -90,6 +93,7 @@ type Agents struct {
 	root   string      // $JUICE_HOME/agents; overridable in tests
 	logs   string      // $JUICE_HOME/ui/agents, one <login>.log per daemon run
 	client string      // $JUICE_HOME/client, the records an agent's session lives in
+	schema string      // $JUICE_HOME/schemas/juice-agent.schema.json, the daemon's schema of config.json
 	sup    *supervisor // the children this UI spawned; overridable in tests (fake launcher)
 	mu     sync.Mutex  // one lifecycle post at a time (create, start, stop, delete)
 }
@@ -127,6 +131,9 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("GET /agents/{handle}", d.RequireSuperuser(a.getDetail))
 	d.Watch("agent", a.watch)
 	mux.HandleFunc("POST /agents/{handle}/files/{file}", d.RequireSuperuser(a.postSaveFile))
+	mux.HandleFunc("POST /agents/{handle}/config", d.RequireSuperuser(a.postConfig))
+	mux.HandleFunc("POST /agents/{handle}/config/json", d.RequireSuperuser(a.postConfigJSON))
+	mux.HandleFunc("POST /agents/{handle}/config/form", d.RequireSuperuser(a.postConfigForm))
 	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
 	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
@@ -144,6 +151,9 @@ func (a *Agents) Start(ctx context.Context) error {
 	}
 	if a.client == "" {
 		a.client = filepath.Join(home, "client")
+	}
+	if a.schema == "" {
+		a.schema = filepath.Join(home, "schemas", schemaFile)
 	}
 	if a.sup == nil {
 		a.sup = newSupervisor(osLauncher{bin: agentBin(home), home: home})
@@ -246,9 +256,7 @@ func (a *Agents) readFile(handle, file string) (string, error) {
 	return string(b), nil
 }
 
-// writeFile writes one editable file. A blank config.json removes the file,
-// restoring the daemon's defaults; any other config.json must parse as JSON —
-// the UI rejects malformed config as the daemon does, never inventing its own.
+// writeFile writes one editable file.
 func (a *Agents) writeFile(handle, file, content string) error {
 	if !editable[file] {
 		return errBadHandle
@@ -260,17 +268,38 @@ func (a *Agents) writeFile(handle, file, content string) error {
 	if _, err := os.Stat(dir); err != nil {
 		return errNotFound
 	}
-	path := filepath.Join(dir, file)
-	if file == configFile && strings.TrimSpace(content) == "" {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+	return os.WriteFile(filepath.Join(dir, file), []byte(content), 0o600)
+}
+
+// writeConfig replaces the agent's config.json whole, by a temp file renamed
+// over it, so a daemon starting meanwhile reads the old file or the new one.
+func (a *Agents) writeConfig(handle string, content []byte) error {
+	dir, err := a.agentDir(handle)
+	if err != nil {
+		return err
 	}
-	if file == configFile && !json.Valid([]byte(content)) {
-		return errBadConfig
+	tmp, err := os.CreateTemp(dir, configFile+".*")
+	if err != nil {
+		return err
 	}
-	return os.WriteFile(path, []byte(content), 0o600)
+	if _, err := tmp.Write(content); err == nil {
+		err = tmp.Close()
+	} else {
+		_ = tmp.Close()
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(dir, configFile))
+}
+
+// editor edits config.json through the daemon's schema of it, absent until an
+// agent of this installation first starts; the schema pointer is kept as
+// saved. Without the schema the form is the JSON editor alone.
+func (a *Agents) editor() apps.ConfigEditor {
+	schema, _ := os.ReadFile(a.schema)
+	return a.deps.ConfigEditor(schema, "$schema")
 }
 
 // remove deletes handle's home, the log of its last run and its credential.
@@ -378,7 +407,8 @@ type listView struct {
 type detailView struct {
 	status
 	Agent    string // agent.md
-	Config   string // config.json; "" when absent
+	Config   any    // config.json as the editor's form; an absent file is {}
+	Version  string // the file's version, carried by the form and checked by a save
 	OpenForm string // the ?form= value; selects which dialog renders [open]
 	Error    string // why the Sign in dialog came back open
 
@@ -487,11 +517,19 @@ func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, 
 		return
 	}
 	agent, _ := a.readFile(handle, agentFile)
-	config, _ := a.readFile(handle, configFile)
+	file, err := a.readFile(handle, configFile)
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
+	config, err := a.editor().Form([]byte(file))
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
 	a.deps.RenderPage(w, r, code, "agent", "agents", detailView{
 		status:   st,
 		Agent:    agent,
 		Config:   config,
+		Version:  a.editor().Version([]byte(file)),
 		OpenForm: form,
 		Error:    errMsg,
 		Account:  a.account(r, handle),
@@ -506,15 +544,80 @@ func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	content := strings.ReplaceAll(r.FormValue("content"), "\r\n", "\n")
-	if err := a.writeFile(handle, file, content); err != nil {
-		if errors.Is(err, errBadConfig) {
-			a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "config.json must be valid JSON — not saved.")
-			return
-		}
-		a.deps.HandleErr(w, r, err)
+	if err := a.writeFile(handle, file, content); a.deps.HandleErr(w, r, err) {
 		return
 	}
 	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Saved.")
+}
+
+// config reads the agent's config.json for its three handlers: "" when
+// absent, an error when unreadable, never an empty file in its place.
+func (a *Agents) config(w http.ResponseWriter, r *http.Request) (handle string, file []byte, ok bool) {
+	handle = r.PathValue("handle")
+	if !a.exists(handle) {
+		a.notFound(w, r)
+		return "", nil, false
+	}
+	content, err := a.readFile(handle, configFile)
+	if a.deps.HandleErr(w, r, err) {
+		return "", nil, false
+	}
+	return handle, []byte(content), true
+}
+
+// postConfig writes the form over the file the page was rendered from. The
+// daemon reads the file at its next start, which the flash of a running
+// agent says; a stale version is refused, since a daemon's start adds the
+// keys a file lacks and a daemon started from a terminal is not under a.mu.
+func (a *Agents) postConfig(w http.ResponseWriter, r *http.Request) {
+	handle, file, ok := a.config(w, r)
+	if !ok {
+		return
+	}
+	back := "/agents/" + handle
+	editor := a.editor()
+	var to []byte
+	var changed bool
+	err := errStale
+	if r.FormValue("version") == editor.Version(file) {
+		to, changed, err = editor.Read(r, file)
+	}
+	if err != nil {
+		a.deps.FlashRedirect(w, r, back, "error", capitalize(err.Error())+".")
+		return
+	}
+	if !changed {
+		a.deps.FlashRedirect(w, r, back, "info", "Nothing changed.")
+		return
+	}
+	if err := a.writeConfig(handle, append(to, '\n')); a.deps.HandleErr(w, r, err) {
+		return
+	}
+	msg := "Saved."
+	if running, _ := a.running(handle); running {
+		msg = "Saved; the agent applies it at its next start."
+	}
+	a.deps.FlashRedirect(w, r, back, "success", msg)
+}
+
+func (a *Agents) postConfigJSON(w http.ResponseWriter, r *http.Request) {
+	if _, file, ok := a.config(w, r); ok {
+		a.editor().ToJSON(w, r, file)
+	}
+}
+
+func (a *Agents) postConfigForm(w http.ResponseWriter, r *http.Request) {
+	if _, file, ok := a.config(w, r); ok {
+		a.editor().ToForm(w, r, file)
+	}
+}
+
+// capitalize upper-cases a message's first letter, as the core flashes one.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // The lifecycle posts run one at a time under a.mu, so two posts for one

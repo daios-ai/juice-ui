@@ -674,7 +674,10 @@ func (s *Server) appDeps() apps.Deps {
 		PublicURL:         s.publicURL,
 		StatePath:         s.appStore.path,
 		Home:              s.home,
-		Logger:            s.log,
+		ConfigEditor: func(schema json.RawMessage, hidden ...string) apps.ConfigEditor {
+			return s.editor(schema, hidden...)
+		},
+		Logger: s.log,
 	}
 }
 

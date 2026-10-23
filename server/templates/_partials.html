@@ -432,10 +432,7 @@
 <p class="error-text" role="alert" data-json-error hidden></p>
 {{end}}
 <div class="field" data-raw{{if not .UseRawFallback}} hidden{{end}}>
-  {{if .UseRawFallback}}
-  <label>Input (JSON)</label>
-  <p class="help">{{if .Example}}Pre-filled with the expected shape — edit the values.{{else}}Defaults to <code>{}</code> when empty.{{end}}</p>
-  {{end}}
+  {{if .UseRawFallback}}<label>JSON</label>{{end}}
   <textarea name="raw_args" placeholder="{}" rows="1">{{if .Example}}{{.Example}}{{end}}</textarea>
 </div>
 {{if not .UseRawFallback}}<input type="hidden" name="has_fields" value="1">{{end}}

@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.32.1
+Version: 0.33.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.33.0.** An agent's `config.json` is edited as the form
+> of the daemon's own JSON Schema of it, which juice-agent 0.7.0 writes to
+> `$JUICE_HOME/schemas/juice-agent.schema.json` at every start, with the JSON
+> switch and a save, as the kernel's configuration page edits its file (§6.1,
+> §6.6). One editor serves both files: the kernel's with its secrets withheld
+> and its restart, the agent's with `$schema` kept as saved and a write the
+> daemon reads at its next start, refused when the file changed since the page
+> was loaded. The raw `config.json` textarea is gone.
 
 > **What changed in 0.32.1.** A demanded row holding nothing is empty, so a
 > required array whose item demands no field opens under `minItems` until its
@@ -998,12 +1007,18 @@ kernel and world is in use, and keys everything durable by
   kernel account confers: on a shared root, an ordinary session could otherwise
   edit and stop another person's agent, and anyone signed in could start a
   process on the host. The agents app is one: it keeps an agent's home at
-  `$JUICE_HOME/agents/<login>/` (ecosystem-standard §2), edits its `agent.md`
-  and optional `config.json`, a blank `config.json` being no file, and runs
+  `$JUICE_HOME/agents/<login>/` (ecosystem-standard §2), edits its `agent.md`,
+  and its `config.json` through the form of the daemon's own schema of it,
+  `$JUICE_HOME/schemas/juice-agent.schema.json`, as the kernel's configuration
+  is edited (§6.6), `$schema` kept as saved and the JSON editor alone until the
+  schema exists: a save replaces the file whole, by rename, which the daemon
+  reads at its next start, and a running agent's flash says so; a save from a
+  page older than the file is refused, since the daemon's start writes the
+  keys a file lacks (juice-agent 0.7.0 §11). It runs
   `juice-agent serve <login>` detached, so the daemon outlives the UI as the
   kernel does. An agent is running when a daemon holds `serve.lock` in its
   home (juice-agent 0.6.0 §11, as a kernel holds its own, ecosystem-standard
-  §3), whoever started it, or when a child the UI just spawned has not yet
+  §4), whoever started it, or when a child the UI just spawned has not yet
   taken the lock; a lock whose state cannot be read is an error, never
   "stopped". Stop signals the process named in the lock. The daemon's session
   is the login's own, made as `juice auth login <login>` would (§5): New agent
@@ -1909,8 +1924,9 @@ bilateral settlement to initiate, no settle route, and nothing here to press.
 editing the file and restarting the kernel (kernel manual). The UI, which
 supervises this installation's kernel (§1), does both for the operator, on a
 page reached from `admin` and from the `admin config` command, both of which
-exist only when the kernel is this installation's. (`ecosystem-standard.md` §3 still names the first boot the
-file's only writer; the kernel manual has the operator edit it.)
+exist only when the kernel is this installation's. The editor is one
+component, parameterised by the file's schema, its hidden keys and the
+kernel's secrets; an agent's `config.json` is its second instance (§6.1).
 
 * The form is the kernel's own JSON Schema of the file,
   `$JUICE_HOME/schemas/config.schema.json`, rendered by the run form's
