@@ -131,7 +131,7 @@
        (tick.go). A widget that waits for something holds a hidden input
        naming what it shows; the reply swaps only what changed. */}}
   {{if .Me}}
-  <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every 3s" hx-include="input[name=watch]" hx-swap="none"></div>
+  <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every 5s" hx-include="input[name=watch]" hx-swap="none"></div>
   <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every {{.BadgeSecs}}s" hx-include="input[name=slow]" hx-swap="none"></div>
   {{range .Nav}}{{if .Live}}<input type="hidden" id="watch-{{.Slug}}" name="slow" value="{{.Slug}}:badge:{{.Badge}}">{{end}}{{end}}
   {{end}}

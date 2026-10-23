@@ -803,7 +803,7 @@ func TestLayoutRendersTheHeartbeat(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`hx-get="/tick" hx-trigger="every 3s" hx-include="input[name=watch]" hx-swap="none"`,
+		`hx-get="/tick" hx-trigger="every 5s" hx-include="input[name=watch]" hx-swap="none"`,
 		`hx-get="/tick" hx-trigger="every 15s" hx-include="input[name=slow]" hx-swap="none"`,
 	} {
 		if strings.Count(body, want) != 1 {

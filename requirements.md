@@ -4,7 +4,7 @@ Version: 0.31.0
 Status: design draft — endpoint surface gated against the running kernel
 
 > **What changed in 0.31.0.** One heartbeat per page. A signed-in page makes
-> one request per lane — every 3 s, and every badge interval — carrying a
+> one request per lane — every 5 s, and every badge interval — carrying a
 > hidden watch for each widget that waits for something (the task and app
 > badges, an agent's status, a conversation's tail, a parked process, a
 > peer's card), naming what it shows; the reply swaps only the widgets whose
@@ -758,7 +758,7 @@ detectable.
     htmx swap fragments.
   * **Interactivity:** **htmx** plus small vanilla ES modules — no build step, no
     Node, no SPA framework. Handlers return HTML fragments; htmx performs swaps
-    and the page's heartbeat (one request per lane, every 3 s and every badge
+    and the page's heartbeat (one request per lane, every 5 s and every badge
     interval, carrying each widget's watch). Vanilla JS is limited
     to the schema→form renderer, the theme toggle, a tab-visibility signal, and
     the wallet module (`wallet/wallet.mjs`, §6.5), which speaks EIP-6963 and

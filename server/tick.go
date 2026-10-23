@@ -16,7 +16,7 @@ import (
 )
 
 // The heartbeat. A signed-in page makes one request per lane — `watch` every
-// 3 s, `slow` every BadgeSecs — carrying one hidden input per widget that
+// 5 s, `slow` every BadgeSecs — carrying one hidden input per widget that
 // waits for something: kind:key:shown. The tick answers out-of-band fragments
 // for the widgets whose truth differs from what they show and nothing for the
 // rest, so an unchanged widget is never swapped under a click. The kernel-gone
