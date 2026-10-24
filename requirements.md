@@ -2190,7 +2190,8 @@ the assistant, else the newest room, else an empty page beside the rail.
   `/` (the launcher, §6.1), `@` where the room has more than one other member
   (a list of them; choosing one puts its address first, in place of one
   already there), the message box growing to ten lines, and an up arrow that
-  sends, neutral and disabled while the box is empty. Enter sends and
+  sends — the one ink-filled control, never the accent, disabled while the
+  box is empty; `/` and `@` are quiet icons of the same set. Enter sends and
   Shift+Enter breaks the line; a first word that begins a member's address
   lists the members too. Beneath the bar stands the viewer's available
   balance in small type, kept current by the heartbeat (a run in the panel, a

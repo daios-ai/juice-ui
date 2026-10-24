@@ -26,7 +26,7 @@ Three laws underpin everything:
 
 | Component | Class(es) | Role |
 |---|---|---|
-| Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-quiet` | actions |
+| Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-quiet` · `.btn-send` (the composer's alone) | actions |
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
 | Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
@@ -236,6 +236,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
+| `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, the one ink-filled control in the interface, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
 
 **One geometry, one row, one look.**
 - No size modifier exists: every button, in a table cell or a card, has the
@@ -428,9 +429,10 @@ separates it from the content above, and nothing else does (§4).
   answer arrives (an out-of-band delete by its id, `e-<seq>`). The
   **composer** is the post action's form drawn as a bar, `form.composer`:
   `.error-text` for a refusal, the launcher's list, then `.composer-bar` —
-  `/` and `@` (`.btn-icon`), the `message` control through `_control` (the
-  form built with `taskForm`, the room sealed by the path and not shown, a
-  `sr-only` label), and the send arrow — then `_balance`. A refusal answers
+  `/` and `@` (quiet `.btn-icon`s, `#slash` and `#at-sign`), the `message`
+  control through `_control` (the form built with `taskForm`, the room sealed
+  by the path and not shown, a `sr-only` label), and the send arrow
+  (`.btn-send`, `#arrow-up`) — then `_balance`. A refusal answers
   422, so the form keeps its draft (requirements.md §6.7). Enter sends; a
   leading address is completed from the room's members. Nothing asks the person to connect: the UI joins
   them.

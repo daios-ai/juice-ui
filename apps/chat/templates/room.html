@@ -48,10 +48,10 @@
   <p class="error-text" id="chat-error" role="alert" hidden></p>
   {{template "_launcher" (launcher .Launcher $d.Others $rid)}}
   <div class="composer-bar">
-    <button type="button" class="btn-icon" data-launcher aria-label="Actions and pages" title="Actions and pages">/</button>
+    <button type="button" class="btn-icon" data-launcher aria-label="Actions and pages" title="Actions and pages"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#slash"/></svg></button>
     {{if gt (len $d.Others) 1}}<button type="button" class="btn-icon" data-address aria-label="Address a member" title="Address a member"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#at-sign"/></svg></button>{{end}}
     <div data-fields class="stretch">{{range $f.Editable.Fields}}<label class="sr-only" for="f_{{.Path}}">{{.Name}}</label>{{template "_control" .}}{{end}}</div>
-    <button type="submit" class="btn-icon" data-send aria-label="Send" title="Send"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#arrow-up"/></svg></button>
+    <button type="submit" class="btn-send" data-send aria-label="Send" title="Send"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#arrow-up"/></svg></button>
   </div>
   {{template "_balance" (balance .Available)}}
 </form>

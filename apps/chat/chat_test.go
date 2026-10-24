@@ -908,7 +908,7 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 	got := page(pair.ID)
 	for _, want := range []string{`<form class="composer"`, `data-composer`, `<div class="composer-bar">`, `name="has_fields" value="1"`,
 		`name="t_/message" value="string"`, `name="f_/message"`, `<label class="sr-only" for="f_/message">message</label>`,
-		`data-launcher`, `data-send aria-label="Send"`, `#arrow-up`, `id="balance"`, `name="watch" value="balance::0"`,
+		`data-launcher`, `#slash`, `class="btn-send" data-send aria-label="Send"`, `#arrow-up`, `id="balance"`, `name="watch" value="balance::0"`,
 		`id="launcher-data"`, `"room":"` + pair.ID + `"`, `"members":["bob@testnet"]`,
 		`class="view" data-json`, `<aside class="panel" id="panel"`, `id="chat-working"`} {
 		if !strings.Contains(got, want) {

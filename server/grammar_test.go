@@ -18,7 +18,7 @@ import (
 
 var allowedButtonClasses = map[string]bool{
 	"btn": true, "btn-money": true, "btn-danger": true,
-	"btn-icon": true, "btn-quiet": true,
+	"btn-icon": true, "btn-quiet": true, "btn-send": true, // btn-send: the composer bar's alone (TestComposerIsTheOneException)
 }
 
 var (
@@ -831,8 +831,8 @@ func TestComposerIsTheOneException(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(b), `class="composer`) && filepath.Base(f) != "room.html" {
-			t.Errorf("%s: the composer bar stands in the room alone", f)
+		if (strings.Contains(string(b), `class="composer`) || strings.Contains(string(b), "btn-send")) && filepath.Base(f) != "room.html" {
+			t.Errorf("%s: the composer bar and its send arrow stand in the room alone", f)
 		}
 	}
 }

@@ -646,11 +646,17 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .composer > .error-text { margin: 0 0 .35rem; }
 .composer-bar { display: flex; align-items: flex-end; gap: .35rem; padding: .35rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 .composer-bar:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
-.composer-bar .btn-icon { border-color: transparent; color: var(--text-muted); }
+/* One line of text and every control are 2rem tall, so they share a centre
+   line; aligned at the foot, the controls stay level with the last line as the
+   text grows. */
+.composer-bar .btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; padding: 0; border-color: transparent; color: var(--text-muted); }
 .composer-bar .btn-icon:hover { color: var(--text); }
-.composer-bar .btn-icon[data-send] { color: var(--text); border-color: var(--border-strong); }
-.composer-bar .btn-icon:disabled { opacity: .4; cursor: default; }
-.composer-bar textarea { border: none; background: none; padding: .45rem .3rem; min-height: 0; max-height: 15em; resize: none; font-family: var(--font-ui); outline: none; }
+/* The send arrow: the bar's one primary act, the one ink-filled control in the
+   interface (grammar §5.1) — never the accent, which is money's. */
+.btn-send { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; padding: 0; border: none; border-radius: 50%; background: var(--text); color: var(--bg); cursor: pointer; }
+.btn-send .ico { width: 1rem; height: 1rem; }
+.btn-send:disabled { opacity: .3; cursor: default; }
+.composer-bar textarea { display: block; border: none; background: none; padding: calc((2rem - 1.5em) / 2) .3rem; min-height: 2rem; line-height: 1.5; max-height: 15em; resize: none; font-family: var(--font-ui); outline: none; }
 .composer > #balance { margin-top: .3rem; padding-left: .5rem; }
 .panel { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .panel:empty { display: none; }
