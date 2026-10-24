@@ -686,6 +686,7 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .launcher[hidden] { display: none; }
 .launcher nav { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
 .launcher .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.launcher .menu-item .ico { color: var(--text-muted); }
 @media (max-width: 720px) {
   .room { grid-template-columns: minmax(0, 1fr); }
   .panel:not(:empty) { position: fixed; inset: 0; z-index: 250; max-height: none; border-radius: 0; }

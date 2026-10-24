@@ -538,8 +538,9 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   CSP-safe) with the room's members and the room. Its query is the
   composer's text after `/`; its rows are `.menu-item`s under
   `.menu-caption`s, read bottom-up from the box — `Actions` (title and
-  address, from the catalog file, matched by either), `Pages`, and at the top
-  `Search "…"` with the search's price as its muted detail. Enter in the box
+  address, from the catalog file, matched by either), the pages, each led
+  by `#arrow-right` under no caption, and at the top
+  `Search "…"`, led by `#search`, with the search's price as its muted detail. Enter in the box
   submits the search into the panel; a row is chosen by a click, or by `↑`
   to it and Enter, never for the person. An action row opens the panel (its
   href is the action page, the no-JS path), as does a row of the panel's

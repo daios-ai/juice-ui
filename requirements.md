@@ -1172,8 +1172,8 @@ and absent until then.
   (which sets the draft aside), opens the list above the composer, the best
   match nearest the box: the catalog's actions matching what is typed by title
   or by address (at most five, title and address), then above them the
-  registry's destinations and openers (at most three; all of them while
-  nothing is typed), and at the top one row, `Search "…"`, naming the price
+  registry's destinations and openers, each led by an arrow (at most three;
+  all of them while nothing is typed), and at the top one row, `Search "…"`, naming the price
   of submitting it (nothing when free). Typing sends no request and spends
   nothing: the actions are read from the free catalog file and matched in the
   browser, never from `sys/lookup` (§8.2). **Enter submits the query** to the

@@ -466,11 +466,13 @@ document.body.addEventListener('click', (e) => {
 // address, so typing sends no request and spends nothing. Choosing an action
 // opens its panel beside the conversation and choosing a page goes there;
 // Enter, or the top row naming the search's price, submits the query to the
-// economy, whose results open in the panel. A row is chosen only by clicking
-// it, or by ↑ to it and Enter: nothing is chosen for the person. Closing the
-// list gives the draft back. A first word that begins a member's address lists
-// the members, and choosing one writes its address. Without JavaScript the
-// composer is the plain post form and every page stays a link.
+// economy, whose results open in the panel. The search's row is led by its
+// glass and a page's by an arrow.
+// A row is chosen only by clicking it, or by ↑ to it and Enter: nothing is
+// chosen for the person. Closing the list gives the draft back. A first word
+// that begins a member's address lists the members, and choosing one writes
+// its address. Without JavaScript the composer is the plain post form and
+// every page stays a link.
 //
 // hintKey and the ranking mirror server/handlers.go (hintKey, wordsBegin, and
 // catalogAsResults's title tiers); server/testdata/hints.json holds the cases
@@ -514,11 +516,21 @@ const loadCatalog = () => (catalog ??= fetch("/search/catalog.json", { credentia
   .then((file) => ({ actions: (file?.actions || []).map((e) => ({ ...e, r: hintKey(e.ref || "") })), search: file?.search || null }))
   .catch(() => ({ actions: [], search: null })));
 
-// row builds one launcher row: a link, labelled, with a muted detail.
-function row(label, detail, href) {
+// row builds one launcher row: a link, labelled, with a muted detail, and
+// led by an icon where one marks its kind.
+function row(label, detail, href, icon = "") {
   const a = document.createElement("a");
   a.className = "menu-item";
   a.href = href;
+  if (icon) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "ico");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "/static/icons.svg#" + icon);
+    svg.append(use);
+    a.append(svg);
+  }
   a.append(label);
   if (detail) {
     const d = document.createElement("span");
@@ -607,11 +619,12 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     const found = matchHints(pages, q, q ? LAUNCH_PAGES : pages.length, true);
     const rows = [];
     if (q) {
-      const r = row("Search “" + q + "”", cat.search?.price || "", "/browse?q=" + encodeURIComponent(q));
+      const r = row("Search “" + q + "”", cat.search?.price || "", "/browse?q=" + encodeURIComponent(q), "search");
       r.addEventListener("click", (e) => { e.preventDefault(); search(q); });
       rows.push(r);
     }
-    if (found.length) rows.push(caption("Pages"), ...found.reverse().map((p) => row(p.t, "", p.href)));
+    // A page is a place to go: led by an arrow, under no caption.
+    rows.push(...found.reverse().map((p) => row(p.t, "", p.href, "arrow-right")));
     if (actions.length) {
       rows.push(caption("Actions"));
       for (const a of actions.reverse()) {
