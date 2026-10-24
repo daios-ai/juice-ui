@@ -1,7 +1,18 @@
 # Juice Web UI Requirements
 
-Version: 0.39.0
+Version: 0.40.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.40.0.** The launcher searches the economy without
+> leaving the conversation (docs/conversational-search.md). A known action is
+> still chosen from the free catalog as one types; Enter, or the top row naming
+> the lookup's price, submits the query to `sys/lookup` pinned to that quote,
+> and the results open in the panel, built from Discover's own. An action
+> opened from them is shown over them, and ← Results gives them back, in their
+> order and at their scroll position, without searching again. A successful
+> run from a room becomes the composer's draft and the panel closes; Use
+> result, and the result it carried into the next action, are gone (§6.1,
+> §6.2, §6.7).
 
 > **What changed in 0.39.0.** Sizes are one system: the type, spacing, icon
 > and avatar scales and one control height are tokens, and the stylesheet
@@ -1041,7 +1052,8 @@ The workspace (§1), on a wide screen:
 
 The sidebar is the conversations and the avatar (③ the task badge), whose
 menu holds every other destination; the composer is where text, an address and
-`/` begin; the panel holds the action chosen, empty and absent until then.
+`/` begin; the panel holds the action chosen or a search's results, empty
+and absent until then.
 
 * **The sidebar is the workspace's conversations.** It MUST hold, in order:
   the brand (the kernel and its world, §7) with the collapse toggle; the
@@ -1161,17 +1173,21 @@ menu holds every other destination; the composer is where text, an address and
   match nearest the box: the catalog's actions matching what is typed by title
   or by address (at most five, title and address), then above them the
   registry's destinations and openers (at most three; all of them while
-  nothing is typed), and at the top one row, `Search "…" →`, which runs
-  Discover's search for the text. Enter takes the row nearest the box, ↑
-  climbs the rows and ↓ comes back. Choosing an action opens its panel beside
-  the conversation; choosing a page goes there; neither posts a message nor
-  runs anything, and Escape closes the list and gives the draft back. The
-  registry is delivered as inert JSON (a `type="application/json"` block),
-  never executable inline script, to satisfy the CSP, and every entry is a
-  link, so the launcher adds no capability unreachable without it. The actions
-  are read from the free catalog file, matched in the browser, never from
-  `sys/lookup` (§8.2). There is no palette, no search pill and no command
-  prefix.
+  nothing is typed), and at the top one row, `Search "…"`, naming the price
+  of submitting it (nothing when free). Typing sends no request and spends
+  nothing: the actions are read from the free catalog file and matched in the
+  browser, never from `sys/lookup` (§8.2). **Enter submits the query** to the
+  economy (§6.2, the search from a conversation), as the search row does; a
+  row is chosen only by clicking it, or by ↑ to it and Enter — nothing is
+  chosen for the person — and ↓ comes back. Choosing an action, whether this
+  kernel holds it or only knows it from a peer, opens its panel beside the
+  conversation; choosing a page goes there; neither posts a message nor runs
+  anything, and Escape closes the list and gives the draft back, as a search
+  does: the query is never part of the draft. The registry is delivered as
+  inert JSON (a `type="application/json"` block), never executable inline
+  script, to satisfy the CSP, and every entry is a link, so the launcher adds
+  no capability unreachable without it. There is no palette, no search pill
+  and no command prefix.
 
 ### 6.2 run — discovery, action page, run form
 
@@ -1252,15 +1268,34 @@ both MUST keep planning apart from spending:
   title line. The title is the row's one pointer target. With no query the page
   is a **flat catalog capped at 20 per page** with a pager (§7 pagination).
 * **The catalog file.** The launcher's actions come from one file
-  (`GET /search/catalog.json`: every page of `GET /v1/actions` — the caller's
-  own actions, the live ones it may call, and those discovered on peers — each
-  action with its title, the title's normalized key, its id, none for a
-  discovered one, and its address), loaded once per page and matched in the
-  browser on every keystroke, so typing sends no request. Matching folds
-  accents, case and punctuation (decimal digits are kept), requires every
-  typed word to begin a word of the title, and ranks titles beginning with the
-  text first, then shorter ones. The file holds the account's private titles,
-  so it MUST NOT be stored by the browser (`Cache-Control: no-store`).
+  (`GET /search/catalog.json`: `actions`, every page of `GET /v1/actions` —
+  the caller's own actions, the live ones it may call, and those discovered on
+  peers — each action with its title, the title's normalized key, its id,
+  none for a discovered one, and its address; and `search`, what submitting a
+  query costs: the lookup's price as the row prints it, empty when free, and
+  the quote that pins it), loaded once per page and matched in the browser on
+  every keystroke, so typing sends no request. `search` is null when the
+  kernel has no active lookup, or prices one without a quote to pin: a priced
+  search is never offered unpinned. Matching folds accents, case and
+  punctuation (decimal digits are kept), requires every typed word to begin a
+  word of the title, and ranks titles beginning with the text first, then
+  shorter ones. The file holds the account's private titles, so it MUST NOT be
+  stored by the browser (`Cache-Control: no-store`).
+* **The search from a conversation** (`POST /browse/search`, `q` and
+  `lookup_quote_hash`) is Discover's search answering the panel (§6.7): one
+  function serves both, and the panel renders Discover's results, its banner
+  and its sort switch through the same partial. It runs `sys/lookup` pinned to
+  the quote the launcher's row named, which is the person's authorization of
+  that price; a priced lookup MUST NOT run without a pin, here or on
+  Discover's GET, and falls back to the catalog match with the reason stated.
+  A pinned run the kernel refuses because the price moved is said as such —
+  not charged, the new price named — with one money button,
+  `Search "…" (N)`, pinned to the new quote; it is never shown as the
+  fallback. A search is **one ranked page** (at most 20) and has no pager.
+  Each row is numbered, by the one sort rule, under every order, so the
+  panel's sort switch arranges the rows in the browser and never searches
+  again; the switch's links are Discover's, the path without script. The
+  planner's `Choose for me` is Discover's alone: it lands on an action page.
 * **Search fallback.** When `sys/lookup` is priced or fails, the search MUST
   match the whole catalog by the launcher's rules over title, name and description
   — a title beginning with the query first, then a title holding its words, then
@@ -2217,24 +2252,33 @@ the assistant, else the newest room, else an empty page beside the rail.
   take one path. A refusal, the kernel's or chat's, stands just above the bar,
   keeps what was typed, and clears at the next keystroke. A post is a string
   for now; a document post is a later decision.
-* **The panel** (`GET /actions/{id}/panel`) is the action as its page states
-  it — title, chips, address, description, this kernel's record with the
-  price, what other kernels report folded — and the one run form (§6.2), with
-  its outcome below; × closes it. On a narrow screen it covers the
+* **The panel** holds an action or a search's results, its head held at the
+  top as the panel scrolls. An action (`GET /actions/{id}/panel`, or
+  `GET /discovered/panel?ref=` for one known only from a peer, resolved first
+  as its page is: a row's panel is its page's address with `/panel`) is the
+  action as its page states it — title, chips, address, description, this
+  kernel's record with the price, what other kernels report folded — and the
+  one run form (§6.2), with its outcome below. A search's results
+  (`POST /browse/search`, §6.2) are headed `Search "…"`. A row opens its
+  action over the results, which are held; its head is then `← Results`,
+  which gives them back in the order and at the scroll position they had,
+  without searching again. × closes the panel and drops what it held; nothing
+  of the conversation or the draft changes. On a narrow screen it covers the
   conversation. The action page remains, built from the same partials and the
   same loader.
 * **Fill from chat** (`POST /actions/{id}/fill`) prepares the panel's fields
   with the planner, under §6.2's Proposal rule: its context is the room's
   recent conversation, as the conversations app hands it (the viewer's
-  entries as the user's, every other member's named), or, when a result was
-  carried into the action, that result alone. The fields come back as the
-  form's own; a refusal is stated above the buttons and the fields stay.
-* **Use result.** A success run from a room offers `Use result`: **In chat**
-  puts the result into the composer's draft — a string as itself, any other
-  value as its JSON — to be sent or not; **In another action** opens the
-  launcher, and the action chosen opens with that result for its fill.
-  Nothing reaches the room until the person sends it, and no reference to a
-  result is kept: a result is carried as its value.
+  entries as the user's, every other member's named). The fields come back as
+  the form's own; a refusal is stated above the buttons and the fields stay.
+* **A success from a room is the draft.** A successful run from the panel
+  puts its result into the composer — a string as itself, any other value as
+  its JSON — after a blank line when something was typed, so a draft is never
+  overwritten, and the panel closes; the receipt stays in Transactions. A
+  failed, refused or pending run keeps the panel with its outcome. Nothing
+  reaches the room until the person sends it, through `msg/post` like any
+  post. A result reaches a next action through the conversation: an agent
+  reads it, or Fill from chat does.
 
 The store is `$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held
 across the upgrade settles nothing said before it); a first start beside the
@@ -2579,9 +2623,16 @@ Every production `.go` file has a `_test.go` file with independent tests.
   (drift guard);
 * the planner under one rule: offered at its price, on the money button when
   priced, pinned to the quote shown, never on load; a fill prepares the
-  panel's fields from the room's conversation, or from a carried result alone,
-  runs nothing but the planner, leaves an unstated argument blank, and states
-  a refusal in its own words; Use result appears only on a run from a room.
+  panel's fields from the room's conversation, runs nothing but the planner,
+  leaves an unstated argument blank, and states a refusal in its own words;
+* the search from a conversation: Discover's search and the panel's are one
+  function; a priced lookup never runs unpinned, a GET never spends, and the
+  pinned one runs once at the quote shown; changed terms ask again at the new
+  price and are never the fallback; a transport failure is an error, not an
+  empty result; the catalog file's search terms, null for a lookup absent,
+  switched off or priced without a pin; every row ranked under every order by
+  the one sort rule; a discovered row opening in the panel; a success from a
+  room carrying its draft, and no other way to use a result (drift guard).
 
 ## 10. Open items / kernel prerequisites
 

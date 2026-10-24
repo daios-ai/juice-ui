@@ -336,6 +336,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))
 	mux.HandleFunc("GET /search/catalog.json", s.requireAuth(s.getSearchCatalog))
 	mux.HandleFunc("POST /browse/propose", s.requireAuth(s.postPropose))
+	mux.HandleFunc("POST /browse/search", s.requireAuth(s.postSearch))
 
 	// Workshop — the provider surface (own actions, earnings, creation).
 	mux.HandleFunc("GET /workshop", s.requireAuth(s.getWorkshop))
@@ -344,6 +345,7 @@ func New(o Options) (http.Handler, error) {
 	// A DISCOVERED action has no local row yet: opening it resolves the reference
 	// with its home kernel, which caches a proxy and lands on an ordinary page.
 	mux.HandleFunc("GET /discovered", s.requireAuth(s.getDiscovered))
+	mux.HandleFunc("GET /discovered/panel", s.requireAuth(s.getDiscoveredPanel))
 	// A mutation names a target — an action id, or an owner/path naming a whole
 	// application — so these are not per-id routes (kernel §D20).
 	mux.HandleFunc("POST /actions/enable", s.requireAuth(s.postActionLifecycle))

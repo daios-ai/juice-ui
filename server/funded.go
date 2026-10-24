@@ -92,7 +92,7 @@ type Outcome struct {
 	// (a public key arrives abbreviated). Display only: nothing keys on it.
 	Peer string
 	// Room is the conversation the run was made from, when it was: a success
-	// then offers its result to the composer and to a next action.
+	// is then the composer's draft (requirements §6.7).
 	Room string
 }
 
@@ -173,13 +173,13 @@ type CallForm struct {
 	// separate decline form (_task_decline) through the HTML form attribute, so
 	// the two commands share one row and keep their own actions.
 	DeclineID string
-	// Room and Tx are the context a panel was opened with: the conversation,
-	// and a previous result to carry into this action. Fill, set when there is
-	// a context and the kernel has a planner, offers to prepare the arguments
-	// from it (requirements §6.2), at the planner's own price and pin.
-	Room, Tx string
-	Fill     *plannerTerms
-	FillURL  string
+	// Room is the conversation a panel was opened from, which the fill reads
+	// and a success answers to. Fill, set when there is a room and the kernel
+	// has a planner, offers to prepare the arguments from it (requirements
+	// §6.2), at the planner's own price and pin.
+	Room    string
+	Fill    *plannerTerms
+	FillURL string
 }
 
 // plannerTerms are the kernel's planner as a page offers it: its price and
@@ -202,7 +202,7 @@ func (r *Renderer) runForm(v actionView) CallForm {
 		CSRFField: v.CSRFField, PostURL: "/actions/" + a.ID + "/run", FormURL: "/actions/" + a.ID + "/form", Verb: "Run",
 		QuoteHash: a.QuoteHash, Price: a.Price, Editable: v.Form, ResultID: "run-result", Outcome: v.Outcome,
 		FirstPayee: v.FirstPayee, PayeeOwner: r.refOf(a.Ref(), "").Owner.Text,
-		Room: v.Room, Tx: v.Tx, Fill: v.Fill, FillURL: "/actions/" + a.ID + "/fill",
+		Room: v.Room, Fill: v.Fill, FillURL: "/actions/" + a.ID + "/fill",
 	}
 }
 

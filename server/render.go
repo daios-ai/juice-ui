@@ -285,7 +285,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 }
 
 // resultText is a result as a message carries it: a string as itself, any
-// other value as its JSON (requirements §6.7, Use result).
+// other value as its JSON: the draft a success from a room becomes (§6.7).
 func resultText(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {

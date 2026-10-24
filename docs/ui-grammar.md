@@ -36,8 +36,8 @@ Three laws underpin everything:
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
-| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…" →` row; rows `.menu-item`, matched in the browser (§5.9) |
-| **Panel** | `.panel` (`_action_panel`) within `.room` beside `.conversation` | an action beside a conversation: `.modal-head` (title, chips, ×), `_action_head`, the run form; empty, it takes no column; on a phone it covers the conversation |
+| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; rows `.menu-item`, matched in the browser; Enter submits the search (§5.9) |
+| **Panel** | `.panel` (`_action_panel`, `_search_panel`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head`, the run form; opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). Empty, it takes no column; on a phone it covers the conversation |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
@@ -347,12 +347,11 @@ separates it from the content above, and nothing else does (§4).
   button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
-  In a panel opened from a room the form carries the room (and a carried
-  result) as hidden fields, and its cluster leads with **Fill from chat** — a
-  `.btn` when the planner is free, the `.btn-money` naming its price when
-  priced — whose refusal is an `.error-text` above the buttons; a success's
-  row then holds **Use result ▾**, a `.menu` of `In chat` and `In another
-  action`.
+  In a panel opened from a room the form carries the room as a hidden field,
+  and its cluster leads with **Fill from chat** — a `.btn` when the planner is
+  free, the `.btn-money` naming its price when priced — whose refusal is an
+  `.error-text` above the buttons; a success's `.outcome` then carries its
+  result as the composer's draft (`data-draft`), and the panel closes into it.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the JSON toggle), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.
@@ -540,12 +539,16 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   composer's text after `/`; its rows are `.menu-item`s under
   `.menu-caption`s, read bottom-up from the box — `Actions` (title and
   address, from the catalog file, matched by either), `Pages`, and at the top
-  `Search "…" →` to Discover. An
-  action row opens the panel (its href is the action page, the no-JS path).
-  There is no palette, no search pill, no command prefix.
+  `Search "…"` with the search's price as its muted detail. Enter in the box
+  submits the search into the panel; a row is chosen by a click, or by `↑`
+  to it and Enter, never for the person. An action row opens the panel (its
+  href is the action page, the no-JS path), as does a row of the panel's
+  results; the panel's sort tabs arrange the rows it holds (their hrefs are
+  Discover's). There is no palette, no search pill, no command prefix.
 - Shortcuts: `g`+letter (destinations, `g h` home, `g d` discover) · `/` (the
   launcher, or Discover's box) · `?` (help overlay, `dialog.palette`) ·
-  `j/k/Enter` (table and list rows) · `Esc` (close topmost) · `↑` from the
+  `j/k/Enter` (table and list rows; Enter opens a row as its own link does,
+  so a row in the panel opens in the panel) · `Esc` (close topmost) · `↑` from the
   composer into the launcher's rows, `↓` back. Every row targets a real link — the keyboard layer adds no
   capability unreachable without it.
 
@@ -554,7 +557,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | Element | Use |
 |---|---|
 | Flash bar | one-shot result of the last action, top of content |
-| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as the view (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row |
+| `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as the view (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row; from a room it carries its draft (`data-draft`) |
 | `.banner` (`-info`/`-error`) | inline notice. A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |

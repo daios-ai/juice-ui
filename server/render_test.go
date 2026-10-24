@@ -2270,10 +2270,11 @@ func TestShortAddrAbbreviatesAChainAddressOnly(t *testing.T) {
 	}
 }
 
-// A success run from a conversation offers its result back — into the draft
-// as text (a string as itself, anything else as its JSON), or into the next
-// action — and one run elsewhere offers nothing.
-func TestUseResultFollowsTheConversation(t *testing.T) {
+// A success run from a conversation is the composer's draft: the outcome
+// carries the result as a message carries it (a string as itself, anything
+// else as its JSON), and a run elsewhere carries nothing. There is no other
+// way to use a result.
+func TestASuccessFromARoomIsTheDraft(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
@@ -2286,13 +2287,20 @@ func TestUseResultFollowsTheConversation(t *testing.T) {
 		return rec.Body.String()
 	}
 	in := render(Outcome{Class: Success, TxID: "T1", Room: "r1", Result: json.RawMessage(`{"iso":"x"}`)})
-	for _, want := range []string{`data-menu="use-T1"`, `data-use-result data-value="{`, `data-use-tx="T1"`} {
-		if !strings.Contains(in, want) {
-			t.Errorf("a run from a room lacks %s: %s", want, in)
-		}
+	if !strings.Contains(in, `<div class="outcome success" role="status" data-draft="{`) {
+		t.Errorf("a run from a room carries its draft: %s", in)
 	}
-	if out := render(Outcome{Class: Success, TxID: "T1", Result: json.RawMessage(`{}`)}); strings.Contains(out, "data-use-") {
-		t.Error("a run outside a conversation offers no Use result")
+	if !strings.Contains(render(Outcome{Class: Success, TxID: "T1", Room: "r1", Result: json.RawMessage(`"plain"`)}), `data-draft="plain"`) {
+		t.Error("a string result is the draft as itself")
+	}
+	if strings.Contains(in, "data-use-") || strings.Contains(in, `data-menu="use-`) {
+		t.Error("Use result is gone")
+	}
+	if out := render(Outcome{Class: Success, TxID: "T1", Result: json.RawMessage(`{}`)}); strings.Contains(out, "data-draft") {
+		t.Error("a run outside a conversation has no draft")
+	}
+	if fail := render(Outcome{Class: Failed, Room: "r1", Message: "boom"}); strings.Contains(fail, "data-draft") {
+		t.Error("a failure is never a draft")
 	}
 	if resultText(json.RawMessage(`"plain"`)) != "plain" || !strings.Contains(resultText(json.RawMessage(`{"a":1}`)), `"a": 1`) {
 		t.Error("a string is itself, anything else its JSON")

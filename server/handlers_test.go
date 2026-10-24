@@ -3347,9 +3347,6 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 			w.Write([]byte(`[]`))
 		}
 	})
-	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"T9","action":"sys@testnet/time","owner":"alice@testnet","caller":"alice@testnet","target":"sys@testnet","status":"success","args":{},"result":{"iso":"2026-10-24T16:47:29Z"}}`))
-	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Action string `json:"action"`
@@ -3487,29 +3484,25 @@ func TestFillPreparesTheFieldsFromTheConversation(t *testing.T) {
 	}
 
 	lastDecide, ranActions = "", nil
-	resp := postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}, "tx": {"T9"}, "fill_quote_hash": {"DQ"}})
+	resp := postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}, "fill_quote_hash": {"DQ"}})
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(string(b), `name="f_/url" rows="1">example.com`) {
 		t.Fatalf("fill = %d %s", resp.StatusCode, b)
 	}
-	for _, want := range []string{`"role":"system"`, `"actions":["sys@testnet/web"]`, `"quote_hash":"DQ"`,
-		`Use this result of sys@testnet/time in the action: {\"iso\":\"2026-10-24T16:47:29Z\"}`} {
+	for _, want := range []string{`"role":"system"`, `"actions":["sys@testnet/web"]`, `"quote_hash":"DQ"`, "fetch example.com for me"} {
 		if !strings.Contains(lastDecide, want) {
 			t.Errorf("the planner was not given %s: %s", want, lastDecide)
 		}
 	}
-	if strings.Contains(lastDecide, "fetch example.com for me") {
-		t.Error("a carried result is the context, not the conversation")
-	}
 	if len(ranActions) != 1 || ranActions[0] != "sys@testnet/llm/decide" {
 		t.Errorf("a fill runs the planner alone, ran %v", ranActions)
 	}
-	resp = postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}, "fill_quote_hash": {"DQ"}})
-	resp.Body.Close()
-	if !strings.Contains(lastDecide, "fetch example.com for me") {
-		t.Errorf("without a result the conversation is the context: %s", lastDecide)
+	resp = postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"fill_quote_hash": {"DQ"}})
+	if b, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(b), "nothing to prepare") {
+		t.Errorf("with no conversation there is nothing to prepare from: %d %s", resp.StatusCode, b)
 	}
+	resp.Body.Close()
 	resp = postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"elsewhere"}})
 	if b, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(b), "Not a member") {
 		t.Errorf("a room the viewer is not in is refused: %d %s", resp.StatusCode, b)
@@ -3895,6 +3888,7 @@ type homeKernel struct {
 	actionLists int
 	runs        int
 	failLedger  bool
+	lookup      string // the sys/lookup row a ref read answers; none when empty
 }
 
 func newHomeKernel(t *testing.T) *homeKernel {
@@ -3943,7 +3937,11 @@ func newHomeKernel(t *testing.T) *homeKernel {
 		if pastEnd(w, r) {
 			return
 		}
-		if r.URL.Query().Get("ref") != "" {
+		if ref := r.URL.Query().Get("ref"); ref != "" {
+			if ref == "sys@testnet/lookup" && k.lookup != "" {
+				w.Write([]byte("[" + k.lookup + "]"))
+				return
+			}
 			w.Write([]byte(`[]`))
 			return
 		}
@@ -4126,9 +4124,13 @@ func TestSearchCatalogServesEveryAction(t *testing.T) {
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	var got []catalogEntry
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+	var file catalogFile
+	if err := json.NewDecoder(resp.Body).Decode(&file); err != nil {
 		t.Fatal(err)
+	}
+	got := file.Actions
+	if file.Search != nil {
+		t.Errorf("a kernel without a lookup offers no search: %+v", file.Search)
 	}
 	if k.actionLists != 1 || k.runs != 0 {
 		t.Errorf("catalog made %d list reads and %d runs, want 1 and 0", k.actionLists, k.runs)
@@ -4154,6 +4156,45 @@ func TestSearchCatalogServesEveryAction(t *testing.T) {
 	}
 	if keys["summarize a page"] != 2 || keys["greet 0"] != 1 || len(got) != 15 {
 		t.Errorf("every action, two sharing a title, all 15 of them: %+v", got)
+	}
+}
+
+// The catalog file carries what submitting a search costs: the lookup's price
+// as the launcher's row names it and the quote that pins it, an empty price
+// when free, and no search at all when the lookup is absent, switched off, or
+// priced without a quote to pin — a priced search is never offered unpinned.
+func TestSearchCatalogNamesTheSearchsTerms(t *testing.T) {
+	k := newHomeKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	terms := func() *searchTerms {
+		t.Helper()
+		var file catalogFile
+		if err := json.Unmarshal([]byte(getBody(t, cl, srv.URL+"/search/catalog.json")), &file); err != nil {
+			t.Fatal(err)
+		}
+		return file.Search
+	}
+	const row = `{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":%t,"price":%d,"quote_hash":%q}`
+	k.lookup = fmt.Sprintf(row, true, 7, "LQ")
+	if got := terms(); got == nil || got.Price != "7 credits" || got.QuoteHash != "LQ" {
+		t.Errorf("a priced lookup is offered at its price and pin: %+v", got)
+	}
+	k.lookup = fmt.Sprintf(row, true, 0, "LQ")
+	if got := terms(); got == nil || got.Price != "" || got.QuoteHash != "LQ" {
+		t.Errorf("a free lookup names no price: %+v", got)
+	}
+	k.lookup = fmt.Sprintf(row, true, 7, "")
+	if got := terms(); got != nil {
+		t.Errorf("a priced lookup with no quote to pin is never offered: %+v", got)
+	}
+	k.lookup = fmt.Sprintf(row, false, 0, "LQ")
+	if got := terms(); got != nil {
+		t.Errorf("a switched-off lookup is not offered: %+v", got)
+	}
+	if k.runs != 0 {
+		t.Errorf("reading the terms ran %d actions", k.runs)
 	}
 }
 
@@ -4374,5 +4415,224 @@ func TestBalanceWatch(t *testing.T) {
 	got := getBody(t, cl, srv.URL+"/tick?watch=balance::400")
 	if !strings.Contains(got, `id="balance" hx-swap-oob="true">500 credits</p>`) || !strings.Contains(got, `value="balance::500" hx-swap-oob="true"`) {
 		t.Errorf("a moved balance answers the new line: %s", got)
+	}
+}
+
+// searchKernel is a fake kernel for the search submitted from a
+// conversation: sys/lookup at a price and quote of the test's choosing, one
+// local action and one known only through a peer, which resolves to a proxy.
+// It records every run's body, and refuses a run pinned to a stale quote as
+// the kernel does.
+type searchKernel struct {
+	*httptest.Server
+	price    int64
+	quote    string
+	runs     []string
+	failList bool
+}
+
+func newSearchKernel(t *testing.T) *searchKernel {
+	k := &searchKernel{quote: "LQ"}
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/transactions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	const hello = `{"id":"A1","action":"alice@testnet/hello","name":"hello","title":"Hello","kind":"wasm","active":true,"price":3,"description":"says hello",
+		"evidence":{"local_experience":{"rating_count":2,"rating_estimate":0.5}}}`
+	const proxy = `{"id":"P1","action":"tom@BRAVOKEY/hola","name":"hola","title":"Hola","kind":"remote_proxy","active":true,"price":1}`
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("id") {
+		case "A1":
+			w.Write([]byte(hello))
+		case "P1":
+			w.Write([]byte(proxy))
+		default:
+			http.Error(w, `{"code":"not_found","error":"no such action"}`, http.StatusNotFound)
+		}
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
+		switch r.URL.Query().Get("ref") {
+		case "sys@testnet/lookup":
+			fmt.Fprintf(w, `[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":%d,"quote_hash":%q}]`, k.price, k.quote)
+		case "tom@BRAVOKEY/hola":
+			w.Write([]byte("[" + proxy + "]"))
+		case "":
+			if k.failList {
+				http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte("[" + hello + "]"))
+		default:
+			w.Write([]byte(`[]`))
+		}
+	})
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		k.runs = append(k.runs, string(b))
+		var in struct {
+			QuoteHash string `json:"quote_hash"`
+		}
+		_ = json.Unmarshal(b, &in)
+		if in.QuoteHash != "" && in.QuoteHash != k.quote {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprintf(w, `{"code":"terms_changed","error":"the action's terms changed","meta":{"price":"%d","quote_hash":%q}}`, k.price, k.quote)
+			return
+		}
+		w.Write([]byte(`{"result":{"results":[
+			{"action_id":"A1","action":"alice@testnet/hello","title":"Hello","price":3},
+			{"action_id":"R9","action":"tom@BRAVOKEY/hola","title":"Hola","price":1,"observed_at":"2026-10-24T10:00:00Z"}]},"tx_id":"TL"}`))
+	})
+	k.Server = httptest.NewServer(mux)
+	t.Cleanup(k.Close)
+	return k
+}
+
+// postHTMX posts a form as htmx does, so a failure answers as a fragment.
+func postHTMX(t *testing.T, cl *http.Client, urlStr, page string, form url.Values) (int, string) {
+	t.Helper()
+	form.Set("gorilla.csrf.Token", csrfTokenFrom(t, page))
+	req, _ := http.NewRequest(http.MethodPost, urlStr, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// A search submitted from a conversation runs the lookup once, pinned to the
+// quote its row named, and answers the panel with Discover's results: the
+// rows ranked under every order, the sort switch linking Discover, and no
+// pager. A priced lookup without a pin is never run: the panel falls back to
+// the catalog and says why. A kernel that cannot be read is an error, never
+// an empty result.
+func TestSearchFromTheComposerAnswersThePanel(t *testing.T) {
+	k := newSearchKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse")
+
+	k.price = 7
+	code, panel := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}, "lookup_quote_hash": {"LQ"}})
+	if code != 200 || len(k.runs) != 1 || !strings.Contains(k.runs[0], `"quote_hash":"LQ"`) || !strings.Contains(k.runs[0], `"query":"hello"`) {
+		t.Fatalf("one pinned lookup: %d runs %v", code, k.runs)
+	}
+	for _, want := range []string{
+		`<h2>Search “hello”</h2>`, `data-panel-close`,
+		`data-href="/actions/A1" data-rank-relevance="0" data-rank-rating="0" data-rank-price="1"`,
+		`data-href="/discovered?ref=tom%40BRAVOKEY%2fhola" data-rank-relevance="1" data-rank-rating="1" data-rank-price="0"`,
+		`href="/browse?q=hello&amp;sort=rating"`, `href="/browse?q=hello"`,
+	} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("panel lacks %s:\n%s", want, panel)
+		}
+	}
+	if strings.Contains(panel, `class="pager"`) || strings.Contains(panel, "Choose for me") || strings.Contains(panel, "Semantic search unavailable") {
+		t.Errorf("a search in the panel is one ranked page, with no planner and no fallback: %s", panel)
+	}
+
+	k.runs = nil
+	_, panel = postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}})
+	if len(k.runs) != 0 {
+		t.Errorf("a priced lookup ran without a pin: %v", k.runs)
+	}
+	if !strings.Contains(panel, "priced on this kernel") || !strings.Contains(panel, `data-href="/actions/A1"`) {
+		t.Errorf("an unpinned priced search falls back to the catalog and says why: %s", panel)
+	}
+
+	if code, body := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"  "}}); code != http.StatusUnprocessableEntity || !strings.Contains(body, "banner-error") {
+		t.Errorf("an empty query is refused: %d %s", code, body)
+	}
+
+	k.failList = true
+	if _, body := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}}); !strings.Contains(body, "banner-error") || strings.Contains(body, "No matches") {
+		t.Errorf("a kernel that cannot be read is an error, not an empty result: %s", body)
+	}
+}
+
+// A pinned search refused because the lookup's price moved is said as such —
+// nothing charged, the new price named — and asked again on one money button
+// pinned to the new quote, never shown as a fallback.
+func TestChangedSearchTermsAskAgainAtTheNewPrice(t *testing.T) {
+	k := newSearchKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse")
+
+	k.price, k.quote = 9, "LQ2"
+	_, panel := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}, "lookup_quote_hash": {"LQ"}})
+	for _, want := range []string{"Terms changed — you were not charged.", "Searching now costs 9 credits.",
+		`name="q" value="hello"`, `name="lookup_quote_hash" value="LQ2"`, `<button class="btn-money" type="submit">Search “hello” (9 credits)</button>`,
+		`hx-post="/browse/search" hx-target="#panel"`, `name="gorilla.csrf.Token"`} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("panel lacks %s:\n%s", want, panel)
+		}
+	}
+	if strings.Contains(panel, "Semantic search unavailable") || strings.Contains(panel, "action-row") {
+		t.Errorf("changed terms are not a fallback: %s", panel)
+	}
+	k.runs = nil
+	_, panel = postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}, "lookup_quote_hash": {"LQ2"}})
+	if len(k.runs) != 1 || !strings.Contains(panel, `data-href="/actions/A1"`) {
+		t.Errorf("accepting the new price searches once: %v", k.runs)
+	}
+}
+
+// A row of a search opens in the panel whether or not this kernel holds it: a
+// discovered one is resolved with its home kernel first, as its page is. A
+// panel opened from results carries the way back, and the room for the fill.
+func TestDiscoveredOpensInThePanel(t *testing.T) {
+	k := newSearchKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	panel := getBody(t, cl, srv.URL+"/discovered/panel?ref="+url.QueryEscape("tom@BRAVOKEY/hola")+"&room=r1&back=1")
+	for _, want := range []string{`data-panel-back`, `<h2>Hola`, `action="/actions/P1/run"`, `name="room" value="r1"`} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("panel lacks %s:\n%s", want, panel)
+		}
+	}
+	if plain := getBody(t, cl, srv.URL+"/actions/A1/panel?room=r1"); strings.Contains(plain, "data-panel-back") {
+		t.Error("a panel opened from the launcher has no results to return to")
+	}
+	if missing := getBody(t, cl, srv.URL+"/discovered/panel?ref="+url.QueryEscape("tom@BRAVOKEY/gone")); !strings.Contains(missing, "That action could not be resolved from its kernel.") {
+		t.Errorf("an unresolvable ref says so: %s", missing)
+	}
+}
+
+// rankCards numbers each row under every order by sortCards, the one rule: a
+// rated row before an unrated one, the cheaper first, the served order kept.
+func TestRankCardsFollowTheOneSortRule(t *testing.T) {
+	card := func(price int64, rating float64, count int) actionCardView {
+		a := client.Action{Price: price}
+		if count > 0 {
+			a.Evidence = &client.ActionEvidence{LocalExperience: &client.Stats{RatingCount: int64(count), RatingEstimate: rating}}
+		}
+		return actionCardView{Action: a}
+	}
+	cards := []actionCardView{card(3, .9, 4), card(1, 0, 0), card(2, .5, 4)}
+	rankCards(cards)
+	for i, want := range []cardRank{{0, 0, 2}, {1, 2, 0}, {2, 1, 1}} {
+		if *cards[i].Rank != want {
+			t.Errorf("row %d ranks %+v, want %+v", i, *cards[i].Rank, want)
+		}
 	}
 }

@@ -347,6 +347,17 @@ for (const form of document.querySelectorAll('form[data-confirm-password]')) {
   confirm.addEventListener('input', check);
 }
 
+// light marks one tab of its switch current. .active and aria-current move
+// together — the CSS highlights on either, so a stale aria-current would keep
+// the old tab lit.
+function light(tab) {
+  for (const t of tab.closest('.tabs').querySelectorAll('.tab')) {
+    const on = t === tab;
+    t.classList.toggle('active', on);
+    if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+  }
+}
+
 // Entry-screen tabs: swap the sign-in / create-account panels client-side.
 // The tabs are real /login?tab= links, so with JS off the server just renders
 // the requested tab (no-JS fallback); here we avoid the reload. Scoped to
@@ -356,13 +367,7 @@ document.addEventListener('click', (e) => {
   if (!tab) return;
   e.preventDefault();
   const want = tab.dataset.tab;
-  for (const t of document.querySelectorAll('.tabs .tab[data-tab]')) {
-    const on = t.dataset.tab === want;
-    t.classList.toggle('active', on);
-    // Move aria-current with .active — the CSS highlights on either, so a stale
-    // aria-current would keep the old tab lit.
-    if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
-  }
+  light(tab);
   for (const p of document.querySelectorAll('.auth-panel')) p.hidden = p.dataset.panel !== want;
   if (window.history) history.replaceState(null, '', '/login?tab=' + want);
 });
@@ -456,10 +461,13 @@ document.body.addEventListener('click', (e) => {
 // the list opens above the composer with the best match nearest the box, as a
 // prompt at the foot of a terminal lists them. The page carries the registry's
 // pages, the room's members and the room (#launcher-data, inert JSON); the
-// catalog's actions are loaded once (GET /search/catalog.json) and matched in
-// the browser by title or by address, so typing sends no request. Choosing an
-// action opens its panel beside the conversation, choosing a page goes there,
-// and the top row searches Discover; nothing posts or runs, and closing the
+// catalog's actions and what a search costs are loaded once
+// (GET /search/catalog.json) and matched in the browser by title or by
+// address, so typing sends no request and spends nothing. Choosing an action
+// opens its panel beside the conversation and choosing a page goes there;
+// Enter, or the top row naming the search's price, submits the query to the
+// economy, whose results open in the panel. A row is chosen only by clicking
+// it, or by ↑ to it and Enter: nothing is chosen for the person. Closing the
 // list gives the draft back. A first word that begins a member's address lists
 // the members, and choosing one writes its address. Without JavaScript the
 // composer is the plain post form and every page stays a link.
@@ -498,11 +506,13 @@ function matchHints(entries, q, limit, all = false) {
 
 let launcher = null;
 try { launcher = JSON.parse(document.getElementById("launcher-data")?.textContent || "null"); } catch (_) { launcher = null; }
+// The catalog file: the actions, and the search's terms — its price as the
+// row names it and the quote that pins it — or null where none can be quoted.
 let catalog = null;
 const loadCatalog = () => (catalog ??= fetch("/search/catalog.json", { credentials: "same-origin" })
-  .then((r) => (r.ok ? r.json() : []))
-  .then((list) => list.map((e) => ({ ...e, r: hintKey(e.ref || "") })))
-  .catch(() => []));
+  .then((r) => (r.ok ? r.json() : null))
+  .then((file) => ({ actions: (file?.actions || []).map((e) => ({ ...e, r: hintKey(e.ref || "") })), search: file?.search || null }))
+  .catch(() => ({ actions: [], search: null })));
 
 // row builds one launcher row: a link, labelled, with a muted detail.
 function row(label, detail, href) {
@@ -525,10 +535,28 @@ function caption(text) {
   return c;
 }
 
-// openPanel loads an action's panel beside the conversation.
-export function openPanel(id, extra = "") {
-  const room = launcher?.room ? "?room=" + encodeURIComponent(launcher.room) : "?";
-  window.htmx.ajax("GET", "/actions/" + encodeURIComponent(id) + "/panel" + room + extra, { target: "#panel", swap: "innerHTML" });
+// The panel beside the conversation (requirements §6.7) holds an action or a
+// search's results. An action opened from the results is shown over them, and
+// the results are held, with their order and scroll position, for ← Results.
+let held = null;
+
+// openPanel opens the action behind a row's link in the panel: a row's panel
+// is its page's address with /panel (/actions/{id}, /discovered?ref=), opened
+// for the room, and over the results when `back` says so.
+function openPanel(href, back = false) {
+  const url = new URL(href, location.origin);
+  url.pathname += "/panel";
+  if (launcher?.room) url.searchParams.set("room", launcher.room);
+  if (back) url.searchParams.set("back", "1");
+  else held = null;
+  window.htmx.ajax("GET", url.pathname + url.search, { target: "#panel", swap: "innerHTML scroll:top" });
+}
+
+// searchPanel submits a query to the economy: the lookup, pinned to the quote
+// its row named, answering the panel with Discover's results (§6.2).
+function searchPanel(q, quoteHash) {
+  held = null;
+  window.htmx.ajax("POST", "/browse/search", { target: "#panel", swap: "innerHTML scroll:top", values: { q, lookup_quote_hash: quoteHash } });
 }
 
 for (const form of document.querySelectorAll("form[data-composer]")) {
@@ -539,24 +567,31 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
   const pages = (launcher.pages || []).map((p) => ({ t: p.name, k: hintKey(p.name), href: p.href }));
   const field = () => form.querySelector("[data-fields] textarea:not([disabled])");
   let saved = null;  // the draft the launcher gives back when it closes
-  let after = "";    // a query string the chosen action's panel opens with (a result to use)
 
   const open = () => saved !== null;
   const close = (restore = true) => {
     if (restore && saved !== null && field()) field().value = saved;
-    saved = null; after = ""; box.hidden = true; list.replaceChildren();
+    saved = null; box.hidden = true; list.replaceChildren();
     sync();
   };
   // launch opens the launcher over the draft: the field holds `/` and the
-  // query, and the draft comes back when it closes.
-  form.launch = (extra = "") => {
+  // query, and the draft comes back when it closes. The `/` button and the `/`
+  // key (keys.js) ask for it with a `launch` event on the form.
+  const launch = () => {
     const f = field();
     if (!f) return;
     saved = f.value.startsWith("/") ? "" : f.value;
-    after = extra;
     f.value = "/";
     f.focus();
     render();
+  };
+  form.addEventListener("launch", launch);
+  // search closes the launcher, giving the draft back — the query is never
+  // part of it — and submits the query at the search's quoted terms.
+  const search = async (q) => {
+    const { search: terms } = await loadCatalog();
+    close();
+    searchPanel(q, terms?.quote_hash || "");
   };
 
   // place puts the rows above the bar, the last row nearest it.
@@ -565,21 +600,23 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
   async function render() {
     const f = field();
     if (!open() || !f) return;
-    const typed = f.value.slice(1);
-    const actions = typed.trim() ? matchHints(await loadCatalog(), typed, LAUNCH_ACTIONS) : [];
+    const q = f.value.slice(1).trim();
+    const cat = q ? await loadCatalog() : null;
     if (!open()) return;
-    const found = matchHints(pages, typed, typed.trim() ? LAUNCH_PAGES : pages.length, true);
+    const actions = q ? matchHints(cat.actions, q, LAUNCH_ACTIONS) : [];
+    const found = matchHints(pages, q, q ? LAUNCH_PAGES : pages.length, true);
     const rows = [];
-    if (typed.trim()) rows.push(row("Search “" + typed.trim() + "” →", "", "/browse?q=" + encodeURIComponent(typed.trim())));
+    if (q) {
+      const r = row("Search “" + q + "”", cat.search?.price || "", "/browse?q=" + encodeURIComponent(q));
+      r.addEventListener("click", (e) => { e.preventDefault(); search(q); });
+      rows.push(r);
+    }
     if (found.length) rows.push(caption("Pages"), ...found.reverse().map((p) => row(p.t, "", p.href)));
     if (actions.length) {
       rows.push(caption("Actions"));
       for (const a of actions.reverse()) {
         const r = row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
-        if (a.id) {
-          const extra = after;
-          r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(a.id, extra); field()?.focus(); });
-        }
+        r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(r.href); field()?.focus(); });
         rows.push(r);
       }
     }
@@ -623,18 +660,18 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     listMembers(members);
   });
 
-  button.addEventListener("click", () => (open() ? close() : form.launch()));
+  button.addEventListener("click", () => (open() ? close() : launch()));
   form.addEventListener("input", (e) => {
     const f = field();
     if (e.target !== f) return;
     sync();
     if (error) error.hidden = true;
     if (f.value.startsWith("/")) {
-      if (!open()) { saved = ""; after = ""; }
+      if (!open()) saved = "";
       render();
       return;
     }
-    if (open()) { saved = null; after = ""; }
+    if (open()) saved = null;
     suggestMembers(f.value);
   });
   form.addEventListener("keydown", (e) => {
@@ -652,16 +689,59 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     }
     if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target !== f) return;
     e.preventDefault();
-    // Enter takes the row nearest the field while the list is open, and sends
-    // otherwise; Shift+Enter breaks the line.
-    if (!box.hidden && rows.length) rows[rows.length - 1].click();
+    // Enter in the box: with the launcher open it submits the query to the
+    // economy; with the members listed it takes the nearest; otherwise it
+    // sends. Shift+Enter breaks the line.
+    const q = f.value.slice(1).trim();
+    if (open()) { if (q) search(q); }
+    else if (!box.hidden && rows.length) rows[rows.length - 1].click();
     else if (f.value.trim()) form.requestSubmit();
   });
 }
 
-// The panel's close empties it, and the conversation has the room again.
+// The panel's rows, its sort switch and its way back. A row opens its action
+// in the panel over the results, which are held with their scroll position; a
+// sort tab arranges the rows by the rank the server numbered them with, so a
+// search is never run twice; ← Results puts the held results back. Rows and
+// tabs are Discover's links, the no-JS path.
 document.addEventListener("click", (e) => {
-  if (e.target.closest("[data-panel-close]")) document.getElementById("panel")?.replaceChildren();
+  const panel = document.getElementById("panel");
+  if (!panel?.contains(e.target)) return;
+  const link = e.target.closest(".action-list a[href]");
+  const tab = e.target.closest(".tabs .tab");
+  if (link && /^\/(actions\/[^/]+|discovered)$/.test(new URL(link.href).pathname)) {
+    e.preventDefault();
+    held = { nodes: [...panel.childNodes], top: panel.scrollTop };
+    openPanel(link.href, true);
+  } else if (tab) {
+    e.preventDefault();
+    const by = "data-rank-" + (new URL(tab.href).searchParams.get("sort") || "relevance");
+    const rows = panel.querySelector(".action-list");
+    rows?.replaceChildren(...[...rows.children].sort((a, b) => a.getAttribute(by) - b.getAttribute(by)));
+    light(tab);
+  } else if (e.target.closest("[data-panel-back]") && held) {
+    panel.replaceChildren(...held.nodes);
+    panel.scrollTop = held.top;
+    held = null;
+  } else if (e.target.closest("[data-panel-close]")) {
+    panel.replaceChildren();
+    held = null;
+  }
+});
+
+// A success from a room is the composer's draft (requirements §6.7): the
+// result, after a blank line when something was typed, and the panel is gone.
+// Sending is the person's; the receipt stays in Transactions. A failure,
+// refusal or pending result stays in the panel.
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  const text = e.target.querySelector?.(":scope > .outcome.success[data-draft]")?.dataset.draft;
+  const field = document.querySelector("form[data-composer] [data-fields] textarea:not([disabled])");
+  if (text === undefined || !field) return;
+  field.value = field.value.trim() ? field.value.replace(/\s+$/, "") + "\n\n" + text : text;
+  field.dispatchEvent(new Event("input", { bubbles: true })); // the arrow follows the box
+  field.focus();
+  document.getElementById("panel")?.replaceChildren();
+  held = null;
 });
 
 // A narrow screen's drawer: the trigger slides the sidebar in over the page
@@ -709,23 +789,4 @@ document.addEventListener('click', async (e) => {
   } finally {
     btn.disabled = false;
   }
-});
-
-// Use result (requirements §6.7): a result goes into the composer's draft, to
-// be sent or not, or into the next action chosen from the launcher, whose
-// panel carries it for the fill.
-document.addEventListener('click', (e) => {
-  const inChat = e.target.closest('[data-use-result]');
-  const inAction = e.target.closest('[data-use-tx]');
-  if (!inChat && !inAction) return;
-  closeAllMenus();
-  const composer = document.querySelector('form[data-composer]');
-  if (inChat) {
-    const field = composer?.querySelector('[data-fields] textarea:not([disabled])');
-    if (!field) return;
-    field.value = field.value ? field.value + '\n' + inChat.dataset.value : inChat.dataset.value;
-    field.focus();
-    return;
-  }
-  composer?.launch?.('&tx=' + encodeURIComponent(inAction.dataset.useTx));
 });

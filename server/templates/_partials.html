@@ -20,7 +20,7 @@
      proxy. */}}
 {{define "_action_row"}}
 {{if .Discovered}}
-<article class="action-row rowable" tabindex="-1" data-href="/discovered?ref={{.Action.Ref}}">
+<article class="action-row rowable" tabindex="-1" data-href="/discovered?ref={{.Action.Ref}}"{{template "_rank" .Rank}}>
   {{template "_tile" .Action}}
   <div class="action-body">
     <div class="action-line">
@@ -34,7 +34,7 @@
   </div>
 </article>
 {{else}}
-<article class="action-row rowable{{if not .Action.Active}} inactive{{end}}" tabindex="-1" data-href="/actions/{{.Action.ID}}">
+<article class="action-row rowable{{if not .Action.Active}} inactive{{end}}" tabindex="-1" data-href="/actions/{{.Action.ID}}"{{template "_rank" .Rank}}>
   {{template "_tile" .Action}}
   <div class="action-body">
     <div class="action-line">
@@ -51,6 +51,58 @@
   </div>
 </article>
 {{end}}
+{{end}}
+
+{{/* _rank — a search row's place under each order, by which the panel
+     rearranges the rows it holds without searching again (§6.2). */}}
+{{define "_rank"}}{{with .}} data-rank-relevance="{{.Relevance}}" data-rank-rating="{{.Rating}}" data-rank-price="{{.Price}}"{{end}}{{end}}
+
+{{/* _search_results — a search's results, on Discover and in the panel
+     alike: the fallback's banner, the sort switch, the ranked rows. A search
+     is one ranked page, so it has no pager. When the pinned lookup was
+     refused because its price moved, it asks again at the new price instead.
+     Takes a discoverView. */}}
+{{define "_search_results"}}
+{{if .Requote}}
+<div class="outcome rejected" role="status">
+  <strong>Terms changed — you were not charged.</strong>
+  <p>Searching now costs {{.Requote.Price}}.</p>
+  <form method="post" action="/browse/search" hx-post="/browse/search" hx-target="#panel" hx-swap="innerHTML">
+    {{.CSRFField}}
+    <input type="hidden" name="q" value="{{.Query}}">
+    <input type="hidden" name="lookup_quote_hash" value="{{.Requote.QuoteHash}}">
+    <button class="btn-money" type="submit">Search “{{.Query}}” ({{.Requote.Price}})</button>
+  </form>
+</div>
+{{else}}
+{{if not .LookupAvailable}}
+<div class="banner banner-info" role="status">Semantic search unavailable — showing catalog results.{{if .Reason}} <span class="muted">(reason: {{.Reason}})</span>{{end}}</div>
+{{end}}
+{{if .Results}}
+{{/* The signals a buyer already has, made usable when choosing. Relevance is
+     the kernel's own order; rating and price arrange what it served, and
+     nothing here is computed (§6.2). An unrated row sorts into its own block
+     after the rated ones — "no ratings" is not a low rating. */}}
+<nav class="tabs" aria-label="Sort">
+  {{range .Sorts}}{{template "_tab" (tab .Label .Href .Current)}}{{end}}
+</nav>
+<div class="action-list">
+  {{range .Results}}{{template "_action_row" .}}{{end}}
+</div>
+{{else}}
+<p class="muted">No matches for “{{.Query}}”.</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{/* _search_panel — a search submitted from a conversation, in the panel
+     beside it (requirements §6.7). Takes a discoverView. */}}
+{{define "_search_panel"}}
+<div class="modal-head">
+  <h2>Search “{{.Query}}”</h2>
+  <button type="button" class="modal-close" data-panel-close aria-label="Close">×</button>
+</div>
+<div class="modal-body">{{template "_search_results" .}}</div>
 {{end}}
 
 {{/* _figures — THE headline money figures (§5.6), one block each on every
@@ -210,21 +262,14 @@
   <p>{{.Message}}</p>
 </div>
 {{else}}
-<div class="outcome success" role="status">
+{{/* A run from a room: its result is the composer's draft, and the panel
+     closes (requirements §6.7). */}}
+<div class="outcome success" role="status"{{if .Room}} data-draft="{{resultText .Result}}"{{end}}>
   {{template "_value_block" (valueBlock .Result (download .TxID))}}
   {{if .TxID}}
   <hr class="card-sep">
   <div class="row compact">
     <a class="btn" href="/transactions/{{.TxID}}">Receipt</a>
-    {{/* Use result (requirements §6.7): into the composer's draft, or into the
-         next action, whose fill reads it. Sharing is the person's send. */}}
-    {{if .Room}}
-    <button type="button" class="btn" data-menu="use-{{.TxID}}" aria-haspopup="menu" aria-expanded="false">Use result ▾</button>
-    <div class="menu" id="use-{{.TxID}}" role="menu" hidden>
-      <button type="button" class="menu-item" role="menuitem" data-use-result data-value="{{resultText .Result}}">In chat</button>
-      <button type="button" class="menu-item" role="menuitem" data-use-tx="{{.TxID}}">In another action</button>
-    </div>
-    {{end}}
     <form class="row compact stretch" method="post" action="/transactions/{{.TxID}}/rate"
           hx-post="/transactions/{{.TxID}}/rate" hx-target="this" hx-swap="outerHTML">
       {{.CSRFField}}
@@ -328,11 +373,9 @@
        request, never from a fresh read of the action — a pin taken from the
        re-read would always match and silently disable the protection. */}}
   {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
-  {{/* The context a panel was opened with (requirements §6.7): the room and a
-       previous result, which the fill reads and a success offers its result
-       back to. */}}
+  {{/* The conversation a panel was opened from (requirements §6.7), which
+       the fill reads and a success answers to. */}}
   {{with .Room}}<input type="hidden" name="room" value="{{.}}">{{end}}
-  {{with .Tx}}<input type="hidden" name="tx" value="{{.}}">{{end}}
   {{with .Fill}}<input type="hidden" name="fill_quote_hash" value="{{.QuoteHash}}">{{end}}
   {{if .Structured}}{{template "_json_switch"}}{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
@@ -745,15 +788,18 @@
 {{template "_stat_strip" (statStrip .Action.Price .Action.Experience true true)}}
 {{end}}
 
-{{/* _action_panel — an action beside a conversation (requirements §6.7): its
-     title and close, its head, what other kernels report folded, and the one
-     run form. Takes an actionView. */}}
+{{/* _action_panel — an action beside a conversation (requirements §6.7):
+     its title and close, its head, what other kernels report folded, and the
+     one run form. Opened from a search's results, the head holds the way back
+     to them instead, and the title opens the body. Takes an actionView. */}}
+{{define "_panel_title"}}<h2>{{.Action.Title}} {{template "_action_chips" .}}</h2>{{end}}
 {{define "_action_panel"}}
 <div class="modal-head">
-  <h2>{{.Action.Title}} {{template "_action_chips" .}}</h2>
+  {{if .Back}}<button type="button" class="btn-quiet" data-panel-back>← Results</button>{{else}}{{template "_panel_title" .}}{{end}}
   <button type="button" class="modal-close" data-panel-close aria-label="Close">×</button>
 </div>
 <div class="modal-body">
+  {{if .Back}}{{template "_panel_title" .}}{{end}}
   {{template "_action_head" .}}
   {{with .Action.Reports}}<details class="fold"><summary>Evidence</summary>{{range .}}<div>{{template "_evidence" .}}</div>{{end}}</details>{{end}}
   {{template "_action_run" .}}

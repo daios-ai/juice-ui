@@ -30,7 +30,7 @@ document.addEventListener("keydown", (e) => {
       // The composer's launcher where there is a composer, else the page's
       // own search box (Discover).
       const form = document.querySelector("form[data-composer]");
-      if (form?.launch) { e.preventDefault(); form.launch(); break; }
+      if (form) { e.preventDefault(); form.dispatchEvent(new Event("launch")); break; }
       const q = document.querySelector('main input[type="search"], main input[name="q"]');
       if (q) { e.preventDefault(); q.focus(); }
       break;
@@ -39,8 +39,13 @@ document.addEventListener("keydown", (e) => {
     case "j": moveRow(1); break;
     case "k": moveRow(-1); break;
     case "Enter": {
+      // A row opens as its own link does — in the panel, for a row there —
+      // or, where it shows none, at its address.
       const row = document.activeElement;
-      if (row && row.classList.contains("rowable") && row.dataset.href) { e.preventDefault(); location.href = row.dataset.href; }
+      if (!row?.classList.contains("rowable") || !row.dataset.href) break;
+      e.preventDefault();
+      const link = [...row.querySelectorAll("a[href]")].find((a) => a.getAttribute("href") === row.dataset.href);
+      if (link) link.click(); else location.href = row.dataset.href;
       break;
     }
   }

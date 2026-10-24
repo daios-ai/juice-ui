@@ -361,7 +361,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 /* Freshness of a remote-backed row's terms (the kernel's observed_at). Quiet:
    it qualifies the price, it is not a status. */
 .action-observed { margin: var(--space-1) 0 0; }
-.chips { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-1); }
+.chips { flex: 0 0 auto; display: inline-flex; vertical-align: middle; align-items: center; gap: var(--space-1); }
 /* Attribute chips — single letter (or lock/word), colorless. R stands out by
    weight (.filled), never by hue: every theme color is a money/trust signal. */
 .chip {
@@ -674,6 +674,12 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .composer > #balance { margin-top: var(--space-1); padding-left: var(--space-2); }
 .panel { position: sticky; top: 0; max-height: 100dvh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .panel:empty { display: none; }
+/* The panel is the one scroller, its head held at the top so the title or the
+   way back, and the close, stay in reach over a long list of results. */
+.panel .modal-head { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.panel .modal-head > .btn-quiet { margin-left: calc(-1 * var(--space-2)); }
+.panel .modal-body { max-height: none; overflow: visible; }
+.panel .modal-body > h2:first-child { margin: 0 0 var(--space-2); font-size: var(--font-size-lg); }
 /* The launcher: the composer's `/`, its matches opening above the composer,
    the best nearest the box one types in. */
 .launcher { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 200; padding: var(--space-1); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }

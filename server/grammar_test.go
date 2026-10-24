@@ -201,15 +201,17 @@ func TestNoRetiredSurfaces(t *testing.T) {
 		"steps_truncated":        "the inspection carries no tasks (§6.6)",
 		"step-card":              "a step is a task (§6.3)",
 		"step-result-":           "a step is a task (§6.3)",
+		"data-use-":              "a success from a room is the composer's draft, the one way to use a result (§6.7)",
+		"Use result":             "a success from a room is the composer's draft, the one way to use a result (§6.7)",
 	}
 	var files []string
 	for _, pat := range []string{"templates/*.html", "*.go"} {
 		f, _ := fs.Glob(tmplFS, pat)
 		files = append(files, f...)
 	}
-	// The routes live in the client and the apps as much as here.
+	// The routes live in the client, the apps and the scripts as much as here.
 	var goFiles []string
-	for _, pat := range []string{"*.go", "../client/*.go", "../apps/*/*.go", "../apps/*/*/*.go"} {
+	for _, pat := range []string{"*.go", "../client/*.go", "../apps/*/*.go", "../apps/*/*/*.go", "static/app.js", "static/keys.js"} {
 		f, _ := filepath.Glob(pat)
 		goFiles = append(goFiles, f...)
 	}

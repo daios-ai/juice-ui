@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,6 +87,9 @@ type actionCardView struct {
 	// ObservedAt is the kernel's own freshness stamp on a remote-backed row (a
 	// gossip observation or a proxy's reconcile); empty on a local action.
 	ObservedAt string
+	// Rank is a search row's place under each order, so the panel rearranges
+	// the rows it holds without searching again; nil on a catalog row.
+	Rank *cardRank
 }
 
 // Observed reports whether this row's terms were last verified against a remote
@@ -118,6 +122,17 @@ type discoverView struct {
 	// Relevance is the kernel's own; the others arrange what it served (§6.2).
 	Sort  string
 	Sorts []SortTab
+	// Requote is the lookup's new terms when the pinned search was refused
+	// because its price moved: the person is asked again at that price.
+	Requote   *searchTerms
+	CSRFField template.HTML // the requote's form, in the panel
+}
+
+// searchTerms are what submitting a query costs: the lookup's price as a
+// button prints it, empty when free, and the quote that pins it.
+type searchTerms struct {
+	Price     string `json:"price"`
+	QuoteHash string `json:"quote_hash"`
 }
 
 // SortTab is one choice in the sort switch: its label, its URL, and whether it
@@ -151,10 +166,12 @@ type actionView struct {
 	Proposed        bool
 	ProposedMessage string
 	CSRFField       template.HTML // carried so the polled _action_run fragment's form keeps its token
-	// Room and Tx are the context the panel was opened with, and Fill the
-	// planner's terms when there is a context to prepare the arguments from.
-	Room, Tx string
-	Fill     *plannerTerms
+	// Room is the conversation the panel was opened from, Fill the planner's
+	// terms for preparing the arguments from it, and Back marks a panel opened
+	// over a search's results, which it returns to.
+	Room string
+	Fill *plannerTerms
+	Back bool
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -734,132 +751,170 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	offset := queryOffset(r)
 	order := sortOrder(r)
-	view := discoverView{Query: q, LookupAvailable: true, Sort: order}
-	for _, t := range []struct{ label, order string }{
-		{"relevance", sortRelevance}, {"rating", sortRating}, {"price", sortPrice},
-	} {
-		view.Sorts = append(view.Sorts, SortTab{
-			Label: t.label, Href: sortHref(r, t.order), Current: order == t.order,
-		})
-	}
-	var granted map[string]bool
+	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, order)}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		// Best-effort: the page must not fail for a chip.
-		if me, e := s.me(r); e == nil {
-			granted = grantedRefs(me)
-		}
-		if q == "" {
-			// Read the whole catalog — local actions and those discovered on
-			// peers — and slice one page here, because a sort orders the whole
-			// list (below).
-			cat, e := s.client.ListActions(ctx, tok, "")
+		granted := s.granted(r)
+		if q != "" {
+			// A page load spends nothing (§8.2): no pin, so a priced lookup is
+			// not run and the search falls back.
+			v, e := s.discover(ctx, tok, granted, q, order, "")
 			if e != nil {
 				return e
 			}
-			cards := make([]actionCardView, len(cat))
-			for i, a := range cat {
-				cards[i] = cardOf(a)
-				cards[i].NeedsConnect = !a.Discovered && needsConnect(a, granted)
-			}
-			// A sort orders the WHOLE catalog, then the page is cut from it.
-			// Ordering only the page would answer a different question than the
-			// one asked — the best-rated action could sit on page two while page
-			// one claimed to be sorted by rating — and nothing on screen would
-			// say so. Rating therefore costs a detail read per row, which is why
-			// it is paid only when that sort is asked for.
-			if order == sortRating {
-				s.fetchEvidence(ctx, tok, cards)
-			}
-			sortCards(cards, order)
-			start, end, hasNext := pageSlice(len(cards), offset, pageSize)
-			cards = cards[start:end]
-			view.Pager = pageNav(r, offset, pageSize, hasNext)
-			s.fetchEvidence(ctx, tok, cards)
-			view.Catalog = cards
+			view = v
+			view.Planner = s.planner(ctx, tok)
 			return nil
 		}
-		view.Planner = s.planner(ctx, tok)
-		// Semantic search runs sys/lookup. A native's price is the OPERATOR's
-		// configuration, not a constant (measured: a kernel booted with
-		// native.lookup.price = 7 serves 7 on the row and charges it), and a
-		// search is a page load — so running it unchecked would make a GET spend,
-		// which §8.2 forbids outright. Read the price first and degrade instead.
-		// Only the price is read: whether it works at all is discovered by
-		// running it and reporting what happened, never guessed.
-		priced := s.nativeIsPriced(ctx, tok, s.native(lookupNative))
-		var out Outcome
-		if !priced {
-			o, e := s.caller.Run(ctx, tok, s.native(lookupNative), mustArgs(map[string]any{"query": q, "limit": 20}), "")
-			if e != nil {
-				return e
-			}
-			out = o
+		// Read the whole catalog — local actions and those discovered on peers
+		// — and slice one page here, because a sort orders the whole list.
+		cat, e := s.client.ListActions(ctx, tok, "")
+		if e != nil {
+			return e
 		}
-		if out.IsSuccess() {
-			view.Results = parseLookup(out.Result)
-		} else {
-			// Degrade honestly to catalog search (R6.2.4). The reason is the
-			// kernel's own where it ran and failed — it may be a missing embedder,
-			// or something else — and ours where we declined to run it, since the
-			// kernel said nothing.
-			view.LookupAvailable = false
-			switch {
-			case priced:
-				view.Reason = "Semantic search is priced on this kernel."
-			default:
-				view.Reason = out.Reason()
-			}
-			cat, e := s.client.ListActions(ctx, tok, "")
-			if e != nil {
-				return e
-			}
-			view.Results = catalogAsResults(cat, q)
+		cards := make([]actionCardView, len(cat))
+		for i, a := range cat {
+			cards[i] = cardOf(a)
+			cards[i].NeedsConnect = !a.Discovered && needsConnect(a, granted)
 		}
-		// Fetch each hit's full action row concurrently. The read is also what
-		// DECIDES the card's class: a lookup row whose action_id names
-		// no local action is a discovered one, rendered from the row alone. The
-		// ref's shape cannot decide it — a resolved proxy keeps its kernel-
-		// qualified ref while having a perfectly readable local row, and reading
-		// discovery off the ref would strip a card the buyer has already paid for
-		// down to a stranger's (requirements.md §6.2).
-		var wg sync.WaitGroup
-		for i := range view.Results {
-			if view.Results[i].Discovered {
-				continue // the catalog already says: no local row to read
-			}
-			wg.Add(1)
-			go func(i int, id string) {
-				defer wg.Done()
-				a, e := s.client.GetAction(ctx, tok, id)
-				if e != nil {
-					// No local row. Another kernel's address means it is
-					// discovered; a local one that fails to read is a row that has
-					// since gone, and keeps the lookup row's own fields.
-					view.Results[i].Discovered = !s.identity.Local(view.Results[i].Action.Action)
-					return
-				}
-				view.Results[i].Discovered = false
-				view.Results[i].Action = a
-			}(i, view.Results[i].Action.ID)
+		// A sort orders the WHOLE catalog, then the page is cut from it.
+		// Ordering only the page would answer a different question than the
+		// one asked — the best-rated action could sit on page two while page
+		// one claimed to be sorted by rating — and nothing on screen would say
+		// so. Rating therefore costs a detail read per row, which is why it is
+		// paid only when that sort is asked for.
+		if order == sortRating {
+			s.fetchEvidence(ctx, tok, cards)
 		}
-		wg.Wait()
-		// Flag after the fetches: a partial lookup entry only carries
-		// requires_grant once its full record is in. A discovered hit has no
-		// local record and no local grant to want.
-		for i := range view.Results {
-			if view.Results[i].Discovered {
-				continue
-			}
-			view.Results[i].NeedsConnect = needsConnect(view.Results[i].Action, granted)
-		}
-		// Search results are one ranked page, so they sort whole.
-		sortCards(view.Results, order)
+		sortCards(cards, order)
+		start, end, hasNext := pageSlice(len(cards), offset, pageSize)
+		cards = cards[start:end]
+		view.Pager = pageNav(r, offset, pageSize, hasNext)
+		s.fetchEvidence(ctx, tok, cards)
+		view.Catalog = cards
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "browse", "Discover actions", view)
+}
+
+// postSearch is the search submitted from a conversation (requirements
+// §6.2): the lookup at the price the launcher's row named, pinned to it,
+// answering the panel beside the conversation with Discover's results.
+func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := strings.TrimSpace(r.FormValue("q"))
+	if q == "" {
+		_ = s.render.Fragment(w, http.StatusUnprocessableEntity, "_error", "Type what to search for.")
+		return
+	}
+	var view discoverView
+	err := s.sessions.Do(ctx, func(tok string) (e error) {
+		view, e = s.discover(ctx, tok, s.granted(r), q, sortRelevance, r.FormValue("lookup_quote_hash"))
+		return e
+	})
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	forgetMe(r) // a pinned lookup moved the viewer's money
+	view.CSRFField = csrf.TemplateField(r)
+	_ = s.render.Fragment(w, http.StatusOK, "_search_panel", view)
+}
+
+// granted is the viewer's connected grants, best-effort: a page must not fail
+// for a chip.
+func (s *Server) granted(r *http.Request) map[string]bool {
+	if me, e := s.me(r); e == nil {
+		return grantedRefs(me)
+	}
+	return nil
+}
+
+// discover is the search Discover and the panel share: sys/lookup for the
+// query, run pinned to the quote the person was shown, or unpinned only when
+// free — a priced lookup never runs without a pin, so a page load spends
+// nothing (§8.2) — else the catalog matched by the launcher's rules. Each hit
+// is read to decide whether it is discovered (§6.2), and the rows are ranked
+// under every order and arranged under the one asked for. The error is the
+// transport's; a lookup that ran and did not succeed is a state of the view.
+func (s *Server) discover(ctx context.Context, tok string, granted map[string]bool, q, order, quoteHash string) (discoverView, error) {
+	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, order)}
+	priced := quoteHash == "" && s.nativeIsPriced(ctx, tok, s.native(lookupNative))
+	var out Outcome
+	if !priced {
+		o, e := s.caller.Run(ctx, tok, s.native(lookupNative), mustArgs(map[string]any{"query": q, "limit": 20}), quoteHash)
+		if e != nil {
+			return view, e
+		}
+		out = o
+	}
+	switch {
+	case out.IsSuccess():
+		view.Results = parseLookup(out.Result)
+	case out.IsTermsChanged() && out.QuoteHash != "":
+		// The price moved since the row named it: nothing ran, nothing was
+		// charged, and the person is asked again at the new price — never
+		// shown a fallback that would hide what happened.
+		view.Requote = &searchTerms{Price: s.render.money(out.Price), QuoteHash: out.QuoteHash}
+		return view, nil
+	default:
+		// Degrade honestly to catalog search (R6.2.4). The reason is the
+		// kernel's own where it ran and failed — it may be a missing embedder,
+		// or something else — and ours where we declined to run it, since the
+		// kernel said nothing.
+		view.LookupAvailable = false
+		view.Reason = out.Reason()
+		if priced {
+			view.Reason = "Semantic search is priced on this kernel."
+		}
+		cat, e := s.client.ListActions(ctx, tok, "")
+		if e != nil {
+			return view, e
+		}
+		view.Results = catalogAsResults(cat, q)
+	}
+	// Fetch each hit's full action row concurrently. The read is also what
+	// DECIDES the card's class: a lookup row whose action_id names no local
+	// action is a discovered one, rendered from the row alone. The ref's shape
+	// cannot decide it — a resolved proxy keeps its kernel-qualified ref while
+	// having a perfectly readable local row, and reading discovery off the ref
+	// would strip a card the buyer has already paid for down to a stranger's
+	// (requirements.md §6.2).
+	var wg sync.WaitGroup
+	for i := range view.Results {
+		if view.Results[i].Discovered {
+			continue // the catalog already says: no local row to read
+		}
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			a, e := s.client.GetAction(ctx, tok, id)
+			if e != nil {
+				// No local row. Another kernel's address means it is
+				// discovered; a local one that fails to read is a row that has
+				// since gone, and keeps the lookup row's own fields.
+				view.Results[i].Discovered = !s.identity.Local(view.Results[i].Action.Action)
+				return
+			}
+			view.Results[i].Discovered = false
+			view.Results[i].Action = a
+		}(i, view.Results[i].Action.ID)
+	}
+	wg.Wait()
+	// Flag after the fetches: a partial lookup entry only carries
+	// requires_grant once its full record is in. A discovered hit has no local
+	// record and no local grant to want.
+	for i := range view.Results {
+		if !view.Results[i].Discovered {
+			view.Results[i].NeedsConnect = needsConnect(view.Results[i].Action, granted)
+		}
+	}
+	// Search results are one ranked page: ranked under every order, so a list
+	// on screen is rearranged without searching again, and sorted whole.
+	rankCards(view.Results)
+	sortCards(view.Results, order)
+	return view, nil
 }
 
 // ---- user (account + wallet) ----
@@ -1133,18 +1188,42 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 // getActionPanel is an action as the workspace's panel shows it beside a
 // conversation (requirements §6.7): its head and the one run form.
 func (s *Server) getActionPanel(w http.ResponseWriter, r *http.Request) {
+	s.renderPanel(w, r, func(string) (string, error) { return r.PathValue("id"), nil })
+}
+
+// getDiscoveredPanel is a discovered action in the panel: resolved with its
+// home kernel as its page is, then shown as any action is.
+func (s *Server) getDiscoveredPanel(w http.ResponseWriter, r *http.Request) {
+	s.renderPanel(w, r, func(tok string) (string, error) {
+		return s.resolveDiscovered(r.Context(), tok, r.URL.Query().Get("ref"))
+	})
+}
+
+// renderPanel renders the panel of the action id names: the room it was
+// opened from, the fill when there is one, and the way back when it was opened
+// from a search's results.
+func (s *Server) renderPanel(w http.ResponseWriter, r *http.Request, id func(tok string) (string, error)) {
 	var view actionView
-	err := s.sessions.Do(r.Context(), func(tok string) (e error) {
-		if view, e = s.actionView(r, tok, r.PathValue("id")); e != nil {
+	err := s.sessions.Do(r.Context(), func(tok string) error {
+		target, e := id(tok)
+		if e != nil {
 			return e
 		}
-		view.Room, view.Tx = r.URL.Query().Get("room"), r.URL.Query().Get("tx")
-		if view.Room != "" || view.Tx != "" {
+		if view, e = s.actionView(r, tok, target); e != nil {
+			return e
+		}
+		view.Room, view.Back = r.URL.Query().Get("room"), r.URL.Query().Get("back") == "1"
+		if view.Room != "" {
 			view.Fill = s.planner(r.Context(), tok)
 		}
 		return nil
 	})
-	if s.handleErrFragment(w, r, err) {
+	if isAuthErr(err) {
+		s.handleErrFragment(w, r, err)
+		return
+	}
+	if err != nil {
+		_ = s.render.Fragment(w, http.StatusOK, "_error", refusal(err))
 		return
 	}
 	_ = s.render.Fragment(w, http.StatusOK, "_action_panel", view)
@@ -1156,35 +1235,41 @@ func (s *Server) getActionPanel(w http.ResponseWriter, r *http.Request) {
 // and caches a proxy. What the buyer reads is then an ordinary priced action
 // page quoting live terms, rather than a catalog row that may be a discovery
 // interval stale.
-//
-// The resolve is a pure read: one round trip, and it spends nothing.
 func (s *Server) getDiscovered(w http.ResponseWriter, r *http.Request) {
-	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-	if ref == "" {
-		s.flashRedirect(w, r, "/browse", "error", "No action specified.")
-		return
-	}
-	ctx := r.Context()
-	var (
-		action client.Action
-		found  bool
-	)
-	err := s.sessions.Do(ctx, func(tok string) error {
-		a, ok, e := s.client.ResolveRef(ctx, tok, ref)
-		action, found = a, ok
+	var id string
+	err := s.sessions.Do(r.Context(), func(tok string) (e error) {
+		id, e = s.resolveDiscovered(r.Context(), tok, r.URL.Query().Get("ref"))
 		return e
 	})
 	if err != nil {
 		// An unreachable or refusing home kernel is a fact about that kernel, and
 		// its own sentence says so (§6.2).
-		s.flashRedirect(w, r, "/browse", "error", userMessage(err))
+		if isAuthErr(err) {
+			s.handleErr(w, r, err)
+			return
+		}
+		s.flashRedirect(w, r, "/browse", "error", refusal(err))
 		return
 	}
-	if !found {
-		s.flashRedirect(w, r, "/browse", "error", "That action could not be resolved from its kernel.")
-		return
+	http.Redirect(w, r, "/actions/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+// resolveDiscovered resolves a discovered ref with its home kernel, which
+// verifies the signed contract and caches a proxy, and answers the local id.
+// The resolve is a pure read: one round trip, and it spends nothing.
+func (s *Server) resolveDiscovered(ctx context.Context, tok, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errors.New("no action specified")
 	}
-	http.Redirect(w, r, "/actions/"+url.PathEscape(action.ID), http.StatusSeeOther)
+	a, ok, err := s.client.ResolveRef(ctx, tok, ref)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errors.New("that action could not be resolved from its kernel")
+	}
+	return a.ID, nil
 }
 
 func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
@@ -2731,26 +2816,52 @@ func catalogEntries(actions []client.Action) []catalogEntry {
 // its search index: the whole catalog at once (local actions, resolved proxies
 // and the actions discovered on peers), which the page matches in the browser
 // as the person types, so typing sends no request. It reads the free catalog
-// and never runs sys/lookup. The list is the caller's own (it holds their
-// private titles), so it is never stored by the browser: a cached copy at
-// this one URL could be shown to the next account. A failure answers with no
-// actions; the launcher's pages and its search row still work.
+// and never runs sys/lookup; beside the actions it carries the lookup's terms,
+// what submitting a query costs, for the launcher's search row to name. The
+// list is the caller's own (it holds their private titles), so it is never
+// stored by the browser: a cached copy at this one URL could be shown to the
+// next account. A failure answers with no actions and no search; the
+// launcher's pages still work.
 func (s *Server) getSearchCatalog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	out := []catalogEntry{}
+	file := catalogFile{Actions: []catalogEntry{}}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		actions, e := s.client.ListActions(ctx, tok, "")
-		if e == nil {
-			out = catalogEntries(actions)
+		if e != nil {
+			return e
 		}
-		return e
+		file.Actions = catalogEntries(actions)
+		file.Search = s.lookupTerms(ctx, tok)
+		return nil
 	})
 	if err != nil {
 		s.log.Warn("search catalog failed", "err", err)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(file)
+}
+
+// catalogFile is the launcher's index: the actions it matches, and the
+// search's terms, null when no search can be submitted at a quoted price.
+type catalogFile struct {
+	Actions []catalogEntry `json:"actions"`
+	Search  *searchTerms   `json:"search"`
+}
+
+// lookupTerms is the lookup's price and pin as the launcher offers a search,
+// or nil when this kernel has no active lookup, or prices it without a quote
+// to pin — a priced search is never offered unpinned (§8.2).
+func (s *Server) lookupTerms(ctx context.Context, tok string) *searchTerms {
+	a, ok, err := s.client.ResolveRef(ctx, tok, s.native(lookupNative))
+	if err != nil || !ok || !a.Active || (a.Price > 0 && a.QuoteHash == "") {
+		return nil
+	}
+	t := &searchTerms{QuoteHash: a.QuoteHash}
+	if a.Price > 0 {
+		t.Price = s.render.money(a.Price)
+	}
+	return t
 }
 
 // fallbackLimit caps the search fallback, like the one ranked page a lookup
@@ -2918,32 +3029,22 @@ func refusal(err error) string {
 const fillInstruction = "Propose arguments for the one action offered, using only what the conversation states. " +
 	"Never invent a value: where the conversation does not state an argument, give an empty string."
 
-// postFill prepares an action's arguments from the result the person
-// carried into it, or else from the conversation the panel was opened from:
-// the planner with this one action as its candidate (requirements §6.2). It answers the form's
+// postFill prepares an action's arguments from the conversation the panel
+// was opened from: the planner with this one action as its candidate
+// (requirements §6.2). It answers the form's
 // fields filled — or, for a form with no fields, the arguments as JSON — and
 // never runs the action, which the person still does with its own button.
 func (s *Server) postFill(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	room, txID := r.FormValue("room"), r.FormValue("tx")
+	room := r.FormValue("room")
 	var form FormModel
 	err := s.sessions.Do(ctx, func(tok string) error {
 		a, e := s.client.GetAction(ctx, tok, r.PathValue("id"))
 		if e != nil {
 			return e
 		}
-		// The context is the result the person carried into this action when
-		// there is one (requirements §6.7, Use result), else the conversation
-		// the panel was opened from.
 		msgs := []client.Message{{Role: "system", Content: fillInstruction}}
-		switch {
-		case txID != "":
-			tx, e := s.client.GetTransaction(ctx, tok, txID)
-			if e != nil {
-				return e
-			}
-			msgs = append(msgs, client.Message{Role: "user", Content: "Use this result of " + tx.Action + " in the action: " + string(tx.Result)})
-		case room != "" && s.conv != nil:
+		if room != "" && s.conv != nil {
 			said, e := s.conv.Context(r, room)
 			if e != nil {
 				return e
@@ -3192,20 +3293,50 @@ func sortOrder(r *http.Request) string {
 	}
 }
 
-// sortHref builds the URL for one sort order, dropping the offset: a different
-// order starts at its own first page.
-func sortHref(r *http.Request, order string) string {
-	q := r.URL.Query()
-	q.Del("offset")
-	if order == sortRelevance {
-		q.Del("sort")
-	} else {
-		q.Set("sort", order)
+// sortTabs is the sort switch for a query: each order linking Discover with
+// the query and no offset, since a different order starts at its own first
+// page. The page and the panel link the same place.
+func sortTabs(q, current string) []SortTab {
+	var tabs []SortTab
+	for _, t := range []struct{ label, order string }{
+		{"relevance", sortRelevance}, {"rating", sortRating}, {"price", sortPrice},
+	} {
+		v := url.Values{}
+		if q != "" {
+			v.Set("q", q)
+		}
+		if t.order != sortRelevance {
+			v.Set("sort", t.order)
+		}
+		href := "/browse"
+		if len(v) > 0 {
+			href += "?" + v.Encode()
+		}
+		tabs = append(tabs, SortTab{Label: t.label, Href: href, Current: current == t.order})
 	}
-	if len(q) == 0 {
-		return r.URL.Path
+	return tabs
+}
+
+// cardRank numbers one served row under each order.
+type cardRank struct{ Relevance, Rating, Price int }
+
+// rankCards numbers the rows, as served, under every order by sortCards, the
+// one rule, so the browser can arrange them without a second search (§6.2).
+func rankCards(cards []actionCardView) {
+	for i := range cards {
+		cards[i].Rank = &cardRank{Relevance: i}
 	}
-	return r.URL.Path + "?" + q.Encode()
+	for _, order := range []string{sortRating, sortPrice} {
+		c := slices.Clone(cards) // the ranks are shared with the originals
+		sortCards(c, order)
+		for i := range c {
+			if order == sortRating {
+				c[i].Rank.Rating = i
+			} else {
+				c[i].Rank.Price = i
+			}
+		}
+	}
 }
 
 // fetchEvidence replaces each card's list row with the action's detail read,
