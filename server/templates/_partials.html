@@ -216,6 +216,15 @@
   <hr class="card-sep">
   <div class="row compact">
     <a class="btn" href="/transactions/{{.TxID}}">Receipt</a>
+    {{/* Use result (requirements §6.7): into the composer's draft, or into the
+         next action, whose fill reads it. Sharing is the person's send. */}}
+    {{if .Room}}
+    <button type="button" class="btn" data-menu="use-{{.TxID}}" aria-haspopup="menu" aria-expanded="false">Use result ▾</button>
+    <div class="menu" id="use-{{.TxID}}" role="menu" hidden>
+      <button type="button" class="menu-item" role="menuitem" data-use-result data-value="{{resultText .Result}}">In chat</button>
+      <button type="button" class="menu-item" role="menuitem" data-use-tx="{{.TxID}}">In another action</button>
+    </div>
+    {{end}}
     <form class="row compact stretch" method="post" action="/transactions/{{.TxID}}/rate"
           hx-post="/transactions/{{.TxID}}/rate" hx-target="this" hx-swap="outerHTML">
       {{.CSRFField}}
@@ -319,12 +328,23 @@
        request, never from a fresh read of the action — a pin taken from the
        re-read would always match and silently disable the protection. */}}
   {{if .QuoteHash}}<input type="hidden" name="quote_hash" value="{{.QuoteHash}}">{{end}}
+  {{/* The context a panel was opened with (requirements §6.7): the room and a
+       previous result, which the fill reads and a success offers its result
+       back to. */}}
+  {{with .Room}}<input type="hidden" name="room" value="{{.}}">{{end}}
+  {{with .Tx}}<input type="hidden" name="tx" value="{{.}}">{{end}}
+  {{with .Fill}}<input type="hidden" name="fill_quote_hash" value="{{.QuoteHash}}">{{end}}
   {{if .Structured}}{{template "_json_switch"}}{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
   {{if .Locked}}<div class="view locked">{{template "_view" (view .Locked)}}</div>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
+  {{/* Fill from chat: the planner prepares the fields from the conversation
+       and never runs the action; a priced planner is authorized on the money
+       button naming its price, never silently (requirements §6.2). */}}
+  {{if .Fill}}<p class="error-text" data-fill-error hidden></p>{{end}}
   <div class="cluster">
+    {{with .Fill}}<button type="button" class="{{if gt .Price 0}}btn-money{{else}}btn{{end}}" data-fill="{{$.FillURL}}">Fill from chat{{if gt .Price 0}} ({{money .Price}}){{end}}</button>{{end}}
     {{/* A task completion (OneShot) is NEUTRAL and names no amount: it spends
          nothing of the completer's, the requester's funds having been reserved
          when the task was made (requirements.md §6.3). A paid run names its
@@ -748,7 +768,7 @@
      names the amount on the button and shows the refund + first-payment hint;
      nothing floats in a modal. */}}
 <div id="action-run">
-{{template "_call_form" (runForm .CSRFField .Action.ID .Action.Price .Form .Outcome .FirstPayee (ref .Action.Ref "").Owner.Text .Action.QuoteHash)}}
+{{template "_call_form" (runForm .)}}
 </div>
 {{end}}
 {{end}}

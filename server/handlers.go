@@ -111,11 +111,9 @@ type discoverView struct {
 	Results         []actionCardView
 	Catalog         []actionCardView
 	Pager           Pager // catalog paging (search results are single-page, ranked)
-	// CanPropose reports that the kernel's planner is there and free, so the
-	// command to ask it is offered. A kernel without a model, or one that prices
-	// the planner, simply does not carry the command — an affordance that
-	// cannot work, or that would spend, is not offered (§8.2).
-	CanPropose bool
+	// Planner is the kernel's planner when it is here: the command to ask it
+	// is offered at its price, on the money button when priced (§8.2).
+	Planner *plannerTerms
 	// Sort is the order the rows are arranged in, and Sorts the choices offered.
 	// Relevance is the kernel's own; the others arrange what it served (§6.2).
 	Sort  string
@@ -153,6 +151,10 @@ type actionView struct {
 	Proposed        bool
 	ProposedMessage string
 	CSRFField       template.HTML // carried so the polled _action_run fragment's form keeps its token
+	// Room and Tx are the context the panel was opened with, and Fill the
+	// planner's terms when there is a context to prepare the arguments from.
+	Room, Tx string
+	Fill     *plannerTerms
 }
 
 // actionsView is the action room: manage your own actions, with earnings folded
@@ -776,7 +778,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			view.Catalog = cards
 			return nil
 		}
-		view.CanPropose = s.nativeOffered(ctx, tok, s.native(decideNative))
+		view.Planner = s.planner(ctx, tok)
 		// Semantic search runs sys/lookup. A native's price is the OPERATOR's
 		// configuration, not a constant (measured: a kernel booted with
 		// native.lookup.price = 7 serves 7 on the row and charges it), and a
@@ -1133,8 +1135,14 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 func (s *Server) getActionPanel(w http.ResponseWriter, r *http.Request) {
 	var view actionView
 	err := s.sessions.Do(r.Context(), func(tok string) (e error) {
-		view, e = s.actionView(r, tok, r.PathValue("id"))
-		return e
+		if view, e = s.actionView(r, tok, r.PathValue("id")); e != nil {
+			return e
+		}
+		view.Room, view.Tx = r.URL.Query().Get("room"), r.URL.Query().Get("tx")
+		if view.Room != "" || view.Tx != "" {
+			view.Fill = s.planner(r.Context(), tok)
+		}
+		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
 		return
@@ -1201,6 +1209,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 				return e
 			}
 			forgetMe(r) // the run may have moved the viewer's money
+			out.Room = r.FormValue("room")
 			// A refused quote re-renders the form pinned to the terms the kernel
 			// just quoted, so accepting them is one more click, not a re-read.
 			if out.Class == TermsChanged && out.QuoteHash != "" {
@@ -2854,13 +2863,125 @@ func (s *Server) nativeIsPriced(ctx context.Context, token, ref string) bool {
 	return err == nil && ok && a.Price > 0
 }
 
-// nativeOffered reports that a command driven by this native may be shown at
-// all: it is here, it is callable, and it is free. The stricter test is for an
-// affordance rather than a fallback — a doomed run is never offered (§5.5), and
-// a priced one would spend without a confirm.
-func (s *Server) nativeOffered(ctx context.Context, token, ref string) bool {
-	a, ok, err := s.client.ResolveRef(ctx, token, ref)
-	return err == nil && ok && a.Active && a.Price == 0
+// planner is the kernel's planner as a page offers it — its price and the
+// quote that pins it — or nil when this kernel has none to offer: absent or
+// switched off, so a doomed command is never offered (§5.5). A priced planner
+// is offered on the money button that names its price: preparing arguments
+// is then a spend the person authorizes, never a silent one (§8.2).
+func (s *Server) planner(ctx context.Context, token string) *plannerTerms {
+	a, ok, err := s.client.ResolveRef(ctx, token, s.native(decideNative))
+	if err != nil || !ok || !a.Active {
+		return nil
+	}
+	return &plannerTerms{Price: a.Price, QuoteHash: a.QuoteHash}
+}
+
+// propose asks the kernel's planner to choose among refs and propose their
+// arguments from the messages: one run of sys/llm/decide, pinned to the quote
+// the person was shown and priced like any run. It selects and never executes
+// (kernel U46): the arguments fill an ordinary form, and the kernel validates
+// them when the person runs the action. A refusal is the kernel's own reason.
+func (s *Server) propose(ctx context.Context, tok string, msgs []client.Message, refs []string, quoteHash string) (chosen string, args map[string]json.RawMessage, message string, err error) {
+	out, err := s.caller.Run(ctx, tok, s.native(decideNative), mustArgs(map[string]any{"messages": msgs, "actions": refs}), quoteHash)
+	if err != nil {
+		return "", nil, "", err
+	}
+	if !out.IsSuccess() {
+		return "", nil, "", fmt.Errorf("%s", out.Reason())
+	}
+	var d struct {
+		Action  string                     `json:"action"`
+		Args    map[string]json.RawMessage `json:"args"`
+		Message string                     `json:"message"`
+	}
+	if err := json.Unmarshal(out.Result, &d); err != nil {
+		return "", nil, "", fmt.Errorf("the planner's answer could not be read")
+	}
+	return d.Action, d.Args, d.Message, nil
+}
+
+// refusal is why a proposal was not made, as a sentence: the kernel's own
+// message for a typed error, else the reason the planner or the conversation
+// gave, which is already words — never the generic failure, which would hide
+// the one thing the person needs to know.
+func refusal(err error) string {
+	msg := err.Error()
+	if _, ok := client.AsKernelError(err); ok {
+		msg = userMessage(err)
+	}
+	return strings.TrimSuffix(capitalize(msg), ".") + "."
+}
+
+// fillInstruction is what the planner is told when it prepares one action's
+// arguments: the conversation's own words, never a guess. An empty string is
+// how it says an argument is not stated, and such a field stays blank.
+const fillInstruction = "Propose arguments for the one action offered, using only what the conversation states. " +
+	"Never invent a value: where the conversation does not state an argument, give an empty string."
+
+// postFill prepares an action's arguments from the result the person
+// carried into it, or else from the conversation the panel was opened from:
+// the planner with this one action as its candidate (requirements §6.2). It answers the form's
+// fields filled — or, for a form with no fields, the arguments as JSON — and
+// never runs the action, which the person still does with its own button.
+func (s *Server) postFill(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	room, txID := r.FormValue("room"), r.FormValue("tx")
+	var form FormModel
+	err := s.sessions.Do(ctx, func(tok string) error {
+		a, e := s.client.GetAction(ctx, tok, r.PathValue("id"))
+		if e != nil {
+			return e
+		}
+		// The context is the result the person carried into this action when
+		// there is one (requirements §6.7, Use result), else the conversation
+		// the panel was opened from.
+		msgs := []client.Message{{Role: "system", Content: fillInstruction}}
+		switch {
+		case txID != "":
+			tx, e := s.client.GetTransaction(ctx, tok, txID)
+			if e != nil {
+				return e
+			}
+			msgs = append(msgs, client.Message{Role: "user", Content: "Use this result of " + tx.Action + " in the action: " + string(tx.Result)})
+		case room != "" && s.conv != nil:
+			said, e := s.conv.Context(r, room)
+			if e != nil {
+				return e
+			}
+			msgs = append(msgs, said...)
+		}
+		if len(msgs) == 1 {
+			return fmt.Errorf("there is nothing to prepare the arguments from")
+		}
+		_, args, _, e := s.propose(ctx, tok, msgs, []string{a.Ref()}, r.FormValue("fill_quote_hash"))
+		if e != nil {
+			return e
+		}
+		forgetMe(r)
+		for k, v := range args {
+			if string(v) == `""` {
+				delete(args, k) // not stated: the field stays blank
+			}
+		}
+		raw, _ := json.Marshal(args)
+		form = BuildForm(a.InputSchema)
+		form.Fill(raw)
+		form.Example = jsonEdit(raw)
+		return nil
+	})
+	if err != nil {
+		if isAuthErr(err) {
+			s.handleErrFragment(w, r, err)
+			return
+		}
+		http.Error(w, refusal(err), http.StatusUnprocessableEntity)
+		return
+	}
+	if form.UseRawFallback {
+		writeJSONText(w, []byte(form.Example))
+		return
+	}
+	_ = s.render.Fragment(w, http.StatusOK, "_fields", form)
 }
 
 // upstreamAuth builds the write-only credential configuration from the shared
@@ -2946,70 +3067,49 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/browse", "error", "Search first, then ask for a proposal.")
 		return
 	}
-	var chosen, message string
-	var args map[string]string
-	var raws map[string]json.RawMessage
+	var id string
+	var p proposal
 	err := s.sessions.Do(ctx, func(tok string) error {
-		// The same guard as search: a native the UI runs on a person's behalf is
-		// read for its price first, since a priced one would spend from a page
-		// they did not confirm (§8.2).
-		if s.nativeIsPriced(ctx, tok, s.native(decideNative)) {
-			return errPricedPlanner
-		}
-		out, e := s.caller.Run(ctx, tok, s.native(decideNative), mustArgs(map[string]any{
-			"messages": []map[string]string{{"role": "user", "content": q}},
-			"actions":  refs,
-		}), "")
+		chosen, args, message, e := s.propose(ctx, tok, []client.Message{{Role: "user", Content: q}}, refs, r.FormValue("planner_quote_hash"))
 		if e != nil {
 			return e
 		}
-		if !out.IsSuccess() {
-			// The kernel's own reason, not a guess: it may have no model
-			// configured, or the model may have chosen nothing.
-			return fmt.Errorf("%s", out.Reason())
+		forgetMe(r)
+		if chosen == "" {
+			return nil
 		}
-		chosen, args, raws, message = parseDecision(out.Result)
-		return nil
-	})
-	if err != nil {
-		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", capitalize(userMessage(err))+".")
-		return
-	}
-	if chosen == "" {
-		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "info", "No action was chosen for that.")
-		return
-	}
-	// The chosen ref is resolved the way any ref is, so a proposal lands on the
-	// ordinary action page and inherits every rule that page already holds.
-	var id string
-	if e := s.sessions.Do(ctx, func(tok string) error {
-		a, ok, re := s.client.ResolveRef(ctx, tok, chosen)
-		if re != nil {
-			return re
+		// The chosen ref is resolved the way any ref is, so a proposal lands on
+		// the ordinary action page and inherits every rule that page holds.
+		a, ok, e := s.client.ResolveRef(ctx, tok, chosen)
+		if e != nil {
+			return e
 		}
 		if !ok {
 			return fmt.Errorf("the chosen action could not be opened")
 		}
-		id = a.ID
+		id, p = a.ID, proposal{Raws: args, Message: message}
 		return nil
-	}); e != nil {
-		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", capitalize(userMessage(e))+".")
+	})
+	if err != nil {
+		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", refusal(err))
 		return
 	}
-	s.renderAction(w, r, id, &proposal{Args: args, Raws: raws, Message: message}, nil)
+	if id == "" {
+		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "info", "No action was chosen for that.")
+		return
+	}
+	s.renderAction(w, r, id, &p, nil)
 }
 
-// proposal is the planner's choice as the action page renders it: the arguments
-// it proposes, keyed by field name, and anything it said.
+// proposal is the planner's choice as the action page renders it: the
+// arguments it proposes, as the kernel sent them, and anything it said.
 type proposal struct {
-	Args    map[string]string
-	Raws    map[string]json.RawMessage // the same arguments as the kernel sent them
+	Raws    map[string]json.RawMessage
 	Message string
 }
 
 // Raw is the proposed arguments as one pretty JSON object, for the raw input
-// box. Built from what the kernel sent rather than from the flattened form
-// values, so a number stays a number and an object stays an object.
+// box, so a number stays a number and an object stays an object.
 func (p proposal) Raw() string {
 	if len(p.Raws) == 0 {
 		return ""
@@ -3019,36 +3119,6 @@ func (p proposal) Raw() string {
 		return ""
 	}
 	return string(b)
-}
-
-// errPricedPlanner is the refusal when an operator has priced the planner: the
-// proposal is withheld rather than charged for without a confirm (§8.2).
-var errPricedPlanner = errors.New("choosing an action is priced on this kernel")
-
-// parseDecision reads the planner's reply: the action it chose, the arguments it
-// proposes as form values, and anything it said. Every argument is rendered as
-// text into an ordinary field, so a scalar prints as itself and an object or
-// array as its JSON — the person edits and submits it like any other input, and
-// the kernel validates it like any other input.
-func parseDecision(result json.RawMessage) (action string, args map[string]string, raws map[string]json.RawMessage, message string) {
-	var d struct {
-		Action  string                     `json:"action"`
-		Args    map[string]json.RawMessage `json:"args"`
-		Message string                     `json:"message"`
-	}
-	if err := json.Unmarshal(result, &d); err != nil {
-		return "", nil, nil, ""
-	}
-	args = make(map[string]string, len(d.Args))
-	for k, v := range d.Args {
-		var str string
-		if json.Unmarshal(v, &str) == nil {
-			args[k] = str
-			continue
-		}
-		args[k] = strings.TrimSpace(string(v))
-	}
-	return d.Action, args, d.Args, d.Message
 }
 
 // Sort orders for the catalog and for search results. Relevance is what the

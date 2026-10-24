@@ -629,3 +629,58 @@ document.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && document.documentElement.dataset.menu) delete document.documentElement.dataset.menu;
 });
+
+// Fill from chat (requirements §6.2): the planner prepares the form's fields
+// from the conversation the panel was opened from, and from a result carried
+// into it. The fields come back as the form's own — or, for a form with none,
+// the arguments into the editor — and nothing runs: the person still presses
+// the action's own button. A refusal is shown above the buttons and the fields
+// stay as they were.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-fill]');
+  if (!btn) return;
+  const form = btn.closest('form');
+  const fields = form.querySelector('[data-fields]');
+  const editor = form.querySelector('[data-raw] textarea');
+  const error = form.querySelector('[data-fill-error]');
+  const say = (text) => { error.textContent = text; error.hidden = !text; };
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+  btn.disabled = true;
+  try {
+    const res = await fetch(btn.dataset.fill, {
+      method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf },
+    });
+    const text = await res.text();
+    if (!res.ok) { say(text.trim()); return; }
+    if (fields && !(res.headers.get('Content-Type') || '').startsWith('application/json')) {
+      fields.innerHTML = text;
+      wireRowsIn(fields);
+    } else if (editor) {
+      editor.value = text;
+    }
+    say('');
+  } catch {
+    say('The server did not answer.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Use result (requirements §6.7): a result goes into the composer's draft, to
+// be sent or not, or into the next action chosen from the launcher, whose
+// panel carries it for the fill.
+document.addEventListener('click', (e) => {
+  const inChat = e.target.closest('[data-use-result]');
+  const inAction = e.target.closest('[data-use-tx]');
+  if (!inChat && !inAction) return;
+  closeAllMenus();
+  const composer = document.querySelector('form[data-composer]');
+  if (inChat) {
+    const field = composer?.querySelector('[data-fields] textarea:not([disabled])');
+    if (!field) return;
+    field.value = field.value ? field.value + '\n' + inChat.dataset.value : inChat.dataset.value;
+    field.focus();
+    return;
+  }
+  composer?.launch?.('', '&tx=' + encodeURIComponent(inAction.dataset.useTx));
+});

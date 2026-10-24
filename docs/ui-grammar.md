@@ -228,7 +228,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, synthesize, deposit, withdraw — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Fill from chat (N)` / `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
@@ -331,6 +331,12 @@ separates it from the content above, and nothing else does (§4).
   button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
   with `.progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
+  In a panel opened from a room the form carries the room (and a carried
+  result) as hidden fields, and its cluster leads with **Fill from chat** — a
+  `.btn` when the planner is free, the `.btn-money` naming its price when
+  priced — whose refusal is an `.error-text` above the buttons; a success's
+  row then holds **Use result ▾**, a `.menu` of `In chat` and `In another
+  action`.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the JSON toggle), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.

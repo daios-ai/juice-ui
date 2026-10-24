@@ -222,7 +222,8 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"tab":          tab,
 		"paneltab":     paneltab,
 		"actionsHref":  actionsHref,
-		"runForm":      runForm,
+		"runForm":      r.runForm,
+		"resultText":   resultText,
 		"completeForm": completeForm,
 		"statStrip":    statStrip,
 		"figure":       figure,
@@ -280,6 +281,16 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 	}
 	r.pages, r.partials = pages, base
 	return r, nil
+}
+
+// resultText is a result as a message carries it: a string as itself, any
+// other value as its JSON (requirements §6.7, Use result).
+func resultText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return indentJSON(raw, "")
 }
 
 // launcherView feeds the _launcher partial: the registry, the room's members

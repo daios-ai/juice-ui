@@ -1,7 +1,19 @@
 # Juice Web UI Requirements
 
-Version: 0.36.0
+Version: 0.37.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.37.0.** The UI is one collaborative workspace. The
+> sidebar is the conversations and the avatar, whose menu holds every
+> destination of one registry; the search pill, the nav groups in the sidebar
+> and the rooms page are gone. The composer is the common entry: text, an
+> address first, and `/` for an action or a page. An action opens in a panel
+> beside the conversation, built from the action page's own parts; its
+> arguments can be prepared from the conversation (Fill from chat), and its
+> result carried into the next message or action (Use result). A room says who
+> is answering, and a conversation starts from its participants. The kernel's
+> planner is offered at its price, on the money button when priced, rather
+> than hidden (§6.1, §6.2, §6.7).
 
 > **What changed in 0.36.0.** Chat's input and output go through the UI's one
 > form and one view. A message is a string, declared so in the post action's
@@ -1143,30 +1155,41 @@ back only as a number to look at:
 **Proposal.** The kernel ships a planner (`sys/llm/decide`) that selects one
 action from typed candidates and proposes valid arguments **without executing
 anything** — kernel U46, where planning and spending are named as separate
-decisions. The UI MUST expose it, and MUST NOT let it become a second way to
-spend:
+decisions. The UI uses it twice — to choose among Discover's results, and to
+prepare one action's arguments from a conversation (Fill from chat, §6.7) — and
+both MUST keep planning apart from spending:
 
-* The command sits with the results it acts on, offered only when the planner is
-  present and **free**: a priced native run on a person's behalf would spend
-  from a page nobody confirmed (§8.2), so where it is priced the command is
-  absent rather than charged for.
-* The candidates posted are **exactly the refs on screen**. A set assembled
-  server-side would be a claim about what was offered that nobody could check,
-  and the kernel refuses the whole call on a bare ref it does not know, so only
-  refs it served are ever sent back.
-* The reply renders as **the ordinary action page**, with the proposed arguments
-  filled into its ordinary fields and the ordinary confirm unpressed. Nothing
-  about a proposal is privileged: the fields are editable, the kernel validates
-  them as it validates any input, and the money still moves only through the
-  button that names the amount.
-* The page MUST say it is a proposal **whether or not the model said anything**,
-  since a person must know they are reading a choice made for them. Anything the
-  model did say is counterparty prose by construction: inert, and never beside
-  the confirm (§8.1).
+* **One rule for its price.** The command is offered wherever the planner is
+  present and switched on, at the price the kernel quotes for it: a neutral
+  button when free, the money button naming the amount when priced
+  (`Choose for me (N)`, `Fill from chat (N)`), its run pinned to the quote shown
+  (§6.2 quote pinning). Asking is then a spend the person authorizes, never a
+  silent one (§8.2). It never runs on a page's load, and an absent planner
+  offers no command.
+* The candidates posted to choose among are **exactly the refs on screen**. A
+  set assembled server-side would be a claim about what was offered that
+  nobody could check, and the kernel refuses the whole call on a bare ref it
+  does not know, so only refs it served are ever sent back. A fill offers one
+  candidate: the action whose panel is open.
+* The reply fills **the ordinary form**: the action page's own fields, or the
+  panel's. Nothing about a proposal is privileged: the fields are editable, the
+  kernel validates them as it validates any input, and the action's money
+  still moves only through its own button that names the amount. Preparing
+  arguments never runs the action.
+* **Nothing is invented to complete a form.** The planner is told to use only
+  what the context states and to give an empty string for what it does not;
+  such an argument is left blank. (The kernel requires a proposal valid
+  against the schema, so an unstated required number or boolean may still be
+  proposed or refused: §10.)
+* The action page MUST say it is a proposal **whether or not the model said
+  anything**, since a person must know they are reading a choice made for
+  them. Anything the model did say is counterparty prose by construction:
+  inert, and never beside the confirm (§8.1).
 * It MUST NOT be reachable by GET with arguments in the URL: that would be a
   link that fills a money form for someone.
-* Where the planner is absent or chooses nothing, the UI states the kernel's own
-  reason and the page is unchanged. Nothing is inferred about why.
+* Where the planner refuses or chooses nothing, the UI states the kernel's own
+  reason — the planner's words, never a generic failure — and the form is
+  unchanged.
 
 **Discovery.**
 
@@ -2145,6 +2168,18 @@ the assistant, else the newest room, else an empty page beside the rail.
   its outcome below; × closes it. On a narrow screen it covers the
   conversation. The action page remains, built from the same partials and the
   same loader.
+* **Fill from chat** (`POST /actions/{id}/fill`) prepares the panel's fields
+  with the planner, under §6.2's Proposal rule: its context is the room's
+  recent conversation, as the conversations app hands it (the viewer's
+  entries as the user's, every other member's named), or, when a result was
+  carried into the action, that result alone. The fields come back as the
+  form's own; a refusal is stated above the buttons and the fields stay.
+* **Use result.** A success run from a room offers `Use result`: **In chat**
+  puts the result into the composer's draft — a string as itself, any other
+  value as its JSON — to be sent or not; **In another action** opens the
+  launcher, and the action chosen opens with that result for its fill.
+  Nothing reaches the room until the person sends it, and no reference to a
+  result is kept: a result is carried as its value.
 
 The store is `$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held
 across the upgrade settles nothing said before it); a first start beside the
@@ -2474,7 +2509,12 @@ Every production `.go` file has a `_test.go` file with independent tests.
   composer with its launcher and the panel; a room's context as the planner
   reads it, refused to a non-member;
 * the stylesheet styles nothing that no template, script or Go renders
-  (drift guard).
+  (drift guard);
+* the planner under one rule: offered at its price, on the money button when
+  priced, pinned to the quote shown, never on load; a fill prepares the
+  panel's fields from the room's conversation, or from a carried result alone,
+  runs nothing but the planner, leaves an unstated argument blank, and states
+  a refusal in its own words; Use result appears only on a run from a room.
 
 ## 10. Open items / kernel prerequisites
 
@@ -2513,14 +2553,28 @@ once its prerequisite is confirmed on the running kernel.
 * **Lookup operational status (Run).** Confirm whether `sys/lookup` has a
   configured embedder or returns `ErrInvalidState`. Does not gate discovery
   (mandatory); selects semantic ranking versus catalog fallback.
-* **The planner (§6.2).** Confirmed on 25c07cd against a local model:
+* **The planner (§6.2).** Confirmed on 25c07cd against a local model, and on
+  v0.17.1 with one candidate and a conversation:
   `sys/llm/decide` takes `{messages, actions}` and answers
   `{action, args, message?}` — `message` optional and usually absent. It selects
   and never executes. A dead kernel-qualified candidate among live ones is
   discarded; a **bare unknown** ref refuses the whole call (404), so the UI
   sends only refs the kernel served. With no model reachable it fails as an
   ordinary outcome (`execution_failed`, "model did not select an action"), which
-  the existing degrade-honestly path renders as the kernel's own reason.
+  the UI states as the planner's own words. Its proposal must satisfy the
+  candidate's schema: a required argument the context does not state makes the
+  model omit it, which the kernel refuses ("required field missing"), unless it
+  is told to give an empty string — possible for a string, not for a number or
+  a boolean. A partial proposal is a contract the kernel does not offer.
+* **Structured agent proposals.** An agent answers a delivery with a string
+  (juice-agent's reply tool, shaped onto chat's `reply.answer`), so a member
+  cannot hand the person a validated `{action, args}` to open in the panel.
+  Assisted execution goes through the conversation and the fill until an agent
+  emits such an object and chat admits it; prose is never read as one.
+* **Value-bearing runs.** A run of an action whose `effect` is `transfer`
+  moves value beside its price, and §8.2 asks its confirm to name the amount;
+  the run form names only the price, and the transfer's `amount` field is the
+  kernel's base-unit integer. Both predate the workspace and are open.
 * **Settlement — retired (§6.6).** The kernel serves no settle route: every debt
   settles per call on the rail by its own ticket. As of 25c07cd the operator has
   no act in it at all — an obligation closes when its buyer pays, which the

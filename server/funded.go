@@ -91,6 +91,9 @@ type Outcome struct {
 	// Peer names the kernel that refused a PeerRefused outcome, ready to print
 	// (a public key arrives abbreviated). Display only: nothing keys on it.
 	Peer string
+	// Room is the conversation the run was made from, when it was: a success
+	// then offers its result to the composer and to a next action.
+	Room string
 }
 
 // IsTermsChanged reports a refused quote (template helper).
@@ -170,20 +173,36 @@ type CallForm struct {
 	// separate decline form (_task_decline) through the HTML form attribute, so
 	// the two commands share one row and keep their own actions.
 	DeclineID string
+	// Room and Tx are the context a panel was opened with: the conversation,
+	// and a previous result to carry into this action. Fill, set when there is
+	// a context and the kernel has a planner, offers to prepare the arguments
+	// from it (requirements §6.2), at the planner's own price and pin.
+	Room, Tx string
+	Fill     *plannerTerms
+	FillURL  string
+}
+
+// plannerTerms are the kernel's planner as a page offers it: its price and
+// the quote that pins it (sys/llm/decide, kernel U46).
+type plannerTerms struct {
+	Price     int64
+	QuoteHash string
 }
 
 // Structured reports a form with typed fields, which the JSON toggle swaps for
 // the raw editor; an approval or a raw-only form has nothing to swap.
 func (f CallForm) Structured() bool { return !f.IsApproval && len(f.Editable.Fields) > 0 }
 
-// runForm builds a CallForm for running an action (repeatable, no locked args).
-// firstPayee/payeeOwner drive the first-payment hint (§8.3) on a paid run.
-func runForm(csrf template.HTML, actionID string, price int64, editable FormModel, outcome *Outcome, firstPayee bool, payeeOwner, quoteHash string) CallForm {
+// runForm builds the CallForm of an action's run (repeatable, no locked
+// args) from its view: the pin it was quoted at, the first-payment hint
+// (§8.3), and the context a panel was opened with.
+func (r *Renderer) runForm(v actionView) CallForm {
+	a := v.Action
 	return CallForm{
-		CSRFField: csrf, PostURL: "/actions/" + actionID + "/run", FormURL: "/actions/" + actionID + "/form", Verb: "Run",
-		QuoteHash: quoteHash,
-		Price:     price, Editable: editable, ResultID: "run-result", Outcome: outcome,
-		FirstPayee: firstPayee, PayeeOwner: payeeOwner,
+		CSRFField: v.CSRFField, PostURL: "/actions/" + a.ID + "/run", FormURL: "/actions/" + a.ID + "/form", Verb: "Run",
+		QuoteHash: a.QuoteHash, Price: a.Price, Editable: v.Form, ResultID: "run-result", Outcome: v.Outcome,
+		FirstPayee: v.FirstPayee, PayeeOwner: r.refOf(a.Ref(), "").Owner.Text,
+		Room: v.Room, Tx: v.Tx, Fill: v.Fill, FillURL: "/actions/" + a.ID + "/fill",
 	}
 }
 

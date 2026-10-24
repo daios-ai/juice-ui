@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -21,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/wallet"
 )
@@ -3335,7 +3337,7 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 		}
 		switch r.URL.Query().Get("ref") {
 		case "sys@testnet/llm/decide":
-			fmt.Fprintf(w, `[{"id":"D","action":"sys@testnet/llm/decide","name":"decide","kind":"native","active":true,"price":%d}]`, decidePrice)
+			fmt.Fprintf(w, `[{"id":"D","action":"sys@testnet/llm/decide","name":"decide","kind":"native","active":true,"price":%d,"quote_hash":"DQ"}]`, decidePrice)
 		case "sys@testnet/web":
 			w.Write([]byte(`[{"id":"WEB","action":"sys@testnet/web","name":"web","kind":"http","active":true,"price":0,
 			 "input_schema":{"type":"object","properties":{"url":{"type":"string","description":"the page"}},"required":["url"]}}]`))
@@ -3345,12 +3347,16 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 			w.Write([]byte(`[]`))
 		}
 	})
+	mux.HandleFunc("GET /v1/transactions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"T9","action":"sys@testnet/time","owner":"alice@testnet","caller":"alice@testnet","target":"sys@testnet","status":"success","args":{},"result":{"iso":"2026-10-24T16:47:29Z"}}`))
+	})
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Action string `json:"action"`
 		}
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &in)
+		ranActions = append(ranActions, in.Action)
 		if in.Action == "sys@testnet/llm/decide" {
 			lastDecide = string(b)
 			fmt.Fprintf(w, `{"result":%s,"tx_id":"T1"}`, decision)
@@ -3361,7 +3367,10 @@ func proposalKernel(t *testing.T, decidePrice int64, decision string) *httptest.
 	return httptest.NewServer(mux)
 }
 
-var lastDecide string
+var (
+	lastDecide string
+	ranActions []string
+)
 
 // The kernel ships a planner that selects an action and proposes arguments
 // WITHOUT executing (U46: planning and spending are separate decisions). The UI
@@ -3422,17 +3431,118 @@ func TestProposalAnnouncesItselfWithoutAMessage(t *testing.T) {
 	}
 }
 
-// An operator may price the planner. Then the command is not offered at all: an
-// affordance that would spend from a page nobody confirmed is not an affordance
-// (§8.2).
-func TestPricedPlannerIsNotOffered(t *testing.T) {
+// An operator may price the planner. Then the command is offered on the money
+// button naming its price, and the run is pinned to the quote shown: asking is
+// a spend the person authorizes, never a silent one (§8.2).
+func TestPricedPlannerIsPaidOnItsButton(t *testing.T) {
+	lastDecide = ""
 	kernel := proposalKernel(t, 9, `{"action":"sys@testnet/web","args":{}}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	if page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page"); strings.Contains(page, "/browse/propose") {
-		t.Errorf("a priced planner must not be offered: %s", page)
+	page := getBody(t, cl, srv.URL+"/browse?q=fetch+a+page")
+	if !strings.Contains(page, `<button class="btn-money" type="submit">Choose for me (9 credits)</button>`) || !strings.Contains(page, `name="planner_quote_hash" value="DQ"`) {
+		t.Fatalf("a priced planner is offered on the money button, pinned: %s", page)
+	}
+	resp := postTo(t, cl, srv.URL+"/browse/propose", page, url.Values{"q": {"fetch a page"}, "ref": {"sys@testnet/web"}, "planner_quote_hash": {"DQ"}})
+	resp.Body.Close()
+	if !strings.Contains(lastDecide, `"quote_hash":"DQ"`) {
+		t.Errorf("the planner's run is pinned to the quote shown: %s", lastDecide)
+	}
+}
+
+// convApp is a conversations app for the core's tests: a room "r1" whose
+// conversation is fixed, refused for any other room.
+type convApp struct{ launchApp }
+
+func (convApp) Rail(*http.Request) (template.HTML, error) { return `<nav class="rail"></nav>`, nil }
+func (convApp) Landing() string                           { return "/" }
+func (convApp) Context(_ *http.Request, room string) ([]client.Message, error) {
+	if room != "r1" {
+		return nil, fmt.Errorf("not a member")
+	}
+	return []client.Message{{Role: "user", Content: "fetch example.com for me"}}, nil
+}
+
+// Fill from chat prepares an action's fields from the conversation the panel
+// was opened from — the planner with this one action, pinned to its quote —
+// and from a previous result carried in; an argument the conversation does not
+// state stays blank; nothing runs but the planner.
+func TestFillPreparesTheFieldsFromTheConversation(t *testing.T) {
+	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{"url":"example.com"}}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{convApp{}} }))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	panel := getBody(t, cl, srv.URL+"/actions/WEB/panel?room=r1")
+	for _, want := range []string{`name="room" value="r1"`, `name="fill_quote_hash" value="DQ"`, `<button type="button" class="btn" data-fill="/actions/WEB/fill">Fill from chat</button>`} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("panel lacks %s", want)
+		}
+	}
+	if bare := getBody(t, cl, srv.URL+"/actions/WEB/panel"); strings.Contains(bare, "data-fill") {
+		t.Error("with no conversation there is nothing to fill from")
+	}
+
+	lastDecide, ranActions = "", nil
+	resp := postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}, "tx": {"T9"}, "fill_quote_hash": {"DQ"}})
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `name="f_/url" rows="1">example.com`) {
+		t.Fatalf("fill = %d %s", resp.StatusCode, b)
+	}
+	for _, want := range []string{`"role":"system"`, `"actions":["sys@testnet/web"]`, `"quote_hash":"DQ"`,
+		`Use this result of sys@testnet/time in the action: {\"iso\":\"2026-10-24T16:47:29Z\"}`} {
+		if !strings.Contains(lastDecide, want) {
+			t.Errorf("the planner was not given %s: %s", want, lastDecide)
+		}
+	}
+	if strings.Contains(lastDecide, "fetch example.com for me") {
+		t.Error("a carried result is the context, not the conversation")
+	}
+	if len(ranActions) != 1 || ranActions[0] != "sys@testnet/llm/decide" {
+		t.Errorf("a fill runs the planner alone, ran %v", ranActions)
+	}
+	resp = postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}, "fill_quote_hash": {"DQ"}})
+	resp.Body.Close()
+	if !strings.Contains(lastDecide, "fetch example.com for me") {
+		t.Errorf("without a result the conversation is the context: %s", lastDecide)
+	}
+	resp = postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"elsewhere"}})
+	if b, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(b), "Not a member") {
+		t.Errorf("a room the viewer is not in is refused: %d %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+}
+
+// An argument the conversation does not state comes back empty and stays
+// blank: the fill never invents a value to complete the form.
+func TestFillLeavesTheUnstatedBlank(t *testing.T) {
+	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{"url":""}}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{convApp{}} }))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	panel := getBody(t, cl, srv.URL+"/actions/WEB/panel?room=r1")
+	resp := postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}})
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `name="f_/url" rows="1"></textarea>`) {
+		t.Errorf("an unstated argument stays blank: %s", b)
+	}
+}
+
+// A priced planner prices the fill: the money button names it.
+func TestPricedFillIsAMoneyButton(t *testing.T) {
+	kernel := proposalKernel(t, 9, `{"action":"sys@testnet/web","args":{}}`)
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{convApp{}} }))
+	defer srv.Close()
+	panel := getBody(t, loginClient(t, srv.URL), srv.URL+"/actions/WEB/panel?room=r1")
+	if !strings.Contains(panel, `<button type="button" class="btn-money" data-fill="/actions/WEB/fill">Fill from chat (9 credits)</button>`) {
+		t.Errorf("a priced fill is authorized on the money button: %s", panel)
 	}
 }
 
@@ -4236,5 +4346,16 @@ func TestPageReadsTheViewerOnce(t *testing.T) {
 		if n := reads.Load(); n != 1 {
 			t.Errorf("%s read /v1/me %d times, want 1", page, n)
 		}
+	}
+}
+
+// A refused proposal says why: the kernel's message for a typed error, the
+// planner's or the conversation's own words otherwise.
+func TestRefusalSaysWhy(t *testing.T) {
+	if got := refusal(fmt.Errorf("model did not select an action")); got != "Model did not select an action." {
+		t.Errorf("refusal = %q", got)
+	}
+	if got := refusal(&client.KernelError{Kind: client.KindInsufficientFunds}); strings.Contains(got, "Something went wrong") {
+		t.Errorf("a typed error reads as its own sentence: %q", got)
 	}
 }

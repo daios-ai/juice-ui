@@ -588,7 +588,8 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, true, "alice", "QH")
+	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "alice@testnet/x", Price: 12, QuoteHash: "QH"},
+		Form: FormModel{UseRawFallback: true}, FirstPayee: true})
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
@@ -1738,7 +1739,7 @@ func TestFormWireForTheSwitch(t *testing.T) {
 		"req":{"type":"array","items":{"type":"string"}},"opt":{"type":"array","items":{"type":"string"}},
 		"nul":{"type":["string","null"]}}}`))
 	fm.Fill(json.RawMessage(`{"nul":null}`))
-	cf := runForm(template.HTML(`<input>`), "A1", 0, fm, nil, false, "", "")
+	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "alice@testnet/x"}, Form: fm})
 	rec := httptest.NewRecorder()
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
@@ -1844,7 +1845,7 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, false, "lena", "QH1")
+	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "lena@testnet/x", Price: 12, QuoteHash: "QH1"}, Form: FormModel{UseRawFallback: true}})
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
 	}
@@ -1853,7 +1854,7 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 	}
 	// No hash (an older kernel) carries no field, leaving behaviour unchanged.
 	rec2 := httptest.NewRecorder()
-	cf2 := runForm(template.HTML(`<input>`), "A1", 12, FormModel{UseRawFallback: true}, nil, false, "lena", "")
+	cf2 := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "lena@testnet/x", Price: 12}, Form: FormModel{UseRawFallback: true}})
 	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
 		t.Fatal(err)
 	}
@@ -2266,5 +2267,34 @@ func TestShortAddrAbbreviatesAChainAddressOnly(t *testing.T) {
 		if got := shortAddr(s); got != s {
 			t.Errorf("shortAddr(%q) = %q, want it unchanged", s, got)
 		}
+	}
+}
+
+// A success run from a conversation offers its result back — into the draft
+// as text (a string as itself, anything else as its JSON), or into the next
+// action — and one run elsewhere offers nothing.
+func TestUseResultFollowsTheConversation(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(o Outcome) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, "_call_outcome", o); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	in := render(Outcome{Class: Success, TxID: "T1", Room: "r1", Result: json.RawMessage(`{"iso":"x"}`)})
+	for _, want := range []string{`data-menu="use-T1"`, `data-use-result data-value="{`, `data-use-tx="T1"`} {
+		if !strings.Contains(in, want) {
+			t.Errorf("a run from a room lacks %s: %s", want, in)
+		}
+	}
+	if out := render(Outcome{Class: Success, TxID: "T1", Result: json.RawMessage(`{}`)}); strings.Contains(out, "data-use-") {
+		t.Error("a run outside a conversation offers no Use result")
+	}
+	if resultText(json.RawMessage(`"plain"`)) != "plain" || !strings.Contains(resultText(json.RawMessage(`{"a":1}`)), `"a": 1`) {
+		t.Error("a string is itself, anything else its JSON")
 	}
 }

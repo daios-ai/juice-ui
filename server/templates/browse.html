@@ -23,19 +23,21 @@
 </div>
 {{if not $q}}{{template "_pager" .Data.Pager}}{{end}}
 {{/* Ask the kernel's planner which of these fits, and with what arguments. It
-     selects and never executes, so this moves no money: it lands on the chosen
-     action's own page with the form filled in, and the same confirm still has
-     to be pressed (§6.2). The candidates posted are exactly the refs on screen,
-     so what was offered to the model is what the person could see. A command,
-     quietly with the content it acts on — never a floating cluster. */}}
-{{if and $q .Data.CanPropose}}
+     selects and never executes: it lands on the chosen action's own page with
+     the form filled in, and the action's own confirm still has to be pressed
+     (§6.2). A priced planner is paid for here, on the money button that names
+     its price, pinned to the quote shown. The candidates posted are exactly
+     the refs on screen, so what was offered to the model is what the person
+     could see. */}}
+{{with .Data.Planner}}{{if $q}}
 <form class="row control-row" method="post" action="/browse/propose">
-  {{.CSRFField}}
+  {{$.CSRFField}}
   <input type="hidden" name="q" value="{{$q}}">
+  <input type="hidden" name="planner_quote_hash" value="{{.QuoteHash}}">
   {{range $cards}}<input type="hidden" name="ref" value="{{.Action.Ref}}">{{end}}
-  <button class="btn-quiet" type="submit">let the model choose</button>
+  {{if gt .Price 0}}<button class="btn-money" type="submit">Choose for me ({{money .Price}})</button>{{else}}<button class="btn" type="submit">Choose for me</button>{{end}}
 </form>
-{{end}}
+{{end}}{{end}}
 {{else}}
 <p class="muted">{{if $q}}No matches for "{{$q}}".{{else}}No actions here yet.{{end}}</p>
 {{end}}

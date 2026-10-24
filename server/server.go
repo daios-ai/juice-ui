@@ -349,6 +349,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
 	mux.HandleFunc("GET /actions/{id}/panel", s.requireAuth(s.getActionPanel))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
+	mux.HandleFunc("POST /actions/{id}/fill", s.requireAuth(s.postFill))
 	mux.HandleFunc("POST /actions/{id}/form", s.requireAuth(s.postActionForm))
 	mux.HandleFunc("POST /actions/{id}/update-price", s.requireAuth(s.postUpdateActionPrice))
 	mux.HandleFunc("POST /actions/{id}/update", s.requireAuth(s.postUpdateAction))

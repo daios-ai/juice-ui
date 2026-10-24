@@ -310,19 +310,10 @@ type RunRequest struct {
 }
 
 // Message is one message the kernel's planner reads (sys/llm/decide, kernel
-// D17): a role and its text, or a tool message carrying a call already made.
+// D17): a role and its text.
 type Message struct {
-	Role    string    `json:"role"`
-	Content string    `json:"content,omitempty"`
-	Tool    *ToolCall `json:"tool,omitempty"`
-}
-
-// ToolCall is a call a tool message reports: the action, its arguments and
-// what it answered.
-type ToolCall struct {
-	Action string          `json:"action"`
-	Args   json.RawMessage `json:"args"`
-	Result json.RawMessage `json:"result"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // CallReply is the success response of POST /v1/run.
