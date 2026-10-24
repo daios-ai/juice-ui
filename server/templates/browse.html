@@ -1,5 +1,10 @@
 {{define "content"}}
 {{$q := .Data.Query}}
+<div class="page-head"><h1>Discover actions</h1></div>
+<form class="row compact control-row" method="get" action="/browse" role="search">
+  <input class="stretch" type="search" name="q" value="{{$q}}" aria-label="Search actions" enterkeyhint="search">
+  <button class="btn" type="submit">Search</button>
+</form>
 {{if not .Data.LookupAvailable}}
 <div class="banner banner-info" role="status">Semantic search unavailable — showing catalog results.{{if .Data.Reason}} <span class="muted">(reason: {{.Data.Reason}})</span>{{end}}</div>
 {{end}}

@@ -678,10 +678,12 @@ The UI is a **backend-for-frontend (BFF)**: a Go HTTP server that renders the
 interface and proxies every request to the kernel API, holding the user session
 server-side.
 
-The front door is a conversation (§6.7): a person talks to an assistant and to
-other people and agents in rooms, and what passes between them are JSON
-documents rendered by the form and the view. The catalog, the run form and the
-inbox stay one level down, reached from the nav and from search.
+The UI is one collaborative workspace (§6.1, §6.7): conversations among people
+and agents are its frame, and actions are operations within them — chosen from
+the composer, prepared, run and their results reused without leaving the
+conversation. Every other page — the dashboard, the inbox, the catalog, the
+workshop, the wallet — stays a destination, reached from the avatar menu and
+the composer's launcher.
 
 * The browser communicates only with the BFF. The BFF is the sole client of the
   kernel HTTP API.
@@ -747,25 +749,25 @@ peer, no proxy header); any other request is told the terminal command. The
 UI never removes a kernel. A UI configured with a named kernel or an
 operator's running kernel sees no screen: the first fact is true.
 
-**Navigation model.** The UI's navigation MUST present the juice CLI concepts as
-a marketplace, not a raw command dump. The primary groups are **Home**,
-**Inbox**, **Workshop**, **Wallet**, and **Settings**, plus **Network** (federation)
-and **Admin**, both shown **only to the `sys` superuser**. Each maps to the same
-CLI concepts as before: `home` is the dashboard over the others; discovery +
-execution (`run` + the catalog) is reached from the search box on every page,
-whose results page is `browse`;
-`inbox` is `task` — work addressed to the user, carrying the sole attention badge,
-which counts the waiting tasks addressed to the user and the requesters awaiting
-the user's decision (§6.3);
-`workshop` is the provider surface (`action` management + earnings + creation);
-`wallet` is money evidence (`user` balances + `process` lifetimes + the `tx`
-ledger + receipts); `settings` is account, preferences, and connected accounts;
-`network` is federation
-(peers), and `admin` is operator supervision. The relabelling grants no new
-authority — the underlying routes and superuser gating are unchanged. The kernel
-still creates and closes processes automatically; the UI MUST NOT ask the user to
-manage that bookkeeping, but it
-MAY surface a process's parked funds and awaiting-receipt state as evidence.
+**Navigation model.** The UI's permanent elements are three: the
+conversations, the composer, and the avatar menu (§6.1). The destinations —
+**Home**, **Inbox**, **Discover actions**, **Workshop**, **Wallet**,
+**Settings**, plus **Network**, **Admin** and an app's operator surfaces for
+`sys` alone — are one registry, which the avatar menu lists and the launcher
+searches. Each still maps to the CLI concepts it always did: `home` is the
+dashboard over the others; discovery + execution (`run` + the catalog) is
+Discover and the composer's launcher; `inbox` is `task` — work addressed to the
+user, carrying the sole attention badge, which counts the waiting tasks
+addressed to the user and the requesters awaiting the user's decision (§6.3);
+`workshop` is the provider surface (`action` management + earnings +
+creation); `wallet` is money evidence (`user` balances + `process` lifetimes +
+the `tx` ledger + receipts); `settings` is account, preferences, and connected
+accounts; `network` is federation (peers), and `admin` is operator
+supervision. Moving a page out of the sidebar grants and removes no authority —
+the underlying routes and superuser gating are unchanged. The kernel still
+creates and closes processes automatically; the UI MUST NOT ask the user to
+manage that bookkeeping, but it MAY surface a process's parked funds and
+awaiting-receipt state as evidence.
 
 **Reference discipline.** Each cross-cutting rule is defined once and applies
 wherever relevant without per-use citation: the API contract in §4, session and
@@ -996,16 +998,21 @@ kernel and world is in use, and keys everything durable by
 
 ### 6.1 Information architecture
 
-* The UI MUST present a left sidebar whose entries are the primary groups
-  (`Chat` first, then `Home`, `Inbox`, `Workshop`, `Wallet`, `Settings`, then
-  `Network` and `Admin` for `sys`), default-expanded with labels, collapsible, with collapse state
-  persisted server-side. The active group MUST carry `aria-current`. The `inbox`
-  entry MUST carry its waiting-count task badge in every state — a constraint on
-  the entry wherever it renders, not on any one surface. A single nav model, built
-  once server-side, MUST drive the sidebar and the mobile drawer (and the search
-  pill's commands), so they cannot drift.
-* **Sign-in lands on chat** (§6.7): the app whose nav entry leads. **Home is
-  the dashboard** (`/`). It MUST show the
+* **The sidebar is the workspace's conversations.** It MUST hold, in order:
+  the brand (the kernel and its world, §7) with the collapse toggle; the
+  conversations rail (§6.7); and at its foot the signed-in user's avatar, which
+  carries the task badge and opens the **avatar menu**: the address and the
+  available balance, then every destination of the registry with the inbox's
+  count on its row, then Sign out. No destination occupies the sidebar itself.
+  The current destination MUST carry `aria-current` in the menu. One registry,
+  built once per request server-side, MUST drive the menu and the launcher, so
+  they cannot drift; its entries are plain words, every one a link.
+* **Collapsed means hidden.** A list of conversation names has no icon form, so
+  collapsing the sidebar hides it, the choice persisted server-side
+  (`sidebar` cookie, stamped on `<html>`); a slim topbar then carries the
+  sidebar's trigger, with the task badge, and the brand.
+* **Sign-in lands in a conversation** (§6.7): the conversations app's landing.
+  **Home is the dashboard** (`/`). It MUST show the
   viewer's available and parked balance, the waiting tasks addressed to them
   (read as `status=waiting`, never the whole history), their open sessions,
   and their most recent ledger entries — at most five rows each, every section
@@ -1013,22 +1020,18 @@ kernel and world is in use, and keys everything durable by
   holds only the viewer's entries, not from the transaction list, which the
   kernel pages before its party filter. Home MUST NOT complete a task (the
   inbox is the one surface that spends on a task) and MUST NOT draw a balance
-  chart (the kernel serves no series). Results and action pages belong to no
-  nav group: they are reached from search.
-* The account/identity summary (handle, balance) lives at the sidebar foot;
-  nothing that is itself a primary destination sits in a popover. Preferences are
-  not chrome: the theme picker MUST appear exactly once, on `settings`.
-* Mobile MUST reflow to **a single menu affordance at the top left** opening the
-  sidebar as a **left panel** carrying the **whole** nav — the same object the
-  sidebar is, at a different width, not a different component. No fixed-size bar is permissible: the nav is
-  unbounded, since every registered app contributes entries at runtime, so any bar
-  would need an overflow, and the split between bar and overflow would be
-  arbitrary and would shift as apps install — unlearnable. One model, two
-  renderings: sidebar where there is room, drawer where there is not. The drawer
-  MUST be reachable without JavaScript by the same `?form=`-style fallback used
-  elsewhere. The closed affordance MUST carry the task badge, so the sole core
-  attention signal survives the drawer being shut. (The core rule that money moves
-  only through a named confirm is unaffected by which surface hosts a screen.)
+  chart (the kernel serves no series). An action page belongs to no
+  destination: it is reached from the launcher, Discover or a row.
+* The account summary (address, available balance) heads the avatar menu.
+  Preferences are not chrome: the theme picker MUST appear exactly once, on
+  `settings`; Sign out is the menu's.
+* Mobile MUST reflow to **a single menu affordance at the top left**, in a slim
+  topbar, which slides **the same sidebar** in over the page — the same element,
+  not a copy — closed by a scrim and by Escape; it MUST be reachable without
+  JavaScript (`?menu=open`, stamped on `<html>`). The closed affordance MUST
+  carry the task badge, so the sole core attention signal survives the sidebar
+  being out of view. The nav is unbounded, since every registered app
+  contributes destinations, so no fixed bar is permissible.
 * **An app that presents a kernel principal presents its account.** An agent is
   a user: it holds its own principal, is funded like anybody's, and spends it
   (ecosystem-standard §6). An app that manages one MUST therefore show that
@@ -1041,8 +1044,8 @@ kernel and world is in use, and keys everything durable by
 * **An app that acts on the UI host is an operator surface.** Most apps are
   ordinary kernel clients and gate on a session. One whose handlers act on the
   machine the interface runs on — spawning a process, writing the installation's
-  files — MUST gate every route on the superuser and MUST contribute no nav
-  entry to anyone else. That authority is the operator's machine, which no
+  files — MUST gate every route on the superuser and MUST contribute no
+  destination to anyone else. That authority is the operator's machine, which no
   kernel account confers: on a shared root, an ordinary session could otherwise
   edit and stop another person's agent, and anyone signed in could start a
   process on the host. The agents app is one: it keeps an agent's home at
@@ -1078,13 +1081,13 @@ kernel and world is in use, and keys everything durable by
   with (§6.7, rule 11); the assistant is otherwise an ordinary agent. It knows
   nothing of chat: chat joins the agents it finds.
 * The task badge MUST be the only attention-demanding affordance in the **core**
-  UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
-  its nav entry. It MUST reflect waiting tasks whose `required_caller` is the
-  signed-in user (a superuser lists everyone's), sourced from
-  a single server-side read of `GET /v1/tasks?status=waiting` per session (a
-  per-session cache whose TTL is the badge interval), carried to every open
-  page by its heartbeat and swapped only when the count changed — not one
-  polling loop per widget.
+  UI. It MUST reflect waiting tasks whose `required_caller` is the signed-in
+  user (a superuser lists everyone's) and the requesters awaiting a decision,
+  sourced from a single server-side read per session (a per-session cache
+  whose TTL is the badge interval), carried to every open page by its heartbeat
+  and swapped only when the count changed — every copy at once: the avatar,
+  the Inbox row of the menu, and the topbar's trigger. An app MAY keep its own
+  attention in its own surface (the rail's unread weighting, §6.7).
 * All create and edit operations MUST open **floating modal forms** — native
   `<dialog>` elements opened client-side with `showModal()`. Each modal trigger
   MUST also be a real link (`?form=NAME`); without JavaScript the server renders
@@ -1092,22 +1095,26 @@ kernel and world is in use, and keys everything durable by
   operable with JS off. The `?form=` value MUST be validated server-side against a
   per-page whitelist before rendering.
 * The UI MUST be keyboard-navigable as a first-class affordance: `g`+letter
-  section navigation, `/` to focus search, `?` for a shortcuts overlay,
+  section navigation, `/` to open the composer's launcher (Discover's box where
+  there is no composer), `?` for a shortcuts overlay,
   `j`/`k`/`Enter` to move through and open rows (table rows and list rows
   alike), and `Esc` to close the top layer. A rowable row's pointer target is
   its link: the row MUST NOT show a pointer cursor, since no click handler
   stands behind it.
-* **Commands are rows of the search pill.** The command registry mirrors the
-  CLI (gated: admin commands appear only for `sys`) and is delivered as inert
-  JSON data (a `type="application/json"` block), never executable inline
-  script, to satisfy the CSP. The pill lists the commands matching the typed
-  text before the title hints, each marked `›` (chrome; a title row never
-  carries the mark, §8.1) — at most three when titles also match, twelve rows
-  in all; a leading `>` lists commands only, `>` alone all of them. A command
-  is a link (a page, or a `?form=` URL the server renders open) or a submit
-  button bound to the page's one hidden command form, so every command targets
-  a real link or form and the keyboard layer adds no capability unreachable
-  without it. There is no palette, chip or Ctrl/Cmd+K binding.
+* **The launcher is the composer's `/`.** Typing `/` at the start of the
+  composer, or pressing its `/` button, opens a list under the draft: the
+  catalog's actions matching what is typed (at most five, title and address),
+  then the registry's destinations and openers (at most three; all of them
+  while nothing is typed), then one last row, `Search "…" →`, which runs
+  Discover's search for the text. Choosing an action opens its panel beside
+  the conversation; choosing a page goes there; neither posts a message nor
+  runs anything, and Escape closes the list keeping the draft. The registry is
+  delivered as inert JSON (a `type="application/json"` block), never
+  executable inline script, to satisfy the CSP, and every entry is a link, so
+  the launcher adds no capability unreachable without it. The actions are read
+  from the free catalog file, matched in the browser, never from
+  `sys/lookup` (§8.2). There is no palette, no search pill and no command
+  prefix.
 
 ### 6.2 run — discovery, action page, run form
 
@@ -1163,10 +1170,9 @@ spend:
 
 **Discovery.**
 
-* The omnibox MUST be present on every page — it lives in a **persistent
-  topbar** at the top of the content area (a compact search input reflows onto the
-  browse page itself on mobile, where the topbar is hidden) — and MUST issue
-  `sys/lookup` (required `query`, optional `limit`) via `POST /v1/run`. Results
+* **Discover** (`/browse`) is the search's own page: its query box is the
+  page's content, a GET to itself, and MUST issue `sys/lookup` (required
+  `query`, optional `limit`) via `POST /v1/run`. Results
   MUST render as **rows in one ranked column** (the rank is a sequence, so it
   is not spread over a grid), filling the container like every component. A
   row leads with a
@@ -1175,27 +1181,20 @@ spend:
   (owner-emphasized) on its own line beneath, the description (at most two
   lines), and the **same reputation strip the action page uses** (icon +
   tooltip: success · rating · latency), price-less since the price is on the
-  title line. The title is the row's one pointer target. The browse page is
-  **headless** (no page-head)
-  and shows a **flat catalog capped at 20 per page** with a pager (§7 pagination);
-  there are no filter tabs.
-* **Search hints.** While a person types, the search box MUST offer up to
-  twelve **search hints**, matched in the browser as a static site searches its
-  index: the page loads the whole catalog's titles once
+  title line. The title is the row's one pointer target. With no query the page
+  is a **flat catalog capped at 20 per page** with a pager (§7 pagination).
+* **The catalog file.** The launcher's actions come from one file
   (`GET /search/catalog.json`: every page of `GET /v1/actions` — the caller's
   own actions, the live ones it may call, and those discovered on peers — each
-  distinct title with its normalized key) and matches them on every keystroke,
-  so typing sends no request. Matching folds accents, case and punctuation
-  (decimal digits are kept), requires every typed word to begin a word of the
-  title, and ranks titles beginning with the text first, then shorter ones. A
-  hint is a query, not an action: choosing one MUST run the search for it
-  (`/browse?q=`), exactly as if typed, and MUST NOT open an action page. Hints
-  MUST NOT come from `sys/lookup`, a run at an operator-set price (§8.2). The
-  catalog file holds the account's private titles, so it MUST NOT be stored by
-  the browser (`Cache-Control: no-store`); the page fetches it once per load.
-  Without JavaScript the box submits as before.
+  action with its title, the title's normalized key, its id, none for a
+  discovered one, and its address), loaded once per page and matched in the
+  browser on every keystroke, so typing sends no request. Matching folds
+  accents, case and punctuation (decimal digits are kept), requires every
+  typed word to begin a word of the title, and ranks titles beginning with the
+  text first, then shorter ones. The file holds the account's private titles,
+  so it MUST NOT be stored by the browser (`Cache-Control: no-store`).
 * **Search fallback.** When `sys/lookup` is priced or fails, the search MUST
-  match the whole catalog by the hints' rules over title, name and description
+  match the whole catalog by the launcher's rules over title, name and description
   — a title beginning with the query first, then a title holding its words, then
   a name or description holding them — at most 20 results, discovered rows
   kept and marked.
@@ -1252,7 +1251,7 @@ spend:
   is not permitted: the kernel serves one for every row.
 * Catalog browse (`GET /v1/actions`, the `?owner=` filter) MUST be available as
   the secondary path and the per-owner listing.
-* On `ErrInvalidState` from `sys/lookup`, the omnibox MUST fall back to catalog
+* On `ErrInvalidState` from `sys/lookup`, Discover MUST fall back to catalog
   search and MUST show a notice that semantic search is unavailable; it MUST NOT
   present a dead control. Discovery is mandatory regardless of embedder status.
 
@@ -2113,21 +2112,44 @@ member addressed. Without the second sentence the model answered by posting
 and then narrated the post in its completion; without the first it reached the
 member by a direct message outside the room.
 
-The UI: `/chat` lands in the room; the room is crumb (← rooms · name ·
-members · leave/delete) → entries → composer, the page the scroll container;
-the rooms are a table (`.rowable`, unread weighting). An entry renders as the
-view of its body (§7), a failure being the view of its `{status, reason}`. The
-composer is the post action's form, built from its input schema as a task's
-completion form is (§6.3): `thread_id` sealed, shown as the view above the
-fields, and `message` its one field, with the JSON switch, whose editor names
-only `message`. Its submission runs `msg/post` as the viewer with the room
-taken from the page's address, never from the form, so the browser and an
-agent take one path. A refusal, the kernel's or chat's, is shown beside the
-composer and keeps what was typed. The store is
-`$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held across the
-upgrade settles nothing said before it); a first start beside the previous
-application's `chat.db` imports its live rooms, members and messages once and
-never writes that file.
+The UI (the workspace, §6.1): `/chat` lands in the viewer's conversation with
+the assistant, else the newest room, else an empty page beside the rail.
+
+* **The rail** is the sidebar's list of the viewer's rooms, newest activity
+  first, the room in view `aria-current`, a room with unread entries weighted;
+  the heartbeat replaces it when a room appears, goes or is read. Its first row,
+  `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
+  for the **participants first** — this installation's agents as boxes, then
+  any addresses — and a name, optional: a blank one is the participants'
+  handles. There is no rooms page.
+* **A room** is crumb (name · members · leave/delete) → entries → who is
+  answering → composer, the page the scroll container, the composer held at
+  the foot of the viewport; beside it the **panel**, empty until an action is
+  chosen. An entry renders as the view of its body (§7), a failure being the
+  view of its `{status, reason}`. **Who is answering** is one line naming the
+  members other than the viewer that hold an unanswered delivery in the room
+  — a fact chat holds — kept by the heartbeat, empty when nobody.
+* **The composer** is the post action's form, built from its input schema as
+  a task's completion form is (§6.3): `thread_id` sealed, shown as the view
+  above the fields, and `message` its one field, with the JSON switch, whose
+  editor names only `message`. Enter sends and Shift+Enter breaks the line. A
+  first word that begins a member's address lists the members, and choosing
+  one writes its address and a comma. `/` opens the launcher (§6.1). Its
+  submission runs `msg/post` as the viewer with the room taken from the page's
+  address, never from the form, so the browser and an agent take one path. A
+  refusal, the kernel's or chat's, is shown beside the composer and keeps what
+  was typed.
+* **The panel** (`GET /actions/{id}/panel`) is the action as its page states
+  it — title, chips, address, description, this kernel's record with the
+  price, what other kernels report folded — and the one run form (§6.2), with
+  its outcome below; × closes it. On a narrow screen it covers the
+  conversation. The action page remains, built from the same partials and the
+  same loader.
+
+The store is `$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held
+across the upgrade settles nothing said before it); a first start beside the
+previous application's `chat.db` imports its live rooms, members and messages
+once and never writes that file.
 
 ## 7. Visual language and non-functional requirements
 
@@ -2255,8 +2277,8 @@ never writes that file.
   region for ephemeral acknowledgement of the user's own just-completed action
   (e.g. "Action disabled," "Copied," the 429 "slow down"): no history, no
   stacking, no counterparty text, auto-dismissing. The task badge is the sole
-  async attention signal in the core surface; an app MAY add its own app-scoped
-  nav badge.
+  async attention signal in the core surface; an app keeps its own attention
+  in its own surface (the rail's unread weighting).
 * **CSS grammar.** All visual decisions MUST live in named CSS classes in
   `app.css`; inline `style="..."` attributes are forbidden in templates. Utilities
   (`.small`, `.tiny`, `.flush`, `.stretch`, `.input-sm`, `.row.compact`, etc.)
@@ -2436,8 +2458,23 @@ Every production `.go` file has a `_test.go` file with independent tests.
   that a search on a kernel which prices `sys/lookup` degrades instead of
   charging (§8.2);
 * an app that acts on the UI host is reachable by the operator alone: every
-  route gated, and no nav entry offered to anyone else (§5, apps);
-* the single `aria-live` feedback region and the absence of any notification feed.
+  route gated, and no destination offered to anyone else (§5, apps);
+* the single `aria-live` feedback region and the absence of any notification feed;
+* the workspace frame (§6.1, §6.7): one sidebar — the rail and the avatar
+  menu, the menu listing the registry's destinations with the current one
+  marked and the operator's for the operator alone — the task badge on the
+  avatar, the menu row and the topbar's trigger, the hidden sidebar reachable
+  without script, and no search pill, palette or command prefix; the launcher
+  carries the whole registry as inert JSON, the configuration only where its
+  page exists; a page reads the viewer once;
+* chat as the workspace: the rail newest first with the room in view and an
+  unread one marked, its heartbeat answering only a changed rail; the landing's
+  fallbacks; a conversation started from its participants, its blank name
+  theirs; who is answering, never the viewer; the room page carries the
+  composer with its launcher and the panel; a room's context as the planner
+  reads it, refused to a non-member;
+* the stylesheet styles nothing that no template, script or Go renders
+  (drift guard).
 
 ## 10. Open items / kernel prerequisites
 

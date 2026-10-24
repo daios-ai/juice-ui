@@ -14,14 +14,16 @@ responses rather than reproducing kernel logic.
 
 ## Highlights
 
-- **CLI-mirroring navigation** — `run · action · process · tx · task · user`, plus
-  `admin · peers` for the `sys` superuser. Each group presents a concept, not a
-  command dump.
+- **One collaborative workspace** — conversations among people and agents are
+  the frame; actions are chosen from the composer's `/`, run in a panel beside
+  the conversation, and their results carried into the next message or action.
+  Home, Inbox, Discover, Workshop, Wallet and Settings (and Network, Admin and
+  Agents for `sys`) are destinations of the avatar menu.
 - **Terminal aesthetic** — a monospace face and selectable **Ghostty 16-colour ANSI
   themes**, every theme derived from one set of design tokens and held to WCAG AA by
   a test.
-- **Keyboard-first** — a `Ctrl/Cmd-K` command palette, `g`+letter section jumps,
-  `/` to search, `j`/`k`/`Enter` on rows, `?` for help.
+- **Keyboard-first** — `/` for actions and pages, Enter to send, `g`+letter
+  jumps, `j`/`k`/`Enter` on rows, `?` for help.
 - **No SPA** — server-rendered HTML with **htmx** and a few vanilla ES modules. No
   build step, no Node, no framework.
 - **Security by construction** — a strict Content-Security-Policy, server-side
@@ -29,7 +31,7 @@ responses rather than reproducing kernel logic.
   route, and counterparty-authored content rendered inert and quarantined from
   chrome.
 - **Apps** — a small seam for self-contained modules that ship in the binary. The
-  built-in **[chat](apps/chat/README.md)** app, where a session lands — rooms of
+  built-in **[chat](apps/chat/README.md)** app is the workspace — rooms of
   people and agents, input and output through the one form and view, delivered as kernel tasks —
   is the reference implementation; **agents** manages the installation's
   juice-agents.
@@ -84,7 +86,7 @@ Configuration is layered **defaults < `config.json` < environment variables**
 | `JUICE_UI_PUBLIC_URL` | absolute base URL for OAuth redirects (behind a proxy) | derived from the request |
 
 The optional `config.json` (in `$JUICE_HOME/ui/`) holds the same settings plus
-`badge_interval_seconds` (how often nav badges poll, default 30). See
+`badge_interval_seconds` (how often the task badge is refreshed, default 30). See
 **[docs/config.md](docs/config.md)** for the schema and
 **[docs/installation.md](docs/installation.md)** for file locations.
 

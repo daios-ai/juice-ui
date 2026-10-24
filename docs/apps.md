@@ -52,14 +52,15 @@ core rotting into a monolith; read them before touching this seam.
    one app could want — the app-state store, `ServiceAccount`, `CallerKeyHeader`,
    badge polling, `UserDataDir` — lands in `apps/apps.go`, never hardwired into one
    app. The badge poll is the worked example: chat asked for a live nav count, and
-   the answer was a seam field (`NavEntry.BadgeURL`) every future app inherits.
+   the answer was a seam capability (a heartbeat watcher under the app's slug)
+   every future app inherits.
 
 ## The seam (`apps/apps.go`)
 
 ```go
 type App interface {
     Slug() string
-    Nav(me string, superuser bool) []NavEntry     // self-gated sidebar entries; me is the signed-in address
+    Nav(me string, superuser bool) []NavEntry     // self-gated destinations of the avatar menu; me is the signed-in address
     Mount(mux *http.ServeMux, d Deps)             // register routes
     Templates() fs.FS                             // embedded templates/*.html
     Start(ctx context.Context) error              // provision/open resources
@@ -150,19 +151,18 @@ action that lost its auth entirely is repaired without waiting for a revision bu
 that source is a loopback URL: the kernel's SSRF guard validates a source only when
 its value changes, so an identical re-push is accepted.)
 
-`NavEntry` is one sidebar link (`Slug`, `Label`, `Href`, `Icon` — the app's own
-inline `<svg>` markup, so it needs no edit to the core sprite, `Match` — the path
-prefix that lights it). An app nav entry is a deliberate exception to the
-CLI-mirroring nav, exactly as `peers` is.
+`NavEntry` is one destination an app adds to the registry — the avatar menu and
+the launcher (`Slug`, `Label`, sentence case, `Href`, `Match` — the path prefix
+that marks it current). Text only: the registry is names. `Live` says its badge
+is kept by the heartbeat: the app registers a watcher under its slug that
+answers the key `badge` with `apps.Badge`.
 
-**Live nav badge.** `NavEntry.Badge` is the initial count (server-rendered, so a
-no-JS client still sees it). Set `NavEntry.BadgeURL` too — an authenticated `GET`
-fragment endpoint (convention `/<slug>/badge`) — and the core polls it on the one
-configured interval (`badge_interval_seconds`, default 30s), keeping the badge live
-without a page reload. **Endpoint contract:** respond `text/html` whose body is the
-bare count, and an **empty** body when zero (`.badge:empty` hides it). This is the
-same contract the core tasks badge uses; it is a seam capability, not a chat
-special-case (rule 5).
+**The conversations.** One app may be the workspace itself by implementing
+`apps.Conversations` (requirements §6.1): `Rail(r)` is the sidebar's list of
+the viewer's conversations, `Landing()` is where a session begins, and
+`Context(r, room)` is a room's recent conversation as the kernel's planner
+reads it (`[]client.Message`, newest last, refused to a non-member). The core
+finds it among the apps; chat is it, and contributes no `NavEntry`.
 
 `Deps.DataDir` is the per-user durable-data directory (`apps.UserDataDir`: XDG data
 dir on Linux, `~/Library/Application Support` on macOS) — where an app places its
@@ -197,9 +197,10 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
 2. **Routes + lifecycle** — for each app `server.New(Options{Apps: …})` calls
    `Mount(mux, deps)` (the app stashes `Deps`), then `Start(ctx)`, before the
    middleware chain; `Stop` runs on shutdown.
-3. **Nav** — the page envelope calls `Nav(me, superuser)` and marks the entry
-   whose `Match` prefixes the request path as current. `layout.html` ranges over
-   `.AppNav` in both the sidebar and the mobile tab bar.
+3. **Registry** — the page envelope folds each app's `Nav(me, superuser)` into
+   the one registry (`server/commands.go`), marking the entry whose `Match`
+   prefixes the request path as current; the conversations app's `Rail` is the
+   sidebar's content.
 
 ## Adding a new app — checklist
 
@@ -208,8 +209,7 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
 2. Templates: page files define `{{define "content"}}`; shared bits are `_*.html`
    partials. **Compose the existing grammar utilities** (`.stack`, `.row`, `.card`,
    `.mono`, `.owner`, `_ref`, …) — never invent chrome, and do **not** edit core
-   `app.css`/`icons.svg`. Provide the nav icon inline on `NavEntry`. The drift guard
-   scans your templates.
+   `app.css`/`icons.svg`. The drift guard scans your templates.
 3. **Never touch a core file for app-specific content.** The only acceptable core
    edits are to the seam itself (`apps/`, the mount/render wiring in `server`, the
    wiring line in `cmd`). Everything else lives in `apps/<name>/`.
@@ -221,9 +221,9 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
    — as `apps/chat` does. It **self-provisions** its account on first run and
    persists the password via `SaveAppState`, so there are no per-app env vars. The
    plugin reads its store and issues writes as the signed-in user.
-6. Badge (optional): to show a live attention count on the nav entry, add a `GET
-   /<slug>/badge` route (auth-gated) honouring the endpoint contract above and set
-   `NavEntry.BadgeURL`. Durable data goes under `Deps.DataDir`, not the config dir.
+6. Badge (optional): to keep a count on the app's destination, set
+   `NavEntry.Live` and register a watcher under the slug answering `badge` with
+   `apps.Badge`. Durable data goes under `Deps.Home`, not the config dir.
 7. Run `go test ./...` (unit + the grammar drift guard) and **drive the real app
    end-to-end** against a throwaway kernel — a single juice-ui launch, with
    realistic pricing (native actions can cost credits).
@@ -239,8 +239,10 @@ Chat is the worked example — a real **application on top of Juice** — with
   together one transaction, and no kernel knowledge. `deliver.go` is routing by
   address and the delivery of a post as kernel tasks. `chat.go` is the App:
   lifecycle, the five actions and their reconciliation, the kernel's dispatches
-  under `/_kernel/chat/`, joining the installation's principals, the landing,
-  the browser routes, the badge and the heartbeat watcher.
+  under `/_kernel/chat/`, joining the installation's principals, the
+  conversations seam (the rail, the landing, a room's context), the browser
+  routes and the heartbeat watcher (the rail, a room's entries, who is
+  answering).
 - **Self-provisions.** On `Start` it loads, or generates and persists, the
   `chat@<kernel>` password and the upstream secret its private actions carry,
   and opens the store in the component home (in memory when there is no

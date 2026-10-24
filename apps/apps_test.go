@@ -64,8 +64,8 @@ func TestAppInterface(t *testing.T) {
 // TestNavEntryCarriesLive documents the seam field an app sets to have its
 // badge kept current by the heartbeat, under its slug.
 func TestNavEntryCarriesLive(t *testing.T) {
-	e := NavEntry{Slug: "chat", Live: true, Badge: 3}
-	if !e.Live || e.Badge != 3 {
+	e := NavEntry{Slug: "agents", Live: true}
+	if !e.Live {
 		t.Fatalf("NavEntry badge fields = %+v", e)
 	}
 }

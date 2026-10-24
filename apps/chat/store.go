@@ -468,15 +468,14 @@ func (s *Store) members(roomID string) ([]string, error) {
 
 // ---- reads ----
 
-// Rooms lists the viewer's rooms, the ones with something unread first, then
-// by last activity.
+// Rooms lists the viewer's rooms, newest activity first.
 func (s *Store) Rooms(viewer string) ([]Room, error) {
 	rows, err := s.db.Query(`
 		SELECT r.id, r.name, r.creator, r.created_at,
 		       COALESCE((SELECT MAX(seq) FROM entries e WHERE e.room_id = r.id), 0) > COALESCE((SELECT read FROM cursors c WHERE c.room_id = r.id AND c.member = ?), 0),
 		       COALESCE((SELECT MAX(at) FROM entries e WHERE e.room_id = r.id), r.created_at)
 		FROM rooms r JOIN members m ON m.room_id = r.id AND m.member = ?
-		ORDER BY 5 DESC, 6 DESC`, viewer, viewer)
+		ORDER BY 6 DESC, r.id`, viewer, viewer)
 	if err != nil {
 		return nil, err
 	}
@@ -638,6 +637,25 @@ func (s *Store) Range(member, roomID string, upto int64, limit int) ([]Entry, er
 		WHERE room_id = ? AND seq <= ? AND author != ? AND replaced_by = 0
 		  AND seq > COALESCE((SELECT delivered FROM cursors WHERE room_id = ? AND member = ?), 0)
 		ORDER BY seq DESC LIMIT ?`, roomID, upto, member, roomID, member, limit)
+}
+
+// Working is who holds an unanswered delivery in the room, other than viewer:
+// the members the room is waiting on, in address order.
+func (s *Store) Working(roomID, viewer string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT member FROM chain WHERE room_id = ? AND member != ? ORDER BY member`, roomID, viewer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // NextDelivery hands out the next delivery id; never reused.

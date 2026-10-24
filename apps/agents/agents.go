@@ -72,10 +72,6 @@ const (
 	schemaFile = "juice-agent.schema.json"
 )
 
-// agentsIcon is the app's own nav icon (a small robot), inline so no core sprite
-// edit is needed (mirrors apps/chat).
-const agentsIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><path d="M9 13h.01M15 13h.01"/><path d="M2 14v2M22 14v2"/></svg>`)
-
 // A handle names the home directory, so it is validated strictly: lowercase
 // letters, digits, '-' and '_', starting alphanumeric. This forbids '/', '.', and
 // '..', making path traversal impossible before the containment check in agentDir.
@@ -107,7 +103,7 @@ func New() *Agents { return &Agents{} }
 
 func (a *Agents) Slug() string { return "agents" }
 
-// Nav contributes the "agents" sidebar entry (no badge — this app has no async
+// Nav contributes the Agents destination (no badge — this app has no async
 // attention signal), to the operator alone. Everything this app does happens on
 // the UI host — it writes the installation's files and spawns a long-lived
 // daemon — so it is an operator surface, and an entry a non-superuser could not
@@ -116,7 +112,7 @@ func (a *Agents) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" || !superuser {
 		return nil
 	}
-	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
+	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Match: "/agents"}}
 }
 
 func (a *Agents) Templates() fs.FS { return tmplFS }

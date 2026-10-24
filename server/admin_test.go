@@ -92,12 +92,9 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(body, `href="/admin/users/alice@testnet"`) {
 		t.Error("/admin user handle must link to the user's detail page")
 	}
-	// Admin and Peers are now separate top-level sidebar entries (not a sub-nav).
-	if !strings.Contains(body, `href="/admin" title="Admin"`) {
-		t.Error("superuser sidebar must have an Admin nav entry")
-	}
-	if !strings.Contains(body, `href="/admin/peers" title="Network"`) {
-		t.Error("superuser sidebar must have a separate network nav entry")
+	// Admin and Network are separate destinations of the avatar menu.
+	if menu := menuOf(body); menu["Admin"] != "/admin" || menu["Network"] != "/admin/peers" {
+		t.Errorf("the operator's menu must list Admin and Network: %v", menu)
 	}
 	if strings.Contains(body, "linkbar") {
 		t.Error("/admin must not carry the retired users·peers sub-nav")
@@ -125,8 +122,8 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(pbody, `class="stat-row"`) || !strings.Contains(pbody, "owed to us") {
 		t.Error("/admin/peers must state this kernel's money through the figures")
 	}
-	if !strings.Contains(pbody, `href="/admin/peers" title="Network" aria-current="page"`) {
-		t.Error("/admin/peers must mark the network nav entry active")
+	if !strings.Contains(pbody, `<a href="/admin/peers" class="menu-item" role="menuitem" aria-current="page">Network</a>`) {
+		t.Error("/admin/peers must mark the Network destination current")
 	}
 }
 
@@ -974,8 +971,8 @@ func TestAdminConfigPage(t *testing.T) {
 			t.Errorf("page has %q", not)
 		}
 	}
-	if b := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(b, `href="/admin/config"`) || !strings.Contains(b, `"name":"admin config"`) {
-		t.Error("admin links the configuration, and the command registry lists it")
+	if b := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(b, `href="/admin/config"`) {
+		t.Error("admin links the configuration")
 	}
 }
 

@@ -34,8 +34,10 @@ Three laws underpin everything:
 | **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action. The command registry's entries list first among them, marked `›` (`.menu-item.command`; a title row never carries the mark), at most three beside titles, twelve rows in all; `>` lists commands only (§5.9) |
-| **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
+| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
+| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/`, a `.menu`-styled list opening above it — the catalog's actions, the registry's pages, a last `Search "…" →` row — rows `.menu-item`, matched in the browser (§5.9) |
+| **Panel** | `.panel` (`_action_panel`) within `.room` beside `.conversation` | an action beside a conversation: `.modal-head` (title, chips, ×), `_action_head`, the run form; empty, it takes no column; on a phone it covers the conversation |
+| **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · chat's composer (`form.card.stack[data-json]`: the switch, the sealed room as `.view.locked`, `_form_fields`, Send) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
 | **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
@@ -48,37 +50,28 @@ Three laws underpin everything:
 
 ## 1. Canvas
 
-The frame every page renders into. Defined in `layout.html`.
+The frame every page renders into: the collaborative workspace
+(`requirements.md` §6.1). Defined in `layout.html` and `_sidebar`.
 
 ```
-┌──────────┬───────────────────────────────────────┐
-│ SIDEBAR  │  flash bar (one-shot, when present)     │
-│ brand    ├───────────────────────────────────────┤
-│ juice ◄logo│ ┌── page-head ───────────────────┐   │
-│          │  │ title                           │   │
-│ ▸ chat•  │  (leads: where a session lands)         │
-│ ▸ browse │  └─────────────────────────────────┘   │
-│ ▸ inbox• │  content (container, max ~1160px)       │
-│ ▸ workshop│                                        │
-│ ▸ wallet │                                         │
-│ ▸ you    │  (• = badge)                            │
-│ ─ agents │  (apps, after a divider)                │
-│ ▸ network│  (network/admin: sys only)              │
-│ ▸ admin  │                                         │
-│          │                                         │
-│ ⌂ you    │  ← identity summary → the `you` hub     │
-└────────┴─────────────────────────────────────────┘
+┌─ sidebar ─────────┬───────────────────────────────┬─ panel ──────┐
+│ ◆ k play        ≡ │ flash bar (one-shot)           │ (a room only: │
+│ + New conversation│ crumb · entries · answering    │  an action    │
+│ assistant         │ composer [message …] [/] Send  │  beside the   │
+│ research-room  •  │ — or any page's content —      │  conversation)│
+│                   │                                │               │
+│ (A) ana@k   ③     │                                │               │
+└───────────────────┴───────────────────────────────┴───────────────┘
 ```
 
 | Region | Contents | Rules |
 |---|---|---|
-| **Sidebar** | brand (`juice-logo.svg`) → `/browse`; collapse toggle; nav groups; identity summary at foot | Sticky, full height. Collapsible to an icon rail; state persisted server-side (`sidebar` cookie), stamped on `<html data-sidebar>` — no flash. |
-| **Nav** | `Chat · Home · Inbox · Workshop · Wallet · Settings` + `Network · Admin` (only `sys`) | The marketplace groups (§1 of `requirements.md`); one server-built nav model drives the sidebar, the mobile drawer, and the palette. Active group carries `aria-current="page"`. `inbox` carries the task badge; an app entry (chat) MAY carry its own. Icon + sentence-case label; label hidden when collapsed. |
-| **you** (hub) | balances, links to wallet/workshop/network/agents, account modal, connected accounts, theme picker, Sign out | A real screen, not a popover — the profile/preferences hub. Theme picker is a `<select>` of the shipped themes + "System default". |
-| **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps (no narrow strips inside broad pages). |
+| **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail**; the **avatar** at the foot | One element. Sticky, full height, 240px. Collapsed it is **hidden** — a list of names has no icon form — the state persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash). |
+| **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`). Text rows only: the registry is names. The avatar carries the task badge too. |
+| **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Mobile** (`≤720px`) | the same shell, narrower: the sidebar becomes a left **drawer** opened by a menu button at the topbar's left (`requirements.md` §6.1) | The topbar stays at every width and carries the menu trigger and the one search pill. The drawer holds the **whole** nav (the same model the sidebar renders); its trigger carries the inbox badge. No fixed bottom bar: the nav is unbounded, so any bar would need an arbitrary overflow. |
+| **Topbar** | the menu trigger (with the task badge) and the brand | Only where the sidebar is hidden: `≤720px`, or collapsed. The trigger slides **the same sidebar** in over the page (`html[data-menu=open]`, `?menu=open` without script), a `.scrim` link closing it. No fixed bottom bar: the destinations are unbounded. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -134,8 +127,9 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   back to mono; components never assume one or the other — they use the token.)
 - **Scale:** `h1 1.4rem` · `h2 1.1rem` · `h3 1rem` · body `.9rem/14px` ·
   `.small .85rem` · `.tiny .8rem`. Headings carry slight `letter-spacing`.
-- **The brand names the kernel and its world** (`.brand` + `.brand .world`), in
-  both renderings of the nav — sidebar and mobile drawer. A kernel serves one
+- **The brand names the kernel and its world** (`.brand` + `.brand .world`,
+  the one `_brand` partial), in the sidebar and in the topbar where the sidebar
+  is hidden. A kernel serves one
   world for life, and the world decides what the money on every screen is:
   whether it can leave, and what it is worth. The symbol on an amount does not
   say that — `credits` is not "not redeemable" — so without this a person cannot
@@ -409,13 +403,13 @@ separates it from the content above, and nothing else does (§4).
   `class="money"` so the title sits over its right-aligned values.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
-- **Chat lands in a conversation.** `/chat` opens the viewer's room with the
-  assistant; the rooms are a table at `/chat/rooms` (`.rowable` rows,
-  `tr.unread` weighting, unread `.badge`), reached from the room's crumb. A room
-  is a detail page: crumb (← rooms · room name · members · leave/delete) → the
-  entry stack (`.msgs`, `[data-autoscroll]`) in the document flow → the
-  composer at the document's end. **The page is the scroll container** — no
-  fixed-height frame, no inner scroll region. The document pins to its
+- **Chat is the workspace.** `/chat` opens the viewer's room with the
+  assistant; the rooms are the sidebar's **rail**. A room is `.room`: the
+  `.conversation` — crumb (room name · members · leave/delete) → the entry
+  stack (`.msgs`, `[data-autoscroll]`) → who is answering (`.muted.small`,
+  `#chat-working`) → the composer, held at the viewport's foot — beside the
+  `.panel`. **The page is the scroll container** — no fixed-height frame; the
+  panel alone scrolls on its own. The document pins to its
   **newest** entry on open and on any append while already at the bottom —
   never yanking a reader scrolled up into history; the sticky crumb and the nav
   keep the way out always in reach. An **entry** (`_entry`: `.msg` with
@@ -425,8 +419,9 @@ separates it from the content above, and nothing else does (§4).
   **composer** is the post action's form, `form.card.stack[data-json]`: the
   switch, the room sealed as `.view.locked` (`_view`), `_form_fields` of the
   form built with `taskForm` (the schema and its sealed part), a refusal in
-  `.error-text`, and Send; a refusal answers 422, so the form keeps its draft
-  (requirements.md §6.7). Nothing asks the person to connect: the UI joins
+  `.error-text`, and a `.cluster` of the launcher's `/` and Send; a refusal
+  answers 422, so the form keeps its draft (requirements.md §6.7). Enter
+  sends; a leading address is completed from the room's members. Nothing asks the person to connect: the UI joins
   them.
 - **Record rows** (the same record type wherever it appears) render through **one
   shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.
@@ -511,21 +506,21 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   this task?", "Suspend bob@alpha?"), never a sentence explaining what follows;
   an amount that is data rides on the button (`End · refund 0.40 fUSD`).
 
-### 5.9 Commands & keyboard
+### 5.9 The registry, the launcher & keyboard
 
-- **Commands are rows of the search pill.** The registry is **inert JSON**
-  (`<script type="application/json" id="command-registry">`, CSP-safe), built
-  server-side and **admin-gated** (admin commands only for `sys`). The pill
-  lists matching commands before the title hints, each a `.menu-item.command`
-  with the `›` mark (`.mark`) and its hint in `.muted.small`: a link, or for a
-  post a `<button type="submit" form="command-post" formaction name value>`
-  bound to the page's one hidden `#command-post` form, which carries the CSRF
-  field. At most three commands beside titles, twelve rows in all; a leading
-  `>` lists commands only. There is no palette, no ⌘K chip, no Ctrl/Cmd+K.
-- Shortcuts: `g`+letter (section nav, `g h` home) · `/` (focus search) · `?`
-  (help overlay, `dialog.palette`) · `j/k/Enter` (table and list rows) · `Esc`
-  (close topmost) · `↓/↑` in the search box (move through hints and commands).
-  Every command targets a real link/form — the keyboard layer adds no
+- **One registry** (`commands.go`) holds every destination and opener, in
+  plain words, every one a link, the operator's for `sys` alone. The avatar
+  menu lists its destinations; the **launcher** lists all of it, carried as
+  **inert JSON** (`<script type="application/json" id="launcher-data">`,
+  CSP-safe) with the room's members and the room. The launcher's rows are
+  `.menu-item`s under `.menu-caption`s — `Actions` (title and address, from
+  the catalog file), `Pages` — and a last `Search "…" →` to Discover. An
+  action row opens the panel (its href is the action page, the no-JS path).
+  There is no palette, no search pill, no command prefix.
+- Shortcuts: `g`+letter (destinations, `g h` home, `g d` discover) · `/` (the
+  launcher, or Discover's box) · `?` (help overlay, `dialog.palette`) ·
+  `j/k/Enter` (table and list rows) · `Esc` (close topmost) · `↓/↑` in the
+  launcher. Every row targets a real link — the keyboard layer adds no
   capability unreachable without it.
 
 ### 5.10 Feedback
@@ -537,8 +532,8 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | `.banner` (`-info`/`-error`) | inline notice. A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
-| `.badge` | round, accent — an async attention count. In the **core** surface, **only** the `inbox` nav carries it (the sole core async signal). An **app** MAY carry its own **app-scoped** badge on its nav entry (e.g. chat's unread count) — a deliberate exception like the `peers` slot, scoped to the app, leaving the core rule intact. **Every** nav badge is the `_badge_poll` partial: htmx re-fetches its endpoint on the **one** configured interval (`badge_interval_seconds`, default 30s), body = bare count, **empty when zero** (`.badge:empty` hides it). Rendered identically in the sidebar and the mobile tab bar |
-| `.unread` | row modifier for a list row with unseen activity (e.g. a chat room): the primary-cell link is weighted (`tr.unread > td:first-child a`) so the row reads as "new", complementing the count badge |
+| `.badge` | round, accent — the task count, the **sole** async attention signal of the core surface: on the avatar, the menu's Inbox row (inline) and the topbar's trigger, every copy swapped at once by the heartbeat (`.badge-inbox`), **empty when zero** (`.badge:empty` hides it) |
+| `.unread` | a rail room with unseen activity: weighted, so it reads as "new" |
 
 ### 5.11 Federation (network)
 
@@ -643,7 +638,7 @@ obligations above.
 ### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
-  `+ new …` openers, row-lifecycle `⋯` menus, and the `you` hub.
+  `+ new …` openers, row-lifecycle `⋯` menus, and the avatar menu.
 - One SVG sprite (`icons.svg`), recolored via `currentColor`, **never emoji**.
   Every icon-only control carries an `aria-label`. The brand uses
   `juice-logo.svg`.
@@ -681,8 +676,8 @@ obligations above.
 - No inline `style=""`; tokens only; every decision is a named class.
 - **Accent = money movement + focus only.** Concretely, the accent appears ONLY
   on `.btn-money`, the `.badge`, the focus ring, `.req`, and the progress bar —
-  never on links, tab underlines, active nav, or the active mobile tab (those key
-  on text weight + surface). Money buttons name the amount as `verb (N)` and carry
+  never on links, tab underlines, the current destination or the current room
+  (those key on text weight + surface). Money buttons name the amount as `verb (N)` and carry
   **no credit glyph**; money *display* uses the same scaled form in the mono
   provenance face (§5.6). **Danger beats money.** An **ordinary task completion is
   neutral** (`Complete`, no amount, no accent): the completer is not the payer;
@@ -708,9 +703,9 @@ obligations above.
   of consequence. Empty states and `help` name the thing, they don't lecture. A
   field caption never restates its label or explains a mechanism. The drift guard
   lints **app** templates (`apps/*/templates/`) for this, identically to the core.
-- One `aria-live` region; the task badge (on `inbox`) is the only async attention
-  signal in the core surface (an app MAY add its own app-scoped nav badge, e.g.
-  chat unread); no notification feed/toast stack.
+- One `aria-live` region; the task badge is the only async attention signal in
+  the core surface (the rail's unread weighting is the conversations' own); no
+  notification feed/toast stack.
 - Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
   WCAG AA (theme test).
 - CSP: no inline script; the command registry is inert JSON; `Referrer-Policy:
@@ -728,7 +723,8 @@ obligations above.
   (only an identity or a scope note), any prose note (`.help` / `.card-note`) that
   swells into a paragraph, and any **`¤` character, `$` before a figure, or
   hard-coded `step` on an amount input** (`TestMoneyGrammar`), any `{{json …}}`
-  outside `_value_block` (`TestJSONRendersThroughTheView`), and the retired
+  outside `_value_block` (`TestJSONRendersThroughTheView`), any class
+  `app.css` styles that nothing renders (`TestNoDeadCSS`), and the retired
   `data-param-*` row attributes — money is the
   world's unit and symbol through the `money` helper, the step is the world's
   through `{{amountStep}}`, and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the

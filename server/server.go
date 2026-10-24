@@ -64,6 +64,7 @@ type Server struct {
 	home       string                  // component home dir handed to apps
 	badgeTTL   time.Duration           // the heartbeat's slow lane, and the task badge's cache TTL
 	watchers   map[string]apps.Watcher // the heartbeat's watchers by kind (tick.go)
+	conv       apps.Conversations      // the app whose rooms are the workspace; nil when none
 	identity   *KernelIdentity         // which kernel this UI is for, and its money unit
 	kernelName string                  // the kernel's name in the client records, for the chrome
 	config     Configuration           // this installation's kernel configuration; nil = none
@@ -346,6 +347,7 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /actions/visibility", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/delete", s.requireAuth(s.postActionDelete))
 	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
+	mux.HandleFunc("GET /actions/{id}/panel", s.requireAuth(s.getActionPanel))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
 	mux.HandleFunc("POST /actions/{id}/form", s.requireAuth(s.postActionForm))
 	mux.HandleFunc("POST /actions/{id}/update-price", s.requireAuth(s.postUpdateActionPrice))
@@ -420,6 +422,9 @@ func New(o Options) (http.Handler, error) {
 	// gated behind requireAuth here so a module handler always has a session.
 	deps := s.appDeps()
 	for _, f := range s.apps {
+		if c, ok := f.(apps.Conversations); ok {
+			s.conv = c
+		}
 		f.Mount(mux, deps) // Mount first: a module stashes Deps here, then uses it in Start.
 		if err := f.Start(context.Background()); err != nil {
 			return nil, err
@@ -723,96 +728,6 @@ func (s *Server) appDeps() apps.Deps {
 	}
 }
 
-// The marketplace nav icons, inline (stroked outline, currentColor) so they match
-// the approved mockup exactly without a sprite edit. Each is a 24×24 outline.
-func navIcon(paths string) template.HTML {
-	return template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">` + paths + `</svg>`)
-}
-
-var (
-	iconHome     = navIcon(`<path d="M4 11l8-7 8 7"/><path d="M6 9.5V19a1 1 0 0 0 1 1h3.5v-5h3v5H17a1 1 0 0 0 1-1V9.5"/>`)            // house
-	iconInbox    = navIcon(`<path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5a3 3 0 0 0 6 0h5"/>`)    // tray
-	iconWorkshop = navIcon(`<path d="M9 3h6M10 3v6l-4.4 8.1A2 2 0 0 0 7.4 20h9.2a2 2 0 0 0 1.8-2.9L14 9V3"/><path d="M7.7 13h8.6"/>`) // lab beaker
-
-	iconWallet  = navIcon(`<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>`)
-	iconYou     = navIcon(`<circle cx="12" cy="8" r="3.4"/><path d="M5 20c1.5-4 4-5.5 7-5.5s5.5 1.5 7 5.5"/>`)
-	iconNetwork = navIcon(`<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3.5 9h17M3.5 15h17"/>`)
-	iconAdmin   = navIcon(`<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>`)
-)
-
-// buildNav assembles the single nav model: the marketplace groups, then app
-// entries, then the superuser-only network/admin. active is the current group.
-//
-// There is no privileged subset. The list is unbounded — every registered app
-// contributes entries at runtime — so no fixed-size bar could ever cover it.
-// Where there is room the sidebar renders the whole list; where there isn't, the
-// drawer renders the same list. One model, two renderings.
-func (s *Server) buildNav(r *http.Request, active string) []NavItem {
-	nav := []NavItem{
-		{Slug: "home", Label: "Home", Href: "/", Icon: iconHome},
-		{Slug: "inbox", Label: "Inbox", Href: "/inbox", Icon: iconInbox, Live: true},
-		{Slug: "workshop", Label: "Workshop", Href: "/workshop", Icon: iconWorkshop},
-		{Slug: "wallet", Label: "Wallet", Href: "/wallet", Icon: iconWallet},
-		{Slug: "settings", Label: "Settings", Href: "/settings", Icon: iconYou},
-	}
-	// App entries fold in after the core groups, except a leading one
-	// (chat), which goes first: it is where a session lands.
-	me := s.sessions.Address(r.Context())
-	super := s.isSuperuser(r)
-	firstApp := true
-	for _, f := range s.apps {
-		for _, e := range f.Nav(me, super) {
-			item := NavItem{
-				Slug:   e.Slug,
-				Label:  e.Label,
-				Href:   e.Href,
-				Icon:   e.Icon,
-				Badge:  e.Badge,
-				Live:   e.Live,
-				Active: e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match),
-			}
-			if e.Lead {
-				nav = append([]NavItem{item}, nav...)
-				continue
-			}
-			item.Divider = firstApp // separate the apps group from the core groups
-			firstApp = false
-			nav = append(nav, item)
-		}
-	}
-	if super {
-		nav = append(nav,
-			NavItem{Slug: "network", Label: "Network", Href: "/admin/peers", Icon: iconNetwork},
-			NavItem{Slug: "admin", Label: "Admin", Href: "/admin", Icon: iconAdmin},
-		)
-	}
-	for i := range nav {
-		if nav[i].Slug == active {
-			nav[i].Active = true
-		}
-	}
-	return nav
-}
-
-// appNav collects the sidebar entries contributed by apps for the
-// signed-in user, marking the entry whose Match prefixes the request path as the
-// current page.
-func (s *Server) appNav(r *http.Request) []apps.NavEntry {
-	if len(s.apps) == 0 {
-		return nil
-	}
-	me := s.sessions.Address(r.Context())
-	super := s.isSuperuser(r)
-	var out []apps.NavEntry
-	for _, f := range s.apps {
-		for _, e := range f.Nav(me, super) {
-			e.Active = e.Match != "" && strings.HasPrefix(r.URL.Path, e.Match)
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
 // page builds the common page envelope (theme, handle, CSRF, flash) for a
 // request.
 func (s *Server) page(r *http.Request, title string, data any) Page {
@@ -830,7 +745,17 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 	}
 	super := s.isSuperuser(r)
 	kernelID := s.kernelIdentity(r.Context())
-	active := activeGroup(r.URL.Path)
+	var cmds []Command
+	var rail template.HTML
+	if s.sessions.IsAuthenticated(r.Context()) {
+		cmds = s.commands(r)
+		if s.conv != nil {
+			var err error
+			if rail, err = s.conv.Rail(r); err != nil {
+				s.log.Warn("rail", "err", err)
+			}
+		}
+	}
 	return Page{
 		Title: title,
 		Path:  r.URL.Path,
@@ -840,8 +765,8 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		MenuOpen:     r.URL.Query().Get("menu") == "open",
 		Theme:        themeFromRequest(r),
 		Sidebar:      sidebarFromRequest(r),
-		Active:       active,
-		Nav:          s.buildNav(r, active),
+		Commands:     cmds,
+		Rail:         rail,
 		Me:           s.sessions.Address(r.Context()),
 		KernelHandle: kernelID.Handle,
 		KernelFP:     keyFingerprint(kernelID.PublicKey),
@@ -851,10 +776,9 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Themes:       ThemeList(),
 		CSRFField:    csrf.TemplateField(r),
 		CSRFToken:    csrf.Token(r),
-		Commands:     template.JS(commandsJSON(BuildCommands(super, s.config != nil, ThemeList()))),
+		Launcher:     template.JS(commandsJSON(cmds)),
 		Flash:        flash,
 		FlashKind:    flashKind,
-		AppNav:       s.appNav(r),
 		BadgeSecs:    int(s.badgeTTL / time.Second),
 		Data:         data,
 	}
@@ -865,9 +789,9 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 func activeGroup(path string) string {
 	switch {
 	case path == "/":
-		// Results and action pages are reached from search, not the nav, so
-		// they belong to no group.
 		return "home"
+	case strings.HasPrefix(path, "/browse"):
+		return "browse"
 	case strings.HasPrefix(path, "/workshop"):
 		return "workshop"
 	case strings.HasPrefix(path, "/inbox"):

@@ -1,5 +1,5 @@
 {{define "layout"}}<!DOCTYPE html>
-<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}{{if .Sidebar}} data-sidebar="{{.Sidebar}}"{{end}}>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}{{if .Sidebar}} data-sidebar="{{.Sidebar}}"{{end}}{{if .MenuOpen}} data-menu="open"{{end}}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,81 +18,27 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="layout">
-    {{/* The brand names the kernel AND the world it serves. A kernel serves one
-         world for life, and the world decides what the money on every screen is:
-         whether it can leave, and what it is worth. Naming it once, where the
-         interface names itself, is what keeps a rehearsal and a live market from
-         looking alike (§7). Both are the kernel's own /health fields. */}}
+    {{/* The workspace frame (requirements §6.1): the sidebar is the
+         conversations and the avatar whose menu holds every destination. Where
+         it is hidden — a narrow screen, or collapsed — a slim topbar carries
+         its trigger and the brand, and the trigger slides the same sidebar in
+         over the page (?menu=open without script; the scrim closes it). */}}
     {{if .Me}}
-    <aside class="sidebar">
-      <div class="sidebar-top">
-        <a class="brand" href="/"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span class="lbl">{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>
-        <form method="post" action="/sidebar" class="sidebar-collapse">
-          {{.CSRFField}}
-          <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
-          <button type="submit" class="btn-icon" aria-label="{{if eq .Sidebar "collapsed"}}Expand{{else}}Collapse{{end}} sidebar" title="Toggle sidebar">≡</button>
-        </form>
-      </div>
-
-      <nav class="nav" aria-label="Primary">
-        {{range .Nav}}
-        {{if .Divider}}<div class="nav-sep" role="presentation"></div>{{end}}
-        <a href="{{.Href}}" title="{{.Label}}"{{if .Active}} aria-current="page"{{end}}>{{if .Live}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge badge-{{.Slug}}" aria-label="{{.Label}}">{{if .Badge}}{{.Badge}}{{end}}</span></span>{{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>{{else}}{{.Icon}}{{end}}<span class="lbl">{{.Label}}</span></a>
-        {{end}}
-      </nav>
-
-      <div class="profile-menu">
-        <button class="profile-trigger" data-menu="profile-popup" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu" title="Account menu">
-          <span class="avatar" aria-hidden="true">{{initial .Me}}</span>
-          <span class="who">
-            <span class="handle mono lbl">{{.Me}}</span>
-            <span class="bal mono lbl">{{money .Available}}</span>
-          </span>
-        </button>
-        <div class="menu" id="profile-popup" role="menu" hidden>
-          {{template "_menu_account" .}}
-        </div>
-      </div>
-    </aside>
+    <aside class="sidebar" id="sidebar">{{template "_sidebar" .}}</aside>
+    <a class="scrim" href="{{.Path}}" data-menu-close aria-label="Close menu"></a>
     {{end}}
 
     <div class="main-area">
       {{if .Me}}
       <header class="topbar">
-        {{/* Mobile nav trigger: top-left, opening the sidebar as a left panel.
-             It is a real anchored link so the drawer stays reachable with JS off
-             (the ?form= fallback of §6.1); data-modal intercepts when JS is on.
-             The badge rides it so §6.1's sole core attention signal survives the
-             panel being shut — app-scoped badges render on their own entries. */}}
-        <a href="?menu=open#nav-drawer" class="menu-trigger" data-modal="nav-drawer" aria-haspopup="dialog" aria-label="Menu">
+        <a href="?menu=open" class="menu-trigger" data-menu-open aria-controls="sidebar" aria-label="Menu">
           <span class="ico-badge-wrap">
             <svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
             <span class="badge badge-inbox" aria-label="Waiting tasks"></span>
           </span>
         </a>
-        <form class="omni" method="get" action="/browse" role="search">
-          <input type="search" enterkeyhint="search" name="q" placeholder="what do you need done?" aria-label="Search actions" autocomplete="off" data-search-hints>
-          <button type="submit" class="btn-icon omni-go" aria-label="Search"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#search"/></svg></button>
-          <div class="omni-suggest"></div>
-        </form>
+        {{template "_brand" .}}
       </header>
-      {{end}}
-
-      {{/* Mobile navigation: the sidebar, rendered as a left panel. Same nav
-           model, so the two cannot drift and no destination is privileged over
-           another; only the presentation differs, chosen by how much room the
-           screen has. It sits here, not at the end of <body>: showModal() puts
-           it in the top layer regardless, but the no-JS in-flow fallback renders
-           where it stands, and that must be under the topbar rather than at the
-           foot of a long page. */}}
-      {{if .Me}}
-      <dialog id="nav-drawer" class="drawer" aria-label="Navigation"{{if .MenuOpen}} open{{end}}>
-        <div class="modal-head">
-          <span class="brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></span>
-          <a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a>
-        </div>
-        <div class="drawer-body">{{template "_menu_content" .}}</div>
-      </dialog>
       {{end}}
 
       <div class="content">
@@ -107,17 +53,12 @@
   <div aria-live="polite" aria-atomic="true" id="live-region" class="live-region"></div>
 
   {{if .Me}}
-  <!-- The command registry the search pill lists (inert JSON, CSP-safe), and the
-       one form a post command's button submits through (form="command-post"). -->
-  <script type="application/json" id="command-registry">{{.Commands}}</script>
-  <form id="command-post" method="post" hidden>{{.CSRFField}}</form>
   <dialog id="help" class="palette" aria-label="Keyboard shortcuts">
     <div class="modal-head"><h2>Keyboard shortcuts</h2><button class="modal-close" data-modal-close aria-label="Close">×</button></div>
     <div class="modal-body">
       <dl class="help-grid">
-        <dt><kbd>g</kbd> then <kbd>h b i k w y</kbd></dt><dd>Go to home · browse · inbox · workshop · wallet · settings</dd>
-        <dt><kbd>/</kbd></dt><dd>Focus search</dd>
-        <dt><kbd>></kbd></dt><dd>Commands, in the search box</dd>
+        <dt><kbd>/</kbd></dt><dd>Actions and pages, in the composer</dd>
+        <dt><kbd>g</kbd> then <kbd>h d i k w y</kbd></dt><dd>Go to home · discover · inbox · workshop · wallet · settings</dd>
         <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Move between rows</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the focused row</dd>
         <dt><kbd>?</kbd></dt><dd>This help</dd>
@@ -125,15 +66,12 @@
       </dl>
     </div>
   </dialog>
-  {{end}}
-
   {{/* The heartbeat: one request per lane carrying every watch on the page
        (tick.go). A widget that waits for something holds a hidden input
        naming what it shows; the reply swaps only what changed. */}}
-  {{if .Me}}
   <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every 5s" hx-include="input[name=watch]" hx-swap="none"></div>
   <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every {{.BadgeSecs}}s" hx-include="input[name=slow]" hx-swap="none"></div>
-  {{range .Nav}}{{if .Live}}<input type="hidden" id="watch-{{.Slug}}" name="slow" value="{{.Slug}}:badge:{{.Badge}}">{{end}}{{end}}
+  {{range .Commands}}{{if .Live}}<input type="hidden" id="watch-{{.Slug}}" name="slow" value="{{.Slug}}:badge:">{{end}}{{end}}
   {{end}}
   <dialog id="modal-backdrop" class="modal-confirm" aria-labelledby="modal-msg">
     <div class="modal-box">

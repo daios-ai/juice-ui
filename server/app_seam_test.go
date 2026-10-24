@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -25,7 +24,7 @@ type seamFake struct{ started bool }
 
 func (f *seamFake) Slug() string { return "seam" }
 func (f *seamFake) Nav(handle string, superuser bool) []apps.NavEntry {
-	return []apps.NavEntry{{Slug: "seam", Label: "seam", Href: "/seam", Icon: template.HTML(`<svg class="ico"></svg>`), Match: "/seam"}}
+	return []apps.NavEntry{{Slug: "seam", Label: "Seam", Href: "/seam", Match: "/seam"}}
 }
 func (f *seamFake) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("GET /seam", d.RequireAuth(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))

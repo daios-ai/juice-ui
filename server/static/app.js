@@ -107,9 +107,6 @@ document.addEventListener('mousedown', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
 
-// The mobile nav drawer is a <dialog> opened via [data-modal], so showModal()
-// supplies its focus trap, Escape handling and light dismiss. Nothing here.
-
 // Confirmation modal — forms with data-confirm="message" show a styled dialog.
 (function() {
   const backdrop = document.getElementById('modal-backdrop');
@@ -340,7 +337,7 @@ function wireJSON(root) {
   }
 }
 wireJSON(document);
-document.body.addEventListener('htmx:afterSwap', (e) => wireJSON(e.target));
+document.body.addEventListener('htmx:afterSwap', (e) => { wireJSON(e.target); wireRowsIn(e.target); });
 
 // Password confirmation: in a form marked [data-confirm-password], the
 // confirm field must equal the password field. Uses native constraint validation
@@ -409,7 +406,7 @@ document.addEventListener('click', (e) => {
 // A dialog server-rendered [open] (no-JS fallback path reached with JS on): if it
 // is not already modal, close and reopen it modally so the backdrop and focus
 // trap apply, and clean the URL.
-for (const dlg of document.querySelectorAll('dialog.modal-form[open], dialog.drawer[open]')) {
+for (const dlg of document.querySelectorAll('dialog.modal-form[open]')) {
   if (!dlg.matches(':modal') && typeof dlg.showModal === 'function') {
     dlg.close();
     dlg.showModal();
@@ -461,24 +458,21 @@ document.body.addEventListener('click', (e) => {
   copyText(btn.getAttribute('data-copy')).then((ok) => announce(ok ? 'Copied' : 'Could not copy'));
 });
 
-// Search hints, the way a static site searches its index: the page loads the
-// whole catalog's titles once (GET /search/catalog.json, each title with its
-// key already normalized by the server's hintKey) and matches them in the
-// browser as the person types, so typing sends no request. A hint is a query:
-// each is an ordinary link that runs the search for its title. Without
-// JavaScript the box submits as before.
-//
-// The command registry (#command-registry, inert JSON built per session) is
-// listed the same way, first and marked (§6.1): a command is chrome, a title is
-// counterparty content, and the two differ by what they are built from. At most
-// COMMAND_LIMIT commands show when titles also match; a leading ">" lists
-// commands only (">" alone, all of them).
+// The launcher (requirements §6.2): the composer's `/`. The page carries the
+// registry's pages, the room's members and the room (#launcher-data, inert
+// JSON); the catalog's actions are loaded once (GET /search/catalog.json) and
+// matched in the browser as the person types, so typing sends no request.
+// Choosing an action opens its panel beside the conversation, choosing a page
+// goes there, and the last row searches Discover; nothing posts or runs. A
+// first word that begins a member's address lists the members, and choosing
+// one writes its address. Without JavaScript the composer is the plain post
+// form and every page stays a link.
 //
 // hintKey and the ranking mirror server/handlers.go (hintKey, wordsBegin, and
 // catalogAsResults's title tiers); server/testdata/hints.json holds the cases
 // both are checked against.
-const HINT_LIMIT = 12;
-const COMMAND_LIMIT = 3;
+const LAUNCH_ACTIONS = 5;
+const LAUNCH_PAGES = 3;
 
 // hintKey: NFKD, combining marks removed, lowercase, every run of characters
 // that are neither letters nor decimal digits one space, trimmed.
@@ -505,59 +499,133 @@ function matchHints(entries, q, limit, all = false) {
   return hits.slice(0, limit);
 }
 
-// commandRow renders one command: a link, or a submit button bound to the
-// page's command form (form="command-post"), which carries the CSRF field.
-function commandRow(c) {
-  const row = document.createElement(c.kind === "post" ? "button" : "a");
-  row.className = "menu-item command";
-  if (c.kind === "post") {
-    row.type = "submit"; row.setAttribute("form", "command-post");
-    row.formAction = c.href; row.name = c.field; row.value = c.value;
-  } else {
-    row.href = c.href;
+let launcher = null;
+try { launcher = JSON.parse(document.getElementById("launcher-data")?.textContent || "null"); } catch (_) { launcher = null; }
+let catalog = null;
+const loadCatalog = () => (catalog ??= fetch("/search/catalog.json", { credentials: "same-origin" })
+  .then((r) => (r.ok ? r.json() : []))
+  .catch(() => []));
+
+// row builds one launcher row: a link, labelled, with a muted detail.
+function row(label, detail, href) {
+  const a = document.createElement("a");
+  a.className = "menu-item";
+  a.href = href;
+  a.append(label);
+  if (detail) {
+    const d = document.createElement("span");
+    d.className = "muted small mono";
+    d.textContent = detail;
+    a.append(" ", d);
   }
-  const mark = document.createElement("span");
-  mark.className = "mark"; mark.setAttribute("aria-hidden", "true"); mark.textContent = "›";
-  const hint = document.createElement("span");
-  hint.className = "muted small"; hint.textContent = c.hint;
-  row.append(mark, c.name, " ", hint);
-  return row;
+  return a;
+}
+function caption(text) {
+  const c = document.createElement("div");
+  c.className = "menu-caption";
+  c.textContent = text;
+  return c;
 }
 
-let commands = [];
-try {
-  commands = JSON.parse(document.getElementById("command-registry")?.textContent || "[]")
-    .map((c) => ({ t: c.name, k: hintKey(c.name), cmd: c }));
-} catch (_) { commands = []; }
+// openPanel loads an action's panel beside the conversation.
+export function openPanel(id, extra = "") {
+  const room = launcher?.room ? "?room=" + encodeURIComponent(launcher.room) : "?";
+  window.htmx.ajax("GET", "/actions/" + encodeURIComponent(id) + "/panel" + room + extra, { target: "#panel", swap: "innerHTML" });
+}
 
-for (const input of document.querySelectorAll("input[data-search-hints]")) {
-  const panel = input.form?.querySelector(".omni-suggest");
-  if (!panel) continue;
-  let catalog = null;
-  const load = () => {
-    catalog ??= fetch("/search/catalog.json", { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : []))
-      .catch(() => []);
-    return catalog;
+for (const form of document.querySelectorAll("form[data-composer]")) {
+  const box = form.querySelector(".launcher");
+  const button = form.querySelector("[data-launcher]");
+  if (!box || !button || !launcher) continue;
+  const q = box.querySelector("input");
+  const list = box.querySelector("nav");
+  const pages = (launcher.pages || []).map((p) => ({ t: p.name, k: hintKey(p.name), href: p.href }));
+  const field = () => form.querySelector("[data-fields] textarea:not([disabled])");
+  let after = ""; // a query string the chosen action's panel is opened with (a result to use)
+  let members = false;
+
+  const close = () => { box.hidden = true; list.replaceChildren(); after = ""; members = false; };
+  form.launch = (text = "", extra = "") => {
+    after = extra; members = false;
+    box.hidden = false; q.hidden = false; q.value = text; q.focus();
+    render();
+    loadCatalog().then(render);
   };
-  const render = async () => {
-    const only = input.value.startsWith(">");
-    const q = only ? input.value.slice(1) : input.value;
-    const cmds = matchHints(commands, q, only ? HINT_LIMIT : COMMAND_LIMIT, only);
-    const titles = only ? [] : matchHints(await load(), q, HINT_LIMIT - cmds.length);
-    const nav = document.createElement("nav");
-    nav.className = "suggest-list";
-    nav.setAttribute("aria-label", "Search suggestions");
-    for (const c of cmds) nav.append(commandRow(c.cmd));
-    for (const e of titles) {
-      const a = document.createElement("a");
-      a.className = "menu-item";
-      a.href = "/browse?q=" + encodeURIComponent(e.t);
-      a.textContent = e.t;
-      nav.append(a);
+
+  async function render() {
+    if (box.hidden || members) return;
+    const typed = q.value;
+    const actions = typed.trim() ? matchHints(await loadCatalog(), typed, LAUNCH_ACTIONS) : [];
+    const found = matchHints(pages, typed, typed.trim() ? LAUNCH_PAGES : pages.length, true);
+    const rows = [];
+    if (actions.length) rows.push(caption("Actions"));
+    for (const a of actions) {
+      const r = row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
+      if (a.id) {
+        const extra = after;
+        r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(a.id, extra); field()?.focus(); });
+      }
+      rows.push(r);
     }
-    panel.replaceChildren(...(nav.children.length ? [nav] : []));
-  };
-  input.addEventListener("focus", load, { once: true });
-  input.addEventListener("input", render);
+    if (found.length) rows.push(caption("Pages"));
+    for (const p of found) rows.push(row(p.t, "", p.href));
+    if (typed.trim()) rows.push(row("Search “" + typed.trim() + "” →", "", "/browse?q=" + encodeURIComponent(typed.trim())));
+    list.replaceChildren(...rows);
+  }
+
+  // The members whose address begins with the first word typed.
+  function suggestMembers(text) {
+    const word = text.split(/\s/)[0];
+    const hits = word && !/\s/.test(text) ? (launcher.members || []).filter((m) => m.toLowerCase().startsWith(word.toLowerCase()) && m !== word) : [];
+    if (!hits.length) { if (members) close(); return; }
+    members = true; box.hidden = false; q.hidden = true;
+    list.replaceChildren(...hits.map((m) => {
+      const r = row(m, "", "#");
+      r.addEventListener("click", (e) => {
+        e.preventDefault();
+        const f = field();
+        f.value = m + ", " + f.value.slice(word.length).replace(/^\S*/, "");
+        close(); f.focus();
+      });
+      return r;
+    }));
+  }
+
+  button.addEventListener("click", () => (box.hidden ? form.launch() : close()));
+  q.addEventListener("input", render);
+  form.addEventListener("input", (e) => {
+    const f = field();
+    if (e.target !== f) return;
+    if (f.value.startsWith("/")) { const rest = f.value.slice(1); f.value = ""; form.launch(rest); return; }
+    suggestMembers(f.value);
+  });
+  form.addEventListener("keydown", (e) => {
+    const rows = [...list.querySelectorAll("a")];
+    if (e.key === "Escape" && !box.hidden) { e.preventDefault(); close(); field()?.focus(); return; }
+    if (!box.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp") && rows.length) {
+      e.preventDefault();
+      const i = rows.indexOf(document.activeElement);
+      rows[Math.min(Math.max(i + (e.key === "ArrowDown" ? 1 : -1), 0), rows.length - 1)].focus();
+      return;
+    }
+    if (e.key === "Enter" && e.target === q && rows.length) { e.preventDefault(); rows[0].click(); return; }
+    // Enter sends; Shift+Enter breaks the line.
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.target === field()) { e.preventDefault(); form.requestSubmit(); }
+  });
 }
+
+// The panel's close empties it, and the conversation has the room again.
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-panel-close]")) document.getElementById("panel")?.replaceChildren();
+});
+
+// The sidebar where it is hidden (a narrow screen, or collapsed): the trigger
+// slides it in over the page and the scrim or Escape takes it away. Without
+// JavaScript the trigger is ?menu=open, which the server stamps the same way.
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-menu-open]")) { e.preventDefault(); document.documentElement.dataset.menu = "open"; }
+  else if (e.target.closest("[data-menu-close]")) { e.preventDefault(); delete document.documentElement.dataset.menu; }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.documentElement.dataset.menu) delete document.documentElement.dataset.menu;
+});

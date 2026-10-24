@@ -595,11 +595,19 @@ func TestChromeNamesTheWorld(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(b)
-	// Both renderings of the one nav model: the sidebar and the mobile drawer.
-	if n := strings.Count(body, "{{.KernelNet}}"); n != 2 {
-		t.Errorf("the brand names the world in both renderings; found %d", n)
+	// The one brand partial, in the sidebar and in the topbar where the
+	// sidebar is hidden.
+	partials, err := fs.ReadFile(tmplFS, "templates/_partials.html")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(body, `<span class="world">`) {
+	if n := strings.Count(string(partials), "{{.KernelNet}}"); n != 1 {
+		t.Errorf("the brand names the world in one partial; found %d", n)
+	}
+	if n := strings.Count(body, `{{template "_brand" .}}`) + strings.Count(string(partials), `{{template "_brand" .}}`); n != 2 {
+		t.Errorf("the brand stands in the sidebar and the topbar; found %d", n)
+	}
+	if !strings.Contains(string(partials), `<span class="world">`) {
 		t.Error("the world renders through the named class, never ad hoc (§2)")
 	}
 }

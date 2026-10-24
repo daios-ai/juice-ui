@@ -526,37 +526,51 @@
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 
-{{/* _menu_account — identity, preferences and sign-out; NO navigation. Used by
-     the desktop profile popover (nav lives in the sidebar). */}}
-{{define "_menu_account"}}
-<div class="menu-caption mono">{{.Me}}</div>
-<div class="menu-caption money">{{money .Available}}</div>
-<div class="menu-divider"></div>
-<form method="post" action="/logout">
-  {{.CSRFField}}
-  <button type="submit" class="menu-item" role="menuitem">
-    <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg>
-    Sign out
-  </button>
-</form>
+{{/* _launcher — the composer's `/` (requirements §6.2): a button, and a list
+     of the actions in the catalog and the pages of the registry matched as
+     one types, with a last row searching Discover. Choosing an action opens
+     its panel; choosing a page goes there; neither posts nor runs anything.
+     Takes launcher (the registry, the room's members, the room). */}}
+{{define "_launcher"}}
+<button type="button" class="btn-icon" data-launcher aria-label="Actions and pages" title="Actions and pages">/</button>
+<div class="launcher" hidden>
+  <input type="search" aria-label="Find an action or a page" autocomplete="off">
+  <nav aria-label="Matches"></nav>
+</div>
+<script type="application/json" id="launcher-data">{{.JSON}}</script>
 {{end}}
 
-{{/* _menu_content — the mobile drawer: it replaces the sidebar, so it carries the
-     whole nav, driven by the same .Nav model the sidebar renders. Nothing is
-     privileged and nothing can drift. The desktop popover uses _menu_account only
-     (no nav duplication). */}}
-{{define "_menu_content"}}
-{{range .Nav}}
-{{if .Divider}}<div class="menu-divider"></div>{{end}}
-<a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>
-  {{if .Live}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge badge-{{.Slug}}" aria-label="{{.Label}}">{{if .Badge}}{{.Badge}}{{end}}</span></span>
-  {{else if .Badge}}<span class="ico-badge-wrap">{{.Icon}}<span class="badge">{{.Badge}}</span></span>
-  {{else}}{{.Icon}}{{end}}
-  {{.Label}}
-</a>
-{{end}}
-<div class="menu-divider"></div>
-{{template "_menu_account" .}}
+{{/* _brand — the kernel and the world it serves (§7), linking home. */}}
+{{define "_brand"}}<a class="brand" href="/"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>{{end}}
+
+{{/* _sidebar — the workspace's one sidebar (requirements §6.1): the brand
+     and the collapse toggle, the conversations rail, and at its foot the
+     avatar, carrying the task badge, whose menu is every destination of the
+     registry, the inbox with its count, and Sign out. Takes the Page. */}}
+{{define "_sidebar"}}
+<div class="sidebar-top">
+  {{template "_brand" .}}
+  <form method="post" action="/sidebar" class="sidebar-collapse">
+    {{.CSRFField}}
+    <input type="hidden" name="sidebar" value="{{if eq .Sidebar "collapsed"}}expanded{{else}}collapsed{{end}}">
+    <button type="submit" class="btn-icon" aria-label="{{if eq .Sidebar "collapsed"}}Keep the sidebar open{{else}}Hide the sidebar{{end}}" title="{{if eq .Sidebar "collapsed"}}Keep the sidebar open{{else}}Hide the sidebar{{end}}">≡</button>
+  </form>
+</div>
+{{.Rail}}
+<div class="profile-menu">
+  <button class="profile-trigger" data-menu="profile-popup" aria-haspopup="menu" aria-expanded="false" aria-label="Account and pages">
+    <span class="ico-badge-wrap"><span class="avatar" aria-hidden="true">{{initial .Me}}</span><span class="badge badge-inbox" aria-label="Waiting tasks"></span></span>
+    <span class="handle mono">{{.Me}}</span>
+  </button>
+  <div class="menu" id="profile-popup" role="menu" hidden>
+    <div class="menu-caption mono">{{.Me}}</div>
+    <div class="menu-caption money">{{money .Available}}</div>
+    <div class="menu-divider"></div>
+    {{range .Commands}}{{if .Nav}}<a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>{{.Name}}{{if .Live}}<span class="badge badge-{{.Slug}}" aria-label="{{.Name}}"></span>{{end}}</a>{{end}}{{end}}
+    <div class="menu-divider"></div>
+    <form method="post" action="/logout">{{.CSRFField}}<button type="submit" class="menu-item" role="menuitem">Sign out</button></form>
+  </div>
+</div>
 {{end}}
 
 {{/* _receipt renders on-demand receipt verification (the Verify control). */}}
@@ -679,6 +693,40 @@
   {{with .Report}}{{if gt .Uses 0}}<dt>Self-reported</dt><dd>{{pct .Successes .Uses}}% success over {{.Uses}} run{{if ne .Uses 1}}s{{end}}{{if gt .RatingCount 0}} · rating {{ratingPct .RatingMean .RatingCount}}% ({{.RatingCount}} rater{{if ne .RatingCount 1}}s{{end}}){{end}}</dd>{{end}}{{end}}
   {{with .Record.FirstSeen}}<dt>Known since</dt><dd>{{shortDate .}}</dd>{{end}}
 </dl>
+{{end}}
+
+{{/* _action_chips — an action's marks on its page and its panel: its
+     visibility narrowing, its kind, a grant to connect, inactive. Takes an
+     actionView. */}}
+{{define "_action_chips"}}<span class="chips">
+  {{if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if .Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
+  {{with kindBadge .Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
+  {{if .NeedsConnect}}<span class="chip filled" title="Needs a connected account"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
+  {{if not .Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
+</span>{{end}}
+
+{{/* _action_head — what an action is, under its title on its page and in
+     its panel: the ref, the description and this kernel's record with the
+     price. Takes an actionView. */}}
+{{define "_action_head"}}
+<p class="subtitle">{{template "_ref" (ref .Action.Ref "")}}</p>
+{{if .Action.Description}}<p>{{.Action.Description}}</p>{{end}}
+{{template "_stat_strip" (statStrip .Action.Price .Action.Experience true true)}}
+{{end}}
+
+{{/* _action_panel — an action beside a conversation (requirements §6.7): its
+     title and close, its head, what other kernels report folded, and the one
+     run form. Takes an actionView. */}}
+{{define "_action_panel"}}
+<div class="modal-head">
+  <h2>{{.Action.Title}} {{template "_action_chips" .}}</h2>
+  <button type="button" class="modal-close" data-panel-close aria-label="Close">×</button>
+</div>
+<div class="modal-body">
+  {{template "_action_head" .}}
+  {{with .Action.Reports}}<details class="fold"><summary>Evidence</summary>{{range .}}<div>{{template "_evidence" .}}</div>{{end}}</details>{{end}}
+  {{template "_action_run" .}}
+</div>
 {{end}}
 
 {{/* _action_run — the Run region of the action page: the connect gesture or the

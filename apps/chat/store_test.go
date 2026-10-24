@@ -322,6 +322,7 @@ func TestRangeAndCursors(t *testing.T) {
 
 // Unread is the viewer's own read cursor against the room's newest entry;
 // the list puts unread rooms first.
+// Rooms come newest activity first, an unread one marked where it stands.
 func TestRoomsUnreadOrdering(t *testing.T) {
 	s := mustStore(t)
 	quiet, _ := s.CreateRoom("ann@k", "quiet", nil)
@@ -330,7 +331,7 @@ func TestRoomsUnreadOrdering(t *testing.T) {
 	s.Post(quiet.ID, "ann@k", raw("me"))
 	s.MarkRead("ann@k", quiet.ID, 1)
 	rooms, _ := s.Rooms("ann@k")
-	if len(rooms) != 2 || rooms[0].ID != busy.ID || !rooms[0].Unread || rooms[1].Unread {
+	if len(rooms) != 2 || rooms[0].ID != quiet.ID || rooms[0].Unread || rooms[1].ID != busy.ID || !rooms[1].Unread {
 		t.Fatalf("rooms = %+v", rooms)
 	}
 	s.MarkRead("ann@k", busy.ID, 1)
@@ -420,5 +421,24 @@ func TestImportsTheLegacyDatabaseOnce(t *testing.T) {
 	defer s.Close()
 	if rooms, _ := s.Rooms("ann@k"); len(rooms) != 1 {
 		t.Errorf("second open imported again: %+v", rooms)
+	}
+}
+
+// Working is who holds an unanswered delivery in the room, never the viewer,
+// and nobody once it is answered.
+func TestWorking(t *testing.T) {
+	s := mustStore(t)
+	r, _ := s.CreateRoom("ann@k", "cafe", []string{"bob@k", "cy@k"})
+	s.Delivered("cy@k", r.ID, 1, 7, 0)
+	s.Delivered("bob@k", r.ID, 1, 8, 0)
+	if ws, _ := s.Working(r.ID, "ann@k"); strings.Join(ws, ",") != "bob@k,cy@k" {
+		t.Errorf("working = %v", ws)
+	}
+	if ws, _ := s.Working(r.ID, "bob@k"); strings.Join(ws, ",") != "cy@k" {
+		t.Errorf("the viewer is not among them: %v", ws)
+	}
+	s.Answer("bob@k", r.ID, 8, raw("done"), false)
+	if ws, _ := s.Working(r.ID, "ann@k"); strings.Join(ws, ",") != "cy@k" {
+		t.Errorf("an answered delivery is no longer held: %v", ws)
 	}
 }

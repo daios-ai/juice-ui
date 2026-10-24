@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 )
 
@@ -35,46 +34,30 @@ func StaticFS() fs.FS {
 	return sub
 }
 
-// NavItem is one entry in the single server-built nav model. The sidebar, the
-// mobile drawer, and the search pill's commands all render from this list, so they cannot
-// drift (the old layout hand-duplicated them). Icon is the full inline <svg> so a
-// core sprite entry and an app's inline icon render uniformly.
-type NavItem struct {
-	Slug    string
-	Label   string
-	Href    string
-	Icon    template.HTML
-	Active  bool
-	Badge   int  // the count shown; 0 hides
-	Live    bool // the badge is kept current by the heartbeat under this slug
-	Divider bool // render a separator before this entry (marks the apps group)
-}
-
 // Page is the data passed to the layout for a full-page render.
 type Page struct {
 	Title        string
-	Theme        string          // theme slug, or "" to defer to prefers-color-scheme
-	Sidebar      string          // "collapsed" | "" (expanded); stamped to avoid flash
-	Active       string          // active nav group ("browse"|"inbox"|…) for aria-current
-	Nav          []NavItem       // the single nav model (sidebar + drawer + the pill's commands)
-	Me           string          // signed-in address for the nav, or "" when anonymous
-	KernelHandle string          // this kernel's own name (from /health), or "" if unknown
-	KernelFP     string          // short key fingerprint for pre-auth verification (login only)
-	KernelNet    string          // the network this kernel serves, named on the login page
-	KernelName   string          // the name this kernel is recorded under, when the UI names one
-	IsSuperuser  bool            // Me == sys@<kernel>: show the admin group and admin scope
-	Available    int64           // signed-in user's available balance; 0 when unknown
-	Themes       []ANSIPalette   // selectable terminal themes for the picker
-	CSRFField    template.HTML   // hidden CSRF input for no-JS forms
-	CSRFToken    string          // raw token for the <meta> tag htmx reads
-	Commands     template.JS     // JSON command registry the search pill lists (inert data)
-	Flash        string          // transient user message
-	FlashKind    string          // "success" | "error" | "info" | ""
-	AppNav       []apps.NavEntry // sidebar entries contributed by apps
-	BadgeSecs    int             // the heartbeat's slow lane, in seconds (badges, receipts, peers)
-	Path         string          // current path, for links that must return to it
-	MenuOpen     bool            // ?menu=open: server-render the nav drawer [open] (no-JS path)
-	Data         any             // page-specific view model
+	Theme        string        // theme slug, or "" to defer to prefers-color-scheme
+	Sidebar      string        // "collapsed" | "" (expanded); stamped to avoid flash
+	Commands     []Command     // the registry: the avatar menu's destinations and the launcher's entries
+	Rail         template.HTML // the conversations rail, the sidebar's content
+	Me           string        // signed-in address for the nav, or "" when anonymous
+	KernelHandle string        // this kernel's own name (from /health), or "" if unknown
+	KernelFP     string        // short key fingerprint for pre-auth verification (login only)
+	KernelNet    string        // the network this kernel serves, named on the login page
+	KernelName   string        // the name this kernel is recorded under, when the UI names one
+	IsSuperuser  bool          // Me == sys@<kernel>: show the admin group and admin scope
+	Available    int64         // signed-in user's available balance; 0 when unknown
+	Themes       []ANSIPalette // selectable terminal themes for the picker
+	CSRFField    template.HTML // hidden CSRF input for no-JS forms
+	CSRFToken    string        // raw token for the <meta> tag htmx reads
+	Launcher     template.JS   // the registry as the launcher reads it (inert JSON)
+	Flash        string        // transient user message
+	FlashKind    string        // "success" | "error" | "info" | ""
+	BadgeSecs    int           // the heartbeat's slow lane, in seconds (badges, receipts, peers)
+	Path         string        // current path, for links that must return to it
+	MenuOpen     bool          // ?menu=open: server-render the nav drawer [open] (no-JS path)
+	Data         any           // page-specific view model
 }
 
 // Renderer holds parsed templates. Each page is parsed together with the layout
@@ -248,6 +231,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"figures":      figures,
 		"cardArt":      CardArt,
 		"initial":      initial,
+		"launcher":     launcherOf,
 		"authPanel":    newAuthPanel,
 		"httpMethods":  func() []string { return []string{"POST", "GET", "PUT", "PATCH", "DELETE"} },
 	}
@@ -296,6 +280,25 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 	}
 	r.pages, r.partials = pages, base
 	return r, nil
+}
+
+// launcherView feeds the _launcher partial: the registry, the room's members
+// and the room, as one inert JSON block the launcher reads.
+type launcherView struct{ JSON template.JS }
+
+// launcherOf builds the launcher of a composer: the pages it lists beside the
+// catalog's actions, the members a leading address completes, and the room an
+// action's panel opens for.
+func launcherOf(pages template.JS, members []string, room string) launcherView {
+	if pages == "" {
+		pages = "[]"
+	}
+	b, _ := json.Marshal(struct {
+		Pages   json.RawMessage `json:"pages"`
+		Members []string        `json:"members"`
+		Room    string          `json:"room"`
+	}{json.RawMessage(pages), members, room})
+	return launcherView{JSON: template.JS(b)}
 }
 
 // noAmount is what a money cell renders when the kernel has not said what its

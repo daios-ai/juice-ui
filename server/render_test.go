@@ -291,38 +291,36 @@ func TestKindBadge(t *testing.T) {
 	}
 }
 
-// The desktop popover (_menu_account) is identity + prefs + sign-out with NO
-// navigation; the mobile drawer (_menu_content) adds the nav links.
-func TestAccountMenuHasNoNav(t *testing.T) {
+// The sidebar is the conversations rail and the avatar, whose menu holds the
+// account, the registry's destinations with the inbox count, and Sign out —
+// and no opener, which is the launcher's.
+func TestSidebarHoldsRailAndMenu(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The drawer renders whatever the nav model holds — it no longer hard-codes
-	// its own links — so the fixture supplies the nav the sidebar would get.
-	data := Page{Me: "sys@testnet", IsSuperuser: true, Themes: ThemeList(), Nav: []NavItem{
-		{Slug: "browse", Label: "browse", Href: "/browse"},
-		{Slug: "settings", Label: "settings", Href: "/settings"},
-		{Slug: "network", Label: "network", Href: "/admin/peers"},
-		{Slug: "admin", Label: "admin", Href: "/admin"},
+	data := Page{Me: "sys@testnet", Rail: template.HTML(`<nav class="rail">ROOMS</nav>`), Commands: []Command{
+		{Slug: "inbox", Name: "Inbox", Href: "/inbox", Nav: true, Live: true},
+		{Slug: "admin", Name: "Admin", Href: "/admin", Nav: true, Active: true},
+		{Name: "Record a payment", Href: "/admin?form=admin-deposit"},
 	}}
-	acctRec, fullRec := httptest.NewRecorder(), httptest.NewRecorder()
-	if err := r.Fragment(acctRec, 200, "_menu_account", data); err != nil {
+	rec := httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_sidebar", data); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Fragment(fullRec, 200, "_menu_content", data); err != nil {
-		t.Fatal(err)
+	got := rec.Body.String()
+	for _, want := range []string{`<nav class="rail">ROOMS</nav>`, `>sys@testnet</div>`, `class="menu-caption money"`,
+		`<a href="/inbox" class="menu-item" role="menuitem">Inbox<span class="badge badge-inbox"`,
+		`<a href="/admin" class="menu-item" role="menuitem" aria-current="page">Admin</a>`, `Sign out`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("sidebar lacks %q: %s", want, got)
+		}
 	}
-	acct, full := acctRec.Body.String(), fullRec.Body.String()
-	if strings.Contains(acct, `href="/admin"`) || strings.Contains(acct, `href="/user"`) {
-		t.Error("desktop popover (_menu_account) must not contain nav links")
+	if strings.Contains(got, "Record a payment") {
+		t.Error("an opener is the launcher's, never a menu row")
 	}
-	if !strings.Contains(acct, "Sign out") {
-		t.Error("_menu_account must have Sign out")
-	}
-	// The mobile drawer keeps the nav (it replaces the sidebar).
-	if !strings.Contains(full, `href="/admin"`) || !strings.Contains(full, `href="/admin/peers"`) {
-		t.Error("mobile drawer (_menu_content) must carry Admin + network nav")
+	if strings.Count(got, `class="badge badge-inbox"`) != 2 {
+		t.Error("the task badge rides the avatar and the Inbox row")
 	}
 }
 
@@ -801,9 +799,8 @@ func TestRenderFragment(t *testing.T) {
 
 // TestLayoutRendersTheHeartbeat proves a signed-in page carries the two tick
 // elements — the fast lane and the slow lane on the configured interval — one
-// slow watch per live nav entry, once, and a static badge span per copy of the
-// entry (sidebar, drawer, and the mobile trigger for the inbox), with no poller
-// of its own anywhere.
+// slow watch per live registry entry, once, and the inbox badge on the
+// avatar, the menu row and the topbar's trigger, with no poller of its own.
 func TestLayoutRendersTheHeartbeat(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -813,11 +810,8 @@ func TestLayoutRendersTheHeartbeat(t *testing.T) {
 	p := Page{
 		Me:        "me@testnet",
 		BadgeSecs: 15,
-		Nav: []NavItem{
-			{Slug: "inbox", Label: "inbox", Href: "/inbox", Icon: template.HTML(`<svg class="ico"></svg>`), Live: true},
-			{Slug: "chat", Label: "chat", Href: "/chat", Icon: template.HTML(`<svg class="ico"></svg>`), Badge: 2, Live: true},
-		},
-		Data: struct{ Message string }{"x"},
+		Commands:  []Command{{Slug: "inbox", Name: "Inbox", Href: "/inbox", Nav: true, Live: true}},
+		Data:      struct{ Message string }{"x"},
 	}
 	if err := r.Render(rec, 200, "error", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -831,16 +825,13 @@ func TestLayoutRendersTheHeartbeat(t *testing.T) {
 			t.Errorf("want one %q: %s", want, body)
 		}
 	}
-	if strings.Count(body, `id="watch-inbox" name="slow" value="inbox:badge:0"`) != 1 || strings.Count(body, `id="watch-chat" name="slow" value="chat:badge:2"`) != 1 {
+	if strings.Count(body, `id="watch-inbox" name="slow" value="inbox:badge:"`) != 1 {
 		t.Errorf("one slow watch per live entry: %s", body)
 	}
-	if strings.Count(body, `class="badge badge-inbox"`) < 3 {
-		t.Errorf("the inbox badge must stand in the sidebar, the drawer and the mobile trigger: %s", body)
+	if strings.Count(body, `class="badge badge-inbox"`) != 3 {
+		t.Errorf("the inbox badge stands on the avatar, the menu row and the trigger: %s", body)
 	}
-	if strings.Count(body, `class="badge badge-chat" aria-label="chat">2</span>`) < 2 {
-		t.Errorf("the app badge must stand in the sidebar and the drawer with its count: %s", body)
-	}
-	for _, gone := range []string{`hx-get="/inbox/badge"`, `hx-get="/chat/badge"`, `hx-get="/health"`, `hx-trigger="load`} {
+	for _, gone := range []string{`hx-get="/inbox/badge"`, `hx-get="/health"`, `hx-trigger="load`} {
 		if strings.Contains(body, gone) {
 			t.Errorf("no poller of its own: %q in %s", gone, body)
 		}
@@ -1403,20 +1394,18 @@ func TestRelTime(t *testing.T) {
 	}
 }
 
-// The mobile nav must survive JavaScript being off. ?menu=open server-renders
-// the drawer [open] so it falls back to an in-flow card, and the trigger is a
-// real link rather than a bare button — the same guarantee §6.1 makes for
-// ?form=. Without this the drawer is unreachable with JS off, which would be
-// worse than the tab bar it replaces.
-func TestNavDrawerWorksWithoutJS(t *testing.T) {
+// The hidden sidebar must survive JavaScript being off. The trigger is a real
+// link to ?menu=open, which the server stamps on <html> so the stylesheet
+// slides the one sidebar in, and the scrim is a link back to the page. There
+// is one sidebar: no second copy of its ids in a drawer.
+func TestHiddenSidebarWorksWithoutJS(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	nav := []NavItem{{Slug: "browse", Label: "browse", Href: "/browse"}}
 	render := func(open bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Me: "me@testnet", Nav: nav, MenuOpen: open, Path: "/browse",
+		p := Page{Me: "me@testnet", MenuOpen: open, Path: "/browse",
 			Data: struct{ Message string }{"x"}}
 		if err := r.Render(rec, 200, "error", p); err != nil {
 			t.Fatalf("render: %v", err)
@@ -1424,21 +1413,20 @@ func TestNavDrawerWorksWithoutJS(t *testing.T) {
 		return rec.Body.String()
 	}
 	closed, open := render(false), render(true)
-
-	// The trigger is a real link to the fallback URL, not a bare button, and it
-	// anchors to the drawer so the no-JS landing is unambiguous.
-	if !strings.Contains(closed, `href="?menu=open#nav-drawer"`) {
-		t.Error("menu trigger must be a real anchored link for the no-JS path")
+	if !strings.Contains(closed, `href="?menu=open" class="menu-trigger"`) {
+		t.Error("the trigger must be a real link for the no-JS path")
 	}
-	if strings.Contains(closed, `<dialog id="nav-drawer" class="drawer" aria-label="Navigation" open`) {
-		t.Error("drawer must not render open without ?menu=open")
+	if strings.Contains(closed, `data-menu="open"`) {
+		t.Error("the sidebar must not be open without ?menu=open")
 	}
-	if !strings.Contains(open, ` open>`) {
-		t.Error("?menu=open must server-render the drawer [open]")
+	if !strings.Contains(open, `<html lang="en" data-menu="open">`) {
+		t.Error("?menu=open must stamp the open sidebar on <html>")
 	}
-	// Closing must also be a link, so it works with JS off.
-	if !strings.Contains(open, `class="modal-close" href="/browse"`) {
-		t.Error("drawer close must be a real link back to the current path")
+	if !strings.Contains(open, `<a class="scrim" href="/browse" data-menu-close`) {
+		t.Error("the scrim must be a real link back to the current path")
+	}
+	if n := strings.Count(open, `id="profile-popup"`); n != 1 {
+		t.Errorf("one sidebar, %d copies of its menu", n)
 	}
 }
 
@@ -1450,7 +1438,7 @@ func TestThemePickerOnlyInSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Me: "me@testnet", Themes: ThemeList(), Nav: []NavItem{{Slug: "browse", Href: "/browse"}},
+	p := Page{Me: "me@testnet", Themes: ThemeList(), Commands: []Command{{Slug: "browse", Name: "Discover actions", Href: "/browse", Nav: true}},
 		Data: struct{ Message string }{"x"}}
 	if err := r.Render(rec, 200, "error", p); err != nil {
 		t.Fatal(err)

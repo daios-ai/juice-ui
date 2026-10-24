@@ -1,22 +1,12 @@
 {{define "content"}}
 {{$d := .Data}}
-<nav class="crumb"><a href="/browse">← browse</a></nav>
+<nav class="crumb"><a href="/browse">← discover</a></nav>
 
 <div class="hero">
   {{template "_media" $d.Action}}
   <div>
-    <div class="action-head">
-      <h1>{{$d.Action.Title}}</h1>
-      <span class="chips">
-        {{if $d.Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $d.Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
-        {{with kindBadge $d.Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
-        {{if $d.NeedsConnect}}<span class="chip filled" title="Needs a connected account"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
-        {{if not $d.Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
-      </span>
-    </div>
-    <p class="subtitle">{{template "_ref" (ref $d.Action.Ref "")}}</p>
-    {{if $d.Action.Description}}<p>{{$d.Action.Description}}</p>{{end}}
-    {{template "_stat_strip" (statStrip $d.Action.Price $d.Action.Experience true true)}}
+    <div class="action-head"><h1>{{$d.Action.Title}}</h1>{{template "_action_chips" $d}}</div>
+    {{template "_action_head" $d}}
   </div>
 </div>
 

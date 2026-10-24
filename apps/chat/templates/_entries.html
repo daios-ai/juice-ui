@@ -10,6 +10,14 @@
 </div>
 {{end}}
 
+{{/* _working — who the room is waiting on: the members holding an unanswered
+     delivery, a fact chat holds (requirements §6.7). Input: entriesView. */}}
+{{define "_working"}}<p class="muted small" id="chat-working">{{.Answering}}</p>{{end}}
+
+{{/* The heartbeat's answer for a room with nothing new: who is answering, out
+     of band (a line with no control loses nothing by being replaced). */}}
+{{define "_chat_working"}}<p class="muted small" id="chat-working" hx-swap-oob="true">{{.Answering}}</p>{{end}}
+
 {{/* The composer's answer and the poll: new entries append, the posts an
      answer replaced leave, the cursor and the watch advance, a shown refusal
      clears. */}}
@@ -30,6 +38,7 @@
 <input type="hidden" id="chat-after" name="after" value="{{.After}}" hx-swap-oob="true">
 <input type="hidden" id="watch-chat-room" name="watch" value="chat:{{.RoomID}}:{{.After}}" hx-swap-oob="true">
 <p class="error-text" id="chat-error" role="alert" hidden hx-swap-oob="true"></p>
+{{template "_chat_working" .}}
 {{end}}
 
 {{/* A refused post: the reason beside the composer, nothing appended. */}}

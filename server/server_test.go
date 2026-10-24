@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2"
+	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 )
@@ -24,6 +26,7 @@ type testWiring struct {
 	recordedKey string
 	badge       time.Duration
 	config      Configuration
+	apps        []apps.App
 }
 
 // newTestHandler builds the BFF against a fake kernel, wired exactly as
@@ -38,12 +41,17 @@ func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) h
 	c := client.New(kernelURL, nil)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	identity := NewKernelIdentity(c, w.recordedKey, w.badge, log)
-	r, err := NewRenderer(identity)
+	var tmpl []fs.FS
+	for _, a := range w.apps {
+		tmpl = append(tmpl, a.Templates())
+	}
+	r, err := NewRenderer(identity, tmpl...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sm := scs.New()
 	h, err := New(Options{
+		Apps:          w.apps,
 		Client:        c,
 		Sessions:      session.NewManager(sm, c),
 		Renderer:      r,
@@ -312,11 +320,11 @@ func TestKernelIdentityAddressAndLocal(t *testing.T) {
 	}
 }
 
-// Home is current only on /; results and action pages are reached from
-// search, not the nav, so they belong to no group.
+// Home is current only on /, Discover on its results; an action page is
+// reached from the launcher or a row, and belongs to no group.
 func TestActiveGroupHome(t *testing.T) {
 	for path, want := range map[string]string{
-		"/": "home", "/browse": "", "/actions/A1": "", "/discovered": "",
+		"/": "home", "/browse": "browse", "/actions/A1": "", "/discovered": "",
 		"/inbox/T1": "inbox", "/transactions": "wallet", "/workshop": "workshop",
 	} {
 		if got := activeGroup(path); got != want {

@@ -238,7 +238,7 @@ type errorView struct{ Message string }
 
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions.IsAuthenticated(r.Context()) {
-		http.Redirect(w, r, s.landing(r), http.StatusSeeOther)
+		http.Redirect(w, r, s.landing(), http.StatusSeeOther)
 		return
 	}
 	view := loginView{Tab: loginTab(r)}
@@ -256,16 +256,14 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusOK, "login", "Sign in", loginView{Tab: "signin", Error: loginErrorMessage(err)})
 		return
 	}
-	http.Redirect(w, r, s.landing(r), http.StatusSeeOther)
+	http.Redirect(w, r, s.landing(), http.StatusSeeOther)
 }
 
-// landing is where a session begins: the app whose nav entry leads (chat,
-// requirements §6.1), else the dashboard.
-func (s *Server) landing(r *http.Request) string {
-	for _, e := range s.appNav(r) {
-		if e.Lead {
-			return e.Href
-		}
+// landing is where a session begins: its conversations (requirements §6.1),
+// else the dashboard.
+func (s *Server) landing() string {
+	if s.conv != nil {
+		return s.conv.Landing()
 	}
 	return "/"
 }
@@ -859,7 +857,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
+	s.renderPage(w, r, http.StatusOK, "browse", "Discover actions", view)
 }
 
 // ---- user (account + wallet) ----
@@ -1056,43 +1054,17 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string, proposal *proposal, edit *actionDraft) {
 	ctx := r.Context()
 	var view actionView
-	err := s.sessions.Do(ctx, func(tok string) error {
-		a, e := s.client.GetAction(ctx, tok, id)
-		if e != nil {
+	err := s.sessions.Do(ctx, func(tok string) (e error) {
+		if view, e = s.actionView(r, tok, id); e != nil {
 			return e
 		}
-		me, e := s.me(r)
-		if e != nil {
-			return e
-		}
-		view = actionView{
-			Action:       a,
-			Form:         BuildForm(a.InputSchema),
-			IsOwner:      refOwner(a.Action) == me.Address,
-			IsPaid:       a.Price > 0,
-			NeedsConnect: needsConnect(a, grantedRefs(me)),
-			OpenForm:     openForm(r, "action-detail"),
-			CSRFField:    csrf.TemplateField(r),
-		}
+		view.OpenForm = openForm(r, "action-detail")
 		// Ratings: fetch all, slice one page here (uniform with the other lists).
 		ratingsOffset := queryOffset(r)
 		if all, e := s.client.ActionRatings(ctx, tok, id, 0, 0); e == nil {
 			start, end, hasNext := pageSlice(len(all), ratingsOffset, pageSize)
 			view.Ratings = all[start:end]
 			view.RatingsPager = pageNav(r, ratingsOffset, pageSize, hasNext)
-		}
-		// First-payee hint on the run form (§8.3): show it unless the viewer has
-		// already transacted with this action's owner. Bounded, best-effort.
-		if owner := refOwner(a.Action); a.Price > 0 && owner != me.Address {
-			view.FirstPayee = true
-			if txs, e := s.client.ListTransactions(ctx, tok, "", 200); e == nil {
-				for _, t := range txs {
-					if t.Target == owner {
-						view.FirstPayee = false
-						break
-					}
-				}
-			}
 		}
 		return nil
 	})
@@ -1118,6 +1090,56 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 		view.Edit = s.draftOf(view.Action)
 	}
 	s.renderPage(w, r, status, "action_detail", view.Action.Title, view)
+}
+
+// actionView loads one action as its page, its panel and its run show it:
+// the row, the viewer's relation to it, the run form and the first-payee hint.
+func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error) {
+	ctx := r.Context()
+	a, e := s.client.GetAction(ctx, tok, id)
+	if e != nil {
+		return actionView{}, e
+	}
+	me, e := s.me(r)
+	if e != nil {
+		return actionView{}, e
+	}
+	view := actionView{
+		Action:       a,
+		Form:         BuildForm(a.InputSchema),
+		IsOwner:      refOwner(a.Action) == me.Address,
+		IsPaid:       a.Price > 0,
+		NeedsConnect: needsConnect(a, grantedRefs(me)),
+		CSRFField:    csrf.TemplateField(r),
+	}
+	// First-payee hint on the run form (§8.3): shown unless the viewer has
+	// already transacted with this action's owner. Bounded, best-effort.
+	if owner := refOwner(a.Action); a.Price > 0 && owner != me.Address {
+		view.FirstPayee = true
+		if txs, e := s.client.ListTransactions(ctx, tok, "", 200); e == nil {
+			for _, t := range txs {
+				if t.Target == owner {
+					view.FirstPayee = false
+					break
+				}
+			}
+		}
+	}
+	return view, nil
+}
+
+// getActionPanel is an action as the workspace's panel shows it beside a
+// conversation (requirements §6.7): its head and the one run form.
+func (s *Server) getActionPanel(w http.ResponseWriter, r *http.Request) {
+	var view actionView
+	err := s.sessions.Do(r.Context(), func(tok string) (e error) {
+		view, e = s.actionView(r, tok, r.PathValue("id"))
+		return e
+	})
+	if s.handleErrFragment(w, r, err) {
+		return
+	}
+	_ = s.render.Fragment(w, http.StatusOK, "_action_panel", view)
 }
 
 // getDiscovered opens an action this kernel has only heard of through gossip.
@@ -1164,15 +1186,12 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 
 	var view actionView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		a, e := s.client.GetAction(ctx, tok, id)
+		v, e := s.actionView(r, tok, id)
 		if e != nil {
 			return e
 		}
-		me, e := s.me(r)
-		if e != nil {
-			return e
-		}
-		view = actionView{Action: a, Form: BuildForm(a.InputSchema), IsOwner: refOwner(a.Action) == me.Address, IsPaid: a.Price > 0, NeedsConnect: needsConnect(a, grantedRefs(me))}
+		view = v
+		a := v.Action
 		if argErr == nil {
 			// The pin comes from the REQUEST — the terms the buyer was actually
 			// shown — never from the re-read above, which would always match and
@@ -2676,46 +2695,44 @@ func wordsBegin(words, typed []string) bool {
 	return true
 }
 
-// catalogTitle is one entry of the search-hint catalog: a title and its
-// hintKey. The browser matches typed text against these keys, so a title is
+// catalogEntry is one action as the launcher matches it: its title and the
+// title's hintKey, its id (none for an action only discovered on a peer) and
+// its address. The browser matches typed text against the keys, so a title is
 // normalized once, here, by the one rule the search fallback also uses.
-type catalogTitle struct {
-	T string `json:"t"`
-	K string `json:"k"`
+type catalogEntry struct {
+	T   string `json:"t"`
+	K   string `json:"k"`
+	ID  string `json:"id,omitempty"`
+	Ref string `json:"ref"`
 }
 
-// catalogTitles returns the catalog's distinct titles (equal under hintKey is
-// one), ordered by key.
-func catalogTitles(actions []client.Action) []catalogTitle {
-	seen := map[string]bool{}
-	out := []catalogTitle{}
+// catalogEntries is the catalog as the launcher reads it, ordered by key.
+func catalogEntries(actions []client.Action) []catalogEntry {
+	out := []catalogEntry{}
 	for _, a := range actions {
-		k := hintKey(a.Title)
-		if k == "" || seen[k] {
-			continue
+		if k := hintKey(a.Title); k != "" {
+			out = append(out, catalogEntry{T: a.Title, K: k, ID: a.ID, Ref: a.Ref()})
 		}
-		seen[k] = true
-		out = append(out, catalogTitle{T: a.Title, K: k})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].K < out[j].K })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].K < out[j].K })
 	return out
 }
 
-// getSearchCatalog serves the search box's hints the way a static site serves
-// its search index: the whole catalog's titles at once (local actions,
-// resolved proxies and the actions discovered on peers), which the page
-// matches in the browser as the person types, so typing sends no request. It
-// reads the free catalog and never runs sys/lookup. The list is the caller's
-// own (it holds their private titles), so it is never stored by the browser:
-// a cached copy at this one URL could be shown to the next account. A failure
-// answers with no titles; the search itself still works.
+// getSearchCatalog serves the launcher's actions the way a static site serves
+// its search index: the whole catalog at once (local actions, resolved proxies
+// and the actions discovered on peers), which the page matches in the browser
+// as the person types, so typing sends no request. It reads the free catalog
+// and never runs sys/lookup. The list is the caller's own (it holds their
+// private titles), so it is never stored by the browser: a cached copy at
+// this one URL could be shown to the next account. A failure answers with no
+// actions; the launcher's pages and its search row still work.
 func (s *Server) getSearchCatalog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	out := []catalogTitle{}
+	out := []catalogEntry{}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		actions, e := s.client.ListActions(ctx, tok, "")
 		if e == nil {
-			out = catalogTitles(actions)
+			out = catalogEntries(actions)
 		}
 		return e
 	})

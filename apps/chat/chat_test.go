@@ -398,19 +398,21 @@ func joined(t *testing.T, c *Chat, member string) string {
 	return key
 }
 
-func TestNavLeadsAndIsLive(t *testing.T) {
+// Chat is the workspace, not a destination: it contributes no menu entry, it
+// is the core's conversations (the rail, the landing, a room's context).
+func TestChatIsTheWorkspace(t *testing.T) {
 	c := New()
-	if n := c.Nav("", false); n != nil {
-		t.Fatalf("anonymous Nav = %v", n)
+	if n := c.Nav("ann@testnet", true); n != nil {
+		t.Fatalf("Nav = %v", n)
 	}
-	n := c.Nav("ann@testnet", false)
-	if len(n) != 1 || n[0].Href != "/chat" || !n[0].Lead || !n[0].Live || n[0].Icon == "" {
-		t.Fatalf("Nav = %+v", n)
+	var conv apps.Conversations = c
+	if conv.Landing() != "/chat" {
+		t.Errorf("Landing = %q", conv.Landing())
 	}
 	if c.Slug() != "chat" {
 		t.Errorf("Slug = %q", c.Slug())
 	}
-	for _, f := range []string{"rooms.html", "room.html", "_entries.html"} {
+	for _, f := range []string{"_rail.html", "room.html", "_entries.html", "landing.html"} {
 		if _, err := c.Templates().Open("templates/" + f); err != nil {
 			t.Errorf("%s not embedded", f)
 		}
@@ -757,8 +759,8 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	land := func() *httptest.ResponseRecorder {
 		return as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
 	}
-	if rec := land(); rec.Code != 303 || rec.Header().Get("Location") != "/chat/rooms" {
-		t.Fatalf("no assistant: %d %s", rec.Code, rec.Header().Get("Location"))
+	if rec := land(); rec.Code != 200 {
+		t.Fatalf("no assistant and no room: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 	if m, ok := c.store.Member(f.keyOf("t")); !ok || m != "ann@testnet" {
 		t.Fatalf("the viewer is joined: %q %v %v", m, ok, f.grants)
@@ -899,7 +901,9 @@ func TestRoomRendersThePostForm(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil)
 	req.SetPathValue("id", r.ID)
 	page := as(c, sm, c.getRoom, req).Body.String()
-	for _, want := range []string{`<div class="view locked">`, ">" + r.ID + "<", `name="f_/message"`, `name="raw_args"`, `class="view" data-json`} {
+	for _, want := range []string{`<div class="view locked">`, ">" + r.ID + "<", `name="f_/message"`, `name="raw_args"`, `class="view" data-json`,
+		`data-composer`, `data-launcher`, `id="launcher-data"`, `"room":"` + r.ID + `"`, `"members":["ann@testnet"]`,
+		`<aside class="panel" id="panel"`, `id="chat-working"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("room page lacks %s", want)
 		}
@@ -923,8 +927,10 @@ func TestRoomSeenAndWatch(t *testing.T) {
 	other, _ := c.store.CreateRoom("bob@testnet", "other", []string{"ann@testnet"})
 	c.store.Post(other.ID, "bob@testnet", raw("x"))
 	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
-	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, "badge", "0") }); !strings.Contains(string(h), ">2<") {
-		t.Fatalf("badge = %s", h)
+	rail, _ := c.store.Rooms("ann@testnet")
+	shown := railDigest(rail)
+	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, railKey, shown) }); h != "" {
+		t.Fatalf("an unchanged rail answers nothing, got %s", h)
 	}
 	rr := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil)
 	rr.SetPathValue("id", r.ID)
@@ -934,11 +940,11 @@ func TestRoomSeenAndWatch(t *testing.T) {
 	if len(f.completes) != 1 {
 		t.Errorf("completed %v, want ann's one delivery", f.completes)
 	}
-	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, "badge", "2") }); !strings.Contains(string(h), ">1<") {
-		t.Errorf("badge after reading = %s", h)
+	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, railKey, shown) }); h != "_rail" {
+		t.Errorf("reading a room changes the rail, which answers it; got %s", h)
 	}
-	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "" {
-		t.Errorf("nothing new must answer nothing, got %s", h)
+	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "_chat_working" {
+		t.Errorf("nothing new answers only who is answering, got %s", h)
 	}
 	dispatch(c, "/msg/post", bob, "", map[string]any{"thread_id": r.ID, "message": "again"})
 	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "_chat_tick" {
@@ -1011,11 +1017,22 @@ func TestRoomRoutes(t *testing.T) {
 	if strings.Join(room.Members, ",") != "ann@testnet,bob@testnet,dave@testnet,helper@testnet" {
 		t.Errorf("members = %v", room.Members)
 	}
-	if rec := do(c.postDeleteRoom, "/delete", ""); rec.Code != 303 || rec.Header().Get("Location") != "/chat/rooms" {
+	if rec := do(c.postDeleteRoom, "/delete", ""); rec.Code != 303 || rec.Header().Get("Location") != "/chat" {
 		t.Errorf("delete: %d", rec.Code)
 	}
-	if bad := as(c, sm, c.postCreateRoom, httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name="))); !strings.Contains(bad.Header().Get("X-Flash"), "name") {
-		t.Errorf("nameless room: %s", bad.Header().Get("X-Flash"))
+	nobody := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name=cafe"))
+	nobody.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if bad := as(c, sm, c.postCreateRoom, nobody); !strings.Contains(bad.Header().Get("X-Flash"), "Choose who") {
+		t.Errorf("a conversation with nobody: %s", bad.Header().Get("X-Flash"))
+	}
+	// The participants come first; a name left blank is theirs.
+	unnamed := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name=&agent=helper%40testnet&members=bob%40testnet"))
+	unnamed.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if rec := as(c, sm, c.postCreateRoom, unnamed); rec.Code != 303 {
+		t.Fatalf("unnamed: %d %s", rec.Code, rec.Header().Get("X-Flash"))
+	}
+	if rooms, _ := c.store.Rooms("ann@testnet"); len(rooms) != 1 || rooms[0].Name != "helper, bob" {
+		t.Errorf("a blank name is the participants': %+v", rooms)
 	}
 }
 
@@ -1052,5 +1069,91 @@ func TestRoutes(t *testing.T) {
 		if rec.Code != rt.want {
 			t.Errorf("%s %s = %d, want %d", rt.method, rt.path, rec.Code, rt.want)
 		}
+	}
+}
+
+// The rail is the viewer's rooms, newest activity first, the one in view
+// current, an unread one weighted, with its watch; ?form=new opens the
+// new-conversation dialog on any page.
+func TestRail(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	old, _ := c.store.CreateRoom("bob@testnet", "old", []string{"ann@testnet"})
+	c.store.Post(old.ID, "bob@testnet", raw("x"))
+	cafe, _ := c.store.CreateRoom("ann@testnet", "cafe", nil)
+	c.store.Post(cafe.ID, "ann@testnet", raw("y"))
+	c.store.MarkRead("ann@testnet", cafe.ID, 1)
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+cafe.ID+"?form=new", nil)
+	h, err := as2(c, sm, req, c.Rail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(h)
+	for _, want := range []string{`<a href="/chat/room/` + cafe.ID + `" aria-current="page">cafe</a>`, `<a href="/chat/room/` + old.ID + `" class="unread">old</a>`,
+		`value="chat:rail:`, `id="form-new" class="modal-form" open`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rail lacks %q: %s", want, got)
+		}
+	}
+	if strings.Index(got, ">cafe<") > strings.Index(got, ">old<") {
+		t.Error("newest activity first")
+	}
+}
+
+// Who is answering: the members other than the viewer that hold an
+// unanswered delivery in the room, named in one line.
+func TestWorkingNamesWhoIsAnswering(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, _ := testChat(t, f)
+	r, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet", "cy@testnet"})
+	bob, cy := joined(t, c, "bob@testnet"), joined(t, c, "cy@testnet")
+	_, _ = bob, cy
+	ann := joined(t, c, "ann@testnet")
+	dispatch(c, "/msg/post", ann, "", map[string]any{"thread_id": r.ID, "message": "hello"})
+	v := entriesView{Working: c.working(r.ID, "ann@testnet")}
+	if got := v.Answering(); got != "bob@testnet and cy@testnet are answering" {
+		t.Errorf("Answering = %q", got)
+	}
+	if ws := c.working(r.ID, "bob@testnet"); len(ws) != 1 || ws[0] != "cy@testnet" {
+		t.Errorf("the viewer is never among those answering: %v", ws)
+	}
+	if (entriesView{}).Answering() != "" || (entriesView{Working: []string{"a"}}).Answering() != "a is answering" {
+		t.Error("nobody is no line; one is singular")
+	}
+}
+
+// A room's context is what the planner reads: the viewer's entries as the
+// user's, everyone else's as the assistant's, named; a non-member is refused.
+func TestContextIsTheRoomAsAModelReadsIt(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	r, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	c.store.Post(r.ID, "ann@testnet", raw("find suppliers"))
+	c.store.Post(r.ID, "bob@testnet", json.RawMessage(`{"found":3}`))
+	var msgs []client.Message
+	var err error
+	as2(c, sm, httptest.NewRequest(http.MethodGet, "/", nil), func(rq *http.Request) (template.HTML, error) {
+		msgs, err = c.Context(rq, r.ID)
+		return "", err
+	})
+	if err != nil || len(msgs) != 2 || msgs[0].Role != "user" || msgs[0].Content != "find suppliers" ||
+		msgs[1].Role != "assistant" || msgs[1].Content != `bob@testnet: {"found":3}` {
+		t.Fatalf("context = %+v %v", msgs, err)
+	}
+	other, _ := c.store.CreateRoom("bob@testnet", "private", nil)
+	as2(c, sm, httptest.NewRequest(http.MethodGet, "/", nil), func(rq *http.Request) (template.HTML, error) {
+		_, err = c.Context(rq, other.ID)
+		return "", nil
+	})
+	if err == nil {
+		t.Error("a room the viewer is not in is refused")
 	}
 }

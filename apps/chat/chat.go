@@ -76,8 +76,6 @@ const (
 	legacyDBName = "chat.db"
 )
 
-const chatIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`)
-
 // usage is what chat/index answers: the one place a member learns chat.
 // KERNEL is replaced by this kernel's name.
 const usage = "Chat rooms for people and agents; every member is an address, handle@KERNEL. " +
@@ -107,21 +105,18 @@ func New() *Chat { return &Chat{} }
 
 func (c *Chat) Slug() string { return "chat" }
 
-// Nav leads the sidebar: chat is where a session lands. The badge counts the
-// rooms with unread entries, kept by the heartbeat.
-func (c *Chat) Nav(me string, superuser bool) []apps.NavEntry {
-	if me == "" {
-		return nil
-	}
-	return []apps.NavEntry{{Slug: "chat", Label: "Chat", Href: "/chat", Icon: chatIcon, Match: "/chat", Live: true, Lead: true}}
-}
+// Nav contributes no destination: chat is the workspace itself, its rooms
+// the sidebar's rail (Rail).
+func (c *Chat) Nav(me string, superuser bool) []apps.NavEntry { return nil }
+
+// Landing is where a session begins: its conversation with the assistant.
+func (c *Chat) Landing() string { return "/chat" }
 
 func (c *Chat) Templates() fs.FS { return tmplFS }
 
 func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	c.deps = d
 	mux.HandleFunc("GET /chat", d.RequireAuth(c.getLanding))
-	mux.HandleFunc("GET /chat/rooms", d.RequireAuth(c.getRooms))
 	mux.HandleFunc("POST /chat/rooms", d.RequireAuth(c.postCreateRoom))
 	mux.HandleFunc("GET /chat/room/{id}", d.RequireAuth(c.getRoom))
 	mux.HandleFunc("GET /chat/room/{id}/entries", d.RequireAuth(c.getEntries))
@@ -747,14 +742,21 @@ func joinFailed(member string, err error) string {
 
 // ---- the browser ----
 
-type roomsView struct {
-	Rooms    []Room
-	Agents   []string // the installation's agents, offered as members
-	OpenForm bool
+// railView backs the rail: the viewer's rooms, the one in view, and the
+// new-conversation dialog with the installation's agents to choose from.
+type railView struct {
+	Rooms     []Room
+	Digest    string // what the heartbeat compares the rail by
+	Current   string
+	Open      bool
+	Agents    []string
+	Path      string
+	CSRFField template.HTML
 }
 
 // roomView backs the room page. The composer is the form of Post, the post
-// action's input schema, with Locked, the room, sealed.
+// action's input schema, with Locked, the room, sealed; Launcher is the
+// composer's launcher (the registry and the room's members).
 type roomView struct {
 	Room     Room
 	Me       string
@@ -772,48 +774,109 @@ type entriesView struct {
 	Entries []Entry
 	Removed []int64
 	After   int64
+	Working []string // the members holding an unanswered delivery here
 	Error   string
 }
 
+// Answering names who the room is waiting on: "a is answering", "a and b
+// are answering", "a, b and c are answering"; "" when nobody.
+func (v entriesView) Answering() string {
+	switch n := len(v.Working); n {
+	case 0:
+		return ""
+	case 1:
+		return v.Working[0] + " is answering"
+	default:
+		return strings.Join(v.Working[:n-1], ", ") + " and " + v.Working[n-1] + " are answering"
+	}
+}
+
 // getLanding is where a session lands: the viewer's conversation with the
-// assistant, made on the first visit. The viewer and the assistant are
-// joined here when they are not yet; without an assistant the landing is the
-// rooms.
+// assistant, made on the first visit, else the newest room, else nothing yet
+// beside the rail. The viewer and the assistant are joined here when they are
+// not yet.
 func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Me(r)
 	if err := c.joinViewer(r); err != nil {
-		c.deps.FlashRedirect(w, r, "/chat/rooms", "error", joinFailed(me, err))
+		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Conversations", landingView{Error: joinFailed(me, err)})
 		return
 	}
 	assistant := c.deps.Address(assistantHandle)
-	if me == assistant || !c.isLocalAgent(assistant) {
-		http.Redirect(w, r, "/chat/rooms", http.StatusSeeOther)
+	if me != assistant && c.isLocalAgent(assistant) {
+		room, err := c.store.Direct(me, assistant)
+		if c.deps.HandleErr(w, r, err) {
+			return
+		}
+		to := "/chat/room/" + url.PathEscape(room.ID)
+		if err := c.joinAgent(r.Context(), assistant); err != nil {
+			c.deps.FlashRedirect(w, r, to, "error", joinFailed(assistant, err))
+			return
+		}
+		http.Redirect(w, r, to, http.StatusSeeOther)
 		return
 	}
-	room, err := c.store.Direct(me, assistant)
+	rooms, err := c.store.Rooms(me)
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	to := "/chat/room/" + url.PathEscape(room.ID)
-	if err := c.joinAgent(r.Context(), assistant); err != nil {
-		c.deps.FlashRedirect(w, r, to, "error", joinFailed(assistant, err))
+	if len(rooms) > 0 {
+		http.Redirect(w, r, "/chat/room/"+url.PathEscape(rooms[0].ID), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, to, http.StatusSeeOther)
+	c.deps.RenderPage(w, r, http.StatusOK, "landing", "Conversations", landingView{})
 }
 
-func (c *Chat) getRooms(w http.ResponseWriter, r *http.Request) {
-	if err := c.joinViewer(r); err != nil {
-		c.log().Warn("chat: join viewer", "err", err)
+// landingView backs the page a viewer with no conversation lands on.
+type landingView struct{ Error string }
+
+// Rail is the sidebar's list of the viewer's rooms, newest activity first,
+// with the new-conversation dialog, open on ?form=new from any page.
+func (c *Chat) Rail(r *http.Request) (template.HTML, error) {
+	me := c.deps.Me(r)
+	rooms, err := c.store.Rooms(me)
+	if err != nil {
+		return "", err
 	}
-	rooms, err := c.store.Rooms(c.deps.Me(r))
-	if c.deps.HandleErr(w, r, err) {
-		return
+	current := ""
+	if id, ok := strings.CutPrefix(r.URL.Path, "/chat/room/"); ok {
+		current, _, _ = strings.Cut(id, "/")
 	}
-	c.deps.RenderPage(w, r, http.StatusOK, "rooms", "Chat", roomsView{
-		Rooms: rooms, Agents: c.agents(), OpenForm: r.URL.Query().Get("form") == "new",
+	return c.deps.Fragment("_rail", railView{
+		Rooms: rooms, Digest: railDigest(rooms), Current: current, Open: r.URL.Query().Get("form") == "new",
+		Agents: c.agents(), Path: r.URL.Path, CSRFField: c.deps.CSRFField(r),
 	})
 }
+
+// Context is a room's recent conversation as the planner reads it: the
+// viewer's entries as the user's, every other member's as the assistant's,
+// named; a document as its JSON text.
+func (c *Chat) Context(r *http.Request, roomID string) ([]client.Message, error) {
+	me := c.deps.Me(r)
+	_, es, err := c.store.Room(me, roomID)
+	if err != nil {
+		return nil, err
+	}
+	if len(es) > contextEntries {
+		es = es[len(es)-contextEntries:]
+	}
+	out := make([]client.Message, 0, len(es))
+	for _, e := range es {
+		text := string(e.Body)
+		var str string
+		if json.Unmarshal(e.Body, &str) == nil {
+			text = str
+		}
+		if e.Author == me {
+			out = append(out, client.Message{Role: "user", Content: text})
+			continue
+		}
+		out = append(out, client.Message{Role: "assistant", Content: e.Author + ": " + text})
+	}
+	return out, nil
+}
+
+// contextEntries is how much of a room the planner reads.
+const contextEntries = 20
 
 func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	if err := c.joinViewer(r); err != nil {
@@ -829,7 +892,7 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	locked, _ := json.Marshal(map[string]string{"thread_id": id})
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
 		Room: room, Me: me, IsOwner: room.Creator == me, OpenForm: r.URL.Query().Get("form"),
-		Entries: entriesView{RoomID: id, Entries: es, After: maxSeq(es)},
+		Entries: entriesView{RoomID: id, Entries: es, After: maxSeq(es), Working: c.working(id, me)},
 		Post:    c.postSchema(), Locked: locked,
 	})
 }
@@ -873,36 +936,61 @@ func (c *Chat) tail(r *http.Request, roomID string, after int64) entriesView {
 	if n := maxSeq(es); n > after {
 		after = n
 	}
-	return entriesView{RoomID: roomID, Entries: es, Removed: gone, After: after}
+	return entriesView{RoomID: roomID, Entries: es, Removed: gone, After: after, Working: c.working(roomID, me)}
 }
 
-// watch answers the heartbeat: the badge with the count of rooms holding
-// something unread, and a room with its entries after the shown seq. A room
-// in a visible tab is seen.
+// working is who is answering in a room: the members other than the viewer
+// that hold an unanswered delivery there.
+func (c *Chat) working(roomID, me string) []string {
+	ws, err := c.store.Working(roomID, me)
+	if err != nil {
+		c.log().Warn("chat: working", "room", roomID, "err", err)
+	}
+	return ws
+}
+
+// watch answers the heartbeat: the rail when a room appeared, went or was
+// read (shown is a digest of the rail it rendered), and a room with its
+// entries after the shown seq and who is answering. A room in a visible tab
+// is seen.
 func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) {
 	me := c.deps.Me(r)
-	if key == "badge" {
-		rooms, _ := c.store.Rooms(me)
-		n := 0
-		for _, room := range rooms {
-			if room.Unread {
-				n++
-			}
+	if key == railKey {
+		rooms, err := c.store.Rooms(me)
+		if err != nil {
+			return "", err
 		}
-		if strconv.Itoa(n) == shown {
+		if d := railDigest(rooms); d == shown {
 			return "", nil
 		}
-		return apps.Badge("chat", "Chat", n), nil
+		rail, err := c.Rail(r)
+		if err != nil {
+			return "", err
+		}
+		return template.HTML(strings.Replace(string(rail), `class="rail"`, `class="rail" hx-swap-oob="outerHTML:.rail"`, 1)), nil
 	}
 	after, _ := strconv.ParseInt(shown, 10, 64)
 	v := c.tail(r, key, after)
-	if len(v.Entries) == 0 && len(v.Removed) == 0 {
-		return "", nil
-	}
-	if r.Header.Get("X-Visible") != "0" {
+	if len(v.Entries) > 0 && r.Header.Get("X-Visible") != "0" {
 		c.seen(r, me, key, v.After)
 	}
+	if len(v.Entries) == 0 && len(v.Removed) == 0 {
+		return c.deps.Fragment("_chat_working", v)
+	}
 	return c.deps.Fragment("_chat_tick", v)
+}
+
+// railKey is the rail's watch: a room id is three words, never this one.
+const railKey = "rail"
+
+// railDigest names the rail a page shows: its rooms, their names and which
+// are unread, so the heartbeat swaps the rail only when one of them changed.
+func railDigest(rooms []Room) string {
+	h := sha256.New()
+	for _, r := range rooms {
+		fmt.Fprintf(h, "%s\x00%s\x00%t\x00", r.ID, r.Name, r.Unread)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:6])
 }
 
 // postMessage runs chat's post action as the viewer with the composer's
@@ -971,20 +1059,29 @@ func reasonOf(err error) string {
 	return body.Error
 }
 
-// postCreateRoom makes a room of the viewer, the agents ticked and the
-// addresses typed; the local agents among them are joined.
+// postCreateRoom starts a conversation with the participants chosen: the
+// agents ticked and the addresses typed, the viewer included. A name left
+// blank is the participants' handles. The local agents among them are joined.
 func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.FormValue("name"))
-	if name == "" {
-		c.deps.FlashRedirect(w, r, "/chat/rooms", "error", "A room needs a name.")
+	_ = r.ParseForm()
+	members := append(r.Form["agent"], strings.Fields(strings.ReplaceAll(r.FormValue("members"), ",", " "))...)
+	if len(members) == 0 {
+		c.deps.FlashRedirect(w, r, "/chat?form=new", "error", "Choose who the conversation is with.")
 		return
 	}
-	members := append(r.Form["agent"], strings.Fields(strings.ReplaceAll(r.FormValue("members"), ",", " "))...)
 	for _, m := range members {
 		if !strings.Contains(m, "@") {
-			c.deps.FlashRedirect(w, r, "/chat/rooms", "error", m+" is not an address (handle@kernel).")
+			c.deps.FlashRedirect(w, r, "/chat?form=new", "error", m+" is not an address (handle@kernel).")
 			return
 		}
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		handles := make([]string, len(members))
+		for i, m := range members {
+			handles[i], _, _ = strings.Cut(m, "@")
+		}
+		name = strings.Join(handles, ", ")
 	}
 	room, err := c.store.CreateRoom(c.deps.Me(r), name, members)
 	if c.deps.HandleErr(w, r, err) {
@@ -994,11 +1091,11 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Chat) postDeleteRoom(w http.ResponseWriter, r *http.Request) {
-	c.then(w, r, c.store.DeleteRoom(c.deps.Me(r), r.PathValue("id")), "/chat/rooms")
+	c.then(w, r, c.store.DeleteRoom(c.deps.Me(r), r.PathValue("id")), "/chat")
 }
 
 func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) {
-	c.then(w, r, c.store.Leave(c.deps.Me(r), r.PathValue("id")), "/chat/rooms")
+	c.then(w, r, c.store.Leave(c.deps.Me(r), r.PathValue("id")), "/chat")
 }
 
 func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {

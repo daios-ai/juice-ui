@@ -3,8 +3,11 @@
 {{$me := $d.Me}}
 {{$rid := $d.Room.ID}}
 
+{{/* A room (requirements §6.7): the conversation, and beside it the action
+     panel an action chosen from the composer opens into. */}}
+<div class="room">
+<div class="conversation">
 <nav class="crumb">
-  <a href="/chat/rooms">← rooms</a>
   <b class="stretch">{{$d.Room.Name}}</b>
   <details class="thread-members">
     <summary class="btn-quiet">{{len $d.Room.Members}} members</summary>
@@ -27,13 +30,14 @@
 <div class="msgs" id="chat-messages" data-autoscroll>
   {{range $d.Entries.Entries}}{{template "_entry" .}}{{end}}
 </div>
+{{template "_working" $d.Entries}}
 <input type="hidden" id="chat-after" name="after" value="{{$d.Entries.After}}">
 <input type="hidden" id="watch-chat-room" name="watch" value="chat:{{$rid}}:{{$d.Entries.After}}">
 
 {{/* The composer: the post action's form, the room sealed above the fields
-     still to fill (requirements.md §6.7). */}}
+     still to fill, and the launcher — actions and pages under `/`. */}}
 {{$f := taskForm $d.Post $d.Locked}}
-<form class="card stack" method="post" action="/chat/room/{{$rid}}/message" data-json
+<form class="card stack" method="post" action="/chat/room/{{$rid}}/message" data-json data-composer
       hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"
       hx-target="#chat-messages" hx-swap="beforeend" data-reset-on-success>
   {{.CSRFField}}
@@ -41,8 +45,14 @@
   <div class="view locked">{{template "_view" (view $d.Locked)}}</div>
   {{template "_form_fields" $f.Editable}}
   <p class="error-text" id="chat-error" role="alert" hidden></p>
-  <button class="btn" type="submit">Send</button>
+  <div class="cluster">
+    {{template "_launcher" (launcher .Launcher $d.Room.Members $rid)}}
+    <button class="btn" type="submit">Send</button>
+  </div>
 </form>
+</div>
+<aside class="panel" id="panel" aria-label="Action"></aside>
+</div>
 
 {{if $d.IsOwner}}
 <dialog id="form-add-member" class="modal-form"{{if eq $d.OpenForm "add-member"}} open{{end}} aria-label="Add member">

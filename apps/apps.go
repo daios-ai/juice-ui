@@ -64,26 +64,30 @@ type App interface {
 	Stop(ctx context.Context) error
 }
 
-// NavEntry is one sidebar link a app contributes. Icon is the app's own
-// inline <svg> markup (so a app owns its icon without editing the core
-// sprite); the core renders it as-is. Match is the path prefix used to light the
-// entry as the current page. A app nav entry is a deliberate exception to the
-// CLI-mirroring nav, exactly as the peers entry is.
+// NavEntry is one destination an app contributes to the avatar menu and the
+// launcher. Match is the path prefix that marks it as the current page.
 type NavEntry struct {
-	Slug   string        // e.g. "chat"
-	Label  string        // lowercase noun, e.g. "chat"
-	Href   string        // e.g. "/chat"
-	Icon   template.HTML // inline <svg class="ico">…</svg> markup, app-provided
-	Match  string        // path prefix for the active state, e.g. "/chat"
-	Active bool          // computed by the core against the request path
-	Badge  int           // app-scoped attention count (e.g. unread); the initial server-rendered value
-	// Live says the badge is kept current by the page's heartbeat: the app
-	// registered a watcher under its slug that answers the key "badge" (see
-	// Watcher). False ⇒ the badge is static (Badge only).
+	Slug  string // e.g. "agents"
+	Label string // sentence case, e.g. "Agents"
+	Href  string // e.g. "/agents"
+	Match string // path prefix for the active state, e.g. "/agents"
+	// Live says the entry's badge is kept current by the page's heartbeat: the
+	// app registered a watcher under its slug that answers the key "badge".
 	Live bool
-	// Lead places the entry before the core groups: the app is where a
-	// session lands.
-	Lead bool
+}
+
+// Conversations is implemented by the app whose rooms are the workspace: the
+// sidebar holds its rail, a session lands where it says, and the planner reads
+// a room's conversation from it. The core holds at most one.
+type Conversations interface {
+	// Rail is the sidebar's list of the viewer's conversations, with its
+	// opener for a new one.
+	Rail(r *http.Request) (template.HTML, error)
+	// Landing is where a signed-in session begins.
+	Landing() string
+	// Context is a room's recent conversation as a model reads it, newest
+	// last; refused for a viewer who is not a member.
+	Context(r *http.Request, room string) ([]client.Message, error)
 }
 
 // Watcher answers one watch of the page's heartbeat — kind:key:shown, the

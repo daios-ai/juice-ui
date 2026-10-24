@@ -1527,8 +1527,8 @@ func TestKernelIdentityShown(t *testing.T) {
 	}
 	// The sidebar brand shows the kernel handle once signed in.
 	cl := loginClient(t, srv.URL)
-	if !strings.Contains(getBody(t, cl, srv.URL+"/browse"), `class="lbl">testnet`) {
-		t.Error("sidebar brand must show the kernel handle")
+	if !strings.Contains(getBody(t, cl, srv.URL+"/browse"), `width="24" height="26"><span>testnet <span class="world">play</span>`) {
+		t.Error("the brand must show the kernel handle and its world")
 	}
 }
 
@@ -2221,33 +2221,20 @@ func TestCatalogAsResults(t *testing.T) {
 	}
 }
 
-// TestSearchIsOnePill guards the single search component: the segmented .omni
-// pill (input left, equal-height .omni-go submit segment right) is THE search,
-// rendered once, in the topbar (layout.html), present at every width, with a
-// search-typed input so phone keyboards offer submit.
-func TestSearchIsOnePill(t *testing.T) {
-	for file, marker := range map[string]string{
-		"templates/layout.html": `class="omni"`,
-	} {
-		b, err := tmplFS.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		src := string(b)
-		i := strings.Index(src, marker)
-		if i < 0 {
-			t.Fatalf("%s: no %s search pill", file, marker)
-		}
-		end := strings.Index(src[i:], "</form>")
-		if end < 0 {
-			t.Fatalf("%s: search pill form not closed", file)
-		}
-		form := src[i : i+end]
-		for _, want := range []string{`type="search"`, `enterkeyhint="search"`, `omni-go`, `type="submit"`, `data-search-hints`, `class="omni-suggest"`} {
-			if !strings.Contains(form, want) {
-				t.Errorf("%s: search pill lacks %s — one segmented pill everywhere (input + submit segment)", file, want)
-			}
-		}
+// TestDiscoverHasItsOwnSearch: with the pill gone, the Discover page carries
+// its query box as its content, a GET to itself, and no chrome holds a second
+// one.
+func TestDiscoverHasItsOwnSearch(t *testing.T) {
+	b, err := tmplFS.ReadFile("templates/browse.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `method="get" action="/browse" role="search"`) || !strings.Contains(string(b), `type="search" name="q"`) {
+		t.Error("Discover must carry its own query box")
+	}
+	layout, _ := tmplFS.ReadFile("templates/layout.html")
+	if strings.Contains(string(layout), `role="search"`) {
+		t.Error("the chrome holds no search box: the composer's launcher is the way in")
 	}
 }
 
@@ -3911,8 +3898,8 @@ func TestHomeIsTheDashboard(t *testing.T) {
 			t.Errorf("home must ask for waiting tasks only, asked %q", q)
 		}
 	}
-	if !strings.Contains(page, `aria-current="page"><svg`) || !strings.Contains(page, `href="/" title="Home" aria-current="page"`) {
-		t.Error("the home nav item must be current on /")
+	if !strings.Contains(page, `<a href="/" class="menu-item" role="menuitem" aria-current="page">Home</a>`) {
+		t.Error("Home must be the current destination on /")
 	}
 	// A secondary read failing leaves the rest of the page standing.
 	k.failLedger = true
@@ -3931,7 +3918,7 @@ type hintFixture struct {
 		In  string `json:"in"`
 		Out string `json:"out"`
 	} `json:"keys"`
-	Catalog []catalogTitle `json:"catalog"`
+	Catalog []catalogEntry `json:"catalog"`
 	Cases   []struct {
 		Query string   `json:"query"`
 		Want  []string `json:"want"`
@@ -4009,12 +3996,12 @@ func pastEnd(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// The search box's hints come from one catalog file, as a static site's search
-// index does: every title the viewer may see — local and discovered — once,
-// with its normalized key, ordered by key. It is read in one catalog read,
-// never runs anything, and is never stored by the browser (it holds the
-// account's private titles).
-func TestSearchCatalogServesEveryTitleOnce(t *testing.T) {
+// The launcher's actions come from one catalog file, as a static site's search
+// index does: every action the viewer may see — local and discovered — with
+// its normalized key, its id (none for a discovered one) and its address,
+// ordered by key. It is read in one catalog read, never runs anything, and is
+// never stored by the browser (it holds the account's private titles).
+func TestSearchCatalogServesEveryAction(t *testing.T) {
 	k := newHomeKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
@@ -4029,7 +4016,7 @@ func TestSearchCatalogServesEveryTitleOnce(t *testing.T) {
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	var got []catalogTitle
+	var got []catalogEntry
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
@@ -4045,12 +4032,18 @@ func TestSearchCatalogServesEveryTitleOnce(t *testing.T) {
 		if e.K != hintKey(e.T) {
 			t.Errorf("key of %q = %q", e.T, e.K)
 		}
+		if e.Ref == "" {
+			t.Errorf("%q carries no address", e.T)
+		}
+		if e.K == "weather forecast" && e.ID != "" {
+			t.Errorf("a discovered action has no local id, got %q", e.ID)
+		}
 	}
 	if keys["weather forecast"] != 1 {
-		t.Error("a discovered action's title belongs in the catalog")
+		t.Error("a discovered action belongs in the catalog")
 	}
-	if keys["summarize a page"] != 1 || keys["greet 0"] != 1 || len(got) != 14 {
-		t.Errorf("each title once, all 14 of them: %+v", got)
+	if keys["summarize a page"] != 2 || keys["greet 0"] != 1 || len(got) != 15 {
+		t.Errorf("every action, two sharing a title, all 15 of them: %+v", got)
 	}
 }
 

@@ -11,11 +11,6 @@
 
 * { box-sizing: border-box; }
 
-/* Shell layout constant: the sticky topbar's height, which sticky page chrome
-   (the crumb) offsets against. The topbar is present at every width — below
-   720px it also hosts the nav trigger. */
-:root { --topbar-h: 3.4rem; }
-
 body {
   margin: 0;
   background: var(--bg);
@@ -48,18 +43,20 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-/* Layout: collapsible left sidebar + content */
+/* The frame (grammar §1): the sidebar — brand, conversations, the avatar —
+   and the content. Where the sidebar is hidden (≤720px, or collapsed) a slim
+   topbar carries its trigger and the brand, and the trigger slides the same
+   sidebar in over the page (html[data-menu=open]); the scrim takes it away. */
 .layout { display: flex; min-height: 100vh; }
 
 .sidebar {
-  --sb-w: 208px;
-  width: var(--sb-w); flex: 0 0 var(--sb-w);
+  width: 240px; flex: 0 0 240px;
   position: sticky; top: 0; align-self: flex-start; height: 100vh;
-  display: flex; flex-direction: column; gap: .15rem;
+  display: flex; flex-direction: column; gap: .5rem;
   background: var(--surface); border-right: 1px solid var(--border);
   padding: .75rem .5rem; overflow: hidden;
 }
-.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .1rem .35rem .7rem; }
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .1rem .35rem .2rem; }
 .brand { display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1rem; letter-spacing: .04em; color: var(--text); white-space: nowrap; }
 .brand:hover { text-decoration: none; }
 .brand-logo { height: 1.5rem; width: auto; display: block; flex: 0 0 auto; }
@@ -67,34 +64,26 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    kernel's own handle: it is the second half of one identity, not a badge. */
 .brand .world { font-weight: 400; letter-spacing: .02em; color: var(--text-muted); }
 
-.nav { display: flex; flex-direction: column; gap: .1rem; }
-.nav a {
-  display: flex; align-items: center; gap: .65rem;
-  padding: .4rem .5rem; border-radius: var(--radius);
-  color: var(--text-muted); white-space: nowrap;
-  border: 1px solid transparent;
-}
-.nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
-.nav a[aria-current="page"] { color: var(--text); background: var(--surface-2); border-color: var(--border); font-weight: 600; }
-.nav .ico { width: 1.05rem; height: 1.05rem; flex: 0 0 auto; display: block; }
-.nav .lbl { letter-spacing: .02em; }
+/* The rail: the viewer's conversations, the open one current, an unread one
+   weighted. It scrolls; the avatar below it stays. */
+.rail { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .1rem; }
+.rail > .btn-quiet { align-self: flex-start; margin-bottom: .35rem; }
+.rail > a:not(.btn-quiet) { padding: .35rem .5rem; border-radius: var(--radius); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail > a:not(.btn-quiet):hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.rail > a[aria-current="page"] { background: var(--surface-2); color: var(--text); }
+.rail > a.unread { color: var(--text); font-weight: 700; }
 
-/* Profile menu trigger at sidebar bottom */
-.profile-menu { margin-top: auto; }
+/* The avatar at the foot, and its menu: the account, every destination, the
+   inbox count, Sign out. */
 .profile-trigger {
   display: flex; align-items: center; gap: .65rem; width: 100%;
-  padding: .4rem .5rem; border-radius: var(--radius);
-  background: none; border: none; cursor: pointer;
-  color: var(--text-muted); font-family: inherit; font-size: inherit; white-space: nowrap;
-  border-top: 1px solid var(--border); padding-top: .7rem; margin-top: .3rem;
+  padding: .7rem .5rem .4rem; border: none; border-top: 1px solid var(--border); border-radius: 0;
+  background: none; cursor: pointer; color: var(--text); font-family: inherit; font-size: .8rem; font-weight: 600; white-space: nowrap;
 }
-.profile-trigger:hover { background: var(--surface-2); color: var(--text); }
-.profile-trigger .ico { width: 1.05rem; height: 1.05rem; flex: 0 0 auto; display: block; }
-.profile-trigger .who { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25; min-width: 0; overflow: hidden; }
-.profile-trigger .handle { font-size: .8rem; font-weight: 600; color: var(--text); }
-.profile-trigger .bal { font-size: .72rem; color: var(--text-muted); }
-.nav-sep { border-top: 1px solid var(--border); margin: .45rem .5rem; }
-html[data-sidebar="collapsed"] .profile-trigger .who { display: none; }
+.profile-trigger:hover { background: var(--surface-2); }
+.profile-trigger .handle { overflow: hidden; text-overflow: ellipsis; }
+.menu-item .badge { position: static; margin-left: auto; }
+.menu-item[aria-current="page"] { color: var(--text); font-weight: 600; }
 
 /* Avatar monogram — a neutral token gradient (never a money/status hue). */
 .avatar {
@@ -104,55 +93,21 @@ html[data-sidebar="collapsed"] .profile-trigger .who { display: none; }
   color: var(--text); background: linear-gradient(135deg, var(--surface-2), var(--border-strong));
 }
 .avatar.lg { width: 2.75rem; height: 2.75rem; font-size: 1.1rem; }
-html[data-sidebar="collapsed"] .profile-trigger { justify-content: center; padding-left: 0; padding-right: 0; }
 
-/* Collapsed state: icons only (no flash — stamped server-side via data-sidebar). */
-html[data-sidebar="collapsed"] .sidebar { --sb-w: 52px; }
-html[data-sidebar="collapsed"] .sidebar .lbl { display: none; }
-html[data-sidebar="collapsed"] .nav a { justify-content: center; padding-left: 0; padding-right: 0; }
-
-html[data-sidebar="collapsed"] .sidebar-top { position: relative; min-height: 2rem; justify-content: center; padding: .1rem 0 .7rem; }
-html[data-sidebar="collapsed"] .sidebar-top .brand,
-html[data-sidebar="collapsed"] .sidebar-top .sidebar-collapse {
-  position: absolute; top: .1rem; left: 0; right: 0; bottom: .7rem; margin: 0;
-  display: flex; align-items: center; justify-content: center; gap: 0;
-  transition: opacity .12s ease;
-}
-html[data-sidebar="collapsed"] .sidebar-top .sidebar-collapse { opacity: 0; pointer-events: none; }
-html[data-sidebar="collapsed"] .sidebar-top:hover .brand,
-html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .brand { opacity: 0; pointer-events: none; }
-html[data-sidebar="collapsed"] .sidebar-top:hover .sidebar-collapse,
-html[data-sidebar="collapsed"] .sidebar-top:has(.sidebar-collapse :focus) .sidebar-collapse { opacity: 1; pointer-events: auto; }
+.topbar { display: none; position: sticky; top: 0; z-index: 6; align-items: center; gap: .6rem; height: 3.2rem; padding: 0 .75rem; background: var(--bg); border-bottom: 1px solid var(--border); }
+.menu-trigger { display: flex; align-items: center; color: var(--text-muted); padding: .3rem; border-radius: var(--radius); flex: 0 0 auto; }
+.menu-trigger:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+.menu-trigger .ico { width: 1.35rem; height: 1.35rem; }
+.scrim { display: none; }
+html[data-sidebar="collapsed"] .sidebar { display: none; }
+html[data-sidebar="collapsed"] .topbar { display: flex; }
+html[data-sidebar="collapsed"][data-menu="open"] .sidebar { display: flex; position: fixed; left: 0; top: 0; z-index: 300; }
+html[data-sidebar="collapsed"][data-menu="open"] .scrim { display: block; position: fixed; inset: 0; z-index: 299; background: rgba(0,0,0,.5); }
 
 .main-area { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .content { flex: 1 1 auto; display: flex; flex-direction: column; }
 .container { width: 100%; max-width: 1160px; margin: 0 auto; padding: 1.25rem 1.5rem 4rem; flex: 1 0 auto; }
 .ico-inline { width: 1em; height: 1em; vertical-align: -.15em; display: inline-block; }
-
-/* Topbar: sticky bar with the persistent omnibox (present on every page,
-   requirements §6.2). Below 720px it also carries the nav trigger at its left. */
-.topbar { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 1rem; height: var(--topbar-h); padding: 0 1.5rem; background: var(--bg); border-bottom: 1px solid var(--border); }
-/* Search pill — ONE component, in the topbar at every width. Segmented: input
-   fills the left, the equal-height icon segment on the right submits. Focus ring on the pill (the input's own is off). */
-.omni { flex: 1 1 auto; max-width: 560px; margin: 0 auto; display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px; position: relative; }
-.omni:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
-.omni input { flex: 1 1 auto; min-width: 0; border: none; background: none; font: inherit; color: inherit; outline: none; padding: .45rem 1rem; }
-.omni input::placeholder { color: var(--text-muted); }
-.omni .omni-go { flex: 0 0 3.4rem; display: flex; align-items: center; justify-content: center; border: none; border-left: 1px solid var(--border-strong); border-radius: 0 999px 999px 0; padding: 0; background: var(--surface-2); color: var(--text-muted); cursor: pointer; }
-.omni .omni-go:hover { color: var(--text); }
-.omni .omni-go .ico { width: 1.05rem; height: 1.05rem; }
-/* Type-ahead under the pill: shown while focus is anywhere in the form (a
-   clicked suggestion takes focus inside it, so the panel stays until the click
-   lands) and only when the server returned links. The panel matches .menu. */
-.omni-suggest { position: absolute; top: calc(100% + .35rem); left: 0; right: 0; z-index: 200; }
-.omni-suggest:empty, .omni:not(:focus-within) .omni-suggest { display: none; }
-.suggest-list { display: flex; flex-direction: column; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
-.suggest-list .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
-/* A command among the hints (§6.1): chrome, marked by the CLI's prompt glyph
-   and by weight; a title row is a plain menu-item and never carries either. */
-.suggest-list .command { font-weight: 600; }
-.suggest-list .command .mark { font-family: var(--font-mono); color: var(--text-muted); }
-.suggest-list .command .muted { font-weight: 400; }
 
 /* Price is money DISPLAY (mono, tabular), not a control — never the accent
    (accent = money movement only). The `$` prefix comes from the money helper. */
@@ -189,32 +144,6 @@ td.money, th.money { text-align: right; }
 .menu-item .ico { width: 1rem; height: 1rem; flex: 0 0 auto; }
 .menu-caption { padding: .3rem .55rem; font-size: .82rem; color: var(--text-muted); white-space: nowrap; }
 .menu-divider { height: 1px; background: var(--border); margin: .2rem 0; }
-
-/* Mobile nav: the sidebar as a left panel. The trigger sits top-left in the
-   topbar; the panel is a <dialog> rather than a .menu popover so showModal()
-   supplies the focus trap, Escape and top-layer stacking. Hidden on desktop,
-   where the sidebar renders the same model in place. */
-.menu-trigger {
-  display: none; align-items: center; color: var(--text-muted);
-  padding: .3rem; border-radius: var(--radius); flex: 0 0 auto;
-}
-.menu-trigger:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
-.menu-trigger .ico { width: 1.35rem; height: 1.35rem; }
-dialog.drawer {
-  width: var(--sb-w-wide, 17rem); max-width: 85%; height: 100%; max-height: 100%;
-  margin: 0 auto 0 0; padding: 0; border: 0; border-right: 1px solid var(--border);
-  border-radius: 0; background: var(--surface); color: var(--text);
-}
-dialog.drawer::backdrop { background: rgba(0,0,0,.5); }
-dialog.drawer .modal-head .brand { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
-/* No-JS: ?menu=open server-renders it [open] and it falls back to an in-flow
-   card, so the whole nav stays reachable without JavaScript (§6.1). */
-dialog.drawer[open]:not(:modal) {
-  display: block; position: static; height: auto; width: 100%; max-width: 100%;
-  margin: 0; border-right: 0; border-top: 1px solid var(--border);
-}
-.drawer-body { padding: .4rem; overflow-y: auto; }
-.drawer-body .menu-item[aria-current="page"] { color: var(--text); font-weight: 600; }
 
 /* Inbox badge */
 .ico-badge-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
@@ -320,15 +249,13 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .help-grid { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0; }
 .help-grid kbd { font-family: var(--font-mono); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: .05rem .35rem; font-size: .85rem; }
 
-/* Narrow screens: the sidebar becomes a left panel behind a top-left trigger */
+/* Narrow screens: the sidebar is hidden behind the topbar's trigger, and the
+   trigger slides it in over the page. */
 @media (max-width: 720px) {
   .sidebar { display: none; }
-  /* The sidebar becomes a left panel behind a top-left trigger. The nav is
-     unbounded (apps register entries at runtime), so no fixed-size bar could
-     cover it, and any subset that fits would be an arbitrary one the user
-     cannot learn. The topbar stays: it hosts the trigger and the omnibox. */
-  .menu-trigger { display: flex; }
-  .topbar { padding: 0 .75rem; gap: .6rem; }
+  .topbar { display: flex; }
+  html[data-menu="open"] .sidebar { display: flex; position: fixed; left: 0; top: 0; z-index: 300; max-width: 85%; }
+  html[data-menu="open"] .scrim { display: block; position: fixed; inset: 0; z-index: 299; background: rgba(0,0,0,.5); }
   .media.tile { width: 40px; flex-basis: 40px; }
   .container { padding-left: 1rem; padding-right: 1rem; }
 
@@ -385,10 +312,13 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
    away"): self-gating on short pages, and it is the page's own header, not
    floating chrome. Sits below the sticky topbar (top 0 on mobile, §media). */
 .crumb {
-  position: sticky; top: var(--topbar-h); z-index: 5;
+  position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: .6rem;
   background: var(--bg); padding: .55rem 0; margin: 0 0 .6rem;
 }
+/* Under the topbar (a narrow screen, or the sidebar collapsed). */
+html[data-sidebar="collapsed"] .crumb { top: 3.2rem; }
+@media (max-width: 720px) { .crumb { top: 3.2rem; } }
 
 
 /* Cards & grids */
@@ -463,7 +393,7 @@ h3 { margin: 1.4rem 0 .35rem; font-size: 1rem; }
 .action-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .action-head h1 { margin: 0; }
 /* The detail/hero stat strip is a facts line, left-aligned (cards center theirs). */
-.hero .stat-strip { justify-content: flex-start; }
+.hero .stat-strip, .panel .stat-strip { justify-content: flex-start; }
 .hero h1 { font-size: 1.25rem; }
 
 /* owner/name — owner segment emphasized, confusable-distinct, never accent (R7) */
@@ -686,8 +616,6 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 
 /* you-row — a link/setting row on the settings page. */
 .you-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.2rem; }
-.you-row-form { margin: 0; }
-.you-row-form .you-row { width: 100%; cursor: pointer; }
 .you-list { display: flex; flex-direction: column; gap: .6rem; }
 .you-row label, .you-row .detail form { margin: 0; }
 .you-row .detail select { font-size: .8rem; padding: .25rem .35rem; }
@@ -701,9 +629,26 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: .82rem; color: var(--text-muted); }
 
 
-/* ---- chat app (list page → document-scrolled thread; app-scoped but in core
-   CSS). The page is the scroll container, like every other page: the thread is
-   a message stack in the flow, the post form sits at the document's end. ---- */
+/* A room (grammar §5.5): the conversation, and beside it the panel an action
+   opens into. The page is the scroll container; the panel is sticky and
+   scrolls on its own, and takes no column while empty. On a narrow screen an
+   open panel covers the conversation. */
+.room { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 1.5rem; align-items: start; }
+.room:has(> .panel:empty) { grid-template-columns: minmax(0, 1fr); }
+.conversation { min-width: 0; min-height: calc(100vh - 5.25rem); display: flex; flex-direction: column; }
+.conversation > .msgs { flex: 1 0 auto; justify-content: flex-end; }
+form[data-composer] { position: sticky; bottom: 1rem; }
+.panel { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.panel:empty { display: none; }
+/* The launcher: the composer's `/`, a menu of matches opening above it. */
+.launcher { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: .35rem; z-index: 200; display: flex; flex-direction: column; gap: .3rem; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.launcher[hidden] { display: none; }
+.launcher nav { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
+.launcher .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 720px) {
+  .room { grid-template-columns: minmax(0, 1fr); }
+  .panel:not(:empty) { position: fixed; inset: 0; z-index: 250; max-height: none; border-radius: 0; }
+}
 .msgs { display: flex; flex-direction: column; gap: 1rem; margin: .4rem 0 1rem; }
 .msg { display: flex; gap: .6rem; }
 .msg .avatar { width: 1.9rem; height: 1.9rem; font-size: .78rem; }

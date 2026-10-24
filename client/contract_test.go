@@ -751,7 +751,7 @@ func signIn(kk *k, address, password string) (client.Tokens, error) {
 
 // requests are the client's types that only ever go to the kernel.
 var requests = map[string]bool{"CreateActionInput": true, "UpdateActionInput": true, "UpdateMeInput": true,
-	"RunRequest": true, "CreateTaskInput": true}
+	"RunRequest": true, "CreateTaskInput": true, "Message": true, "ToolCall": true}
 
 // unreached are the types this rig cannot fill, and why. Each is a gap in the
 // contract, not a pass: keep it short.

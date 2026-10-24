@@ -11,8 +11,8 @@ on is `docs/apps.md`.
 |---|---|
 | `store.go` | SQLite: rooms, members, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one. No kernel knowledge; every rule one transaction. |
 | `deliver.go` | Routing by address (the first word of a post), and the delivery of a post as kernel tasks. |
-| `chat.go` | The app: lifecycle, the five actions, the kernel's dispatches, joining the installation's principals, the landing, the browser routes, the badge, the heartbeat watcher. |
-| `templates/` | `rooms.html` (rooms, New room), `room.html` (a room), `_entries.html` (an entry, the fragments). |
+| `chat.go` | The app: lifecycle, the five actions, the kernel's dispatches, joining the installation's principals, the workspace seam (the rail, the landing, a room's context), the browser routes, the heartbeat watcher. |
+| `templates/` | `_rail.html` (the sidebar's conversations, New conversation), `room.html` (a room: the conversation and the action panel), `landing.html` (no conversation yet), `_entries.html` (an entry, who is answering, the fragments). |
 
 ## The actions, under `chat@<kernel>/`
 
@@ -64,7 +64,7 @@ actions.
 ## Landing
 
 `/chat` is the viewer's conversation with `assistant@<kernel>`, the agent the
-agents app makes and runs; the rooms are at `/chat/rooms`.
+agents app makes and runs; the rooms are the sidebar's rail.
 
 ## Upgrade
 
