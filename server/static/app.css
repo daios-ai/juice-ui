@@ -10,6 +10,9 @@
 */
 
 * { box-sizing: border-box; }
+/* Scrollbars: thin, a thumb in the border's ink on no track, in every theme
+   and every scroller — the page, the sidebar, the panel, the launcher's list. */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 
 body {
   margin: 0;
@@ -250,7 +253,7 @@ dialog.modal-form[open]:not(:modal) {
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
 .modal-head h2 { margin: 0; font-size: var(--font-size-lg); letter-spacing: .02em; }
 .modal-body { padding: var(--space-4); max-height: 70vh; overflow: auto; }
-.modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: var(--font-size-xl); line-height: 1; padding: 0 var(--space-1); border-radius: var(--radius-s); text-decoration: none; }
+.modal-close { margin-left: auto; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: var(--font-size-xl); line-height: 1; padding: 0 var(--space-1); border-radius: var(--radius-s); text-decoration: none; }
 .modal-close:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 
 /* Help overlay (keyboard layer) */
@@ -460,7 +463,7 @@ button { font-family: inherit; cursor: pointer; }
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: var(--space-1); }
 /* A checkbox choice under a field (a nullable field's explicit null). */
-label.check { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: 400; margin: var(--space-1) 0 0; }
+label.check { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 400; margin: var(--space-1) 0 0; }
 .field { margin-bottom: var(--space-4); }
 /* Switch (§5.4): a binary view or setting — its label, then a track with a
    knob; on, the track fills with ink (never the accent). The JSON switch sits
@@ -509,6 +512,23 @@ textarea {
   min-height: var(--control-h);
 }
 textarea, .field .box { padding-block: calc((var(--control-h) - 1.5em - 2px) / 2); }
+/* A checkbox (§5.4): a square at the icon size, in an input's border and
+   ground; ticked, it fills with ink and shows the set's tick in the ground —
+   the switch's language, never the accent. */
+input[type=checkbox] {
+  appearance: none; flex: 0 0 auto; display: inline-grid; place-content: center; vertical-align: middle;
+  width: var(--icon-md); height: var(--icon-md); margin: 0;
+  border: 1px solid var(--border-strong); border-radius: calc(var(--radius-s) / 2);
+  background: var(--bg); cursor: pointer;
+}
+input[type=checkbox]::before {
+  content: ""; width: var(--icon-sm); height: var(--icon-sm); background: var(--bg); transform: scale(0); transition: transform .1s;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+input[type=checkbox]:checked { background: var(--text); border-color: var(--text); }
+input[type=checkbox]:checked::before { transform: scale(1); }
+input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .error-text { color: var(--danger); font-size: var(--font-size-sm); margin-top: var(--space-1); }
 
 /* Status pills (financial trust signal). Square, bordered, text-only fills. */

@@ -1286,12 +1286,16 @@ both MUST keep planning apart from spending:
   function serves both, and the panel renders Discover's results, its banner
   and its sort switch through the same partial. It runs `sys/lookup` pinned to
   the quote the launcher's row named, which is the person's authorization of
-  that price; a priced lookup MUST NOT run without a pin, here or on
-  Discover's GET, and falls back to the catalog match with the reason stated.
+  that price; without a pin it runs only when a read of it confirms it free —
+  a lookup priced, absent or whose price cannot be read MUST NOT run unpinned,
+  here or on Discover's GET, since the kernel charges an unpinned run its
+  current price — and the search falls back to the catalog match with the
+  reason stated.
   A pinned run the kernel refuses because the price moved is said as such —
   not charged, the new price named — with one money button,
   `Search "…" (N)`, pinned to the new quote; it is never shown as the
-  fallback. A search is **one ranked page** (at most 20) and has no pager.
+  fallback, and the launcher reads the catalog file afresh at its next use,
+  so its row names the new price and the next search is not refused again. A search is **one ranked page** (at most 20) and has no pager.
   Each row is numbered, by the one sort rule, under every order, so the
   panel's sort switch arranges the rows in the browser and never searches
   again; the switch's links are Discover's, the path without script. The
@@ -2263,7 +2267,10 @@ the assistant, else the newest room, else an empty page beside the rail.
   action over the results, which are held; its head is then `← Results`,
   which gives them back in the order and at the scroll position they had,
   without searching again. × closes the panel and drops what it held; nothing
-  of the conversation or the draft changes. On a narrow screen it covers the
+  of the conversation or the draft changes. A panel that cannot be filled — an
+  action that cannot be opened, a search that fails — keeps its head, the way
+  back to the results it was opened over and ×, over the reason, so results
+  paid for are never lost to a failure. On a narrow screen it covers the
   conversation. The action page remains, built from the same partials and the
   same loader.
 * **Fill from chat** (`POST /actions/{id}/fill`) prepares the panel's fields
@@ -2626,8 +2633,9 @@ Every production `.go` file has a `_test.go` file with independent tests.
   panel's fields from the room's conversation, runs nothing but the planner,
   leaves an unstated argument blank, and states a refusal in its own words;
 * the search from a conversation: Discover's search and the panel's are one
-  function; a priced lookup never runs unpinned, a GET never spends, and the
-  pinned one runs once at the quote shown; changed terms ask again at the new
+  function; only a lookup a read confirms free runs unpinned — priced or
+  unreadable, never — a GET never spends, and the pinned one runs once at the
+  quote shown; a panel that fails keeps the way back and the close; changed terms ask again at the new
   price and are never the fallback; a transport failure is an error, not an
   empty result; the catalog file's search terms, null for a lookup absent,
   switched off or priced without a pin; every row ranked under every order by

@@ -742,6 +742,14 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// A search refused because its price moved names the new price in the panel.
+// The launcher's terms are then stale, so the catalog file is read afresh at
+// the next `/`: its row names what a search costs now, and the next search is
+// pinned to it rather than refused again.
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  if (e.target.id === "panel" && e.target.querySelector('input[name="lookup_quote_hash"]')) catalog = null;
+});
+
 // A success from a room is the composer's draft (requirements §6.7): the
 // result, after a blank line when something was typed, and the panel is gone.
 // Sending is the person's; the receipt stays in Transactions. A failure,

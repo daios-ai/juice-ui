@@ -37,7 +37,7 @@ Three laws underpin everything:
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; rows `.menu-item`, matched in the browser; Enter submits the search (§5.9) |
-| **Panel** | `.panel` (`_action_panel`, `_search_panel`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head`, the run form; opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). Empty, it takes no column; on a phone it covers the conversation |
+| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head`, the run form; opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. Empty, it takes no column; on a phone it covers the conversation |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
@@ -118,6 +118,8 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   theme does not ship.
 - **Money signals** are color **+ glyph on text/borders only, never fills.**
   Accent is reserved for money movement (§5) and focus — never decoration.
+- **Scrollbars** are thin, a `--border-strong` thumb on no track, in every
+  scroller (`scrollbar-width`, `scrollbar-color`, the standard properties).
 
 ---
 
@@ -327,6 +329,10 @@ separates it from the content above, and nothing else does (§4).
 - **Inputs / selects / textarea:** full width, `--control-h` tall,
   `--border-strong`, `--radius-s`, `--bg`. Inputs and buttons on the same row
   align in height because they share one height token.
+- **Checkbox:** the browser's box replaced by one square at `--icon-md` in an
+  input's border and ground; ticked, it fills with ink (`--text`) and shows
+  the set's `#check` tick in the ground — the switch's language, never the
+  accent. Beside its words in `label.check`.
 - **Textarea:** starts at **exactly one line** (`min-height: var(--control-h)`),
   **autosizes** to content up to 10 lines then scrolls; mono; `rows="1"`. Never
   a fixed multi-line box.

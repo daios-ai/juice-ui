@@ -805,16 +805,16 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.FormValue("q"))
-	if q == "" {
-		_ = s.render.Fragment(w, http.StatusUnprocessableEntity, "_error", "Type what to search for.")
-		return
-	}
 	var view discoverView
 	err := s.sessions.Do(ctx, func(tok string) (e error) {
+		if q == "" {
+			return errors.New("type what to search for")
+		}
 		view, e = s.discover(ctx, tok, s.granted(r), q, sortRelevance, r.FormValue("lookup_quote_hash"))
 		return e
 	})
-	if s.handleErrFragment(w, r, err) {
+	if err != nil {
+		s.panelError(w, r, err, panelErrorView{Title: "Search “" + q + "”"})
 		return
 	}
 	forgetMe(r) // a pinned lookup moved the viewer's money
@@ -833,16 +833,20 @@ func (s *Server) granted(r *http.Request) map[string]bool {
 
 // discover is the search Discover and the panel share: sys/lookup for the
 // query, run pinned to the quote the person was shown, or unpinned only when
-// free — a priced lookup never runs without a pin, so a page load spends
-// nothing (§8.2) — else the catalog matched by the launcher's rules. Each hit
+// a read of it confirms it free — a lookup priced, or whose price cannot be
+// read, never runs without a pin, so a page load spends nothing (§8.2) — else
+// the catalog matched by the launcher's rules. Each hit
 // is read to decide whether it is discovered (§6.2), and the rows are ranked
 // under every order and arranged under the one asked for. The error is the
 // transport's; a lookup that ran and did not succeed is a state of the view.
 func (s *Server) discover(ctx context.Context, tok string, granted map[string]bool, q, order, quoteHash string) (discoverView, error) {
 	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, order)}
-	priced := quoteHash == "" && s.nativeIsPriced(ctx, tok, s.native(lookupNative))
+	declined := ""
+	if quoteHash == "" {
+		declined = s.unpinnedRefusal(ctx, tok, s.native(lookupNative))
+	}
 	var out Outcome
-	if !priced {
+	if declined == "" {
 		o, e := s.caller.Run(ctx, tok, s.native(lookupNative), mustArgs(map[string]any{"query": q, "limit": 20}), quoteHash)
 		if e != nil {
 			return view, e
@@ -865,8 +869,8 @@ func (s *Server) discover(ctx context.Context, tok string, granted map[string]bo
 		// kernel said nothing.
 		view.LookupAvailable = false
 		view.Reason = out.Reason()
-		if priced {
-			view.Reason = "Semantic search is priced on this kernel."
+		if declined != "" {
+			view.Reason = declined
 		}
 		cat, e := s.client.ListActions(ctx, tok, "")
 		if e != nil {
@@ -1218,15 +1222,34 @@ func (s *Server) renderPanel(w http.ResponseWriter, r *http.Request, id func(tok
 		}
 		return nil
 	})
+	if err != nil {
+		s.panelError(w, r, err, panelErrorView{Back: r.URL.Query().Get("back") == "1"})
+		return
+	}
+	_ = s.render.Fragment(w, http.StatusOK, "_action_panel", view)
+}
+
+// panelErrorView is a panel that could not be filled: the way back when it
+// was opened over a search's results, a title where there is one, and why.
+type panelErrorView struct {
+	Back    bool
+	Title   string
+	Message string
+}
+
+// panelError answers a panel that could not be filled with the panel's own
+// head — the way back to the results it was opened over, and the close — over
+// the reason, so the panel is never left without a way out and results paid
+// for are never lost to a failure (§6.7). A lapsed session signs out as
+// anywhere else.
+func (s *Server) panelError(w http.ResponseWriter, r *http.Request, err error, v panelErrorView) {
 	if isAuthErr(err) {
 		s.handleErrFragment(w, r, err)
 		return
 	}
-	if err != nil {
-		_ = s.render.Fragment(w, http.StatusOK, "_error", refusal(err))
-		return
-	}
-	_ = s.render.Fragment(w, http.StatusOK, "_action_panel", view)
+	s.log.Warn("panel failed", "request_id", client.RequestIDFromContext(r.Context()), "path", r.URL.Path, "err", err)
+	v.Message = refusal(err)
+	_ = s.render.Fragment(w, http.StatusOK, "_panel_error", v)
 }
 
 // getDiscovered opens an action this kernel has only heard of through gossip.
@@ -2966,12 +2989,21 @@ const (
 // native is the address of one of this kernel's natives.
 func (s *Server) native(name string) string { return s.identity.Address(superuserHandle) + "/" + name }
 
-// nativeIsPriced reports that running this native would cost the caller money.
-// A native that cannot be read at all is not reported as priced: whether it
-// works is discovered by running it and reporting what happened.
-func (s *Server) nativeIsPriced(ctx context.Context, token, ref string) bool {
+// unpinnedRefusal is why this native may not run without a pin, or "" when a
+// read of it confirms it free. Only a confirmed price of zero runs unpinned:
+// the kernel charges an unpinned run its current price, so a native that is
+// priced, absent or unreadable would otherwise spend what nobody was shown.
+func (s *Server) unpinnedRefusal(ctx context.Context, token, ref string) string {
 	a, ok, err := s.client.ResolveRef(ctx, token, ref)
-	return err == nil && ok && a.Price > 0
+	switch {
+	case err != nil:
+		return "Its price could not be read."
+	case !ok:
+		return "This kernel offers no semantic search."
+	case a.Price > 0:
+		return "Semantic search is priced on this kernel."
+	}
+	return ""
 }
 
 // planner is the kernel's planner as a page offers it — its price and the

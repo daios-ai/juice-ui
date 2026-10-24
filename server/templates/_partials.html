@@ -105,6 +105,17 @@
 <div class="modal-body">{{template "_search_results" .}}</div>
 {{end}}
 
+{{/* _panel_error — a panel that could not be filled: its head — the way back
+     to the results it was opened over, or its title, and the close — over the
+     reason (requirements §6.7). Takes a panelErrorView. */}}
+{{define "_panel_error"}}
+<div class="modal-head">
+  {{if .Back}}<button type="button" class="btn-quiet" data-panel-back>← Results</button>{{else if .Title}}<h2>{{.Title}}</h2>{{end}}
+  <button type="button" class="modal-close" data-panel-close aria-label="Close">×</button>
+</div>
+<div class="modal-body">{{template "_error" .Message}}</div>
+{{end}}
+
 {{/* _figures — THE headline money figures (§5.6), one block each on every
      page that leads with money: the label, the mono amount coloured by its
      signal, and a link to the records behind it when there are any. Build with

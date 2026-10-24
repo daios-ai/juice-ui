@@ -3084,7 +3084,13 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") == "sys@testnet/lookup" {
+			w.Write([]byte(`[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":0}]`))
+			return
+		}
+		w.Write([]byte(`[]`))
+	})
 	// sys/lookup: one unresolved discovery hit and one RESOLVED proxy. Both
 	// carry a kernel-qualified ref and an observed_at; only the second has a
 	// local row.
@@ -4425,10 +4431,11 @@ func TestBalanceWatch(t *testing.T) {
 // the kernel does.
 type searchKernel struct {
 	*httptest.Server
-	price    int64
-	quote    string
-	runs     []string
-	failList bool
+	price     int64
+	quote     string
+	runs      []string
+	failList  bool
+	failTerms bool // the lookup's own row cannot be read
 }
 
 func newSearchKernel(t *testing.T) *searchKernel {
@@ -4465,6 +4472,10 @@ func newSearchKernel(t *testing.T) *searchKernel {
 		}
 		switch r.URL.Query().Get("ref") {
 		case "sys@testnet/lookup":
+			if k.failTerms {
+				http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
+				return
+			}
 			fmt.Fprintf(w, `[{"id":"L","action":"sys@testnet/lookup","name":"lookup","kind":"native","active":true,"price":%d,"quote_hash":%q}]`, k.price, k.quote)
 		case "tom@BRAVOKEY/hola":
 			w.Write([]byte("[" + proxy + "]"))
@@ -4556,13 +4567,45 @@ func TestSearchFromTheComposerAnswersThePanel(t *testing.T) {
 		t.Errorf("an unpinned priced search falls back to the catalog and says why: %s", panel)
 	}
 
-	if code, body := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"  "}}); code != http.StatusUnprocessableEntity || !strings.Contains(body, "banner-error") {
-		t.Errorf("an empty query is refused: %d %s", code, body)
+	// A failed search is answered in the panel's own head, so it can be
+	// closed (htmx swaps a 2xx answer alone).
+	if code, body := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"  "}}); code != 200 || !strings.Contains(body, "Type what to search for.") || !strings.Contains(body, "data-panel-close") {
+		t.Errorf("an empty query is refused in the panel: %d %s", code, body)
 	}
 
 	k.failList = true
-	if _, body := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}}); !strings.Contains(body, "banner-error") || strings.Contains(body, "No matches") {
-		t.Errorf("a kernel that cannot be read is an error, not an empty result: %s", body)
+	if _, body := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}}); !strings.Contains(body, "banner-error") || strings.Contains(body, "No matches") ||
+		!strings.Contains(body, "<h2>Search “hello”</h2>") || !strings.Contains(body, "data-panel-close") {
+		t.Errorf("a kernel that cannot be read is an error, not an empty result, and the panel still closes: %s", body)
+	}
+}
+
+// Only a lookup a read confirms free runs without a pin: one whose price
+// cannot be read is never run unpinned — the kernel would charge it whatever
+// it costs — on Discover's GET or from the panel, and the search falls back
+// to the catalog saying why. A pinned run is the person's authorization and
+// goes ahead.
+func TestUnreadableLookupPriceNeverRunsUnpinned(t *testing.T) {
+	k := newSearchKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse")
+
+	k.failTerms = true
+	body := getBody(t, cl, srv.URL+"/browse?q=hello")
+	_, panel := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}})
+	if len(k.runs) != 0 {
+		t.Fatalf("an unreadable price ran the lookup unpinned: %v", k.runs)
+	}
+	for _, got := range []string{body, panel} {
+		if !strings.Contains(got, "Its price could not be read.") || !strings.Contains(got, `data-href="/actions/A1"`) {
+			t.Errorf("the search falls back and says why: %s", got)
+		}
+	}
+	postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}, "lookup_quote_hash": {"LQ"}})
+	if len(k.runs) != 1 {
+		t.Errorf("a pinned search runs once: %v", k.runs)
 	}
 }
 
@@ -4613,8 +4656,14 @@ func TestDiscoveredOpensInThePanel(t *testing.T) {
 	if plain := getBody(t, cl, srv.URL+"/actions/A1/panel?room=r1"); strings.Contains(plain, "data-panel-back") {
 		t.Error("a panel opened from the launcher has no results to return to")
 	}
-	if missing := getBody(t, cl, srv.URL+"/discovered/panel?ref="+url.QueryEscape("tom@BRAVOKEY/gone")); !strings.Contains(missing, "That action could not be resolved from its kernel.") {
-		t.Errorf("an unresolvable ref says so: %s", missing)
+	missing := getBody(t, cl, srv.URL+"/discovered/panel?ref="+url.QueryEscape("tom@BRAVOKEY/gone")+"&back=1")
+	for _, want := range []string{"That action could not be resolved from its kernel.", "data-panel-back", "data-panel-close"} {
+		if !strings.Contains(missing, want) {
+			t.Errorf("a failed open over results keeps the way back and the close, lacks %s: %s", want, missing)
+		}
+	}
+	if gone := getBody(t, cl, srv.URL+"/actions/NOPE/panel"); strings.Contains(gone, "data-panel-back") || !strings.Contains(gone, "data-panel-close") {
+		t.Errorf("a failed open from the launcher closes, with nothing to go back to: %s", gone)
 	}
 }
 
