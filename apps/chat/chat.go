@@ -4,13 +4,17 @@
 // A post is a run of chat's action msg/post as the member, who the kernel
 // identifies by the chat key it connected (delegated_bearer, injected on
 // apps.CallerKeyHeader). While that call runs chat creates one kernel task
-// per recipient — the members the message names with @, or every other
-// member when it names nobody — carrying what the room said since that
-// member's previous delivery; the kernel shows it to the member once the
-// member has approved chat (U52). Completing the task is the answer: its
-// onward, chat's reply action, appends the answer to the room. Rooms,
-// membership and the key life cycle are the store's; the kernel holds no
-// chat state beyond the tasks in flight.
+// per recipient — the member whose address is the message's first word, or
+// every other member — carrying what the room said since that member's
+// previous delivery; the kernel shows it to the member once the member has
+// approved chat (U52). Completing the task is the answer: its onward, chat's
+// reply action, settles it in the room. Rooms, membership and the key life
+// cycle are the store's; the kernel holds no chat state beyond the tasks in
+// flight.
+//
+// The UI joins the principals of its installation itself: the person signed
+// in, and every agent with a home under $JUICE_HOME/agents, with that agent's
+// own session. A session lands on its conversation with the assistant.
 //
 // Chat is itself a kernel user, chat@<kernel>, provisioned by the seam's
 // ServiceAccount; its actions are reconciled at every start. State in
@@ -29,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -39,6 +44,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
@@ -49,6 +55,10 @@ var tmplFS embed.FS
 
 // chatHandle is chat's own account; its address is Deps.Address(chatHandle).
 const chatHandle = "chat"
+
+// assistantHandle is the agent a session lands in conversation with; the
+// agents app makes it.
+const assistantHandle = "assistant"
 
 // The actions, by name under chat@<kernel>/.
 const (
@@ -69,11 +79,14 @@ const (
 const chatIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`)
 
 // usage is what chat/index answers: the one place a member learns chat.
-const usage = "Chat rooms for people and agents. To post, run chat@KERNEL/msg/post with {thread_id: the room, message: text or a JSON document}. " +
-	"Name members with @, as in \"@critic, which is best?\": only the members you name receive the post; a post naming nobody reaches every other member. " +
-	"You receive a post as a task carrying what the room said since you last heard from it; your answer to that task appears in the room and notifies nobody. " +
-	"To ask a member something, post naming it. While you hold a task you may post once; then answer the task. " +
-	"Joining: approve chat@KERNEL, run chat@KERNEL/register, complete its verification task, then connect chat@KERNEL/msg with the key it returned."
+// KERNEL is replaced by this kernel's name.
+const usage = "Chat rooms for people and agents; every member is an address, handle@KERNEL. " +
+	"You receive a post as a task carrying what the room said since your previous task. Answer by completing the task: your answer appears in the room. " +
+	"To ask another member something, run chat@KERNEL/msg/post with {thread_id: the room, message: your text} and write that member's address as the first word, " +
+	"as in \"critic@KERNEL, which is best?\"; only that member receives it. A post that starts with no address reaches every other member. " +
+	"While you hold tasks you may post once per task; then complete them. " +
+	"Members of this installation are joined by its UI. A member elsewhere joins by approving chat@KERNEL as a requester, running chat@KERNEL/register with its own address, " +
+	"completing the verification task, and connecting chat@KERNEL/msg with the key returned."
 
 // Chat is the app.
 type Chat struct {
@@ -107,8 +120,8 @@ func (c *Chat) Templates() fs.FS { return tmplFS }
 
 func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	c.deps = d
-	mux.HandleFunc("GET /chat", d.RequireAuth(c.getIndex))
-	mux.HandleFunc("POST /chat/connect", d.RequireAuth(c.postConnect))
+	mux.HandleFunc("GET /chat", d.RequireAuth(c.getLanding))
+	mux.HandleFunc("GET /chat/rooms", d.RequireAuth(c.getRooms))
 	mux.HandleFunc("POST /chat/rooms", d.RequireAuth(c.postCreateRoom))
 	mux.HandleFunc("GET /chat/room/{id}", d.RequireAuth(c.getRoom))
 	mux.HandleFunc("GET /chat/room/{id}/entries", d.RequireAuth(c.getEntries))
@@ -123,7 +136,8 @@ func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 }
 
 // Start provisions the account and secret once, opens the store, and signs
-// in as chat in the background, reconciling the actions when it does.
+// in as chat in the background; once signed in it reconciles the actions and
+// joins the installation's agents.
 func (c *Chat) Start(ctx context.Context) error {
 	if raw, err := c.deps.LoadAppState(c.Slug()); err == nil && len(raw) > 0 {
 		_ = json.Unmarshal(raw, &c.st)
@@ -146,7 +160,17 @@ func (c *Chat) Start(ctx context.Context) error {
 	}
 	c.store = store
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, c.st.Password)
-	return c.sa.Start(ctx, c.ensureActions)
+	return c.sa.Start(ctx, c.setup)
+}
+
+// setup runs each time chat signs in: the actions first, since joining
+// connects a key to them, then every local agent.
+func (c *Chat) setup(ctx context.Context) error {
+	if err := c.ensureActions(ctx); err != nil {
+		return err
+	}
+	c.joinAgents(ctx)
+	return nil
 }
 
 func (c *Chat) Stop(ctx context.Context) error {
@@ -202,7 +226,7 @@ type contract struct {
 
 const (
 	descr      = `"description":`
-	anyMessage = `"message":{` + descr + `"The message: text, or a JSON document. Members are named with @."}`
+	anyMessage = `"message":{` + descr + `"The message: text, or a JSON document. Text whose first word is a member's address reaches that member only."}`
 )
 
 // contracts are the five actions. Every schema is canonical: an object
@@ -222,7 +246,7 @@ func (c *Chat) contracts() []contract {
 		}
 		return json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{` + props + `}` + req + `}`)
 	}
-	return []contract{
+	ks := []contract{
 		{name: indexName, title: "Chat", vis: "public",
 			desc: "What chat is and how a member posts, receives and joins.",
 			in:   obj(""), out: obj(`"usage":{"type":"string",` + descr + `"How to use chat."}`)},
@@ -235,17 +259,25 @@ func (c *Chat) contracts() []contract {
 			in:   obj(`"key_id":{"type":"string",`+descr+`"The registration the task names."}`, "key_id"),
 			out:  obj(`"ok":{"type":"boolean",` + descr + `"True when the key is active."}`)},
 		{name: postName, title: "Post to a chat room", vis: "public", auth: delegated,
-			desc: "Post a message to a room you are a member of. The members named with @ receive it; a message naming nobody reaches every other member. See chat@KERNEL/index.",
+			desc: "Speak in a chat room you are a member of, for instance to ask another member something: begin with that member's address, as in \"critic@KERNEL, which is best?\", and only that member receives it; text that begins otherwise reaches every other member. Use this, not a direct message, to reach a member of the room. A task from chat is answered by completing it, not by posting. See chat@KERNEL/index.",
 			in:   obj(`"thread_id":{"type":"string",`+descr+`"The room."},`+anyMessage, "thread_id", "message"),
 			out:  obj(`"delivered":{"type":"integer",` + descr + `"How many members received it."}`)},
 		{name: replyName, title: "Answer in a chat room", vis: "private", auth: bearer,
-			desc: "The onward of a delivery: completing the task appends the answer to the room.",
+			desc: "The onward of a delivery: completing the task settles the answer in the room.",
 			in: obj(`"thread_id":{"type":"string",`+descr+`"The room."},"member":{"type":"string",`+descr+`"The member answering."},"delivery":{"type":"integer",`+descr+`"Which delivery this answers."},`+
 				`"message":{`+descr+`"What the room said."},"answer":{"type":"string",`+descr+`"The answer, posted to the room."},`+
 				`"status":{"type":"string",`+descr+`"Set when the member could not answer."},"reason":{"type":"string",`+descr+`"Why the member could not answer."}`,
 				"thread_id", "member", "delivery", "message"),
 			out: obj(`"ok":{"type":"boolean",` + descr + `"True when the answer was recorded."}`)},
 	}
+	// Every text names this kernel where it says KERNEL.
+	here := "@" + c.kernelName()
+	for i := range ks {
+		ks[i].desc = strings.ReplaceAll(ks[i].desc, "@KERNEL", here)
+		ks[i].in = json.RawMessage(strings.ReplaceAll(string(ks[i].in), "@KERNEL", here))
+		ks[i].out = json.RawMessage(strings.ReplaceAll(string(ks[i].out), "@KERNEL", here))
+	}
+	return ks
 }
 
 // authRev names the auth configuration pushed: the kernel never reads it
@@ -260,8 +292,8 @@ func (c *Chat) authRev() string {
 
 // ensureActions makes each action exist as its contract says, pointed at
 // this interface, and deletes any other action chat owns. A changed contract
-// is pushed whole and re-enabled, which revokes members' grants; they
-// connect again from the rooms page. Failures accumulate so one does not
+// is pushed whole and re-enabled, which revokes members' grants; the UI
+// joins its principals again (setup, and every chat page). Failures accumulate so one does not
 // starve the rest; the revision is recorded only after a clean pass.
 func (c *Chat) ensureActions(ctx context.Context) error {
 	rev := c.authRev()
@@ -385,7 +417,7 @@ func (c *Chat) kernel(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/" + indexName:
-		writeJSON(w, http.StatusOK, map[string]any{"usage": strings.ReplaceAll(usage, "chat@KERNEL", c.self())})
+		writeJSON(w, http.StatusOK, map[string]any{"usage": strings.ReplaceAll(usage, "@KERNEL", "@"+c.kernelName())})
 	case "/" + registerName:
 		c.serveRegister(w, r)
 	case "/" + validateName:
@@ -498,8 +530,9 @@ func (c *Chat) servePost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"delivered": n})
 }
 
-// serveReply is a delivery's completion: the member no longer holds it, and
-// its answer, or the reason it has none, goes into the room.
+// serveReply is a delivery's completion. The answer is a JSON document when
+// its text is one (an object or an array), else a sentence; a completion
+// with a status and no answer is a failure. The store settles it (rule 4).
 func (c *Chat) serveReply(w http.ResponseWriter, r *http.Request) {
 	if !c.fromKernel(w, r) {
 		return
@@ -517,13 +550,23 @@ func (c *Chat) serveReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body json.RawMessage
+	failed := false
+	answer := ""
+	if in.Answer != nil {
+		answer = strings.TrimSpace(*in.Answer)
+	}
 	switch {
-	case in.Answer != nil && *in.Answer != "":
-		body, _ = json.Marshal(*in.Answer)
+	case answer != "":
+		if (answer[0] == '{' || answer[0] == '[') && json.Valid([]byte(answer)) {
+			body = json.RawMessage(answer)
+		} else {
+			body, _ = json.Marshal(*in.Answer)
+		}
 	case in.Status != "":
 		body, _ = json.Marshal(map[string]string{"status": in.Status, "reason": in.Reason})
+		failed = true
 	}
-	if err := c.store.Answer(in.Member, in.Room, in.Delivery, body); err != nil {
+	if err := c.store.Answer(in.Member, in.Room, in.Delivery, body, failed); err != nil {
 		writeJSON(w, statusFor(err), map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -550,13 +593,155 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// ---- joining ----
+
+// join makes member a chat member with its own session token: approve chat
+// as a requester (so the kernel shows it chat's tasks, U52), mint and
+// activate a key, and connect the key to chat's msg actions (so the kernel
+// injects it on a post). The UI holds the session, so no verification task
+// is needed: that is for members elsewhere, through register.
+func (c *Chat) join(ctx context.Context, token, member string) error {
+	if err := c.deps.Client.DecideRequester(ctx, token, c.self(), "approve"); err != nil {
+		return fmt.Errorf("approve %s: %w", c.self(), err)
+	}
+	raw, keyID, err := c.store.RegisterKey(member)
+	if err != nil {
+		return err
+	}
+	if err := c.store.ActivateKey(keyID); err != nil {
+		return err
+	}
+	if _, err := c.deps.Client.ConnectGrant(ctx, token, c.msgSelector(), "", raw); err != nil {
+		return fmt.Errorf("connect %s: %w", c.msgSelector(), err)
+	}
+	return nil
+}
+
+// joinViewer joins the signed-in person when they hold no chat connector.
+func (c *Chat) joinViewer(r *http.Request) error {
+	return c.deps.Sessions.Do(r.Context(), func(tok string) error {
+		me, err := c.deps.Client.Me(r.Context(), tok)
+		if err != nil || me.HasConnector(c.msgSelector()) {
+			return err
+		}
+		return c.join(r.Context(), tok, me.Address)
+	})
+}
+
+// joinAgent joins a local agent, when it holds no chat connector, with the
+// session in its credential file. The file is read, and refreshed when the
+// kernel refuses its token, under the file's exclusive lock, as every program
+// sharing a login does (ecosystem-standard §4).
+func (c *Chat) joinAgent(ctx context.Context, login string) error {
+	if !c.isLocalAgent(login) {
+		return fmt.Errorf("%s has no home here", login)
+	}
+	f, err := os.OpenFile(filepath.Join(c.root(), "client", "credentials", login+".json"), os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("%s holds no session: %w", login, err)
+	}
+	defer f.Close() // releases the lock
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	cred := map[string]string{}
+	if b, err := io.ReadAll(f); err != nil || json.Unmarshal(b, &cred) != nil {
+		return fmt.Errorf("%s: unreadable credential", login)
+	}
+	me, err := c.deps.Client.Me(ctx, cred["token"])
+	if errors.Is(err, client.ErrUnauthenticated) {
+		toks, rerr := c.deps.Client.Refresh(ctx, cred["refresh_token"])
+		if rerr != nil {
+			return fmt.Errorf("%s: session expired: %w", login, rerr)
+		}
+		cred["token"], cred["refresh_token"] = toks.AccessToken, toks.RefreshToken
+		b, _ := json.Marshal(cred)
+		if err := f.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := f.WriteAt(b, 0); err != nil {
+			return err
+		}
+		me, err = c.deps.Client.Me(ctx, cred["token"])
+	}
+	if err != nil {
+		return err
+	}
+	if me.Address != login {
+		return fmt.Errorf("the session in %s.json is %s", login, me.Address)
+	}
+	if me.HasConnector(c.msgSelector()) {
+		return nil
+	}
+	return c.join(ctx, cred["token"], login)
+}
+
+// joinAgents joins every local agent; one that cannot be joined is logged
+// and joined again at the next sign-in, landing or room change.
+func (c *Chat) joinAgents(ctx context.Context) {
+	for _, login := range c.agents() {
+		if err := c.joinAgent(ctx, login); err != nil {
+			c.log().Warn("chat: join agent", "agent", login, "err", err)
+		}
+	}
+}
+
+// root is the installation's home, $JUICE_HOME, holding ui/, agents/ and
+// client/ (ecosystem-standard §2).
+func (c *Chat) root() string { return filepath.Dir(c.deps.Home) }
+
+// agents lists this kernel's agents: the homes under $JUICE_HOME/agents named
+// by a login on this kernel.
+func (c *Chat) agents() []string {
+	if c.deps.Home == "" {
+		return nil
+	}
+	dirs, err := os.ReadDir(filepath.Join(c.root(), "agents"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range dirs {
+		if d.IsDir() && c.isLocalAgent(d.Name()) {
+			out = append(out, d.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isLocalAgent reports a home under $JUICE_HOME/agents for login, a login on
+// this kernel.
+func (c *Chat) isLocalAgent(login string) bool {
+	handle, ok := strings.CutSuffix(login, "@"+c.kernelName())
+	if c.deps.Home == "" || !ok || handle == "" || filepath.Base(login) != login {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(c.root(), "agents", login))
+	return err == nil && st.IsDir()
+}
+
+// kernelName is the name this kernel calls itself.
+func (c *Chat) kernelName() string {
+	_, k, _ := strings.Cut(c.self(), "@")
+	return k
+}
+
+// joinFailed is a refused join as a person reads it.
+func joinFailed(member string, err error) string {
+	detail := err.Error()
+	if ke, ok := client.AsKernelError(err); ok {
+		detail = ke.UserMessage()
+	}
+	return member + " is not connected to chat: " + detail
+}
+
 // ---- the browser ----
 
-type indexView struct {
-	Connected bool
-	Rooms     []Room
-	Agents    []string // the installation's agents, offered as members
-	OpenForm  bool
+type roomsView struct {
+	Rooms    []Room
+	Agents   []string // the installation's agents, offered as members
+	OpenForm bool
 }
 
 type roomView struct {
@@ -568,17 +753,20 @@ type roomView struct {
 }
 
 // card is one entry with what its rendering needs: the body is text, a
-// form (a JSON Schema), or any other value shown as the view.
+// form (a JSON Schema), any other value shown as the view, or a failure.
 type card struct {
 	Entry  Entry
 	RoomID string
 	CSRF   template.HTML
 	Text   string
 	Schema json.RawMessage
+	Reason string
 }
 
 func (k card) Kind() string {
 	switch {
+	case k.Entry.Kind == KindFailed:
+		return "failed"
 	case k.Schema != nil:
 		return "form"
 	case k.Text != "" || string(k.Entry.Body) == `""`:
@@ -592,9 +780,14 @@ func makeCards(es []Entry, roomID string, csrf template.HTML) []card {
 	for i, e := range es {
 		k := card{Entry: e, RoomID: roomID, CSRF: csrf}
 		var s string
-		if json.Unmarshal(e.Body, &s) == nil {
+		switch {
+		case e.Kind == KindFailed:
+			var f struct{ Reason string }
+			_ = json.Unmarshal(e.Body, &f)
+			k.Reason = f.Reason
+		case json.Unmarshal(e.Body, &s) == nil:
 			k.Text = s
-		} else if isSchema(e.Body) {
+		case isSchema(e.Body):
 			k.Schema = e.Body
 		}
 		out[i] = k
@@ -612,122 +805,59 @@ func isSchema(body json.RawMessage) bool {
 	return m["type"] != nil || m["properties"] != nil
 }
 
-// entriesView backs the room's entries and the fragments that append to them.
+// entriesView backs the room's entries and the fragments that append to
+// them; Removed are the posts an answer replaced, for the page to drop.
 type entriesView struct {
-	RoomID string
-	Cards  []card
-	After  int64
-	Error  string
+	RoomID  string
+	Cards   []card
+	Removed []int64
+	After   int64
+	Error   string
 }
 
-func (c *Chat) getIndex(w http.ResponseWriter, r *http.Request) {
-	if !c.connected(r) {
-		c.deps.RenderPage(w, r, http.StatusOK, "chat", "Chat", indexView{})
+// getLanding is where a session lands: the viewer's conversation with the
+// assistant, made on the first visit. The viewer and the assistant are
+// joined here when they are not yet; without an assistant the landing is the
+// rooms.
+func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
+	me := c.deps.Me(r)
+	if err := c.joinViewer(r); err != nil {
+		c.deps.FlashRedirect(w, r, "/chat/rooms", "error", joinFailed(me, err))
 		return
+	}
+	assistant := c.deps.Address(assistantHandle)
+	if me == assistant || !c.isLocalAgent(assistant) {
+		http.Redirect(w, r, "/chat/rooms", http.StatusSeeOther)
+		return
+	}
+	room, err := c.store.Direct(me, assistant)
+	if c.deps.HandleErr(w, r, err) {
+		return
+	}
+	to := "/chat/room/" + url.PathEscape(room.ID)
+	if err := c.joinAgent(r.Context(), assistant); err != nil {
+		c.deps.FlashRedirect(w, r, to, "error", joinFailed(assistant, err))
+		return
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+func (c *Chat) getRooms(w http.ResponseWriter, r *http.Request) {
+	if err := c.joinViewer(r); err != nil {
+		c.log().Warn("chat: join viewer", "err", err)
 	}
 	rooms, err := c.store.Rooms(c.deps.Me(r))
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	c.deps.RenderPage(w, r, http.StatusOK, "chat", "Chat", indexView{
-		Connected: true, Rooms: rooms, Agents: c.agents(), OpenForm: r.URL.Query().Get("form") == "new",
+	c.deps.RenderPage(w, r, http.StatusOK, "rooms", "Chat", roomsView{
+		Rooms: rooms, Agents: c.agents(), OpenForm: r.URL.Query().Get("form") == "new",
 	})
-}
-
-// agents lists the installation's agent logins, from their homes under
-// $JUICE_HOME/agents (ecosystem-standard §2), so a room can take them in.
-func (c *Chat) agents() []string {
-	if c.deps.Home == "" {
-		return nil
-	}
-	dirs, err := os.ReadDir(filepath.Join(filepath.Dir(c.deps.Home), "agents"))
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, d := range dirs {
-		if d.IsDir() && strings.Contains(d.Name(), "@") {
-			out = append(out, d.Name())
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// connected reports whether the viewer holds the chat/msg grant, read from
-// the kernel's own connectors: the state `juice user connect` creates.
-func (c *Chat) connected(r *http.Request) bool {
-	ok := false
-	_ = c.deps.Sessions.Do(r.Context(), func(tok string) error {
-		me, err := c.deps.Client.Me(r.Context(), tok)
-		if err != nil {
-			return err
-		}
-		sel := c.msgSelector()
-		for _, con := range me.Connectors {
-			if con.Directory == sel {
-				ok = true
-			}
-			for _, g := range con.Actions {
-				if strings.HasPrefix(g.Action, sel+"/") {
-					ok = true
-				}
-			}
-		}
-		return nil
-	})
-	return ok
-}
-
-// postConnect joins the viewer as any member joins: approve chat as a
-// requester, register, complete the verification task, connect the key.
-func (c *Chat) postConnect(w http.ResponseWriter, r *http.Request) {
-	if c.connected(r) {
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
-		return
-	}
-	me := c.deps.Me(r)
-	stage := "approve"
-	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
-		if err := c.deps.Client.DecideRequester(r.Context(), tok, c.self(), "approve"); err != nil {
-			return err
-		}
-		stage = "register"
-		args, _ := json.Marshal(map[string]string{"handle": me})
-		reply, err := c.deps.Client.Run(r.Context(), tok, c.self()+"/"+registerName, args, "")
-		if err != nil {
-			return err
-		}
-		var res struct {
-			APIKey string `json:"api_key"`
-			TaskID string `json:"task_id"`
-		}
-		if err := json.Unmarshal(reply.Result, &res); err != nil || res.APIKey == "" || res.TaskID == "" {
-			return fmt.Errorf("register returned no key")
-		}
-		stage = "verification"
-		if _, err := c.deps.Client.CompleteTask(r.Context(), tok, res.TaskID, nil); err != nil {
-			return err
-		}
-		stage = "connect"
-		_, err = c.deps.Client.ConnectGrant(r.Context(), tok, c.msgSelector(), "", res.APIKey)
-		return err
-	})
-	if err != nil && !c.connected(r) {
-		detail := err.Error()
-		if ke, ok := client.AsKernelError(err); ok {
-			detail = ke.UserMessage()
-		}
-		c.deps.FlashRedirect(w, r, "/chat", "error", "Could not connect ("+stage+"): "+detail)
-		return
-	}
-	http.Redirect(w, r, "/chat", http.StatusSeeOther)
 }
 
 func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
-	if !c.connected(r) {
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
-		return
+	if err := c.joinViewer(r); err != nil {
+		c.log().Warn("chat: join viewer", "err", err)
 	}
 	me, id := c.deps.Me(r), r.PathValue("id")
 	room, es, err := c.store.Room(me, id)
@@ -774,14 +904,15 @@ func (c *Chat) getEntries(w http.ResponseWriter, r *http.Request) {
 	_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_poll", c.tail(r, r.PathValue("id"), after))
 }
 
-// tail is the room's entries after seq, with the cursor to show next.
+// tail is the room's entries after seq, the posts they replaced, and the
+// cursor to show next.
 func (c *Chat) tail(r *http.Request, roomID string, after int64) entriesView {
 	me := c.deps.Me(r)
-	es, _ := c.store.After(me, roomID, after)
+	es, gone, _ := c.store.After(me, roomID, after)
 	if n := maxSeq(es); n > after {
 		after = n
 	}
-	return entriesView{RoomID: roomID, Cards: makeCards(es, roomID, c.deps.CSRFField(r)), After: after}
+	return entriesView{RoomID: roomID, Cards: makeCards(es, roomID, c.deps.CSRFField(r)), Removed: gone, After: after}
 }
 
 // watch answers the heartbeat: the badge with the count of rooms holding
@@ -804,7 +935,7 @@ func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) 
 	}
 	after, _ := strconv.ParseInt(shown, 10, 64)
 	v := c.tail(r, key, after)
-	if len(v.Cards) == 0 {
+	if len(v.Cards) == 0 && len(v.Removed) == 0 {
 		return "", nil
 	}
 	if r.Header.Get("X-Visible") != "0" {
@@ -889,16 +1020,18 @@ func reasonOf(err error) string {
 	return body.Error
 }
 
+// postCreateRoom makes a room of the viewer, the agents ticked and the
+// addresses typed; the local agents among them are joined.
 func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		c.deps.FlashRedirect(w, r, "/chat", "error", "A room needs a name.")
+		c.deps.FlashRedirect(w, r, "/chat/rooms", "error", "A room needs a name.")
 		return
 	}
 	members := append(r.Form["agent"], strings.Fields(strings.ReplaceAll(r.FormValue("members"), ",", " "))...)
 	for _, m := range members {
 		if !strings.Contains(m, "@") {
-			c.deps.FlashRedirect(w, r, "/chat", "error", m+" is not an address (handle@kernel).")
+			c.deps.FlashRedirect(w, r, "/chat/rooms", "error", m+" is not an address (handle@kernel).")
 			return
 		}
 	}
@@ -906,15 +1039,15 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	http.Redirect(w, r, "/chat/room/"+url.PathEscape(room.ID), http.StatusSeeOther)
+	c.joinMembers(w, r, members, "/chat/room/"+url.PathEscape(room.ID))
 }
 
 func (c *Chat) postDeleteRoom(w http.ResponseWriter, r *http.Request) {
-	c.then(w, r, c.store.DeleteRoom(c.deps.Me(r), r.PathValue("id")), "/chat")
+	c.then(w, r, c.store.DeleteRoom(c.deps.Me(r), r.PathValue("id")), "/chat/rooms")
 }
 
 func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) {
-	c.then(w, r, c.store.Leave(c.deps.Me(r), r.PathValue("id")), "/chat")
+	c.then(w, r, c.store.Leave(c.deps.Me(r), r.PathValue("id")), "/chat/rooms")
 }
 
 func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
@@ -923,7 +1056,26 @@ func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
 		c.deps.FlashRedirect(w, r, roomURL(r), "error", "A member is an address, handle@kernel.")
 		return
 	}
-	c.then(w, r, c.store.AddMember(c.deps.Me(r), r.PathValue("id"), m), roomURL(r))
+	if err := c.store.AddMember(c.deps.Me(r), r.PathValue("id"), m); err != nil {
+		c.then(w, r, err, roomURL(r))
+		return
+	}
+	c.joinMembers(w, r, []string{m}, roomURL(r))
+}
+
+// joinMembers joins the local agents among members and redirects, naming
+// the first that could not be joined.
+func (c *Chat) joinMembers(w http.ResponseWriter, r *http.Request, members []string, to string) {
+	for _, m := range members {
+		if !c.isLocalAgent(m) {
+			continue
+		}
+		if err := c.joinAgent(r.Context(), m); err != nil {
+			c.deps.FlashRedirect(w, r, to, "error", joinFailed(m, err))
+			return
+		}
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
 func (c *Chat) postRemoveMember(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -68,12 +73,12 @@ func TestRoomsAndMembership(t *testing.T) {
 	}
 }
 
-// A post is refused once the author holds a delivery and has posted since;
-// its depth is one more than the deepest delivery held, and nothing when
-// none is held. Answering releases both.
-func TestPostHoldsOncePerDelivery(t *testing.T) {
+// A member holding n deliveries may have n standing posts since the oldest
+// of them; the next is refused. A post's depth is one more than the deepest
+// delivery held, and zero when none is held. A settlement releases both.
+func TestPostCountsPerDelivery(t *testing.T) {
 	s := mustStore(t)
-	r, _ := s.CreateRoom("ann@k", "cafe", []string{"helper@k"})
+	r, _ := s.CreateRoom("ann@k", "cafe", []string{"helper@k", "critic@k"})
 	e, depth, err := s.Post(r.ID, "ann@k", raw("hi"))
 	if err != nil || depth != 0 || e.Seq != 1 {
 		t.Fatalf("first post: seq=%d depth=%d err=%v", e.Seq, depth, err)
@@ -84,24 +89,201 @@ func TestPostHoldsOncePerDelivery(t *testing.T) {
 	if _, _, err := s.Post(r.ID, "ann@k", json.RawMessage(`{bad`)); !errors.Is(err, ErrBadInput) {
 		t.Errorf("invalid body = %v", err)
 	}
-	if err := s.Delivered("helper@k", r.ID, e.Seq, 7, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, depth, err := s.Post(r.ID, "helper@k", raw("one")); err != nil || depth != 1 {
+	s.Post(r.ID, "ann@k", raw("and"))
+	must(t, s.Delivered("helper@k", r.ID, 1, 7, 0))
+	must(t, s.Delivered("helper@k", r.ID, 2, 8, 1))
+	if _, depth, err := s.Post(r.ID, "helper@k", raw("critic@k one")); err != nil || depth != 2 {
 		t.Fatalf("held post: depth=%d err=%v", depth, err)
 	}
-	if _, _, err := s.Post(r.ID, "helper@k", raw("two")); !errors.Is(err, ErrHeld) {
-		t.Fatalf("second held post = %v, want ErrHeld", err)
+	if _, _, err := s.Post(r.ID, "helper@k", raw("critic@k two")); err != nil {
+		t.Fatalf("two deliveries, two posts: %v", err)
 	}
-	if err := s.Answer("helper@k", r.ID, 7, raw("done")); err != nil {
+	if _, _, err := s.Post(r.ID, "helper@k", raw("three")); !errors.Is(err, ErrHeld) {
+		t.Fatalf("third post = %v, want ErrHeld", err)
+	}
+	must(t, s.Answer("helper@k", r.ID, 7, raw("done"), false))
+	if _, _, err := s.Post(r.ID, "helper@k", raw("still held")); !errors.Is(err, ErrHeld) {
+		t.Fatalf("one delivery left, two posts since it: %v", err)
+	}
+	must(t, s.Answer("helper@k", r.ID, 8, nil, false))
+	if _, depth, err := s.Post(r.ID, "helper@k", raw("free")); err != nil || depth != 0 {
+		t.Fatalf("post after settling: depth=%d err=%v", depth, err)
+	}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, depth, err := s.Post(r.ID, "helper@k", raw("three")); err != nil || depth != 0 {
-		t.Fatalf("post after answer: depth=%d err=%v", depth, err)
+}
+
+// standing is the room's entries as author:body/kind, and the seqs a page
+// that showed everything after seq 0 must remove.
+func standing(t *testing.T, s *Store, room string) (string, []int64) {
+	t.Helper()
+	es, gone, err := s.After("ann@k", room, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, es, _ := s.Room("ann@k", r.ID)
-	if len(es) != 4 || string(es[2].Body) != `"done"` || es[2].Author != "helper@k" {
-		t.Errorf("entries = %+v", es)
+	var out []string
+	for _, e := range es {
+		out = append(out, e.Author+":"+string(e.Body)+"/"+strconv.Itoa(e.Kind))
+	}
+	return strings.Join(out, "|"), gone
+}
+
+// Settling a delivery: with nothing said since, the answer or the failure is
+// appended; an answer replaces the member's posts since that address nobody,
+// hiding them and naming them for removal, never reusing a seq; after a
+// hand-off only, the answer adds nothing; a failure after any post adds
+// nothing; a nil body adds nothing; posts before the delivery are untouched.
+func TestAnswerSettles(t *testing.T) {
+	s := mustStore(t)
+	r, _ := s.CreateRoom("ann@k", "cafe", []string{"bot@k", "critic@k"})
+	ask := func(text string, d int64) {
+		e, _, err := s.Post(r.ID, "ann@k", raw(text))
+		must(t, err)
+		must(t, s.Delivered("bot@k", r.ID, e.Seq, d, 0))
+	}
+	post := func(text string) { _, _, err := s.Post(r.ID, "bot@k", raw(text)); must(t, err) }
+
+	ask("q1", 1)
+	must(t, s.Answer("bot@k", r.ID, 1, raw("a1"), false))
+	ask("q2", 2)
+	post("wait")
+	must(t, s.Answer("bot@k", r.ID, 2, raw("a2"), false))
+	ask("q3", 3)
+	post("critic@k, which?")
+	must(t, s.Answer("bot@k", r.ID, 3, raw("I asked critic."), false))
+	ask("q4", 4)
+	post("a4")
+	must(t, s.Answer("bot@k", r.ID, 4, raw(map[string]string{"status": "failed", "reason": "repeat-loop"}), true))
+	ask("q5", 5)
+	must(t, s.Answer("bot@k", r.ID, 5, raw(map[string]string{"status": "failed", "reason": "budget"}), true))
+	ask("q6", 6)
+	must(t, s.Answer("bot@k", r.ID, 6, nil, false))
+	must(t, s.Answer("bot@k", r.ID, 99, raw("unheld"), false))
+
+	got, gone := standing(t, s, r.ID)
+	want := `ann@k:"q1"/0|bot@k:"a1"/1|ann@k:"q2"/0|bot@k:"a2"/1|ann@k:"q3"/0|bot@k:"critic@k, which?"/0|ann@k:"q4"/0|bot@k:"a4"/0|ann@k:"q5"/0|bot@k:{"reason":"budget","status":"failed"}/2|ann@k:"q6"/0|bot@k:"unheld"/1`
+	if got != want {
+		t.Errorf("room =\n%s\nwant\n%s", got, want)
+	}
+	if len(gone) != 1 || gone[0] != 4 {
+		t.Errorf("removed = %v, want the hidden placeholder 4", gone)
+	}
+	if _, gone, _ := s.After("ann@k", r.ID, 5); len(gone) != 0 {
+		t.Errorf("a page past the answer removes nothing: %v", gone)
+	}
+	var seqs []int64
+	rows, _ := s.db.Query(`SELECT seq FROM entries WHERE room_id = ? ORDER BY seq`, r.ID)
+	for rows.Next() {
+		var q int64
+		rows.Scan(&q)
+		seqs = append(seqs, q)
+	}
+	rows.Close()
+	for i, q := range seqs {
+		if q != int64(i+1) {
+			t.Fatalf("seqs = %v: a row was deleted or a seq reused", seqs)
+		}
+	}
+	if es, _ := s.Range("critic@k", r.ID, 100, carried); strings.Contains(fmt.Sprint(es), `wait`) {
+		t.Error("a hidden post is never delivered")
+	}
+}
+
+// The direct room of two is found, or made once, named by the other's
+// handle; a room with a third member is not it; concurrent first visits make
+// one room.
+func TestDirect(t *testing.T) {
+	s := mustStore(t)
+	s.CreateRoom("ann@k", "group", []string{"assistant@k", "bob@k"})
+	var wg sync.WaitGroup
+	ids := make([]string, 8)
+	for i := range ids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r, err := s.Direct("ann@k", "assistant@k")
+			if err != nil {
+				t.Error(err)
+			}
+			ids[i] = r.ID
+		}(i)
+	}
+	wg.Wait()
+	for _, id := range ids {
+		if id != ids[0] {
+			t.Fatalf("two rooms: %v", ids)
+		}
+	}
+	r, _, err := s.Room("ann@k", ids[0])
+	if err != nil || r.Name != "assistant" || strings.Join(r.Members, ",") != "ann@k,assistant@k" {
+		t.Fatalf("direct = %+v %v", r, err)
+	}
+	if b, _ := s.Direct("bob@k", "assistant@k"); b.ID == ids[0] {
+		t.Error("another viewer has its own room")
+	}
+	if _, err := s.Direct("ann@k", "ann@k"); !errors.Is(err, ErrBadInput) {
+		t.Errorf("a room with oneself = %v", err)
+	}
+}
+
+// Room ids are words, adjective-animal-NN.
+func TestWordID(t *testing.T) {
+	re := regexp.MustCompile(`^[a-z]+-[a-z]+-[1-9][0-9]$`)
+	for i := 0; i < 200; i++ {
+		if id := wordID(); !re.MatchString(id) {
+			t.Fatalf("id %q", id)
+		}
+	}
+	r, _ := mustStore(t).CreateRoom("ann@k", "cafe", nil)
+	if !re.MatchString(r.ID) {
+		t.Errorf("room id %q", r.ID)
+	}
+}
+
+// v034 is the store as 0.34.0 made it.
+const v034 = `
+CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, creator TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE members (room_id TEXT NOT NULL, member TEXT NOT NULL, PRIMARY KEY (room_id, member));
+CREATE TABLE entries (room_id TEXT NOT NULL, seq INTEGER NOT NULL, author TEXT NOT NULL, body TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (room_id, seq));
+CREATE TABLE keys (hash TEXT PRIMARY KEY, member TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0, key_id TEXT NOT NULL UNIQUE);
+CREATE TABLE cursors (room_id TEXT NOT NULL, member TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, read INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (room_id, member));
+CREATE TABLE chain (room_id TEXT NOT NULL, member TEXT NOT NULL, delivery INTEGER NOT NULL, depth INTEGER NOT NULL, posted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (room_id, member, delivery));
+CREATE TABLE seqs (name TEXT PRIMARY KEY, n INTEGER NOT NULL);
+INSERT INTO seqs VALUES ('delivery', 5);
+INSERT INTO rooms VALUES ('0a1b2c', 'main', 'ann@k', '2026-10-23T22:00:00Z');
+INSERT INTO members VALUES ('0a1b2c', 'ann@k'), ('0a1b2c', 'bot@k');
+INSERT INTO entries VALUES ('0a1b2c', 1, 'ann@k', '"hi"', '2026-10-23T22:01:00Z'), ('0a1b2c', 2, 'bot@k', '"hello"', '2026-10-23T22:02:00Z'), ('0a1b2c', 3, 'ann@k', '"hmm"', '2026-10-23T22:03:00Z');
+INSERT INTO chain VALUES ('0a1b2c', 'bot@k', 5, 0, 0);`
+
+// A store made by 0.34.0 gains its columns in place, keeps its rows and its
+// hex room, and a delivery held across the upgrade settles nothing said
+// before it; opening again changes nothing.
+func TestMigratesA034Store(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rooms.db")
+	old, err := sql.Open("sqlite", path)
+	must(t, err)
+	_, err = old.Exec(v034)
+	must(t, err)
+	old.Close()
+	for i := 0; i < 2; i++ {
+		s, err := Open(path, "")
+		must(t, err)
+		if i == 0 {
+			must(t, s.Answer("bot@k", "0a1b2c", 5, raw("ok"), false))
+		}
+		got, _ := standing(t, s, "0a1b2c")
+		if want := `ann@k:"hi"/0|bot@k:"hello"/0|ann@k:"hmm"/0|bot@k:"ok"/1`; got != want {
+			t.Fatalf("open %d: room =\n%s\nwant\n%s", i, got, want)
+		}
+		if n, _ := s.NextDelivery(); n <= 5 {
+			t.Errorf("delivery ids continue: %d", n)
+		}
+		s.Close()
 	}
 }
 
@@ -156,7 +338,7 @@ func TestRoomsUnreadOrdering(t *testing.T) {
 	if rooms[0].Unread || rooms[1].Unread {
 		t.Errorf("after reading: %+v", rooms)
 	}
-	es, _ := s.After("ann@k", busy.ID, 0)
+	es, _, _ := s.After("ann@k", busy.ID, 0)
 	if len(es) != 1 {
 		t.Errorf("after = %+v", es)
 	}

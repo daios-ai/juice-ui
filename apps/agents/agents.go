@@ -33,12 +33,16 @@ package agents
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -158,7 +162,87 @@ func (a *Agents) Start(ctx context.Context) error {
 	if a.sup == nil {
 		a.sup = newSupervisor(osLauncher{bin: agentBin(home), home: home})
 	}
+	a.ensureAssistant(ctx)
 	return nil
+}
+
+// assistantHandle is the agent every session lands in conversation with
+// (requirements §6.7).
+const assistantHandle = "assistant"
+
+// agentsState is the app's state: the assistant's kernel password, made
+// once, so the account can be signed into again when its session is lost.
+type agentsState struct {
+	AssistantPassword string `json:"assistant_password"`
+}
+
+// ensureAssistant makes the assistant exist and run: the account, made with
+// the password the app keeps (a handle the kernel already holds is adopted
+// only when that password signs in, which proves it is the app's), the
+// session, the home, and the daemon when it holds a session and is not
+// running. Never fatal: what fails is logged, and the operator can do it from
+// the page.
+func (a *Agents) ensureAssistant(ctx context.Context) {
+	if a.deps.Client == nil || a.deps.LoadAppState == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	h := assistantHandle
+	if _, err := a.agentDir(h); err != nil {
+		return
+	}
+	fail := func(step string, err error) {
+		a.log().Warn("agents: assistant", "step", step, "err", err)
+	}
+	if !a.exists(h) {
+		var st agentsState
+		if raw, err := a.deps.LoadAppState(a.Slug()); err == nil && len(raw) > 0 {
+			_ = json.Unmarshal(raw, &st)
+		}
+		if st.AssistantPassword == "" {
+			st.AssistantPassword = newPassword()
+			b, _ := json.Marshal(st)
+			if err := a.deps.SaveAppState(a.Slug(), b); err != nil {
+				fail("save password", err)
+				return
+			}
+		}
+		if _, err := a.deps.Client.CreateUser(ctx, a.deps.Address(h), st.AssistantPassword, ""); err != nil && !accountExists(err) {
+			fail("create account", err)
+			return
+		}
+		if err := a.signIn(ctx, h, st.AssistantPassword); err != nil {
+			fail("sign in", err)
+			return
+		}
+		if err := a.create(h); err != nil {
+			fail("home", err)
+			return
+		}
+	}
+	if running, err := a.running(h); err != nil || running {
+		return
+	}
+	if _, err := os.Stat(a.credPath(h)); err != nil {
+		return
+	}
+	if err := a.sup.start(h, a.deps.Address(h), a.logPath(h)); err != nil {
+		fail("start", err)
+	}
+}
+
+func newPassword() string {
+	var b [18]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+func (a *Agents) log() *slog.Logger {
+	if a.deps.Logger != nil {
+		return a.deps.Logger
+	}
+	return slog.Default()
 }
 
 // Stop stops nothing: a daemon outlives the UI as the kernel does, detached in
@@ -470,8 +554,7 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		refuse(signInMessage(err))
 		return
 	}
-	token, err := a.signIn(ctx, handle, password)
-	if err != nil {
+	if err := a.signIn(ctx, handle, password); err != nil {
 		refuse(signInMessage(err))
 		return
 	}
@@ -479,17 +562,11 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		a.deps.HandleErr(w, r, err)
 		return
 	}
-	// A member of chat from the start, as the agent itself (requirements
-	// §6.7). The agent exists either way; a failed join is done by hand.
-	made := "Agent created."
-	if err := a.joinChat(ctx, token, handle); err != nil {
-		made = "Agent created; not connected to chat: " + err.Error()
-	}
 	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
 		return
 	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", made)
+	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Agent created.")
 }
 
 // accountExists reads the kernel's refusal of a handle it already holds.
@@ -689,7 +766,7 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pw := r.FormValue("password"); pw != "" {
-		if _, err := a.signIn(r.Context(), handle, pw); err != nil {
+		if err := a.signIn(r.Context(), handle, pw); err != nil {
 			a.renderDetail(w, r, http.StatusUnprocessableEntity, handle, "start", signInMessage(err))
 			return
 		}

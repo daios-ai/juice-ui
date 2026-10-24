@@ -409,22 +409,28 @@ separates it from the content above, and nothing else does (§4).
   `class="money"` so the title sits over its right-aligned values.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
-- **Chat is list → detail, like everything else.** The chat index is a rooms
-  table (`.rowable` rows, `tr.unread` weighting, unread `.badge`); a room is a
-  detail page: crumb (← chat · room name · members · leave/delete) → the entry
-  stack (`.msgs`, `[data-autoscroll]`) in the document flow → the composer at the
-  document's end. **The page is the scroll container** — no fixed-height frame, no
-  inner scroll region. The document pins to its **newest** entry on open and on any
-  append while already at the bottom — never yanking a reader scrolled up into
-  history; the sticky crumb and the nav keep the way out always in reach. An
-  **entry** (`_entry`: `.msg` with `.avatar`, the author in the mono face, the
-  time) renders its body by its JSON kind: a string as `.msg-text`, a JSON Schema
-  as a `[data-json]` form of that schema (`_form_fields`, Send) whose submission
-  posts the filled value, anything else as the view (`_value_block`). The
-  **composer** (`.composer`) is a `[data-json]` block: the JSON switch at its
-  head, the text box (`[data-fields]`), the JSON editor (`[data-raw]`), a refusal
-  in `.error-text` beside them, and Send; the switch converts nothing, it picks
-  which editor is sent (requirements.md §6.7).
+- **Chat lands in a conversation.** `/chat` opens the viewer's room with the
+  assistant; the rooms are a table at `/chat/rooms` (`.rowable` rows,
+  `tr.unread` weighting, unread `.badge`), reached from the room's crumb. A room
+  is a detail page: crumb (← rooms · room name · members · leave/delete) → the
+  entry stack (`.msgs`, `[data-autoscroll]`) in the document flow → the
+  composer at the document's end. **The page is the scroll container** — no
+  fixed-height frame, no inner scroll region. The document pins to its
+  **newest** entry on open and on any append while already at the bottom —
+  never yanking a reader scrolled up into history; the sticky crumb and the nav
+  keep the way out always in reach. An **entry** (`_entry`: `.msg` with
+  `.avatar`, the author in the mono face, the time) renders by its stored kind
+  and body: a failure as `.msg-text` holding the `failed` pill
+  (`.pill.status-danger`) and the reason in `.muted`; a string as `.msg-text`;
+  a JSON Schema as a `[data-json]` form of that schema (`_form_fields`, Send)
+  whose submission posts the filled value; anything else as the view
+  (`_value_block`). An entry an answer replaced leaves the page when the answer
+  arrives (an out-of-band delete by its id, `e-<seq>`). The **composer**
+  (`.composer`) is a `[data-json]` block: the JSON switch at its head, the text
+  box (`[data-fields]`), the JSON editor (`[data-raw]`), a refusal in
+  `.error-text` beside them, and Send; the switch converts nothing, it picks
+  which editor is sent (requirements.md §6.7). Nothing asks the person to
+  connect: the UI joins them.
 - **Record rows** (the same record type wherever it appears) render through **one
   shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.
   Row rules:

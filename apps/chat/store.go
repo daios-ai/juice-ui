@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registered as "sqlite"
@@ -45,13 +46,22 @@ type Room struct {
 }
 
 // Entry is one thing said in a room. Body is any JSON value; a sentence is a
-// JSON string.
+// JSON string. Kind says how it came: a post, a delivery's answer, or a
+// delivery's failure; it is stored, never read off the body.
 type Entry struct {
 	Seq    int64
 	Author string
 	Body   json.RawMessage
 	At     string
+	Kind   int
 }
+
+// The kinds of entry.
+const (
+	KindPost   = 0
+	KindAnswer = 1
+	KindFailed = 2
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS rooms (
@@ -97,6 +107,33 @@ CREATE TABLE IF NOT EXISTS chain (
 CREATE TABLE IF NOT EXISTS seqs (name TEXT PRIMARY KEY, n INTEGER NOT NULL);
 INSERT OR IGNORE INTO seqs(name, n) VALUES ('delivery', 0);`
 
+// columns are added to a store made by an earlier version, in place. A
+// delivery held before chain.upto existed covered the room as it stood then,
+// so its upto is the room's last seq: the member's earlier posts are never
+// settled by it.
+var columns = []struct{ table, def, backfill string }{
+	{"chain", "upto INTEGER NOT NULL DEFAULT 0", `UPDATE chain SET upto = COALESCE((SELECT MAX(seq) FROM entries e WHERE e.room_id = chain.room_id), 0)`},
+	{"entries", "kind INTEGER NOT NULL DEFAULT 0", ""},
+	{"entries", "replaced_by INTEGER NOT NULL DEFAULT 0", ""},
+}
+
+func migrate(db *sql.DB) error {
+	for _, c := range columns {
+		if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.def); err != nil {
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
+			return err
+		}
+		if c.backfill != "" {
+			if _, err := db.Exec(c.backfill); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // window bounds what a read returns: a room's latest entries.
 const window = 200
 
@@ -122,6 +159,10 @@ func Open(path, legacy string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("chat store schema: %w", err)
+	}
+	if err := migrate(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("chat store migration: %w", err)
 	}
 	s := &Store{db: db}
 	if fresh && path != "" && legacy != "" {
@@ -217,22 +258,81 @@ func (s *Store) CreateRoom(creator, name string, members []string) (Room, error)
 		return Room{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	r := Room{ID: newToken(), Name: name, Creator: creator, CreatedAt: now()}
-	if _, err := tx.Exec(`INSERT INTO rooms(id, name, creator, created_at) VALUES(?,?,?,?)`, r.ID, r.Name, r.Creator, r.CreatedAt); err != nil {
+	id, err := insertRoom(tx, creator, name, members)
+	if err != nil {
 		return Room{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Room{}, err
+	}
+	return s.withMembers(id)
+}
+
+// Direct is the room whose members are exactly viewer and other, the oldest
+// when there are several, created when there is none, named by other's
+// handle. Lookup and creation are one transaction on the store's one
+// connection, so two first visits make one room.
+func (s *Store) Direct(viewer, other string) (Room, error) {
+	if viewer == "" || other == "" || viewer == other {
+		return Room{}, ErrBadInput
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Room{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var id string
+	err = tx.QueryRow(`SELECT r.id FROM rooms r
+		WHERE (SELECT COUNT(*) FROM members m WHERE m.room_id = r.id) = 2
+		  AND EXISTS (SELECT 1 FROM members m WHERE m.room_id = r.id AND m.member = ?)
+		  AND EXISTS (SELECT 1 FROM members m WHERE m.room_id = r.id AND m.member = ?)
+		ORDER BY r.created_at LIMIT 1`, viewer, other).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		handle, _, _ := strings.Cut(other, "@")
+		id, err = insertRoom(tx, viewer, handle, []string{other})
+	}
+	if err != nil {
+		return Room{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Room{}, err
+	}
+	return s.withMembers(id)
+}
+
+// insertRoom writes a room under a fresh word id, and its members.
+func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, error) {
+	var id string
+	for {
+		id = wordID()
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM rooms WHERE id = ?`, id).Scan(&n); err != nil {
+			return "", err
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO rooms(id, name, creator, created_at) VALUES(?,?,?,?)`, id, name, creator, now()); err != nil {
+		return "", err
 	}
 	for _, m := range append([]string{creator}, members...) {
 		if m == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO members(room_id, member) VALUES(?,?)`, r.ID, m); err != nil {
-			return Room{}, err
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO members(room_id, member) VALUES(?,?)`, id, m); err != nil {
+			return "", err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	return id, nil
+}
+
+func (s *Store) withMembers(id string) (Room, error) {
+	r, err := s.room(id)
+	if err != nil {
 		return Room{}, err
 	}
-	r.Members, err = s.members(r.ID)
+	r.Members, err = s.members(id)
 	return r, err
 }
 
@@ -414,18 +514,37 @@ func (s *Store) Room(viewer, roomID string) (Room, []Entry, error) {
 	return r, es, err
 }
 
-// After is the room's entries newer than seq, oldest first; a member only.
-func (s *Store) After(viewer, roomID string, seq int64) ([]Entry, error) {
+// After is the room's standing entries newer than seq, oldest first, and the
+// seqs of the posts replaced by an answer newer than seq, which a page showing
+// them removes; a member only.
+func (s *Store) After(viewer, roomID string, seq int64) ([]Entry, []int64, error) {
 	if _, err := s.requireMember(viewer, roomID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.entries(`room_id = ? AND seq > ?`, roomID, seq)
+	es, err := s.entries(`room_id = ? AND seq > ?`, roomID, seq)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := s.db.Query(`SELECT seq FROM entries WHERE room_id = ? AND replaced_by > ? ORDER BY seq`, roomID, seq)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var gone []int64
+	for rows.Next() {
+		var q int64
+		if err := rows.Scan(&q); err != nil {
+			return nil, nil, err
+		}
+		gone = append(gone, q)
+	}
+	return es, gone, rows.Err()
 }
 
-// entries reads the newest entries satisfying where, at most the window,
-// and returns them oldest first.
+// entries reads the newest standing entries satisfying where, at most the
+// window, and returns them oldest first. A replaced post never stands.
 func (s *Store) entries(where string, args ...any) ([]Entry, error) {
-	return s.query(`SELECT seq, author, body, at FROM entries WHERE `+where+` ORDER BY seq DESC LIMIT ?`, append(args, window)...)
+	return s.query(`SELECT seq, author, body, at, kind FROM entries WHERE replaced_by = 0 AND `+where+` ORDER BY seq DESC LIMIT ?`, append(args, window)...)
 }
 
 func (s *Store) query(q string, args ...any) ([]Entry, error) {
@@ -438,7 +557,7 @@ func (s *Store) query(q string, args ...any) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var body string
-		if err := rows.Scan(&e.Seq, &e.Author, &body, &e.At); err != nil {
+		if err := rows.Scan(&e.Seq, &e.Author, &body, &e.At, &e.Kind); err != nil {
 			return nil, err
 		}
 		e.Body = json.RawMessage(body)
@@ -462,9 +581,9 @@ func (s *Store) MarkRead(member, roomID string, seq int64) error {
 
 // ---- posting and delivery ----
 
-// Post appends what author says, in one transaction with the rule that a
-// member holding a delivery in the room posts once and then answers: it is
-// refused with ErrHeld when the author holds one and has already posted. It
+// Post appends what author says, in one transaction with the rule of one post
+// per held delivery: refused with ErrHeld when the author's standing posts
+// since its oldest held delivery are as many as the deliveries it holds. It
 // returns the entry and the post's depth: 0 when the author holds nothing,
 // else one more than the deepest delivery held.
 func (s *Store) Post(roomID, author string, body json.RawMessage) (Entry, int64, error) {
@@ -479,43 +598,44 @@ func (s *Store) Post(roomID, author string, body json.RawMessage) (Entry, int64,
 		return Entry{}, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var held int
-	var depth int64
-	var posted bool
-	if err := tx.QueryRow(`SELECT COUNT(*), COALESCE(MAX(depth), -1) + 1, COALESCE(MAX(posted), 0)
-		FROM chain WHERE room_id = ? AND member = ?`, roomID, author).Scan(&held, &depth, &posted); err != nil {
-		return Entry{}, 0, err
-	}
-	if held > 0 && posted {
-		return Entry{}, 0, ErrHeld
-	}
-	e, err := appendEntry(tx, roomID, author, body)
-	if err != nil {
+	var held, depth, since int64
+	if err := tx.QueryRow(`SELECT COUNT(*), COALESCE(MAX(depth), -1) + 1, COALESCE(MIN(upto), 0)
+		FROM chain WHERE room_id = ? AND member = ?`, roomID, author).Scan(&held, &depth, &since); err != nil {
 		return Entry{}, 0, err
 	}
 	if held > 0 {
-		if _, err := tx.Exec(`UPDATE chain SET posted = 1 WHERE room_id = ? AND member = ?`, roomID, author); err != nil {
+		var posts int64
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM entries
+			WHERE room_id = ? AND author = ? AND kind = ? AND replaced_by = 0 AND seq > ?`,
+			roomID, author, KindPost, since).Scan(&posts); err != nil {
 			return Entry{}, 0, err
 		}
+		if posts >= held {
+			return Entry{}, 0, ErrHeld
+		}
+	}
+	e, err := appendEntry(tx, roomID, author, body, KindPost)
+	if err != nil {
+		return Entry{}, 0, err
 	}
 	return e, depth, tx.Commit()
 }
 
-func appendEntry(tx *sql.Tx, roomID, author string, body json.RawMessage) (Entry, error) {
-	e := Entry{Author: author, Body: body, At: now()}
+func appendEntry(tx *sql.Tx, roomID, author string, body json.RawMessage, kind int) (Entry, error) {
+	e := Entry{Author: author, Body: body, At: now(), Kind: kind}
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM entries WHERE room_id = ?`, roomID).Scan(&e.Seq); err != nil {
 		return Entry{}, err
 	}
-	_, err := tx.Exec(`INSERT INTO entries(room_id, seq, author, body, at) VALUES(?,?,?,?,?)`, roomID, e.Seq, author, string(body), e.At)
+	_, err := tx.Exec(`INSERT INTO entries(room_id, seq, author, body, at, kind) VALUES(?,?,?,?,?,?)`, roomID, e.Seq, author, string(body), e.At, kind)
 	return e, err
 }
 
-// Range is what a delivery to member carries: the entries with seq after the
-// member's delivered cursor up to upto, by others than the member, at most
-// limit of the newest, oldest first.
+// Range is what a delivery to member carries: the standing entries with seq
+// after the member's delivered cursor up to upto, by others than the member,
+// at most limit of the newest, oldest first.
 func (s *Store) Range(member, roomID string, upto int64, limit int) ([]Entry, error) {
-	return s.query(`SELECT seq, author, body, at FROM entries
-		WHERE room_id = ? AND seq <= ? AND author != ?
+	return s.query(`SELECT seq, author, body, at, kind FROM entries
+		WHERE room_id = ? AND seq <= ? AND author != ? AND replaced_by = 0
 		  AND seq > COALESCE((SELECT delivered FROM cursors WHERE room_id = ? AND member = ?), 0)
 		ORDER BY seq DESC LIMIT ?`, roomID, upto, member, roomID, member, limit)
 }
@@ -528,7 +648,8 @@ func (s *Store) NextDelivery() (int64, error) {
 }
 
 // Delivered records a delivery the kernel accepted: the member's delivered
-// cursor moves to upto and the member holds the delivery at depth.
+// cursor moves to upto, and the member holds the delivery, which covered the
+// room up to upto, at depth.
 func (s *Store) Delivered(member, roomID string, upto, delivery, depth int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -539,42 +660,114 @@ func (s *Store) Delivered(member, roomID string, upto, delivery, depth int64) er
 		ON CONFLICT(room_id, member) DO UPDATE SET delivered = MAX(delivered, excluded.delivered)`, roomID, member, upto); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO chain(room_id, member, delivery, depth, posted) VALUES(?,?,?,?,0)`, roomID, member, delivery, depth); err != nil {
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO chain(room_id, member, delivery, depth, upto) VALUES(?,?,?,?,?)`, roomID, member, delivery, depth, upto); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-// Answer records a completed delivery: the member no longer holds it, its
-// posted mark in the room is cleared, and body, when given, is appended as
-// the member's entry. All in one transaction.
-func (s *Store) Answer(member, roomID string, delivery int64, body json.RawMessage) error {
+// Answer settles a completed delivery in one transaction: the member no
+// longer holds it, and what the member posted since the delivery decides what
+// the room gains. A nil body appends nothing. A failure (failed) is appended
+// only when the member has posted nothing since. An answer is appended when
+// the member has posted nothing since, or in place of its posts that address
+// nobody, which it marks replaced; when everything posted since addresses a
+// member (a hand-off), the answer adds nothing. A delivery the store no
+// longer holds settles nothing said before it. Nothing is ever deleted, so
+// seqs only grow.
+func (s *Store) Answer(member, roomID string, delivery int64, body json.RawMessage, failed bool) error {
+	if body != nil && !json.Valid(body) {
+		return ErrBadInput
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var since int64
+	err = tx.QueryRow(`SELECT upto FROM chain WHERE room_id = ? AND member = ? AND delivery = ?`, roomID, member, delivery).Scan(&since)
+	held := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM chain WHERE room_id = ? AND member = ? AND delivery = ?`, roomID, member, delivery); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE chain SET posted = 0 WHERE room_id = ? AND member = ?`, roomID, member); err != nil {
+	if body == nil {
+		return tx.Commit()
+	}
+	members, err := txMembers(tx, roomID)
+	if err != nil {
 		return err
 	}
-	if body != nil {
-		if !json.Valid(body) {
-			return ErrBadInput
-		}
-		var n int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM members WHERE room_id = ? AND member = ?`, roomID, member).Scan(&n); err != nil {
+	if !contains(members, member) {
+		return tx.Commit()
+	}
+	var unaddressed []int64
+	posted := false
+	if held {
+		rows, err := tx.Query(`SELECT seq, body FROM entries
+			WHERE room_id = ? AND author = ? AND kind = ? AND replaced_by = 0 AND seq > ?`, roomID, member, KindPost, since)
+		if err != nil {
 			return err
 		}
-		if n > 0 {
-			if _, err := appendEntry(tx, roomID, member, body); err != nil {
+		for rows.Next() {
+			var seq int64
+			var b string
+			if err := rows.Scan(&seq, &b); err != nil {
+				rows.Close()
 				return err
 			}
+			posted = true
+			if addressed(json.RawMessage(b), members) == "" {
+				unaddressed = append(unaddressed, seq)
+			}
+		}
+		rows.Close()
+	}
+	if posted && (failed || len(unaddressed) == 0) {
+		return tx.Commit()
+	}
+	kind := KindAnswer
+	if failed {
+		kind = KindFailed
+	}
+	e, err := appendEntry(tx, roomID, member, body, kind)
+	if err != nil {
+		return err
+	}
+	for _, q := range unaddressed {
+		if _, err := tx.Exec(`UPDATE entries SET replaced_by = ? WHERE room_id = ? AND seq = ?`, e.Seq, roomID, q); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func txMembers(tx *sql.Tx, roomID string) ([]string, error) {
+	rows, err := tx.Query(`SELECT member FROM members WHERE room_id = ? ORDER BY member`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- keys ----
@@ -614,7 +807,7 @@ func (s *Store) Member(raw string) (string, bool) {
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-// newToken is 24 random bytes in hex: keys, key ids and room ids.
+// newToken is 24 random bytes in hex: keys and key ids.
 func newToken() string {
 	var b [24]byte
 	_, _ = rand.Read(b[:])
@@ -624,4 +817,21 @@ func newToken() string {
 func hashKey(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// Room ids are words, which a language model copies exactly: an agent posts
+// by copying the room id, and long hex ids came back with one character
+// changed or dropped in a third of the replies measured.
+var (
+	idAdjectives = []string{"amber", "brisk", "cedar", "dusky", "ember", "frost", "gold", "hazel", "ivory", "jade",
+		"lunar", "maple", "noble", "olive", "pearl", "quiet", "rusty", "solar", "tidal", "urban"}
+	idAnimals = []string{"otter", "falcon", "badger", "heron", "lynx", "marten", "osprey", "panda", "raven", "salmon",
+		"tiger", "walrus", "bison", "crane", "dingo", "eagle", "gecko", "ibis", "koala", "llama"}
+)
+
+// wordID is a room id, adjective-animal-NN: 36,000 of them.
+func wordID() string {
+	var b [3]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s-%s-%d", idAdjectives[int(b[0])%len(idAdjectives)], idAnimals[int(b[1])%len(idAnimals)], 10+int(b[2])%90)
 }

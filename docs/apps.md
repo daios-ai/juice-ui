@@ -137,9 +137,10 @@ The fix is to **version the auth config locally** and force a re-push on change:
   do nothing.
 - **An auth change revokes the action's grants** (kernel §8 — verified: renaming the
   header alone empties every caller's grant list). So after a forced re-push the
-  plugin must re-run its per-user grant sync — chat clears its once-per-run
-  `provisioned` guard so each user re-connects `id.Token(handle)` on their next
-  visit. Without this the actions are correct but every user is unauthenticated.
+  app must join its users again — chat finds no connector on the next chat page
+  or sign-in and joins the person and each local agent again (requirements
+  §6.7, rule 8). Without this the actions are correct but every user is
+  unauthenticated.
 
 Also fold the readable signals into the ordinary drift check: treat
 `auth_scheme != "delegated_bearer"` or `requires_grant == false` as drift, so an
@@ -236,10 +237,10 @@ Chat is the worked example — a real **application on top of Juice** — with
 - **Three files.** `store.go` is the state (SQLite: rooms, members, entries,
   keys, cursors, the deliveries a member holds), every rule that must hold
   together one transaction, and no kernel knowledge. `deliver.go` is routing by
-  name and the delivery of a post as kernel tasks. `chat.go` is the App:
+  address and the delivery of a post as kernel tasks. `chat.go` is the App:
   lifecycle, the five actions and their reconciliation, the kernel's dispatches
-  under `/_kernel/chat/`, the browser routes, the badge and the heartbeat
-  watcher.
+  under `/_kernel/chat/`, joining the installation's principals, the landing,
+  the browser routes, the badge and the heartbeat watcher.
 - **Self-provisions.** On `Start` it loads, or generates and persists, the
   `chat@<kernel>` password and the upstream secret its private actions carry,
   and opens the store in the component home (in memory when there is no
@@ -257,6 +258,10 @@ Chat is the worked example — a real **application on top of Juice** — with
   injected into that dispatch (`client.CallbackCreateTask`), one task per
   recipient, and completing it is the answer. No seed trace, no sentinel, no
   app-side notification: the kernel's one signal to a member is a task.
+- **The UI joins its principals.** It holds the person's session and every
+  local agent's credential file, so it approves chat, mints a key and connects
+  it as each of them; nobody is asked to connect. `register` and `validate` are
+  for members elsewhere.
 - **The browser is a member.** Every post from the page runs `msg/post` as the
   viewer, so a person and an agent take one path; rooms and membership are the
   viewer's own writes on the store.

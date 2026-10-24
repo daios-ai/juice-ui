@@ -1,7 +1,19 @@
 # Juice Web UI Requirements
 
-Version: 0.34.0
+Version: 0.35.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.35.0.** Chat provisions what it needs. The UI joins the
+> person signed in and every agent with a home on this installation itself,
+> with that principal's own session, so nobody connects and no agent is joined
+> by hand; the Connect gesture is gone. The agents app makes and runs the
+> assistant, and a session lands in its conversation with it (`/chat`); the
+> rooms are at `/chat/rooms`. A member is addressed by its address as the first
+> word of a post, never by `@handle`. A completion settles what its member said:
+> it replaces the member's unaddressed posts since the delivery, adds nothing
+> after a hand-off, and a failure shows only when the member said nothing; an
+> entry's kind is stored, and a failure reads as one. Room ids are words. The
+> measurements behind each rule are in §6.7.
 
 > **What changed in 0.34.0.** Chat is the front door: a session lands on it
 > and its entry leads the nav (§6.1). The chat app is rewritten (§6.7). A room
@@ -1054,7 +1066,10 @@ kernel and world is in use, and keys everything durable by
   removal, so no daemon takes it meanwhile. A stopped agent shows the daemon's
   `error:` line from its current run. The agent's page shows its account;
   its history is the transactions page, since the kernel filters
-  transactions by process and not by party.
+  transactions by process and not by party. On its start it makes and runs
+  the assistant, `assistant@<kernel>`, that a session lands in conversation
+  with (§6.7, rule 11); the assistant is otherwise an ordinary agent. It knows
+  nothing of chat: chat joins the agents it finds.
 * The task badge MUST be the only attention-demanding affordance in the **core**
   UI; an app (a bundled module such as chat) MAY carry its own app-scoped badge on
   its nav entry. It MUST reflect waiting tasks whose `required_caller` is the
@@ -1995,45 +2010,56 @@ the transaction's `payment` (§6.5).
 Chat is an app (§1, `apps/chat`) and the surface a session lands on. Its
 terms: a **member** is a kernel principal, `handle@kernel`, person or agent,
 and chat never distinguishes the two (ecosystem-standard §7); an **entry** is
-one thing said in a room, author, time and a body that is any JSON value, a
-sentence being a string; a **delivery** is a kernel task chat creates for one
-recipient of a post; a **hand-off** is a post by a member holding an
-unanswered delivery in that room; **naming** is writing `@handle` or
-`@handle@kernel` in a message.
+one thing said in a room, author, time, a body that is any JSON value (a
+sentence being a string) and a stored kind (post, answer or failure); a
+**delivery** is a kernel task chat creates for one recipient of a post; a
+**hand-off** is a post that addresses a member; a post **addresses** a member
+when it is text whose first word, trailing `,:;.!?` removed, is that member's
+address, compared without case. There is no `@handle`: a member is named as
+everywhere in Juice.
 
 Chat is itself a kernel user, `chat@<kernel>`, and owns five actions, every
-schema canonical (§6.4): `index` (public, free; `{}` → `{usage}`, the one
-paragraph a member learns chat from), `register` (public; `{handle}` →
-`{api_key, task_id}`), `validate` (private; the verification task's onward,
-gated by chat's upstream bearer), `msg/post` (public, `delegated_bearer` on the
-seam's caller-key header; `{thread_id, message}` → `{delivered}`) and `reply`
-(private; a delivery's onward, bearer-gated; `{thread_id, member, delivery,
-message, answer?, status?, reason?}` → `{ok}`). The onwards are private so
-that a member completes a task without being able to run the action itself
-and speak as somebody else: the kernel checks an onward's visibility against
-the task's creator, chat. They are reconciled at every start as
-`docs/apps.md` describes, and any other action chat owns is deleted.
+schema canonical (§6.4) and every text naming this kernel: `index` (public,
+free; `{}` → `{usage}`, the paragraph a member learns chat from), `register`
+(public; `{handle}` → `{api_key, task_id}`, for members elsewhere), `validate`
+(private; the verification task's onward, gated by chat's upstream bearer),
+`msg/post` (public, `delegated_bearer` on the seam's caller-key header;
+`{thread_id, message}` → `{delivered}`) and `reply` (private; a delivery's
+onward, bearer-gated; `{thread_id, member, delivery, message, answer?,
+status?, reason?}` → `{ok}`). The onwards are private so that a member
+completes a task without being able to run the action itself and speak as
+somebody else: the kernel checks an onward's visibility against the task's
+creator, chat. They are reconciled at every start as `docs/apps.md`
+describes, and any other action chat owns is deleted.
 
 The rules:
 
 1. **A post is `{thread_id, message}`**, run as the member; the kernel injects
    the member's chat key and chat resolves it. `message` is any JSON value.
-2. **Naming routes.** The recipients are the members the message names, the
-   author excluded; a message naming nobody reaches every other member.
+2. **Addressing routes.** A post that addresses a member reaches that member
+   only; any other post, a document included, reaches every other member. The
+   author never receives its own post.
 3. **A delivery carries the room.** During the post's own dispatch, through the
    capability the kernel injected, chat creates one task per recipient:
    `required_caller` the recipient, action `chat@<kernel>/reply`, partial args
-   `{thread_id, member, delivery, message}` where `message` is the entries
-   since that recipient's previous delivery, by others, this post last, at
-   most fifty. The task is created before the delivery is recorded, so a
-   record that fails repeats a range and never leaves a phantom. A recipient
-   the kernel refuses is skipped. The kernel shows the task to the member once
-   the member has approved chat (kernel U52).
-4. **Completing a delivery answers.** The onward appends an entry by the
-   member when the completion carries `answer`, or `{status, reason}` when it
-   carries a status; a completion carrying neither appends nothing.
-5. **One post per held delivery.** A member holding unanswered deliveries in a
-   room posts once; a second post is refused until a delivery is completed.
+   `{thread_id, member, delivery, message}` where `message` is the standing
+   entries since that recipient's previous delivery, by others, this post
+   last, at most fifty. The task is created before the delivery is recorded,
+   so a record that fails repeats a range and never leaves a phantom. A
+   recipient the kernel refuses is skipped. The kernel shows the task to the
+   member once the member has approved chat (kernel U52).
+4. **Completing a delivery settles what the member said.** Of the member's
+   posts since the delivery: when some address nobody, an answer is appended
+   and those posts are marked replaced by it; when there are none, the answer
+   is appended; when all are hand-offs, nothing is appended. A failure
+   (`status` and no answer) is appended, as a failure, only when the member
+   posted nothing since. A completion carrying neither appends nothing. An
+   answer whose text is a JSON object or array is stored as that document.
+   Nothing is ever deleted: a replaced post stops standing, and a page showing
+   it is told to remove it, so seqs only grow.
+5. **One post per held delivery, counted.** A member holding n unanswered
+   deliveries in a room may have n standing posts since the oldest of them;
+   the next is refused.
 6. **Hand-off cap.** A post's depth is zero when the poster holds no delivery
    in the room, else one more than the deepest held; beyond the cap (three)
    the entry is kept and nothing is delivered.
@@ -2041,28 +2067,58 @@ The rules:
    room is in view; the nav badge is the count of rooms with unread entries.
    Opening a room also completes the viewer's waiting deliveries for it
    (price 0), so a person's next post has depth zero.
-8. **Joining is the documented path**: approve `chat@<kernel>`, run `register`,
-   complete the verification task, connect the key to `chat@<kernel>/msg`. The
-   Connect gesture does it as the viewer; the agents app does it as an agent it
-   creates, after the home exists and before the daemon starts, and says so when
-   it could not; the index says it for everyone else.
-9. **Rooms are the UI's.** Create, add, remove, leave and delete are browser
-   routes on chat's store as the signed-in member; the New room form offers the
-   installation's agents, read from `$JUICE_HOME/agents/`.
-10. **A member on another kernel answers when named and cannot post**: a
-    connected credential names only the caller's own kernel's actions.
+8. **The UI joins its installation's principals.** Joining is approving
+   `chat@<kernel>` as a requester, a key chat mints and activates, and that key
+   connected to `chat@<kernel>/msg`, each as the principal. The person signed
+   in is joined, with the session, by every chat page that finds no connector.
+   An agent with a home under `$JUICE_HOME/agents/` named by a login on this
+   kernel is joined with its own session, read from
+   `client/credentials/<login>.json` under that file's lock and refreshed there
+   when the kernel refuses it (ecosystem-standard §4): every time chat signs
+   in, when it is added to a room, and, for the assistant, at every landing. A
+   join that fails is said on the page that asked for it. A contract change
+   revokes grants; the next join restores them.
+9. **`/chat` is the viewer's conversation with the assistant**: the room whose
+   members are exactly the viewer and `assistant@<kernel>`, found or created
+   in one transaction and named `assistant`; without an assistant home the
+   landing is the rooms. `/chat/rooms` lists the viewer's rooms; create, add,
+   remove, leave and delete are browser routes on chat's store as the
+   signed-in member, and the New room form offers this kernel's agents. A room
+   id is three words, `adjective-animal-NN`, which a language model copies
+   exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
+   26).
+10. **A member on another kernel answers when addressed and cannot post**: a
+    connected credential names only the caller's own kernel's actions. It
+    joins through `register`.
+11. **The assistant exists.** The agents app makes `assistant@<kernel>` when it
+    starts and has no home for it: the password it keeps in its app state, the
+    account (one the kernel already holds is adopted only when that password
+    signs in), the session, the home, and the daemon. It starts a stopped
+    assistant that holds a session.
 
-The UI: the rooms table (`.rowable`, unread weighting), the room as crumb →
-entries → composer, the page the scroll container. An entry renders by its
-body's kind: a string as text, a JSON Schema (`$schema` beside `type` or
-`properties`) as the form of that schema whose submission posts the filled
-value, any other value as the view. The composer is a text box with the JSON
-switch: off, the text is posted as a string; on, the editor's document is
-posted as it is. Every post goes through `msg/post` as the viewer, so the
-browser and an agent take one path, and a refusal is shown beside the
-composer. The store is `$JUICE_HOME/ui/rooms.db`; a first start beside the
-previous application's `chat.db` imports its live rooms, members and messages
-once and never writes that file.
+The post action's description is read by an agent on every turn, so it says
+what the rules need of one: a member of the room is reached by posting with its
+address first, and a task from chat is answered by completing it. Measured on
+the production model (gemma4:26b): eight ordinary questions, two posts, one
+answer each; three hand-offs, three addressed posts and one answer from the
+member addressed. Without the second sentence the model answered by posting
+and then narrated the post in its completion; without the first it reached the
+member by a direct message outside the room.
+
+The UI: `/chat` lands in the room; the room is crumb (← rooms · name ·
+members · leave/delete) → entries → composer, the page the scroll container;
+the rooms are a table (`.rowable`, unread weighting). An entry renders by its
+stored kind and body: a failure as the `failed` pill and its reason, a string
+as text, a JSON Schema (`$schema` beside `type` or `properties`) as the form of
+that schema whose submission posts the filled value, any other value as the
+view. The composer is a text box with the JSON switch: off, the text is posted
+as a string; on, the editor's document is posted as it is. Every post goes
+through `msg/post` as the viewer, so the browser and an agent take one path,
+and a refusal is shown beside the composer. The store is
+`$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held across the
+upgrade settles nothing said before it); a first start beside the previous
+application's `chat.db` imports its live rooms, members and messages once and
+never writes that file.
 
 ## 7. Visual language and non-functional requirements
 

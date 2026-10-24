@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -17,69 +16,33 @@ const handoffCap = 3
 // member's previous delivery.
 const carried = 50
 
-// mention is a name written with @: a handle, or an address handle@kernel.
-var mention = regexp.MustCompile(`@([A-Za-z0-9_.-]+(?:@[A-Za-z0-9_.-]+)?)`)
-
-// named returns the members whose handle or address is written with @ in any
-// string of the message, in the members' order, or nil when the message names
-// nobody at all. An e-mail address names nobody, since its "@" joins a name
-// rather than opening one.
-func named(message json.RawMessage, members []string) []string {
-	said := map[string]bool{}
-	var v any
-	_ = json.Unmarshal(message, &v)
-	for _, t := range texts(v) {
-		for _, m := range mention.FindAllStringSubmatchIndex(t, -1) {
-			if m[0] > 0 && isNameByte(t[m[0]-1]) {
-				continue
-			}
-			said[strings.ToLower(t[m[2]:m[3]])] = true
-		}
+// addressed is the member the message addresses: a string whose first word,
+// trailing punctuation removed, is a member's address, compared without case.
+// "" when none: a document, or text starting with anything else.
+func addressed(message json.RawMessage, members []string) string {
+	var text string
+	if json.Unmarshal(message, &text) != nil {
+		return ""
 	}
-	if len(said) == 0 {
-		return nil
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
 	}
-	out := []string{}
+	first := strings.TrimRight(fields[0], ",:;.!?")
 	for _, m := range members {
-		handle, _, _ := strings.Cut(m, "@")
-		if said[strings.ToLower(m)] || said[strings.ToLower(handle)] {
-			out = append(out, m)
+		if strings.EqualFold(first, m) {
+			return m
 		}
 	}
-	return out
+	return ""
 }
 
-func isNameByte(b byte) bool {
-	return b == '_' || b == '.' || b == '-' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
-}
-
-// texts is every string inside a JSON value.
-func texts(v any) []string {
-	switch x := v.(type) {
-	case string:
-		return []string{x}
-	case []any:
-		var out []string
-		for _, e := range x {
-			out = append(out, texts(e)...)
-		}
-		return out
-	case map[string]any:
-		var out []string
-		for _, e := range x {
-			out = append(out, texts(e)...)
-		}
-		return out
-	}
-	return nil
-}
-
-// recipients applies the routing rule: the members the message names, the
-// author excluded, or every other member when it names nobody.
+// recipients applies the routing rule: the member the message addresses, or
+// every other member when it addresses nobody; never the author.
 func recipients(author string, message json.RawMessage, members []string) []string {
-	to := named(message, members)
-	if to == nil {
-		to = members
+	to := members
+	if m := addressed(message, members); m != "" {
+		to = []string{m}
 	}
 	out := []string{}
 	for _, m := range to {

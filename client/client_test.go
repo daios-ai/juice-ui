@@ -960,3 +960,15 @@ func TestProcessEndable(t *testing.T) {
 		}
 	}
 }
+
+func TestHasConnector(t *testing.T) {
+	dir := User{Connectors: []Connector{{Directory: "chat@k/msg"}}}
+	grant := User{Connectors: []Connector{{Directory: "chat@k", Actions: []Grant{{Action: "chat@k/msg/post"}}}}}
+	other := User{Connectors: []Connector{{Directory: "mail@k", Actions: []Grant{{Action: "chat@k/msgx/post"}}}}}
+	if !dir.HasConnector("chat@k/msg") || !grant.HasConnector("chat@k/msg") {
+		t.Error("a directory or a grant under the selector is a connector")
+	}
+	if other.HasConnector("chat@k/msg") || (User{}).HasConnector("chat@k/msg") {
+		t.Error("no connector for the selector")
+	}
+}

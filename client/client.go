@@ -72,6 +72,22 @@ type User struct {
 	Connections       []Connection `json:"connections"`                  // full upstream-account inventory
 }
 
+// HasConnector reports whether the user holds a connector for selector, as a
+// directory or as a grant under it: the state `juice user connect` creates.
+func (u User) HasConnector(selector string) bool {
+	for _, c := range u.Connectors {
+		if c.Directory == selector {
+			return true
+		}
+		for _, g := range c.Actions {
+			if strings.HasPrefix(g.Action, selector+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Connector is one node of the directory-grouped consent tree in GET /v1/me: a
 // folder (the granted actions' shared ref prefix, e.g. chat or chat/inbox), the
 // upstream account(s) that back it (usually one), and the per-action grants under

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,14 +19,14 @@ import (
 
 // fakeKernel answers the five routes a sign-in and an account creation use. The
 // password it accepts is "pw"; it records the handles created and every path
-// asked, and answers /v1/me with the address it was told to.
+// asked, and answers /v1/me with the address it was told to. A handle starting
+// with "taken", or listed in held, already exists.
 type fakeKernel struct {
 	srv     *httptest.Server
 	mu      sync.Mutex
 	created []string
 	paths   []string
-	runs    []string // POST /v1/run bodies
-	grants  []string // POST /v1/grants bodies
+	held    map[string]bool
 	me      string
 	health  string
 }
@@ -42,7 +41,7 @@ func newKernel(t *testing.T) *fakeKernel {
 		var body map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		k.mu.Lock()
-		dup := strings.HasPrefix(body["handle"], "taken")
+		dup := strings.HasPrefix(body["handle"], "taken") || k.held[body["handle"]]
 		k.created = append(k.created, body["handle"])
 		k.mu.Unlock()
 		if dup {
@@ -65,28 +64,6 @@ func newKernel(t *testing.T) *fakeKernel {
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"P1","address":"` + k.me + `"}`))
-	})
-	// The join: approve chat, register, complete the verification task,
-	// connect the key. The register reply names the key and the task.
-	mux.HandleFunc("POST /v1/me/requesters/{address}/{verb}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"requester":"` + r.PathValue("address") + `","status":"approved"}`))
-	})
-	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		k.mu.Lock()
-		k.runs = append(k.runs, string(b))
-		k.mu.Unlock()
-		w.Write([]byte(`{"result":{"api_key":"KEY1","task_id":"T1"},"tx_id":"tx"}`))
-	})
-	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"task_id":"` + r.PathValue("id") + `","status":"done"}`))
-	})
-	mux.HandleFunc("POST /v1/grants", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		k.mu.Lock()
-		k.grants = append(k.grants, string(b))
-		k.mu.Unlock()
-		w.Write([]byte(`{"actions":["chat@testnet/msg/post"]}`))
 	})
 	k.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		k.mu.Lock()
@@ -132,7 +109,7 @@ func kernelRecord(t *testing.T, a *Agents) map[string]any {
 // `current`, which belongs to a person at a terminal.
 func TestSignInWritesTheClientRecords(t *testing.T) {
 	a, k, _, _ := kernelApp(t)
-	if _, err := a.signIn(context.Background(), "research", "pw"); err != nil {
+	if err := a.signIn(context.Background(), "research", "pw"); err != nil {
 		t.Fatal(err)
 	}
 	cred := a.credPath("research")
@@ -154,7 +131,7 @@ func TestSignInWritesTheClientRecords(t *testing.T) {
 		t.Fatalf("kernel record = %v", rec)
 	}
 	// A second sign-in replaces the session in place.
-	if _, err := a.signIn(context.Background(), "research", "pw"); err != nil {
+	if err := a.signIn(context.Background(), "research", "pw"); err != nil {
 		t.Fatal(err)
 	}
 	if got := readJSON(t, cred); got["token"] != "AT" {
@@ -176,7 +153,7 @@ func TestRecordKernelFollowsKernelAdd(t *testing.T) {
 		_ = os.WriteFile(path, []byte(`{"current":"alice@other","kernels":{"other":{"endpoint":"http://o","public_key":"O"},"testnet":`+rec+`}}`), 0o600)
 	}
 	write(`{"endpoint":"http://old:1","public_key":"KEY","network":"play","decimals":6,"symbol":"fUSDT"}`)
-	if _, err := a.signIn(context.Background(), "research", "pw"); err != nil {
+	if err := a.signIn(context.Background(), "research", "pw"); err != nil {
 		t.Fatal(err)
 	}
 	cfg := readJSON(t, path)
@@ -190,7 +167,7 @@ func TestRecordKernelFollowsKernelAdd(t *testing.T) {
 	write(`{"endpoint":"` + k.srv.URL + `","public_key":"OTHER","world_fingerprint":"FP"}`)
 	_ = os.Remove(a.credPath("research"))
 	before, _ := os.ReadFile(path)
-	if _, err := a.signIn(context.Background(), "research", "pw"); err == nil || !strings.Contains(err.Error(), "another key") {
+	if err := a.signIn(context.Background(), "research", "pw"); err == nil || !strings.Contains(err.Error(), "another key") {
 		t.Fatalf("want refusal, got %v", err)
 	}
 	if after, _ := os.ReadFile(path); string(before) != string(after) {
@@ -231,37 +208,14 @@ func TestRecordKernelHoldsTheLock(t *testing.T) {
 // write nothing.
 func TestSignInRefusalsWriteNothing(t *testing.T) {
 	a, k, _, _ := kernelApp(t)
-	if _, err := a.signIn(context.Background(), "research", "wrong"); !errors.Is(err, client.ErrUnauthenticated) {
+	if err := a.signIn(context.Background(), "research", "wrong"); !errors.Is(err, client.ErrUnauthenticated) {
 		t.Fatalf("want the kernel's 401, got %v", err)
 	}
 	k.me = "someone@testnet"
-	if _, err := a.signIn(context.Background(), "research", "pw"); err == nil || !strings.Contains(err.Error(), "someone@testnet") {
+	if err := a.signIn(context.Background(), "research", "pw"); err == nil || !strings.Contains(err.Error(), "someone@testnet") {
 		t.Fatalf("want a refusal naming the other address, got %v", err)
 	}
 	if _, err := os.Stat(a.client); !os.IsNotExist(err) {
 		t.Fatal("a refused sign-in must write nothing")
-	}
-}
-
-// The join is the documented path, as the agent itself: approve chat, run
-// chat's register for the agent's own address, complete the verification
-// task, connect the key to chat's member actions.
-func TestJoinChatTakesTheDocumentedPath(t *testing.T) {
-	a, k, _, _ := kernelApp(t)
-	if err := a.joinChat(context.Background(), "AT", "research"); err != nil {
-		t.Fatalf("joinChat: %v", err)
-	}
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	want := []string{"POST /v1/me/requesters/chat@testnet/approve", "POST /v1/run", "POST /v1/tasks/T1/complete", "POST /v1/grants"}
-	got := k.paths[len(k.paths)-4:]
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("paths = %v, want %v", got, want)
-	}
-	if len(k.runs) != 1 || !strings.Contains(k.runs[0], `"chat@testnet/register"`) || !strings.Contains(k.runs[0], `"research@testnet"`) {
-		t.Errorf("register run = %v", k.runs)
-	}
-	if len(k.grants) != 1 || !strings.Contains(k.grants[0], `"chat@testnet/msg"`) || !strings.Contains(k.grants[0], `"KEY1"`) {
-		t.Errorf("connect = %v", k.grants)
 	}
 }

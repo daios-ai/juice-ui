@@ -1,12 +1,14 @@
 {{/* _entry — one thing said in a room: who, when, and the body by its kind:
-     a sentence, a form (a JSON Schema, filled and sent as a message), or
-     any other value as the view. */}}
+     a sentence, a form (a JSON Schema, filled and sent as a message), a
+     failure (the member could not answer, with its reason), or any other
+     value as the view. */}}
 {{define "_entry"}}
 <div class="msg" id="e-{{.Entry.Seq}}">
   <span class="avatar" aria-hidden="true">{{initial .Entry.Author}}</span>
   <div class="msg-body">
     <div class="msg-who"><span class="h mono">{{.Entry.Author}}</span><span class="muted small">{{shortTime .Entry.At}}</span></div>
     {{if eq .Kind "text"}}<p class="msg-text">{{.Text}}</p>
+    {{else if eq .Kind "failed"}}<p class="msg-text"><span class="pill status-danger">failed</span> <span class="muted">{{.Reason}}</span></p>
     {{else if eq .Kind "form"}}
     <form class="card stack" method="post" action="/chat/room/{{.RoomID}}/message" data-json
           hx-post="/chat/room/{{.RoomID}}/message" hx-include="#chat-after" hx-target="#chat-messages" hx-swap="beforeend">
@@ -20,8 +22,9 @@
 </div>
 {{end}}
 
-{{/* The composer's answer and the poll: new entries append, the cursor and
-     the watch advance, a shown refusal clears. */}}
+{{/* The composer's answer and the poll: new entries append, the posts an
+     answer replaced leave, the cursor and the watch advance, a shown refusal
+     clears. */}}
 {{define "_chat_poll"}}
 {{range .Cards}}{{template "_entry" .}}{{end}}
 {{template "_chat_cursor" .}}
@@ -35,6 +38,7 @@
 {{end}}
 
 {{define "_chat_cursor"}}
+{{range .Removed}}<div id="e-{{.}}" hx-swap-oob="delete"></div>{{end}}
 <input type="hidden" id="chat-after" name="after" value="{{.After}}" hx-swap-oob="true">
 <input type="hidden" id="watch-chat-room" name="watch" value="chat:{{.RoomID}}:{{.After}}" hx-swap-oob="true">
 <p class="error-text" id="chat-error" role="alert" hidden hx-swap-oob="true"></p>

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -890,5 +891,93 @@ func TestAgentBinResolvesTheInstallationBinFirst(t *testing.T) {
 	t.Setenv(binEnv, "/opt/juice-agent")
 	if got := agentBin(home); got != "/opt/juice-agent" {
 		t.Errorf("the override must win, got %q", got)
+	}
+}
+
+// assistantApp is kernelApp with the app's state kept in memory, seeded with
+// state; saves counts the writes.
+func assistantApp(t *testing.T, state string) (*Agents, *fakeKernel, *fakeLauncher, *int) {
+	t.Helper()
+	a, k, fl, _ := kernelApp(t)
+	k.me = "assistant@testnet"
+	saves := 0
+	a.deps.LoadAppState = func(string) (json.RawMessage, error) { return json.RawMessage(state), nil }
+	a.deps.SaveAppState = func(_ string, v json.RawMessage) error { state = string(v); saves++; return nil }
+	return a, k, fl, &saves
+}
+
+// The assistant is made once: the account under the kept password, the
+// session, the home, the daemon. A second pass changes nothing.
+func TestEnsureAssistantMakesAndStartsIt(t *testing.T) {
+	a, k, fl, saves := assistantApp(t, `{"assistant_password":"pw"}`)
+	a.ensureAssistant(context.Background())
+	if len(k.created) != 1 || k.created[0] != "assistant@testnet" {
+		t.Fatalf("created = %v", k.created)
+	}
+	if !a.exists("assistant") {
+		t.Fatal("no home")
+	}
+	if _, err := os.Stat(a.credPath("assistant")); err != nil {
+		t.Fatalf("no session: %v", err)
+	}
+	if len(fl.started) != 1 || fl.started[0].login != "assistant@testnet" {
+		t.Fatalf("started = %+v", fl.started)
+	}
+	if *saves != 0 {
+		t.Fatal("a kept password is not written again")
+	}
+	a.ensureAssistant(context.Background())
+	if len(k.created) != 1 || len(fl.started) != 1 {
+		t.Fatalf("second pass: created %v, started %+v", k.created, fl.started)
+	}
+}
+
+// Without a kept password one is made and saved before the account, and
+// the next pass uses the same one.
+func TestEnsureAssistantKeepsItsPassword(t *testing.T) {
+	a, k, _, saves := assistantApp(t, "")
+	a.ensureAssistant(context.Background())
+	if *saves != 1 || len(k.created) != 1 {
+		t.Fatalf("saves %d, created %v", *saves, k.created)
+	}
+	a.ensureAssistant(context.Background())
+	if *saves != 1 {
+		t.Fatal("the password is made once")
+	}
+}
+
+// A handle the kernel already holds is adopted only when the kept password
+// signs in; otherwise nothing is written.
+func TestEnsureAssistantAdoptsOnlyItsOwnAccount(t *testing.T) {
+	a, k, fl, _ := assistantApp(t, `{"assistant_password":"pw"}`)
+	k.held = map[string]bool{"assistant@testnet": true}
+	a.ensureAssistant(context.Background())
+	if !a.exists("assistant") || len(fl.started) != 1 {
+		t.Fatal("its own account is adopted")
+	}
+	b, k2, fl2, _ := assistantApp(t, `{"assistant_password":"not-it"}`)
+	k2.held = map[string]bool{"assistant@testnet": true}
+	b.ensureAssistant(context.Background())
+	if b.exists("assistant") || len(fl2.started) != 0 {
+		t.Fatal("another's account is not adopted")
+	}
+}
+
+// A stopped assistant holding a session is started; one without is left.
+func TestEnsureAssistantStartsAStoppedOne(t *testing.T) {
+	a, _, fl, _ := assistantApp(t, `{"assistant_password":"pw"}`)
+	if err := a.create("assistant"); err != nil {
+		t.Fatal(err)
+	}
+	a.ensureAssistant(context.Background())
+	if len(fl.started) != 0 {
+		t.Fatal("no session, no start")
+	}
+	if err := a.signIn(context.Background(), "assistant", "pw"); err != nil {
+		t.Fatal(err)
+	}
+	a.ensureAssistant(context.Background())
+	if len(fl.started) != 1 {
+		t.Fatal("a stopped assistant with a session is started")
 	}
 }

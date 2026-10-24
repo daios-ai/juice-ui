@@ -1,8 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}
-<div class="page-head"><h1>Chat</h1></div>
-{{if $d.Connected}}
-<p><a class="btn-quiet" href="/chat?form=new" data-modal="form-new">+ new room</a></p>
+<div class="page-head"><h1>Rooms</h1></div>
+<p><a class="btn-quiet" href="/chat/rooms?form=new" data-modal="form-new">+ new room</a></p>
 
 {{if $d.Rooms}}
 <div class="table-scroll">
@@ -23,7 +22,7 @@
 {{end}}
 
 <dialog id="form-new" class="modal-form"{{if $d.OpenForm}} open{{end}} aria-label="New room">
-  <div class="modal-head"><h2>New room</h2><a class="modal-close" href="/chat" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>New room</h2><a class="modal-close" href="/chat/rooms" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/chat/rooms">
       {{.CSRFField}}
@@ -45,12 +44,4 @@
     </form>
   </div>
 </dialog>
-{{else}}
-<div class="card">
-  <form method="post" action="/chat/connect">
-    {{.CSRFField}}
-    <button class="btn" type="submit">Connect to chat</button>
-  </form>
-</div>
-{{end}}
 {{end}}
