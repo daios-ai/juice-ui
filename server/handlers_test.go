@@ -4220,3 +4220,28 @@ func TestResultDownloadIsAnAttachment(t *testing.T) {
 		}
 	}
 }
+
+// TestPageReadsTheViewerOnce: a page reads /v1/me once, however many of its
+// parts need the viewer (the envelope's balance, the handler's address).
+func TestPageReadsTheViewerOnce(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	var reads atomic.Int32
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/me" {
+			reads.Add(1)
+		}
+		kernel.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer counting.Close()
+	srv := httptest.NewServer(newTestHandler(t, counting.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	for _, page := range []string{"/", "/wallet", "/inbox", "/settings", "/workshop", "/transactions"} {
+		reads.Store(0)
+		getBody(t, cl, srv.URL+page)
+		if n := reads.Load(); n != 1 {
+			t.Errorf("%s read /v1/me %d times, want 1", page, n)
+		}
+	}
+}

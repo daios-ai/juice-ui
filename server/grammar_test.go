@@ -760,3 +760,48 @@ func TestNoPaletteSurface(t *testing.T) {
 		}
 	}
 }
+
+// TestNoDeadCSS: every class app.css styles is named by a template, a script
+// or the Go that renders markup. A grammar is minimal only while nothing it no
+// longer uses survives in the stylesheet.
+func TestNoDeadCSS(t *testing.T) {
+	css, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpus strings.Builder
+	for _, glob := range []string{"templates/*.html", "../apps/*/templates/*.html", "static/*.js", "../wallet/*.mjs", "*.go", "../apps/*.go", "../apps/*/*.go"} {
+		files, _ := filepath.Glob(glob)
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "htmx.min.js") {
+				continue
+			}
+			b, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			corpus.Write(b)
+			corpus.WriteByte('\n')
+		}
+	}
+	src := corpus.String()
+	// Classes htmx sets on its own.
+	toggled := map[string]bool{"htmx-request": true}
+	rules := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(css), "")
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\.([a-zA-Z][\w-]*)`).FindAllStringSubmatch(rules, -1) {
+		c := m[1]
+		if seen[c] || toggled[c] {
+			continue
+		}
+		seen[c] = true
+		// A class a template composes, flash-{{.FlashKind}}, counts by its stem.
+		stem := c[:strings.LastIndex(c, "-")+1]
+		if stem != "" && strings.Contains(src, stem+"{{") {
+			continue
+		}
+		if !regexp.MustCompile(`(^|[^\w-])` + regexp.QuoteMeta(c) + `([^\w-]|$)`).MatchString(src) {
+			t.Errorf("app.css styles .%s, which nothing renders", c)
+		}
+	}
+}

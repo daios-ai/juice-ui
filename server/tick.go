@@ -79,7 +79,7 @@ func (s *Server) taskBadgeCount(r *http.Request) int {
 		return count
 	}
 	_ = s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}

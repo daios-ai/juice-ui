@@ -573,7 +573,48 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 		if s.kernelChanged(w, r) {
 			return
 		}
-		h(w, r)
+		h(w, withViewer(r))
+	}
+}
+
+// viewer is the signed-in user as this request has read it: the page
+// envelope needs the balance, the handlers the address and the grants, and
+// one read of /v1/me serves them all.
+type viewer struct {
+	user client.User
+	err  error
+	read bool
+}
+
+type viewerKey struct{}
+
+// withViewer gives the request a place to keep the viewer once read.
+func withViewer(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), viewerKey{}, &viewer{}))
+}
+
+// me is the signed-in user, read from the kernel at most once per request.
+func (s *Server) me(r *http.Request) (client.User, error) {
+	v, _ := r.Context().Value(viewerKey{}).(*viewer)
+	if v != nil && v.read {
+		return v.user, v.err
+	}
+	var u client.User
+	err := s.sessions.Do(r.Context(), func(tok string) (e error) {
+		u, e = s.client.Me(r.Context(), tok)
+		return e
+	})
+	if v != nil {
+		v.user, v.err, v.read = u, err, true
+	}
+	return u, err
+}
+
+// forgetMe drops the request's read of the viewer, after a call that moved
+// its money, so the page renders the balance that call left.
+func forgetMe(r *http.Request) {
+	if v, _ := r.Context().Value(viewerKey{}).(*viewer); v != nil {
+		v.read = false
 	}
 }
 
@@ -639,7 +680,7 @@ func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
 			s.renderPage(w, r, http.StatusNotFound, "error", "Not found", errorView{Message: "Page not found."})
 			return
 		}
-		h(w, r)
+		h(w, withViewer(r))
 	}
 }
 
@@ -848,21 +889,13 @@ func activeGroup(path string) string {
 }
 
 // renderPage writes a full page, clearing any one-shot flash cookie and logging
-// (not surfacing) template errors. Pass the signed-in user's available balance
-// as the optional last argument to skip a redundant GET /v1/me call when the
-// handler already fetched the user.
-func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, name, title string, data any, available ...int64) {
+// (not surfacing) template errors. The balance in the envelope is the
+// request's one read of the viewer.
+func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, status int, name, title string, data any) {
 	p := s.page(r, title, data)
 	if p.Me != "" {
-		if len(available) > 0 {
-			p.Available = available[0]
-		} else {
-			_ = s.sessions.Do(r.Context(), func(tok string) error {
-				if me, e := s.client.Me(r.Context(), tok); e == nil {
-					p.Available = me.Available
-				}
-				return nil
-			})
+		if me, err := s.me(r); err == nil {
+			p.Available = me.Available
 		}
 	}
 	if p.Flash != "" {

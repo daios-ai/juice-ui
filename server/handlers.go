@@ -743,15 +743,10 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	var granted map[string]bool
-	var available int64
-	haveMe := false
 	err := s.sessions.Do(ctx, func(tok string) error {
-		// One /v1/me read serves both the needs-account flag and the balance
-		// renderPage would otherwise re-fetch. Best-effort: the page must not
-		// fail for a chip.
-		if me, e := s.client.Me(ctx, tok); e == nil {
+		// Best-effort: the page must not fail for a chip.
+		if me, e := s.me(r); e == nil {
 			granted = grantedRefs(me)
-			available, haveMe = me.Available, true
 		}
 		if q == "" {
 			// Read the whole catalog — local actions and those discovered on
@@ -864,10 +859,6 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	if haveMe {
-		s.renderPage(w, r, http.StatusOK, "browse", "Browse", view, available)
-		return
-	}
 	s.renderPage(w, r, http.StatusOK, "browse", "Browse", view)
 }
 
@@ -877,7 +868,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	view := userView{OpenForm: openForm(r, "user")}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.Me(ctx, tok)
+		u, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -887,7 +878,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "settings", "Settings", view, view.User.Available)
+	s.renderPage(w, r, http.StatusOK, "settings", "Settings", view)
 }
 
 func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
@@ -950,14 +941,12 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("status")
 	view := tasksView{Filter: filter, Superuser: s.isSuperuser(r)}
-	var myAvailable int64
 	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
 		view.Me = me.Address
-		myAvailable = me.Available
 		tasks, e := s.client.ListTasks(ctx, tok, filter)
 		if e != nil {
 			return e
@@ -992,7 +981,7 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view, myAvailable)
+	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view)
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -1004,7 +993,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -1072,7 +1061,7 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 		if e != nil {
 			return e
 		}
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -1179,7 +1168,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -1192,6 +1181,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 			if e != nil {
 				return e
 			}
+			forgetMe(r) // the run may have moved the viewer's money
 			// A refused quote re-renders the form pinned to the terms the kernel
 			// just quoted, so accepting them is one more click, not a re-read.
 			if out.Class == TermsChanged && out.QuoteHash != "" {
@@ -1274,7 +1264,7 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 	var mine []actionCardView
 	var txs []client.Transaction
 	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.Me(ctx, tok)
+		u, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -1353,7 +1343,7 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 	if create != nil {
 		view.Create, view.OpenForm, status = *create, "action-create", http.StatusUnprocessableEntity
 	}
-	s.renderPage(w, r, status, "workshop", "Workshop", view, view.User.Available)
+	s.renderPage(w, r, status, "workshop", "Workshop", view)
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {
@@ -1791,7 +1781,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 	_, chain := wallet.ChainOf(id)
 	view := walletView{OpenForm: form, KernelAddress: id.BlockchainAddress, Token: id.Token, Symbol: id.Symbol, Chain: chain, Review: review}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -1823,7 +1813,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		return
 	}
 	view.Superuser = s.isSuperuser(r)
-	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view, view.Available)
+	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view)
 }
 
 // homeView is the dashboard: what the viewer has, what waits on them, and what
@@ -1857,7 +1847,7 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	view := homeView{Superuser: s.isSuperuser(r)}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.client.Me(ctx, tok)
+		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
@@ -1888,7 +1878,7 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	s.renderPage(w, r, http.StatusOK, "home", "Home", view, view.Available)
+	s.renderPage(w, r, http.StatusOK, "home", "Home", view)
 }
 
 // walletAmount reads a review's typed amount, flashing a refusal back to the
@@ -1930,7 +1920,7 @@ func (s *Server) postFund(w http.ResponseWriter, r *http.Request) {
 	var tx wallet.Tx
 	if err == nil {
 		err = s.sessions.Do(ctx, func(tok string) error {
-			me, e := s.client.Me(ctx, tok)
+			me, e := s.me(r)
 			if e == nil {
 				tx, e = wallet.FundTx(s.kernelIdentity(ctx), me, amount)
 			}
@@ -2097,7 +2087,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	hasNext := false
 	err := s.sessions.Do(ctx, func(tok string) error {
 		var e error
-		if me, e = s.client.Me(ctx, tok); e != nil {
+		if me, e = s.me(r); e != nil {
 			return e
 		}
 		// Fetch the full ledger and slice one page here: the kernel paginates raw
@@ -2125,12 +2115,12 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 // basis of the transaction page and its verify fragment. The action is the
 // transaction's own address, captured when the call was made. CanRate: the
 // buyer may rate a successful, unrated transaction (R6.6.4).
-func (s *Server) loadTxView(ctx context.Context, tok, id string) (txView, error) {
-	tx, e := s.client.GetTransaction(ctx, tok, id)
+func (s *Server) loadTxView(r *http.Request, tok, id string) (txView, error) {
+	tx, e := s.client.GetTransaction(r.Context(), tok, id)
 	if e != nil {
 		return txView{}, e
 	}
-	me, e := s.client.Me(ctx, tok)
+	me, e := s.me(r)
 	if e != nil {
 		return txView{}, e
 	}
@@ -2142,7 +2132,7 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var view txView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		v, e := s.loadTxView(ctx, tok, id)
+		v, e := s.loadTxView(r, tok, id)
 		view = v
 		return e
 	})
@@ -2159,7 +2149,7 @@ func (s *Server) getTxVerify(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var view txView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		v, e := s.loadTxView(ctx, tok, id)
+		v, e := s.loadTxView(r, tok, id)
 		if e != nil {
 			return e
 		}
