@@ -43,7 +43,7 @@ core rotting into a monolith; read them before touching this seam.
    needs the plugin, the boundary has leaked.
 3. **Ownership split.** The store owns *domain state* and its invariants, each
    as one transaction. The plugin owns *Juice/UI integration* (kernel actions,
-   grants, identity, templates, the nav badge, the kernel's dispatches).
+   grants, identity, templates, its menu entry and badge, the kernel's dispatches).
 4. **The caller is who the kernel says.** A `delegated_bearer` action carries the
    key the caller connected on `apps.CallerKeyHeader`; the app resolves that key to
    the caller and trusts nothing else in the request.

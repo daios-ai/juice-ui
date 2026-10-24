@@ -1010,6 +1010,23 @@ kernel and world is in use, and keys everything durable by
 
 ### 6.1 Information architecture
 
+The workspace (§1), on a wide screen:
+
+```text
+┌─ sidebar ───────────┬─ conversation ─────────────────────┬─ panel ──────────┐
+│ ◆ kernel · world  ≡ │ research-room · 3 members · Leave  │ Translate text × │
+│ + New conversation  │ ana@k        Find suppliers …      │ linguist@k/text  │
+│ assistant           │ researcher@k I found three.        │ 2 credits · ▸ ev │
+│ research-room     • │ researcher@k is answering          │ text   [……]      │
+│                     │ ┌ message ─────────────── [/] ┐    │ [Fill from chat] │
+│ (A) ana@k        ③  │ └───────────────────── [Send] ┘    │ [Run (2)]        │
+└─────────────────────┴────────────────────────────────────┴──────────────────┘
+```
+
+The sidebar is the conversations and the avatar (③ the task badge), whose
+menu holds every other destination; the composer is where text, an address and
+`/` begin; the panel holds the action chosen, empty and absent until then.
+
 * **The sidebar is the workspace's conversations.** It MUST hold, in order:
   the brand (the kernel and its world, §7) with the collapse toggle; the
   conversations rail (§6.7); and at its foot the signed-in user's avatar, which
@@ -1139,7 +1156,7 @@ and a price on every local row, and the UI renders them on every card. Those
 signals MUST also be usable when choosing, or the feedback a buyer gives comes
 back only as a number to look at:
 
-* Browse MUST offer a sort switch — **relevance · rating · price** — through the
+* Discover MUST offer a sort switch — **relevance · rating · price** — through the
   one tabs component (§7), preserving the query and starting a new order at its
   own first page.
 * **Relevance is the default and is the kernel's own order**: the lookup ranking
@@ -1383,7 +1400,7 @@ both MUST keep planning apart from spending:
   lands on the ordinary action page, quoting terms verified moments ago rather
   than a catalog row that may be a discovery interval stale, and the pin protects
   the gap between that page and the run. A reference that resolves to nothing,
-  or whose kernel refuses or cannot be reached, returns to browse with that
+  or whose kernel refuses or cannot be reached, returns to Discover with that
   kernel's own sentence (§6.2 outcomes) — never a page built from gossip.
 * **A retry is offered only where the kernel marks the call as unrun.** When a
   cached proxy is stale against its peer, the kernel answers `execution_failed`
@@ -2098,7 +2115,7 @@ The rules:
    in the room, else one more than the deepest held; beyond the cap (three)
    the entry is kept and nothing is delivered.
 7. **Unread is chat's own read cursor** per member and room, advanced when the
-   room is in view; the nav badge is the count of rooms with unread entries.
+   room is in view; a room with unread entries is weighted in the rail.
    Opening a room also completes the viewer's waiting deliveries for it
    (price 0), so a person's next post has depth zero.
 8. **The UI joins its installation's principals.** Joining is approving
@@ -2115,9 +2132,10 @@ The rules:
 9. **`/chat` is the viewer's conversation with the assistant**: the room whose
    members are exactly the viewer and `assistant@<kernel>`, found or created
    in one transaction and named `assistant`; without an assistant home the
-   landing is the rooms. `/chat/rooms` lists the viewer's rooms; create, add,
-   remove, leave and delete are browser routes on chat's store as the
-   signed-in member, and the New room form offers this kernel's agents. A room
+   landing is the newest room, else an empty page beside the rail. The rail
+   lists the viewer's rooms; create, add, remove, leave and delete are browser
+   routes on chat's store as the signed-in member, and New conversation offers
+   this kernel's agents first. A room
    id is three words, `adjective-animal-NN`, which a language model copies
    exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
    26).
@@ -2263,7 +2281,7 @@ once and never writes that file.
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
-* **Pagination.** No list renders unbounded. Every long list — browse, the
+* **Pagination.** No list renders unbounded. Every long list — Discover, the
   transaction ledger, the workshop management table, the admin roster, an action's
   ratings, and open/closed sessions — MUST page with `limit`/`offset` at **20 per
   page** through **one shared, quiet pager** (`← previous · page N · next →`; a
@@ -2766,10 +2784,25 @@ only and never includes tokens or secrets.
 
 ## 11. Design rationale (non-normative)
 
-The interface has four rooms and a ledger rather than one page per resource
-because a person arrives to do one of three things — get something done, answer a
-decision owed to them, or sell a capability — and everything else is evidence
-about those activities. Money borrows the most over-tested patterns on the web:
+Juice is an economy of callable capabilities inhabited by people and agents,
+each a principal with its own account. The interface is organized around
+collaboration among those principals rather than around the kernel's resource
+categories, because the work a person brings rarely fits one action: it moves
+between saying what is needed, choosing a capability, preparing its arguments,
+reading its result and handing the next step to someone — a person or an agent.
+A resource-per-page interface leaves that composition to the person: search,
+open, fill in, run, copy, search again. A pure assistant automates it but routes
+every relationship through one privileged agent and takes the decisions away.
+Collaboration contains both: a conversation with the assistant is its
+one-to-one case, a room of specialists its general one, and in either the
+person can run an action themselves, have its arguments prepared, or delegate
+the whole job to an agent spending its own account. Hence three permanent
+elements — the conversations, the composer, the avatar menu — and one
+contextual surface, the action panel, so that context flows from conversation
+to action to result and back without transcription. Search stays a capability
+(the launcher, Discover); the other pages stay destinations, since a person
+still arrives to answer a decision owed to them or to sell a capability, and
+everything else is evidence about those activities. Money borrows the most over-tested patterns on the web:
 the checkout and the order receipt. The kernel's "a price is a price" — one number
 up front, one receipt at the end, refund on failure — is the mental model of
 buying something online, which is why the run form and receipt page are the

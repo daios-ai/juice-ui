@@ -153,6 +153,9 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   - *Index* = `page-head` (the title) → section `<h2>` → a `.tabs` filter
     row (with an optional inline `+ new …` command) → list.
   - *Detail* = crumb (sticky back-link) → `<h1>` → `.subtitle` (the id) → cards.
+  - *Conversation* = crumb (the room's name, members, leave/delete; no
+    back-link, the rail is the way across) → entries → who is answering →
+    composer, beside the panel (§5.5). It is neither an index nor a detail.
 
 **Copy discipline — words are a component.** Prose is rationed like color. Every
 visible string is exactly one register:
