@@ -764,10 +764,9 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 	return Page{
 		Title: title,
 		Path:  r.URL.Path,
-		// ?menu=open is the no-JS route into the mobile nav: the drawer is
-		// server-rendered [open] and falls back to an in-flow card, exactly as
-		// ?form= does for modals (§6.1). With JS, data-modal intercepts first.
-		MenuOpen:     r.URL.Query().Get("menu") == "open",
+		// ?drawer=open is the no-JS route into a narrow screen's drawer,
+		// stamped on <html> as the script would set it (§6.1).
+		DrawerOpen:   r.URL.Query().Get("drawer") == "open",
 		Theme:        themeFromRequest(r),
 		Sidebar:      sidebarFromRequest(r),
 		Commands:     cmds,

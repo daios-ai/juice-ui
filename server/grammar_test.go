@@ -836,3 +836,86 @@ func TestComposerIsTheOneException(t *testing.T) {
 		}
 	}
 }
+
+// mediaBlock returns the body of the first `@media (<query>)` block of css,
+// by brace matching, or "" when it has none.
+func mediaBlock(css, query string) string {
+	i := strings.Index(css, "@media ("+query+")")
+	if i < 0 {
+		return ""
+	}
+	open := strings.Index(css[i:], "{") + i
+	depth := 0
+	for j := open; j < len(css); j++ {
+		switch css[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return css[open+1 : j]
+			}
+		}
+	}
+	return ""
+}
+
+// TestStylesUseTokens: app.css writes no size of its own (grammar §3, §4).
+// Type, spacing and radii are tokens of tokens.css; only a hairline (1px, 2px)
+// is literal. An icon and an avatar take a token size.
+func TestStylesUseTokens(t *testing.T) {
+	b, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(b), "")
+	declRe := regexp.MustCompile(`(?:^|[;{\s])((?:font-size|padding(?:-[a-z]+)?|margin(?:-[a-z]+)?|gap|row-gap|column-gap|border-radius)\s*:\s*[^;}]+)`)
+	litRe := regexp.MustCompile(`\d*\.?\d+(?:rem|px)\b`)
+	for _, m := range declRe.FindAllStringSubmatch(css, -1) {
+		for _, lit := range litRe.FindAllString(m[1], -1) {
+			if lit != "1px" && lit != "2px" {
+				t.Errorf("app.css: %q writes %s — sizes are tokens (tokens.css)", strings.TrimSpace(m[1]), lit)
+			}
+		}
+	}
+	ruleRe := regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`)
+	sizeRe := regexp.MustCompile(`(?:^|[;\s])(?:width|height)\s*:\s*([^;]+)`)
+	for _, m := range ruleRe.FindAllStringSubmatch(css, -1) {
+		sel := m[1]
+		if !regexp.MustCompile(`\.(ico|avatar)([^\w-]|$)`).MatchString(sel) {
+			continue
+		}
+		for _, s := range sizeRe.FindAllStringSubmatch(m[2], -1) {
+			if !regexp.MustCompile(`^var\(--(icon|avatar)[\w-]*\)$`).MatchString(strings.TrimSpace(s[1])) {
+				t.Errorf("app.css: %s sizes an icon or avatar as %q — use --icon-* or --avatar*", strings.TrimSpace(sel), s[1])
+			}
+		}
+	}
+}
+
+// TestSidebarHasTwoStatesPerWidth: the width picks one of two models, which
+// never mix (requirements §6.1). Collapsing is a wide screen's; the drawer
+// and the topbar a narrow one's; and the frame is sized to the visible screen.
+func TestSidebarHasTwoStatesPerWidth(t *testing.T) {
+	b, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(b), "")
+	wide, narrow := mediaBlock(css, "min-width: 721px"), mediaBlock(css, "max-width: 720px")
+	if wide == "" || narrow == "" {
+		t.Fatal("app.css lacks the wide or the narrow block")
+	}
+	for _, c := range []struct{ needle, block, where string }{
+		{`data-sidebar="collapsed"`, wide, "the wide block"},
+		{`data-drawer`, narrow, "the narrow block"},
+		{`.topbar { display: flex`, narrow, "the narrow block"},
+	} {
+		if n, in := strings.Count(css, c.needle), strings.Count(c.block, c.needle); n == 0 || n != in {
+			t.Errorf("app.css: %q occurs %d times, %d of them in %s — it belongs there alone", c.needle, n, in, c.where)
+		}
+	}
+	if strings.Contains(css, "100vh") {
+		t.Error("app.css: 100vh is taller than a phone's visible screen; the frame uses dvh")
+	}
+}

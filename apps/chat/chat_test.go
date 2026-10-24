@@ -1111,7 +1111,8 @@ func TestRail(t *testing.T) {
 	}
 	got := string(h)
 	for _, want := range []string{`<a href="/chat/room/` + cafe.ID + `" aria-current="page">cafe</a>`, `<a href="/chat/room/` + old.ID + `" class="unread">old</a>`,
-		`value="chat:rail:`, `id="form-new" class="modal-form" open`} {
+		`value="chat:rail:`, `id="form-new" class="modal-form" open`,
+		`data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rail lacks %q: %s", want, got)
 		}

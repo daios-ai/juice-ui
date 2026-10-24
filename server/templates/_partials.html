@@ -575,7 +575,9 @@
 {{/* _sidebar — the workspace's one sidebar (requirements §6.1): the brand
      and the collapse toggle, the conversations rail, and at its foot the
      avatar, carrying the task badge, whose menu is every destination of the
-     registry, the inbox with its count, and Sign out. Takes the Page. */}}
+     registry, the inbox with its count, and Sign out. Collapsed on a wide
+     screen it is a strip of the toggle, the rail's opener and the avatar;
+     the stylesheet hides the rest. Takes the Page. */}}
 {{define "_sidebar"}}
 <div class="sidebar-top">
   {{template "_brand" .}}

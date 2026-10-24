@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.38.0
+Version: 0.39.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.39.0.** Sizes are one system: the type, spacing, icon
+> and avatar scales and one control height are tokens, and the stylesheet
+> writes no size of its own, so a button, an input and an icon button side by
+> side are one height. The sidebar has two states per width, as in the
+> established chat clients: on a wide screen docked or a strip that keeps the
+> toggle, the new-conversation opener and the avatar; on a narrow screen a
+> drawer, never stored, sized to the visible screen so its avatar is never
+> under the browser's toolbar (§6.1, §7).
 
 > **What changed in 0.38.0.** The composer is a chat bar: one box with `/`,
 > `@` and a send arrow around the post form's own message control, the
@@ -1036,17 +1045,21 @@ menu holds every other destination; the composer is where text, an address and
 
 * **The sidebar is the workspace's conversations.** It MUST hold, in order:
   the brand (the kernel and its world, §7) with the collapse toggle; the
-  conversations rail (§6.7); and at its foot the signed-in user's avatar, which
+  conversations rail (§6.7), headed by the opener of a new conversation; and at
+  its foot the signed-in user's avatar, which
   carries the task badge and opens the **avatar menu**: the address and the
   available balance, then every destination of the registry with the inbox's
   count on its row, then Sign out. No destination occupies the sidebar itself.
   The current destination MUST carry `aria-current` in the menu. One registry,
   built once per request server-side, MUST drive the menu and the launcher, so
   they cannot drift; its entries are plain words, every one a link.
-* **Collapsed means hidden.** A list of conversation names has no icon form, so
-  collapsing the sidebar hides it, the choice persisted server-side
-  (`sidebar` cookie, stamped on `<html>`); a slim topbar then carries the
-  sidebar's trigger, with the task badge, and the brand.
+* **Two states per width, never mixed.** On a wide screen (>720px) the
+  sidebar is docked or **collapsed to a strip**: the same element keeping the
+  collapse toggle, the opener's icon and the avatar with its task badge. A
+  list of conversation names has no icon form, so the rooms are not in the
+  strip. The choice is persisted server-side (`sidebar` cookie, stamped on
+  `<html>`) and applies to wide screens alone. There is no topbar and no
+  overlay on a wide screen.
 * **Sign-in lands in a conversation** (§6.7): the conversations app's landing.
   **Home is the dashboard** (`/`). It MUST show the
   viewer's available and parked balance, the waiting tasks addressed to them
@@ -1061,12 +1074,16 @@ menu holds every other destination; the composer is where text, an address and
 * The account summary (address, available balance) heads the avatar menu.
   Preferences are not chrome: the theme picker MUST appear exactly once, on
   `settings`; Sign out is the menu's.
-* Mobile MUST reflow to **a single menu affordance at the top left**, in a slim
-  topbar, which slides **the same sidebar** in over the page — the same element,
-  not a copy — closed by a scrim and by Escape; it MUST be reachable without
-  JavaScript (`?menu=open`, stamped on `<html>`). The closed affordance MUST
-  carry the task badge, so the sole core attention signal survives the sidebar
-  being out of view. The nav is unbounded, since every registered app
+* A narrow screen (≤720px) MUST reflow to **a single menu affordance at the
+  top left**, in a slim topbar with the brand, which slides **the same
+  sidebar** in over the page as a drawer — the same element, not a copy,
+  without the collapse toggle — closed by a scrim, by Escape and by any
+  navigation. The drawer's state is never stored, and the collapse cookie does
+  not apply. It MUST be reachable without JavaScript (`?drawer=open`, stamped
+  on `<html>`). The closed affordance MUST carry the task badge, so the sole
+  core attention signal survives the sidebar being out of view. The frame MUST
+  be sized to the visible screen (`dvh`), so the avatar at the drawer's foot is
+  never under a phone browser's toolbar. The nav is unbounded, since every registered app
   contributes destinations, so no fixed bar is permissible.
 * **An app that presents a kernel principal presents its account.** An agent is
   a user: it holds its own principal, is funded like anybody's, and spends it
@@ -2331,6 +2348,11 @@ once and never writes that file.
   and from counterparty prose. Corners are softly rounded (a card radius and a
   tighter control radius, both tokens); no drop shadows. The `terminal` theme
   reverts the UI face to monospace and the radius to square.
+* **Sizes are tokens.** Font sizes, spacing, icon and avatar sizes, radii and
+  one control height MUST be design tokens on a 4px base, and the stylesheet
+  MUST write no size literal in their place (hairlines excepted), enforced by
+  test. Every button, input, select, one-line textarea and icon button is the
+  control height, so controls side by side align.
 * **Icons.** One set (Heroicons, outline/solid for inactive/active), recolorable
   to tokens, never emoji. Every icon-only control MUST carry an `aria-label`;
   hover tooltips are enhancement only.
@@ -2536,10 +2558,13 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * the workspace frame (§6.1, §6.7): one sidebar — the rail and the avatar
   menu, the menu listing the registry's destinations with the current one
   marked and the operator's for the operator alone — the task badge on the
-  avatar, the menu row and the topbar's trigger, the hidden sidebar reachable
-  without script, and no search pill, palette or command prefix; the launcher
-  carries the whole registry as inert JSON, the configuration only where its
-  page exists; a page reads the viewer once;
+  avatar, the menu row and the topbar's trigger, the drawer reachable without
+  script, two sidebar states per width and none mixed, the frame in `dvh`, and
+  no search pill, palette or command prefix; the launcher carries the whole
+  registry as inert JSON, the configuration only where its page exists; a page
+  reads the viewer once;
+* sizes as tokens: no size literal in the stylesheet beyond a hairline, and
+  icons and avatars at token sizes;
 * chat as the workspace: the rail newest first with the room in view and an
   unread one marked, its heartbeat answering only a changed rail; the landing's
   fallbacks; a conversation started from its participants, its blank name

@@ -67,12 +67,12 @@ The frame every page renders into: the collaborative workspace
 
 | Region | Contents | Rules |
 |---|---|---|
-| **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail**; the **avatar** at the foot | One element. Sticky, full height, 240px. Collapsed it is **hidden** — a list of names has no icon form — the state persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash). |
+| **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail** (its opener, `#plus` and "New conversation", then the rooms); the **avatar** at the foot | One element, sticky, the visible screen's height (`100dvh`), 240px. The width picks one of two models, never mixed. **Wide (>720px): docked or a strip.** Collapsed, the same element keeps only the toggle, the opener's icon and the avatar with its badge; the brand, the rooms and the handle are hidden, since a list of names has no icon form. The state is persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash) and applies to wide screens only. **Narrow (≤720px): a drawer** (Topbar). |
 | **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`), each destination an icon and its name. The avatar carries the task badge too. |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
-| **Topbar** | the menu trigger (with the task badge) and the brand | Only where the sidebar is hidden: `≤720px`, or collapsed. The trigger slides **the same sidebar** in over the page (`html[data-menu=open]`, `?menu=open` without script), a `.scrim` link closing it. No fixed bottom bar: the destinations are unbounded. |
+| **Topbar** | the menu trigger (with the task badge) and the brand | Narrow screens (`≤720px`) alone, `--topbar-h` tall. The trigger slides **the same sidebar** in over the page as a drawer (`html[data-drawer=open]`, `?drawer=open` without script), without the collapse toggle; the `.scrim` link, Escape and any navigation close it, and it is never stored. No fixed bottom bar: the destinations are unbounded. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
 card (`◆ juice`) that **names the kernel you're joining** ("Sign in to
@@ -92,7 +92,7 @@ overlay < aria-live toast.
 
 ## 2. Tokens & theming
 
-Semantic tokens are the only colors/radii components may use. Generated per theme
+Semantic tokens are the only colors, radii and sizes components may use. Generated per theme
 into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 
 | Token | Meaning |
@@ -106,6 +106,9 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
 | `--sel-bg` / `--sel-fg` | text selection |
 | `--radius` (card) / `--radius-s` (control) / `--shadow` (`none`) | structural (in `tokens.css`; a theme MAY override `--radius`/`--radius-s`, e.g. `terminal` → `0`) |
 | `--font-ui` (proportional) / `--font-mono` (provenance) | type faces (`tokens.css`; a theme MAY override `--font-ui`, e.g. `terminal` → `var(--font-mono)`) |
+| `--font-size-xs … -2xl` · `--space-1 … -6` | the type (§3) and spacing (§4) scales |
+| `--control-h` (`2.25rem`) · `--topbar-h` | the one height of every button, input, select, one-line textarea and icon button; the narrow topbar's |
+| `--icon-sm` / `--icon-md` / `--icon-lg` · `--avatar` / `--avatar-lg` · `--radius-full` | icon sizes (inside text and chips / everywhere else / the topbar trigger), avatar sizes, round |
 
 - **Theme selection:** defaults from `prefers-color-scheme` (a default light and
   dark theme); an explicit choice is the `theme` cookie (slug) stamped on
@@ -126,11 +129,14 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   `partial_args`. The typeface itself marks kernel-vouched facts apart from
   chrome and from counterparty prose. (The `terminal` theme overrides `--font-ui`
   back to mono; components never assume one or the other — they use the token.)
-- **Scale:** `h1 1.4rem` · `h2 1.1rem` · `h3 1rem` · body `.9rem/14px` ·
-  `.small .85rem` · `.tiny .8rem`. Headings carry slight `letter-spacing`.
+- **Scale:** six steps on a 4px base — `--font-size-2xl` (`1.375rem`, h1 and
+  a headline figure) · `-xl` (`1.125rem`, h2) · `-lg` (`1rem`, h3, the brand)
+  · `-md` (`.875rem`, body and every control) · `-sm` (`.8125rem`, `.small`,
+  captions) · `-xs` (`.75rem`, `.tiny`, badges, chips, fingerprints). Headings
+  carry slight `letter-spacing`.
 - **The brand names the kernel and its world** (`.brand` + `.brand .world`,
-  the one `_brand` partial), in the sidebar and in the topbar where the sidebar
-  is hidden. A kernel serves one
+  the one `_brand` partial), in the sidebar and in the topbar of a narrow
+  screen. A kernel serves one
   world for life, and the world decides what the money on every screen is:
   whether it can leave, and what it is worth. The symbol on an amount does not
   say that — `credits` is not "not redeemable" — so without this a person cannot
@@ -204,17 +210,20 @@ not length.
 
 ## 4. Spacing scale
 
-One scale; no ad-hoc margins. Steps (rem): **.25 · .35 · .5 · .75 · 1 · 1.4 · 2**.
+One scale, on a 4px base: `--space-1` … `--space-6` = **.25 · .5 · .75 · 1 ·
+1.5 · 2rem**. `app.css` writes every font size, padding, margin, gap and radius
+as a token, and every icon and avatar size too; only a hairline (`1px`, `2px`)
+is literal (`TestStylesUseTokens`).
 
 | Use | Value |
 |---|---|
-| `.stack` between children | `1` |
-| `.row` gap / `.row.compact` · `.cluster` gap | `1` / `.5` |
-| `h2` top / `h3` top | `1.4` |
-| `.subtitle` bottom | `1.4` |
-| `.card` padding | `.85 1` |
-| `.field` bottom | `1` |
-| `.action-list` gap (one column) | `1.1` |
+| `.stack` between children | `--space-4` |
+| `.row` gap / `.row.compact` · `.cluster` gap | `--space-4` / `--space-2` |
+| `h2` top / `h3` top | `--space-6` / `--space-5` |
+| `.subtitle` bottom | `--space-5` |
+| `.card` padding | `--space-3 --space-4` |
+| `.field` bottom | `--space-4` |
+| `.action-list` gap (one column) | `--space-4` |
 
 Compose with `.stack` / `.row` / `.cluster` / `.action-list`; never hand-set margins in
 templates.
@@ -225,7 +234,8 @@ templates.
 
 ### 5.1 Buttons — one neutral, plus money & danger
 
-All buttons share **one geometry** (padding, height, radius, font-size).
+All buttons share **one geometry** (padding, height, radius, font-size); the
+height is `--control-h`, the same as every input's.
 **Color is reserved for the real money/danger moment**; everything else is the
 single neutral `.btn`, so two ordinary buttons never read as "different types."
 
@@ -234,14 +244,14 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Fill from chat (N)` / `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
-| `.btn-icon` | icon-only | — | icon buttons; **MUST carry `aria-label`** |
+| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
 | `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, the one ink-filled control in the interface, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
 
 **One geometry, one row, one look.**
 - No size modifier exists: every button, in a table cell or a card, has the
   one geometry. `.small` is a text utility, never on a button.
-- A record's commands stand in **one `.cluster` row** (gap .5rem), primary
+- A record's commands stand in **one `.cluster` row** (gap `--space-2`), primary
   first, destructive last. A command that posts to its own action joins the row
   through the HTML `form="…"` attribute (a task's Decline beside Complete), so
   no command drops below its row. A quiet text command never shares a row with
@@ -312,11 +322,12 @@ separates it from the content above, and nothing else does (§4).
 
 ### 5.4 Forms
 
-- `.field` (bottom `1rem`) wraps `label` (weight 600) + optional `.help` (muted
-  `.85`) + control. Required marker: `.req` (`*`, accent).
-- **Inputs / selects / textarea:** full width, shared height, `--border-strong`,
-  `--radius`, `--bg`. Inputs and buttons on the same row align in height.
-- **Textarea:** starts at **exactly one line** (`min-height` = 1 line + padding),
+- `.field` (bottom `--space-4`) wraps `label` (weight 600) + optional `.help`
+  (muted `--font-size-sm`) + control. Required marker: `.req` (`*`, accent).
+- **Inputs / selects / textarea:** full width, `--control-h` tall,
+  `--border-strong`, `--radius-s`, `--bg`. Inputs and buttons on the same row
+  align in height because they share one height token.
+- **Textarea:** starts at **exactly one line** (`min-height: var(--control-h)`),
   **autosizes** to content up to 10 lines then scrolls; mono; `rows="1"`. Never
   a fixed multi-line box.
 - **Progressive widgets:** repeatable rows (`[data-rows]`/`[data-row]`, Add =
@@ -688,7 +699,10 @@ obligations above.
 
 ## 6. Invariants (enforced)
 
-- No inline `style=""`; tokens only; every decision is a named class.
+- No inline `style=""`; tokens only, for sizes as for colours
+  (`TestStylesUseTokens`); every decision is a named class.
+- The sidebar has two states per width, never mixed: docked or strip when wide,
+  drawer closed or open when narrow (`TestSidebarHasTwoStatesPerWidth`).
 - **Accent = money movement + focus only.** Concretely, the accent appears ONLY
   on `.btn-money`, the `.badge`, the focus ring, `.req`, and the progress bar —
   never on links, tab underlines, the current destination or the current room

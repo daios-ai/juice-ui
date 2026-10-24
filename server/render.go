@@ -56,7 +56,7 @@ type Page struct {
 	FlashKind    string        // "success" | "error" | "info" | ""
 	BadgeSecs    int           // the heartbeat's slow lane, in seconds (badges, receipts, peers)
 	Path         string        // current path, for links that must return to it
-	MenuOpen     bool          // ?menu=open: server-render the nav drawer [open] (no-JS path)
+	DrawerOpen   bool          // ?drawer=open: the narrow screen's drawer, open (no-JS path)
 	Data         any           // page-specific view model
 }
 

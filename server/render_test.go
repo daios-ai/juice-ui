@@ -1395,10 +1395,10 @@ func TestRelTime(t *testing.T) {
 	}
 }
 
-// The hidden sidebar must survive JavaScript being off. The trigger is a real
-// link to ?menu=open, which the server stamps on <html> so the stylesheet
-// slides the one sidebar in, and the scrim is a link back to the page. There
-// is one sidebar: no second copy of its ids in a drawer.
+// A narrow screen's drawer must survive JavaScript being off. The trigger is
+// a real link to ?drawer=open, which the server stamps on <html> so the
+// stylesheet slides the one sidebar in, and the scrim is a link back to the
+// page. There is one sidebar: no second copy of its ids in a drawer.
 func TestHiddenSidebarWorksWithoutJS(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -1406,7 +1406,7 @@ func TestHiddenSidebarWorksWithoutJS(t *testing.T) {
 	}
 	render := func(open bool) string {
 		rec := httptest.NewRecorder()
-		p := Page{Me: "me@testnet", MenuOpen: open, Path: "/browse",
+		p := Page{Me: "me@testnet", DrawerOpen: open, Path: "/browse",
 			Data: struct{ Message string }{"x"}}
 		if err := r.Render(rec, 200, "error", p); err != nil {
 			t.Fatalf("render: %v", err)
@@ -1414,16 +1414,16 @@ func TestHiddenSidebarWorksWithoutJS(t *testing.T) {
 		return rec.Body.String()
 	}
 	closed, open := render(false), render(true)
-	if !strings.Contains(closed, `href="?menu=open" class="menu-trigger"`) {
+	if !strings.Contains(closed, `href="?drawer=open" class="menu-trigger"`) {
 		t.Error("the trigger must be a real link for the no-JS path")
 	}
-	if strings.Contains(closed, `data-menu="open"`) {
-		t.Error("the sidebar must not be open without ?menu=open")
+	if strings.Contains(closed, `data-drawer="open"`) {
+		t.Error("the drawer must not be open without ?drawer=open")
 	}
-	if !strings.Contains(open, `<html lang="en" data-menu="open">`) {
-		t.Error("?menu=open must stamp the open sidebar on <html>")
+	if !strings.Contains(open, `<html lang="en" data-drawer="open">`) {
+		t.Error("?drawer=open must stamp the open drawer on <html>")
 	}
-	if !strings.Contains(open, `<a class="scrim" href="/browse" data-menu-close`) {
+	if !strings.Contains(open, `<a class="scrim" href="/browse" data-drawer-close`) {
 		t.Error("the scrim must be a real link back to the current path")
 	}
 	if n := strings.Count(open, `id="profile-popup"`); n != 1 {
@@ -2019,7 +2019,7 @@ func TestNetworkPageStatesTheHaltAndTheVault(t *testing.T) {
 		}
 	}
 	css, err := os.ReadFile("static/app.css")
-	if err != nil || !strings.Contains(string(css), ".container > .banner { margin-bottom: 1rem; }") {
+	if err != nil || !strings.Contains(string(css), ".container > .banner { margin-bottom: var(--space-4); }") {
 		t.Error("a banner in page flow owns its spacing")
 	}
 }

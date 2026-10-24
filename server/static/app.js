@@ -664,15 +664,16 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-panel-close]")) document.getElementById("panel")?.replaceChildren();
 });
 
-// The sidebar where it is hidden (a narrow screen, or collapsed): the trigger
-// slides it in over the page and the scrim or Escape takes it away. Without
-// JavaScript the trigger is ?menu=open, which the server stamps the same way.
+// A narrow screen's drawer: the trigger slides the sidebar in over the page
+// and the scrim or Escape takes it away. It is never stored, so any page
+// loads with it closed. Without JavaScript the trigger is ?drawer=open, which
+// the server stamps the same way.
 document.addEventListener("click", (e) => {
-  if (e.target.closest("[data-menu-open]")) { e.preventDefault(); document.documentElement.dataset.menu = "open"; }
-  else if (e.target.closest("[data-menu-close]")) { e.preventDefault(); delete document.documentElement.dataset.menu; }
+  if (e.target.closest("[data-drawer-open]")) { e.preventDefault(); document.documentElement.dataset.drawer = "open"; }
+  else if (e.target.closest("[data-drawer-close]")) { e.preventDefault(); delete document.documentElement.dataset.drawer; }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && document.documentElement.dataset.menu) delete document.documentElement.dataset.menu;
+  if (e.key === "Escape" && document.documentElement.dataset.drawer) delete document.documentElement.dataset.drawer;
 });
 
 // Fill from chat (requirements §6.2): the planner prepares the form's fields

@@ -1,5 +1,5 @@
 {{define "layout"}}<!DOCTYPE html>
-<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}{{if .Sidebar}} data-sidebar="{{.Sidebar}}"{{end}}{{if .MenuOpen}} data-menu="open"{{end}}>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}{{if .Sidebar}} data-sidebar="{{.Sidebar}}"{{end}}{{if .DrawerOpen}} data-drawer="open"{{end}}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -19,19 +19,19 @@
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="layout">
     {{/* The workspace frame (requirements §6.1): the sidebar is the
-         conversations and the avatar whose menu holds every destination. Where
-         it is hidden — a narrow screen, or collapsed — a slim topbar carries
+         conversations and the avatar whose menu holds every destination. Wide,
+         it is docked or collapsed to a strip; narrow, a slim topbar carries
          its trigger and the brand, and the trigger slides the same sidebar in
-         over the page (?menu=open without script; the scrim closes it). */}}
+         over the page (?drawer=open without script; the scrim closes it). */}}
     {{if .Me}}
     <aside class="sidebar" id="sidebar">{{template "_sidebar" .}}</aside>
-    <a class="scrim" href="{{.Path}}" data-menu-close aria-label="Close menu"></a>
+    <a class="scrim" href="{{.Path}}" data-drawer-close aria-label="Close menu"></a>
     {{end}}
 
     <div class="main-area">
       {{if .Me}}
       <header class="topbar">
-        <a href="?menu=open" class="menu-trigger" data-menu-open aria-controls="sidebar" aria-label="Menu">
+        <a href="?drawer=open" class="menu-trigger" data-drawer-open aria-controls="sidebar" aria-label="Menu">
           <span class="ico-badge-wrap">
             <svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
             <span class="badge badge-inbox" aria-label="Waiting tasks"></span>
