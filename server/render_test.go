@@ -2298,3 +2298,41 @@ func TestUseResultFollowsTheConversation(t *testing.T) {
 		t.Error("a string is itself, anything else its JSON")
 	}
 }
+
+// The form and the composer draw a field's input with one partial: _field
+// wraps _control in its label and help, the bar calls _control alone. The
+// balance renders through the money helper, out of band when the heartbeat
+// answers.
+func TestControlIsOneRenderer(t *testing.T) {
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := BuildForm(json.RawMessage(`{"type":"object","properties":{"message":{"type":"string","maxLength":4000,"description":"The text."}},"required":["message"]}`)).Fields[0]
+	field, control := httptest.NewRecorder(), httptest.NewRecorder()
+	if err := r.Fragment(field, 200, "_field", f); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Fragment(control, 200, "_control", f); err != nil {
+		t.Fatal(err)
+	}
+	c := strings.TrimSpace(control.Body.String())
+	if !strings.Contains(c, `name="t_/message" value="string"`) || !strings.Contains(c, `name="f_/message"`) || !strings.Contains(c, `maxlength="4000"`) {
+		t.Errorf("control = %s", c)
+	}
+	if !strings.Contains(field.Body.String(), c) || strings.Contains(c, "<label") {
+		t.Error("_field carries _control whole; _control carries no label")
+	}
+	b := httptest.NewRecorder()
+	if err := r.Fragment(b, 200, "_balance", balanceView{Amount: 1250000, OOB: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Body.String(); !strings.Contains(got, `id="balance" hx-swap-oob="true">`) || !strings.Contains(got, `value="balance::1250000" hx-swap-oob="true"`) {
+		t.Errorf("balance = %s", got)
+	}
+	plain := httptest.NewRecorder()
+	_ = r.Fragment(plain, 200, "_balance", balanceView{Amount: 3})
+	if strings.Contains(plain.Body.String(), "hx-swap-oob") {
+		t.Error("the page's own balance is not out of band")
+	}
+}

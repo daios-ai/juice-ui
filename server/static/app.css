@@ -637,7 +637,21 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .room:has(> .panel:empty) { grid-template-columns: minmax(0, 1fr); }
 .conversation { min-width: 0; min-height: calc(100vh - 5.25rem); display: flex; flex-direction: column; }
 .conversation > .msgs { flex: 1 0 auto; justify-content: flex-end; }
-form[data-composer] { position: sticky; bottom: 1rem; }
+/* The composer (requirements §6.7): the one sanctioned exception to the form's
+   card — the post form drawn as a bar. One rounded box holds [/], [@], the
+   message box, borderless and growing to ten lines, and the arrow that sends;
+   a refusal stands above it and the balance beneath. Sticky at the foot, the
+   page scrolling behind it. */
+.composer { position: sticky; bottom: 0; padding: .5rem 0 .75rem; background: var(--bg); }
+.composer > .error-text { margin: 0 0 .35rem; }
+.composer-bar { display: flex; align-items: flex-end; gap: .35rem; padding: .35rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.composer-bar:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.composer-bar .btn-icon { border-color: transparent; color: var(--text-muted); }
+.composer-bar .btn-icon:hover { color: var(--text); }
+.composer-bar .btn-icon[data-send] { color: var(--text); border-color: var(--border-strong); }
+.composer-bar .btn-icon:disabled { opacity: .4; cursor: default; }
+.composer-bar textarea { border: none; background: none; padding: .45rem .3rem; min-height: 0; max-height: 15em; resize: none; font-family: var(--font-ui); outline: none; }
+.composer > #balance { margin-top: .3rem; padding-left: .5rem; }
 .panel { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .panel:empty { display: none; }
 /* The launcher: the composer's `/`, its matches opening above the composer,

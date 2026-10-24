@@ -233,6 +233,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"cardArt":      CardArt,
 		"initial":      initial,
 		"launcher":     launcherOf,
+		"balance":      func(amount int64) balanceView { return balanceView{Amount: amount} },
 		"authPanel":    newAuthPanel,
 		"httpMethods":  func() []string { return []string{"POST", "GET", "PUT", "PATCH", "DELETE"} },
 	}
@@ -291,6 +292,13 @@ func resultText(raw json.RawMessage) string {
 		return s
 	}
 	return indentJSON(raw, "")
+}
+
+// balanceView feeds the _balance partial: the amount, and whether it is the
+// heartbeat's out-of-band answer.
+type balanceView struct {
+	Amount int64
+	OOB    bool
 }
 
 // launcherView feeds the _launcher partial: the registry, the room's members

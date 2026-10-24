@@ -484,6 +484,17 @@
   {{if .ReadOnly}}
   {{if .Long}}<details class="fold"><summary>{{truncate 80 $v}}</summary><div class="box">{{$v}}</div></details>{{else if eq .Type "null"}}<div class="box muted">{{$v}}</div>{{else if eq .Type "raw"}}<pre class="json">{{$v}}</pre>{{else}}<div class="box">{{$v}}</div>{{end}}
   {{else}}
+  {{template "_control" .}}
+  {{template "_field_null" .}}
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{/* _control — one editable control of the form, its type hint first: the
+     markup every form draws a field's input with, and the composer its bar's
+     text box (requirements §6.7). Input: Field. */}}
+{{define "_control"}}
   <input type="hidden" name="t_{{.Path}}" value="{{.Type}}">
   {{/* Value pre-fills a field where something already proposed an argument
        (§6.2). A pre-filled field is an ordinary field: editable, submitted
@@ -492,27 +503,23 @@
        required and holds a value: a row left untouched then stays blank. A
        schema default is a placeholder, never a value. */}}
   {{if eq .Type "json"}}
-  <textarea id="f_{{.Path}}" name="f_{{.Path}}" placeholder="{{.Example}}" rows="1">{{$v}}</textarea>
+  <textarea id="f_{{.Path}}" name="f_{{.Path}}" placeholder="{{.Example}}" rows="1">{{.Value}}</textarea>
   {{else if .Enum}}
   <select id="f_{{.Path}}" name="f_{{.Path}}">
-    {{if or (not .Required) (eq $v "")}}<option value=""></option>{{end}}
-    {{range .Enum}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
+    {{if or (not .Required) (eq .Value "")}}<option value=""></option>{{end}}
+    {{range .Enum}}<option value="{{.}}"{{if eq . $.Value}} selected{{end}}>{{.}}</option>{{end}}
   </select>
   {{else if eq .Type "boolean"}}
-  <select id="f_{{.Path}}" name="f_{{.Path}}">{{if or (not .Required) (eq $v "")}}<option value=""></option>{{end}}<option value="false"{{if eq $v "false"}} selected{{end}}>false</option><option value="true"{{if eq $v "true"}} selected{{end}}>true</option></select>
+  <select id="f_{{.Path}}" name="f_{{.Path}}">{{if or (not .Required) (eq .Value "")}}<option value=""></option>{{end}}<option value="false"{{if eq .Value "false"}} selected{{end}}>false</option><option value="true"{{if eq .Value "true"}} selected{{end}}>true</option></select>
   {{else if or (eq .Type "integer") (eq .Type "number")}}
-  <input id="f_{{.Path}}" name="f_{{.Path}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
+  <input id="f_{{.Path}}" name="f_{{.Path}}" type="number" step="{{if eq .Type "integer"}}1{{else}}any{{end}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{.Value}}">
   {{else if .Secret}}
   <input id="f_{{.Path}}" name="f_{{.Path}}" type="password" autocomplete="off"{{with .Default}} placeholder="{{.}}"{{end}}>
   {{else if .Input}}
-  <input id="f_{{.Path}}" name="f_{{.Path}}" type="{{.Input}}"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{$v}}">
+  <input id="f_{{.Path}}" name="f_{{.Path}}" type="{{.Input}}"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}} value="{{.Value}}">
   {{else}}
-  <textarea id="f_{{.Path}}" name="f_{{.Path}}" rows="1"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}}>{{$v}}</textarea>
+  <textarea id="f_{{.Path}}" name="f_{{.Path}}" rows="1"{{with .MinLength}} minlength="{{.}}"{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{with .Default}} placeholder="{{.}}"{{end}}>{{.Value}}</textarea>
   {{end}}
-  {{template "_field_null" .}}
-  {{end}}
-</div>
-{{end}}
 {{end}}
 
 {{/* _node — a container's body: its help, its type hints, an object's
@@ -546,17 +553,21 @@
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 
-{{/* _launcher — the composer's `/` (requirements §6.2): a button, and the
-     list that opens above the composer as one types after `/` in it — the
+{{/* _launcher — the composer's `/` (requirements §6.2): the list that opens
+     above the composer, from its [data-launcher] button, as one types after `/` in it — the
      catalog's actions by title or address, the registry's pages, a row
      searching Discover — the best match nearest the box. Choosing an action
      opens its panel; choosing a page goes there; neither posts nor runs
      anything. Takes launcher (the registry, the room's members, the room). */}}
 {{define "_launcher"}}
-<button type="button" class="btn-icon" data-launcher aria-label="Actions and pages" title="Actions and pages">/</button>
 <div class="launcher" hidden><nav aria-label="Matches"></nav></div>
 <script type="application/json" id="launcher-data">{{.JSON}}</script>
 {{end}}
+
+{{/* _balance — the viewer's available balance beneath the composer, where
+     spending starts (requirements §6.7), with the heartbeat's watch of it.
+     Input: balanceView (the `balance` helper); OOB answers the heartbeat. */}}
+{{define "_balance"}}<p class="muted tiny money flush" id="balance"{{if .OOB}} hx-swap-oob="true"{{end}}>{{money .Amount}}</p><input type="hidden" id="watch-balance" name="watch" value="balance::{{.Amount}}"{{if .OOB}} hx-swap-oob="true"{{end}}>{{end}}
 
 {{/* _brand — the kernel and the world it serves (§7), linking home. */}}
 {{define "_brand"}}<a class="brand" href="/"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>{{end}}

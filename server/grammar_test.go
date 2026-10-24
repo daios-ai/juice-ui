@@ -290,7 +290,7 @@ func TestBackLinksLiveInCrumbs(t *testing.T) {
 func TestNoRowThumbnails(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
 	app, _ := filepath.Glob("../apps/*/templates/*.html")
-	banned := []string{"thumb-s", "chat-frame", "chat-back", `class="rooms"`, "thread-head", `class="composer"`, "msg-text"}
+	banned := []string{"thumb-s", "chat-frame", "chat-back", `class="rooms"`, "thread-head", "msg-text"}
 	check := func(f, src string) {
 		for _, bad := range banned {
 			if strings.Contains(src, bad) {
@@ -810,6 +810,29 @@ func TestNoDeadCSS(t *testing.T) {
 		}
 		if !regexp.MustCompile(`(^|[^\w-])` + regexp.QuoteMeta(c) + `([^\w-]|$)`).MatchString(src) {
 			t.Errorf("app.css styles .%s, which nothing renders", c)
+		}
+	}
+}
+
+// TestComposerIsTheOneException: the composer bar is the one sanctioned
+// exception to the form's card (requirements §6.7), and it stands in the room
+// alone; no other template draws a bar around a form.
+func TestComposerIsTheOneException(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	for _, f := range append(core, app...) {
+		var b []byte
+		var err error
+		if strings.HasPrefix(f, "templates/") {
+			b, err = fs.ReadFile(tmplFS, f)
+		} else {
+			b, err = os.ReadFile(f)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `class="composer`) && filepath.Base(f) != "room.html" {
+			t.Errorf("%s: the composer bar stands in the room alone", f)
 		}
 	}
 }

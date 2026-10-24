@@ -112,6 +112,20 @@ func (s *Server) taskBadgeCount(r *http.Request) int {
 	return count
 }
 
+// watchBalance keeps the balance beneath the composer current: the viewer's
+// available amount, answered only when it differs from the one shown — after a
+// run in the panel, a priced fill, or money arriving.
+func (s *Server) watchBalance(r *http.Request, _, shown string) (template.HTML, error) {
+	me, err := s.me(r)
+	if err != nil {
+		return "", err
+	}
+	if strconv.FormatInt(me.Available, 10) == shown {
+		return "", nil
+	}
+	return s.render.HTML("_balance", balanceView{Amount: me.Available, OOB: true})
+}
+
 // watchProcess ends the awaiting-receipt banner once the remote receipt has
 // settled; while it is awaited the banner stands and nothing is sent.
 func (s *Server) watchProcess(r *http.Request, id, _ string) (template.HTML, error) {

@@ -200,144 +200,137 @@ for (const sel of document.querySelectorAll('select[name="kind"]')) {
   update();
 }
 
+// Content reaches the page in several ways — the server's render, an htmx
+// swap, an out-of-band swap from the heartbeat, a fill or a JSON switch
+// replacing a form's fields — so its controls are not wired element by
+// element: one listener on the document reads what it needs from the DOM at the
+// moment of the click, and works for every element however it arrived, once.
+
+// own is the first element under block matching sel whose nearest block of
+// the same kind is block itself, so a view nested inside a form is never taken
+// for the form's own part.
+function own(block, kind, sel) {
+  return [...block.querySelectorAll(sel)].find((el) => el.parentElement.closest(kind) === block) || null;
+}
+
 // Repeatable rows ([data-rows]): the http parameter rows and a schema array's
-// rows (§6.2). Add clones the last row (or the kept template of an emptied
-// container) and clears it; when the container names
+// rows (§6.2). Add clones the last row (or, once every row is gone, the copy
+// kept when the first was removed) and clears it; when the container names
 // its array's path, the clone's index segment is rewritten to one past the
 // highest in use — in every name, id, for and nested data-rows — so a removed
 // index is never reused and a nested array keeps its own rows. Remove drops
 // the row. Cloned rows inherit the template's disabled state, so they stay
-// consistent with the kind toggle above.
-function wireRows(box) {
-  const path = box.dataset.rows;
-  const rows = () => [...box.children].filter((el) => el.matches('[data-row]'));
-  // A row's own Remove is its direct child, and its own containers are the
-  // nearest ones: a nested array's buttons belong to the nested rows.
-  const wire = (row) => {
-    [...row.children].find((el) => el.matches('[data-row-remove]'))?.addEventListener('click', () => row.remove());
-    for (const inner of row.querySelectorAll('[data-rows]')) {
-      if (inner.closest('[data-row]') === row) wireRows(inner);
-    }
-  };
-  rows().forEach(wire);
-  // A select keeps its choice: emptied, it would submit nothing it offers. A
-  // password's placeholder states what its own row holds, so a copy drops it.
-  const clear = (row) => {
-    for (const el of row.querySelectorAll('input:not([type=hidden]), textarea')) el.value = '';
-    for (const el of row.querySelectorAll('input[type=password]')) el.placeholder = '';
-    for (const el of row.querySelectorAll('input[type=checkbox]')) el.checked = false;
-    return row;
-  };
-  // A cleared copy of the first row, kept so Add still has a row to clone once
-  // every row has been removed.
-  const template = rows()[0] && clear(rows()[0].cloneNode(true));
-  const add = box.parentElement.querySelector(':scope > [data-row-add]');
-  if (!add || !template) return;
-  add.addEventListener('click', () => {
-    const last = rows().at(-1);
-    const source = last || template;
-    const row = clear(source.cloneNode(true));
-    if (path) {
-      const from = path + '/' + indexOf(source, path);
-      const to = path + '/' + (last ? Math.max(...rows().map((r) => indexOf(r, path))) + 1 : 0);
-      for (const el of row.querySelectorAll('[name], [id], [for], [data-rows]')) {
-        for (const attr of ['name', 'id', 'for', 'data-rows']) {
-          const v = el.getAttribute(attr);
-          if (v && (v.endsWith(from) || v.includes(from + '/'))) el.setAttribute(attr, v.replace(from, to));
-        }
-      }
-    }
-    wire(row);
-    box.appendChild(row);
-  });
+// consistent with the kind toggle.
+const emptied = new WeakMap(); // a container's cleared copy of a row, for Add once every row is gone
+
+// clearRow empties a row's values. A select keeps its choice: emptied, it
+// would submit nothing it offers. A password's placeholder states what its own
+// row holds, so a copy drops it.
+function clearRow(row) {
+  for (const el of row.querySelectorAll('input:not([type=hidden]), textarea')) el.value = '';
+  for (const el of row.querySelectorAll('input[type=password]')) el.placeholder = '';
+  for (const el of row.querySelectorAll('input[type=checkbox]')) el.checked = false;
+  return row;
 }
+
 // The index of a row: the segment after its array's path in its first named control.
 function indexOf(row, path) {
   const el = row.querySelector('[name]');
   const m = el && el.name.slice(2).startsWith(path + '/') ? el.name.slice(2 + path.length + 1).split('/')[0] : '0';
   return Number(m) || 0;
 }
-// Wires the outermost row containers under root: at load, and in fields the
-// JSON switch has just rendered.
-function wireRowsIn(root) {
-  for (const box of root.querySelectorAll('[data-rows]')) {
-    if (!box.parentElement.closest('[data-rows]')) wireRows(box);
-  }
-}
-wireRowsIn(document);
 
-// The JSON toggle: a [data-json] block holds its fields ([data-fields]) and its
-// JSON ([data-raw]); the toggle swaps them. In a form the hidden editor's
+document.addEventListener('click', (e) => {
+  const remove = e.target.closest('[data-row-remove]');
+  if (remove) {
+    const row = remove.closest('[data-row]');
+    const box = row.parentElement;
+    if (!emptied.has(box)) emptied.set(box, clearRow(row.cloneNode(true)));
+    row.remove();
+    return;
+  }
+  const add = e.target.closest('[data-row-add]');
+  if (!add) return;
+  const box = add.parentElement.querySelector(':scope > [data-rows]');
+  if (!box) return;
+  const rows = [...box.children].filter((el) => el.matches('[data-row]'));
+  const last = rows.at(-1);
+  const source = last || emptied.get(box);
+  if (!source) return;
+  const row = clearRow(source.cloneNode(true));
+  const path = box.dataset.rows;
+  if (path) {
+    const from = path + '/' + indexOf(source, path);
+    const to = path + '/' + (last ? Math.max(...rows.map((r) => indexOf(r, path))) + 1 : 0);
+    for (const el of row.querySelectorAll('[name], [id], [for], [data-rows]')) {
+      for (const attr of ['name', 'id', 'for', 'data-rows']) {
+        const v = el.getAttribute(attr);
+        if (v && (v.endsWith(from) || v.includes(from + '/'))) el.setAttribute(attr, v.replace(from, to));
+      }
+    }
+  }
+  box.appendChild(row);
+});
+
+// The JSON switch: a [data-json] block holds its fields ([data-fields]) and its
+// JSON ([data-raw]); the switch swaps them. In a form the hidden editor's
 // inputs are disabled so only the visible one submits and has_fields tells the
-// server which it was (the kernel validates either, R2.5); on a view
-// the same control shows the raw JSON. Without script the block stays as the
-// server rendered it. A result arrives by htmx swap, so new content is wired
-// as it lands.
+// server which it was (the kernel validates either); on a view the same
+// control shows the raw JSON. The server renders every block with its fields
+// shown, which is the switch's off state.
 //
 // A form names its two conversions (data-to-json, data-to-form): a switch
 // converts what is on screen into the other view exactly, or stays and shows
 // the server's reason (§6.2). A typed password never enters the JSON, so it
 // holds the switch until it is saved or cleared.
-function wireJSON(root) {
-  for (const block of root.querySelectorAll('[data-json]')) {
-    const toggle = block.querySelector('[data-json-switch]');
-    const fields = block.querySelector('[data-fields]');
-    const raw = block.querySelector('[data-raw]');
-    if (!toggle || !fields || !raw) continue;
-    const editor = raw.querySelector('textarea');
-    const error = block.querySelector('[data-json-error]');
-    const apply = (json) => {
-      toggle.setAttribute('aria-checked', String(json));
-      fields.hidden = json;
-      raw.hidden = !json;
-      for (const el of fields.querySelectorAll('input, select, textarea')) el.disabled = json;
-      for (const el of block.querySelectorAll('[name=has_fields]')) el.disabled = json;
-    };
-    const say = (text) => {
-      error.textContent = text;
-      error.hidden = !text;
-      return !text;
-    };
-    const convert = async (json) => {
-      if (json && [...fields.querySelectorAll('input[type=password]')].some((el) => el.value)) {
-        return say('A typed key is never shown as JSON; save or clear it first.');
+document.addEventListener('click', async (e) => {
+  const toggle = e.target.closest('[data-json-switch]');
+  if (!toggle) return;
+  const block = toggle.closest('[data-json]');
+  const fields = block && own(block, '[data-json]', '[data-fields]');
+  const raw = block && own(block, '[data-json]', '[data-raw]');
+  if (!fields || !raw) return;
+  const editor = raw.querySelector('textarea');
+  const error = own(block, '[data-json]', '[data-json-error]');
+  const json = toggle.getAttribute('aria-checked') !== 'true';
+  const say = (text) => {
+    if (error) { error.textContent = text; error.hidden = !text; }
+    return !text;
+  };
+  const convert = async () => {
+    if (json && [...fields.querySelectorAll('input[type=password]')].some((el) => el.value)) {
+      return say('A typed key is never shown as JSON; save or clear it first.');
+    }
+    const body = new URLSearchParams();
+    if (json) {
+      for (const el of fields.querySelectorAll('[name]')) {
+        if (!el.disabled && !(el.type === 'checkbox' && !el.checked)) body.append(el.name, el.value);
       }
-      const body = new URLSearchParams();
-      if (json) {
-        for (const el of fields.querySelectorAll('[name]')) {
-          if (!el.disabled && !(el.type === 'checkbox' && !el.checked)) body.append(el.name, el.value);
-        }
-        body.append('has_fields', '1');
-      } else {
-        body.append('raw_args', editor.value);
-      }
-      const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
-      try {
-        const res = await fetch(json ? block.dataset.toJson : block.dataset.toForm, {
-          method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf },
-        });
-        const text = await res.text();
-        if (!res.ok) return say(text.trim());
-        if (json) {
-          editor.value = text;
-        } else {
-          fields.innerHTML = text;
-          wireRowsIn(fields);
-        }
-        return say('');
-      } catch {
-        return say('The server did not answer.');
-      }
-    };
-    toggle.addEventListener('click', async () => {
-      const json = toggle.getAttribute('aria-checked') !== 'true';
-      if (!block.dataset.toJson || await convert(json)) apply(json);
-    });
-    apply(false);
-  }
-}
-wireJSON(document);
-document.body.addEventListener('htmx:afterSwap', (e) => { wireJSON(e.target); wireRowsIn(e.target); });
+      body.append('has_fields', '1');
+    } else {
+      body.append('raw_args', editor.value);
+    }
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+    try {
+      const res = await fetch(json ? block.dataset.toJson : block.dataset.toForm, {
+        method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf },
+      });
+      const text = await res.text();
+      if (!res.ok) return say(text.trim());
+      if (json) editor.value = text;
+      else fields.innerHTML = text;
+      return say('');
+    } catch {
+      return say('The server did not answer.');
+    }
+  };
+  if (block.dataset.toJson && !(await convert())) return;
+  toggle.setAttribute('aria-checked', String(json));
+  fields.hidden = json;
+  raw.hidden = !json;
+  for (const el of fields.querySelectorAll('input, select, textarea')) el.disabled = json;
+  for (const el of block.querySelectorAll('[name=has_fields]')) el.disabled = json;
+});
 
 // Password confirmation: in a form marked [data-confirm-password], the
 // confirm field must equal the password field. Uses native constraint validation
@@ -552,6 +545,7 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
   const close = (restore = true) => {
     if (restore && saved !== null && field()) field().value = saved;
     saved = null; after = ""; box.hidden = true; list.replaceChildren();
+    sync();
   };
   // launch opens the launcher over the draft: the field holds `/` and the
   // query, and the draft comes back when it closes.
@@ -565,14 +559,8 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     render();
   };
 
-  // place puts the rows just above the field, the last row nearest it.
-  const place = (rows) => {
-    box.hidden = rows.length === 0;
-    list.replaceChildren(...rows);
-    const f = field();
-    if (f && !box.hidden) box.style.bottom = (form.getBoundingClientRect().bottom - f.getBoundingClientRect().top + 6) + "px";
-    list.scrollTop = list.scrollHeight;
-  };
+  // place puts the rows above the bar, the last row nearest it.
+  const place = (rows) => { box.hidden = rows.length === 0; list.replaceChildren(...rows); list.scrollTop = list.scrollHeight; };
 
   async function render() {
     const f = field();
@@ -598,26 +586,49 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     place(rows);
   }
 
-  // The members whose address begins with the first word typed.
-  function suggestMembers(text) {
-    const word = text.split(/\s/)[0];
-    const hits = word && !/\s/.test(text) ? (launcher.members || []).filter((m) => m.toLowerCase().startsWith(word.toLowerCase()) && m !== word) : [];
+  // members lists the room's other members to address: choosing one puts its
+  // address first in the draft, in place of an address already there.
+  const members = launcher.members || [];
+  function listMembers(hits) {
     place(hits.map((m) => {
       const r = row(m, "", "#");
       r.addEventListener("click", (e) => {
         e.preventDefault();
         const f = field();
-        f.value = m + ", " + f.value.slice(word.length);
-        place([]); f.focus();
+        const first = f.value.split(/\s/)[0];
+        const rest = members.some((x) => x.toLowerCase() === first.replace(/[,:;.!?]+$/, "").toLowerCase()) || !/\s/.test(f.value)
+          ? f.value.slice(first.length).replace(/^[,:;.!?]*\s*/, "") : f.value;
+        f.value = m + ", " + rest;
+        place([]); sync(); f.focus();
       });
       return r;
     }));
   }
+  // The members whose address begins with the first word typed.
+  function suggestMembers(text) {
+    const word = text.split(/\s/)[0];
+    listMembers(word && !/\s/.test(text) ? members.filter((m) => m.toLowerCase().startsWith(word.toLowerCase()) && m !== word) : []);
+  }
+
+  // The arrow sends only something; a refusal shown above the bar is cleared by
+  // the next keystroke.
+  const send = form.querySelector("[data-send]");
+  const error = form.querySelector("#chat-error");
+  const sync = () => { if (send) send.disabled = !field()?.value.trim(); };
+  sync();
+  form.addEventListener("reset", () => setTimeout(sync)); // a sent post clears the box
+  form.querySelector("[data-address]")?.addEventListener("click", () => {
+    if (open()) close();
+    if (!box.hidden) { place([]); return; }
+    listMembers(members);
+  });
 
   button.addEventListener("click", () => (open() ? close() : form.launch()));
   form.addEventListener("input", (e) => {
     const f = field();
     if (e.target !== f) return;
+    sync();
+    if (error) error.hidden = true;
     if (f.value.startsWith("/")) {
       if (!open()) { saved = ""; after = ""; }
       render();
@@ -644,7 +655,7 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     // Enter takes the row nearest the field while the list is open, and sends
     // otherwise; Shift+Enter breaks the line.
     if (!box.hidden && rows.length) rows[rows.length - 1].click();
-    else form.requestSubmit();
+    else if (f.value.trim()) form.requestSubmit();
   });
 }
 
@@ -688,7 +699,6 @@ document.addEventListener('click', async (e) => {
     if (!res.ok) { say(text.trim()); return; }
     if (fields && !(res.headers.get('Content-Type') || '').startsWith('application/json')) {
       fields.innerHTML = text;
-      wireRowsIn(fields);
     } else if (editor) {
       editor.value = text;
     }

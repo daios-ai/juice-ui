@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.37.0
+Version: 0.38.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.38.0.** The composer is a chat bar: one box with `/`,
+> `@` and a send arrow around the post form's own message control, the
+> available balance beneath (§6.7). A JSON switch and a list's Add and Remove
+> work on every value however it reached the page — a heartbeat's entry
+> included — being handled for the whole document rather than wired element
+> by element.
 
 > **What changed in 0.37.0.** The UI is one collaborative workspace. The
 > sidebar is the conversations and the avatar, whose menu holds every
@@ -2174,16 +2181,24 @@ the assistant, else the newest room, else an empty page beside the rail.
   view of its `{status, reason}`. **Who is answering** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
   — a fact chat holds — kept by the heartbeat, empty when nobody.
-* **The composer** is the post action's form, built from its input schema as
-  a task's completion form is (§6.3): `thread_id` sealed, shown as the view
-  above the fields, and `message` its one field, with the JSON switch, whose
-  editor names only `message`. Enter sends and Shift+Enter breaks the line. A
-  first word that begins a member's address lists the members, and choosing
-  one writes its address and a comma. `/` opens the launcher (§6.1). Its
-  submission runs `msg/post` as the viewer with the room taken from the page's
-  address, never from the form, so the browser and an agent take one path. A
-  refusal, the kernel's or chat's, is shown beside the composer and keeps what
-  was typed.
+* **The composer** is the post action's form drawn as a bar — the one
+  sanctioned exception to the form's card, because it is the workspace's
+  cornerstone. The exception is in the drawing alone: the text box is the
+  schema's own `message` control (§6.2), under its own name and limits, posted
+  through the form's own decoding; `thread_id` is sealed by the page's address
+  and not shown; there is no label, help or JSON switch. One rounded box holds
+  `/` (the launcher, §6.1), `@` where the room has more than one other member
+  (a list of them; choosing one puts its address first, in place of one
+  already there), the message box growing to ten lines, and an up arrow that
+  sends, neutral and disabled while the box is empty. Enter sends and
+  Shift+Enter breaks the line; a first word that begins a member's address
+  lists the members too. Beneath the bar stands the viewer's available
+  balance in small type, kept current by the heartbeat (a run in the panel, a
+  priced fill, money arriving). The submission runs `msg/post` as the viewer
+  with the room taken from the page's address, so the browser and an agent
+  take one path. A refusal, the kernel's or chat's, stands just above the bar,
+  keeps what was typed, and clears at the next keystroke. A post is a string
+  for now; a document post is a later decision.
 * **The panel** (`GET /actions/{id}/panel`) is the action as its page states
   it — title, chips, address, description, this kernel's record with the
   price, what other kernels report folded — and the one run form (§6.2), with
@@ -2528,8 +2543,12 @@ Every production `.go` file has a `_test.go` file with independent tests.
   unread one marked, its heartbeat answering only a changed rail; the landing's
   fallbacks; a conversation started from its participants, its blank name
   theirs; who is answering, never the viewer; the room page carries the
-  composer with its launcher and the panel; a room's context as the planner
-  reads it, refused to a non-member;
+  composer bar — the schema's own message control, no label, switch or sealed
+  view, `/`, `@` only with more than one other member, the send arrow, the
+  balance and its watch — and the panel; the balance watch answering only a
+  changed amount; the composer standing in the room alone (drift guard); the
+  form and the bar drawing a control through one partial; a room's context as
+  the planner reads it, refused to a non-member;
 * the stylesheet styles nothing that no template, script or Go renders
   (drift guard);
 * the planner under one rule: offered at its price, on the money button when

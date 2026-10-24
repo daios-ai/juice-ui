@@ -4359,3 +4359,20 @@ func TestRefusalSaysWhy(t *testing.T) {
 		t.Errorf("a typed error reads as its own sentence: %q", got)
 	}
 }
+
+// The heartbeat's balance watch answers nothing while the amount shown holds,
+// and the new line, out of band, when it moved.
+func TestBalanceWatch(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	if got := getBody(t, cl, srv.URL+"/tick?watch=balance::500"); strings.Contains(got, "balance") {
+		t.Errorf("an unchanged balance answers nothing: %s", got)
+	}
+	got := getBody(t, cl, srv.URL+"/tick?watch=balance::400")
+	if !strings.Contains(got, `id="balance" hx-swap-oob="true">500 credits</p>`) || !strings.Contains(got, `value="balance::500" hx-swap-oob="true"`) {
+		t.Errorf("a moved balance answers the new line: %s", got)
+	}
+}

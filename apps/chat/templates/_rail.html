@@ -3,12 +3,12 @@
      weighted and the one in view current. Its dialog starts a conversation
      with the participants chosen; the name is optional. Input: railView. */}}
 {{define "_rail"}}
-<nav class="rail" aria-label="Conversations">
+<nav class="rail" aria-label="Conversations"{{if .OOB}} hx-swap-oob="outerHTML:.rail"{{end}}>
   <a class="btn-quiet" href="{{.Path}}?form=new" data-modal="form-new">+ New conversation</a>
   {{range .Rooms}}<a href="/chat/room/{{.ID}}"{{if .Unread}} class="unread"{{end}}{{if eq .ID $.Current}} aria-current="page"{{end}}>{{.Name}}</a>{{end}}
   <input type="hidden" id="watch-rail" name="slow" value="chat:rail:{{.Digest}}">
 </nav>
-<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New conversation">
+{{if not .OOB}}<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New conversation">
   <div class="modal-head"><h2>New conversation</h2><a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/chat/rooms">
@@ -33,5 +33,5 @@
       </div>
     </form>
   </div>
-</dialog>
+</dialog>{{end}}
 {{end}}

@@ -34,21 +34,26 @@
 <input type="hidden" id="chat-after" name="after" value="{{$d.Entries.After}}">
 <input type="hidden" id="watch-chat-room" name="watch" value="chat:{{$rid}}:{{$d.Entries.After}}">
 
-{{/* The composer: the post action's form, the room sealed above the fields
-     still to fill, and the launcher — actions and pages under `/`. */}}
+{{/* The composer (requirements §6.7): the post action's form drawn as a bar,
+     the one sanctioned exception to the form's card. The text box is the
+     schema's own control, under its own name; the room is sealed by the
+     page's address, which the handler reads. [/] opens the launcher, [@] the
+     room's other members, the arrow sends; the balance stands beneath. */}}
 {{$f := taskForm $d.Post $d.Locked}}
-<form class="card stack" method="post" action="/chat/room/{{$rid}}/message" data-json data-composer
+<form class="composer" method="post" action="/chat/room/{{$rid}}/message" data-composer
       hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"
       hx-target="#chat-messages" hx-swap="beforeend" data-reset-on-success>
   {{.CSRFField}}
-  {{template "_json_switch"}}
-  <div class="view locked">{{template "_view" (view $d.Locked)}}</div>
-  {{template "_form_fields" $f.Editable}}
+  <input type="hidden" name="has_fields" value="1">
   <p class="error-text" id="chat-error" role="alert" hidden></p>
-  <div class="cluster">
-    {{template "_launcher" (launcher .Launcher $d.Room.Members $rid)}}
-    <button class="btn" type="submit">Send</button>
+  {{template "_launcher" (launcher .Launcher $d.Others $rid)}}
+  <div class="composer-bar">
+    <button type="button" class="btn-icon" data-launcher aria-label="Actions and pages" title="Actions and pages">/</button>
+    {{if gt (len $d.Others) 1}}<button type="button" class="btn-icon" data-address aria-label="Address a member" title="Address a member"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#at-sign"/></svg></button>{{end}}
+    <div data-fields class="stretch">{{range $f.Editable.Fields}}<label class="sr-only" for="f_{{.Path}}">{{.Name}}</label>{{template "_control" .}}{{end}}</div>
+    <button type="submit" class="btn-icon" data-send aria-label="Send" title="Send"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#arrow-up"/></svg></button>
   </div>
+  {{template "_balance" (balance .Available)}}
 </form>
 </div>
 <aside class="panel" id="panel" aria-label="Action"></aside>

@@ -35,10 +35,11 @@ Three laws underpin everything:
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
+| **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…" →` row; rows `.menu-item`, matched in the browser (§5.9) |
 | **Panel** | `.panel` (`_action_panel`) within `.room` beside `.conversation` | an action beside a conversation: `.modal-head` (title, chips, ×), `_action_head`, the run form; empty, it takes no column; on a phone it covers the conversation |
 | **you-row** | `.you-row` | a setting row on Settings |
-| Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · chat's composer (`form.card.stack[data-json]`: the switch, the sealed room as `.view.locked`, `_form_fields`, Send) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
+| Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
 | **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
@@ -416,7 +417,7 @@ separates it from the content above, and nothing else does (§4).
   assistant; the rooms are the sidebar's **rail**. A room is `.room`: the
   `.conversation` — crumb (room name · members · leave/delete) → the entry
   stack (`.msgs`, `[data-autoscroll]`) → who is answering (`.muted.small`,
-  `#chat-working`) → the composer, held at the viewport's foot — beside the
+  `#chat-working`) → the composer bar, sticky at the foot — beside the
   `.panel`. **The page is the scroll container** — no fixed-height frame; the
   panel alone scrolls on its own. The document pins to its
   **newest** entry on open and on any append while already at the bottom —
@@ -425,12 +426,13 @@ separates it from the content above, and nothing else does (§4).
   `.avatar`, the author in the mono face, the time) renders its body as the
   view (`_value_block`). An entry an answer replaced leaves the page when the
   answer arrives (an out-of-band delete by its id, `e-<seq>`). The
-  **composer** is the post action's form, `form.card.stack[data-json]`: the
-  switch, the room sealed as `.view.locked` (`_view`), `_form_fields` of the
-  form built with `taskForm` (the schema and its sealed part), a refusal in
-  `.error-text`, and a `.cluster` of the launcher's `/` and Send; a refusal
-  answers 422, so the form keeps its draft (requirements.md §6.7). Enter
-  sends; a leading address is completed from the room's members. Nothing asks the person to connect: the UI joins
+  **composer** is the post action's form drawn as a bar, `form.composer`:
+  `.error-text` for a refusal, the launcher's list, then `.composer-bar` —
+  `/` and `@` (`.btn-icon`), the `message` control through `_control` (the
+  form built with `taskForm`, the room sealed by the path and not shown, a
+  `sr-only` label), and the send arrow — then `_balance`. A refusal answers
+  422, so the form keeps its draft (requirements.md §6.7). Enter sends; a
+  leading address is completed from the room's members. Nothing asks the person to connect: the UI joins
   them.
 - **Record rows** (the same record type wherever it appears) render through **one
   shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.

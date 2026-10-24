@@ -171,6 +171,9 @@ func (k *KernelIdentity) Get(ctx context.Context) (client.Health, bool) {
 // symbol — and whether it is known at all. A client that cannot learn the unit
 // renders no amount and accepts none, rather than scaling by a guess (§7).
 func (k *KernelIdentity) Unit() (Unit, bool) {
+	if k == nil {
+		return Unit{}, false
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.id.Handle == "" {
@@ -276,6 +279,7 @@ func New(o Options) (http.Handler, error) {
 		watchers:   map[string]apps.Watcher{},
 	}
 	s.watch("inbox", s.watchInbox)
+	s.watch("balance", s.watchBalance)
 	s.watch("process", s.watchProcess)
 	s.watch("peer", s.watchPeer)
 	as, err := newAppStore(o.StatePath, o.Identity.recorded)

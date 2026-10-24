@@ -877,10 +877,12 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 	}
 }
 
-// The room page renders the composer through the shared form: the room is
-// the sealed view, message the one field, from the post action's schema;
-// every entry is the view of its value.
-func TestRoomRendersThePostForm(t *testing.T) {
+// The room page's composer is the post action's form drawn as a bar: the
+// schema's own message control under its own name and type hint, has_fields,
+// no label, no switch, no sealed view (the room is the page's address); [/],
+// the arrow that sends, the balance beneath; [@] only where there is someone
+// to choose among. Every entry is the view of its value.
+func TestRoomRendersTheComposerBar(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
@@ -894,22 +896,35 @@ func TestRoomRendersThePostForm(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r, _ := c.store.CreateRoom("ann@testnet", "cafe", nil)
-	if _, _, err := c.store.Post(r.ID, "ann@testnet", json.RawMessage(`"hello"`)); err != nil {
+	page := func(id string) string {
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id, nil)
+		req.SetPathValue("id", id)
+		return as(c, sm, c.getRoom, req).Body.String()
+	}
+	pair, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	if _, _, err := c.store.Post(pair.ID, "ann@testnet", json.RawMessage(`"hello"`)); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil)
-	req.SetPathValue("id", r.ID)
-	page := as(c, sm, c.getRoom, req).Body.String()
-	for _, want := range []string{`<div class="view locked">`, ">" + r.ID + "<", `name="f_/message"`, `name="raw_args"`, `class="view" data-json`,
-		`data-composer`, `data-launcher`, `id="launcher-data"`, `"room":"` + r.ID + `"`, `"members":["ann@testnet"]`,
-		`<aside class="panel" id="panel"`, `id="chat-working"`} {
-		if !strings.Contains(page, want) {
+	got := page(pair.ID)
+	for _, want := range []string{`<form class="composer"`, `data-composer`, `<div class="composer-bar">`, `name="has_fields" value="1"`,
+		`name="t_/message" value="string"`, `name="f_/message"`, `<label class="sr-only" for="f_/message">message</label>`,
+		`data-launcher`, `data-send aria-label="Send"`, `#arrow-up`, `id="balance"`, `name="watch" value="balance::0"`,
+		`id="launcher-data"`, `"room":"` + pair.ID + `"`, `"members":["bob@testnet"]`,
+		`class="view" data-json`, `<aside class="panel" id="panel"`, `id="chat-working"`} {
+		if !strings.Contains(got, want) {
 			t.Errorf("room page lacks %s", want)
 		}
 	}
-	if strings.Contains(page, `name="text"`) || strings.Contains(page, `name="f_/thread_id"`) || strings.Contains(page, `"thread_id": ""`) {
-		t.Error("the room is sealed: no field and no editor key for it")
+	bar := got[strings.Index(got, `<form class="composer"`):]
+	bar = bar[:strings.Index(bar, "</form>")]
+	for _, gone := range []string{"data-json-switch", `class="view locked"`, `name="raw_args"`, "f_/thread_id", "data-address", "<label>message"} {
+		if strings.Contains(bar, gone) {
+			t.Errorf("the bar carries %s", gone)
+		}
+	}
+	trio, _ := c.store.CreateRoom("ann@testnet", "trio", []string{"bob@testnet", "cy@testnet"})
+	if !strings.Contains(page(trio.ID), `data-address aria-label="Address a member"`) {
+		t.Error("a room of three offers [@]")
 	}
 }
 

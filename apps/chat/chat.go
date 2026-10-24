@@ -752,14 +752,15 @@ type railView struct {
 	Agents    []string
 	Path      string
 	CSRFField template.HTML
+	OOB       bool // the heartbeat's out-of-band answer: the rail alone, replacing the one shown
 }
 
 // roomView backs the room page. The composer is the form of Post, the post
-// action's input schema, with Locked, the room, sealed; Launcher is the
-// composer's launcher (the registry and the room's members).
+// action's input schema, with Locked, the room, sealed by the page's address.
 type roomView struct {
 	Room     Room
 	Me       string
+	Others   []string // the members other than the viewer: whom [@] and a leading address name
 	IsOwner  bool
 	OpenForm string
 	Entries  entriesView
@@ -831,7 +832,10 @@ type landingView struct{ Error string }
 
 // Rail is the sidebar's list of the viewer's rooms, newest activity first,
 // with the new-conversation dialog, open on ?form=new from any page.
-func (c *Chat) Rail(r *http.Request) (template.HTML, error) {
+func (c *Chat) Rail(r *http.Request) (template.HTML, error) { return c.rail(r, false) }
+
+// rail renders the rail; oob renders it as the heartbeat's answer.
+func (c *Chat) rail(r *http.Request, oob bool) (template.HTML, error) {
 	me := c.deps.Me(r)
 	rooms, err := c.store.Rooms(me)
 	if err != nil {
@@ -843,7 +847,7 @@ func (c *Chat) Rail(r *http.Request) (template.HTML, error) {
 	}
 	return c.deps.Fragment("_rail", railView{
 		Rooms: rooms, Digest: railDigest(rooms), Current: current, Open: r.URL.Query().Get("form") == "new",
-		Agents: c.agents(), Path: r.URL.Path, CSRFField: c.deps.CSRFField(r),
+		Agents: c.agents(), Path: r.URL.Path, CSRFField: c.deps.CSRFField(r), OOB: oob,
 	})
 }
 
@@ -890,8 +894,14 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	c.seen(r, me, id, maxSeq(es))
 	locked, _ := json.Marshal(map[string]string{"thread_id": id})
+	var others []string
+	for _, m := range room.Members {
+		if m != me {
+			others = append(others, m)
+		}
+	}
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
-		Room: room, Me: me, IsOwner: room.Creator == me, OpenForm: r.URL.Query().Get("form"),
+		Room: room, Me: me, Others: others, IsOwner: room.Creator == me, OpenForm: r.URL.Query().Get("form"),
 		Entries: entriesView{RoomID: id, Entries: es, After: maxSeq(es), Working: c.working(id, me)},
 		Post:    c.postSchema(), Locked: locked,
 	})
@@ -963,11 +973,7 @@ func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) 
 		if d := railDigest(rooms); d == shown {
 			return "", nil
 		}
-		rail, err := c.Rail(r)
-		if err != nil {
-			return "", err
-		}
-		return template.HTML(strings.Replace(string(rail), `class="rail"`, `class="rail" hx-swap-oob="outerHTML:.rail"`, 1)), nil
+		return c.rail(r, true)
 	}
 	after, _ := strconv.ParseInt(shown, 10, 64)
 	v := c.tail(r, key, after)
