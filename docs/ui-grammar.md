@@ -35,7 +35,7 @@ Three laws underpin everything:
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
-| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/`, a `.menu`-styled list opening above it — the catalog's actions, the registry's pages, a last `Search "…" →` row — rows `.menu-item`, matched in the browser (§5.9) |
+| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…" →` row; rows `.menu-item`, matched in the browser (§5.9) |
 | **Panel** | `.panel` (`_action_panel`) within `.room` beside `.conversation` | an action beside a conversation: `.modal-head` (title, chips, ×), `_action_head`, the run form; empty, it takes no column; on a phone it covers the conversation |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · chat's composer (`form.card.stack[data-json]`: the switch, the sealed room as `.view.locked`, `_form_fields`, Send) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
@@ -67,7 +67,7 @@ The frame every page renders into: the collaborative workspace
 | Region | Contents | Rules |
 |---|---|---|
 | **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail**; the **avatar** at the foot | One element. Sticky, full height, 240px. Collapsed it is **hidden** — a list of names has no icon form — the state persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash). |
-| **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`). Text rows only: the registry is names. The avatar carries the task badge too. |
+| **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`), each destination an icon and its name. The avatar carries the task badge too. |
 | **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
 | **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
@@ -518,15 +518,17 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   plain words, every one a link, the operator's for `sys` alone. The avatar
   menu lists its destinations; the **launcher** lists all of it, carried as
   **inert JSON** (`<script type="application/json" id="launcher-data">`,
-  CSP-safe) with the room's members and the room. The launcher's rows are
-  `.menu-item`s under `.menu-caption`s — `Actions` (title and address, from
-  the catalog file), `Pages` — and a last `Search "…" →` to Discover. An
+  CSP-safe) with the room's members and the room. Its query is the
+  composer's text after `/`; its rows are `.menu-item`s under
+  `.menu-caption`s, read bottom-up from the box — `Actions` (title and
+  address, from the catalog file, matched by either), `Pages`, and at the top
+  `Search "…" →` to Discover. An
   action row opens the panel (its href is the action page, the no-JS path).
   There is no palette, no search pill, no command prefix.
 - Shortcuts: `g`+letter (destinations, `g h` home, `g d` discover) · `/` (the
   launcher, or Discover's box) · `?` (help overlay, `dialog.palette`) ·
-  `j/k/Enter` (table and list rows) · `Esc` (close topmost) · `↓/↑` in the
-  launcher. Every row targets a real link — the keyboard layer adds no
+  `j/k/Enter` (table and list rows) · `Esc` (close topmost) · `↑` from the
+  composer into the launcher's rows, `↓` back. Every row targets a real link — the keyboard layer adds no
   capability unreachable without it.
 
 ### 5.10 Feedback

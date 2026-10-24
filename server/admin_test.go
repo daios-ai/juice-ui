@@ -122,7 +122,7 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(pbody, `class="stat-row"`) || !strings.Contains(pbody, "owed to us") {
 		t.Error("/admin/peers must state this kernel's money through the figures")
 	}
-	if !strings.Contains(pbody, `<a href="/admin/peers" class="menu-item" role="menuitem" aria-current="page">Network</a>`) {
+	if !regexp.MustCompile(`<a href="/admin/peers" class="menu-item" role="menuitem" aria-current="page"><svg[^>]*>.*?</svg>Network</a>`).MatchString(pbody) {
 		t.Error("/admin/peers must mark the Network destination current")
 	}
 }

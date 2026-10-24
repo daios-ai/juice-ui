@@ -75,6 +75,10 @@ const (
 // A handle names the home directory, so it is validated strictly: lowercase
 // letters, digits, '-' and '_', starting alphanumeric. This forbids '/', '.', and
 // '..', making path traversal impossible before the containment check in agentDir.
+// agentsIcon is the app's menu icon (a small robot), inline so no core sprite
+// edit is needed.
+const agentsIcon = template.HTML(`<svg class="ico" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><path d="M9 13h.01M15 13h.01"/><path d="M2 14v2M22 14v2"/></svg>`)
+
 var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 var editable = map[string]bool{agentFile: true}
@@ -112,7 +116,7 @@ func (a *Agents) Nav(me string, superuser bool) []apps.NavEntry {
 	if me == "" || !superuser {
 		return nil
 	}
-	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Match: "/agents"}}
+	return []apps.NavEntry{{Slug: "agents", Label: "Agents", Href: "/agents", Icon: agentsIcon, Match: "/agents"}}
 }
 
 func (a *Agents) Templates() fs.FS { return tmplFS }

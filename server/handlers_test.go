@@ -4008,7 +4008,7 @@ func TestHomeIsTheDashboard(t *testing.T) {
 			t.Errorf("home must ask for waiting tasks only, asked %q", q)
 		}
 	}
-	if !strings.Contains(page, `<a href="/" class="menu-item" role="menuitem" aria-current="page">Home</a>`) {
+	if !regexp.MustCompile(`<a href="/" class="menu-item" role="menuitem" aria-current="page"><svg[^>]*>.*?</svg>Home</a>`).MatchString(page) {
 		t.Error("Home must be the current destination on /")
 	}
 	// A secondary read failing leaves the rest of the page standing.

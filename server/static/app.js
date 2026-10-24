@@ -458,15 +458,18 @@ document.body.addEventListener('click', (e) => {
   copyText(btn.getAttribute('data-copy')).then((ok) => announce(ok ? 'Copied' : 'Could not copy'));
 });
 
-// The launcher (requirements §6.2): the composer's `/`. The page carries the
-// registry's pages, the room's members and the room (#launcher-data, inert
-// JSON); the catalog's actions are loaded once (GET /search/catalog.json) and
-// matched in the browser as the person types, so typing sends no request.
-// Choosing an action opens its panel beside the conversation, choosing a page
-// goes there, and the last row searches Discover; nothing posts or runs. A
-// first word that begins a member's address lists the members, and choosing
-// one writes its address. Without JavaScript the composer is the plain post
-// form and every page stays a link.
+// The launcher (requirements §6.2): the composer's `/`. Its query is the
+// composer's own text after a leading `/` — one box, under its results — and
+// the list opens above the composer with the best match nearest the box, as a
+// prompt at the foot of a terminal lists them. The page carries the registry's
+// pages, the room's members and the room (#launcher-data, inert JSON); the
+// catalog's actions are loaded once (GET /search/catalog.json) and matched in
+// the browser by title or by address, so typing sends no request. Choosing an
+// action opens its panel beside the conversation, choosing a page goes there,
+// and the top row searches Discover; nothing posts or runs, and closing the
+// list gives the draft back. A first word that begins a member's address lists
+// the members, and choosing one writes its address. Without JavaScript the
+// composer is the plain post form and every page stays a link.
 //
 // hintKey and the ranking mirror server/handlers.go (hintKey, wordsBegin, and
 // catalogAsResults's title tiers); server/testdata/hints.json holds the cases
@@ -481,19 +484,20 @@ function hintKey(s) {
     .replace(/[^\p{L}\p{Nd}]+/gu, " ").trim();
 }
 
-// matchHints ranks entries {t, k} for the typed text: every typed word must
-// begin a word of the key; keys beginning with the whole text first, then the
-// other matches; shorter first, then alphabetical. An empty text matches
-// nothing unless `all` asks for everything.
+// matchHints ranks entries {t, k, r?} for the typed text: every typed word
+// must begin a word of the key — the title's, or the address's where an entry
+// has one; keys beginning with the whole text first, then the other matches;
+// shorter first, then alphabetical. An empty text matches nothing unless
+// `all` asks for everything.
 function matchHints(entries, q, limit, all = false) {
   const typed = hintKey(q).split(" ").filter(Boolean);
   if (typed.length === 0 && !all) return [];
   const whole = typed.join(" ");
   const hits = [];
   for (const e of entries) {
-    const words = e.k.split(" ");
+    const words = (e.k + (e.r ? " " + e.r : "")).split(" ");
     if (!typed.every((t) => words.some((w) => w.startsWith(t)))) continue;
-    hits.push({ ...e, rank: e.k.startsWith(whole) ? 0 : 1 });
+    hits.push({ ...e, rank: e.k.startsWith(whole) || (e.r || "").startsWith(whole) ? 0 : 1 });
   }
   hits.sort((a, b) => a.rank - b.rank || a.k.length - b.k.length || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
   return hits.slice(0, limit);
@@ -504,6 +508,7 @@ try { launcher = JSON.parse(document.getElementById("launcher-data")?.textConten
 let catalog = null;
 const loadCatalog = () => (catalog ??= fetch("/search/catalog.json", { credentials: "same-origin" })
   .then((r) => (r.ok ? r.json() : []))
+  .then((list) => list.map((e) => ({ ...e, r: hintKey(e.ref || "") })))
   .catch(() => []));
 
 // row builds one launcher row: a link, labelled, with a muted detail.
@@ -537,80 +542,109 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
   const box = form.querySelector(".launcher");
   const button = form.querySelector("[data-launcher]");
   if (!box || !button || !launcher) continue;
-  const q = box.querySelector("input");
   const list = box.querySelector("nav");
   const pages = (launcher.pages || []).map((p) => ({ t: p.name, k: hintKey(p.name), href: p.href }));
   const field = () => form.querySelector("[data-fields] textarea:not([disabled])");
-  let after = ""; // a query string the chosen action's panel is opened with (a result to use)
-  let members = false;
+  let saved = null;  // the draft the launcher gives back when it closes
+  let after = "";    // a query string the chosen action's panel opens with (a result to use)
 
-  const close = () => { box.hidden = true; list.replaceChildren(); after = ""; members = false; };
-  form.launch = (text = "", extra = "") => {
-    after = extra; members = false;
-    box.hidden = false; q.hidden = false; q.value = text; q.focus();
+  const open = () => saved !== null;
+  const close = (restore = true) => {
+    if (restore && saved !== null && field()) field().value = saved;
+    saved = null; after = ""; box.hidden = true; list.replaceChildren();
+  };
+  // launch opens the launcher over the draft: the field holds `/` and the
+  // query, and the draft comes back when it closes.
+  form.launch = (extra = "") => {
+    const f = field();
+    if (!f) return;
+    saved = f.value.startsWith("/") ? "" : f.value;
+    after = extra;
+    f.value = "/";
+    f.focus();
     render();
-    loadCatalog().then(render);
+  };
+
+  // place puts the rows just above the field, the last row nearest it.
+  const place = (rows) => {
+    box.hidden = rows.length === 0;
+    list.replaceChildren(...rows);
+    const f = field();
+    if (f && !box.hidden) box.style.bottom = (form.getBoundingClientRect().bottom - f.getBoundingClientRect().top + 6) + "px";
+    list.scrollTop = list.scrollHeight;
   };
 
   async function render() {
-    if (box.hidden || members) return;
-    const typed = q.value;
+    const f = field();
+    if (!open() || !f) return;
+    const typed = f.value.slice(1);
     const actions = typed.trim() ? matchHints(await loadCatalog(), typed, LAUNCH_ACTIONS) : [];
+    if (!open()) return;
     const found = matchHints(pages, typed, typed.trim() ? LAUNCH_PAGES : pages.length, true);
     const rows = [];
-    if (actions.length) rows.push(caption("Actions"));
-    for (const a of actions) {
-      const r = row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
-      if (a.id) {
-        const extra = after;
-        r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(a.id, extra); field()?.focus(); });
-      }
-      rows.push(r);
-    }
-    if (found.length) rows.push(caption("Pages"));
-    for (const p of found) rows.push(row(p.t, "", p.href));
     if (typed.trim()) rows.push(row("Search “" + typed.trim() + "” →", "", "/browse?q=" + encodeURIComponent(typed.trim())));
-    list.replaceChildren(...rows);
+    if (found.length) rows.push(caption("Pages"), ...found.reverse().map((p) => row(p.t, "", p.href)));
+    if (actions.length) {
+      rows.push(caption("Actions"));
+      for (const a of actions.reverse()) {
+        const r = row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
+        if (a.id) {
+          const extra = after;
+          r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(a.id, extra); field()?.focus(); });
+        }
+        rows.push(r);
+      }
+    }
+    place(rows);
   }
 
   // The members whose address begins with the first word typed.
   function suggestMembers(text) {
     const word = text.split(/\s/)[0];
     const hits = word && !/\s/.test(text) ? (launcher.members || []).filter((m) => m.toLowerCase().startsWith(word.toLowerCase()) && m !== word) : [];
-    if (!hits.length) { if (members) close(); return; }
-    members = true; box.hidden = false; q.hidden = true;
-    list.replaceChildren(...hits.map((m) => {
+    place(hits.map((m) => {
       const r = row(m, "", "#");
       r.addEventListener("click", (e) => {
         e.preventDefault();
         const f = field();
-        f.value = m + ", " + f.value.slice(word.length).replace(/^\S*/, "");
-        close(); f.focus();
+        f.value = m + ", " + f.value.slice(word.length);
+        place([]); f.focus();
       });
       return r;
     }));
   }
 
-  button.addEventListener("click", () => (box.hidden ? form.launch() : close()));
-  q.addEventListener("input", render);
+  button.addEventListener("click", () => (open() ? close() : form.launch()));
   form.addEventListener("input", (e) => {
     const f = field();
     if (e.target !== f) return;
-    if (f.value.startsWith("/")) { const rest = f.value.slice(1); f.value = ""; form.launch(rest); return; }
+    if (f.value.startsWith("/")) {
+      if (!open()) { saved = ""; after = ""; }
+      render();
+      return;
+    }
+    if (open()) { saved = null; after = ""; }
     suggestMembers(f.value);
   });
   form.addEventListener("keydown", (e) => {
+    const f = field();
     const rows = [...list.querySelectorAll("a")];
-    if (e.key === "Escape" && !box.hidden) { e.preventDefault(); close(); field()?.focus(); return; }
-    if (!box.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp") && rows.length) {
+    if (e.key === "Escape" && !box.hidden) { e.preventDefault(); if (open()) close(); else place([]); f?.focus(); return; }
+    // The rows stand above the field: ↑ leaves it for the nearest, ↓ comes back.
+    if (!box.hidden && rows.length && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      const items = [...rows, f];
+      const i = items.indexOf(document.activeElement);
+      if (i < 0) return;
       e.preventDefault();
-      const i = rows.indexOf(document.activeElement);
-      rows[Math.min(Math.max(i + (e.key === "ArrowDown" ? 1 : -1), 0), rows.length - 1)].focus();
+      items[Math.min(Math.max(i + (e.key === "ArrowUp" ? -1 : 1), 0), items.length - 1)].focus();
       return;
     }
-    if (e.key === "Enter" && e.target === q && rows.length) { e.preventDefault(); rows[0].click(); return; }
-    // Enter sends; Shift+Enter breaks the line.
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.target === field()) { e.preventDefault(); form.requestSubmit(); }
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target !== f) return;
+    e.preventDefault();
+    // Enter takes the row nearest the field while the list is open, and sends
+    // otherwise; Shift+Enter breaks the line.
+    if (!box.hidden && rows.length) rows[rows.length - 1].click();
+    else form.requestSubmit();
   });
 }
 
@@ -682,5 +716,5 @@ document.addEventListener('click', (e) => {
     field.focus();
     return;
   }
-  composer?.launch?.('', '&tx=' + encodeURIComponent(inAction.dataset.useTx));
+  composer?.launch?.('&tx=' + encodeURIComponent(inAction.dataset.useTx));
 });

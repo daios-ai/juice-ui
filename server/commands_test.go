@@ -15,7 +15,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps"
 )
 
-var menuRowRe = regexp.MustCompile(`<a href="([^"]+)" class="menu-item" role="menuitem"[^>]*>([^<]+)`)
+var menuRowRe = regexp.MustCompile(`<a href="([^"]+)" class="menu-item" role="menuitem"[^>]*>(?:<svg.*?</svg>)?([^<]+)`)
 
 // menuOf is the avatar menu of a page: its destinations by name.
 func menuOf(page string) map[string]string {
@@ -63,8 +63,13 @@ func TestMenuMarksTheCurrentPage(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	page := getBody(t, loginClient(t, srv.URL), srv.URL+"/wallet")
-	if !strings.Contains(page, `<a href="/wallet" class="menu-item" role="menuitem" aria-current="page">`) {
-		t.Error("the wallet's menu row must carry aria-current on the wallet")
+	if !strings.Contains(page, `<a href="/wallet" class="menu-item" role="menuitem" aria-current="page"><svg class="ico"`) {
+		t.Error("the wallet's menu row must carry aria-current on the wallet, and its icon")
+	}
+	for name := range menuOf(page) {
+		if !regexp.MustCompile(`role="menuitem"[^>]*><svg class="ico"[^>]*>.*?</svg>` + regexp.QuoteMeta(name)).MatchString(page) {
+			t.Errorf("menu row %q carries no icon", name)
+		}
 	}
 }
 

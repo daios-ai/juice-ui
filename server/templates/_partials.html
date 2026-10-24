@@ -546,17 +546,15 @@
 
 {{define "_rated"}}<span class="muted small">Rated ✓</span>{{end}}
 
-{{/* _launcher — the composer's `/` (requirements §6.2): a button, and a list
-     of the actions in the catalog and the pages of the registry matched as
-     one types, with a last row searching Discover. Choosing an action opens
-     its panel; choosing a page goes there; neither posts nor runs anything.
-     Takes launcher (the registry, the room's members, the room). */}}
+{{/* _launcher — the composer's `/` (requirements §6.2): a button, and the
+     list that opens above the composer as one types after `/` in it — the
+     catalog's actions by title or address, the registry's pages, a row
+     searching Discover — the best match nearest the box. Choosing an action
+     opens its panel; choosing a page goes there; neither posts nor runs
+     anything. Takes launcher (the registry, the room's members, the room). */}}
 {{define "_launcher"}}
 <button type="button" class="btn-icon" data-launcher aria-label="Actions and pages" title="Actions and pages">/</button>
-<div class="launcher" hidden>
-  <input type="search" aria-label="Find an action or a page" autocomplete="off">
-  <nav aria-label="Matches"></nav>
-</div>
+<div class="launcher" hidden><nav aria-label="Matches"></nav></div>
 <script type="application/json" id="launcher-data">{{.JSON}}</script>
 {{end}}
 
@@ -586,9 +584,9 @@
     <div class="menu-caption mono">{{.Me}}</div>
     <div class="menu-caption money">{{money .Available}}</div>
     <div class="menu-divider"></div>
-    {{range .Commands}}{{if .Nav}}<a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>{{.Name}}{{if .Live}}<span class="badge badge-{{.Slug}}" aria-label="{{.Name}}"></span>{{end}}</a>{{end}}{{end}}
+    {{range .Commands}}{{if .Nav}}<a href="{{.Href}}" class="menu-item" role="menuitem"{{if .Active}} aria-current="page"{{end}}>{{.Icon}}{{.Name}}{{if .Live}}<span class="badge badge-{{.Slug}}" aria-label="{{.Name}}"></span>{{end}}</a>{{end}}{{end}}
     <div class="menu-divider"></div>
-    <form method="post" action="/logout">{{.CSRFField}}<button type="submit" class="menu-item" role="menuitem">Sign out</button></form>
+    <form method="post" action="/logout">{{.CSRFField}}<button type="submit" class="menu-item" role="menuitem"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#log-out"/></svg>Sign out</button></form>
   </div>
 </div>
 {{end}}

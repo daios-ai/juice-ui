@@ -301,7 +301,7 @@ func TestSidebarHoldsRailAndMenu(t *testing.T) {
 	}
 	data := Page{Me: "sys@testnet", Rail: template.HTML(`<nav class="rail">ROOMS</nav>`), Commands: []Command{
 		{Slug: "inbox", Name: "Inbox", Href: "/inbox", Nav: true, Live: true},
-		{Slug: "admin", Name: "Admin", Href: "/admin", Nav: true, Active: true},
+		{Slug: "admin", Name: "Admin", Href: "/admin", Icon: iconAdmin, Nav: true, Active: true},
 		{Name: "Record a payment", Href: "/admin?form=admin-deposit"},
 	}}
 	rec := httptest.NewRecorder()
@@ -311,7 +311,7 @@ func TestSidebarHoldsRailAndMenu(t *testing.T) {
 	got := rec.Body.String()
 	for _, want := range []string{`<nav class="rail">ROOMS</nav>`, `>sys@testnet</div>`, `class="menu-caption money"`,
 		`<a href="/inbox" class="menu-item" role="menuitem">Inbox<span class="badge badge-inbox"`,
-		`<a href="/admin" class="menu-item" role="menuitem" aria-current="page">Admin</a>`, `Sign out`} {
+		`<a href="/admin" class="menu-item" role="menuitem" aria-current="page">` + string(iconAdmin) + `Admin</a>`, `Sign out`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("sidebar lacks %q: %s", want, got)
 		}

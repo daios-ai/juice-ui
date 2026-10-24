@@ -67,10 +67,11 @@ type App interface {
 // NavEntry is one destination an app contributes to the avatar menu and the
 // launcher. Match is the path prefix that marks it as the current page.
 type NavEntry struct {
-	Slug  string // e.g. "agents"
-	Label string // sentence case, e.g. "Agents"
-	Href  string // e.g. "/agents"
-	Match string // path prefix for the active state, e.g. "/agents"
+	Slug  string        // e.g. "agents"
+	Label string        // sentence case, e.g. "Agents"
+	Href  string        // e.g. "/agents"
+	Icon  template.HTML // the menu row's icon: the app's own inline <svg class="ico">
+	Match string        // path prefix for the active state, e.g. "/agents"
 	// Live says the entry's badge is kept current by the page's heartbeat: the
 	// app registered a watcher under its slug that answers the key "badge".
 	Live bool

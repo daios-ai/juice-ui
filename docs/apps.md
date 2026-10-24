@@ -153,7 +153,7 @@ its value changes, so an identical re-push is accepted.)
 
 `NavEntry` is one destination an app adds to the registry — the avatar menu and
 the launcher (`Slug`, `Label`, sentence case, `Href`, `Match` — the path prefix
-that marks it current). Text only: the registry is names. `Live` says its badge
+that marks it current, `Icon` — the app's own inline `<svg class="ico">` for its menu row). `Live` says its badge
 is kept by the heartbeat: the app registers a watcher under its slug that
 answers the key `badge` with `apps.Badge`.
 

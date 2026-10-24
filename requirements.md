@@ -1113,18 +1113,22 @@ kernel and world is in use, and keys everything durable by
   alike), and `Esc` to close the top layer. A rowable row's pointer target is
   its link: the row MUST NOT show a pointer cursor, since no click handler
   stands behind it.
-* **The launcher is the composer's `/`.** Typing `/` at the start of the
-  composer, or pressing its `/` button, opens a list under the draft: the
-  catalog's actions matching what is typed (at most five, title and address),
-  then the registry's destinations and openers (at most three; all of them
-  while nothing is typed), then one last row, `Search "…" →`, which runs
-  Discover's search for the text. Choosing an action opens its panel beside
+* **The launcher is the composer's `/`.** Its query is the composer's own
+  text after a leading `/` — one box, at the foot of the screen, under its
+  results. Typing `/` at the start of the composer, or pressing its `/` button
+  (which sets the draft aside), opens the list above the composer, the best
+  match nearest the box: the catalog's actions matching what is typed by title
+  or by address (at most five, title and address), then above them the
+  registry's destinations and openers (at most three; all of them while
+  nothing is typed), and at the top one row, `Search "…" →`, which runs
+  Discover's search for the text. Enter takes the row nearest the box, ↑
+  climbs the rows and ↓ comes back. Choosing an action opens its panel beside
   the conversation; choosing a page goes there; neither posts a message nor
-  runs anything, and Escape closes the list keeping the draft. The registry is
-  delivered as inert JSON (a `type="application/json"` block), never
-  executable inline script, to satisfy the CSP, and every entry is a link, so
-  the launcher adds no capability unreachable without it. The actions are read
-  from the free catalog file, matched in the browser, never from
+  runs anything, and Escape closes the list and gives the draft back. The
+  registry is delivered as inert JSON (a `type="application/json"` block),
+  never executable inline script, to satisfy the CSP, and every entry is a
+  link, so the launcher adds no capability unreachable without it. The actions
+  are read from the free catalog file, matched in the browser, never from
   `sys/lookup` (§8.2). There is no palette, no search pill and no command
   prefix.
 

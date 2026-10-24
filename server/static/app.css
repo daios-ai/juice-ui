@@ -640,8 +640,9 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 form[data-composer] { position: sticky; bottom: 1rem; }
 .panel { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .panel:empty { display: none; }
-/* The launcher: the composer's `/`, a menu of matches opening above it. */
-.launcher { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: .35rem; z-index: 200; display: flex; flex-direction: column; gap: .3rem; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+/* The launcher: the composer's `/`, its matches opening above the composer,
+   the best nearest the box one types in. */
+.launcher { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 200; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 .launcher[hidden] { display: none; }
 .launcher nav { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
 .launcher .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
