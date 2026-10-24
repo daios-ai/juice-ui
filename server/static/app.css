@@ -644,7 +644,7 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
    page scrolling behind it. */
 .composer { position: sticky; bottom: 0; padding: .5rem 0 .75rem; background: var(--bg); }
 .composer > .error-text { margin: 0 0 .35rem; }
-.composer-bar { display: flex; align-items: flex-end; gap: .35rem; padding: .35rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.composer-bar { display: flex; align-items: flex-end; gap: 0; padding: .35rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 .composer-bar:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* One line of text and every control are 2rem tall, so they share a centre
    line; aligned at the foot, the controls stay level with the last line as the
