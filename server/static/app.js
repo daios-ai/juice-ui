@@ -50,6 +50,9 @@ function pinBottom() {
   sc.scrollTop = sc.scrollHeight;
 }
 document.body.addEventListener("htmx:beforeSwap", (e) => {
+  // A refused form (422) still swaps: its reason is the response. htmx counts
+  // the request unsuccessful, so a [data-reset-on-success] form keeps its draft.
+  if (e.detail.xhr?.status === 422) e.detail.shouldSwap = true;
   const box = e.target?.closest?.("[data-autoscroll]");
   stickBottom = box ? atBottom(box) : false;
 });

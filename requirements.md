@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.35.0
+Version: 0.36.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.36.0.** Chat's input and output go through the UI's one
+> form and one view. A message is a string, declared so in the post action's
+> schema; the composer is that action's form, the room sealed above it as a
+> task's sealed arguments are, and its JSON switch; a refusal keeps the draft.
+> Every entry is the view of its value. A task form's JSON editor names only
+> the fields still to fill (§6.3).
 
 > **What changed in 0.35.0.** Chat provisions what it needs. The UI joins the
 > person signed in and every agent with a home on this installation itself,
@@ -1462,7 +1469,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   target action: a task may be parked on a `private`/`local` action the
   completer can never read.
 * `partial_args` MUST render read-only; only `allowed_input` fields MUST be
-  editable. When none are editable, the card MUST collapse to a single confirm.
+  editable, in the fields and in the JSON editor alike: the form is built from
+  the schema without the sealed properties. When none are editable, the card
+  MUST collapse to a single confirm.
 * **Completion is neutral — this is the single statement of the rule; §7 and
   §8 defer here.** Answering a task spends nothing of the person who answers
   it (kernel U52): its price was parked by whoever created it, and a transfer
@@ -2010,8 +2019,8 @@ the transaction's `payment` (§6.5).
 Chat is an app (§1, `apps/chat`) and the surface a session lands on. Its
 terms: a **member** is a kernel principal, `handle@kernel`, person or agent,
 and chat never distinguishes the two (ecosystem-standard §7); an **entry** is
-one thing said in a room, author, time, a body that is any JSON value (a
-sentence being a string) and a stored kind (post, answer or failure); a
+one thing said in a room, author, time, a body that is a JSON value (a post
+being a string) and a stored kind (post, answer or failure); a
 **delivery** is a kernel task chat creates for one recipient of a post; a
 **hand-off** is a post that addresses a member; a post **addresses** a member
 when it is text whose first word, trailing `,:;.!?` removed, is that member's
@@ -2024,7 +2033,7 @@ free; `{}` → `{usage}`, the paragraph a member learns chat from), `register`
 (public; `{handle}` → `{api_key, task_id}`, for members elsewhere), `validate`
 (private; the verification task's onward, gated by chat's upstream bearer),
 `msg/post` (public, `delegated_bearer` on the seam's caller-key header;
-`{thread_id, message}` → `{delivered}`) and `reply` (private; a delivery's
+`{thread_id, message: string}` → `{delivered}`) and `reply` (private; a delivery's
 onward, bearer-gated; `{thread_id, member, delivery, message, answer?,
 status?, reason?}` → `{ok}`). The onwards are private so that a member
 completes a task without being able to run the action itself and speak as
@@ -2035,9 +2044,9 @@ describes, and any other action chat owns is deleted.
 The rules:
 
 1. **A post is `{thread_id, message}`**, run as the member; the kernel injects
-   the member's chat key and chat resolves it. `message` is any JSON value.
+   the member's chat key and chat resolves it. `message` is a string.
 2. **Addressing routes.** A post that addresses a member reaches that member
-   only; any other post, a document included, reaches every other member. The
+   only; any other post reaches every other member. The
    author never receives its own post.
 3. **A delivery carries the room.** During the post's own dispatch, through the
    capability the kernel injected, chat creates one task per recipient:
@@ -2054,8 +2063,7 @@ The rules:
    is appended; when all are hand-offs, nothing is appended. A failure
    (`status` and no answer) is appended, as a failure, only when the member
    posted nothing since. A completion carrying neither appends nothing. An
-   answer whose text is a JSON object or array is stored as that document.
-   Nothing is ever deleted: a replaced post stops standing, and a page showing
+   answer is stored as the string it is. Nothing is ever deleted: a replaced post stops standing, and a page showing
    it is told to remove it, so seqs only grow.
 5. **One post per held delivery, counted.** A member holding n unanswered
    deliveries in a room may have n standing posts since the oldest of them;
@@ -2107,14 +2115,15 @@ member by a direct message outside the room.
 
 The UI: `/chat` lands in the room; the room is crumb (← rooms · name ·
 members · leave/delete) → entries → composer, the page the scroll container;
-the rooms are a table (`.rowable`, unread weighting). An entry renders by its
-stored kind and body: a failure as the `failed` pill and its reason, a string
-as text, a JSON Schema (`$schema` beside `type` or `properties`) as the form of
-that schema whose submission posts the filled value, any other value as the
-view. The composer is a text box with the JSON switch: off, the text is posted
-as a string; on, the editor's document is posted as it is. Every post goes
-through `msg/post` as the viewer, so the browser and an agent take one path,
-and a refusal is shown beside the composer. The store is
+the rooms are a table (`.rowable`, unread weighting). An entry renders as the
+view of its body (§7), a failure being the view of its `{status, reason}`. The
+composer is the post action's form, built from its input schema as a task's
+completion form is (§6.3): `thread_id` sealed, shown as the view above the
+fields, and `message` its one field, with the JSON switch, whose editor names
+only `message`. Its submission runs `msg/post` as the viewer with the room
+taken from the page's address, never from the form, so the browser and an
+agent take one path. A refusal, the kernel's or chat's, is shown beside the
+composer and keeps what was typed. The store is
 `$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held across the
 upgrade settles nothing said before it); a first start beside the previous
 application's `chat.db` imports its live rooms, members and messages once and

@@ -3,10 +3,12 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,7 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
 )
 
@@ -226,6 +229,10 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			_, _ = w.Write([]byte(`{"result":{"api_key":"KEY","task_id":"T9"},"tx_id":"tx"}`))
 			return
 		}
+		if strings.Contains(string(b), "/msg/post") && !strings.Contains(string(b), `"message"`) {
+			http.Error(w, `{"code":"invalid_input","error":"message: required field missing"}`, http.StatusUnprocessableEntity)
+			return
+		}
 		if strings.Contains(string(b), "refuse me") {
 			http.Error(w, `{"code":"execution_failed","error":"action failed: {\"ok\":false,\"error\":\"a post is already pending; answer the delivery first\"}"}`, http.StatusInternalServerError)
 			return
@@ -297,7 +304,13 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 			w.Header().Set("X-Flash-To", to)
 			http.Redirect(w, r, to, http.StatusSeeOther)
 		},
-		FormArgs:     func(r *http.Request) (json.RawMessage, error) { return json.RawMessage(`{"city":"Lisbon"}`), nil },
+		FormArgs: func(r *http.Request) (json.RawMessage, error) {
+			raw := r.FormValue("raw_args")
+			if !json.Valid([]byte(raw)) {
+				return nil, errors.New("invalid JSON")
+			}
+			return json.RawMessage(raw), nil
+		},
 		LoadAppState: func(string) (json.RawMessage, error) { return nil, nil },
 		SaveAppState: func(string, json.RawMessage) error { return nil },
 	}
@@ -465,6 +478,9 @@ func TestContractsAreCanonical(t *testing.T) {
 			}
 			walk(k.name+"."+side, n)
 		}
+	}
+	if !strings.Contains(string(c.postSchema()), `"message":{"type":"string",`) {
+		t.Errorf("a message is a string: %s", c.postSchema())
 	}
 	if len(c.contracts()) != 5 {
 		t.Errorf("%d contracts", len(c.contracts()))
@@ -674,7 +690,7 @@ func TestHandoffRules(t *testing.T) {
 
 // A completion settles the room: an answer replaces the member's posts that
 // address nobody (hidden, never deleted, and named to an open page for
-// removal); an answer that is a JSON document is stored as the document; a
+// removal); an answer is the string the member gave, JSON text included; a
 // failure with nothing said is a failed entry.
 func TestReplySettles(t *testing.T) {
 	f := newFakeKernel()
@@ -701,8 +717,8 @@ func TestReplySettles(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil)
 	var shown entriesView
 	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, rr *http.Request) { shown = c.tail(rr, r.ID, 1) })).ServeHTTP(httptest.NewRecorder(), req)
-	if len(shown.Cards) != 1 || shown.Cards[0].Entry.Seq != 2 {
-		t.Fatalf("the placeholder is shown: %+v", shown.Cards)
+	if len(shown.Entries) != 1 || shown.Entries[0].Seq != 2 {
+		t.Fatalf("the placeholder is shown: %+v", shown.Entries)
 	}
 	reply(map[string]any{"answer": "391"})
 	// The person reads the room, which settles what was delivered to them.
@@ -711,7 +727,7 @@ func TestReplySettles(t *testing.T) {
 	}
 	var tick entriesView
 	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, rr *http.Request) { tick = c.tail(rr, r.ID, 2) })).ServeHTTP(httptest.NewRecorder(), req)
-	if len(tick.Cards) != 1 || string(tick.Cards[0].Entry.Body) != `"391"` || tick.Cards[0].Entry.Seq != 3 || len(tick.Removed) != 1 || tick.Removed[0] != 2 {
+	if len(tick.Entries) != 1 || string(tick.Entries[0].Body) != `"391"` || tick.Entries[0].Seq != 3 || len(tick.Removed) != 1 || tick.Removed[0] != 2 {
 		t.Fatalf("the answer arrives and the placeholder leaves: %+v", tick)
 	}
 	say(ann, "answer as JSON")
@@ -723,7 +739,7 @@ func TestReplySettles(t *testing.T) {
 	for _, e := range es {
 		got = append(got, string(e.Body)+"/"+strconv.Itoa(e.Kind))
 	}
-	want := `"what is 17 times 23?"/0|"391"/1|"answer as JSON"/0|{"a": 1}/1|"and fail"/0|{"reason":"repeat-loop","status":"failed"}/2`
+	want := `"what is 17 times 23?"/0|"391"/1|"answer as JSON"/0|" {\"a\": 1} "/1|"and fail"/0|{"status":"failed","reason":"repeat-loop"}/2`
 	if strings.Join(got, "|") != want {
 		t.Errorf("room =\n%s\nwant\n%s", strings.Join(got, "|"), want)
 	}
@@ -807,17 +823,18 @@ func TestJoinAgentRefreshesItsSession(t *testing.T) {
 	}
 }
 
-// The composer posts through chat's own action as the viewer: text as a
-// JSON string, the JSON editor's document as it is, a filled form through
-// FormArgs; a refusal comes back beside the composer; an htmx submit
-// appends the tail and no-JS reloads the room.
-func TestPostMessageShapes(t *testing.T) {
+// The composer is the post action's form: what it carries runs msg/post as
+// the viewer with the room from the path, never from the form; a refusal,
+// the kernel's or chat's, is a 422 beside the composer, so the draft stays;
+// an htmx submit appends the tail and no-JS reloads the room.
+func TestPostMessageRunsThePostForm(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
 	r, _ := c.store.CreateRoom("ann@testnet", "cafe", nil)
-	send := func(form string, htmx bool) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+r.ID+"/message", strings.NewReader(form))
+	send := func(raw string, htmx bool) *httptest.ResponseRecorder {
+		form := url.Values{"raw_args": {raw}, "after": {"0"}}
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+r.ID+"/message", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.SetPathValue("id", r.ID)
 		if htmx {
@@ -825,22 +842,18 @@ func TestPostMessageShapes(t *testing.T) {
 		}
 		return as(c, sm, c.postMessage, req)
 	}
-	if rec := send("text=hello+there&has_fields=1&after=0", true); rec.Code != 200 || rec.Body.String() != "_chat_poll" {
-		t.Fatalf("text: %d %s", rec.Code, rec.Body)
+	if rec := send(`{"message":"hello there"}`, true); rec.Code != 200 || rec.Body.String() != "_chat_poll" {
+		t.Fatalf("post: %d %s", rec.Code, rec.Body)
 	}
-	if rec := send("raw_args=%7B%22a%22%3A1%7D&after=0", true); rec.Code != 200 {
-		t.Fatalf("json: %d", rec.Code)
+	if rec := send(`{"message":"elsewhere","thread_id":"other-room-1"}`, true); rec.Code != 200 {
+		t.Fatalf("sealed: %d", rec.Code)
 	}
-	if rec := send("has_fields=1&f_%2Fcity=Lisbon&after=0", true); rec.Code != 200 {
-		t.Fatalf("form: %d", rec.Code)
+	for _, refused := range []string{`{}`, `{"message":"refuse me"}`, `"hi"`, `{bad`} {
+		if rec := send(refused, true); rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != "_chat_refused" {
+			t.Errorf("%s must be refused beside the composer: %d %s", refused, rec.Code, rec.Body)
+		}
 	}
-	if rec := send("raw_args=%7Bbad&after=0", true); rec.Body.String() != "_chat_refused" {
-		t.Fatalf("bad json: %s", rec.Body)
-	}
-	if rec := send("text=refuse+me&has_fields=1&after=0", true); rec.Body.String() != "_chat_refused" {
-		t.Fatalf("a refusal must show beside the composer: %s", rec.Body)
-	}
-	if rec := send("text=bye&has_fields=1", false); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+r.ID {
+	if rec := send(`{"message":"bye"}`, false); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+r.ID {
 		t.Fatalf("no-JS: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 	var args []string
@@ -855,9 +868,44 @@ func TestPostMessageShapes(t *testing.T) {
 		}
 		args = append(args, string(in.Args))
 	}
-	want := []string{`{"message":"hello there","thread_id":"` + r.ID + `"}`, `{"message":{"a":1},"thread_id":"` + r.ID + `"}`, `{"message":{"city":"Lisbon"},"thread_id":"` + r.ID + `"}`, `{"message":"refuse me","thread_id":"` + r.ID + `"}`, `{"message":"bye","thread_id":"` + r.ID + `"}`}
+	room := `"thread_id":"` + r.ID + `"`
+	want := []string{`{"message":"hello there",` + room + `}`, `{"message":"elsewhere",` + room + `}`, `{` + room + `}`, `{"message":"refuse me",` + room + `}`, `{"message":"bye",` + room + `}`}
 	if strings.Join(args, "\n") != strings.Join(want, "\n") {
 		t.Errorf("runs =\n%s\nwant\n%s", strings.Join(args, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The room page renders the composer through the shared form: the room is
+// the sealed view, message the one field, from the post action's schema;
+// every entry is the view of its value.
+func TestRoomRendersThePostForm(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	f.me = connected("ann@testnet")
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
+		if err := rnd.Render(w, status, page, server.Page{Title: title, Data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, _ := c.store.CreateRoom("ann@testnet", "cafe", nil)
+	if _, _, err := c.store.Post(r.ID, "ann@testnet", json.RawMessage(`"hello"`)); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil)
+	req.SetPathValue("id", r.ID)
+	page := as(c, sm, c.getRoom, req).Body.String()
+	for _, want := range []string{`<div class="view locked">`, ">" + r.ID + "<", `name="f_/message"`, `name="raw_args"`, `class="view" data-json`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("room page lacks %s", want)
+		}
+	}
+	if strings.Contains(page, `name="text"`) || strings.Contains(page, `name="f_/thread_id"`) || strings.Contains(page, `"thread_id": ""`) {
+		t.Error("the room is sealed: no field and no editor key for it")
 	}
 }
 
@@ -968,30 +1016,6 @@ func TestRoomRoutes(t *testing.T) {
 	}
 	if bad := as(c, sm, c.postCreateRoom, httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name="))); !strings.Contains(bad.Header().Get("X-Flash"), "name") {
 		t.Errorf("nameless room: %s", bad.Header().Get("X-Flash"))
-	}
-}
-
-// An entry renders by its body's kind: a string as text, a JSON Schema as a
-// form, anything else as the view; a failure by its stored kind alone, so a
-// document shaped like one is a document.
-func TestCardKinds(t *testing.T) {
-	cards := makeCards([]Entry{
-		{Seq: 1, Body: json.RawMessage(`"hello"`)},
-		{Seq: 2, Body: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"city":{"type":"string"}}}`)},
-		{Seq: 3, Body: json.RawMessage(`{"celsius":100}`)},
-		{Seq: 4, Body: json.RawMessage(`""`)},
-		{Seq: 5, Body: json.RawMessage(`{"$schema":"x"}`)},
-		{Seq: 6, Body: json.RawMessage(`{"status":"failed","reason":"budget"}`), Kind: KindFailed},
-		{Seq: 7, Body: json.RawMessage(`{"status":"failed","reason":"budget"}`)},
-	}, "r", "")
-	want := []string{"text", "form", "value", "text", "value", "failed", "value"}
-	for i, k := range cards {
-		if k.Kind() != want[i] {
-			t.Errorf("card %d = %s, want %s", i+1, k.Kind(), want[i])
-		}
-	}
-	if cards[0].Text != "hello" || cards[5].Reason != "budget" {
-		t.Errorf("text = %q, reason = %q", cards[0].Text, cards[5].Reason)
 	}
 }
 

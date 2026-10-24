@@ -290,7 +290,7 @@ func TestBackLinksLiveInCrumbs(t *testing.T) {
 func TestNoRowThumbnails(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
 	app, _ := filepath.Glob("../apps/*/templates/*.html")
-	banned := []string{"thumb-s", "chat-frame", "chat-back", `class="rooms"`, "thread-head"}
+	banned := []string{"thumb-s", "chat-frame", "chat-back", `class="rooms"`, "thread-head", `class="composer"`, "msg-text"}
 	check := func(f, src string) {
 		for _, bad := range banned {
 			if strings.Contains(src, bad) {

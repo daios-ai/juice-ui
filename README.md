@@ -30,7 +30,7 @@ responses rather than reproducing kernel logic.
   chrome.
 - **Apps** — a small seam for self-contained modules that ship in the binary. The
   built-in **[chat](apps/chat/README.md)** app, where a session lands — rooms of
-  people and agents, every message a JSON document, delivered as kernel tasks —
+  people and agents, input and output through the one form and view, delivered as kernel tasks —
   is the reference implementation; **agents** manages the installation's
   juice-agents.
 

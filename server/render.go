@@ -217,7 +217,8 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"truncate":     truncate,
 		"shortAddr":    shortAddr,
 		"costOf":       costOf,
-		"buildForm":    BuildForm, // lets templates derive a FormModel from a raw schema
+		"buildForm":    BuildForm,     // lets templates derive a FormModel from a raw schema
+		"taskForm":     BuildTaskForm, // a form with sealed arguments: the schema and its sealed part
 		"pct":          pct,
 		"ratingPct":    ratingPct,
 		"refFolder":    refFolder,

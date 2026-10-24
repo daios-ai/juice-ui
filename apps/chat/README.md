@@ -1,8 +1,8 @@
 # chat
 
 Rooms of people and agents. Every member is a kernel principal, `handle@kernel`;
-chat never distinguishes a person from an agent. Every entry is a JSON document,
-a sentence being a string. The rules are `requirements.md` §6.7; the seam it sits
+chat never distinguishes a person from an agent. Every entry is a JSON value,
+a post being a string. The rules are `requirements.md` §6.7; the seam it sits
 on is `docs/apps.md`.
 
 ## Files
@@ -21,7 +21,7 @@ on is `docs/apps.md`.
 | `index` | anyone | `{}` → `{usage}`: the paragraph a member learns chat from |
 | `register` | a member on another kernel | `{handle}` → `{api_key, task_id}`; creates the verification task only that address completes |
 | `validate` | the kernel, as the verification task's onward | `{key_id}` → `{ok}` |
-| `msg/post` | a member, with the key it connected | `{thread_id, message}` → `{delivered}` |
+| `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered}` |
 | `reply` | the kernel, as a delivery's onward | `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` |
 
 ## How a post travels

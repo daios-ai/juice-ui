@@ -710,23 +710,15 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 
 /* ---- chat app (list page → document-scrolled thread; app-scoped but in core
    CSS). The page is the scroll container, like every other page: the thread is
-   a message stack in the flow, the composer sits at the document's end. ---- */
+   a message stack in the flow, the post form sits at the document's end. ---- */
 .msgs { display: flex; flex-direction: column; gap: 1rem; margin: .4rem 0 1rem; }
 .msg { display: flex; gap: .6rem; }
 .msg .avatar { width: 1.9rem; height: 1.9rem; font-size: .78rem; }
-.msg-body { min-width: 0; }
+.msg-body { flex: 1 1 auto; min-width: 0; }
 .msg-who { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .1rem; }
 .msg-who .h { font-size: .82rem; font-weight: 650; color: var(--text); }
-.msg-text { margin: 0; font-size: .9rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg-del { padding: 0 .2rem; opacity: 0; }
 .msg:hover .msg-del { opacity: .6; }
-.composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .6rem; }
-.composer-body { flex: 1 1 auto; min-width: 0; }
-.composer-body[hidden] { display: none; }
-/* A message box grows to ten lines, then scrolls; it has no drag handle. */
-.composer textarea { width: 100%; resize: none; max-height: calc(15em + 1rem + 2px); }
-.composer .error-text { flex: 1 1 100%; order: 1; margin: 0; }
-.composer .error-text[hidden] { display: none; }
 /* Members disclosure lives in the room's crumb. */
 .thread-members { position: relative; }
 .thread-members > summary { list-style: none; cursor: pointer; }

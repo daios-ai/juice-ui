@@ -225,8 +225,8 @@ type contract struct {
 }
 
 const (
-	descr      = `"description":`
-	anyMessage = `"message":{` + descr + `"The message: text, or a JSON document. Text whose first word is a member's address reaches that member only."}`
+	descr       = `"description":`
+	textMessage = `"message":{"type":"string",` + descr + `"The text. A member's address as the first word, as in \"critic@KERNEL, which is best?\", reaches that member only; any other text reaches every other member."}`
 )
 
 // contracts are the five actions. Every schema is canonical: an object
@@ -260,7 +260,7 @@ func (c *Chat) contracts() []contract {
 			out:  obj(`"ok":{"type":"boolean",` + descr + `"True when the key is active."}`)},
 		{name: postName, title: "Post to a chat room", vis: "public", auth: delegated,
 			desc: "Speak in a chat room you are a member of, for instance to ask another member something: begin with that member's address, as in \"critic@KERNEL, which is best?\", and only that member receives it; text that begins otherwise reaches every other member. Use this, not a direct message, to reach a member of the room. A task from chat is answered by completing it, not by posting. See chat@KERNEL/index.",
-			in:   obj(`"thread_id":{"type":"string",`+descr+`"The room."},`+anyMessage, "thread_id", "message"),
+			in:   obj(`"thread_id":{"type":"string",`+descr+`"The room."},`+textMessage, "thread_id", "message"),
 			out:  obj(`"delivered":{"type":"integer",` + descr + `"How many members received it."}`)},
 		{name: replyName, title: "Answer in a chat room", vis: "private", auth: bearer,
 			desc: "The onward of a delivery: completing the task settles the answer in the room.",
@@ -278,6 +278,16 @@ func (c *Chat) contracts() []contract {
 		ks[i].out = json.RawMessage(strings.ReplaceAll(string(ks[i].out), "@KERNEL", here))
 	}
 	return ks
+}
+
+// postSchema is the post action's input schema, the composer's form.
+func (c *Chat) postSchema() json.RawMessage {
+	for _, k := range c.contracts() {
+		if k.name == postName {
+			return k.in
+		}
+	}
+	return nil
 }
 
 // authRev names the auth configuration pushed: the kernel never reads it
@@ -530,9 +540,9 @@ func (c *Chat) servePost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"delivered": n})
 }
 
-// serveReply is a delivery's completion. The answer is a JSON document when
-// its text is one (an object or an array), else a sentence; a completion
-// with a status and no answer is a failure. The store settles it (rule 4).
+// serveReply is a delivery's completion: the answer is the string the
+// member gave; a completion with a status and no answer is a failure. The
+// store settles it (rule 4).
 func (c *Chat) serveReply(w http.ResponseWriter, r *http.Request) {
 	if !c.fromKernel(w, r) {
 		return
@@ -557,13 +567,12 @@ func (c *Chat) serveReply(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case answer != "":
-		if (answer[0] == '{' || answer[0] == '[') && json.Valid([]byte(answer)) {
-			body = json.RawMessage(answer)
-		} else {
-			body, _ = json.Marshal(*in.Answer)
-		}
+		body, _ = json.Marshal(*in.Answer)
 	case in.Status != "":
-		body, _ = json.Marshal(map[string]string{"status": in.Status, "reason": in.Reason})
+		body, _ = json.Marshal(struct {
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		}{in.Status, in.Reason})
 		failed = true
 	}
 	if err := c.store.Answer(in.Member, in.Room, in.Delivery, body, failed); err != nil {
@@ -744,72 +753,23 @@ type roomsView struct {
 	OpenForm bool
 }
 
+// roomView backs the room page. The composer is the form of Post, the post
+// action's input schema, with Locked, the room, sealed.
 type roomView struct {
 	Room     Room
 	Me       string
 	IsOwner  bool
 	OpenForm string
 	Entries  entriesView
-}
-
-// card is one entry with what its rendering needs: the body is text, a
-// form (a JSON Schema), any other value shown as the view, or a failure.
-type card struct {
-	Entry  Entry
-	RoomID string
-	CSRF   template.HTML
-	Text   string
-	Schema json.RawMessage
-	Reason string
-}
-
-func (k card) Kind() string {
-	switch {
-	case k.Entry.Kind == KindFailed:
-		return "failed"
-	case k.Schema != nil:
-		return "form"
-	case k.Text != "" || string(k.Entry.Body) == `""`:
-		return "text"
-	}
-	return "value"
-}
-
-func makeCards(es []Entry, roomID string, csrf template.HTML) []card {
-	out := make([]card, len(es))
-	for i, e := range es {
-		k := card{Entry: e, RoomID: roomID, CSRF: csrf}
-		var s string
-		switch {
-		case e.Kind == KindFailed:
-			var f struct{ Reason string }
-			_ = json.Unmarshal(e.Body, &f)
-			k.Reason = f.Reason
-		case json.Unmarshal(e.Body, &s) == nil:
-			k.Text = s
-		case isSchema(e.Body):
-			k.Schema = e.Body
-		}
-		out[i] = k
-	}
-	return out
-}
-
-// isSchema recognizes a JSON Schema by its $schema key beside a type or
-// properties: an entry that asks for something.
-func isSchema(body json.RawMessage) bool {
-	var m map[string]json.RawMessage
-	if json.Unmarshal(body, &m) != nil || m["$schema"] == nil {
-		return false
-	}
-	return m["type"] != nil || m["properties"] != nil
+	Post     json.RawMessage
+	Locked   json.RawMessage
 }
 
 // entriesView backs the room's entries and the fragments that append to
 // them; Removed are the posts an answer replaced, for the page to drop.
 type entriesView struct {
 	RoomID  string
-	Cards   []card
+	Entries []Entry
 	Removed []int64
 	After   int64
 	Error   string
@@ -866,10 +826,11 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.seen(r, me, id, maxSeq(es))
-	csrf := c.deps.CSRFField(r)
+	locked, _ := json.Marshal(map[string]string{"thread_id": id})
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
 		Room: room, Me: me, IsOwner: room.Creator == me, OpenForm: r.URL.Query().Get("form"),
-		Entries: entriesView{RoomID: id, Cards: makeCards(es, id, csrf), After: maxSeq(es)},
+		Entries: entriesView{RoomID: id, Entries: es, After: maxSeq(es)},
+		Post:    c.postSchema(), Locked: locked,
 	})
 }
 
@@ -912,7 +873,7 @@ func (c *Chat) tail(r *http.Request, roomID string, after int64) entriesView {
 	if n := maxSeq(es); n > after {
 		after = n
 	}
-	return entriesView{RoomID: roomID, Cards: makeCards(es, roomID, c.deps.CSRFField(r)), Removed: gone, After: after}
+	return entriesView{RoomID: roomID, Entries: es, Removed: gone, After: after}
 }
 
 // watch answers the heartbeat: the badge with the count of rooms holding
@@ -935,7 +896,7 @@ func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) 
 	}
 	after, _ := strconv.ParseInt(shown, 10, 64)
 	v := c.tail(r, key, after)
-	if len(v.Cards) == 0 && len(v.Removed) == 0 {
+	if len(v.Entries) == 0 && len(v.Removed) == 0 {
 		return "", nil
 	}
 	if r.Header.Get("X-Visible") != "0" {
@@ -944,49 +905,34 @@ func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) 
 	return c.deps.Fragment("_chat_tick", v)
 }
 
-// postMessage posts as the viewer: the composer's text as a JSON string, its
-// JSON editor's document, or a filled form's value, through chat's own post
-// action, so the browser and an agent take the same path.
+// postMessage runs chat's post action as the viewer with the composer's
+// fields: what the form carries, and the room from the path, which the form
+// shows sealed and never sends. The browser and an agent take one path.
 func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := r.ParseForm(); err != nil {
-		c.deps.HandleErr(w, r, err)
+	args, err := c.deps.FormArgs(r)
+	if err != nil {
+		c.composeFailed(w, r, id, err.Error())
 		return
 	}
-	var body json.RawMessage
-	switch {
-	case r.Form.Has("text"):
-		if t := strings.TrimSpace(r.FormValue("text")); t != "" {
-			body, _ = json.Marshal(t)
-		}
-	case r.Form.Has("has_fields"):
-		var err error
-		if body, err = c.deps.FormArgs(r); err != nil {
-			c.composeFailed(w, r, id, err.Error())
-			return
-		}
-	default:
-		raw := strings.TrimSpace(r.FormValue("raw_args"))
-		if raw != "" && !json.Valid([]byte(raw)) {
-			c.composeFailed(w, r, id, "Not valid JSON.")
-			return
-		}
-		body = json.RawMessage(raw)
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(args, &fields) != nil || fields == nil {
+		c.composeFailed(w, r, id, "The JSON must be an object.")
+		return
 	}
-	if len(body) > 0 {
-		args, _ := json.Marshal(map[string]any{"thread_id": id, "message": body})
-		err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
-			_, e := c.deps.Client.Run(r.Context(), tok, c.self()+"/"+postName, args, "")
-			return e
-		})
-		if err != nil {
-			if reason := reasonOf(err); reason != "" {
-				c.composeFailed(w, r, id, reason)
-				return
-			}
-			if c.deps.HandleErr(w, r, err) {
-				return
-			}
+	fields["thread_id"], _ = json.Marshal(id)
+	body, _ := json.Marshal(fields)
+	err = c.deps.Sessions.Do(r.Context(), func(tok string) error {
+		_, e := c.deps.Client.Run(r.Context(), tok, c.self()+"/"+postName, body, "")
+		return e
+	})
+	if err != nil {
+		if reason := reasonOf(err); reason != "" {
+			c.composeFailed(w, r, id, reason)
+			return
+		}
+		if c.deps.HandleErr(w, r, err) {
+			return
 		}
 	}
 	if c.deps.IsHTMX(r) {
@@ -997,19 +943,24 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/chat/room/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
-// composeFailed shows why a post was refused, beside the composer.
+// composeFailed shows why a post was refused, beside the composer. An htmx
+// refusal is 422, so the composer keeps the draft (it resets on success only).
 func (c *Chat) composeFailed(w http.ResponseWriter, r *http.Request, roomID, reason string) {
 	if c.deps.IsHTMX(r) {
-		_ = c.deps.RenderFragment(w, http.StatusOK, "_chat_refused", entriesView{RoomID: roomID, Error: reason})
+		_ = c.deps.RenderFragment(w, http.StatusUnprocessableEntity, "_chat_refused", entriesView{RoomID: roomID, Error: reason})
 		return
 	}
 	c.deps.FlashRedirect(w, r, "/chat/room/"+url.PathEscape(roomID), "error", reason)
 }
 
-// reasonOf is chat's own refusal carried back through the kernel as an
-// execution failure, or "" for anything else.
+// reasonOf is why a post was refused: the kernel's own reason for input its
+// schema refuses, or chat's refusal carried back as an execution failure; ""
+// for anything else.
 func reasonOf(err error) string {
 	ke, ok := client.AsKernelError(err)
+	if ok && ke.Kind == client.KindInvalidInput {
+		return ke.KernelMessage
+	}
 	if !ok || ke.Kind != client.KindExecutionFailed {
 		return ""
 	}

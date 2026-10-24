@@ -622,10 +622,10 @@ type TaskFormModel struct {
 }
 
 // BuildTaskForm derives a completion form from the task's allowed_input and
-// partial_args: a field present in partial_args is sealed and leaves the
-// form. Nil or invalid partial_args is treated as empty (all fields editable).
+// partial_args: the form of the schema without the sealed properties, so its
+// fields and its editor's example agree. Nil or invalid partial_args is
+// treated as empty (all fields editable).
 func BuildTaskForm(inputSchema, partialArgs json.RawMessage) TaskFormModel {
-	full := BuildForm(inputSchema)
 	bound := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(partialArgs)) > 0 {
 		_ = json.Unmarshal(partialArgs, &bound)
@@ -633,12 +633,50 @@ func BuildTaskForm(inputSchema, partialArgs json.RawMessage) TaskFormModel {
 	if len(bound) == 0 {
 		// An empty-object schema with nothing pre-bound is still an approval: the
 		// kernel is asking for a confirmation, not for input.
+		full := BuildForm(inputSchema)
 		return TaskFormModel{Editable: full, IsApproval: full.NoFields}
 	}
-	full.Fields = slices.DeleteFunc(full.Fields, func(f Field) bool { _, ok := bound[f.Name]; return ok })
+	form := BuildForm(unsealed(inputSchema, bound))
 	// Nothing left to fill is an approval: a structured schema with every field
 	// sealed, and a free-form schema whose pre-bound args already carry the
 	// payload (sys/sink with `message` sealed) — the acknowledge button alone,
 	// not a dead raw box.
-	return TaskFormModel{Editable: full, IsApproval: len(full.Fields) == 0}
+	return TaskFormModel{Editable: form, IsApproval: len(form.Fields) == 0}
+}
+
+// unsealed is the schema without the properties named in sealed, the rest in
+// the order served; a schema naming no properties is returned as it is.
+func unsealed(schema json.RawMessage, sealed map[string]json.RawMessage) json.RawMessage {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(schema, &doc) != nil || doc["properties"] == nil {
+		return schema
+	}
+	var props map[string]json.RawMessage
+	_ = json.Unmarshal(doc["properties"], &props)
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for _, k := range orderedKeys(doc["properties"]) {
+		if _, ok := sealed[k]; ok {
+			continue
+		}
+		if b.Len() > 1 {
+			b.WriteByte(',')
+		}
+		kb, _ := json.Marshal(k)
+		b.Write(kb)
+		b.WriteByte(':')
+		b.Write(props[k])
+	}
+	b.WriteByte('}')
+	doc["properties"] = b.Bytes()
+	var required []string
+	_ = json.Unmarshal(doc["required"], &required)
+	required = slices.DeleteFunc(required, func(k string) bool { _, ok := sealed[k]; return ok })
+	if len(required) == 0 {
+		delete(doc, "required")
+	} else {
+		doc["required"], _ = json.Marshal(required)
+	}
+	out, _ := json.Marshal(doc)
+	return out
 }

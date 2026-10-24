@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -31,6 +32,26 @@ var unknownKernel = testKernel(client.Health{})
 func TestNewRendererParsesAllTemplates(t *testing.T) {
 	if _, err := NewRenderer(playKernel); err != nil {
 		t.Fatalf("NewRenderer: %v", err)
+	}
+}
+
+// An app's template builds a form with sealed arguments through taskForm: the
+// sealed property is not a field, the rest is.
+func TestTaskFormHelper(t *testing.T) {
+	app := fstest.MapFS{"templates/_t.html": {Data: []byte(`{{define "_t"}}{{template "_form_fields" (taskForm .S .L).Editable}}{{end}}`)}}
+	r, err := NewRenderer(playKernel, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.HTML("_t", map[string]json.RawMessage{
+		"S": json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"},"thread_id":{"type":"string"}}}`),
+		"L": json.RawMessage(`{"thread_id":"r"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `name="f_/message"`) || strings.Contains(string(out), "thread_id") {
+		t.Errorf("form = %s", out)
 	}
 }
 

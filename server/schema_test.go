@@ -158,6 +158,23 @@ func TestBuildTaskFormPartialLock(t *testing.T) {
 	if len(sfm.Editable.Fields) != 1 || sfm.Editable.Fields[0].Name != "b" {
 		t.Errorf("editable wrong: %+v", sfm.Editable.Fields)
 	}
+	if strings.Contains(sfm.Editable.Example, `"a"`) || !strings.Contains(sfm.Editable.Example, `"b"`) {
+		t.Errorf("the editor's example must name only what is still to fill: %s", sfm.Editable.Example)
+	}
+}
+
+// A sealed property leaves the form whole: the rest keep the order served and
+// their own required marks.
+func TestBuildTaskFormKeepsOrder(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"z":{"type":"string"},"m":{"type":"string"},"a":{"type":"string"}},"required":["m","a"]}`)
+	sfm := BuildTaskForm(schema, json.RawMessage(`{"m":"x"}`))
+	var got []string
+	for _, f := range sfm.Editable.Fields {
+		got = append(got, f.Name)
+	}
+	if strings.Join(got, ",") != "z,a" || sfm.Editable.Fields[0].Required || !sfm.Editable.Fields[1].Required {
+		t.Errorf("fields = %+v", sfm.Editable.Fields)
+	}
 }
 
 func TestBuildTaskFormAllLocked(t *testing.T) {

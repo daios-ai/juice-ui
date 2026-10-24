@@ -36,7 +36,7 @@ Three laws underpin everything:
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Search pill** | `.omni` + `.omni-go` submit segment + `.omni-suggest` | **the** search, in the topbar at every width, segmented like a single pill: input left, equal-height icon-submit right. Search hints drop beneath it as a `.menu`-styled panel of links, matched in the browser against the catalog file (`/search/catalog.json`) loaded once per page — each a title that runs the search for it, never an action. The command registry's entries list first among them, marked `›` (`.menu-item.command`; a title row never carries the mark), at most three beside titles, twelve rows in all; `>` lists commands only (§5.9) |
 | **you-row / you-tiles** | `.you-row` · `.you-tiles`/`.you-tile` | a setting row, or an icon destination tile, on the `you` hub |
-| Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
+| Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · chat's composer (`form.card.stack[data-json]`: the switch, the sealed room as `.view.locked`, `_form_fields`, Send) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
 | **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
@@ -419,18 +419,15 @@ separates it from the content above, and nothing else does (§4).
   **newest** entry on open and on any append while already at the bottom —
   never yanking a reader scrolled up into history; the sticky crumb and the nav
   keep the way out always in reach. An **entry** (`_entry`: `.msg` with
-  `.avatar`, the author in the mono face, the time) renders by its stored kind
-  and body: a failure as `.msg-text` holding the `failed` pill
-  (`.pill.status-danger`) and the reason in `.muted`; a string as `.msg-text`;
-  a JSON Schema as a `[data-json]` form of that schema (`_form_fields`, Send)
-  whose submission posts the filled value; anything else as the view
-  (`_value_block`). An entry an answer replaced leaves the page when the answer
-  arrives (an out-of-band delete by its id, `e-<seq>`). The **composer**
-  (`.composer`) is a `[data-json]` block: the JSON switch at its head, the text
-  box (`[data-fields]`), the JSON editor (`[data-raw]`), a refusal in
-  `.error-text` beside them, and Send; the switch converts nothing, it picks
-  which editor is sent (requirements.md §6.7). Nothing asks the person to
-  connect: the UI joins them.
+  `.avatar`, the author in the mono face, the time) renders its body as the
+  view (`_value_block`). An entry an answer replaced leaves the page when the
+  answer arrives (an out-of-band delete by its id, `e-<seq>`). The
+  **composer** is the post action's form, `form.card.stack[data-json]`: the
+  switch, the room sealed as `.view.locked` (`_view`), `_form_fields` of the
+  form built with `taskForm` (the schema and its sealed part), a refusal in
+  `.error-text`, and Send; a refusal answers 422, so the form keeps its draft
+  (requirements.md §6.7). Nothing asks the person to connect: the UI joins
+  them.
 - **Record rows** (the same record type wherever it appears) render through **one
   shared partial** — `_tx_row`, `_process_row` — so lists never drift apart.
   Row rules:

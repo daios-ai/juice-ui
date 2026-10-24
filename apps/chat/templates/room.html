@@ -25,23 +25,21 @@
 </nav>
 
 <div class="msgs" id="chat-messages" data-autoscroll>
-  {{range $d.Entries.Cards}}{{template "_entry" .}}{{end}}
+  {{range $d.Entries.Entries}}{{template "_entry" .}}{{end}}
 </div>
 <input type="hidden" id="chat-after" name="after" value="{{$d.Entries.After}}">
 <input type="hidden" id="watch-chat-room" name="watch" value="chat:{{$rid}}:{{$d.Entries.After}}">
 
-<form class="composer" method="post" action="/chat/room/{{$rid}}/message" data-json
+{{/* The composer: the post action's form, the room sealed above the fields
+     still to fill (requirements.md §6.7). */}}
+{{$f := taskForm $d.Post $d.Locked}}
+<form class="card stack" method="post" action="/chat/room/{{$rid}}/message" data-json
       hx-post="/chat/room/{{$rid}}/message" hx-include="#chat-after"
       hx-target="#chat-messages" hx-swap="beforeend" data-reset-on-success>
   {{.CSRFField}}
   {{template "_json_switch"}}
-  <div class="composer-body" data-fields>
-    <textarea name="text" rows="1" aria-label="Message"></textarea>
-    <input type="hidden" name="has_fields" value="1">
-  </div>
-  <div class="composer-body" data-raw hidden>
-    <textarea name="raw_args" rows="1" class="mono" placeholder="{}" aria-label="JSON"></textarea>
-  </div>
+  <div class="view locked">{{template "_view" (view $d.Locked)}}</div>
+  {{template "_form_fields" $f.Editable}}
   <p class="error-text" id="chat-error" role="alert" hidden></p>
   <button class="btn" type="submit">Send</button>
 </form>
