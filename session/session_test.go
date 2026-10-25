@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/client"
@@ -188,5 +189,59 @@ func TestSingleFlightRefresh(t *testing.T) {
 	}
 	if fr.calls != 1 {
 		t.Errorf("refresh calls = %d want exactly 1 (single-flight)", fr.calls)
+	}
+}
+
+// A session ends IdleLimit after the person's last request and AgeLimit after
+// login whatever happened; a session that does not date its login is aged.
+func TestExpiryJudgesBothLimits(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	now := time.Unix(1_000_000, 0)
+	m.Now = func() time.Time { return now }
+	if m.Expiry(ctx) != Aged {
+		t.Fatal("a session that does not date its login must be aged")
+	}
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	if m.Expiry(ctx) != Live || m.Idle(ctx) != 0 {
+		t.Fatalf("after login: %v idle %v", m.Expiry(ctx), m.Idle(ctx))
+	}
+	now = now.Add(IdleLimit - time.Second)
+	if m.Expiry(ctx) != Live {
+		t.Fatal("a second before the idle limit the session serves")
+	}
+	now = now.Add(time.Second)
+	if m.Expiry(ctx) != Idled {
+		t.Fatal("at the idle limit the session is idled")
+	}
+
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	login := now
+	for now.Sub(login) < AgeLimit-10*time.Minute {
+		now = now.Add(10 * time.Minute)
+		m.Touch(ctx)
+	}
+	if m.Expiry(ctx) != Live {
+		t.Fatal("a session in use is live until the age limit")
+	}
+	now = login.Add(AgeLimit)
+	m.Touch(ctx)
+	if m.Expiry(ctx) != Aged {
+		t.Fatal("at the age limit the session is aged, however recently used")
+	}
+}
+
+// A request that meets a 401 after another has already rotated the pair takes
+// the rotated pair rather than presenting the dead refresh token.
+func TestRefreshAfterARotationReusesIt(t *testing.T) {
+	fr := &fakeRefresher{next: client.Tokens{AccessToken: "at1", RefreshToken: "rt1"}}
+	m, ctx := newCtx(t, fr)
+	m.Login(ctx, client.Tokens{AccessToken: "at0", RefreshToken: "rt0"}, "a", Pin{})
+	old, _ := m.Tokens(ctx)
+	if _, err := m.refreshSingleFlight(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.refreshSingleFlight(ctx, old)
+	if err != nil || got.AccessToken != "at1" || fr.calls != 1 {
+		t.Fatalf("second refresh with the old pair: %+v %v, calls %d", got, err, fr.calls)
 	}
 }

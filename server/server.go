@@ -282,6 +282,7 @@ func New(o Options) (http.Handler, error) {
 	s.watch("balance", s.watchBalance)
 	s.watch("process", s.watchProcess)
 	s.watch("peer", s.watchPeer)
+	s.watch("session", s.watchSession)
 	as, err := newAppStore(o.StatePath, o.Identity.recorded)
 	if err != nil {
 		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
@@ -302,8 +303,9 @@ func New(o Options) (http.Handler, error) {
 	})
 
 	// Public auth routes.
-	mux.HandleFunc("GET /health", s.getHealth)            // open liveness probe
-	mux.HandleFunc("GET /tick", s.requireAuth(s.getTick)) // the page's heartbeat (tick.go)
+	mux.HandleFunc("GET /health", s.getHealth)                    // open liveness probe
+	mux.HandleFunc("GET /tick", s.gate(false, s.getTick))         // the page's heartbeat (tick.go): observes the idle rule, never extends it
+	mux.HandleFunc("POST /session", s.requireAuth(s.postSession)) // Stay signed in (tick.go)
 	mux.HandleFunc("GET /login", s.getLogin)
 	mux.HandleFunc("POST /login", s.postLogin)
 	mux.HandleFunc("POST /signup", s.postSignup)
@@ -574,19 +576,59 @@ func shortID(s string) string {
 	return s
 }
 
-// requireAuth wraps a handler so unauthenticated requests are redirected to the
-// login page.
-func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
+// gate admits a session that is present, unexpired and signed in to the
+// kernel at this address. act says the request is the person's own act and
+// counts as activity; the heartbeat's is not — a page left open is nobody
+// present — so it can only observe the idle rule, never extend it.
+func (s *Server) gate(act bool, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.sessions.IsAuthenticated(r.Context()) {
+		ctx := r.Context()
+		if !s.sessions.IsAuthenticated(ctx) {
+			// hxRedirect, not a bare 303: a polled fragment must navigate on a
+			// lost session, never swap the login page into its element.
 			hxRedirect(w, r, "/login")
+			return
+		}
+		if x := s.sessions.Expiry(ctx); x != session.Live {
+			s.endSession(ctx)
+			s.flashRedirect(w, r, "/login", "info", expiryMessage(x))
 			return
 		}
 		if s.kernelChanged(w, r) {
 			return
 		}
+		if act {
+			s.sessions.Touch(ctx)
+		}
 		h(w, withViewer(r))
 	}
+}
+
+// requireAuth gates a request the person made.
+func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc { return s.gate(true, h) }
+
+// endSession is the one exit: the session is destroyed, and its refresh token
+// revoked (R5.4) only at the kernel that issued it. A credential travels to its
+// issuer alone (ecosystem-standard §5), so a kernel that is unknown or no
+// longer the pinned one is told nothing. A revocation the kernel refuses, the
+// token being already dead after a failed refresh, changes nothing here; one
+// is not abandoned with the request that asked for it, since the session it
+// ends is gone either way.
+func (s *Server) endSession(ctx context.Context) {
+	id := s.kernelIdentity(ctx)
+	issuer := id.PublicKey != "" && s.sessions.Pin(ctx) == session.Pin{PublicKey: id.PublicKey, NetworkFingerprint: id.NetworkFingerprint}
+	if toks, ok := s.sessions.Tokens(ctx); ok && issuer {
+		_ = s.client.Logout(context.WithoutCancel(ctx), toks.RefreshToken)
+	}
+	_ = s.sessions.Logout(ctx)
+}
+
+// expiryMessage words a sign-out by the limits, so the figures never drift.
+func expiryMessage(x session.Expiry) string {
+	if x == session.Idled {
+		return fmt.Sprintf("You were signed out after %d minutes of inactivity.", int(session.IdleLimit.Minutes()))
+	}
+	return fmt.Sprintf("You were signed out after %d hours. Sign in again.", int(session.AgeLimit.Hours()))
 }
 
 // viewer is the signed-in user as this request has read it: the page
@@ -648,7 +690,7 @@ func (s *Server) kernelChanged(w http.ResponseWriter, r *http.Request) bool {
 	if pin.PublicKey == id.PublicKey && pin.NetworkFingerprint == id.NetworkFingerprint {
 		return false
 	}
-	_ = s.sessions.Logout(r.Context())
+	s.endSession(r.Context())
 	s.flashRedirect(w, r, "/login", "error", "This address now answers for a different kernel. Sign in again.")
 	return true
 }
@@ -671,19 +713,10 @@ func (s *Server) isSuperuser(r *http.Request) bool {
 // to those who may not use it. The kernel independently rejects any admin call
 // from a non-sys bearer.
 func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.sessions.IsAuthenticated(r.Context()) {
-			// hxRedirect, not a bare 303: an admin view that polls a fragment must
-			// navigate on a lost session, never swap the login page into the div.
-			hxRedirect(w, r, "/login")
-			return
-		}
-		if s.kernelChanged(w, r) {
-			return
-		}
+	return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		if !s.isSuperuser(r) {
-			// Same reasoning for a demoted session: send htmx to the home page
-			// rather than swap a full 404 into a polled fragment.
+			// hxRedirect's reasoning for a demoted session: send htmx to the home
+			// page rather than swap a full 404 into a polled fragment.
 			if isHTMX(r) {
 				w.Header().Set("HX-Redirect", "/")
 				w.WriteHeader(http.StatusOK)
@@ -692,8 +725,8 @@ func (s *Server) requireSuperuser(h http.HandlerFunc) http.HandlerFunc {
 			s.renderPage(w, r, http.StatusNotFound, "error", "Not found", errorView{Message: "Page not found."})
 			return
 		}
-		h(w, withViewer(r))
-	}
+		h(w, r)
+	})
 }
 
 // appDeps builds the capability surface handed to every app at
@@ -846,7 +879,7 @@ func (s *Server) handleErrFragment(w http.ResponseWriter, r *http.Request, err e
 		return false
 	}
 	if isAuthErr(err) {
-		_ = s.sessions.Logout(r.Context())
+		s.endSession(r.Context())
 		if isHTMX(r) {
 			w.Header().Set("HX-Redirect", "/login")
 			return true
@@ -877,7 +910,7 @@ func (s *Server) handleErr(w http.ResponseWriter, r *http.Request, err error) bo
 		return false
 	}
 	if isAuthErr(err) {
-		_ = s.sessions.Logout(r.Context())
+		s.endSession(r.Context())
 		s.flashRedirect(w, r, "/login", "error", "Your session has expired. Please sign in again.")
 		return true
 	}

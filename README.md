@@ -95,7 +95,10 @@ The optional `config.json` (in `$JUICE_HOME/ui/`) holds the same settings plus
 The browser talks only to the BFF; the BFF is the sole client of the kernel API.
 Kernel access and refresh tokens live server-side in the session and never reach
 the browser, HTML, or logs. A single request wrapper handles single-flight token
-refresh; login is authorization-code with PKCE.
+refresh; login is authorization-code with PKCE. A session ends 30 minutes
+after the person's last request and 12 hours after login; the page's heartbeat
+never counts as activity, and every sign-out revokes the refresh token at the
+kernel that issued it.
 
 **Apps** are self-contained modules behind one interface (`apps/apps.go`), in
 three layers: a **store** (the app's own state, knowing nothing of Juice), a

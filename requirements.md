@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.41.0
+Version: 0.42.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.42.0.** A session ends on the person's inactivity, not
+> the page's. The heartbeat counted as activity, so an open tab kept a session
+> alive for its whole 24-hour lifetime. A session now ends 30 minutes after
+> the last request the person made and 12 hours after login; a minute before
+> the idle end the page asks "Stay signed in?"; the login page says why the
+> session ended; and every sign-out leaves through one exit that revokes the
+> refresh token at the kernel that issued it, and at no other (§5, §8). A
+> heartbeat the page abandoned by navigating no longer reads as the kernel
+> gone, which had signed people out at random.
 
 > **What changed in 0.41.0.** Fill from chat is a tool of the form: an icon in
 > its top row beside the JSON switch, the money button naming the amount when
@@ -1031,6 +1041,22 @@ kernel and world is in use, and keys everything durable by
   user returns to login with a clear explanation.
 * Logout calls `POST /v1/auth/logout` to revoke the refresh token and drops the
   session.
+* **Session limits, the UI's own policy.** A session ends **30 minutes** after
+  the last request the person made and **12 hours** after login, whatever
+  happened. Both sit within NIST SP 800-63B-4 §4.2.3 (1 hour, 24 hours) and are
+  rev. 3's AAL2 figures; a password login is not AAL2, so the figures are
+  stated as policy, not as a level. Activity is a request the person made —
+  a page, a fragment, a form — and the heartbeat never counts: a page left
+  open is nobody present, so it observes the limit and never extends it. A
+  minute before the idle end the page asks **Stay signed in?**, with *Sign
+  out* and *Stay signed in*; `Esc` dismisses it without extending. The
+  login page's notice names the limit that ended the session. A record whose
+  page was closed outlives its session by the idle limit and then leaves the
+  store, so a return later than that finds the login page without a notice.
+* **One exit.** Every sign-out — Sign out, either limit, a failed refresh, a
+  kernel gone or changed — destroys the session and revokes its refresh token
+  only at the kernel that issued it: a kernel that cannot be identified, or is
+  no longer the pinned one, is sent nothing.
 * The session cookie is `HttpOnly`, `Secure`, `SameSite=Lax`. All state-changing
   routes are CSRF-protected.
 * Account creation (`POST /v1/users`) is available from the UI; the UI surfaces
@@ -2471,7 +2497,7 @@ once and never writes that file.
 ## 8. Security
 
 **Architecture.** The UI MUST apply the session, token, PKCE, single-flight
-refresh, logout-revocation, and cookie/CSRF rules of §5, and additionally MUST:
+refresh, session-limit, logout-revocation, and cookie/CSRF rules of §5, and additionally MUST:
 route all browser traffic through the BFF as the sole kernel client; serve a
 strict `Content-Security-Policy` (no inline script, self-hosted htmx, no
 third-party origins) with `frame-ancestors 'none'` and `Referrer-Policy:
@@ -2534,8 +2560,15 @@ Every production `.go` file has a `_test.go` file with independent tests.
   reads: a field nothing reads is a decode hazard, not documentation;
 
 * the typed API client and error mapping (§10 error mapping);
-* session lifecycle: PKCE handshake, single-flight refresh rotation, logout
-  revocation, suspension → clean logout;
+* session lifecycle: PKCE handshake, single-flight refresh rotation (a request
+  after a rotation reuses it), logout revocation, suspension → clean logout;
+* session limits: a session is idled at the idle limit and aged at the age
+  limit however recently used; ticks alone never keep it alive while a page
+  request does; the heartbeat signs an idle page out with the notice and one
+  revocation; the warning opens a minute before, Stay signed in closes it and
+  moves the limit, and an unchanged state is answered with nothing; the scs
+  store's own idle rule is off and its lifetime is the age limit plus the
+  idle limit; a tick whose request was abandoned keeps the session;
 * CSRF protection on every state-changing route;
 * JSON-Schema-to-form rendering, including `partial_args` lock-out on task cards
   and the `allowed_input`-sourced completion form (target action unreadable →
@@ -2580,8 +2613,9 @@ Every production `.go` file has a `_test.go` file with independent tests.
   kernel's form (§7); an amount finer than the base unit is refused, not
   rounded; and no template renders a currency symbol (drift guard);
 * the session pin: a login records the kernel's key and network fingerprint, an
-  address that answers for another kernel ends the session, and a kernel that
-  cannot identify itself cannot be signed in to (§5);
+  address that answers for another kernel ends the session without sending
+  it the refresh token, and a kernel that cannot identify itself cannot be
+  signed in to (§5);
 * target-based mutations: enable/disable/update/delete name an id or a path and
   the UI reports the rows returned, not a predicted state (§6.4);
 * a discovered action resolves on open and lands on the ordinary action page;

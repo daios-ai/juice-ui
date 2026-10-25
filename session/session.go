@@ -3,10 +3,23 @@ package session
 import (
 	"context"
 	"errors"
-	"sync"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/daios-ai/juice-ui/client"
+	"golang.org/x/sync/singleflight"
+)
+
+// Limits, the UI's own policy: a session ends after IdleLimit without a
+// request the person made, and AgeLimit after login whatever happened; the
+// page warns Warning before the idle end. Both sit within NIST SP 800-63B-4
+// §4.2.3 (1 h, 24 h) and are rev. 3's AAL2 figures. The idle rule is the
+// Manager's, not scs's: scs renews on every request it loads and cannot
+// except the page's heartbeat.
+const (
+	IdleLimit = 30 * time.Minute
+	AgeLimit  = 12 * time.Hour
+	Warning   = time.Minute
 )
 
 // session value keys.
@@ -20,6 +33,8 @@ const (
 	keyRecovery    = "recovery_phrase" // one-shot seed phrase to show once after signup
 	keyKernelKey   = "kernel_public_key"
 	keyKernelNet   = "kernel_network_fingerprint"
+	keyLoginAt     = "login_at"  // unix nanoseconds of the login
+	keyActiveAt    = "active_at" // unix nanoseconds of the person's last request
 )
 
 // Pin is the kernel this session signed in to: its public key and the
@@ -41,17 +56,48 @@ type Refresher interface {
 }
 
 // Manager stores the kernel token pair and PKCE state in a server-side scs
-// session and provides the authenticated request wrapper with single-flight
-// refresh-and-retry (R5.2).
+// session, judges the session against the limits, and provides the
+// authenticated request wrapper with single-flight refresh-and-retry (R5.2).
 type Manager struct {
 	sm        *scs.SessionManager
 	refresher Refresher
-	locks     sync.Map // session token -> *sync.Mutex, serializes refresh per session
+	refreshes singleflight.Group // one refresh per session at a time, keyed by its token
+	Now       func() time.Time   // the clock sessions age by; tests set it
 }
 
 // NewManager wraps an scs.SessionManager and a Refresher.
 func NewManager(sm *scs.SessionManager, r Refresher) *Manager {
-	return &Manager{sm: sm, refresher: r}
+	return &Manager{sm: sm, refresher: r, Now: time.Now}
+}
+
+// Expiry is why a session may no longer serve.
+type Expiry int
+
+const (
+	Live  Expiry = iota
+	Idled        // IdleLimit passed since the person's last request
+	Aged         // AgeLimit passed since login, or a login the session does not date
+)
+
+// Touch records a request the person made. The heartbeat never calls it: a
+// page left open is not a person present.
+func (m *Manager) Touch(ctx context.Context) { m.sm.Put(ctx, keyActiveAt, m.Now().UnixNano()) }
+
+// Idle is the time since the person's last request.
+func (m *Manager) Idle(ctx context.Context) time.Duration {
+	return m.Now().Sub(time.Unix(0, m.sm.GetInt64(ctx, keyActiveAt)))
+}
+
+// Expiry judges the session against the limits.
+func (m *Manager) Expiry(ctx context.Context) Expiry {
+	login := m.sm.GetInt64(ctx, keyLoginAt)
+	if login == 0 || m.Now().Sub(time.Unix(0, login)) >= AgeLimit {
+		return Aged
+	}
+	if m.Idle(ctx) >= IdleLimit {
+		return Idled
+	}
+	return Live
 }
 
 // SCS exposes the underlying scs manager so the server can mount its
@@ -69,6 +115,8 @@ func (m *Manager) Login(ctx context.Context, t client.Tokens, address string, pi
 	m.sm.Put(ctx, keyAddress, address)
 	m.sm.Put(ctx, keyKernelKey, pin.PublicKey)
 	m.sm.Put(ctx, keyKernelNet, pin.NetworkFingerprint)
+	m.sm.Put(ctx, keyLoginAt, m.Now().UnixNano())
+	m.Touch(ctx)
 	m.sm.Remove(ctx, keyVerifier)
 	return nil
 }
@@ -201,29 +249,32 @@ func (m *Manager) Do(ctx context.Context, fn func(token string) error) error {
 	return fn(rotated.AccessToken)
 }
 
-// refreshSingleFlight refreshes the token pair, ensuring only one refresh per
-// session occurs even under concurrent requests. Because rotation invalidates
-// the prior refresh token, a second concurrent refresh would fail; the loser of
-// the lock instead reuses the pair the winner stored.
+// refreshSingleFlight refreshes the token pair once per session however many
+// requests ask at the same time: rotation kills the prior refresh token, so a
+// request that joins an in-flight refresh takes its answer, and one that
+// arrives after it finds the pair already rotated, instead of presenting a
+// token that no longer exists. The group keeps no entry past the call.
 func (m *Manager) refreshSingleFlight(ctx context.Context, old client.Tokens) (client.Tokens, error) {
-	mu := m.lockFor(m.sm.Token(ctx))
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Another request may have rotated while we waited for the lock.
-	if cur, ok := m.Tokens(ctx); ok && cur.RefreshToken != old.RefreshToken {
-		return cur, nil
-	}
-	nt, err := m.refresher.Refresh(ctx, old.RefreshToken)
+	v, err, _ := m.refreshes.Do(m.sm.Token(ctx), func() (any, error) {
+		if cur, ok := m.Tokens(ctx); ok && cur.RefreshToken != old.RefreshToken {
+			return cur, nil
+		}
+		nt, err := m.refresher.Refresh(ctx, old.RefreshToken)
+		if err != nil {
+			return nil, err
+		}
+		m.store(ctx, nt)
+		return nt, nil
+	})
 	if err != nil {
 		return client.Tokens{}, err
 	}
-	m.sm.Put(ctx, keyAccess, nt.AccessToken)
-	m.sm.Put(ctx, keyRefresh, nt.RefreshToken)
+	nt := v.(client.Tokens)
+	m.store(ctx, nt) // a joiner's request holds its own copy of the session
 	return nt, nil
 }
 
-func (m *Manager) lockFor(token string) *sync.Mutex {
-	v, _ := m.locks.LoadOrStore(token, &sync.Mutex{})
-	return v.(*sync.Mutex)
+func (m *Manager) store(ctx context.Context, t client.Tokens) {
+	m.sm.Put(ctx, keyAccess, t.AccessToken)
+	m.sm.Put(ctx, keyRefresh, t.RefreshToken)
 }

@@ -210,6 +210,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"kernelName":     keyDisplay,
 		"copyOf":         copyOf,
 		"progress":       func(id, label string) progressView { return progressView{ID: id, Label: label} },
+		"idle":           func(csrf template.HTML) idleView { return idleView{CSRFField: csrf} },
 		"actionEvidence": actionEvidence,
 		"peerEvidence":   peerEvidence,
 		"endOf":          endOf,
@@ -797,6 +798,21 @@ func peerEvidence(i client.Inspection) *evidenceTable {
 // progressView is one in-flight bar (_progress): its id, which an
 // hx-indicator names, and what it says.
 type progressView struct{ ID, Label string }
+
+// idleView is the idle warning (_idle): the dialog, open when the sign-out is
+// session.Warning away, and the watch input naming what it shows.
+type idleView struct {
+	Soon      bool
+	CSRFField template.HTML
+}
+
+// State is the watch's value: "soon" while the dialog is open.
+func (v idleView) State() string {
+	if v.Soon {
+		return "soon"
+	}
+	return ""
+}
 
 // Figure is one headline money figure, drawn as a block: what it is, the
 // amount with its signal (§7) — "" plain, "credited" earned (signed +),

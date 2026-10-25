@@ -7,6 +7,7 @@ require (
 	github.com/gorilla/csrf v1.7.3
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/mod v0.17.0
+	golang.org/x/sync v0.8.0
 	golang.org/x/text v0.17.0
 	modernc.org/sqlite v1.34.4
 )

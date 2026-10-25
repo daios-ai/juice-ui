@@ -200,6 +200,21 @@
      hx-indicator names. */}}
 {{define "_progress"}}<div{{with .ID}} id="{{.}}"{{end}} class="progress" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>{{.Label}}</span></div>{{end}}
 
+{{/* _idle — THE idle warning (§5.8): the heartbeat's answer when the sign-out is a
+     minute away, and Stay signed in's answer afterwards. Sign out is the
+     ordinary logout form; Stay signed in posts /session, whose only effect is
+     the activity the gate records. Both elements swap out-of-band, so the
+     heartbeat and the post answer the same markup. */}}
+{{define "_idle"}}<dialog id="idle" class="modal-confirm" aria-labelledby="idle-msg" hx-swap-oob="true"{{if .Soon}} open{{end}}>
+  <div class="modal-box">
+    <p id="idle-msg" class="modal-msg">Stay signed in?</p>
+    <div class="modal-actions">
+      <form method="post" action="/logout">{{.CSRFField}}<button type="submit" class="btn">Sign out</button></form>
+      <button type="button" class="btn" hx-post="/session" hx-swap="none" autofocus>Stay signed in</button>
+    </div>
+  </div>
+</dialog><input type="hidden" id="watch-session" name="watch" value="session::{{.State}}" hx-swap-oob="true">{{end}}
+
 {{/* One call, two readings. Locally the buyer pays gross, the operator takes a
      fee on value added, and the provider is paid net. Across kernels the same
      row means something else: net is the obligation returned to the caller, fee

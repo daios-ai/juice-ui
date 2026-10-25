@@ -14,6 +14,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/kernel"
 	"github.com/daios-ai/juice-ui/server"
+	"github.com/daios-ai/juice-ui/session"
 )
 
 func env(m map[string]string) func(string) string {
@@ -285,5 +286,18 @@ func TestShutdownStopsEveryApp(t *testing.T) {
 	shutdown(&http.Server{}, []apps.App{a, b}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !a.stopped || !b.stopped {
 		t.Fatalf("stopped = %v, %v; want both", a.stopped, b.stopped)
+	}
+}
+
+// The store only discards: the Manager judges both limits, scs's own idle rule
+// is off (it would count the heartbeat), and a record outlives its session by
+// the idle limit so the gate finds it aged and ends it with the notice.
+func TestSessionStoreLeavesTheLimitsToTheManager(t *testing.T) {
+	sm := sessionStore(true)
+	if sm.IdleTimeout != 0 || sm.Lifetime != session.AgeLimit+session.IdleLimit {
+		t.Errorf("idle %v lifetime %v", sm.IdleTimeout, sm.Lifetime)
+	}
+	if !sm.Cookie.HttpOnly || !sm.Cookie.Secure || sm.Cookie.SameSite != http.SameSiteLaxMode || sm.Cookie.Name != "juice_session" {
+		t.Errorf("cookie = %+v", sm.Cookie)
 	}
 }

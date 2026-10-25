@@ -507,11 +507,7 @@ func (s *Server) doLogin(ctx context.Context, address, password string) error {
 }
 
 func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if toks, ok := s.sessions.Tokens(ctx); ok {
-		_ = s.client.Logout(ctx, toks.RefreshToken) // revoke refresh token (R5.4)
-	}
-	_ = s.sessions.Logout(ctx)
+	s.endSession(r.Context())
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -1590,11 +1586,6 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		if isAuthErr(err) {
-			_ = s.sessions.Logout(ctx)
-			s.flashRedirect(w, r, "/login", "error", "Your session has expired. Please sign in again.")
-			return
-		}
 		s.handleErr(w, r, err)
 		return
 	}

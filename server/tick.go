@@ -13,6 +13,8 @@ import (
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/session"
+	"github.com/gorilla/csrf"
 )
 
 // The heartbeat. A signed-in page makes one request per lane — `watch` every
@@ -27,11 +29,17 @@ import (
 func (s *Server) watch(kind string, fn apps.Watcher) { s.watchers[kind] = fn }
 
 // getTick answers a page's watches. An unknown kind is ignored; a watcher's
-// error is logged and skipped, so one failing widget never stops the rest.
+// error is logged and skipped, so one failing widget never stops the rest. A
+// tick the page abandoned — it navigated while the request was in flight —
+// says nothing about the kernel, so its failed health read is not the
+// kernel-gone sign-out.
 func (s *Server) getTick(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if _, err := s.client.Health(ctx); err != nil {
-		_ = s.sessions.Logout(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		s.endSession(ctx)
 		w.Header().Set("HX-Redirect", "/login")
 		w.WriteHeader(http.StatusOK)
 		return
@@ -52,6 +60,23 @@ func (s *Server) getTick(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = io.WriteString(w, string(h))
 	}
+}
+
+// watchSession is the idle warning: the dialog opens when the person's last
+// request is session.Warning from the limit, and closes when a request — from
+// another tab, or Stay signed in — moved it.
+func (s *Server) watchSession(r *http.Request, key, shown string) (template.HTML, error) {
+	v := idleView{Soon: s.sessions.Idle(r.Context()) >= session.IdleLimit-session.Warning, CSRFField: csrf.TemplateField(r)}
+	if v.State() == shown {
+		return "", nil
+	}
+	return s.render.HTML("_idle", v)
+}
+
+// postSession is Stay signed in: passing the gate recorded the activity, so
+// the answer is the dialog closed.
+func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
+	_ = s.render.Fragment(w, http.StatusOK, "_idle", idleView{CSRFField: csrf.TemplateField(r)})
 }
 
 // watchInbox keeps the task badge current: the viewer's waiting tasks and the

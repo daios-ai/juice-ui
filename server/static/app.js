@@ -401,11 +401,12 @@ document.addEventListener('click', (e) => {
     if (dlg) { e.preventDefault(); dlg.close(); }
   }
 });
-// A dialog server-rendered [open] (no-JS fallback path reached with JS on): if it
-// is not already modal, close and reopen it modally so the backdrop and focus
-// trap apply, and clean the URL.
-for (const dlg of document.querySelectorAll('dialog.modal-form[open]')) {
-  if (!dlg.matches(':modal') && typeof dlg.showModal === 'function') {
+// A dialog that arrived [open] — server-rendered for the no-JS path, or swapped
+// in by the heartbeat (the idle warning) — is reopened modally so the backdrop
+// and the focus trap apply, and the URL that opened it is cleaned.
+function modalize() {
+  for (const dlg of document.querySelectorAll('dialog[open]')) {
+    if (dlg.matches(':modal') || typeof dlg.showModal !== 'function') continue;
     dlg.close();
     dlg.showModal();
     if (window.history && /[?&](form|menu)=/.test(location.search)) {
@@ -413,6 +414,8 @@ for (const dlg of document.querySelectorAll('dialog.modal-form[open]')) {
     }
   }
 }
+modalize();
+document.body.addEventListener('htmx:oobAfterSwap', modalize);
 
 // announce puts one ephemeral acknowledgement in the single polite aria-live
 // region (§7): it replaces what the region held, so there is no stack and no

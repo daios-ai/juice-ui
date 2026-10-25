@@ -99,6 +99,25 @@ func wire(cfg Config, log *slog.Logger) (*wiring, error) {
 	return w, nil
 }
 
+// sessionStore is the scs store of browser sessions. The Manager judges both
+// limits (session/session.go); scs only discards. Its deadline is set at
+// login, and a record evicted at the age limit itself would be gone when the
+// gate came to end it, so the record outlives the session by the idle limit:
+// long enough for the heartbeat, or a return, to find it aged and end it with
+// the notice and the revocation. Its own idle rule is off, because it would
+// count the heartbeat as activity.
+func sessionStore(secure bool) *scs.SessionManager {
+	sm := scs.New()
+	sm.Lifetime = session.AgeLimit + session.IdleLimit
+	sm.IdleTimeout = 0
+	sm.Cookie.Name = "juice_session"
+	sm.Cookie.HttpOnly = true
+	sm.Cookie.Secure = secure
+	sm.Cookie.SameSite = http.SameSiteLaxMode
+	sm.Cookie.Path = "/"
+	return sm
+}
+
 // build wires all dependencies into the application's http.Handler. Separated
 // from main for testability.
 func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
@@ -120,14 +139,7 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	// request, and an app's own retry waits for that.
 	w.identity.Get(context.Background())
 
-	sm := scs.New()
-	sm.Lifetime = 24 * time.Hour
-	sm.IdleTimeout = 2 * time.Hour
-	sm.Cookie.Name = "juice_session"
-	sm.Cookie.HttpOnly = true
-	sm.Cookie.Secure = cfg.Secure
-	sm.Cookie.SameSite = http.SameSiteLaxMode
-	sm.Cookie.Path = "/"
+	sm := sessionStore(cfg.Secure)
 
 	key, ephemeral, err := csrfKey(cfg.SessionSecret)
 	if err != nil {

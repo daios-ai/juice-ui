@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -27,6 +28,7 @@ type testWiring struct {
 	badge       time.Duration
 	config      Configuration
 	apps        []apps.App
+	now         func() time.Time // the clock sessions age by; nil is the wall clock
 }
 
 // newTestHandler builds the BFF against a fake kernel, wired exactly as
@@ -49,11 +51,14 @@ func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) h
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := scs.New()
+	sessions := session.NewManager(scs.New(), c)
+	if w.now != nil {
+		sessions.Now = w.now
+	}
 	h, err := New(Options{
 		Apps:          w.apps,
 		Client:        c,
-		Sessions:      session.NewManager(sm, c),
+		Sessions:      sessions,
 		Renderer:      r,
 		Logger:        log,
 		CSRFKey:       bytes.Repeat([]byte("k"), 32),
@@ -207,10 +212,14 @@ func TestSessionRefusesADifferentKernel(t *testing.T) {
 	base := authKernel()
 	defer base.Close()
 	var swapped atomic.Bool
+	var told atomic.Int32 // revocations the other kernel received
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" && swapped.Load() {
 			w.Write([]byte(`{"status":"ok","handle":"other","public_key":"OTHERKEY","network":"play","network_fingerprint":"D2","decimals":0}`))
 			return
+		}
+		if r.URL.Path == "/v1/auth/logout" {
+			told.Add(1)
 		}
 		base.Config.Handler.ServeHTTP(w, r)
 	}))
@@ -234,6 +243,207 @@ func TestSessionRefusesADifferentKernel(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
 		t.Errorf("a changed kernel must end the session: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if told.Load() != 0 {
+		t.Error("the refresh token must never be sent to a kernel that did not issue it")
+	}
+}
+
+// revokingKernel is the fake kernel with its revocations counted.
+func revokingKernel(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	base := authKernel()
+	t.Cleanup(base.Close)
+	var n atomic.Int32
+	k := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/auth/logout" {
+			n.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(k.Close)
+	return k, &n
+}
+
+// clock is a settable clock for the sessions of a test server.
+type clock struct{ ns atomic.Int64 }
+
+func newClock() *clock                   { c := &clock{}; c.ns.Store(time.Unix(1_000_000, 0).UnixNano()); return c }
+func (c *clock) now() time.Time          { return time.Unix(0, c.ns.Load()) }
+func (c *clock) advance(d time.Duration) { c.ns.Add(int64(d)) }
+
+// sessionServer is a BFF on the revoking kernel whose sessions age by c.
+func sessionServer(t *testing.T, c *clock) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	k, revoked := revokingKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL, func(w *testWiring) { w.now = c.now }))
+	t.Cleanup(srv.Close)
+	return srv, revoked
+}
+
+// get makes a request without following a redirect; hx marks it an htmx one.
+func get(t *testing.T, cl *http.Client, u string, hx bool) (*http.Response, string) {
+	t.Helper()
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, _ := http.NewRequest(http.MethodGet, u, nil)
+	if hx {
+		req.Header.Set("HX-Request", "true")
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp, string(b)
+}
+
+// flashOf is the one-shot notice the login page will show.
+func flashOf(t *testing.T, cl *http.Client, base string) string {
+	t.Helper()
+	u, _ := url.Parse(base)
+	for _, c := range cl.Jar.Cookies(u) {
+		if c.Name == "flash" {
+			v, _ := url.QueryUnescape(c.Value)
+			return v
+		}
+	}
+	return ""
+}
+
+// The heartbeat observes the idle rule: a page left open is signed out at the
+// limit, told why, and its refresh token revoked at the kernel.
+func TestIdleSessionIsSignedOutByTheHeartbeat(t *testing.T) {
+	c := newClock()
+	srv, revoked := sessionServer(t, c)
+	cl := loginClient(t, srv.URL)
+
+	c.advance(session.IdleLimit - time.Minute)
+	if resp, _ := get(t, cl, srv.URL+"/tick", true); resp.StatusCode != 200 || resp.Header.Get("HX-Redirect") != "" {
+		t.Fatalf("before the limit the tick serves: %d %q", resp.StatusCode, resp.Header.Get("HX-Redirect"))
+	}
+	c.advance(time.Minute)
+	resp, _ := get(t, cl, srv.URL+"/tick", true)
+	if resp.Header.Get("HX-Redirect") != "/login" {
+		t.Fatalf("at the limit the tick signs out: HX-Redirect %q", resp.Header.Get("HX-Redirect"))
+	}
+	if f := flashOf(t, cl, srv.URL); f != "info|You were signed out after 30 minutes of inactivity." {
+		t.Errorf("flash = %q", f)
+	}
+	if revoked.Load() != 1 {
+		t.Errorf("revocations = %d, want 1", revoked.Load())
+	}
+	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Errorf("the session is gone: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+// The heartbeat is not activity; a request the person made is.
+func TestHeartbeatIsNotActivity(t *testing.T) {
+	c := newClock()
+	srv, _ := sessionServer(t, c)
+
+	idle := loginClient(t, srv.URL)
+	c.advance(20 * time.Minute)
+	get(t, idle, srv.URL+"/tick", true)
+	c.advance(20 * time.Minute)
+	if resp, _ := get(t, idle, srv.URL+"/tick", true); resp.Header.Get("HX-Redirect") != "/login" {
+		t.Error("ticks alone must not keep a session alive")
+	}
+
+	busy := loginClient(t, srv.URL)
+	c.advance(20 * time.Minute)
+	get(t, busy, srv.URL+"/", false)
+	c.advance(20 * time.Minute)
+	if resp, _ := get(t, busy, srv.URL+"/tick", true); resp.Header.Get("HX-Redirect") != "" {
+		t.Error("a page the person opened 20 minutes ago keeps the session")
+	}
+}
+
+// The idle warning is a watch: the dialog opens a minute before the limit,
+// Stay signed in closes it and extends the session, and an unchanged state is
+// answered with nothing.
+func TestIdleWarningOpensAndCloses(t *testing.T) {
+	c := newClock()
+	srv, _ := sessionServer(t, c)
+	cl := loginClient(t, srv.URL)
+	_, page := get(t, cl, srv.URL+"/", false)
+	if strings.Count(page, `id="watch-session"`) != 1 || !strings.Contains(page, `value="session::"`) || strings.Contains(page, `class="modal-confirm" aria-labelledby="idle-msg" hx-swap-oob="true" open`) {
+		t.Fatal("a page carries the closed warning and its watch once")
+	}
+
+	c.advance(session.IdleLimit - session.Warning)
+	_, body := get(t, cl, srv.URL+"/tick?watch=session::", true)
+	if !strings.Contains(body, `<dialog id="idle" class="modal-confirm" aria-labelledby="idle-msg" hx-swap-oob="true" open>`) || !strings.Contains(body, `value="session::soon"`) {
+		t.Fatalf("a minute before the limit the warning opens: %s", body)
+	}
+	if _, body := get(t, cl, srv.URL+"/tick?watch=session::soon", true); body != "" {
+		t.Fatalf("an open warning is not answered again: %q", body)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/session", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("X-CSRF-Token", csrfTokenFrom(t, page))
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || strings.Contains(string(b), "hx-swap-oob=\"true\" open") || !strings.Contains(string(b), `value="session::"`) {
+		t.Fatalf("Stay signed in answers the closed warning: %d %s", resp.StatusCode, b)
+	}
+	if _, body := get(t, cl, srv.URL+"/tick?watch=session::soon", true); !strings.Contains(body, `value="session::"`) {
+		t.Fatalf("another tab's open warning closes: %q", body)
+	}
+	c.advance(session.IdleLimit - session.Warning - time.Second)
+	if resp, body := get(t, cl, srv.URL+"/tick?watch=session::", true); resp.Header.Get("HX-Redirect") != "" || body != "" {
+		t.Fatalf("Stay signed in moved the limit: %q %q", resp.Header.Get("HX-Redirect"), body)
+	}
+}
+
+// A session in use still ends at the age limit, told why.
+func TestAgedSessionIsSignedOut(t *testing.T) {
+	c := newClock()
+	srv, revoked := sessionServer(t, c)
+	cl := loginClient(t, srv.URL)
+	const step = 20 * time.Minute
+	for i := 1; i < int(session.AgeLimit/step); i++ {
+		c.advance(step)
+		if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
+			t.Fatalf("step %d: a session in use serves, got %d", i, resp.StatusCode)
+		}
+	}
+	c.advance(step)
+	resp, _ := get(t, cl, srv.URL+"/", false)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Fatalf("at the age limit: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if f := flashOf(t, cl, srv.URL); f != "info|You were signed out after 12 hours. Sign in again." {
+		t.Errorf("flash = %q", f)
+	}
+	if revoked.Load() != 1 {
+		t.Errorf("revocations = %d, want 1", revoked.Load())
+	}
+}
+
+// Sign out revokes the refresh token at the kernel (R5.4).
+func TestSignOutRevokesTheRefreshToken(t *testing.T) {
+	srv, revoked := sessionServer(t, newClock())
+	cl := loginClient(t, srv.URL)
+	_, page := get(t, cl, srv.URL+"/", false)
+	form := url.Values{"gorilla.csrf.Token": {csrfTokenFrom(t, page)}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/logout", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("Location") != "/login" || revoked.Load() != 1 {
+		t.Errorf("sign out: %q, revocations %d", resp.Header.Get("Location"), revoked.Load())
 	}
 }
 
@@ -330,5 +540,33 @@ func TestActiveGroupHome(t *testing.T) {
 		if got := activeGroup(path); got != want {
 			t.Errorf("activeGroup(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// A tick the page abandoned — it navigated while the request was in flight —
+// arrives with its context cancelled; its failed health read says nothing
+// about the kernel and must not sign the person out.
+func TestAnAbandonedTickKeepsTheSession(t *testing.T) {
+	k, revoked := revokingKernel(t)
+	h := newTestHandler(t, k.URL)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/tick", nil).WithContext(ctx)
+	req.Header.Set("HX-Request", "true")
+	u, _ := url.Parse(srv.URL)
+	for _, c := range cl.Jar.Cookies(u) {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Header().Get("HX-Redirect") != "" || revoked.Load() != 0 {
+		t.Fatalf("an abandoned tick signed out: %q, revocations %d", rec.Header().Get("HX-Redirect"), revoked.Load())
+	}
+	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
+		t.Errorf("the session must survive an abandoned tick: %d", resp.StatusCode)
 	}
 }
