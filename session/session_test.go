@@ -97,8 +97,8 @@ func TestLoginLogout(t *testing.T) {
 	if m.Address(ctx) != "alice@testnet" {
 		t.Errorf("address = %q", m.Address(ctx))
 	}
-	if err := m.Logout(ctx); err != nil {
-		t.Fatal(err)
+	if t2, err := m.Logout(ctx); err != nil || t2 != toks {
+		t.Fatalf("logout returned %+v, %v; want the pair it held", t2, err)
 	}
 	if m.IsAuthenticated(ctx) {
 		t.Error("should be unauthenticated after logout")
@@ -294,7 +294,7 @@ func TestASignedOutEntryIsNotRecreated(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
 	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
 	inflight := request(t, m, ctx)
-	if err := m.Logout(request(t, m, ctx)); err != nil {
+	if _, err := m.Logout(request(t, m, ctx)); err != nil {
 		t.Fatal(err)
 	}
 	m.Touch(inflight)
@@ -304,7 +304,7 @@ func TestASignedOutEntryIsNotRecreated(t *testing.T) {
 }
 
 // An entry ends with its record: past the scs Lifetime it reads as gone, and
-// the next creation sweeps it.
+// a sweep removes it.
 func TestAnEntryExpiresWithItsRecord(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
 	now := time.Unix(1_000_000, 0)
@@ -315,12 +315,13 @@ func TestAnEntryExpiresWithItsRecord(t *testing.T) {
 		t.Fatal("an entry past the record's lifetime must read as gone")
 	}
 	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	now = now.Add(time.Minute)
 	other, _ := m.sm.Load(context.Background(), "")
 	m.Login(other, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "b", Pin{})
-	now = now.Add(m.sm.Lifetime)
-	m.Login(other, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "b", Pin{})
-	if len(m.live) != 1 {
-		t.Errorf("expired entries must be swept at a creation: %d left", len(m.live))
+	now = now.Add(m.sm.Lifetime - time.Minute)
+	m.sweep()
+	if len(m.live) != 1 || !m.IsAuthenticated(other) {
+		t.Errorf("a sweep must remove the expired entry alone: %d left", len(m.live))
 	}
 }
 

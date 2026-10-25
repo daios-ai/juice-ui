@@ -49,8 +49,8 @@ const (
 // move the entry with it. Every other write changes an entry that exists and
 // never makes one, so a session ended while a request was in flight stays
 // ended. An entry leaves at Logout, or once its record would have (expires,
-// the scs Lifetime from when it was made): the creations sweep expired ones,
-// and every read treats one as gone.
+// the scs Lifetime from when it was made): Sweep removes expired ones, and
+// every read treats one as gone.
 type live struct {
 	toks     client.Tokens // the kernel's pair; zero before login
 	activeAt int64         // unix nanoseconds of the person's last request; only moves forward
@@ -117,7 +117,7 @@ func (m *Manager) entryLocked(key string, fn func(*live)) bool {
 }
 
 // create renews the session token and makes its entry, carrying over the
-// recovery phrase of the entry it replaces; expired entries are swept.
+// recovery phrase of the entry it replaces.
 func (m *Manager) create(ctx context.Context, fill func(*live)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -127,16 +127,34 @@ func (m *Manager) create(ctx context.Context, fill func(*live)) error {
 	if err := m.sm.RenewToken(ctx); err != nil {
 		return err
 	}
-	now := m.Now()
-	for k, e := range m.live {
-		if !now.Before(e.expires) {
-			delete(m.live, k)
-		}
-	}
-	e := &live{phrase: phrase, expires: now.Add(m.sm.Lifetime)}
+	e := &live{phrase: phrase, expires: m.Now().Add(m.sm.Lifetime)}
 	fill(e)
 	m.live[m.sm.Token(ctx)] = e
 	return nil
+}
+
+// Sweep removes the expired entries every interval until ctx ends, so their
+// tokens and recovery phrase leave memory even when no request reads them
+// again.
+func (m *Manager) Sweep(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.sweep()
+		}
+	}
+}
+
+func (m *Manager) sweep() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.live {
+		m.entryLocked(k, func(*live) {})
+	}
 }
 
 // Expiry is why a session may no longer serve.
@@ -206,14 +224,20 @@ func (m *Manager) Pin(ctx context.Context) Pin {
 	}
 }
 
-// Logout deletes the session's entry and destroys its record. A request in
-// flight can no longer bring either back: it changes only an entry that
-// exists, and a record without one holds no session.
-func (m *Manager) Logout(ctx context.Context) error {
+// Logout deletes the session's entry and destroys its record, and returns the
+// pair the entry held for the caller to revoke. A request in flight can no
+// longer bring either back: it changes only an entry that exists, and a
+// record without one holds no session. The pair is taken under the lock that
+// a refresh stores under, so every pair the kernel issued is revoked: the one
+// stored before is returned here, and one stored after finds no entry and is
+// revoked by the refresh.
+func (m *Manager) Logout(ctx context.Context) (client.Tokens, error) {
+	var t client.Tokens
 	m.mu.Lock()
+	m.entryLocked(m.sm.Token(ctx), func(e *live) { t = e.toks })
 	delete(m.live, m.sm.Token(ctx))
 	m.mu.Unlock()
-	return m.sm.Destroy(ctx)
+	return t, m.sm.Destroy(ctx)
 }
 
 // Tokens returns the session's current token pair and whether it is signed in.

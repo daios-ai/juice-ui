@@ -139,7 +139,8 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	// request, and an app's own retry waits for that.
 	w.identity.Get(context.Background())
 
-	sm := sessionStore(cfg.Secure)
+	sessions := session.NewManager(sessionStore(cfg.Secure), w.kernel)
+	go sessions.Sweep(context.Background(), time.Minute)
 
 	key, ephemeral, err := csrfKey(cfg.SessionSecret)
 	if err != nil {
@@ -157,7 +158,7 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	}
 	return server.New(server.Options{
 		Client:         w.kernel,
-		Sessions:       session.NewManager(sm, w.kernel),
+		Sessions:       sessions,
 		Renderer:       w.renderer,
 		Logger:         log,
 		CSRFKey:        key,

@@ -577,13 +577,15 @@ func TestAnAbandonedTickKeepsTheSession(t *testing.T) {
 // rotatingKernel is the fake kernel with a real token lifecycle on top: the
 // login's pair (at, rt) is rotated once to (at1, rt1), a dead refresh token is
 // refused, and /v1/me refuses "at" once it has expired. holdMe parks the next
-// /v1/me presented with "at", and holdRefresh the next refresh, until the
-// test releases them, so the test orders separate HTTP requests.
+// /v1/me presented with "at", holdRefresh the next refresh and holdLogout the
+// next revocation, until the test releases them, so the test orders separate
+// HTTP requests.
 type rotatingKernel struct {
 	*httptest.Server
 	expired             atomic.Bool
 	holdMe, holdRefresh chan chan struct{} // the test receives a release channel when a request parks
-	arm                 func(me, refresh bool)
+	holdLogout          chan chan struct{}
+	arm                 func(me, refresh, logout bool)
 	mu                  sync.Mutex
 	refreshes           int
 	revoked             []string
@@ -604,8 +606,8 @@ func newRotatingKernel(t *testing.T) *rotatingKernel {
 	t.Helper()
 	base := authKernel()
 	t.Cleanup(base.Close)
-	k := &rotatingKernel{holdMe: make(chan chan struct{}), holdRefresh: make(chan chan struct{})}
-	var meHeld, refreshHeld atomic.Bool
+	k := &rotatingKernel{holdMe: make(chan chan struct{}), holdRefresh: make(chan chan struct{}), holdLogout: make(chan chan struct{})}
+	var meHeld, refreshHeld, logoutHeld atomic.Bool
 	park := func(armed *atomic.Bool, hold chan chan struct{}) {
 		if armed.CompareAndSwap(true, false) {
 			release := make(chan struct{})
@@ -639,6 +641,7 @@ func newRotatingKernel(t *testing.T) *rotatingKernel {
 			w.Write([]byte(`{"access_token":"at1","refresh_token":"rt1"}`))
 			return
 		case r.URL.Path == "/v1/auth/logout":
+			park(&logoutHeld, k.holdLogout)
 			var in struct {
 				RefreshToken string `json:"refresh_token"`
 			}
@@ -652,7 +655,7 @@ func newRotatingKernel(t *testing.T) *rotatingKernel {
 		base.Config.Handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(k.Server.Close)
-	k.arm = func(me, refresh bool) { meHeld.Store(me); refreshHeld.Store(refresh) }
+	k.arm = func(me, refresh, logout bool) { meHeld.Store(me); refreshHeld.Store(refresh); logoutHeld.Store(logout) }
 	return k
 }
 
@@ -666,7 +669,7 @@ func TestARotationSurvivesAStaleSave(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	k.arm(true, false)
+	k.arm(true, false, false)
 	slow := make(chan int)
 	go func() { slow <- status(cl, srv.URL+"/") }()
 	release := <-k.holdMe // A has loaded its copy, holding "at", and waits on the kernel
@@ -698,7 +701,7 @@ func TestASignOutDuringARefreshRevokesTheNewPair(t *testing.T) {
 	token := csrfTokenFrom(t, page)
 
 	k.expired.Store(true)
-	k.arm(false, true)
+	k.arm(false, true, false)
 	done := make(chan struct{})
 	go func() { status(cl, srv.URL+"/wallet"); close(done) }()
 	release := <-k.holdRefresh // A's refresh is at the kernel
@@ -720,5 +723,44 @@ func TestASignOutDuringARefreshRevokesTheNewPair(t *testing.T) {
 	defer k.mu.Unlock()
 	if !slices.Contains(k.revoked, "rt1") {
 		t.Errorf("revoked %v, want the orphaned rt1 among them", k.revoked)
+	}
+}
+
+// A refresh that stores its pair while a sign-out's revocation is at the
+// kernel leaves no live pair behind: the sign-out takes the entry before it
+// calls, so the refresh finds none and revokes its own.
+func TestARefreshDuringASignOutsRevocationIsRevoked(t *testing.T) {
+	k := newRotatingKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	_, page := get(t, cl, srv.URL+"/", false)
+	token := csrfTokenFrom(t, page)
+
+	k.expired.Store(true)
+	k.arm(false, true, true)
+	refreshed := make(chan struct{})
+	go func() { status(cl, srv.URL+"/wallet"); close(refreshed) }()
+	releaseRefresh := <-k.holdRefresh // A's refresh is at the kernel
+	signedOut := make(chan struct{})
+	go func() {
+		form := url.Values{"gorilla.csrf.Token": {token}}
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/logout", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if resp, err := cl.Do(req); err == nil {
+			resp.Body.Close()
+		}
+		close(signedOut)
+	}()
+	releaseLogout := <-k.holdLogout // the sign-out's revocation is at the kernel
+	close(releaseRefresh)
+	<-refreshed
+	close(releaseLogout)
+	<-signedOut
+
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if !slices.Contains(k.revoked, "rt1") {
+		t.Errorf("revoked %v, want the rotated rt1 among them", k.revoked)
 	}
 }

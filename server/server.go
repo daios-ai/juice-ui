@@ -610,17 +610,17 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc { return s.gat
 // endSession is the one exit: the session is destroyed, and its refresh token
 // revoked (R5.4) only at the kernel that issued it. A credential travels to its
 // issuer alone (ecosystem-standard §5), so a kernel that is unknown or no
-// longer the pinned one is told nothing. A revocation the kernel refuses, the
-// token being already dead after a failed refresh, changes nothing here; one
-// is not abandoned with the request that asked for it, since the session it
-// ends is gone either way.
+// longer the pinned one is told nothing. The session ends before the call, so
+// the pair revoked is the last one stored (session.Manager.Logout). A
+// revocation the kernel refuses, the token being already dead after a failed
+// refresh, changes nothing here; one is not abandoned with the request that
+// asked for it, since the session it ends is gone either way.
 func (s *Server) endSession(ctx context.Context) {
 	id := s.kernelIdentity(ctx)
 	issuer := id.PublicKey != "" && s.sessions.Pin(ctx) == session.Pin{PublicKey: id.PublicKey, NetworkFingerprint: id.NetworkFingerprint}
-	if toks, ok := s.sessions.Tokens(ctx); ok && issuer {
+	if toks, _ := s.sessions.Logout(ctx); toks.RefreshToken != "" && issuer {
 		_ = s.client.Logout(context.WithoutCancel(ctx), toks.RefreshToken)
 	}
-	_ = s.sessions.Logout(ctx)
 }
 
 // expiryMessage words a sign-out by the limits, so the figures never drift.

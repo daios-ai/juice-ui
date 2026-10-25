@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.42.1
+Version: 0.42.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.42.2.** A sign-out revoked the pair it had read before
+> its call to the kernel, so a refresh that stored a new pair during that call
+> left the new one live; the sign-out now takes the pair as it ends the
+> session, and the refresh, finding no session, revokes its own. Expired
+> entries of the session store are removed every minute rather than at the
+> next sign-in, so their tokens and recovery phrase leave memory with the
+> session (§5).
 
 > **What changed in 0.42.1.** A request saves its own copy of the session, so
 > one that finished after another had rotated the kernel tokens wrote the old
@@ -1055,8 +1063,10 @@ kernel and world is in use, and keys everything durable by
   forward, and an acknowledged phrase stays gone. Only sign-in and sign-up
   create an entry; every other write changes an existing one, so a session
   ended while a request was in flight stays ended, and a token pair the kernel
-  issued to it meanwhile is revoked. An entry leaves at sign-out or with the
-  session's record. What stays in the copy is written once at sign-in, or is
+  issued to it meanwhile is revoked. A sign-out takes the pair as it removes
+  the entry and revokes that one, so every pair the kernel issued is revoked
+  by the sign-out or by the refresh that finds no entry. An entry leaves at
+  sign-out, or with the session's record, removed within a minute. What stays in the copy is written once at sign-in, or is
   harmless if a stale save restores it: the PKCE verifier lives within one
   request, and a grant state restored after its callback is refused by the
   kernel, which completes a state once.
@@ -2588,9 +2598,10 @@ Every production `.go` file has a `_test.go` file with independent tests.
   over separate HTTP requests, a request that loaded the session before
   another rotated its tokens and finishes after leaves the rotation in place,
   and a sign-out during a refresh stays a sign-out and revokes the pair the
-  refresh received; an acknowledged recovery phrase stays gone after a late
-  save, a signed-out entry is never recreated, and entries expire with their
-  record;
+  refresh received, as does a refresh that stores its pair while the
+  sign-out's revocation is at the kernel; an acknowledged recovery phrase
+  stays gone after a late save, a signed-out entry is never recreated, and a
+  sweep removes the entries expired with their record and no other;
 * session limits: a session is idled at the idle limit and aged at the age
   limit however recently used; ticks alone never keep it alive while a page
   request does; the heartbeat signs an idle page out with the notice and one
