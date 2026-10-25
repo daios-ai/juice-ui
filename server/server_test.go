@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -10,7 +11,9 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -568,5 +571,154 @@ func TestAnAbandonedTickKeepsTheSession(t *testing.T) {
 	}
 	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
 		t.Errorf("the session must survive an abandoned tick: %d", resp.StatusCode)
+	}
+}
+
+// rotatingKernel is the fake kernel with a real token lifecycle on top: the
+// login's pair (at, rt) is rotated once to (at1, rt1), a dead refresh token is
+// refused, and /v1/me refuses "at" once it has expired. holdMe parks the next
+// /v1/me presented with "at", and holdRefresh the next refresh, until the
+// test releases them, so the test orders separate HTTP requests.
+type rotatingKernel struct {
+	*httptest.Server
+	expired             atomic.Bool
+	holdMe, holdRefresh chan chan struct{} // the test receives a release channel when a request parks
+	arm                 func(me, refresh bool)
+	mu                  sync.Mutex
+	refreshes           int
+	revoked             []string
+}
+
+// status makes a request off the test goroutine, where t.Fatal may not be
+// called: the status, or 0 when the request failed.
+func status(cl *http.Client, u string) int {
+	resp, err := cl.Get(u)
+	if err != nil {
+		return 0
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func newRotatingKernel(t *testing.T) *rotatingKernel {
+	t.Helper()
+	base := authKernel()
+	t.Cleanup(base.Close)
+	k := &rotatingKernel{holdMe: make(chan chan struct{}), holdRefresh: make(chan chan struct{})}
+	var meHeld, refreshHeld atomic.Bool
+	park := func(armed *atomic.Bool, hold chan chan struct{}) {
+		if armed.CompareAndSwap(true, false) {
+			release := make(chan struct{})
+			hold <- release
+			<-release
+		}
+	}
+	k.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/me" && r.Header.Get("Authorization") == "Bearer at":
+			if k.expired.Load() {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"code":"unauthenticated","error":"token expired"}`))
+				return
+			}
+			park(&meHeld, k.holdMe)
+		case r.URL.Path == "/v1/auth/refresh":
+			park(&refreshHeld, k.holdRefresh)
+			var in struct {
+				RefreshToken string `json:"refresh_token"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			if in.RefreshToken != "rt" || k.refreshes > 0 {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"code":"unauthenticated","error":"refresh token revoked"}`))
+				return
+			}
+			k.refreshes++
+			w.Write([]byte(`{"access_token":"at1","refresh_token":"rt1"}`))
+			return
+		case r.URL.Path == "/v1/auth/logout":
+			var in struct {
+				RefreshToken string `json:"refresh_token"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			k.mu.Lock()
+			k.revoked = append(k.revoked, in.RefreshToken)
+			k.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(k.Server.Close)
+	k.arm = func(me, refresh bool) { meHeld.Store(me); refreshHeld.Store(refresh) }
+	return k
+}
+
+// The token pair is not a request's to save: a request that loaded the
+// session before another rotated its tokens, and finishes after, leaves the
+// rotated pair in place, so the next request needs no refresh and survives.
+func TestARotationSurvivesAStaleSave(t *testing.T) {
+	k := newRotatingKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	k.arm(true, false)
+	slow := make(chan int)
+	go func() { slow <- status(cl, srv.URL+"/") }()
+	release := <-k.holdMe // A has loaded its copy, holding "at", and waits on the kernel
+	k.expired.Store(true)
+	if resp, _ := get(t, cl, srv.URL+"/wallet", false); resp.StatusCode != 200 {
+		t.Fatalf("B refreshes and serves: %d", resp.StatusCode)
+	}
+	close(release)
+	if code := <-slow; code != 200 {
+		t.Fatalf("A serves: %d", code)
+	}
+	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
+		t.Fatalf("C after A's late save: %d %q, want the session alive", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if k.refreshes != 1 {
+		t.Errorf("refreshes = %d, want 1", k.refreshes)
+	}
+}
+
+// A sign-out that lands while a refresh is in flight stays a sign-out: the
+// refresh's late answer recreates nothing, and the pair it carries, which
+// nobody now holds, is revoked at the kernel.
+func TestASignOutDuringARefreshRevokesTheNewPair(t *testing.T) {
+	k := newRotatingKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	_, page := get(t, cl, srv.URL+"/", false)
+	token := csrfTokenFrom(t, page)
+
+	k.expired.Store(true)
+	k.arm(false, true)
+	done := make(chan struct{})
+	go func() { status(cl, srv.URL+"/wallet"); close(done) }()
+	release := <-k.holdRefresh // A's refresh is at the kernel
+	form := url.Values{"gorilla.csrf.Token": {token}}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/logout", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	close(release)
+	<-done
+
+	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Errorf("the signed-out session came back: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if !slices.Contains(k.revoked, "rt1") {
+		t.Errorf("revoked %v, want the orphaned rt1 among them", k.revoked)
 	}
 }

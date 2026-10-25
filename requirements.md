@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.42.0
+Version: 0.42.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.42.1.** A request saves its own copy of the session, so
+> one that finished after another had rotated the kernel tokens wrote the old
+> pair back and the next refresh signed the person out; a refresh that
+> finished after a sign-out brought the session back and left its new token
+> live. The token pair, the last activity and the unacknowledged recovery
+> phrase now live in one server-side store that no request's copy can
+> overwrite, which only sign-in and sign-up create, and a pair issued to a
+> session already ended is revoked (§5).
 
 > **What changed in 0.42.0.** A session ends on the person's inactivity, not
 > the page's. The heartbeat counted as activity, so an open tab kept a session
@@ -1037,6 +1046,20 @@ kernel and world is in use, and keys everything durable by
   `POST /v1/auth/refresh`, stores the rotated token pair, and retries the original
   request once. Refresh MUST be single-flight per session, because rotation
   invalidates the prior refresh token and concurrent refreshes would fail.
+* **What a request may not save.** Each request works on its own copy of the
+  session and saves it whole, so a value another request changed meanwhile
+  would be written back stale. The token pair, the last activity and the
+  unacknowledged recovery phrase are therefore kept in a store beside the
+  session, keyed by its token, which every request reads and none saves
+  whole: a rotation is seen by every request, the last activity only moves
+  forward, and an acknowledged phrase stays gone. Only sign-in and sign-up
+  create an entry; every other write changes an existing one, so a session
+  ended while a request was in flight stays ended, and a token pair the kernel
+  issued to it meanwhile is revoked. An entry leaves at sign-out or with the
+  session's record. What stays in the copy is written once at sign-in, or is
+  harmless if a stale save restores it: the PKCE verifier lives within one
+  request, and a grant state restored after its callback is refused by the
+  kernel, which completes a state once.
 * When refresh fails, or the user is suspended, the session is cleared and the
   user returns to login with a clear explanation.
 * Logout calls `POST /v1/auth/logout` to revoke the refresh token and drops the
@@ -2562,6 +2585,12 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * the typed API client and error mapping (§10 error mapping);
 * session lifecycle: PKCE handshake, single-flight refresh rotation (a request
   after a rotation reuses it), logout revocation, suspension → clean logout;
+  over separate HTTP requests, a request that loaded the session before
+  another rotated its tokens and finishes after leaves the rotation in place,
+  and a sign-out during a refresh stays a sign-out and revokes the pair the
+  refresh received; an acknowledged recovery phrase stays gone after a late
+  save, a signed-out entry is never recreated, and entries expire with their
+  record;
 * session limits: a session is idled at the idle limit and aged at the age
   limit however recently used; ticks alone never keep it alive while a page
   request does; the heartbeat signs an idle page out with the notice and one

@@ -18,6 +18,9 @@ type fakeRefresher struct {
 	err   error
 }
 
+// Logout records nothing the tests read; the server tests count revocations.
+func (f *fakeRefresher) Logout(context.Context, string) error { return nil }
+
 func (f *fakeRefresher) Refresh(_ context.Context, _ string) (client.Tokens, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -29,7 +32,7 @@ func (f *fakeRefresher) Refresh(_ context.Context, _ string) (client.Tokens, err
 }
 
 // newCtx returns a fresh scs session context plus the manager.
-func newCtx(t *testing.T, r Refresher) (*Manager, context.Context) {
+func newCtx(t *testing.T, r Issuer) (*Manager, context.Context) {
 	t.Helper()
 	sm := scs.New()
 	m := NewManager(sm, r)
@@ -243,5 +246,94 @@ func TestRefreshAfterARotationReusesIt(t *testing.T) {
 	got, err := m.refreshSingleFlight(ctx, old)
 	if err != nil || got.AccessToken != "at1" || fr.calls != 1 {
 		t.Fatalf("second refresh with the old pair: %+v %v, calls %d", got, err, fr.calls)
+	}
+}
+
+// request loads a separate copy of the session record, as scs does for each
+// HTTP request.
+func request(t *testing.T, m *Manager, ctx context.Context) context.Context {
+	t.Helper()
+	tok, _, err := m.sm.Commit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := m.sm.Load(context.Background(), tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// The acknowledged phrase is gone for every request, whatever copy of the
+// record a request loaded before the acknowledgement.
+func TestAnAcknowledgedPhraseStaysGone(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	if err := m.PutRecoveryPhrase(ctx, "w1 w2"); err != nil {
+		t.Fatal(err)
+	}
+	stale := request(t, m, ctx)
+	if p, ok := m.PeekRecoveryPhrase(stale); !ok || p != "w1 w2" {
+		t.Fatalf("peek = %q %v", p, ok)
+	}
+	if p, ok := m.TakeRecoveryPhrase(request(t, m, ctx)); !ok || p != "w1 w2" {
+		t.Fatalf("take = %q %v", p, ok)
+	}
+	if _, _, err := m.sm.Commit(stale); err != nil { // the late save of a copy loaded before
+		t.Fatal(err)
+	}
+	if _, ok := m.PeekRecoveryPhrase(request(t, m, ctx)); ok {
+		t.Error("a late save brought the phrase back")
+	}
+	if len(m.live) != 0 {
+		t.Errorf("an entry made for the phrase alone must end with it: %d left", len(m.live))
+	}
+}
+
+// A signed-out session's entry is never made again by a request in flight.
+func TestASignedOutEntryIsNotRecreated(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	inflight := request(t, m, ctx)
+	if err := m.Logout(request(t, m, ctx)); err != nil {
+		t.Fatal(err)
+	}
+	m.Touch(inflight)
+	if m.IsAuthenticated(inflight) || len(m.live) != 0 {
+		t.Error("a request in flight brought the session back")
+	}
+}
+
+// An entry ends with its record: past the scs Lifetime it reads as gone, and
+// the next creation sweeps it.
+func TestAnEntryExpiresWithItsRecord(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	now := time.Unix(1_000_000, 0)
+	m.Now = func() time.Time { return now }
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	now = now.Add(m.sm.Lifetime)
+	if m.IsAuthenticated(ctx) {
+		t.Fatal("an entry past the record's lifetime must read as gone")
+	}
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	other, _ := m.sm.Load(context.Background(), "")
+	m.Login(other, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "b", Pin{})
+	now = now.Add(m.sm.Lifetime)
+	m.Login(other, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "b", Pin{})
+	if len(m.live) != 1 {
+		t.Errorf("expired entries must be swept at a creation: %d left", len(m.live))
+	}
+}
+
+// A signup's pending phrase survives the sign-in that follows, as it did when
+// it lived in the record.
+func TestLoginCarriesThePendingPhrase(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	m.PutRecoveryPhrase(ctx, "w1 w2")
+	m.Login(ctx, client.Tokens{AccessToken: "at", RefreshToken: "rt"}, "a", Pin{})
+	if p, ok := m.PeekRecoveryPhrase(ctx); !ok || p != "w1 w2" {
+		t.Errorf("phrase after login = %q %v", p, ok)
+	}
+	if len(m.live) != 1 {
+		t.Errorf("the pre-login entry must be replaced, not kept: %d", len(m.live))
 	}
 }

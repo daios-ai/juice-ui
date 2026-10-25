@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -22,20 +23,40 @@ const (
 	Warning   = time.Minute
 )
 
-// session value keys.
+// Keys of the scs record. A request saves its own copy of the record whole,
+// so a request that loaded it before another changed a value, and finishes
+// after, writes the old value back. The record therefore holds what is written
+// once (the address, the pin and the login time, at login) and what a stale
+// save cannot make dangerous: the PKCE verifier lives within one request, the
+// grant state is refused by the kernel once completed should a stale save
+// restore it, and the badge cache is a cache. What a stale save would make
+// wrong — the token pair, the last activity, the recovery phrase — lives in
+// the Manager's store instead (live).
 const (
-	keyAccess      = "access_token"
-	keyRefresh     = "refresh_token"
 	keyVerifier    = "pkce_verifier"
-	keyAddress     = "address"         // the signed-in user's address, handle@kernel
-	keyGrantState  = "grant_state"     // opaque state for an in-flight OAuth grant consent
-	keyGrantAction = "grant_action"    // the action the in-flight grant is for (for the return redirect)
-	keyRecovery    = "recovery_phrase" // one-shot seed phrase to show once after signup
+	keyAddress     = "address"      // the signed-in user's address, handle@kernel
+	keyGrantState  = "grant_state"  // opaque state for an in-flight OAuth grant consent
+	keyGrantAction = "grant_action" // the action the in-flight grant is for (for the return redirect)
 	keyKernelKey   = "kernel_public_key"
 	keyKernelNet   = "kernel_network_fingerprint"
-	keyLoginAt     = "login_at"  // unix nanoseconds of the login
-	keyActiveAt    = "active_at" // unix nanoseconds of the person's last request
+	keyLoginAt     = "login_at" // unix nanoseconds of the login
 )
+
+// live is a session's state that no request's copy of the record may decide,
+// kept by the Manager under its lock and keyed by the scs token, which is
+// fixed from the moment the entry is made: only Login and PutRecoveryPhrase
+// make one, each right after renewing the token, so a later RenewToken must
+// move the entry with it. Every other write changes an entry that exists and
+// never makes one, so a session ended while a request was in flight stays
+// ended. An entry leaves at Logout, or once its record would have (expires,
+// the scs Lifetime from when it was made): the creations sweep expired ones,
+// and every read treats one as gone.
+type live struct {
+	toks     client.Tokens // the kernel's pair; zero before login
+	activeAt int64         // unix nanoseconds of the person's last request; only moves forward
+	phrase   string        // the recovery phrase until acknowledged
+	expires  time.Time
+}
 
 // Pin is the kernel this session signed in to: its public key and the
 // fingerprint of the world it serves. A client sends a stored credential only to the server it
@@ -49,25 +70,73 @@ type Pin struct {
 // ErrNoSession is returned by Do when no authenticated session is present.
 var ErrNoSession = errors.New("no authenticated session")
 
-// Refresher performs a kernel token refresh. *client.Client satisfies this; an
-// interface keeps the session layer testable without a live kernel.
-type Refresher interface {
+// Issuer is the kernel's token lifecycle: a refresh rotates a pair, a logout
+// revokes one. *client.Client satisfies it; an interface keeps the session
+// layer testable without a live kernel.
+type Issuer interface {
 	Refresh(ctx context.Context, refreshToken string) (client.Tokens, error)
+	Logout(ctx context.Context, refreshToken string) error
 }
 
-// Manager stores the kernel token pair and PKCE state in a server-side scs
-// session, judges the session against the limits, and provides the
-// authenticated request wrapper with single-flight refresh-and-retry (R5.2).
+// Manager keeps a browser session: the scs record and the store of its live
+// state, judged against the limits, with the authenticated request wrapper's
+// single-flight refresh-and-retry (R5.2).
 type Manager struct {
 	sm        *scs.SessionManager
-	refresher Refresher
+	issuer    Issuer
 	refreshes singleflight.Group // one refresh per session at a time, keyed by its token
-	Now       func() time.Time   // the clock sessions age by; tests set it
+	mu        sync.Mutex
+	live      map[string]*live // by scs token
+	Now       func() time.Time // the clock sessions age by; tests set it
 }
 
-// NewManager wraps an scs.SessionManager and a Refresher.
-func NewManager(sm *scs.SessionManager, r Refresher) *Manager {
-	return &Manager{sm: sm, refresher: r, Now: time.Now}
+// NewManager wraps an scs.SessionManager and the kernel that issues its tokens.
+func NewManager(sm *scs.SessionManager, k Issuer) *Manager {
+	return &Manager{sm: sm, issuer: k, live: map[string]*live{}, Now: time.Now}
+}
+
+// entry runs fn on the session's live entry under the lock, and reports
+// whether there was one; an expired entry is removed and counts as none.
+func (m *Manager) entry(ctx context.Context, fn func(*live)) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.entryLocked(m.sm.Token(ctx), fn)
+}
+
+func (m *Manager) entryLocked(key string, fn func(*live)) bool {
+	e := m.live[key]
+	if e == nil {
+		return false
+	}
+	if !m.Now().Before(e.expires) {
+		delete(m.live, key)
+		return false
+	}
+	fn(e)
+	return true
+}
+
+// create renews the session token and makes its entry, carrying over the
+// recovery phrase of the entry it replaces; expired entries are swept.
+func (m *Manager) create(ctx context.Context, fill func(*live)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var phrase string
+	m.entryLocked(m.sm.Token(ctx), func(e *live) { phrase = e.phrase })
+	delete(m.live, m.sm.Token(ctx))
+	if err := m.sm.RenewToken(ctx); err != nil {
+		return err
+	}
+	now := m.Now()
+	for k, e := range m.live {
+		if !now.Before(e.expires) {
+			delete(m.live, k)
+		}
+	}
+	e := &live{phrase: phrase, expires: now.Add(m.sm.Lifetime)}
+	fill(e)
+	m.live[m.sm.Token(ctx)] = e
+	return nil
 }
 
 // Expiry is why a session may no longer serve.
@@ -80,12 +149,19 @@ const (
 )
 
 // Touch records a request the person made. The heartbeat never calls it: a
-// page left open is not a person present.
-func (m *Manager) Touch(ctx context.Context) { m.sm.Put(ctx, keyActiveAt, m.Now().UnixNano()) }
+// page left open is not a person present. The time only moves forward, so a
+// request that finishes late cannot set it back.
+func (m *Manager) Touch(ctx context.Context) {
+	now := m.Now().UnixNano()
+	m.entry(ctx, func(e *live) { e.activeAt = max(e.activeAt, now) })
+}
 
-// Idle is the time since the person's last request.
+// Idle is the time since the person's last request; a session without an
+// entry has been idle as long as the limit.
 func (m *Manager) Idle(ctx context.Context) time.Duration {
-	return m.Now().Sub(time.Unix(0, m.sm.GetInt64(ctx, keyActiveAt)))
+	idle := IdleLimit
+	m.entry(ctx, func(e *live) { idle = m.Now().Sub(time.Unix(0, e.activeAt)) })
+	return idle
 }
 
 // Expiry judges the session against the limits.
@@ -104,19 +180,18 @@ func (m *Manager) Expiry(ctx context.Context) Expiry {
 // LoadAndSave middleware.
 func (m *Manager) SCS() *scs.SessionManager { return m.sm }
 
-// Login stores a fresh token pair, the user's address and the kernel this login
-// is for, and renews the session token to prevent fixation.
+// Login renews the session token to prevent fixation, makes the session's
+// entry with the fresh token pair, and records the user's address and the
+// kernel this login is for.
 func (m *Manager) Login(ctx context.Context, t client.Tokens, address string, pin Pin) error {
-	if err := m.sm.RenewToken(ctx); err != nil {
+	now := m.Now()
+	if err := m.create(ctx, func(e *live) { e.toks, e.activeAt = t, now.UnixNano() }); err != nil {
 		return err
 	}
-	m.sm.Put(ctx, keyAccess, t.AccessToken)
-	m.sm.Put(ctx, keyRefresh, t.RefreshToken)
 	m.sm.Put(ctx, keyAddress, address)
 	m.sm.Put(ctx, keyKernelKey, pin.PublicKey)
 	m.sm.Put(ctx, keyKernelNet, pin.NetworkFingerprint)
-	m.sm.Put(ctx, keyLoginAt, m.Now().UnixNano())
-	m.Touch(ctx)
+	m.sm.Put(ctx, keyLoginAt, now.UnixNano())
 	m.sm.Remove(ctx, keyVerifier)
 	return nil
 }
@@ -131,19 +206,21 @@ func (m *Manager) Pin(ctx context.Context) Pin {
 	}
 }
 
-// Logout destroys the session.
+// Logout deletes the session's entry and destroys its record. A request in
+// flight can no longer bring either back: it changes only an entry that
+// exists, and a record without one holds no session.
 func (m *Manager) Logout(ctx context.Context) error {
+	m.mu.Lock()
+	delete(m.live, m.sm.Token(ctx))
+	m.mu.Unlock()
 	return m.sm.Destroy(ctx)
 }
 
-// Tokens returns the stored token pair and whether a session is authenticated.
+// Tokens returns the session's current token pair and whether it is signed in.
 func (m *Manager) Tokens(ctx context.Context) (client.Tokens, bool) {
-	at := m.sm.GetString(ctx, keyAccess)
-	rt := m.sm.GetString(ctx, keyRefresh)
-	if at == "" || rt == "" {
-		return client.Tokens{}, false
-	}
-	return client.Tokens{AccessToken: at, RefreshToken: rt}, true
+	var t client.Tokens
+	m.entry(ctx, func(e *live) { t = e.toks })
+	return t, t.AccessToken != "" && t.RefreshToken != ""
 }
 
 // Address returns the signed-in user's address, handle@kernel, or "". A
@@ -203,30 +280,36 @@ func (m *Manager) TakeGrantState(ctx context.Context) (state, action string, ok 
 	return state, action, true
 }
 
-// PutRecoveryPhrase stashes the freshly-generated seed phrase server-side, keyed
-// by the session cookie, so it can be shown exactly once on the post-signup page
-// and never re-rendered. It never leaves the server except on that one render.
-func (m *Manager) PutRecoveryPhrase(ctx context.Context, phrase string) {
-	m.sm.Put(ctx, keyRecovery, phrase)
+// PutRecoveryPhrase stashes the freshly-generated seed phrase server-side,
+// in a new entry under a renewed session token, so it can be shown on the
+// post-signup page until acknowledged. It never leaves the server except on
+// that page.
+func (m *Manager) PutRecoveryPhrase(ctx context.Context, phrase string) error {
+	return m.create(ctx, func(e *live) { e.phrase = phrase })
 }
 
 // PeekRecoveryPhrase returns the stashed phrase without clearing it, so the
 // standalone phrase page survives reloads until the user acknowledges it. ok is
 // false when none is pending.
 func (m *Manager) PeekRecoveryPhrase(ctx context.Context) (phrase string, ok bool) {
-	phrase = m.sm.GetString(ctx, keyRecovery)
+	m.entry(ctx, func(e *live) { phrase = e.phrase })
 	return phrase, phrase != ""
 }
 
 // TakeRecoveryPhrase returns and clears the stashed seed phrase (one-shot). ok is
-// false when none is pending, so the phrase page redirects away on a reload.
+// false when none is pending, so the phrase page redirects away on a reload. The
+// clearing is the store's, so no request's late save can show the phrase again.
 func (m *Manager) TakeRecoveryPhrase(ctx context.Context) (phrase string, ok bool) {
-	phrase = m.sm.GetString(ctx, keyRecovery)
-	if phrase == "" {
-		return "", false
-	}
-	m.sm.Remove(ctx, keyRecovery)
-	return phrase, true
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := m.sm.Token(ctx)
+	m.entryLocked(key, func(e *live) {
+		phrase, e.phrase = e.phrase, ""
+		if e.toks.RefreshToken == "" {
+			delete(m.live, key) // an entry made for the phrase alone ends with it
+		}
+	})
+	return phrase, phrase != ""
 }
 
 // Do runs fn with the current access token. If fn returns ErrUnauthenticated,
@@ -250,31 +333,37 @@ func (m *Manager) Do(ctx context.Context, fn func(token string) error) error {
 }
 
 // refreshSingleFlight refreshes the token pair once per session however many
-// requests ask at the same time: rotation kills the prior refresh token, so a
-// request that joins an in-flight refresh takes its answer, and one that
-// arrives after it finds the pair already rotated, instead of presenting a
-// token that no longer exists. The group keeps no entry past the call.
+// requests ask at the same time. Rotation kills the prior refresh token, so a
+// request that joins a refresh in flight takes its answer, and one that comes
+// after finds the rotated pair in the store, where every request reads it,
+// rather than presenting a token that no longer exists. The kernel call is
+// not abandoned with the request that made it: a rotation it completes would
+// otherwise be lost. A session ended while the kernel rotated is not brought
+// back: the pair nobody now holds is revoked. The group keeps no entry past
+// the call.
 func (m *Manager) refreshSingleFlight(ctx context.Context, old client.Tokens) (client.Tokens, error) {
-	v, err, _ := m.refreshes.Do(m.sm.Token(ctx), func() (any, error) {
-		if cur, ok := m.Tokens(ctx); ok && cur.RefreshToken != old.RefreshToken {
+	key := m.sm.Token(ctx)
+	v, err, _ := m.refreshes.Do(key, func() (any, error) {
+		cur, ok := m.Tokens(ctx)
+		if !ok {
+			return nil, ErrNoSession
+		}
+		if cur.RefreshToken != old.RefreshToken {
 			return cur, nil
 		}
-		nt, err := m.refresher.Refresh(ctx, old.RefreshToken)
+		kctx := context.WithoutCancel(ctx)
+		nt, err := m.issuer.Refresh(kctx, old.RefreshToken)
 		if err != nil {
 			return nil, err
 		}
-		m.store(ctx, nt)
+		if !m.entry(ctx, func(e *live) { e.toks = nt }) {
+			_ = m.issuer.Logout(kctx, nt.RefreshToken)
+			return nil, ErrNoSession
+		}
 		return nt, nil
 	})
 	if err != nil {
 		return client.Tokens{}, err
 	}
-	nt := v.(client.Tokens)
-	m.store(ctx, nt) // a joiner's request holds its own copy of the session
-	return nt, nil
-}
-
-func (m *Manager) store(ctx context.Context, t client.Tokens) {
-	m.sm.Put(ctx, keyAccess, t.AccessToken)
-	m.sm.Put(ctx, keyRefresh, t.RefreshToken)
+	return v.(client.Tokens), nil
 }

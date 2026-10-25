@@ -317,7 +317,10 @@ func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
 	// Do NOT sign in yet. The recovery phrase is shown on a standalone page
 	// (unauthenticated → no app chrome); the user gains access only by signing in
 	// after acknowledging it. Stash the phrase against the session cookie.
-	s.sessions.PutRecoveryPhrase(ctx, mnemonic)
+	if err := s.sessions.PutRecoveryPhrase(ctx, mnemonic); err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
 	http.Redirect(w, r, "/recovery-phrase", http.StatusSeeOther)
 }
 
