@@ -37,7 +37,7 @@ Three laws underpin everything:
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; rows `.menu-item`, matched in the browser; Enter submits the search (§5.9) |
-| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head`, the run form; opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. Empty, it takes no column; on a phone it covers the conversation |
+| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. Empty, it takes no column; on a phone it covers the conversation |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
@@ -57,7 +57,7 @@ The frame every page renders into: the collaborative workspace
 ```
 ┌─ sidebar ─────────┬───────────────────────────────┬─ panel ──────┐
 │ ◆ k play        ≡ │ flash bar (one-shot)           │ (a room only: │
-│ + New conversation│ crumb · entries · answering    │  an action    │
+│ + New conversation│ crumb · entries · waiting on   │  an action    │
 │ assistant         │ composer [message …] [/] Send  │  beside the   │
 │ research-room  •  │ — or any page's content —      │  conversation)│
 │                   │                                │               │
@@ -163,7 +163,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
     row (with an optional inline `+ new …` command) → list.
   - *Detail* = crumb (sticky back-link) → `<h1>` → `.subtitle` (the id) → cards.
   - *Conversation* = crumb (the room's name, members, leave/delete; no
-    back-link, the rail is the way across) → entries → who is answering →
+    back-link, the rail is the way across) → entries → whom it waits on →
     composer, beside the panel (§5.5). It is neither an index nor a detail.
 
 **Copy discipline — words are a component.** Prose is rationed like color. Every
@@ -244,7 +244,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | Class | Tier | Fill | Use |
 |---|---|---|---|
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
-| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Fill from chat (N)` / `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
+| `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`** |
 | `.btn-quiet` | inline text button | — | remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
@@ -351,13 +351,18 @@ separates it from the content above, and nothing else does (§4).
   **locked block** (a task's pre-bound args as the view, `.view.locked`,
   no verbal label — the sealed half of the form), the **editable input**, **one
   button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
-  with `.progress` + `hx-disabled-elt`, then the **result attached below**
+  with `_progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
-  In a panel opened from a room the form carries the room as a hidden field,
-  and its cluster leads with **Fill from chat** — a `.btn` when the planner is
-  free, the `.btn-money` naming its price when priced — whose refusal is an
-  `.error-text` above the buttons; a success's `.outcome` then carries its
-  result as the composer's draft (`data-draft`), and the panel closes into it.
+  The form's **tools** stand in its top row above the fields they act on
+  (`.form-tools`): the JSON switch and, in a panel opened from a room (the
+  room a hidden field), **Fill from chat** — the `sparkles` icon named in its
+  title, a `.btn-icon` when the planner is free, the `.btn-money` holding the
+  icon and the amount when priced (§5.1: a spend names its amount). While the
+  planner works, the same `_progress` bar runs at the row's left, where
+  nothing else stands, the form is `aria-busy` and its other controls
+  `inert`; a refusal is an `.error-text` in the bar's place. Run is the foot's
+  one button. A success's `.outcome` carries its result as the composer's
+  draft (`data-draft`), and the panel closes into it.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
   the JSON toggle), **approval** (nothing left to fill → just the button), or a
   lone **raw JSON** editor (free-form schema). Same component throughout.
@@ -388,7 +393,8 @@ separates it from the content above, and nothing else does (§4).
   right-aligned on that line (`.action-line`), the **ref** on its own line
   beneath (`.action-ref`, `_ref`, owner emphasized), the description (at most two
   lines, `.action-desc`), and **the same `_stat_strip`** the action page uses
-  (icon + tooltip: success · rating · latency), rendered **price-less** on the row
+  (its `.stat-cell`s, icon + tooltip: success · rating · latency, which the
+  evidence table renders too), rendered **price-less** on the row
   (`statStrip … withPrice=false`) since price is already on the title line. The
   title is the row's one pointer target; the row is `.rowable` for `j`/`k`/`Enter`
   and carries no click handler. The peer roster and the agents page use the same
@@ -433,8 +439,10 @@ separates it from the content above, and nothing else does (§4).
 - **Chat is the workspace.** `/chat` opens the viewer's room with the
   assistant; the rooms are the sidebar's **rail**. A room is `.room`: the
   `.conversation` — crumb (room name · members · leave/delete) → the entry
-  stack (`.msgs`, `[data-autoscroll]`) → who is answering (`.muted.small`,
-  `#chat-working`) → the composer bar, sticky at the foot — beside the
+  stack (`.msgs`, `[data-autoscroll]`) → whom it waits on (`_working`:
+  `.muted.small.waiting`, `#chat-working`, one element for the page and every
+  out-of-band answer — `Waiting on a and b`, its ellipsis breathing while the
+  page watches, still under reduced motion) → the composer bar, sticky at the foot — beside the
   `.panel`. **The page is the scroll container** — no fixed-height frame; the
   panel alone scrolls on its own. The document pins to its
   **newest** entry on open and on any append while already at the bottom —
@@ -567,7 +575,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as the view (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row; from a room it carries its draft (`data-draft`) |
 | `.banner` (`-info`/`-error`) | inline notice. A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
-| `.progress` | indeterminate bar for long calls (never an indefinite spinner) |
+| `.progress` | indeterminate bar for long calls (never an indefinite spinner), one partial, `_progress` (id, label): Run's below its form, a form tool's in the form's top row; shown in flight, `.htmx-request`, set by htmx on an `hx-indicator` or by the script owning a fetch |
 | `.badge` | round, accent — the task count, the **sole** async attention signal of the core surface: on the avatar, the menu's Inbox row (inline) and the topbar's trigger, every copy swapped at once by the heartbeat (`.badge-inbox`), **empty when zero** (`.badge:empty` hides it) |
 | `.unread` | a rail room with unseen activity: weighted, so it reads as "new" |
 
@@ -641,15 +649,19 @@ date from the kernel row; no `none`, no dash, no protocol strings) and a
 `.cluster` of buttons, `Name` (`.btn`) and `Suspend` or `Unsuspend`,
 as the user page's card does; then the kernel's **public actions** as
 **discovered `_action_row`s** (§5.5 — a remote action before resolution, its
-link resolving it), and **evidence** in **two blocks**, in the same
-grouped-block grammar as the action stats table: the provider's own **report**
-("reported by the provider"), then **counterparty experience** per issuer with
-its corroborated count. Each row names its subject action and states
-uses/failures/contradicted with the two rating counts as text —
-`N trade-backed · M unverified`. The **one `_evidence` partial** also renders
-what other kernels report on an **action's page**, below its ratings, the
-provider's block first. Evidence carries **no colour and no fill**: it is a
-trust fact, not a status, and never joins the first-party reputation strip.
+link resolving it), and **evidence** as **one table** (`_evidence`,
+`.stats-table`, no header): one report per row, its subject first — the
+address the inspection serves, else the id cut short with `_copy` — then the
+stats line's own cells (`_stat_success`, `_stat_rating`, `_stat_latency`:
+icon, value, the meaning in `title`) and the **source** last, `provider` for
+the subject's own report (first) and the issuer's key otherwise. The
+corroborated and unverified counts ride in the success and rating titles; a
+contradiction marks the source with `alert` and its count. The **one
+`_evidence` partial** also renders what other kernels report on an **action's
+page**, below its ratings, and folded under **Evidence** in the panel, without
+the subject column. Evidence carries **no colour and no fill**: it is a trust
+fact, not a status, and never joins the first-party reputation strip, which
+stays its own view, as does the inspection's pooled Self-reported line.
 
 **Obligations** sit between this kernel's figures and the list: every cross-kernel
 debt settles per call on the rail by a ticket both kernels name, so each row is
@@ -745,7 +757,7 @@ obligations above.
 - One `aria-live` region; the task badge is the only async attention signal in
   the core surface (the rail's unread weighting is the conversations' own); no
   notification feed/toast stack.
-- Visible focus; full keyboard operability; `prefers-reduced-motion` respected;
+- Visible focus; full keyboard operability; `prefers-reduced-motion` respected, pseudo-elements included (the progress bar and the waiting ellipsis move there);
   WCAG AA (theme test).
 - CSP: no inline script; the command registry is inert JSON; `Referrer-Policy:
   same-origin` (never `no-referrer` — it nulls the Origin and breaks CSRF).

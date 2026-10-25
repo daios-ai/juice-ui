@@ -134,8 +134,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 /* Stat strips — icon + number pairs in a horizontal row */
 .stat-strip { display: flex; gap: var(--space-4); flex-wrap: nowrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
-.stat-strip span { display: flex; align-items: center; gap: var(--space-1); }
-.stat-strip svg { pointer-events: none; }
+/* A stat cell (_stat_success, _stat_rating, _stat_latency): icon and value,
+   the meaning in its title — in the stats line and in the evidence table. */
+.stat-cell { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.stat-cell svg { pointer-events: none; }
 
 /* Money columns are right-aligned — header included, so the title sits over its
    values. Any money <th> carries class="money". */
@@ -465,6 +467,12 @@ label { display: block; font-weight: 600; margin-bottom: var(--space-1); }
 /* A checkbox choice under a field (a nullable field's explicit null). */
 label.check { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 400; margin: var(--space-1) 0 0; }
 .field { margin-bottom: var(--space-4); }
+/* A form's tools (_call_form): a tool's bar, or its refusal, at the left; the
+   JSON switch and Fill at the right, above the fields they act on. While a
+   tool works the form is busy and its other controls inert. */
+.form-tools { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.form-tools > .error-text { flex: 1; margin: 0; }
+form[aria-busy="true"] [inert] { opacity: .5; }
 /* Switch (§5.4): a binary view or setting — its label, then a track with a
    knob; on, the track fills with ink (never the accent). The JSON switch sits
    at the top right of a form and of a view alike. */
@@ -572,7 +580,8 @@ form > .view.locked { border-bottom: 1px solid var(--border); padding-bottom: va
 .cost .n { color: var(--credited); }
 .cost-note { font-size: var(--font-size-xs); }
 
-/* In-flight progress (htmx adds .htmx-request to the hx-indicator target). */
+/* In-flight progress (_progress). In flight is .htmx-request, which htmx sets
+   on an hx-indicator target and the script that owns a fetch sets itself. */
 .progress { display: none; align-items: center; gap: var(--space-2); flex: 1; color: var(--text-muted); font-size: var(--font-size-md); }
 .progress.htmx-request { display: flex; }
 .progress .bar { position: relative; height: 5px; flex: 0 0 140px; max-width: 45%; background: var(--surface-2); border-radius: var(--radius-full); overflow: hidden; }
@@ -605,12 +614,10 @@ th { color: var(--text-muted); font-weight: 600; }
 details.card > summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; list-style-position: inside; }
 details.card > summary::-webkit-details-marker { color: var(--text-muted); }
 details.card > summary .cluster { margin-left: auto; }
-.roster-stats { margin-top: var(--space-3); }
 
 /* Compact stats table for federation roster/inspect (name/price/uses/rating) */
 .stats-table { margin: var(--space-1) 0 0; }
 .stats-table th, .stats-table td { padding: var(--space-1) var(--space-2); font-size: var(--font-size-sm); }
-h3.flush { margin: var(--space-2) 0 0; }
 
 /* Keyboard-navigable rows: focusable, j/k moves and Enter follows data-href
    (keys.js). The row's link is the pointer target, so no pointer cursor. */
@@ -629,6 +636,10 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .container > .banner { margin-bottom: var(--space-4); }
 
 .muted { color: var(--text-muted); }
+/* A wait on a party (_working): the line says who; its ellipsis breathes
+   while the page watches. Reduced motion stops it (the global rule). */
+.waiting:not(:empty)::after { content: "…"; animation: waiting 1.5s ease-in-out infinite; }
+@keyframes waiting { 50% { opacity: .2; } }
 
 /* ---- v0.3 marketplace components ---- */
 
@@ -700,6 +711,11 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .panel .modal-head > .btn-quiet { margin-left: calc(-1 * var(--space-2)); }
 .panel .modal-body { max-height: none; overflow: visible; }
 .panel .modal-body > h2:first-child { margin: 0 0 var(--space-2); font-size: var(--font-size-lg); }
+/* The run form opens a new section of the panel: a step above the form's own
+   field rhythm (--space-4), so the gap between the groups exceeds the gaps
+   inside them; the evidence fold, part of the record above, keeps the
+   record's paragraph rhythm. The page needs none: its h2 opens the section. */
+.panel #action-run { margin-top: var(--space-5); }
 /* The launcher: the composer's `/`, its matches opening above the composer,
    the best nearest the box one types in. */
 .launcher { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 200; padding: var(--space-1); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
@@ -725,7 +741,8 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .member-row form { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  /* Pseudo-elements too: the progress bar and the waiting ellipsis move there. */
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .btn, .btn-money, .btn-danger { transition: border-color .14s ease, background .14s ease, transform .14s ease; }

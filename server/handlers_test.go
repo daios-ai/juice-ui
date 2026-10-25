@@ -3469,9 +3469,9 @@ func (convApp) Context(_ *http.Request, room string) ([]client.Message, error) {
 }
 
 // Fill from chat prepares an action's fields from the conversation the panel
-// was opened from — the planner with this one action, pinned to its quote —
-// and from a previous result carried in; an argument the conversation does not
-// state stays blank; nothing runs but the planner.
+// was opened from — the planner with this one action, pinned to its quote; an
+// argument the conversation does not state stays blank; nothing runs but the
+// planner.
 func TestFillPreparesTheFieldsFromTheConversation(t *testing.T) {
 	kernel := proposalKernel(t, 0, `{"action":"sys@testnet/web","args":{"url":"example.com"}}`)
 	defer kernel.Close()
@@ -3480,12 +3480,22 @@ func TestFillPreparesTheFieldsFromTheConversation(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	panel := getBody(t, cl, srv.URL+"/actions/WEB/panel?room=r1")
-	for _, want := range []string{`name="room" value="r1"`, `name="fill_quote_hash" value="DQ"`, `<button type="button" class="btn" data-fill="/actions/WEB/fill">Fill from chat</button>`} {
+	for _, want := range []string{`name="room" value="r1"`, `name="fill_quote_hash" value="DQ"`, `<button type="button" class="btn-icon" data-fill="/actions/WEB/fill" title="Fill from chat" aria-label="Fill from chat"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg></button>`, `<span>Filling…</span>`} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("panel lacks %s", want)
 		}
 	}
-	if bare := getBody(t, cl, srv.URL+"/actions/WEB/panel"); strings.Contains(bare, "data-fill") {
+	// Fill is a tool of the form, in its top row; Run is the foot's one button.
+	tools := panel[strings.Index(panel, `<div class="form-tools">`):]
+	tools = tools[:strings.Index(tools, "</div>\n")]
+	if !strings.Contains(tools, "data-fill") || !strings.Contains(tools, "data-json-switch") {
+		t.Errorf("the top row holds the switch and Fill: %s", tools)
+	}
+	foot := panel[strings.LastIndex(panel, `<div class="cluster">`):]
+	if strings.Contains(foot[:strings.Index(foot, "</div>")], "data-fill") {
+		t.Error("Fill must not sit beside Run")
+	}
+	if bare := getBody(t, cl, srv.URL+"/actions/WEB/panel"); strings.Contains(bare, "data-fill") || strings.Contains(bare, "Filling…") {
 		t.Error("with no conversation there is nothing to fill from")
 	}
 
@@ -3533,14 +3543,14 @@ func TestFillLeavesTheUnstatedBlank(t *testing.T) {
 	}
 }
 
-// A priced planner prices the fill: the money button names it.
+// A priced planner prices the fill: the tool is the money button naming it.
 func TestPricedFillIsAMoneyButton(t *testing.T) {
 	kernel := proposalKernel(t, 9, `{"action":"sys@testnet/web","args":{}}`)
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{convApp{}} }))
 	defer srv.Close()
 	panel := getBody(t, loginClient(t, srv.URL), srv.URL+"/actions/WEB/panel?room=r1")
-	if !strings.Contains(panel, `<button type="button" class="btn-money" data-fill="/actions/WEB/fill">Fill from chat (9 credits)</button>`) {
+	if !strings.Contains(panel, `<button type="button" class="btn-money" data-fill="/actions/WEB/fill" title="Fill from chat — 9 credits" aria-label="Fill from chat — 9 credits"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg><span>9 credits</span></button>`) {
 		t.Errorf("a priced fill is authorized on the money button: %s", panel)
 	}
 }

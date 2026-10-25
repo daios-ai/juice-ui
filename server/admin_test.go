@@ -310,27 +310,31 @@ func TestAdminInspectRenders(t *testing.T) {
 	if strings.Contains(body, "Reachability</dt>") {
 		t.Error("the separate Reachability row should be folded into Status")
 	}
-	// Evidence renders in two views that are never folded: the subject's own
-	// execution rows, then each other issuer's experience with its corroborated
-	// count. A subject is named by its full action id — nothing joins it to a name.
+	// Evidence is one table: one report per row in the stats line's cells,
+	// the source last, the kernel's own report first. Each row names its
+	// subject by the address the inspection serves; the kernel's further counts
+	// ride in the cells' titles; nothing is summed.
 	if !strings.Contains(body, "Evidence") || strings.Contains(body, "Transacted peers") {
 		t.Error("inspect must render Evidence, not the retired transacted-peers list")
 	}
-	for _, want := range []string{"reported by the provider", "issued by", "a2", "corroborated", "trade-backed", "unverified"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("evidence block missing %q", want)
+	table := body[strings.Index(body, `<table class="stats-table">`):]
+	table = table[:strings.Index(table, "</table>")]
+	for _, want := range []string{
+		`<span class="mono" title="a2">synth@kernelc/make</span>`,
+		"100% (6)", `title="Rating — 2 raters, 1 more unverified"`, "0.7s", `title="KEYC">provider</span>`,
+		"0% (1)", `title="Success rate — 1 runs, 1 confirmed by the provider"`, `title="KEYB">KEYB</span>`,
+	} {
+		if !strings.Contains(table, want) {
+			t.Errorf("evidence table missing %q:\n%s", want, table)
 		}
 	}
-	// One self block and one third-party block — never merged into one score, and
-	// the self block carries no corroborated column (nothing can corroborate it).
-	if n := strings.Count(body, "reported by the provider"); n != 1 {
-		t.Errorf("the execution summary must be exactly one block, got %d", n)
+	if strings.Count(table, "<tr>") != 2 || strings.Index(table, ">provider<") > strings.Index(table, ">KEYB<") {
+		t.Errorf("one row per report, the provider's first:\n%s", table)
 	}
-	if n := strings.Count(body, "issued by"); n != 1 {
-		t.Errorf("counterparty experience must group per issuer, got %d blocks", n)
-	}
-	if n := strings.Count(body, ">corroborated<"); n != 1 {
-		t.Errorf("only a third-party block may carry the corroborated column, got %d", n)
+	for _, gone := range []string{"trade-backed", "issued by", "reported by the provider", "<h3", "#alert"} {
+		if strings.Contains(table, gone) {
+			t.Errorf("evidence table carries retired %q", gone)
+		}
 	}
 }
 

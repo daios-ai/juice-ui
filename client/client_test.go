@@ -910,10 +910,9 @@ func TestRequesters(t *testing.T) {
 }
 
 // An action's detail read carries the evidence block (d59742b, verified live):
-// this kernel's own record, the provider's report, and other kernels' reports.
-// Experience is the first; Reports lists the rest under their issuers, the
-// provider's own first and never folded together.
-func TestActionEvidenceDecodesAndGroups(t *testing.T) {
+// this kernel's own record, the provider's report, and other kernels' reports,
+// each kept apart.
+func TestActionEvidenceDecodes(t *testing.T) {
 	var a Action
 	body := `{"id":"P","action":"seller@k-4lnq/greet","evidence":{
 	  "local_experience":{"action_id":"P","uses":2,"successes":1,"failures":1,"rating_count":1,"rating_estimate":1},
@@ -926,20 +925,19 @@ func TestActionEvidenceDecodesAndGroups(t *testing.T) {
 	if st := a.Experience(); st == nil || st.Uses != 2 || st.RatingCount != 1 {
 		t.Fatalf("Experience = %+v", st)
 	}
-	r := a.Reports()
-	if len(r) != 2 || !r[0].Self || r[0].Issuer != "PROV" || r[1].Self || r[1].Issuer != "OTHER" {
-		t.Fatalf("Reports = %+v", r)
+	if p := a.Evidence.ProviderReported; p == nil || p.IssuerPublicKey != "PROV" || p.AvgLatencyMs != 0.5 {
+		t.Fatalf("provider report = %+v", p)
 	}
-	if r[1].Rows[0].Contradictions != 1 || r[1].Rows[0].CorroboratedUses != 2 {
-		t.Errorf("third-party row = %+v", r[1].Rows[0])
+	if o := a.Evidence.ObservedByOthers; len(o) != 1 || o[0].Contradictions != 1 || o[0].CorroboratedUses != 2 || o[0].UnverifiedRating != 1 {
+		t.Errorf("third-party rows = %+v", o)
 	}
 	// A list row carries no evidence, and a discovered hit no local record.
-	if (Action{}).Experience() != nil || (Action{}).Reports() != nil {
-		t.Error("an action without an evidence block has no record and no reports")
+	if (Action{}).Experience() != nil {
+		t.Error("an action without an evidence block has no record")
 	}
 	var hit Action
 	_ = json.Unmarshal([]byte(`{"evidence":{"local_experience":null,"provider_reported":null,"observed_by_others":[],"retained_cap":200}}`), &hit)
-	if hit.Experience() != nil || len(hit.Reports()) != 0 {
+	if hit.Experience() != nil || hit.Evidence.ProviderReported != nil || len(hit.Evidence.ObservedByOthers) != 0 {
 		t.Error("a discovered hit carries neither")
 	}
 }

@@ -42,18 +42,12 @@
 {{if lt (len $d.Actions) $d.Catalog}}<p class="muted small">{{len $d.Actions}} of {{$d.Catalog}} shown</p>{{end}}
 {{else}}<p class="muted">No public actions.</p>{{end}}
 
-{{/* Evidence is signed and independently verifiable, so it is shown in two
-     blocks that are never folded: what this kernel reports about its own
-     execution, and what other kernels report about it. Neither is a verdict. */}}
+{{/* Evidence is signed and independently verifiable: one table, one
+     report per row with its source, the kernel's own reports first. Nothing
+     is summed, and the pooled Self-reported line above stays its own view.
+     Neither is a verdict. */}}
 <h2>Evidence</h2>
-{{$self := $i.SelfEvidence}}
-{{$others := $i.CounterpartyEvidence}}
-{{if or $self.Rows $others}}
-<div class="stack roster-stats">
-  {{if $self.Rows}}<div>{{template "_evidence" $self}}</div>{{end}}
-  {{range $others}}<div>{{template "_evidence" .}}</div>{{end}}
-</div>
-{{else}}<p class="muted">No evidence retained.</p>{{end}}
+{{with peerEvidence $i}}{{template "_evidence" .}}{{else}}<p class="muted">No evidence retained.</p>{{end}}
 
 {{/* The field opens with the kernel's own auto-bind preference (§6.6): the
      petname when bound, else the nickname or k-<key8>, suffixed past any

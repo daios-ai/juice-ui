@@ -208,23 +208,6 @@ func (a Action) Experience() *Stats {
 	return a.Evidence.LocalExperience
 }
 
-// Reports groups what kernels other than this one say about the action, each
-// report under its issuer — the provider's own first — for the _evidence
-// partial. Empty on an action no one else has reported on.
-func (a Action) Reports() []IssuerEvidence {
-	if a.Evidence == nil {
-		return nil
-	}
-	var out []IssuerEvidence
-	if p := a.Evidence.ProviderReported; p != nil {
-		out = append(out, IssuerEvidence{Issuer: p.IssuerPublicKey, Self: true, Rows: []Evidence{*p}})
-	}
-	for _, e := range a.Evidence.ObservedByOthers {
-		out = append(out, IssuerEvidence{Issuer: e.IssuerPublicKey, Rows: []Evidence{e}})
-	}
-	return out
-}
-
 // Ref returns the action's address, owner@kernel/name, as the kernel serves it.
 func (a Action) Ref() string { return a.Action }
 

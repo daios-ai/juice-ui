@@ -779,16 +779,17 @@ type entriesView struct {
 	Error   string
 }
 
-// Answering names who the room is waiting on: "a is answering", "a and b
-// are answering", "a, b and c are answering"; "" when nobody.
-func (v entriesView) Answering() string {
+// Waiting names who the room waits on: "Waiting on a", "Waiting on a and
+// b", "Waiting on a, b and c"; "" when nobody. It states an open delivery,
+// never activity, which chat cannot observe.
+func (v entriesView) Waiting() string {
 	switch n := len(v.Working); n {
 	case 0:
 		return ""
 	case 1:
-		return v.Working[0] + " is answering"
+		return "Waiting on " + v.Working[0]
 	default:
-		return strings.Join(v.Working[:n-1], ", ") + " and " + v.Working[n-1] + " are answering"
+		return "Waiting on " + strings.Join(v.Working[:n-1], ", ") + " and " + v.Working[n-1]
 	}
 }
 
@@ -949,7 +950,7 @@ func (c *Chat) tail(r *http.Request, roomID string, after int64) entriesView {
 	return entriesView{RoomID: roomID, Entries: es, Removed: gone, After: after, Working: c.working(roomID, me)}
 }
 
-// working is who is answering in a room: the members other than the viewer
+// working is who a room waits on: the members other than the viewer
 // that hold an unanswered delivery there.
 func (c *Chat) working(roomID, me string) []string {
 	ws, err := c.store.Working(roomID, me)
@@ -961,7 +962,7 @@ func (c *Chat) working(roomID, me string) []string {
 
 // watch answers the heartbeat: the rail when a room appeared, went or was
 // read (shown is a digest of the rail it rendered), and a room with its
-// entries after the shown seq and who is answering. A room in a visible tab
+// entries after the shown seq and who it waits on. A room in a visible tab
 // is seen.
 func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) {
 	me := c.deps.Me(r)
@@ -981,7 +982,7 @@ func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) 
 		c.seen(r, me, key, v.After)
 	}
 	if len(v.Entries) == 0 && len(v.Removed) == 0 {
-		return c.deps.Fragment("_chat_working", v)
+		return c.deps.Fragment("_working", v)
 	}
 	return c.deps.Fragment("_chat_tick", v)
 }

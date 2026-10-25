@@ -180,15 +180,25 @@
 {{/* _stat_strip — THE action stats line (price · success · rating · latency),
      shared by the list cards and the action detail page so they never drift.
      Keyed per field, so an unused action reads honest empty states, not fake
-     "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). */}}
+     "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). Each
+     slot is a cell partial — icon, value, the meaning in its title — which the
+     evidence table renders too, so a report reads as the line does. */}}
 {{define "_stat_strip"}}
 <p class="stat-strip">
   {{if .WithPrice}}{{template "_price" (price .Price false)}}
-  · {{end}}{{if gt .S.Uses 0}}<span title="Success rate — {{.S.Uses}} runs"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
-  · {{if gt .S.RatingCount 0}}<span title="Rating — {{.S.RatingCount}} raters"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="muted" title="No ratings yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}
-  · {{if gt .S.Uses 0}}<span title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}
+  · {{end}}{{template "_stat_success" .}}
+  · {{template "_stat_rating" .}}
+  · {{template "_stat_latency" .}}
 </p>
 {{end}}
+{{define "_stat_success"}}{{if gt .S.Uses 0}}<span class="stat-cell" title="Success rate — {{.S.Uses}} runs{{with .Corroborated}}, {{.}} confirmed by the provider{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="stat-cell muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}{{end}}
+{{define "_stat_rating"}}{{if gt .S.RatingCount 0}}<span class="stat-cell" title="Rating — {{.S.RatingCount}} raters{{with .Unverified}}, {{.}} more unverified{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="stat-cell muted" title="No ratings yet{{with .Unverified}} — {{.}} unverified{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}{{end}}
+{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell" title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="stat-cell muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}{{end}}
+
+{{/* _progress — THE in-flight bar: Run's, below its form, and a form tool's,
+     in the form's top row. Takes progress id label; the id is what an
+     hx-indicator names. */}}
+{{define "_progress"}}<div{{with .ID}} id="{{.}}"{{end}} class="progress" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>{{.Label}}</span></div>{{end}}
 
 {{/* One call, two readings. Locally the buyer pays gross, the operator takes a
      fee on value added, and the provider is paid net. Across kernels the same
@@ -388,17 +398,21 @@
        the fill reads and a success answers to. */}}
   {{with .Room}}<input type="hidden" name="room" value="{{.}}">{{end}}
   {{with .Fill}}<input type="hidden" name="fill_quote_hash" value="{{.QuoteHash}}">{{end}}
-  {{if .Structured}}{{template "_json_switch"}}{{end}}
+  {{/* The form's tools, above the fields they act on: the JSON switch, and
+       Fill from chat — the planner prepares the fields from the conversation
+       and never runs the action. A priced planner is authorized on the money
+       button naming its amount, never silently (requirements §6.2). While it
+       works its bar runs at the row's left, where a refusal then stands. */}}
+  {{if or .Structured .Fill}}<div class="form-tools">
+    {{if .Fill}}{{template "_progress" (progress "" "Filling…")}}<p class="error-text" data-fill-error hidden></p>{{end}}
+    {{if .Structured}}{{template "_json_switch"}}{{end}}
+    {{with .Fill}}{{$p := gt .Price 0}}{{$name := "Fill from chat"}}{{if $p}}{{$name = printf "Fill from chat — %s" (money .Price)}}{{end}}<button type="button" class="{{if $p}}btn-money{{else}}btn-icon{{end}}" data-fill="{{$.FillURL}}" title="{{$name}}" aria-label="{{$name}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg>{{if $p}}<span>{{money .Price}}</span>{{end}}</button>{{end}}
+  </div>{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
   {{if .Locked}}<div class="view locked">{{template "_view" (view .Locked)}}</div>{{end}}
   {{if not .IsApproval}}{{template "_form_fields" .Editable}}{{end}}
-  {{/* Fill from chat: the planner prepares the fields from the conversation
-       and never runs the action; a priced planner is authorized on the money
-       button naming its price, never silently (requirements §6.2). */}}
-  {{if .Fill}}<p class="error-text" data-fill-error hidden></p>{{end}}
   <div class="cluster">
-    {{with .Fill}}<button type="button" class="{{if gt .Price 0}}btn-money{{else}}btn{{end}}" data-fill="{{$.FillURL}}">Fill from chat{{if gt .Price 0}} ({{money .Price}}){{end}}</button>{{end}}
     {{/* A task completion (OneShot) is NEUTRAL and names no amount: it spends
          nothing of the completer's, the requester's funds having been reserved
          when the task was made (requirements.md §6.3). A paid run names its
@@ -406,9 +420,7 @@
     {{$spend := and (gt .Price 0) (not .OneShot)}}
     <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{money .Price}}){{end}}</button>
     {{if .DeclineID}}{{template "_decline_button" .DeclineID}}{{end}}
-    <div id="{{.ResultID}}-progress" class="progress" role="status" aria-live="polite">
-      <span class="bar" aria-hidden="true"></span><span>Running…</span>
-    </div>
+    {{template "_progress" (progress (printf "%s-progress" .ResultID) "Running…")}}
   </div>
   {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
@@ -458,38 +470,26 @@
 {{define "_task_decline"}}<form id="decline-{{.ID}}" method="post" action="/inbox/{{.ID}}/cancel" data-confirm="Decline this task?">{{.CSRFField}}</form>{{end}}
 {{define "_decline_button"}}<button class="btn-danger" type="submit" form="decline-{{.}}">Decline</button>{{end}}
 
-{{/* _evidence renders one block of retained evidence, on a peer's inspection
-     and on an action's page. Input: client.IssuerEvidence — .Self marks the
-     provider's report about its own actions (never folded with what others
-     report), which also decides the corroborated column: only a third party's
-     rows can be corroborated by the provider's. A subject is named by its full
-     action id — the id on the provider's kernel, and a truncated id would link
-     nowhere. Ratings are stated in two counts, never averaged together:
-     trade-backed (the two-kernel receipt link holds) and unverified. A trade
-     the issuer told two stories about counts for nothing and is stated as
-     contradicted. Evidence proves attribution, not honesty, so it carries no
-     status colour and never joins an action's own reputation strip. */}}
+{{/* _evidence — retained evidence, on an action's page and panel and on a
+     peer's inspection: one row per report, in the stats line's own cells, the
+     source last — "provider" for the provider's account of its own action,
+     else the issuer's key. Takes an evidenceTable (actionEvidence,
+     peerEvidence). The kernel's further counts ride in the cells' titles:
+     uses the provider's receipts confirm, ratings no trade backs; trades the
+     source reported two ways are marked on the source, since they count for
+     nothing. Evidence proves attribution, not honesty: rows are never summed,
+     carry no status colour, and never join the action's own strip. Where rows
+     span a kernel's actions, each names its subject by address, else by id. */}}
 {{define "_evidence"}}
-{{if .Self}}<h3 class="flush">reported by the provider</h3>
-{{else}}<h3 class="flush">issued by <span class="mono hash">{{truncate 12 .Issuer}}</span> {{template "_copy" (copyOf "key" .Issuer)}}</h3>{{end}}
-<div class="table-scroll">
-<table class="stats-table">
-  <thead><tr><th>action</th><th class="money">uses</th><th class="money">failures</th>{{if not .Self}}<th class="money">corroborated</th>{{end}}<th class="money">contradicted</th><th>ratings</th></tr></thead>
-  <tbody>
-  {{$self := .Self}}
-  {{range .Rows}}
-  <tr>
-    <td><span class="ref mono">{{.SubjectActionID}}</span></td>
-    <td class="money">{{.Uses}}</td>
-    <td class="money">{{.Failures}}</td>
-    {{if not $self}}<td class="money">{{.CorroboratedUses}}</td>{{end}}
-    <td class="money">{{.Contradictions}}</td>
-    <td class="muted small">{{.RatingCount}} trade-backed{{if gt .RatingCount 0}} · {{ratingPct .RatingMean .RatingCount}}%{{end}} · {{.UnverifiedRating}} unverified</td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
+<div class="table-scroll"><table class="stats-table"><tbody>
+{{range .Rows}}<tr>
+  {{if $.Subjects}}<td><span class="mono" title="{{.Subject.Title}}">{{.Subject.Text}}</span>{{if .Subject.IsKey}} {{template "_copy" (copyOf "id" .Subject.Title)}}{{end}}</td>{{end}}
+  <td>{{template "_stat_success" .Strip}}</td>
+  <td>{{template "_stat_rating" .Strip}}</td>
+  <td>{{template "_stat_latency" .Strip}}</td>
+  <td><span{{if .Source.IsKey}} class="mono"{{end}} title="{{.Source.Title}}">{{.Source.Text}}</span>{{if .Source.IsKey}} {{template "_copy" (copyOf "key" .Source.Title)}}{{end}}{{if .Contradictions}} <span class="stat-cell" title="{{.Contradictions}} trades reported two ways — they count for nothing"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Contradictions}}</span>{{end}}</td>
+</tr>{{end}}
+</tbody></table></div>
 {{end}}
 
 {{/* _fields — a form's fields, also the JSON switch's answer when it converts
@@ -812,7 +812,7 @@
 <div class="modal-body">
   {{if .Back}}{{template "_panel_title" .}}{{end}}
   {{template "_action_head" .}}
-  {{with .Action.Reports}}<details class="fold"><summary>Evidence</summary>{{range .}}<div>{{template "_evidence" .}}</div>{{end}}</details>{{end}}
+  {{with actionEvidence .Action}}<details class="fold"><summary>Evidence</summary>{{template "_evidence" .}}</details>{{end}}
   {{template "_action_run" .}}
 </div>
 {{end}}

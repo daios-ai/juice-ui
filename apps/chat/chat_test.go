@@ -958,8 +958,8 @@ func TestRoomSeenAndWatch(t *testing.T) {
 	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, railKey, shown) }); h != "_rail" {
 		t.Errorf("reading a room changes the rail, which answers it; got %s", h)
 	}
-	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "_chat_working" {
-		t.Errorf("nothing new answers only who is answering, got %s", h)
+	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "_working" {
+		t.Errorf("nothing new answers only who the room waits on, got %s", h)
 	}
 	dispatch(c, "/msg/post", bob, "", map[string]any{"thread_id": r.ID, "message": "again"})
 	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "_chat_tick" {
@@ -1122,9 +1122,9 @@ func TestRail(t *testing.T) {
 	}
 }
 
-// Who is answering: the members other than the viewer that hold an
+// Who the room waits on: the members other than the viewer that hold an
 // unanswered delivery in the room, named in one line.
-func TestWorkingNamesWhoIsAnswering(t *testing.T) {
+func TestWorkingNamesWhoTheRoomWaitsOn(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, _ := testChat(t, f)
@@ -1134,14 +1134,17 @@ func TestWorkingNamesWhoIsAnswering(t *testing.T) {
 	ann := joined(t, c, "ann@testnet")
 	dispatch(c, "/msg/post", ann, "", map[string]any{"thread_id": r.ID, "message": "hello"})
 	v := entriesView{Working: c.working(r.ID, "ann@testnet")}
-	if got := v.Answering(); got != "bob@testnet and cy@testnet are answering" {
-		t.Errorf("Answering = %q", got)
+	if got := v.Waiting(); got != "Waiting on bob@testnet and cy@testnet" {
+		t.Errorf("Waiting = %q", got)
 	}
 	if ws := c.working(r.ID, "bob@testnet"); len(ws) != 1 || ws[0] != "cy@testnet" {
-		t.Errorf("the viewer is never among those answering: %v", ws)
+		t.Errorf("the viewer is never among those waited on: %v", ws)
 	}
-	if (entriesView{}).Answering() != "" || (entriesView{Working: []string{"a"}}).Answering() != "a is answering" {
-		t.Error("nobody is no line; one is singular")
+	if (entriesView{}).Waiting() != "" || (entriesView{Working: []string{"a"}}).Waiting() != "Waiting on a" {
+		t.Error("nobody is no line; one is named alone")
+	}
+	if got := (entriesView{Working: []string{"a", "b", "c"}}).Waiting(); got != "Waiting on a, b and c" {
+		t.Errorf("Waiting = %q", got)
 	}
 }
 

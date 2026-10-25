@@ -43,14 +43,12 @@
 {{template "_pager" $d.RatingsPager}}
 {{end}}
 
-{{/* What other kernels report about this action, each under its issuer and
-     the provider's own report first. Labelled by provenance, never summed into
+{{/* What other kernels report about this action, one row per report and the
+     provider's own first. Labelled by provenance, never summed into
      the strip above, which is this kernel's own record (kernel §D16). */}}
-{{with $d.Action.Reports}}
+{{with actionEvidence $d.Action}}
 <h2>Evidence</h2>
-<div class="stack roster-stats">
-  {{range .}}<div>{{template "_evidence" .}}</div>{{end}}
-</div>
+{{template "_evidence" .}}
 {{end}}
 
 {{/* A cached remote proxy is kernel-managed state, not an action one owns here:

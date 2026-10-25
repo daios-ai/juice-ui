@@ -1,7 +1,18 @@
 # Juice Web UI Requirements
 
-Version: 0.40.0
+Version: 0.41.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.41.0.** Fill from chat is a tool of the form: an icon in
+> its top row beside the JSON switch, the money button naming the amount when
+> the planner is priced, and while the planner works its bar runs there and
+> the form waits. What other kernels report reads as the stats line does: one
+> table, one report per row in the line's own cells, the source last and the
+> provider's first, the kernel's further counts in the cells' titles. In the
+> panel the run form begins a section of its own. A room says whom it is
+> waiting on, which is what it knows, and the line breathes while the page
+> watches; reduced motion now stills pseudo-elements too, the progress bar's
+> included (§6.2, §6.6, §6.7).
 
 > **What changed in 0.40.0.** The launcher searches the economy without
 > leaving the conversation (docs/conversational-search.md). A known action is
@@ -1044,8 +1055,8 @@ The workspace (§1), on a wide screen:
 │ ◆ kernel · world  ≡ │ research-room · 3 members · Leave  │ Translate text × │
 │ + New conversation  │ ana@k        Find suppliers …      │ linguist@k/text  │
 │ assistant           │ researcher@k I found three.        │ 2 credits · ▸ ev │
-│ research-room     • │ researcher@k is answering          │ text   [……]      │
-│                     │ ┌ message ─────────────── [/] ┐    │ [Fill from chat] │
+│ research-room     • │ Waiting on researcher@k…           │       JSON ○  ✦  │
+│                     │ ┌ message ─────────────── [/] ┐    │ text   [……]      │
 │ (A) ana@k        ③  │ └───────────────────── [Send] ┘    │ [Run (2)]        │
 └─────────────────────┴────────────────────────────────────┴──────────────────┘
 ```
@@ -1223,7 +1234,8 @@ both MUST keep planning apart from spending:
 * **One rule for its price.** The command is offered wherever the planner is
   present and switched on, at the price the kernel quotes for it: a neutral
   button when free, the money button naming the amount when priced
-  (`Choose for me (N)`, `Fill from chat (N)`), its run pinned to the quote shown
+  (`Choose for me (N)`; Fill from chat, a form tool, its icon and `N`), its run
+  pinned to the quote shown
   (§6.2 quote pinning). Asking is then a spend the person authorizes, never a
   silent one (§8.2). It never runs on a page's load, and an absent planner
   offers no command.
@@ -1377,11 +1389,17 @@ both MUST keep planning apart from spending:
 * **What other kernels report renders beside it, never inside it.** The same
   evidence block carries `provider_reported` (the provider's own account,
   absent when the provider is this kernel) and `observed_by_others`. The page
-  MUST render each under its issuer, the provider first, through the one
-  evidence partial the peer inspection uses (§6.6): uses, failures,
-  corroborated, contradicted, and ratings as trade-backed and unverified counts.
-  Nothing is summed, scored or coloured, and a page with no reports has no
-  section.
+  MUST render them as one table through the one evidence partial the peer
+  inspection uses (§6.6): one report per row, in the strip's own cells —
+  success with its run count, rating with its rater count, latency from
+  `avg_latency_ms` — and the source last, `provider` for the provider's own
+  report (first) and an issuer's key otherwise. The kernel's further counts
+  ride in the cells' titles: on success, the uses the provider's receipts
+  corroborate; on rating, the ratings no trade backs (unverified). Trades the
+  source reported two ways (contradictions) count for nothing and mark the
+  source with their number. Nothing is summed, scored or coloured, and a page
+  with no reports has no section. In the panel the table is folded under
+  **Evidence**.
 * Ratings MUST render as reviews (0/1 value, `note`, newest first, paginated),
   labeled as ratings from paid calls.
 * The owner of an action address MUST be visually emphasized and, when the
@@ -1993,13 +2011,15 @@ symmetry, but because the kernel refuses anything else.
   indicative price, address, description — and its link resolves it. Reachability states the path, one ping's
   round trip, and the peer's version.
 * **Evidence, not hearsay.** Inspect MUST render the kernel's retained evidence
-  in **two views, never folded**: an **execution summary** from the rows the
-  subject issued about itself, and **counterparty experience** from the rest,
-  grouped by issuer and carrying the **corroborated** count. Each row names its
-  subject by its action id (§10) and states uses, successes, failures, and the
-  two rating counts distinctly: **trade-backed** (the two-kernel receipt link
-  holds) and **unverified**. Counts are text; no new colour, no status fill —
-  evidence is a trust fact, not a state. Attribution is provable and honesty is
+  in **two views, never folded**: the **execution summary** (Self-reported,
+  above) pooled from the rows the subject issued about itself, and the
+  **evidence table** of every report — §6.2's one table, one report per row
+  with its source, the subject's own first. Each row names its subject by the
+  address the inspection serves, else by its action id cut short with the
+  whole behind a copy control (§10). The rating counts stay distinct:
+  trade-backed (the two-kernel receipt link holds) in the cell,
+  **unverified** in its title, as is the **corroborated** count on success.
+  No new colour, no status fill — evidence is a trust fact, not a state. Attribution is provable and honesty is
   not, so the UI MUST NOT present evidence as a verdict or fold it into the
   first-party reputation strip.
 * **A cached proxy is kernel-managed state.** Activation is set by resolve and
@@ -2230,13 +2250,15 @@ the assistant, else the newest room, else an empty page beside the rail.
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
   handles. There is no rooms page.
-* **A room** is crumb (name · members · leave/delete) → entries → who is
-  answering → composer, the page the scroll container, the composer held at
+* **A room** is crumb (name · members · leave/delete) → entries → whom it
+  waits on → composer, the page the scroll container, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
   chosen. An entry renders as the view of its body (§7), a failure being the
-  view of its `{status, reason}`. **Who is answering** is one line naming the
+  view of its `{status, reason}`. **Waiting on** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
-  — a fact chat holds — kept by the heartbeat, empty when nobody.
+  — a fact chat holds, never a claim of activity, which chat cannot observe —
+  kept by the heartbeat, empty when nobody; its ellipsis breathes while the
+  page watches, and stands still under reduced motion.
 * **The composer** is the post action's form drawn as a bar — the one
   sanctioned exception to the form's card, because it is the workspace's
   cornerstone. The exception is in the drawing alone: the text box is the
@@ -2276,8 +2298,17 @@ the assistant, else the newest room, else an empty page beside the rail.
 * **Fill from chat** (`POST /actions/{id}/fill`) prepares the panel's fields
   with the planner, under §6.2's Proposal rule: its context is the room's
   recent conversation, as the conversations app hands it (the viewer's
-  entries as the user's, every other member's named). The fields come back as
-  the form's own; a refusal is stated above the buttons and the fields stay.
+  entries as the user's, every other member's named). It is a tool of the
+  form, in its top row beside the JSON switch — an icon named in its title,
+  with the amount on the money button when priced — and Run is the form's one
+  button at its foot. While the planner works, Run's progress bar runs at the
+  row's left, where nothing else stands, and the form is busy, its other
+  controls inert. The fields come back as the form's own; a refusal stands in
+  the bar's place and the fields stay.
+* **The panel's sections.** The record — title, address, description, the
+  stats line and its folded evidence — keeps its paragraph rhythm; the run
+  form begins a section, one spacing step (`--space-5`) below whatever
+  precedes it, above the form's own field rhythm (`--space-4`).
 * **A success from a room is the draft.** A successful run from the panel
   puts its result into the composer — a string as itself, any other value as
   its JSON — after a blank line when something was typed, so a draft is never
@@ -2619,7 +2650,7 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * chat as the workspace: the rail newest first with the room in view and an
   unread one marked, its heartbeat answering only a changed rail; the landing's
   fallbacks; a conversation started from its participants, its blank name
-  theirs; who is answering, never the viewer; the room page carries the
+  theirs; whom the room waits on, never the viewer; the room page carries the
   composer bar — the schema's own message control, no label, switch or sealed
   view, `/`, `@` only with more than one other member, the send arrow, the
   balance and its watch — and the panel; the balance watch answering only a
@@ -2632,6 +2663,16 @@ Every production `.go` file has a `_test.go` file with independent tests.
   priced, pinned to the quote shown, never on load; a fill prepares the
   panel's fields from the room's conversation, runs nothing but the planner,
   leaves an unstated argument blank, and states a refusal in its own words;
+  the fill is a tool of the form's top row, beside the switch, its bar there,
+  and Run alone at the foot;
+* evidence as the stats line reads: one table through one partial on the
+  action page, the panel and the inspection; the stats line's cells; the
+  provider's report first, the source last; corroborated and unverified counts
+  in the cells' titles; a contradiction marking only its source; a peer's
+  subjects named by address, else by id cut short; the old vocabulary gone
+  (drift guard);
+* the room's line waits on its members: one element for the page and every
+  answer, and the old "is answering" gone (drift guard);
 * the search from a conversation: Discover's search and the panel's are one
   function; only a lookup a read confirms free runs unpinned — priced or
   unreadable, never — a GET never spends, and the pinned one runs once at the

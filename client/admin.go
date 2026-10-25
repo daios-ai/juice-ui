@@ -109,10 +109,8 @@ type PeerAction struct {
 // confirms. It is meaningful only on a third-party row (an issuer reporting on
 // someone else) — a subject's self-reported rows carry 0 by construction.
 //
-// `avg_latency_ms` is deliberately NOT decoded: the kernel emits it fractional
-// (690.5, 90760.5 — verified live 2026-08-06), so an integer field fails the
-// whole inspection, and nothing renders it. A field the UI does not show is a
-// decode hazard, not documentation.
+// AvgLatencyMs is a float because the kernel emits it fractional (690.5,
+// 90760.5 — verified live 2026-08-06): an integer field fails the whole read.
 type Evidence struct {
 	IssuerPublicKey  string  `json:"issuer_public_key"`
 	SubjectActionID  string  `json:"subject_action_id"`
@@ -124,6 +122,7 @@ type Evidence struct {
 	RatingMean       float64 `json:"rating_mean"`
 	UnverifiedRating int64   `json:"unverified_ratings"`
 	Contradictions   int64   `json:"contradictions"`
+	AvgLatencyMs     float64 `json:"avg_latency_ms"`
 }
 
 // Reachability holds the transport diagnostics only. Online/Source are NOT here —
@@ -159,47 +158,15 @@ type Inspection struct {
 
 // SelfEvidence is the subject's own execution evidence — the rows it issued
 // about itself. Counted alone it is the execution summary: a remote call is
-// never double-counted (juicedocs §13). It shares IssuerEvidence with the
-// counterparty view so both render through one partial, and carries Self so
-// that partial can drop the corroborated column, which only a third party's
-// rows can populate.
-func (i Inspection) SelfEvidence() IssuerEvidence {
-	out := IssuerEvidence{Issuer: i.PublicKey, Self: true}
+// never double-counted (juicedocs §13).
+func (i Inspection) SelfEvidence() []Evidence {
+	var out []Evidence
 	for _, e := range i.Evidence {
 		if e.IssuerPublicKey == i.PublicKey {
-			out.Rows = append(out.Rows, e)
+			out = append(out, e)
 		}
 	}
 	return out
-}
-
-// CounterpartyEvidence is every OTHER issuer's directly-observed experience of
-// this kernel, grouped by issuer in wire order. It is shown beside the execution
-// summary and never folded into it: attribution is provable, honesty is not.
-func (i Inspection) CounterpartyEvidence() []IssuerEvidence {
-	var out []IssuerEvidence
-	at := map[string]int{}
-	for _, e := range i.Evidence {
-		if e.IssuerPublicKey == i.PublicKey {
-			continue
-		}
-		idx, seen := at[e.IssuerPublicKey]
-		if !seen {
-			out = append(out, IssuerEvidence{Issuer: e.IssuerPublicKey})
-			idx = len(out) - 1
-			at[e.IssuerPublicKey] = idx
-		}
-		out[idx].Rows = append(out[idx].Rows, e)
-	}
-	return out
-}
-
-// IssuerEvidence is one issuer's block of evidence rows. Self marks the block
-// the provider issued about its own actions.
-type IssuerEvidence struct {
-	Issuer string
-	Self   bool
-	Rows   []Evidence
 }
 
 // Identity is GET /v1/admin/kernel: who this kernel is, what its money is

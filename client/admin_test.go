@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -323,39 +324,26 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	}
 }
 
-// Evidence splits into two views that are never folded: the subject's own
-// execution rows, and every other issuer's experience of it, grouped in wire
-// order. Both legs were reproduced live on one subject action (2026-08-06).
-func TestEvidenceViews(t *testing.T) {
+// The execution summary is the subject's own rows alone; a fractional
+// latency decodes (the kernel emits 90760.5, verified live 2026-08-06).
+func TestSelfEvidenceIsTheSubjectsOwnRows(t *testing.T) {
 	insp := Inspection{
 		PublicKey: "SUBJ",
 		Evidence: []Evidence{
 			{IssuerPublicKey: "SUBJ", SubjectActionID: "A1", Uses: 3},
-			{IssuerPublicKey: "ISS1", SubjectActionID: "A1", Uses: 2, CorroboratedUses: 1, RatingCount: 1, RatingMean: 1},
-			{IssuerPublicKey: "ISS2", SubjectActionID: "A1", Uses: 5, UnverifiedRating: 3},
-			{IssuerPublicKey: "ISS1", SubjectActionID: "A2", Uses: 1},
+			{IssuerPublicKey: "ISS1", SubjectActionID: "A1", Uses: 2},
+			{IssuerPublicKey: "SUBJ", SubjectActionID: "A2", Uses: 1},
 		},
 	}
-	self := insp.SelfEvidence()
-	if !self.Self || len(self.Rows) != 1 || self.Rows[0].Uses != 3 {
+	if self := insp.SelfEvidence(); len(self) != 2 || self[0].Uses != 3 || self[1].Uses != 1 {
 		t.Errorf("execution summary must be the subject's own rows alone: %+v", self)
 	}
-	got := insp.CounterpartyEvidence()
-	if len(got) != 2 || got[0].Issuer != "ISS1" || got[1].Issuer != "ISS2" {
-		t.Fatalf("grouping wrong (wire order, subject excluded): %+v", got)
-	}
-	if len(got[0].Rows) != 2 || got[0].Rows[0].CorroboratedUses != 1 {
-		t.Errorf("issuer rows or corroborated count lost: %+v", got[0].Rows)
-	}
-	if got[1].Rows[0].UnverifiedRating != 3 {
-		t.Errorf("unverified count lost: %+v", got[1].Rows[0])
-	}
-	// No evidence → no rows either side (the template shows its own empty state).
-	if g := (Inspection{}).CounterpartyEvidence(); g != nil {
-		t.Errorf("empty evidence must group to nil, got %+v", g)
-	}
-	if s := (Inspection{}).SelfEvidence(); s.Rows != nil {
+	if s := (Inspection{}).SelfEvidence(); s != nil {
 		t.Errorf("empty evidence must yield no self rows, got %+v", s)
+	}
+	var e Evidence
+	if err := json.Unmarshal([]byte(`{"avg_latency_ms":90760.5}`), &e); err != nil || e.AvgLatencyMs != 90760.5 {
+		t.Errorf("avg_latency_ms = %v, %v", e.AvgLatencyMs, err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -186,56 +187,59 @@ func allDigits(s string) bool {
 func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, error) {
 	r := &Renderer{identity: identity}
 	funcs := template.FuncMap{
-		"money":        r.money,
-		"amountInput":  r.amountInput,
-		"amountStep":   r.amountStep,
-		"sum":          func(a, b int64) int64 { return a + b },
-		"sub":          func(a, b int64) int64 { return a - b },
-		"json":         prettyJSON,
-		"jsonEdit":     jsonEdit,
-		"view":         View,
-		"valueBlock":   valueBlock,
-		"download":     resultDownload,
-		"statusClass":  statusClass,
-		"truncate":     truncate,
-		"shortAddr":    shortAddr,
-		"costOf":       costOf,
-		"buildForm":    BuildForm,     // lets templates derive a FormModel from a raw schema
-		"taskForm":     BuildTaskForm, // a form with sealed arguments: the schema and its sealed part
-		"pct":          pct,
-		"ratingPct":    ratingPct,
-		"refFolder":    refFolder,
-		"nameOf":       nameOf,
-		"kernelName":   keyDisplay,
-		"copyOf":       copyOf,
-		"endOf":        endOf,
-		"obligation":   obligation,
-		"declineForm":  declineForm,
-		"ref":          r.refOf,
-		"price":        priceOf,
-		"shortTime":    shortTime,
-		"shortDate":    shortDate,
-		"relTime":      relTime,
-		"txAmount":     r.txAmount,
-		"txrow":        txRowOf,
-		"kindBadge":    kindBadge,
-		"tab":          tab,
-		"paneltab":     paneltab,
-		"actionsHref":  actionsHref,
-		"runForm":      r.runForm,
-		"resultText":   resultText,
-		"completeForm": completeForm,
-		"statStrip":    statStrip,
-		"figure":       figure,
-		"linked":       linked,
-		"lockedFigure": lockedFigure,
-		"figures":      figures,
-		"cardArt":      CardArt,
-		"initial":      initial,
-		"launcher":     launcherOf,
-		"balance":      func(amount int64) balanceView { return balanceView{Amount: amount} },
-		"authPanel":    newAuthPanel,
-		"httpMethods":  func() []string { return []string{"POST", "GET", "PUT", "PATCH", "DELETE"} },
+		"money":          r.money,
+		"amountInput":    r.amountInput,
+		"amountStep":     r.amountStep,
+		"sum":            func(a, b int64) int64 { return a + b },
+		"sub":            func(a, b int64) int64 { return a - b },
+		"json":           prettyJSON,
+		"jsonEdit":       jsonEdit,
+		"view":           View,
+		"valueBlock":     valueBlock,
+		"download":       resultDownload,
+		"statusClass":    statusClass,
+		"truncate":       truncate,
+		"shortAddr":      shortAddr,
+		"costOf":         costOf,
+		"buildForm":      BuildForm,     // lets templates derive a FormModel from a raw schema
+		"taskForm":       BuildTaskForm, // a form with sealed arguments: the schema and its sealed part
+		"pct":            pct,
+		"ratingPct":      ratingPct,
+		"refFolder":      refFolder,
+		"nameOf":         nameOf,
+		"kernelName":     keyDisplay,
+		"copyOf":         copyOf,
+		"progress":       func(id, label string) progressView { return progressView{ID: id, Label: label} },
+		"actionEvidence": actionEvidence,
+		"peerEvidence":   peerEvidence,
+		"endOf":          endOf,
+		"obligation":     obligation,
+		"declineForm":    declineForm,
+		"ref":            r.refOf,
+		"price":          priceOf,
+		"shortTime":      shortTime,
+		"shortDate":      shortDate,
+		"relTime":        relTime,
+		"txAmount":       r.txAmount,
+		"txrow":          txRowOf,
+		"kindBadge":      kindBadge,
+		"tab":            tab,
+		"paneltab":       paneltab,
+		"actionsHref":    actionsHref,
+		"runForm":        r.runForm,
+		"resultText":     resultText,
+		"completeForm":   completeForm,
+		"statStrip":      statStrip,
+		"figure":         figure,
+		"linked":         linked,
+		"lockedFigure":   lockedFigure,
+		"figures":        figures,
+		"cardArt":        CardArt,
+		"initial":        initial,
+		"launcher":       launcherOf,
+		"balance":        func(amount int64) balanceView { return balanceView{Amount: amount} },
+		"authPanel":      newAuthPanel,
+		"httpMethods":    func() []string { return []string{"POST", "GET", "PUT", "PATCH", "DELETE"} },
 	}
 	base, err := template.New("base").Funcs(funcs).ParseFS(tmplFS, "templates/layout.html", "templates/_*.html")
 	if err != nil {
@@ -684,14 +688,115 @@ type Tab struct {
 	Active            bool
 }
 
-// StatStrip feeds the _stat_strip partial. Counts toggles the (N) run/rater
-// counts — shown on the action detail page, omitted on the list cards.
+// StatStrip feeds the _stat_strip partial and its cells (_stat_success,
+// _stat_rating, _stat_latency), which the evidence table shares. Counts
+// toggles the (N) run/rater counts — shown on the action detail page, omitted
+// on the list cards.
 type StatStrip struct {
 	Price     int64
 	S         client.Stats
 	Counts    bool
 	WithPrice bool // detail page leads with price; cards omit it (shown top-right)
+	// Set on a row of evidence (evidenceOf): the uses the provider's receipts
+	// confirm, and the ratings no trade backs, stated in the cells' titles.
+	Corroborated, Unverified int64
 }
+
+// evidenceTable is what _evidence renders: one row per report — one issuer's
+// signed account of one action (kernel §D16) — in the stats line's cells, the
+// source last. Subjects is set where the rows span a kernel's actions (a
+// peer's inspection); on an action every row is about it.
+type evidenceTable struct {
+	Rows     []evidenceRow
+	Subjects bool
+}
+
+type evidenceRow struct {
+	Subject        Name // the action: its address where known, else its id
+	Strip          StatStrip
+	Source         Name // "provider", else the issuer's key
+	Contradictions int64
+}
+
+// evidenceOf builds the table, nil when there is nothing to show. provider is
+// the key whose reports are the provider's own; names maps a subject's id to
+// its address, nil on an action. The provider's rows come first, by subject;
+// nothing is summed (requirements §6.2, §6.6).
+func evidenceOf(rows []client.Evidence, provider string, names map[string]string) *evidenceTable {
+	if len(rows) == 0 {
+		return nil
+	}
+	t := &evidenceTable{Subjects: names != nil}
+	for _, e := range rows {
+		source := keyDisplay(e.IssuerPublicKey)
+		if e.IssuerPublicKey == provider {
+			source = Name{Text: "provider", Title: e.IssuerPublicKey}
+		}
+		subject := Name{Text: e.SubjectActionID, Title: e.SubjectActionID}
+		if name := names[e.SubjectActionID]; name != "" {
+			subject.Text = name
+		} else if len(e.SubjectActionID) > keyLen {
+			subject = Name{Text: e.SubjectActionID[:keyLen] + "…", Title: e.SubjectActionID, IsKey: true}
+		}
+		t.Rows = append(t.Rows, evidenceRow{
+			Subject: subject,
+			Strip: StatStrip{
+				S: client.Stats{
+					Uses: e.Uses, Successes: e.Successes, Failures: e.Failures,
+					RatingCount: e.RatingCount, RatingEstimate: e.RatingMean,
+					LatencyEstimate: e.AvgLatencyMs / 1000,
+				},
+				Counts: true, Corroborated: e.CorroboratedUses, Unverified: e.UnverifiedRating,
+			},
+			Source:         source,
+			Contradictions: e.Contradictions,
+		})
+	}
+	slices.SortStableFunc(t.Rows, func(a, b evidenceRow) int {
+		if t.Subjects {
+			if c := strings.Compare(a.Subject.Text, b.Subject.Text); c != 0 {
+				return c
+			}
+		}
+		return boolOrder(a.Source.Text != "provider") - boolOrder(b.Source.Text != "provider")
+	})
+	return t
+}
+
+func boolOrder(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// actionEvidence is an action's evidence table: the provider's report, then
+// what other kernels observed.
+func actionEvidence(a client.Action) *evidenceTable {
+	if a.Evidence == nil {
+		return nil
+	}
+	var rows []client.Evidence
+	provider := ""
+	if p := a.Evidence.ProviderReported; p != nil {
+		rows, provider = append(rows, *p), p.IssuerPublicKey
+	}
+	return evidenceOf(append(rows, a.Evidence.ObservedByOthers...), provider, nil)
+}
+
+// peerEvidence is a peer's evidence table: every report on its actions, each
+// subject named by its address from the inspection's own list.
+func peerEvidence(i client.Inspection) *evidenceTable {
+	names := map[string]string{}
+	for _, a := range i.Actions {
+		names[a.ActionID] = a.Name
+	}
+	return evidenceOf(i.Evidence, i.PublicKey, names)
+}
+
+// progressView is one in-flight bar (_progress): its id, which an
+// hx-indicator names, and what it says.
+type progressView struct{ ID, Label string }
 
 // Figure is one headline money figure, drawn as a block: what it is, the
 // amount with its signal (§7) — "" plain, "credited" earned (signed +),

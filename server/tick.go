@@ -170,7 +170,7 @@ func (s *Server) inspectView(ctx context.Context, key, openForm string) (adminIn
 			return e
 		}
 		view.Inspection = insp
-		view.Report = poolEvidence(insp.SelfEvidence().Rows)
+		view.Report = poolEvidence(insp.SelfEvidence())
 		view.Actions = peerActionRows(insp)
 		view.Version = strings.TrimPrefix(insp.Reachability.Version, "juice-kernel/")
 		// The kernel row says when the peer became known and whether it is

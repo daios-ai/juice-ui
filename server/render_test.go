@@ -1186,7 +1186,7 @@ func TestInspectStatesLabelledFacts(t *testing.T) {
 	render := func(i client.Inspection, rec client.PeerRecord, catalog int) string {
 		rec2 := httptest.NewRecorder()
 		p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
-			Key: "KEYC", Inspection: i, Report: poolEvidence(i.SelfEvidence().Rows), Record: rec, Catalog: catalog,
+			Key: "KEYC", Inspection: i, Report: poolEvidence(i.SelfEvidence()), Record: rec, Catalog: catalog,
 			Actions: peerActionRows(i), Version: strings.TrimPrefix(i.Reachability.Version, "juice-kernel/"),
 		}}
 		if err := r.Render(rec2, 200, "admin_inspect", p); err != nil {
@@ -2047,18 +2047,21 @@ func TestWalletNamesTheTokenOnAnAddressedWorld(t *testing.T) {
 	}
 }
 
-// What other kernels report about an action renders on its page, each under
-// its issuer and the provider's own report first — beside, never inside, this
-// kernel's own reputation strip (kernel §D16, U39).
-func TestActionPageRendersOthersReports(t *testing.T) {
+// What other kernels report about an action reads as the stats line does:
+// one table, one report per row in the line's own cells, the source last and
+// the provider's report first — beside, never inside, this kernel's own strip
+// (kernel §D16, U39). The kernel's further counts ride in the cells' titles,
+// and a contradiction marks its source. The page and the panel render it.
+func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
+	other := strings.Repeat("O", 43) // key-shaped
 	a := client.Action{ID: "P", Action: "seller@k-4lnq/greet", Kind: "remote_proxy", Active: true, Evidence: &client.ActionEvidence{
 		LocalExperience:  &client.Stats{Uses: 2, Successes: 1},
-		ProviderReported: &client.Evidence{IssuerPublicKey: "PROVIDERKEY0000", SubjectActionID: "R1", Uses: 1},
-		ObservedByOthers: []client.Evidence{{IssuerPublicKey: "OTHERKEY0000000", SubjectActionID: "R1", Uses: 3, CorroboratedUses: 2, Contradictions: 1}},
+		ProviderReported: &client.Evidence{IssuerPublicKey: "PROVIDERKEY0000", SubjectActionID: "R1", Uses: 4, Successes: 1, AvgLatencyMs: 690.5},
+		ObservedByOthers: []client.Evidence{{IssuerPublicKey: other, SubjectActionID: "R1", Uses: 3, Successes: 3, CorroboratedUses: 2, Contradictions: 1, RatingCount: 1, RatingMean: 1, UnverifiedRating: 2}},
 	}}
 	rec := httptest.NewRecorder()
 	if err := r.Render(rec, 200, "action_detail", Page{Me: "me@testnet", Data: actionView{Action: a}}); err != nil {
@@ -2066,13 +2069,35 @@ func TestActionPageRendersOthersReports(t *testing.T) {
 	}
 	body := rec.Body.String()
 	ev := body[strings.Index(body, "<h2>Evidence</h2>"):]
-	if strings.Index(ev, "reported by the provider") > strings.Index(ev, "issued by") {
+	ev = ev[:strings.Index(ev, "</table>")]
+	for _, want := range []string{
+		"#milestone", "25% (4)", "0.7s", `title="PROVIDERKEY0000">provider</span>`,
+		`title="Success rate — 3 runs, 2 confirmed by the provider"`, `title="Rating — 1 raters, 2 more unverified"`,
+		`class="mono" title="` + other + `">OOOOOOOO…</span>`, `data-copy="` + other + `"`,
+		`title="1 trades reported two ways — they count for nothing"`,
+	} {
+		if !strings.Contains(ev, want) {
+			t.Errorf("evidence missing %q:\n%s", want, ev)
+		}
+	}
+	if strings.Index(ev, ">provider<") > strings.Index(ev, ">OOOOOOOO…<") {
 		t.Error("the provider's own report comes first")
 	}
-	for _, want := range []string{"reported by the provider", "issued by", "OTHERKEY0000", "contradicted", "corroborated"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("evidence missing %q", want)
+	if strings.Count(ev, "#alert") != 1 || strings.Count(ev, "confirmed by the provider") != 1 {
+		t.Error("a contradiction and a corroboration mark only the row that has them")
+	}
+	for _, gone := range []string{"R1", "trade-backed", "contradicted", "<h3", "<th"} {
+		if strings.Contains(ev, gone) {
+			t.Errorf("an action's evidence carries no %q", gone)
 		}
+	}
+	// The panel folds the same table.
+	rec = httptest.NewRecorder()
+	if err := r.Fragment(rec, 200, "_action_panel", actionView{Action: a}); err != nil {
+		t.Fatal(err)
+	}
+	if p := rec.Body.String(); !strings.Contains(p, `<details class="fold"><summary>Evidence</summary>`) || !strings.Contains(p, "25% (4)") {
+		t.Errorf("the panel folds the evidence: %s", p)
 	}
 	// An action no one else has reported on has no section at all.
 	rec = httptest.NewRecorder()
@@ -2082,6 +2107,34 @@ func TestActionPageRendersOthersReports(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "<h2>Evidence</h2>") {
 		t.Error("no reports, no evidence section")
+	}
+}
+
+// A peer's evidence spans its actions: each row names its subject by the
+// address the inspection serves, else by its id cut short with the whole
+// behind a copy control; rows sort by subject, the provider's first.
+func TestPeerEvidenceNamesItsSubjects(t *testing.T) {
+	id := "9f2c4e1a-0000-4000-8000-000000000001"
+	i := client.Inspection{PublicKey: "PEER", Actions: []client.PeerAction{{ActionID: "A", Name: "z@peer/zed"}}, Evidence: []client.Evidence{
+		{IssuerPublicKey: "OTHER", SubjectActionID: "A"},
+		{IssuerPublicKey: "PEER", SubjectActionID: "A"},
+		{IssuerPublicKey: "PEER", SubjectActionID: id},
+	}}
+	tb := peerEvidence(i)
+	if tb == nil || !tb.Subjects || len(tb.Rows) != 3 {
+		t.Fatalf("table = %+v", tb)
+	}
+	if r := tb.Rows[0]; r.Subject.Text != "9f2c4e1a…" || r.Subject.Title != id || !r.Subject.IsKey || r.Source.Text != "provider" {
+		t.Errorf("an unknown subject is its id cut short: %+v", r)
+	}
+	if r := tb.Rows[1]; r.Subject.Text != "z@peer/zed" || r.Subject.IsKey || r.Source.Text != "provider" {
+		t.Errorf("a known subject is its address, the provider's report first: %+v", r)
+	}
+	if r := tb.Rows[2]; r.Source.Text != "OTHER" {
+		t.Errorf("then the other sources: %+v", r)
+	}
+	if peerEvidence(client.Inspection{}) != nil || actionEvidence(client.Action{}) != nil {
+		t.Error("no reports, no table")
 	}
 }
 

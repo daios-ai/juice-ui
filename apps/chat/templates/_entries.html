@@ -10,13 +10,14 @@
 </div>
 {{end}}
 
-{{/* _working — who the room is waiting on: the members holding an unanswered
-     delivery, a fact chat holds (requirements §6.7). Input: entriesView. */}}
-{{define "_working"}}<p class="muted small" id="chat-working">{{.Answering}}</p>{{end}}
-
-{{/* The heartbeat's answer for a room with nothing new: who is answering, out
-     of band (a line with no control loses nothing by being replaced). */}}
-{{define "_chat_working"}}<p class="muted small" id="chat-working" hx-swap-oob="true">{{.Answering}}</p>{{end}}
+{{/* _working — who the room waits on: the members holding an unanswered
+     delivery, a fact chat holds (requirements §6.7); its ellipsis breathes
+     while the page watches (.waiting). One element for the room page and every
+     answer: htmx reads hx-swap-oob only in a response, where it replaces the
+     line whole (a line with no control loses nothing by being replaced).
+     Nothing but the text inside, so an empty line is :empty. Input:
+     entriesView. */}}
+{{define "_working"}}<p class="muted small waiting" id="chat-working" hx-swap-oob="true">{{.Waiting}}</p>{{end}}
 
 {{/* The composer's answer and the poll: new entries append, the posts an
      answer replaced leave, the cursor and the watch advance, a shown refusal
@@ -38,7 +39,7 @@
 <input type="hidden" id="chat-after" name="after" value="{{.After}}" hx-swap-oob="true">
 <input type="hidden" id="watch-chat-room" name="watch" value="chat:{{.RoomID}}:{{.After}}" hx-swap-oob="true">
 <p class="error-text" id="chat-error" role="alert" hidden hx-swap-oob="true"></p>
-{{template "_chat_working" .}}
+{{template "_working" .}}
 {{end}}
 
 {{/* A refused post: the reason beside the composer, nothing appended. */}}

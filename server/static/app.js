@@ -778,25 +778,32 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Fill from chat (requirements §6.2): the planner prepares the form's fields
-// from the conversation the panel was opened from, and from a result carried
-// into it. The fields come back as the form's own — or, for a form with none,
-// the arguments into the editor — and nothing runs: the person still presses
-// the action's own button. A refusal is shown above the buttons and the fields
-// stay as they were.
+// from the conversation the panel was opened from. The fields come back as the
+// form's own — or, for a form with none, the arguments into the editor — and
+// nothing runs: the person still presses Run. While the planner works the form
+// is busy — the tool row's bar runs and every other control is inert — and a
+// refusal takes the bar's place, the fields as they were.
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-fill]');
   if (!btn) return;
   const form = btn.closest('form');
+  const tools = btn.closest('.form-tools');
+  const bar = tools.querySelector('.progress');
+  const error = tools.querySelector('[data-fill-error]');
   const fields = form.querySelector('[data-fields]');
   const editor = form.querySelector('[data-raw] textarea');
-  const error = form.querySelector('[data-fill-error]');
   const say = (text) => { error.textContent = text; error.hidden = !text; };
+  const busy = (on) => {
+    form.setAttribute('aria-busy', on);
+    bar.classList.toggle('htmx-request', on); // in flight (app.css .progress)
+    for (const el of form.querySelectorAll(':scope > :not(.form-tools), .form-tools > button')) el.inert = on;
+  };
+  const body = new URLSearchParams(new FormData(form));
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
-  btn.disabled = true;
+  say('');
+  busy(true);
   try {
-    const res = await fetch(btn.dataset.fill, {
-      method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf },
-    });
+    const res = await fetch(btn.dataset.fill, { method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf } });
     const text = await res.text();
     if (!res.ok) { say(text.trim()); return; }
     if (fields && !(res.headers.get('Content-Type') || '').startsWith('application/json')) {
@@ -804,10 +811,9 @@ document.addEventListener('click', async (e) => {
     } else if (editor) {
       editor.value = text;
     }
-    say('');
   } catch {
     say('The server did not answer.');
   } finally {
-    btn.disabled = false;
+    busy(false);
   }
 });
