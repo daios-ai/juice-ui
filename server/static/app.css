@@ -122,7 +122,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .menu-trigger .ico { width: var(--icon-lg); height: var(--icon-lg); }
 .scrim { display: none; }
 
-.main-area { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.main-area { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; container-type: inline-size; }
 .content { flex: 1 1 auto; display: flex; flex-direction: column; }
 .container { width: 100%; max-width: 1160px; margin: 0 auto; padding: var(--space-4) var(--space-5) calc(2 * var(--space-6)); flex: 1 0 auto; }
 .ico-inline { width: 1em; height: 1em; vertical-align: -.15em; display: inline-block; }
@@ -210,7 +210,7 @@ tr.unread > td:first-child a { font-weight: 700; }
 /* Accessible aria-live announcement region */
 .live-region {
   position: fixed; bottom: 4rem; left: 50%; transform: translateX(-50%);
-  max-width: 400px; width: 90%; z-index: 40; pointer-events: none;
+  max-width: 400px; width: 90%; z-index: 400; pointer-events: none;
 }
 .live-region:empty { display: none; }
 .live-region .toast {
@@ -625,21 +625,24 @@ tr.rowable:hover { background: var(--surface-2); }
 tr.dim td { opacity: .55; }
 tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
-.flash { background: var(--surface-2); border-bottom: 1px solid var(--border); padding: var(--space-2) var(--space-5); color: var(--text); }
-.flash-success { border-bottom-color: var(--credited); color: var(--credited); }
-.flash-error   { border-bottom-color: var(--danger);   color: var(--danger); }
-.banner { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: var(--space-3) var(--space-4); color: var(--text-muted); }
-.banner-error { border-color: var(--danger); color: var(--danger); }
-.banner-info  { border-color: var(--border-strong); color: var(--text-muted); }
+.banner { display: flex; align-items: baseline; gap: var(--space-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: var(--space-3) var(--space-4); color: var(--text-muted); }
+.banner[hidden] { display: none; }
+.banner-error   { border-color: var(--danger); color: var(--danger); }
+.banner-info    { border-color: var(--border-strong); color: var(--text-muted); }
+.banner-success { border-color: var(--credited); color: var(--credited); }
 /* A banner in page flow owns its spacing, as h2, .subhead and .details-panel
    do; inside a .stack the stack spaces it. */
 .container > .banner { margin-bottom: var(--space-4); }
 
 .muted { color: var(--text-muted); }
-/* A wait on a party (_working): the line says who; its ellipsis breathes
-   while the page watches. Reduced motion stops it (the global rule). */
-.waiting:not(:empty)::after { content: "…"; animation: waiting 1.5s ease-in-out infinite; }
-@keyframes waiting { 50% { opacity: .2; } }
+/* A wait on a party (_working): the sentence says who and stands still;
+   beside it three dots pulse in turn while the page watches. Reduced motion
+   stops them (the global rule). */
+.dots { display: inline-flex; gap: .25em; vertical-align: middle; color: var(--text); }
+.dots span { width: .4em; height: .4em; border-radius: var(--radius-full); background: currentColor; animation: dot 1.2s ease-in-out infinite; }
+.dots span:nth-child(2) { animation-delay: .2s; }
+.dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes dot { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
 /* ---- v0.3 marketplace components ---- */
 
@@ -675,12 +678,14 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); color: var(--text-muted); }
 
 
-/* A room (grammar §5.5): the conversation, and beside it the panel an action
-   opens into. The page is the scroll container; the panel is sticky and
-   scrolls on its own, and takes no column while empty. On a narrow screen an
-   open panel covers the conversation. */
-.room { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: var(--space-5); align-items: start; }
-.room:has(> .panel:empty) { grid-template-columns: minmax(0, 1fr); }
+/* A room (grammar §5.5): the conversation in the page's column and, beside
+   it, the panel an action opens into — a pane of the window: full height at
+   its right edge, a hairline from the conversation, its own scroller, its
+   width taken from the column while open and nothing while empty. The split
+   holds while the conversation keeps a readable column, the main area 960px
+   and over (the column is then 492px at least), whatever the sidebar's
+   state; narrower, the panel covers the conversation. The page is the
+   conversation's scroll container. */
 .conversation { min-width: 0; min-height: calc(100dvh - var(--space-4) - 2 * var(--space-6)); display: flex; flex-direction: column; }
 .conversation > .msgs { flex: 1 0 auto; justify-content: flex-end; }
 /* The composer (requirements §6.7): the one sanctioned exception to the form's
@@ -703,8 +708,13 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .btn-send:disabled { opacity: .3; cursor: default; }
 .composer-bar textarea { display: block; border-color: transparent; background: none; padding-inline: var(--space-1); max-height: 15em; resize: none; font-family: var(--font-ui); outline: none; }
 .composer > #balance { margin-top: var(--space-1); padding-left: var(--space-2); }
-.panel { position: sticky; top: 0; max-height: 100dvh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.content:has(.panel:not(:empty)) { padding-right: var(--panel-w); }
+.panel { position: fixed; inset: 0 0 0 auto; width: var(--panel-w); z-index: 250; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--border); }
 .panel:empty { display: none; }
+@container (width < 960px) {
+  .content:has(.panel:not(:empty)) { padding-right: 0; }
+  .panel { inset: 0; width: auto; border-left: none; }
+}
 /* The panel is the one scroller, its head held at the top so the title or the
    way back, and the close, stay in reach over a long list of results. */
 .panel .modal-head { position: sticky; top: 0; z-index: 1; background: var(--surface); }
@@ -723,10 +733,6 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .launcher nav { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
 .launcher .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 .launcher .menu-item .ico { color: var(--text-muted); }
-@media (max-width: 720px) {
-  .room { grid-template-columns: minmax(0, 1fr); }
-  .panel:not(:empty) { position: fixed; inset: 0; z-index: 250; max-height: none; border-radius: 0; }
-}
 .msgs { display: flex; flex-direction: column; gap: var(--space-4); margin: var(--space-2) 0 var(--space-4); }
 .msg { display: flex; gap: var(--space-2); }
 .msg-body { flex: 1 1 auto; min-width: 0; }
@@ -741,7 +747,7 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .member-row form { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Pseudo-elements too: the progress bar and the waiting ellipsis move there. */
+  /* Pseudo-elements too: the progress bar moves there. */
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 @media (prefers-reduced-motion: no-preference) {

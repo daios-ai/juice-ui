@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.42.2
+Version: 0.43.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.43.0.** The panel floated as a card in the page's
+> column and took its full width first, leaving the conversation a sliver on
+> a laptop; it is now a pane of the window, full height at its right edge,
+> beside the conversation while the conversation keeps a readable column and
+> over it otherwise, whatever the sidebar's state. The waiting line's
+> ellipsis was too faint to see; the sentence now stands at body size with
+> three dots pulsing beside it. The one-shot notice was a band of its own
+> above the column; it is now a banner of its kind heading the column, which
+> × dismisses (§6.7).
 
 > **What changed in 0.42.2.** A sign-out revoked the pair it had read before
 > its call to the kernel, so a refresh that stored a new pair during that call
@@ -2316,8 +2326,8 @@ the assistant, else the newest room, else an empty page beside the rail.
   view of its `{status, reason}`. **Waiting on** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
   — a fact chat holds, never a claim of activity, which chat cannot observe —
-  kept by the heartbeat, empty when nobody; its ellipsis breathes while the
-  page watches, and stands still under reduced motion.
+  kept by the heartbeat, empty when nobody; three dots pulse beside it while
+  the page watches, still under reduced motion.
 * **The composer** is the post action's form drawn as a bar — the one
   sanctioned exception to the form's card, because it is the workspace's
   cornerstone. The exception is in the drawing alone: the text box is the
@@ -2351,8 +2361,10 @@ the assistant, else the newest room, else an empty page beside the rail.
   of the conversation or the draft changes. A panel that cannot be filled — an
   action that cannot be opened, a search that fails — keeps its head, the way
   back to the results it was opened over and ×, over the reason, so results
-  paid for are never lost to a failure. On a narrow screen it covers the
-  conversation. The action page remains, built from the same partials and the
+  paid for are never lost to a failure. The panel is a pane of the window —
+  full height at its right edge, a hairline from the conversation — while the
+  conversation keeps a readable column (the main area 960px and over,
+  whatever the sidebar's state); narrower, it covers the conversation. The action page remains, built from the same partials and the
   same loader.
 * **Fill from chat** (`POST /actions/{id}/fill`) prepares the panel's fields
   with the planner, under §6.2's Proposal rule: its context is the room's

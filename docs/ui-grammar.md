@@ -37,14 +37,14 @@ Three laws underpin everything:
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; rows `.menu-item`, matched in the browser; Enter submits the search (§5.9) |
-| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. Empty, it takes no column; on a phone it covers the conversation |
+| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
 | **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`, and `#idle`, the idle warning) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
-| Feedback | flash · `.outcome` · `.banner` · `.live-region` · `.progress` · `.badge` | results/notice |
+| Feedback | `.outcome` · `.banner` (the one-shot notice included) · `.live-region` · `.progress` · `.badge` | results/notice |
 | Ref | `_ref` partial | an action address `owner@kernel/name` (owner linked only when local) |
 
 ---
@@ -56,7 +56,7 @@ The frame every page renders into: the collaborative workspace
 
 ```
 ┌─ sidebar ─────────┬───────────────────────────────┬─ panel ──────┐
-│ ◆ k play        ≡ │ flash bar (one-shot)           │ (a room only: │
+│ ◆ k play        ≡ │ notice (one-shot)              │ (a room only: │
 │ + New conversation│ crumb · entries · waiting on   │  an action    │
 │ assistant         │ composer [message …] [/] Send  │  beside the   │
 │ research-room  •  │ — or any page's content —      │  conversation)│
@@ -69,9 +69,9 @@ The frame every page renders into: the collaborative workspace
 |---|---|---|
 | **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail** (its opener, `#plus` and "New conversation", then the rooms); the **avatar** at the foot | One element, sticky, the visible screen's height (`100dvh`), 240px. The width picks one of two models, never mixed. **Wide (>720px): docked or a strip.** Collapsed, the same element keeps only the toggle, the opener's icon and the avatar with its badge; the brand, the rooms and the handle are hidden, since a list of names has no icon form. The state is persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash) and applies to wide screens only. **Narrow (≤720px): a drawer** (Topbar). |
 | **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`), each destination an icon and its name. The avatar carries the task badge too. |
-| **Main area** | flash bar, then the content container | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
+| **Main area** | the content container, a one-shot notice heading it | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
-| **Flash bar** | one transient message | One-shot cookie, top of content; `role=alert` (error) / `status`. Not a feed. |
+| **Notice** | one transient message | A `.banner` of its kind first in the container, from a one-shot cookie, led by its kind's icon (`#alert`, `#check`); × dismisses it (`[data-dismiss]`, a link to the page itself without script); `role=alert` (error) / `status`. Not a feed. |
 | **Topbar** | the menu trigger (with the task badge) and the brand | Narrow screens (`≤720px`) alone, `--topbar-h` tall. The trigger slides **the same sidebar** in over the page as a drawer (`html[data-drawer=open]`, `?drawer=open` without script), without the collapse toggle; the `.scrim` link, Escape and any navigation close it, and it is never stored. No fixed bottom bar: the destinations are unbounded. |
 
 **Entry screen** (unauthenticated): no sidebar — a single centered, branded auth
@@ -84,9 +84,9 @@ the top, your own `handle` at the profile foot). Tabs are real `/login?tab=`
 links (server renders the active tab with JS off); app.js swaps panels
 client-side.
 
-**Layer order** (all native `<dialog>` except the menu/flash; `Esc` closes the
-topmost): content < flash < menu/popover < modal form & confirm modal < help
-overlay < aria-live toast.
+**Layer order** (all native `<dialog>` except the menu, the panel and the
+toast; `Esc` closes the topmost): content < menu/popover < panel < drawer <
+modal form & confirm modal < help overlay < aria-live toast.
 
 ---
 
@@ -440,9 +440,9 @@ separates it from the content above, and nothing else does (§4).
   assistant; the rooms are the sidebar's **rail**. A room is `.room`: the
   `.conversation` — crumb (room name · members · leave/delete) → the entry
   stack (`.msgs`, `[data-autoscroll]`) → whom it waits on (`_working`:
-  `.muted.small.waiting`, `#chat-working`, one element for the page and every
-  out-of-band answer — `Waiting on a and b`, its ellipsis breathing while the
-  page watches, still under reduced motion) → the composer bar, sticky at the foot — beside the
+  `.muted`, `#chat-working`, one element for the page and every out-of-band
+  answer — `Waiting on a and b` at body size, three dots (`.dots`) pulsing in
+  turn beside it while the page watches, still under reduced motion) → the composer bar, sticky at the foot — beside the
   `.panel`. **The page is the scroll container** — no fixed-height frame; the
   panel alone scrolls on its own. The document pins to its
   **newest** entry on open and on any append while already at the bottom —
@@ -548,7 +548,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   in?**, and two neutral `.btn`s: *Sign out* (the logout form) and *Stay signed
   in* (`POST /session`). A dialog that arrives `[open]` — server-rendered or
   swapped in — is made modal by one script (`modalize`), so it traps focus
-  like any other. The reason a session ended is the login page's flash.
+  like any other. The reason a session ended is the login page's notice.
 
 ### 5.9 The registry, the launcher & keyboard
 
@@ -578,9 +578,8 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 
 | Element | Use |
 |---|---|
-| Flash bar | one-shot result of the last action, top of content |
 | `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as the view (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row; from a room it carries its draft (`data-draft`) |
-| `.banner` (`-info`/`-error`) | inline notice. A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
+| `.banner` (`-info`/`-error`/`-success`) | inline notice, and the one-shot result of the last action heading the column (dismissable, §1). A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
 | `.progress` | indeterminate bar for long calls (never an indefinite spinner), one partial, `_progress` (id, label): Run's below its form, a form tool's in the form's top row; shown in flight, `.htmx-request`, set by htmx on an `hx-indicator` or by the script owning a fetch |
 | `.badge` | round, accent — the task count, the **sole** async attention signal of the core surface: on the avatar, the menu's Inbox row (inline) and the topbar's trigger, every copy swapped at once by the heartbeat (`.badge-inbox`), **empty when zero** (`.badge:empty` hides it) |
@@ -764,7 +763,7 @@ obligations above.
 - One `aria-live` region; the task badge is the only async attention signal in
   the core surface (the rail's unread weighting is the conversations' own); no
   notification feed/toast stack.
-- Visible focus; full keyboard operability; `prefers-reduced-motion` respected, pseudo-elements included (the progress bar and the waiting ellipsis move there);
+- Visible focus; full keyboard operability; `prefers-reduced-motion` respected, pseudo-elements included (the progress bar moves there);
   WCAG AA (theme test).
 - CSP: no inline script; the command registry is inert JSON; `Referrer-Policy:
   same-origin` (never `no-referrer` — it nulls the Origin and breaks CSRF).

@@ -42,8 +42,12 @@
       {{end}}
 
       <div class="content">
-        {{if .Flash}}<div class="flash{{if .FlashKind}} flash-{{.FlashKind}}{{end}}" role="{{if eq .FlashKind "error"}}alert{{else}}status{{end}}">{{.Flash}}</div>{{end}}
         <main id="main" class="container">
+          {{/* The one-shot notice (grammar §1): the last action's result, a
+               banner of its kind heading the column. × is a link to the page
+               itself, whose render cleared the cookie; app.js removes the
+               banner in place. */}}
+          {{if .Flash}}<div class="banner{{with .FlashKind}} banner-{{.}}{{end}}" role="{{if eq .FlashKind "error"}}alert{{else}}status{{end}}">{{if eq .FlashKind "error"}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg>{{else if eq .FlashKind "success"}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{end}}<span class="stretch">{{.Flash}}</span><a class="modal-close" href="{{.Path}}" data-dismiss aria-label="Dismiss">×</a></div>{{end}}
           {{block "content" .}}{{end}}
         </main>
       </div>

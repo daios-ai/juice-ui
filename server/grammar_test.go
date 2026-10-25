@@ -810,7 +810,7 @@ func TestNoDeadCSS(t *testing.T) {
 			continue
 		}
 		seen[c] = true
-		// A class a template composes, flash-{{.FlashKind}}, counts by its stem.
+		// A class a template composes, banner-{{.}}, counts by its stem.
 		stem := c[:strings.LastIndex(c, "-")+1]
 		if stem != "" && strings.Contains(src, stem+"{{") {
 			continue
@@ -924,5 +924,24 @@ func TestSidebarHasTwoStatesPerWidth(t *testing.T) {
 	}
 	if strings.Contains(css, "100vh") {
 		t.Error("app.css: 100vh is taller than a phone's visible screen; the frame uses dvh")
+	}
+}
+
+// TestNoticeIsABanner: the one-shot notice is a .banner heading the column,
+// its × a link to the page itself (the no-script way out) that app.js turns
+// into a removal; no flash band remains.
+func TestNoticeIsABanner(t *testing.T) {
+	layout, _ := fs.ReadFile(tmplFS, "templates/layout.html")
+	css, _ := staticFS.ReadFile("static/app.css")
+	js, _ := staticFS.ReadFile("static/app.js")
+	if !strings.Contains(string(layout), `{{if .Flash}}<div class="banner{{with .FlashKind}} banner-{{.}}{{end}}"`) ||
+		!strings.Contains(string(layout), `<a class="modal-close" href="{{.Path}}" data-dismiss`) {
+		t.Error("layout.html: the notice must be a banner whose × links to the page")
+	}
+	if strings.Contains(string(css), ".flash") {
+		t.Error("app.css: the flash band is retired; the notice is a .banner")
+	}
+	if !strings.Contains(string(js), "[data-dismiss]") {
+		t.Error("app.js: [data-dismiss] must remove its banner")
 	}
 }

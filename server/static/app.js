@@ -400,6 +400,10 @@ document.addEventListener('click', (e) => {
     const dlg = closer.closest('dialog');
     if (dlg) { e.preventDefault(); dlg.close(); }
   }
+  // A notice's × ([data-dismiss]) removes the banner it sits in, in place of
+  // the reload its link is without script.
+  const dismiss = e.target.closest('[data-dismiss]');
+  if (dismiss) { e.preventDefault(); dismiss.closest('.banner').remove(); }
 });
 // A dialog that arrived [open] — server-rendered for the no-JS path, or swapped
 // in by the heartbeat (the idle warning) — is reopened modally so the backdrop

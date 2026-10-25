@@ -48,6 +48,7 @@
      button, so any two controls side by side line up. */
   --control-h: 2.25rem;
   --topbar-h: calc(var(--control-h) + var(--space-4));
+  --panel-w: 420px; /* a room's panel, beside the conversation */
 
   --icon-sm: .875rem;
   --icon-md: 1rem;

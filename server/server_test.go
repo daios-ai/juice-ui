@@ -341,6 +341,9 @@ func TestIdleSessionIsSignedOutByTheHeartbeat(t *testing.T) {
 	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
 		t.Errorf("the session is gone: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
+	if _, body := get(t, cl, srv.URL+"/login", false); !strings.Contains(body, `<div class="banner banner-info" role="status"><span class="stretch">You were signed out after 30 minutes of inactivity.</span><a class="modal-close" href="/login" data-dismiss`) {
+		t.Error("the login page heads its column with the notice, a dismissable info banner")
+	}
 }
 
 // The heartbeat is not activity; a request the person made is.

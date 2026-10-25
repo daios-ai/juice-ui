@@ -1146,6 +1146,17 @@ func TestWorkingNamesWhoTheRoomWaitsOn(t *testing.T) {
 	if got := (entriesView{Working: []string{"a", "b", "c"}}).Waiting(); got != "Waiting on a, b and c" {
 		t.Errorf("Waiting = %q", got)
 	}
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, _ := rnd.HTML("_working", v)
+	if !strings.Contains(string(line), `>Waiting on bob@testnet and cy@testnet <span class="dots" aria-hidden="true">`) {
+		t.Errorf("the sentence stands with its dots beside it: %s", line)
+	}
+	if line, _ := rnd.HTML("_working", entriesView{}); !strings.Contains(string(line), `id="chat-working" hx-swap-oob="true"></p>`) {
+		t.Errorf("nobody is an empty line: %s", line)
+	}
 }
 
 // A room's context is what the planner reads: the viewer's entries as the
