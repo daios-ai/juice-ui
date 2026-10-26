@@ -551,7 +551,7 @@
   {{if .Description}}<p class="help">{{.Description}}</p>{{end}}
   {{$v := .Value}}
   {{if .ReadOnly}}
-  {{if .Long}}<details class="fold"><summary>{{truncate 80 $v}}</summary><div class="box">{{$v}}</div></details>{{else if eq .Type "null"}}<div class="box muted">{{$v}}</div>{{else if eq .Type "raw"}}<pre class="json">{{$v}}</pre>{{else}}<div class="box">{{$v}}</div>{{end}}
+  {{if eq .Type "null"}}<div class="box muted">{{$v}}</div>{{else if eq .Type "raw"}}<pre class="json">{{$v}}</pre>{{else}}<div class="box">{{$v}}</div>{{end}}
   {{else}}
   {{template "_control" .}}
   {{template "_field_null" .}}

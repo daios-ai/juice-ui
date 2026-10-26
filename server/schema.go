@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // Field is one node of the run form, derived from a node of the input schema.
@@ -50,16 +49,11 @@ type Field struct {
 	// ReadOnly marks a node of the view (§7) — a JSON value: a result, a
 	// receipt's args, sealed partial_args — or a fixed key of the config form,
 	// in the form's own anatomy, each control a read-only box with no wire name.
-	// Long marks a read-only string past longText, folded.
-	ReadOnly, Long bool
+	ReadOnly bool
 	// Open says a container renders open: an unnamed node always, a named one
 	// while unsettled (settle).
 	Open bool
 }
-
-// longText is the length past which a read-only string folds, so a page body
-// or a compiled artifact does not push the rest of the result off screen.
-const longText = 800
 
 // View builds the view of a JSON value (§7). Object keys keep the order
 // served; a number keeps its literal text; null, `{}` and `[]` are words in a
@@ -104,7 +98,6 @@ func viewField(name string, raw json.RawMessage) Field {
 	case '"':
 		f.Type = "string"
 		_ = json.Unmarshal(raw, &f.Value)
-		f.Long = utf8.RuneCountInString(f.Value) > longText
 	case 'n':
 		f.Type, f.Value = "null", "null"
 	case 't', 'f':

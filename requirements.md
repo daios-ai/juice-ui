@@ -1,7 +1,11 @@
 # Juice Web UI Requirements
 
-Version: 0.44.0
+Version: 0.44.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.44.1.** A string past 800 characters folded behind an
+> excerpt, a widget no form has, and so did a long chat reply; a string's box
+> now holds it whole, as the form's textarea does (§7).
 
 > **What changed in 0.44.0.** A chat message is text by the post schema, so a
 > JSON document posted by a person or an agent showed as one string box and
@@ -2431,8 +2435,8 @@ once and never writes that file.
   a nested object or array is a group that folds behind its name and its
   size, closed; an array's element and the root never fold; a number
   is its literal, a boolean, `null`, `{}` and `[]` their words, muted. Keys
-  keep the order served. A string past 800 characters folds (closed) behind its
-  first line. Nothing is submittable. The raw JSON sits behind the same JSON
+  keep the order served. A string's box holds it whole, however long, as the
+  form's textarea does. Nothing is submittable. The raw JSON sits behind the same JSON
   switch the form carries — a labelled switch (`role="switch"`) at the block's
   top right, swapping the fields for the JSON — with a Download where the value is a
   transaction's result.

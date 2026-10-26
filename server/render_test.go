@@ -2252,7 +2252,7 @@ func TestFormFieldsRenderTheTree(t *testing.T) {
 // The view: a result in the form's own anatomy, read-only — labels over
 // boxes, a named container a closed group whose summary names it and its
 // size, an element an open plain group, an array its rows, the words for null
-// and booleans, a long string folded, nothing submittable, the JSON behind
+// and booleans, a long string whole, nothing submittable, the JSON behind
 // the switch, and a Download only where a transaction exists.
 func TestValueBlockRendersAView(t *testing.T) {
 	r, err := NewRenderer(playKernel)
@@ -2266,14 +2266,14 @@ func TestValueBlockRendersAView(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	long := strings.Repeat("x", longText+1)
+	long := strings.Repeat("x", 2000)
 	body := render(`{"z":"a\nb","list":[1,true,null],"empty":{},"long":"`+long+`","n":{"k":"<i>"}}`, "/transactions/T1/result.json")
 	for _, want := range []string{
 		`<label>z</label>`, `<div class="box">a` + "\n" + `b</div>`,
 		`<details class="field group">` + "\n" + `  <summary>list <span class="muted small">3 items</span></summary>`,
 		`<div class="rows">`, `<div class="box">1</div>`, `<div class="box">true</div>`, `<div class="box muted">null</div>`,
 		`<label>empty</label>`, `<div class="box muted">{}</div>`,
-		`<details class="fold"><summary>` + strings.Repeat("x", 80) + `…</summary><div class="box">` + long + `</div></details>`,
+		`<label>long</label>`, `<div class="box">` + long + `</div>`,
 		`<summary>n <span class="muted small">1 field</span></summary>`, `<label>k</label>`, `<div class="box">&lt;i&gt;</div>`,
 		`<div class="view" data-json><button type="button" class="switch" role="switch" aria-checked="false" data-json-switch>JSON</button><div data-fields>`,
 		`<div data-raw hidden><pre class="json">`,
@@ -2283,7 +2283,7 @@ func TestValueBlockRendersAView(t *testing.T) {
 			t.Errorf("view missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "<input") || strings.Contains(body, "data-row") {
+	if strings.Contains(body, "<input") || strings.Contains(body, "data-row") || strings.Contains(body, `class="fold"`) {
 		t.Errorf("a view has no control and no row mechanism: %s", body)
 	}
 	if strings.Contains(body, " open>") || strings.Contains(body, "<fieldset") {

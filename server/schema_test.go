@@ -506,14 +506,6 @@ func TestViewKeepsOrderAndTypes(t *testing.T) {
 	if e, l := f.Fields[3], f.Fields[4]; e.Type != "null" || e.Value != "{}" || l.Type != "null" || l.Value != "[]" {
 		t.Errorf("empties = %+v %+v", e, l)
 	}
-	long := strings.Repeat("é", longText+1)
-	b, _ := json.Marshal(long)
-	if v := View(b); !v.Long || v.Value != long {
-		t.Errorf("a string past %d characters folds: %+v", longText, v.Long)
-	}
-	if v := View(json.RawMessage(`"short"`)); v.Long || v.Type != "string" {
-		t.Error("a short string does not fold")
-	}
 	if v := View(nil); v.Type != "raw" || v.Value != "" {
 		t.Errorf("empty = %+v", v)
 	}
