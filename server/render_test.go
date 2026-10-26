@@ -2301,6 +2301,19 @@ func TestValueBlockRendersAView(t *testing.T) {
 	if b := render(``, ""); !strings.Contains(b, `<pre class="json"></pre>`) {
 		t.Errorf("an empty value renders raw: %s", b)
 	}
+	// A string holding a JSON object or array is viewed as that document; the
+	// JSON behind the switch stays the stored string. Any other string is text.
+	if b := render(`"{\"a\":1}"`, ""); !strings.Contains(b, `<label>a</label>`) || !strings.Contains(b, `<div class="box">1</div>`) || !strings.Contains(b, `<pre class="json">&#34;{\&#34;a\&#34;:1}&#34;</pre>`) {
+		t.Errorf("a string holding an object is viewed as the object, stored as the string: %s", b)
+	}
+	if b := render(`" [1,2] "`, ""); !strings.Contains(b, `<div class="rows">`) {
+		t.Errorf("a string holding an array is viewed as its rows: %s", b)
+	}
+	for raw, box := range map[string]string{`"42"`: `42`, `"{not json"`: `{not json`, `"\"hi\""`: `&#34;hi&#34;`} {
+		if b := render(raw, ""); strings.Contains(b, "<label") || strings.Contains(b, `class="rows"`) || !strings.Contains(b, `<div class="box">`+box+`</div>`) {
+			t.Errorf("%s is text in one box: %s", raw, b)
+		}
+	}
 }
 
 func TestResultDownload(t *testing.T) {

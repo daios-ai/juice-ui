@@ -41,7 +41,7 @@ Three laws underpin everything:
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
-| **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
+| **View** | `.view` · `.field .box` · `.fold` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries; in `_value_block`, a string holding a JSON object or array is viewed as that document, its raw JSON the stored string (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`, and `#idle`, the idle warning) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | `.outcome` · `.banner` (the one-shot notice included) · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -743,7 +743,8 @@ obligations above.
 - Counterparty content (names, descriptions, args, results, reasons) renders
   **inert**: escaped, no chrome, no accent; a JSON value only through the view
   (`_view` / `_value_block`), which is structure by JSON type and
-  interprets nothing. Trust affordances key on kernel-captured fields, never
+  interprets nothing but a string holding a JSON object or array in
+  `_value_block`. Trust affordances key on kernel-captured fields, never
   payload shape.
 - No spend reachable from a list view or a GET; money moves only through a
   confirm that names the amount.

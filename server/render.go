@@ -421,8 +421,18 @@ type ValueBlock struct {
 	Download string
 }
 
+// valueBlock views a value, and a string holding a JSON object or array (a
+// chat message, an agent's reply) as that document. The JSON behind the switch
+// stays the value as stored.
 func valueBlock(raw json.RawMessage, download string) ValueBlock {
-	return ValueBlock{Root: View(raw), Raw: raw, Download: download}
+	doc := raw
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if t := strings.TrimSpace(s); t != "" && (t[0] == '{' || t[0] == '[') && json.Valid([]byte(t)) {
+			doc = json.RawMessage(t)
+		}
+	}
+	return ValueBlock{Root: View(doc), Raw: raw, Download: download}
 }
 
 // resultDownload is the download route of a transaction's result, or "" when

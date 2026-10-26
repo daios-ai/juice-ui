@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.43.1
+Version: 0.44.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.44.0.** A chat message is text by the post schema, so a
+> JSON document posted by a person or an agent showed as one string box and
+> its JSON as an escaped string. A string holding a JSON object or array is
+> now viewed as that document; the JSON behind the switch stays the value as
+> stored (§7, §8.1). A result and args are objects at the top level by the
+> kernel's schema rule, so in practice the rule meets chat messages.
 
 > **What changed in 0.43.1.** The avatar menu's entry for `/browse` reads
 > **Discover**, the name the rest of this document gives the page (§6).
@@ -2429,7 +2436,10 @@ once and never writes that file.
   switch the form carries — a labelled switch (`role="switch"`) at the block's
   top right, swapping the fields for the JSON — with a Download where the value is a
   transaction's result.
-  Nothing in it is interpreted (§8.1).
+  In a chat message, a run's result and a receipt's args and result, a string
+  whose trimmed text is a JSON object or array is viewed as that document;
+  the JSON behind the switch stays the value as stored. Nothing else in it is
+  interpreted (§8.1).
 
   **The world is named wherever the interface names itself.** The chrome states
   the kernel's handle and the world it serves, on every page, because a kernel
@@ -2562,7 +2572,8 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
 1. Render every counterparty-authored string escaped and quarantined from chrome:
    no markdown, no auto-links, no bold, no the accent, never adjacent to or styled like
    a button; a result, args or sealed `partial_args` only through the view
-   (§7), whose structure is the JSON type and never the value: no value is
+   (§7), whose structure is the JSON type, a string holding a JSON object or
+   array being viewed as that document (§7), and never otherwise the value: no value is
    linked, formatted or turned into an icon, a boolean is its word. The chrome
    vocabulary defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
