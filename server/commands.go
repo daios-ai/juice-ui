@@ -34,7 +34,7 @@ func (s *Server) commands(r *http.Request) []Command {
 	cmds := []Command{
 		{Slug: "home", Name: "Home", Href: "/", Icon: iconHome, Nav: true},
 		{Slug: "inbox", Name: "Inbox", Href: "/inbox", Icon: iconInbox, Nav: true, Live: true},
-		{Slug: "browse", Name: "Discover actions", Href: "/browse", Icon: iconDiscover, Nav: true},
+		{Slug: "browse", Name: "Discover", Href: "/browse", Icon: iconDiscover, Nav: true},
 		{Slug: "workshop", Name: "Workshop", Href: "/workshop", Icon: iconWorkshop, Nav: true},
 		{Name: "Create an action", Href: "/workshop?form=action-create"},
 		{Name: "Import an OpenAPI document", Href: "/workshop?form=action-import"},

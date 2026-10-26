@@ -36,7 +36,7 @@ func TestMenuListsTheDestinations(t *testing.T) {
 	defer srv.Close()
 
 	alice := menuOf(getBody(t, loginClient(t, srv.URL), srv.URL+"/wallet"))
-	for name, href := range map[string]string{"Home": "/", "Inbox": "/inbox", "Discover actions": "/browse",
+	for name, href := range map[string]string{"Home": "/", "Inbox": "/inbox", "Discover": "/browse",
 		"Workshop": "/workshop", "Wallet": "/wallet", "Settings": "/settings"} {
 		if alice[name] != href {
 			t.Errorf("menu row %q = %q, want %q", name, alice[name], href)
@@ -175,7 +175,7 @@ func TestLauncherListsTheRegistry(t *testing.T) {
 		}))
 		alice := getBody(t, loginClient(t, srv.URL), srv.URL+"/launch")
 		reg := registryOf(t, alice)
-		if reg["Create an action"] != "/workshop?form=action-create" || reg["Transactions"] != "/transactions" || reg["Discover actions"] != "/browse" {
+		if reg["Create an action"] != "/workshop?form=action-create" || reg["Transactions"] != "/transactions" || reg["Discover"] != "/browse" {
 			t.Errorf("registry = %v", reg)
 		}
 		if _, ok := reg["Record a payment"]; ok {

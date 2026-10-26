@@ -1439,7 +1439,7 @@ func TestThemePickerOnlyInSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	p := Page{Me: "me@testnet", Themes: ThemeList(), Commands: []Command{{Slug: "browse", Name: "Discover actions", Href: "/browse", Nav: true}},
+	p := Page{Me: "me@testnet", Themes: ThemeList(), Commands: []Command{{Slug: "browse", Name: "Discover", Href: "/browse", Nav: true}},
 		Data: struct{ Message string }{"x"}}
 	if err := r.Render(rec, 200, "error", p); err != nil {
 		t.Fatal(err)

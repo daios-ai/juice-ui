@@ -1,7 +1,10 @@
 # Juice Web UI Requirements
 
-Version: 0.43.0
+Version: 0.43.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.43.1.** The avatar menu's entry for `/browse` reads
+> **Discover**, the name the rest of this document gives the page (§6).
 
 > **What changed in 0.43.0.** The panel floated as a card in the page's
 > column and took its full width first, leaving the conversation a sliver on
@@ -838,7 +841,7 @@ operator's running kernel sees no screen: the first fact is true.
 
 **Navigation model.** The UI's permanent elements are three: the
 conversations, the composer, and the avatar menu (§6.1). The destinations —
-**Home**, **Inbox**, **Discover actions**, **Workshop**, **Wallet**,
+**Home**, **Inbox**, **Discover**, **Workshop**, **Wallet**,
 **Settings**, plus **Network**, **Admin** and an app's operator surfaces for
 `sys` alone — are one registry, which the avatar menu lists and the launcher
 searches. Each still maps to the CLI concepts it always did: `home` is the
