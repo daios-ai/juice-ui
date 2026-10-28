@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.44.1
+Version: 0.45.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.45.0.** The launcher's actions sat under an `Actions`
+> caption although their address already marks them; it is gone. Discover's
+> box lost its suggestions when the launcher took them over; the launcher's
+> list is now one component beside a text input, composed into the composer
+> and into Discover's box, which suggests the catalog's actions (§6.2).
 
 > **What changed in 0.44.1.** A string past 800 characters folded behind an
 > excerpt, a widget no form has, and so did a long chat reply; a string's box
@@ -1350,7 +1356,9 @@ both MUST keep planning apart from spending:
 **Discovery.**
 
 * **Discover** (`/browse`) is the search's own page: its query box is the
-  page's content, a GET to itself, and MUST issue `sys/lookup` (required
+  page's content, a GET to itself, with the catalog's actions matching what
+  is typed listed under it — the launcher's rows and rules (§6.1), each the
+  action's page; Enter submits the search — and MUST issue `sys/lookup` (required
   `query`, optional `limit`) via `POST /v1/run`. Results
   MUST render as **rows in one ranked column** (the rank is a sequence, so it
   is not spread over a grid), filling the container like every component. A

@@ -36,7 +36,7 @@ Three laws underpin everything:
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
-| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper) | **the** way to an action or a page: the composer's `/` — the query is the composer's own text after it — and a `.menu`-styled list opening above the composer, the best match nearest the box: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; rows `.menu-item`, matched in the browser; Enter submits the search (§5.9) |
+| **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper; `suggestions` in app.js) | **the** list of suggestions beside a text input, the best match nearest it; ↑/↓ walk the rows, Escape empties, Enter on a row follows it. Over the composer, its `/` — the query is the composer's own text after it: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; Enter submits the search (§5.9); and its addresses. Under Discover's `.search` box: the catalog's actions alone. Rows `.menu-item`, matched in the browser |
 | **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
@@ -557,16 +557,17 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   menu lists its destinations; the **launcher** lists all of it, carried as
   **inert JSON** (`<script type="application/json" id="launcher-data">`,
   CSP-safe) with the room's members and the room. Its query is the
-  composer's text after `/`; its rows are `.menu-item`s under
-  `.menu-caption`s, read bottom-up from the box — `Actions` (title and
+  composer's text after `/`; its rows are `.menu-item`s, under no caption,
+  read bottom-up from the box — the actions (title and
   address, from the catalog file, matched by either), the pages, each led
-  by `#arrow-right` under no caption, and at the top
+  by `#arrow-right`, and at the top
   `Search "…"`, led by `#search`, with the search's price as its muted detail. Enter in the box
   submits the search into the panel; a row is chosen by a click, or by `↑`
   to it and Enter, never for the person. An action row opens the panel (its
   href is the action page, the no-JS path), as does a row of the panel's
   results; the panel's sort tabs arrange the rows it holds (their hrefs are
   Discover's). There is no palette, no search pill, no command prefix.
+  Discover's box carries the same list under it, the catalog's actions alone.
 - Shortcuts: `g`+letter (destinations, `g h` home, `g d` discover) · `/` (the
   launcher, or Discover's box) · `?` (help overlay, `dialog.palette`) ·
   `j/k/Enter` (table and list rows; Enter opens a row as its own link does,

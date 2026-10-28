@@ -547,11 +547,29 @@ function row(label, detail, href, icon = "") {
   }
   return a;
 }
-function caption(text) {
-  const c = document.createElement("div");
-  c.className = "menu-caption";
-  c.textContent = text;
-  return c;
+const actionRow = (a) => row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
+
+// suggestions drives a list of rows beside a text input (the combobox
+// pattern), in order of merit from the input outward: over the composer
+// (column-reverse, the best nearest the box), under Discover's box. ↑/↓ walk
+// the rows as they are seen, from the input and back; Escape empties the
+// list. It knows nothing of what the rows are.
+function suggestions(form, input, box) {
+  const nav = box.querySelector("nav");
+  const above = box.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING;
+  const rows = () => [...nav.querySelectorAll("a")];
+  const show = (items) => { box.hidden = items.length === 0; nav.replaceChildren(...items); };
+  form.addEventListener("keydown", (e) => {
+    if (box.hidden) return;
+    if (e.key === "Escape") { e.preventDefault(); show([]); input.focus(); return; }
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    const seen = above ? [...rows().reverse(), input] : [input, ...rows()];
+    const i = seen.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    seen[Math.min(Math.max(i + (e.key === "ArrowUp" ? -1 : 1), 0), seen.length - 1)].focus();
+  });
+  return { show, rows, shown: () => !box.hidden };
 }
 
 // The panel beside the conversation (requirements §6.7) holds an action or a
@@ -581,27 +599,25 @@ function searchPanel(q, quoteHash) {
 for (const form of document.querySelectorAll("form[data-composer]")) {
   const box = form.querySelector(".launcher");
   const button = form.querySelector("[data-launcher]");
-  if (!box || !button || !launcher) continue;
-  const list = box.querySelector("nav");
+  const field = form.querySelector("[data-fields] textarea:not([disabled])");
+  if (!box || !button || !launcher || !field) continue;
+  const list = suggestions(form, field, box);
   const pages = (launcher.pages || []).map((p) => ({ t: p.name, k: hintKey(p.name), href: p.href }));
-  const field = () => form.querySelector("[data-fields] textarea:not([disabled])");
   let saved = null;  // the draft the launcher gives back when it closes
 
   const open = () => saved !== null;
   const close = (restore = true) => {
-    if (restore && saved !== null && field()) field().value = saved;
-    saved = null; box.hidden = true; list.replaceChildren();
+    if (restore && saved !== null) field.value = saved;
+    saved = null; list.show([]);
     sync();
   };
   // launch opens the launcher over the draft: the field holds `/` and the
   // query, and the draft comes back when it closes. The `/` button and the `/`
   // key (keys.js) ask for it with a `launch` event on the form.
   const launch = () => {
-    const f = field();
-    if (!f) return;
-    saved = f.value.startsWith("/") ? "" : f.value;
-    f.value = "/";
-    f.focus();
+    saved = field.value.startsWith("/") ? "" : field.value;
+    field.value = "/";
+    field.focus();
     render();
   };
   form.addEventListener("launch", launch);
@@ -613,50 +629,37 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
     searchPanel(q, terms?.quote_hash || "");
   };
 
-  // place puts the rows above the bar, the last row nearest it.
-  const place = (rows) => { box.hidden = rows.length === 0; list.replaceChildren(...rows); list.scrollTop = list.scrollHeight; };
-
+  // render lists, best first: the actions, the pages (led by an arrow), and
+  // the search row naming its price.
   async function render() {
-    const f = field();
-    if (!open() || !f) return;
-    const q = f.value.slice(1).trim();
+    if (!open()) return;
+    const q = field.value.slice(1).trim();
     const cat = q ? await loadCatalog() : null;
     if (!open()) return;
-    const actions = q ? matchHints(cat.actions, q, LAUNCH_ACTIONS) : [];
-    const found = matchHints(pages, q, q ? LAUNCH_PAGES : pages.length, true);
-    const rows = [];
+    const rows = (q ? matchHints(cat.actions, q, LAUNCH_ACTIONS) : []).map(actionRow);
+    for (const r of rows) r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(r.href); field.focus(); });
+    rows.push(...matchHints(pages, q, q ? LAUNCH_PAGES : pages.length, true).map((p) => row(p.t, "", p.href, "arrow-right")));
     if (q) {
       const r = row("Search “" + q + "”", cat.search?.price || "", "/browse?q=" + encodeURIComponent(q), "search");
       r.addEventListener("click", (e) => { e.preventDefault(); search(q); });
       rows.push(r);
     }
-    // A page is a place to go: led by an arrow, under no caption.
-    rows.push(...found.reverse().map((p) => row(p.t, "", p.href, "arrow-right")));
-    if (actions.length) {
-      rows.push(caption("Actions"));
-      for (const a of actions.reverse()) {
-        const r = row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
-        r.addEventListener("click", (e) => { e.preventDefault(); close(); openPanel(r.href); field()?.focus(); });
-        rows.push(r);
-      }
-    }
-    place(rows);
+    list.show(rows);
   }
 
   // members lists the room's other members to address: choosing one puts its
   // address first in the draft, in place of an address already there.
   const members = launcher.members || [];
   function listMembers(hits) {
-    place(hits.map((m) => {
+    list.show(hits.map((m) => {
       const r = row(m, "", "#");
       r.addEventListener("click", (e) => {
         e.preventDefault();
-        const f = field();
-        const first = f.value.split(/\s/)[0];
-        const rest = members.some((x) => x.toLowerCase() === first.replace(/[,:;.!?]+$/, "").toLowerCase()) || !/\s/.test(f.value)
-          ? f.value.slice(first.length).replace(/^[,:;.!?]*\s*/, "") : f.value;
-        f.value = m + ", " + rest;
-        place([]); sync(); f.focus();
+        const first = field.value.split(/\s/)[0];
+        const rest = members.some((x) => x.toLowerCase() === first.replace(/[,:;.!?]+$/, "").toLowerCase()) || !/\s/.test(field.value)
+          ? field.value.slice(first.length).replace(/^[,:;.!?]*\s*/, "") : field.value;
+        field.value = m + ", " + rest;
+        list.show([]); sync(); field.focus();
       });
       return r;
     }));
@@ -671,51 +674,50 @@ for (const form of document.querySelectorAll("form[data-composer]")) {
   // the next keystroke.
   const send = form.querySelector("[data-send]");
   const error = form.querySelector("#chat-error");
-  const sync = () => { if (send) send.disabled = !field()?.value.trim(); };
+  const sync = () => { if (send) send.disabled = !field.value.trim(); };
   sync();
   form.addEventListener("reset", () => setTimeout(sync)); // a sent post clears the box
   form.querySelector("[data-address]")?.addEventListener("click", () => {
     if (open()) close();
-    if (!box.hidden) { place([]); return; }
+    if (list.shown()) { list.show([]); return; }
     listMembers(members);
   });
 
   button.addEventListener("click", () => (open() ? close() : launch()));
   form.addEventListener("input", (e) => {
-    const f = field();
-    if (e.target !== f) return;
+    if (e.target !== field) return;
     sync();
     if (error) error.hidden = true;
-    if (f.value.startsWith("/")) {
+    if (field.value.startsWith("/")) {
       if (!open()) saved = "";
       render();
       return;
     }
     if (open()) saved = null;
-    suggestMembers(f.value);
+    suggestMembers(field.value);
   });
   form.addEventListener("keydown", (e) => {
-    const f = field();
-    const rows = [...list.querySelectorAll("a")];
-    if (e.key === "Escape" && !box.hidden) { e.preventDefault(); if (open()) close(); else place([]); f?.focus(); return; }
-    // The rows stand above the field: ↑ leaves it for the nearest, ↓ comes back.
-    if (!box.hidden && rows.length && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-      const items = [...rows, f];
-      const i = items.indexOf(document.activeElement);
-      if (i < 0) return;
-      e.preventDefault();
-      items[Math.min(Math.max(i + (e.key === "ArrowUp" ? -1 : 1), 0), items.length - 1)].focus();
-      return;
-    }
-    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target !== f) return;
+    // Escape with the launcher open gives the draft back, rows shown or not.
+    if (e.key === "Escape" && open()) { e.preventDefault(); close(); field.focus(); return; }
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target !== field) return;
     e.preventDefault();
     // Enter in the box: with the launcher open it submits the query to the
     // economy; with the members listed it takes the nearest; otherwise it
     // sends. Shift+Enter breaks the line.
-    const q = f.value.slice(1).trim();
+    const q = field.value.slice(1).trim();
     if (open()) { if (q) search(q); }
-    else if (!box.hidden && rows.length) rows[rows.length - 1].click();
-    else if (f.value.trim()) form.requestSubmit();
+    else if (list.shown()) list.rows()[0]?.click();
+    else if (field.value.trim()) form.requestSubmit();
+  });
+}
+
+// Discover's box: the catalog's actions matching it, under it, each row the
+// action's page; Enter submits the page's own search.
+for (const form of document.querySelectorAll("form.search")) {
+  const input = form.querySelector("input[name=q]"), list = suggestions(form, input, form.querySelector(".launcher"));
+  input.addEventListener("input", async () => {
+    const q = input.value.trim();
+    list.show(q ? matchHints((await loadCatalog()).actions, q, LAUNCH_ACTIONS).map(actionRow) : []);
   });
 }
 

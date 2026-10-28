@@ -726,11 +726,15 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
    inside them; the evidence fold, part of the record above, keeps the
    record's paragraph rhythm. The page needs none: its h2 opens the section. */
 .panel #action-run { margin-top: var(--space-5); }
-/* The launcher: the composer's `/`, its matches opening above the composer,
-   the best nearest the box one types in. */
-.launcher { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 200; padding: var(--space-1); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
+/* The launcher: a list of suggestions beside a text input, the best nearest
+   it — under Discover's box (.search), over the composer at the foot of the
+   screen. */
+.search { position: relative; }
+.launcher { position: absolute; inset: 100% 0 auto; z-index: 200; padding: var(--space-1); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 .launcher[hidden] { display: none; }
 .launcher nav { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
+.composer .launcher { inset: auto 0 100%; }
+.composer .launcher nav { flex-direction: column-reverse; }
 .launcher .menu-item { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 .launcher .menu-item .ico { color: var(--text-muted); }
 .msgs { display: flex; flex-direction: column; gap: var(--space-4); margin: var(--space-2) 0 var(--space-4); }

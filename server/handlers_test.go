@@ -2224,8 +2224,9 @@ func TestCatalogAsResults(t *testing.T) {
 }
 
 // TestDiscoverHasItsOwnSearch: with the pill gone, the Discover page carries
-// its query box as its content, a GET to itself, and no chrome holds a second
-// one.
+// its query box as its content, a GET to itself, with the launcher's list of
+// suggestions under it in place of the browser's own; no chrome holds a
+// second one. The list's rows carry no caption: each kind is marked by itself.
 func TestDiscoverHasItsOwnSearch(t *testing.T) {
 	b, err := tmplFS.ReadFile("templates/browse.html")
 	if err != nil {
@@ -2233,6 +2234,12 @@ func TestDiscoverHasItsOwnSearch(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `method="get" action="/browse" role="search"`) || !strings.Contains(string(b), `type="search" name="q"`) {
 		t.Error("Discover must carry its own query box")
+	}
+	if !strings.Contains(string(b), `autocomplete="off"`) || !strings.Contains(string(b), `<div class="launcher" hidden>`) {
+		t.Error("Discover's box must carry the launcher's list, not the browser's")
+	}
+	if js, _ := staticFS.ReadFile("static/app.js"); strings.Contains(string(js), "menu-caption") {
+		t.Error("the launcher's rows carry no caption")
 	}
 	layout, _ := tmplFS.ReadFile("templates/layout.html")
 	if strings.Contains(string(layout), `role="search"`) {

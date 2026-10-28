@@ -1,9 +1,10 @@
 {{define "content"}}
 {{$q := .Data.Query}}
 <div class="page-head"><h1>Discover actions</h1></div>
-<form class="row compact control-row" method="get" action="/browse" role="search">
-  <input class="stretch" type="search" name="q" value="{{$q}}" aria-label="Search actions" enterkeyhint="search">
+<form class="search row compact control-row" method="get" action="/browse" role="search">
+  <input class="stretch" type="search" name="q" value="{{$q}}" aria-label="Search actions" enterkeyhint="search" autocomplete="off">
   <button class="btn" type="submit">Search</button>
+  <div class="launcher" hidden><nav aria-label="Matches"></nav></div>
 </form>
 {{if $q}}
 {{template "_search_results" .Data}}
