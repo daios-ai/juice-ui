@@ -240,3 +240,24 @@ func TestPeerDisplayAbbreviatesAKeyButNotAPetname(t *testing.T) {
 		t.Error("an absent peer stays absent")
 	}
 }
+
+// The kernel relays one fact of an HTTP action's refusal, its status, in a
+// fixed message; anything else is no status.
+func TestUpstreamStatus(t *testing.T) {
+	for _, c := range []struct {
+		kind Kind
+		msg  string
+		want int
+	}{
+		{KindExecutionFailed, "upstream returned status 404", 404},
+		{KindExecutionFailed, "upstream returned status 409", 409},
+		{KindExecutionFailed, "upstream returned status 40", 0},
+		{KindExecutionFailed, "upstream returned status 404, and more", 0},
+		{KindExecutionFailed, "model did not select an action", 0},
+		{KindUnauthorized, "upstream returned status 404", 0},
+	} {
+		if got := (&KernelError{Kind: c.kind, KernelMessage: c.msg}).UpstreamStatus(); got != c.want {
+			t.Errorf("%v %q = %d, want %d", c.kind, c.msg, got, c.want)
+		}
+	}
+}

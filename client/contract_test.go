@@ -330,6 +330,11 @@ func newUpstream(t *testing.T) *upstream {
 			io.WriteString(w, petsSpec)
 			return
 		}
+		if r.URL.Path == "/refuse" {
+			w.WriteHeader(http.StatusConflict)
+			io.WriteString(w, `{"ok":false,"code":"held","error":"refused"}`)
+			return
+		}
 		if r.URL.Path == "/park" {
 			u.mu.Lock()
 			cb := client.New(r.Header.Get(client.CallbackHeader), nil)
@@ -389,6 +394,7 @@ func TestKernelContract(t *testing.T) {
 	}
 	echo := mk("echo", "/echo", 1_000_000, schema("x"), nil)
 	mk("park", "/park", 0, schema("x"), nil)
+	refused := mk("refuse", "/refuse", 0, schema("x"), nil)
 	ack := mk("ack", "/echo", 0, schema("x", "z"), nil)
 	mk("secret/read", "/echo", 0, schema("x"), json.RawMessage(`{"scheme":"delegated_bearer","config":{"header":"X-Key","template":"{token}"}}`))
 	up.park.action, up.park.caller = ack.Action, a.addr("bob")
@@ -396,6 +402,12 @@ func TestKernelContract(t *testing.T) {
 	reply := get(a, "run echo", func() (client.CallReply, error) {
 		return a.c.Run(ctx, bob, echo.Action, json.RawMessage(`{"x":"hi"}`), echo.QuoteHash)
 	})
+	// Of an endpoint's refusal the kernel relays its status and nothing of its
+	// body, and an app's sentences are chosen by that status.
+	_, rerr := a.c.Run(ctx, bob, refused.Action, json.RawMessage(`{"x":"hi"}`), "")
+	if ke, ok := client.AsKernelError(rerr); !ok || ke.UpstreamStatus() != http.StatusConflict || strings.Contains(ke.KernelMessage, "held") {
+		t.Fatalf("an endpoint's refusal reads as its status alone: %v", rerr)
+	}
 	get(a, "transaction", func() (client.Transaction, error) { return a.c.GetTransaction(ctx, bob, reply.TxID) })
 	get(a, "verify receipt", func() (client.ReceiptVerification, error) { return a.c.ReceiptVerification(ctx, bob, reply.TxID) })
 	done(a, "rate", a.c.RateTransaction(ctx, bob, reply.TxID, 1, "good"))

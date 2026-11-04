@@ -87,6 +87,21 @@ cheap, and both surprised us on the first app:
   *is* the trace). This is how an out-of-kernel service participates in the execution
   graph. See `juicedocs/API.md` §"Composition from a `kind=http` action".
 
+- **Every command is an action; a read is not.** Whatever changes the app's state
+  is an action the app owns, and the UI's control is a run of it, so a person and
+  an agent take one path and the kernel attests, prices and receipts the call. A
+  read is an endpoint of the service authenticated by the caller's key, as the
+  kernel serves its own reads: a run writes a transaction, and polling through runs
+  would fill the caller's history. A UI that writes the app's store directly has
+  given the person a capability no agent can reach, and made the service impossible
+  to move. Chat did this until 0.46.0.
+
+- **A refusal reaches a caller as its status alone.** The kernel answers a non-2xx
+  from an HTTP action with `execution_failed` and `upstream returned status N`, and
+  never relays the body (kernel D4). Choose statuses a caller can act on, let the
+  UI write the sentence from the status, and do not answer a refusal with 200 and
+  an error field: that records it as a success in the transaction and the receipt.
+
 ## 4. The economics *are* the design
 
 There is no free async in Juice, and pretending otherwise produces bugs. Every task:

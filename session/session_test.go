@@ -338,3 +338,50 @@ func TestLoginCarriesThePendingPhrase(t *testing.T) {
 		t.Errorf("the pre-login entry must be replaced, not kept: %d", len(m.live))
 	}
 }
+
+// An app's credential lives in the session's entry beside its tokens: it survives
+// a stale save, leaves with the session, is not carried into a new login, and
+// never brings an ended session back.
+func TestAppSecretLivesInTheEntry(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	m.PutAppSecret(ctx, "chat", "before-login")
+	if _, ok := m.AppSecret(ctx, "chat"); ok {
+		t.Fatal("no entry holds no secret, and none is made")
+	}
+	if err := m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "ann@k", Pin{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.AppSecret(ctx, "chat"); ok {
+		t.Fatal("a new login holds nothing yet")
+	}
+	m.PutAppSecret(ctx, "chat", "K1")
+	m.PutAppSecret(ctx, "other", "K2")
+	if k, ok := m.AppSecret(ctx, "chat"); !ok || k != "K1" {
+		t.Fatalf("AppSecret = %q %v", k, ok)
+	}
+	m.DropAppSecret(ctx, "chat")
+	if _, ok := m.AppSecret(ctx, "chat"); ok {
+		t.Fatal("dropped")
+	}
+	if k, _ := m.AppSecret(ctx, "other"); k != "K2" {
+		t.Fatal("each app's own")
+	}
+	m.PutAppSecret(ctx, "chat", "K3")
+	if err := m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "bob@k", Pin{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.AppSecret(ctx, "chat"); ok {
+		t.Fatal("one login's credential is never another's")
+	}
+	m.PutAppSecret(ctx, "chat", "K4")
+	if _, err := m.Logout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.AppSecret(ctx, "chat"); ok {
+		t.Fatal("it leaves with the session")
+	}
+	m.PutAppSecret(ctx, "chat", "late")
+	if _, ok := m.AppSecret(ctx, "chat"); ok {
+		t.Fatal("a late write brings nothing back")
+	}
+}

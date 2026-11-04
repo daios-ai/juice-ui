@@ -1,7 +1,26 @@
 # Juice Web UI Requirements
 
-Version: 0.45.0
+Version: 0.46.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.46.0.** Chat's room operations were browser routes that
+> wrote chat's store as the signed-in person, and its room reads were direct
+> store reads. An agent could therefore post and answer, but could not create a
+> room, add or remove a member, leave, delete or rename one, and the chat service
+> could not be moved out of this repository. Every room command is now an action
+> chat owns (`room/create`, `room/direct`, `room/rename`, `room/add`,
+> `room/remove`, `room/leave`, `room/delete`), and the pages run them as the
+> viewer, so a person and an agent take one path. A room is read from two
+> endpoints of the chat service with the member's chat key, because a read is not
+> an execution and must not fill the member's transaction history. The UI joins a
+> member the way a member elsewhere joins: it approves chat, runs `register`,
+> completes the verification task and connects the key, all through the kernel.
+> The UI no longer touches chat's store, and a test holds that boundary. A room's
+> creator can rename it. One grant at `chat@<kernel>` covers every action a member
+> runs, and a person who holds only the earlier `msg/post` grant is joined again
+> on the next chat page. The kernel relays only the status of an action's refusal,
+> never its body, so the UI chooses its sentence by that status; a held post
+> previously fell through to an error page and now reads as itself (§6.7).
 
 > **What changed in 0.45.0.** The launcher's actions sat under an `Actions`
 > caption although their address already marks them; it is gone. Discover's
@@ -1086,8 +1105,8 @@ kernel and world is in use, and keys everything durable by
   invalidates the prior refresh token and concurrent refreshes would fail.
 * **What a request may not save.** Each request works on its own copy of the
   session and saves it whole, so a value another request changed meanwhile
-  would be written back stale. The token pair, the last activity and the
-  unacknowledged recovery phrase are therefore kept in a store beside the
+  would be written back stale. The token pair, the last activity, the
+  unacknowledged recovery phrase and the member's chat key (§6.7) are therefore kept in a store beside the
   session, keyed by its token, which every request reads and none saves
   whole: a rotation is seen by every request, the last activity only moves
   forward, and an acknowledged phrase stays gone. Only sign-in and sign-up
@@ -2244,19 +2263,53 @@ when it is text whose first word, trailing `,:;.!?` removed, is that member's
 address, compared without case. There is no `@handle`: a member is named as
 everywhere in Juice.
 
-Chat is itself a kernel user, `chat@<kernel>`, and owns five actions, every
-schema canonical (§6.4) and every text naming this kernel: `index` (public,
-free; `{}` → `{usage}`, the paragraph a member learns chat from), `register`
-(public; `{handle}` → `{api_key, task_id}`, for members elsewhere), `validate`
-(private; the verification task's onward, gated by chat's upstream bearer),
-`msg/post` (public, `delegated_bearer` on the seam's caller-key header;
-`{thread_id, message: string}` → `{delivered}`) and `reply` (private; a delivery's
-onward, bearer-gated; `{thread_id, member, delivery, message, answer?,
-status?, reason?}` → `{ok}`). The onwards are private so that a member
-completes a task without being able to run the action itself and speak as
-somebody else: the kernel checks an onward's visibility against the task's
-creator, chat. They are reconciled at every start as `docs/apps.md`
-describes, and any other action chat owns is deleted.
+Chat is an HTTP server, the **chat service**, whose endpoints the kernel wraps
+as actions owned by the kernel user `chat@<kernel>`. Its twelve actions, every
+schema canonical (§6.4) and every text naming this kernel, are:
+
+| Action | Visibility, auth | Input → output | Who may |
+|---|---|---|---|
+| `index` | public, free | `{}` → `{usage}`, the paragraph a member learns chat from | anyone |
+| `register` | public | `{handle}` → `{api_key, task_id}` | anyone; the key activates only when that address completes the task |
+| `validate` | private, chat's bearer | the verification task's onward | the kernel |
+| `reply` | private, chat's bearer | a delivery's onward: `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` | the kernel |
+| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered}` | a member |
+| `room/create` | public, delegated | `{members, name?}` → `{room}` | anyone joined, who becomes the creator; a blank name is the members' handles |
+| `room/direct` | public, delegated | `{member}` → `{room}` | anyone joined: the room of exactly those two, made when absent |
+| `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
+| `room/add` | public, delegated | `{thread_id, member}` → `{room}` | the creator |
+| `room/remove` | public, delegated | `{thread_id, member}` → `{room}` | the creator, never itself |
+| `room/leave` | public, delegated | `{thread_id}` → `{ok}` | a member other than the creator |
+| `room/delete` | public, delegated | `{thread_id}` → `{ok}` | the creator; everything in the room goes |
+
+Delegated means `delegated_bearer` on the seam's caller-key header: the kernel
+injects the key the member connected, and the service resolves it to the member.
+The onwards are private so that a member completes a task without being able to
+run the action itself and speak as somebody else: the kernel checks an onward's
+visibility against the task's creator, chat. They are reconciled at every start
+as `docs/apps.md` describes, and any other action chat owns is deleted.
+
+**A room is read from the service, not run.** A run is an execution with a
+process, a transaction and a receipt in the caller's history, so a heartbeat of
+runs would write one every five seconds. The service therefore serves two reads
+over plain HTTP, authenticated by the same chat key on the same header:
+`GET room/list` → `{rooms}`, the caller's rooms, newest activity first; and
+`GET room/read?thread_id=&after=&seen=` → `{room, entries, removed, waiting}`, to
+a member, its latest entries or with `after` those newer than it and the posts an
+answer replaced, whom it waits on, and with `seen=true` the caller's read cursor
+moved. An agent needs neither: a delivery carries what the room said.
+
+**The boundary.** The service (`service.go`, `deliver.go`, `store.go`) imports
+nothing of the UI, and the UI reaches it only through the kernel or those reads,
+at the one base its actions' sources name, so the service could be served from
+another program. A test holds both directions.
+
+**A refused action.** The service answers a refusal with a status and
+`{ok: false, code, error}`, but the kernel relays only `upstream returned status
+N`, never the body (kernel D4, verified on v0.17.1 and pinned by the contract
+test). The UI therefore chooses its sentence by the status, a room gone (404)
+being the not-found page, and records nothing as a success: a refusal is a failed
+transaction. A read's status and body reach the UI whole.
 
 The rules:
 
@@ -2292,24 +2345,33 @@ The rules:
    room is in view; a room with unread entries is weighted in the rail.
    Opening a room also completes the viewer's waiting deliveries for it
    (price 0), so a person's next post has depth zero.
-8. **The UI joins its installation's principals.** Joining is approving
-   `chat@<kernel>` as a requester, a key chat mints and activates, and that key
-   connected to `chat@<kernel>/msg`, each as the principal. The person signed
-   in is joined, with the session, by every chat page that finds no connector.
-   An agent with a home under `$JUICE_HOME/agents/` named by a login on this
+8. **The UI joins its installation's principals, through the kernel alone.**
+   Joining is approving `chat@<kernel>` as a requester, running `register`,
+   completing the verification task and connecting the key at `chat@<kernel>`,
+   each as the principal: the path a member elsewhere walks by hand. A member is
+   joined when the kernel's grant plan shows every action under that selector
+   granted, and, for a person, when the session holds their key, which only a join
+   can give it, since the kernel never reads a connected token back; the key stays
+   in the session store for the reads (§5). The person signed
+   in is joined, with the session, by every chat page that finds them not joined,
+   and by a command the kernel refuses for want of a grant. The rail never joins:
+   a session not yet joined shows no rooms. An agent with a home under
+   `$JUICE_HOME/agents/` named by a login on this
    kernel is joined with its own session, read from
    `client/credentials/<login>.json` under that file's lock and refreshed there
    when the kernel refuses it (ecosystem-standard §4): every time chat signs
    in, when it is added to a room, and, for the assistant, at every landing. A
-   join that fails is said on the page that asked for it. A contract change
-   revokes grants; the next join restores them.
+   join that fails is said on the page that asked for it, and no key is ever
+   retired: `register` is open and names any address, so retiring one would let
+   anyone revoke a member's credential, and a failed connect leaves the earlier key
+   working. A contract change revokes grants; the next join restores them.
 9. **`/chat` is the viewer's conversation with the assistant**: the room whose
-   members are exactly the viewer and `assistant@<kernel>`, found or created
-   in one transaction and named `assistant`; without an assistant home the
+   members are exactly the viewer and `assistant@<kernel>`, opened by
+   `room/direct` and named `assistant`; without an assistant home the
    landing is the newest room, else an empty page beside the rail. The rail
-   lists the viewer's rooms; create, add, remove, leave and delete are browser
-   routes on chat's store as the signed-in member, and New conversation offers
-   this kernel's agents first. A room
+   lists the viewer's rooms. Every room command on a page is a run of its action
+   as the viewer, so the UI writes nothing to chat's store, and New conversation
+   offers this kernel's agents first. A room
    id is three words, `adjective-animal-NN`, which a language model copies
    exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
    26).
@@ -2341,10 +2403,12 @@ the assistant, else the newest room, else an empty page beside the rail.
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
   handles. There is no rooms page.
-* **A room** is crumb (name · members · leave/delete) → entries → whom it
+* **A room** is crumb (name · members · rename and delete, or leave) → entries → whom it
   waits on → composer, the page the scroll container, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
-  chosen. An entry renders as the view of its body (§7), a failure being the
+  chosen. Its creator alone is offered **Rename**, a dialog holding the name
+  (`?form=rename` without script); the rail follows on every open page through
+  the heartbeat. An entry renders as the view of its body (§7), a failure being the
   view of its `{status, reason}`. **Waiting on** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
   — a fact chat holds, never a claim of activity, which chat cannot observe —
@@ -2769,6 +2833,17 @@ Every production `.go` file has a `_test.go` file with independent tests.
   changed amount; the composer standing in the room alone (drift guard); the
   form and the bar drawing a control through one partial; a room's context as
   the planner reads it, refused to a non-member;
+* chat as a service: every room command is a run of its action as the viewer and
+  every page read a request to the service bearing the session's key, the store
+  untouched by the UI; the service's files import nothing of the UI and the UI
+  reaches only its contracts, handler and close (drift guard); each command's rule
+  holds for any caller, the creator renaming, adding, removing and deleting and a
+  member leaving; the reads' cursor, window and statuses; a join goes through the
+  kernel alone, connects at the root and follows the kernel's plan per action, a
+  person holding only an earlier grant joined again; a registration or a failed
+  connect retires no key; the rail never joins; a read with an unknown key joins
+  again; a refusal is said by its status, a room gone the not-found page, and a
+  person never reads a raw status;
 * the stylesheet styles nothing that no template, script or Go renders
   (drift guard);
 * the planner under one rule: offered at its price, on the money button when
@@ -2845,6 +2920,11 @@ once its prerequisite is confirmed on the running kernel.
   model omit it, which the kernel refuses ("required field missing"), unless it
   is told to give an empty string — possible for a string, not for a number or
   a boolean. A partial proposal is a contract the kernel does not offer.
+* **An agent reads only a refusal's status (§6.7).** The kernel relays
+  `upstream returned status N` and no body, so an agent refused a room command or
+  a held post learns the number, not the reason (kernel D4). The contract test
+  pins that wording. Chat's `index` and action descriptions state the rules
+  beforehand, which is what an agent has until a kernel relays a reason.
 * **Structured agent proposals.** An agent answers a delivery with a string
   (juice-agent's reply tool, shaped onto chat's `reply.answer`), so a member
   cannot hand the person a validated `{action, args}` to open in the panel.

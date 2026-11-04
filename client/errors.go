@@ -55,6 +55,26 @@ type KernelError struct {
 	Meta map[string]json.RawMessage
 }
 
+// upstreamStatus is the one fact the kernel relays about an HTTP action's
+// refusal: kernel D4 keeps the upstream's body out of every reason, so its
+// status is all a caller can act on. The contract test holds this wording
+// against the installed kernel.
+var upstreamStatus = regexp.MustCompile(`^upstream returned status (\d{3})$`)
+
+// UpstreamStatus is the status an HTTP action's endpoint answered, for an
+// execution_failed the kernel reports as such, and 0 for anything else.
+func (e *KernelError) UpstreamStatus() int {
+	if e.Kind != KindExecutionFailed {
+		return 0
+	}
+	m := upstreamStatus.FindStringSubmatch(e.KernelMessage)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
 // MetaString reads a metadata value as a string, tolerating both a JSON string
 // and a bare number.
 func (e *KernelError) MetaString(key string) string {

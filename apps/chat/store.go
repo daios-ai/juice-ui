@@ -36,24 +36,24 @@ var (
 // Room is a conversation among its members. Unread and LastAt are filled by
 // Rooms, for the list.
 type Room struct {
-	ID        string
-	Name      string
-	Creator   string
-	Members   []string
-	CreatedAt string
-	Unread    bool
-	LastAt    string
+	ID        string   `json:"thread_id"`
+	Name      string   `json:"name"`
+	Creator   string   `json:"creator"`
+	Members   []string `json:"members"`
+	CreatedAt string   `json:"created_at"`
+	Unread    bool     `json:"unread"`
+	LastAt    string   `json:"last_at"`
 }
 
 // Entry is one thing said in a room. Body is any JSON value; a sentence is a
 // JSON string. Kind says how it came: a post, a delivery's answer, or a
 // delivery's failure; it is stored, never read off the body.
 type Entry struct {
-	Seq    int64
-	Author string
-	Body   json.RawMessage
-	At     string
-	Kind   int
+	Seq    int64           `json:"seq"`
+	Author string          `json:"author"`
+	Body   json.RawMessage `json:"body"`
+	At     string          `json:"at"`
+	Kind   int             `json:"kind"`
 }
 
 // The kinds of entry.
@@ -336,6 +336,19 @@ func (s *Store) withMembers(id string) (Room, error) {
 	return r, err
 }
 
+// Rename changes the room's name; the creator only. A name is never blank.
+func (s *Store) Rename(actor, roomID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrBadInput
+	}
+	if _, err := s.requireCreator(actor, roomID); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE rooms SET name = ? WHERE id = ?`, name, roomID)
+	return err
+}
+
 // AddMember adds member to the room; the creator only.
 func (s *Store) AddMember(actor, roomID, member string) error {
 	if member == "" {
@@ -455,7 +468,7 @@ func (s *Store) members(roomID string) ([]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := []string{}
 	for rows.Next() {
 		var m string
 		if err := rows.Scan(&m); err != nil {

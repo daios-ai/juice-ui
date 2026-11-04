@@ -442,3 +442,74 @@ func TestWorking(t *testing.T) {
 		t.Errorf("an answered delivery is no longer held: %v", ws)
 	}
 }
+
+// A room's name is its creator's to change, and is never blank; a stranger, a
+// member and a room that is not there are each refused, and the rail's list
+// shows the new name.
+func TestRename(t *testing.T) {
+	s := mustStore(t)
+	r, err := s.CreateRoom("ann@k", "cafe", []string{"bob@k"})
+	must(t, err)
+	must(t, s.Rename("ann@k", r.ID, "  tea room  "))
+	rooms, err := s.Rooms("bob@k")
+	must(t, err)
+	if len(rooms) != 1 || rooms[0].Name != "tea room" {
+		t.Errorf("rooms = %+v", rooms)
+	}
+	for who, want := range map[string]error{"bob@k": ErrForbidden, "eve@k": ErrForbidden} {
+		if err := s.Rename(who, r.ID, "mine"); !errors.Is(err, want) {
+			t.Errorf("%s renames: %v", who, err)
+		}
+	}
+	if err := s.Rename("ann@k", r.ID, "   "); !errors.Is(err, ErrBadInput) {
+		t.Errorf("a blank name: %v", err)
+	}
+	if err := s.Rename("ann@k", "no-such-1", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no such room: %v", err)
+	}
+	room, _, err := s.Room("ann@k", r.ID)
+	must(t, err)
+	if room.Name != "tea room" {
+		t.Errorf("a refusal changed the name: %q", room.Name)
+	}
+}
+
+// No key is ever retired: register is open and names any address, so a second
+// registration, pending or active, leaves a member's working key working.
+func TestARegistrationRetiresNoKey(t *testing.T) {
+	s := mustStore(t)
+	first, id, err := s.RegisterKey("ann@k")
+	must(t, err)
+	must(t, s.ActivateKey(id))
+	if _, _, err := s.RegisterKey("ann@k"); err != nil { // anyone's, never completed
+		t.Fatal(err)
+	}
+	if m, ok := s.Member(first); !ok || m != "ann@k" {
+		t.Errorf("a pending registration revoked the key: %q %v", m, ok)
+	}
+	second, id2, err := s.RegisterKey("ann@k")
+	must(t, err)
+	must(t, s.ActivateKey(id2))
+	for _, k := range []string{first, second} {
+		if m, ok := s.Member(k); !ok || m != "ann@k" {
+			t.Errorf("both keys work: %q %v", m, ok)
+		}
+	}
+}
+
+// A room reads as its action's output schema declares, members a list.
+func TestARoomsWireShape(t *testing.T) {
+	s := mustStore(t)
+	r, err := s.CreateRoom("ann@k", "cafe", nil)
+	must(t, err)
+	b, _ := json.Marshal(r)
+	for _, want := range []string{`"thread_id":"` + r.ID + `"`, `"name":"cafe"`, `"creator":"ann@k"`, `"members":["ann@k"]`, `"unread":false`, `"last_at":""`, `"created_at":"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("%s lacks %s", b, want)
+		}
+	}
+	b, _ = json.Marshal(Entry{Seq: 1, Author: "a@k", Body: json.RawMessage(`"x"`), At: "t", Kind: KindAnswer})
+	if string(b) != `{"seq":1,"author":"a@k","body":"x","at":"t","kind":1}` {
+		t.Errorf("entry = %s", b)
+	}
+}

@@ -52,9 +52,10 @@ const (
 // the scs Lifetime from when it was made): Sweep removes expired ones, and
 // every read treats one as gone.
 type live struct {
-	toks     client.Tokens // the kernel's pair; zero before login
-	activeAt int64         // unix nanoseconds of the person's last request; only moves forward
-	phrase   string        // the recovery phrase until acknowledged
+	toks     client.Tokens     // the kernel's pair; zero before login
+	activeAt int64             // unix nanoseconds of the person's last request; only moves forward
+	phrase   string            // the recovery phrase until acknowledged
+	secrets  map[string]string // an app's credential for this user, by app
 	expires  time.Time
 }
 
@@ -245,6 +246,30 @@ func (m *Manager) Tokens(ctx context.Context) (client.Tokens, bool) {
 	var t client.Tokens
 	m.entry(ctx, func(e *live) { t = e.toks })
 	return t, t.AccessToken != "" && t.RefreshToken != ""
+}
+
+// PutAppSecret keeps a credential an app obtained for this session's user
+// beside the session's kernel tokens: in the server-side entry, never in the
+// session record or the browser, and gone with the session. It changes only an
+// entry that exists, so a session ended meanwhile stays ended.
+func (m *Manager) PutAppSecret(ctx context.Context, app, secret string) {
+	m.entry(ctx, func(e *live) {
+		if e.secrets == nil {
+			e.secrets = map[string]string{}
+		}
+		e.secrets[app] = secret
+	})
+}
+
+// AppSecret returns the credential PutAppSecret kept for the app.
+func (m *Manager) AppSecret(ctx context.Context, app string) (secret string, ok bool) {
+	m.entry(ctx, func(e *live) { secret = e.secrets[app] })
+	return secret, secret != ""
+}
+
+// DropAppSecret forgets it, when whoever issued it no longer honours it.
+func (m *Manager) DropAppSecret(ctx context.Context, app string) {
+	m.entry(ctx, func(e *live) { delete(e.secrets, app) })
 }
 
 // Address returns the signed-in user's address, handle@kernel, or "". A

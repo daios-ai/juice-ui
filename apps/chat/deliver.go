@@ -66,32 +66,32 @@ type carriedEntry struct {
 // post last. The task is created before the delivery is recorded, so a
 // record that fails only repeats a range next time; a recipient the kernel
 // refuses is skipped. It returns how many were created.
-func (c *Chat) deliver(ctx context.Context, callback, capability, roomID string, upto, depth int64, to []string) int {
+func (s *Service) deliver(ctx context.Context, callback, capability, roomID string, upto, depth int64, to []string) int {
 	n := 0
 	for _, m := range to {
-		entries, err := c.store.Range(m, roomID, upto, carried)
+		entries, err := s.Store.Range(m, roomID, upto, carried)
 		if err != nil {
-			c.log().Warn("chat: delivery range", "member", m, "err", err)
+			s.log().Warn("chat: delivery range", "member", m, "err", err)
 			continue
 		}
 		carry := make([]carriedEntry, 0, len(entries))
 		for _, e := range entries {
 			carry = append(carry, carriedEntry{From: e.Author, Message: e.Body})
 		}
-		id, err := c.store.NextDelivery()
+		id, err := s.Store.NextDelivery()
 		if err != nil {
-			c.log().Warn("chat: delivery id", "err", err)
+			s.log().Warn("chat: delivery id", "err", err)
 			continue
 		}
 		partial, _ := json.Marshal(map[string]any{"thread_id": roomID, "member": m, "delivery": id, "message": carry})
-		if _, err := c.deps.Client.CallbackCreateTask(ctx, callback, capability, client.CreateTaskInput{
-			Action: c.self() + "/" + replyName, RequiredCaller: m, PartialArgs: partial,
+		if _, err := s.Kernel.CallbackCreateTask(ctx, callback, capability, client.CreateTaskInput{
+			Action: s.Self() + "/" + replyName, RequiredCaller: m, PartialArgs: partial,
 		}); err != nil {
-			c.log().Warn("chat: deliver", "room", roomID, "member", m, "err", err)
+			s.log().Warn("chat: deliver", "room", roomID, "member", m, "err", err)
 			continue
 		}
-		if err := c.store.Delivered(m, roomID, upto, id, depth); err != nil {
-			c.log().Warn("chat: record delivery", "member", m, "err", err)
+		if err := s.Store.Delivered(m, roomID, upto, id, depth); err != nil {
+			s.log().Warn("chat: record delivery", "member", m, "err", err)
 			continue
 		}
 		n++

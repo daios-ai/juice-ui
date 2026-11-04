@@ -46,6 +46,10 @@ type fakeKernel struct {
 	mes       map[string]string // GET /v1/me body by any other token
 	expired   map[string]bool   // tokens the kernel refuses
 	refreshed []string          // refresh tokens rotated
+	svc       *Service          // what a run dispatches to, as the kernel does
+	keys      map[string]string // the chat key connected, by session token
+	granted   map[string]map[string]bool
+	failGrant bool // POST /v1/grants refuses
 }
 
 type fakeAction struct {
@@ -72,7 +76,7 @@ func (a *fakeAction) wire() string {
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string][]string{}, me: `{"address":"ann@testnet","connectors":[]}`,
-		mes: map[string]string{}, expired: map[string]bool{}}
+		mes: map[string]string{}, expired: map[string]bool{}, keys: map[string]string{}, granted: map[string]map[string]bool{}}
 	for i := range seed {
 		a := seed[i]
 		f.acts[a.ID] = &a
@@ -113,6 +117,17 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		_, _ = w.Write([]byte(`{"access_token":"NEW-` + in.RefreshToken + `","refresh_token":"NEXT-` + in.RefreshToken + `"}`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if ref := r.URL.Query().Get("ref"); ref != "" {
+			for _, k := range f.svc.Contracts() {
+				if "chat@testnet/"+k.name == ref {
+					b, _ := json.Marshal([]map[string]any{{"id": k.name, "name": k.name, "input_schema": k.in}})
+					_, _ = w.Write(b)
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
 		if r.URL.Query().Get("offset") != "" {
 			_, _ = w.Write([]byte(`[]`))
 			return
@@ -211,39 +226,114 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	})
 	mux.HandleFunc("POST /v1/tasks/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		defer f.mu.Unlock()
-		f.completes = append(f.completes, r.PathValue("id"))
+		var keyID any
 		for _, t := range f.tasks {
 			if t["id"] == r.PathValue("id") {
 				t["status"] = "done"
+				if t["action"] == "chat@testnet/validate" {
+					keyID = t["partial_args"].(map[string]any)["key_id"]
+				}
 			}
+		}
+		if keyID == nil {
+			f.completes = append(f.completes, r.PathValue("id"))
+		}
+		f.mu.Unlock()
+		if keyID != nil { // the onward of the verification task
+			b, _ := json.Marshal(map[string]any{"key_id": keyID})
+			req := httptest.NewRequest(http.MethodPost, "/validate", strings.NewReader(string(b)))
+			req.Header.Set("Authorization", "Bearer "+f.svc.Secret)
+			f.svc.ServeHTTP(httptest.NewRecorder(), req)
 		}
 		_, _ = w.Write([]byte(`{"task_id":"` + r.PathValue("id") + `"}`))
 	})
-	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+	mux.HandleFunc("GET /v1/grants/plan", func(w http.ResponseWriter, r *http.Request) {
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		f.mu.Lock()
-		f.runs = append(f.runs, string(b))
-		f.mu.Unlock()
-		if strings.Contains(string(b), "/register") {
-			_, _ = w.Write([]byte(`{"result":{"api_key":"KEY","task_id":"T9"},"tx_id":"tx"}`))
+		defer f.mu.Unlock()
+		if f.expired[tok] {
+			http.Error(w, `{"error":"token expired"}`, http.StatusUnauthorized)
 			return
 		}
+		var actions []client.GrantPlanAction
+		for _, a := range f.delegated() {
+			actions = append(actions, client.GrantPlanAction{Action: a, Granted: f.granted[tok][a]})
+		}
+		b, _ := json.Marshal(client.GrantPlan{Groups: []client.GrantGroup{{Actions: actions}}})
+		_, _ = w.Write(b)
+	})
+	// A run is the kernel's dispatch: the grant is checked, the input checked,
+	// the action's endpoint called with the connected key and the capability,
+	// and of a refusal only the status comes back.
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		var in struct {
+			Action string          `json:"action"`
+			Args   json.RawMessage `json:"args"`
+		}
+		_ = json.Unmarshal(b, &in)
+		f.mu.Lock()
+		needs := false
+		for _, a := range f.delegated() {
+			needs = needs || a == in.Action
+		}
+		if needs && !f.granted[tok][in.Action] {
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"grant_required","error":"grant required","meta":{"action":"` + in.Action + `"}}`))
+			return
+		}
+		f.runs = append(f.runs, string(b))
+		key := f.keys[tok]
+		f.mu.Unlock()
 		if strings.Contains(string(b), "/msg/post") && !strings.Contains(string(b), `"message"`) {
 			http.Error(w, `{"code":"invalid_input","error":"message: required field missing"}`, http.StatusUnprocessableEntity)
 			return
 		}
 		if strings.Contains(string(b), "refuse me") {
-			http.Error(w, `{"code":"execution_failed","error":"action failed: {\"ok\":false,\"error\":\"a post is already pending; answer the delivery first\"}"}`, http.StatusInternalServerError)
+			http.Error(w, `{"code":"execution_failed","error":"upstream returned status 409","meta":{"charge":"0","tx_id":"tx"}}`, http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write([]byte(`{"result":{"delivered":1},"tx_id":"tx"}`))
+		req := httptest.NewRequest(http.MethodPost, "/"+strings.TrimPrefix(in.Action, "chat@testnet/"), strings.NewReader(string(in.Args)))
+		req.Header.Set(client.CallbackHeader, f.srv.URL)
+		req.Header.Set(client.CapabilityHeader, "trace.sig")
+		if needs {
+			req.Header.Set(f.svc.CallerKey, key)
+		}
+		rec := httptest.NewRecorder()
+		f.svc.ServeHTTP(rec, req)
+		if rec.Code/100 != 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"code":"execution_failed","error":"upstream returned status ` + strconv.Itoa(rec.Code) + `","meta":{"charge":"0","tx_id":"tx"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"result":` + rec.Body.String() + `,"tx_id":"tx"}`))
 	})
 	mux.HandleFunc("POST /v1/grants", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		var in struct {
+			Selector string `json:"selector"`
+			Token    string `json:"token"`
+		}
+		_ = json.Unmarshal(b, &in)
 		f.mu.Lock()
-		f.grants = append(f.grants, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")+"|"+string(b))
-		f.mu.Unlock()
+		defer f.mu.Unlock()
+		if f.failGrant {
+			http.Error(w, `{"code":"invalid_state","error":"no"}`, http.StatusConflict)
+			return
+		}
+		f.grants = append(f.grants, tok+"|"+string(b))
+		f.keys[tok] = in.Token
+		if f.granted[tok] == nil {
+			f.granted[tok] = map[string]bool{}
+		}
+		for _, a := range f.delegated() {
+			if a == in.Selector || strings.HasPrefix(a, in.Selector+"/") {
+				f.granted[tok][a] = true
+			}
+		}
 		_, _ = w.Write([]byte(`{"actions":["chat@testnet/msg/post"]}`))
 	})
 	mux.HandleFunc("POST /v1/me/requesters/{address}/{verb}", func(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +347,35 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 }
 
 func (f *fakeKernel) close() { f.srv.Close() }
+
+// delegated is every action a member runs with its key, by address.
+func (f *fakeKernel) delegated() []string {
+	var out []string
+	for _, k := range f.svc.Contracts() {
+		if schemeOf(k.auth) == "delegated_bearer" {
+			out = append(out, "chat@testnet/"+k.name)
+		}
+	}
+	return out
+}
+
+// ran is the arguments of every dispatched run of one of chat's actions.
+func (f *fakeKernel) ran(name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, run := range f.runs {
+		var in struct {
+			Action string          `json:"action"`
+			Args   json.RawMessage `json:"args"`
+		}
+		_ = json.Unmarshal([]byte(run), &in)
+		if in.Action == "chat@testnet/"+name {
+			out = append(out, string(in.Args))
+		}
+	}
+	return out
+}
 
 func schemeOf(auth json.RawMessage) string {
 	var a struct{ Scheme string }
@@ -278,8 +397,10 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	root := t.TempDir()
 	cl := client.New(f.srv.URL, nil)
 	sm := scs.New()
-	c.store = mustStore(t)
 	c.st = chatState{Secret: "S", Password: "pw"}
+	c.svc = &Service{Store: mustStore(t), Self: c.self, Secret: "S", CallerKey: apps.CallerKeyHeader, Kernel: cl}
+	f.svc = c.svc
+	c.httpc = &http.Client{Transport: &toService{c: c}}
 	c.deps = apps.Deps{
 		Address:   testAddress,
 		Client:    cl,
@@ -318,14 +439,54 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	return c, sm
 }
 
-// as runs a browser handler inside a session signed in as ann.
-func as(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
+// toService is the UI's way to the service in a test: a read reaches the
+// service's handler, with no listener. It counts them, and what key each bore.
+type toService struct {
+	c    *Chat
+	mu   sync.Mutex
+	keys []string
+}
+
+func (t *toService) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.keys = append(t.keys, req.Header.Get(apps.CallerKeyHeader))
+	t.mu.Unlock()
+	if !strings.HasPrefix(req.URL.String(), t.c.base()) {
+		return nil, errors.New("a read dials the service's base: " + req.URL.String())
+	}
+	rec := httptest.NewRecorder()
+	sreq := req.Clone(req.Context())
+	sreq.URL.Path = "/" + strings.TrimPrefix(req.URL.Path, "/_kernel/chat/")
+	t.c.svc.ServeHTTP(rec, sreq)
+	return rec.Result(), nil
+}
+
+// sessions is each session manager's cookie, so requests in a test share one
+// session, as a browser's do.
+var sessions sync.Map
+
+// inSession serves req inside the session signed in as ann, signing in on its
+// first request.
+func inSession(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
+	if ck, ok := sessions.Load(sm); ok {
+		req.AddCookie(ck.(*http.Cookie))
+	}
 	rec := httptest.NewRecorder()
 	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "ann@testnet", session.Pin{})
+		if _, ok := c.deps.Sessions.Tokens(r.Context()); !ok {
+			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "ann@testnet", session.Pin{})
+		}
 		h(w, r)
 	})).ServeHTTP(rec, req)
+	for _, ck := range rec.Result().Cookies() {
+		sessions.Store(sm, ck)
+	}
 	return rec
+}
+
+// as runs a browser handler in ann's session.
+func as(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
+	return inSession(c, sm, h, req)
 }
 
 // dispatch posts to a kernel-facing route the way the kernel does, with
@@ -342,7 +503,7 @@ func dispatch(c *Chat, path, key, bearer string, body any) *httptest.ResponseRec
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	rec := httptest.NewRecorder()
-	http.StripPrefix("/_kernel/chat", http.HandlerFunc(c.kernel)).ServeHTTP(rec, req)
+	http.StripPrefix("/_kernel/chat", c.svc).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -364,11 +525,6 @@ func agentHome(t *testing.T, c *Chat, login, token string) string {
 	return cred
 }
 
-// connected is a /v1/me body holding chat's connector.
-func connected(address string) string {
-	return `{"address":"` + address + `","connectors":[{"directory":"chat@testnet/msg","actions":[{"action":"chat@testnet/msg/post"}]}]}`
-}
-
 // keyOf is the key a join connected with token.
 func (f *fakeKernel) keyOf(token string) string {
 	f.mu.Lock()
@@ -388,11 +544,11 @@ func (f *fakeKernel) keyOf(token string) string {
 
 func joined(t *testing.T, c *Chat, member string) string {
 	t.Helper()
-	key, id, err := c.store.RegisterKey(member)
+	key, id, err := c.svc.Store.RegisterKey(member)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.store.ActivateKey(id); err != nil {
+	if err := c.svc.Store.ActivateKey(id); err != nil {
 		t.Fatal(err)
 	}
 	return key
@@ -449,52 +605,7 @@ func TestStartProvisionsOnce(t *testing.T) {
 	}
 }
 
-// Every schema chat declares is canonical: a described, closed object, as
-// the kernel stores it, so a reconcile never rewrites a contract for form.
-func TestContractsAreCanonical(t *testing.T) {
-	c := New()
-	c.st.Secret = "S"
-	c.deps.Address = testAddress
-	var walk func(path string, n map[string]any)
-	walk = func(path string, n map[string]any) {
-		props, ok := n["properties"].(map[string]any)
-		if !ok {
-			return
-		}
-		if n["additionalProperties"] != false {
-			t.Errorf("%s: not closed", path)
-		}
-		for k, v := range props {
-			m := v.(map[string]any)
-			if m["description"] == nil {
-				t.Errorf("%s.%s: no description", path, k)
-			}
-			walk(path+"."+k, m)
-		}
-	}
-	for _, k := range c.contracts() {
-		for side, raw := range map[string]json.RawMessage{"in": k.in, "out": k.out} {
-			var n map[string]any
-			if err := json.Unmarshal(raw, &n); err != nil {
-				t.Fatalf("%s %s: %v", k.name, side, err)
-			}
-			walk(k.name+"."+side, n)
-		}
-	}
-	if !strings.Contains(string(c.postSchema()), `"message":{"type":"string",`) {
-		t.Errorf("a message is a string: %s", c.postSchema())
-	}
-	if len(c.contracts()) != 5 {
-		t.Errorf("%d contracts", len(c.contracts()))
-	}
-	for _, k := range c.contracts() {
-		if strings.Contains(k.desc+string(k.in)+string(k.out), "KERNEL") {
-			t.Errorf("%s names no kernel: %s", k.name, k.desc)
-		}
-	}
-}
-
-// A first reconcile creates the five actions at their routes, each enabled
+// A first reconcile creates the twelve actions at their routes, each enabled
 // and given its visibility, and deletes what chat owned before; a second
 // pass with the revision recorded changes nothing.
 func TestEnsureActionsCreatesAndDeletesTheRest(t *testing.T) {
@@ -504,7 +615,7 @@ func TestEnsureActionsCreatesAndDeletesTheRest(t *testing.T) {
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("ensureActions: %v", err)
 	}
-	if len(f.creates) != 5 || len(f.deletes) != 1 || f.deletes[0] != "old" {
+	if len(f.creates) != 12 || len(f.deletes) != 1 || f.deletes[0] != "old" {
 		t.Fatalf("creates=%d deletes=%v", len(f.creates), f.deletes)
 	}
 	byName := map[string]client.CreateActionInput{}
@@ -518,7 +629,7 @@ func TestEnsureActionsCreatesAndDeletesTheRest(t *testing.T) {
 	if !strings.Contains(string(byName[replyName].Auth), `"bearer"`) || !strings.Contains(string(byName[replyName].Auth), `"S"`) {
 		t.Errorf("reply auth = %s", byName[replyName].Auth)
 	}
-	if len(f.enables) != 5 {
+	if len(f.enables) != 12 {
 		t.Errorf("enabled %d", len(f.enables))
 	}
 	if c.st.AuthRev == "" {
@@ -528,165 +639,8 @@ func TestEnsureActionsCreatesAndDeletesTheRest(t *testing.T) {
 	if err := c.ensureActions(context.Background()); err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
-	if len(f.creates) != 5 || len(f.updates) != before || len(f.enables) != 5 {
+	if len(f.creates) != 12 || len(f.updates) != before || len(f.enables) != 12 {
 		t.Errorf("second pass churned: creates=%d updates=%d enables=%d", len(f.creates), len(f.updates), len(f.enables))
-	}
-}
-
-// Register mints a pending key and creates, through the call's own
-// capability, the verification task only the address can complete; the
-// task's onward activates the key.
-func TestRegisterThenValidate(t *testing.T) {
-	f := newFakeKernel()
-	defer f.close()
-	c, _ := testChat(t, f)
-	rec := dispatch(c, "/register", "", "", map[string]string{"handle": "bob@testnet"})
-	if rec.Code != 200 {
-		t.Fatalf("register: %d %s", rec.Code, rec.Body)
-	}
-	var res struct{ APIKey, TaskID string }
-	_ = json.Unmarshal(rec.Body.Bytes(), &struct {
-		APIKey *string `json:"api_key"`
-		TaskID *string `json:"task_id"`
-	}{&res.APIKey, &res.TaskID})
-	tasks := f.taskBodies()
-	if len(tasks) != 1 || tasks[0]["required_caller"] != "bob@testnet" || tasks[0]["action"] != "chat@testnet/validate" {
-		t.Fatalf("verification task = %v", tasks)
-	}
-	if _, ok := c.store.Member(res.APIKey); ok {
-		t.Fatal("key active before verification")
-	}
-	keyID := tasks[0]["partial_args"].(map[string]any)["key_id"].(string)
-	if rec := dispatch(c, "/validate", "", "wrong", map[string]string{"key_id": keyID}); rec.Code != 401 {
-		t.Errorf("validate with a wrong bearer: %d", rec.Code)
-	}
-	if rec := dispatch(c, "/validate", "", "S", map[string]string{"key_id": keyID}); rec.Code != 200 {
-		t.Fatalf("validate: %d %s", rec.Code, rec.Body)
-	}
-	if m, ok := c.store.Member(res.APIKey); !ok || m != "bob@testnet" {
-		t.Errorf("after validate: %q %v", m, ok)
-	}
-	if rec := dispatch(c, "/register", "", "", map[string]string{"handle": "bare"}); rec.Code != 400 {
-		t.Errorf("bare handle: %d", rec.Code)
-	}
-}
-
-// A post reaches the member whose address is its first word, as a task
-// created during the call: chat's reply as the onward, the member as the
-// required caller, the room as thread_id, and what the room said since that
-// member's previous delivery, this post last. Any other post reaches every
-// other member. The post's own entry is stored either way.
-func TestPostDeliversByAddress(t *testing.T) {
-	f := newFakeKernel()
-	defer f.close()
-	c, _ := testChat(t, f)
-	r, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet", "helper@testnet", "critic@testnet"})
-	ann := joined(t, c, "ann@testnet")
-	if rec := dispatch(c, "/msg/post", "nokey", "", map[string]any{"thread_id": r.ID, "message": "hi"}); rec.Code != 401 {
-		t.Fatalf("unknown key: %d", rec.Code)
-	}
-	rec := dispatch(c, "/msg/post", ann, "", map[string]any{"thread_id": r.ID, "message": "helper@testnet, propose names and ask critic@testnet"})
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"delivered":1`) {
-		t.Fatalf("post: %d %s", rec.Code, rec.Body)
-	}
-	tasks := f.taskBodies()
-	if len(tasks) != 1 || tasks[0]["action"] != "chat@testnet/reply" || tasks[0]["required_caller"] != "helper@testnet" {
-		t.Fatalf("tasks = %v", tasks)
-	}
-	pa := tasks[0]["partial_args"].(map[string]any)
-	msgs := pa["message"].([]any)
-	if pa["thread_id"] != r.ID || pa["member"] != "helper@testnet" || pa["delivery"].(float64) == 0 || len(msgs) != 1 || msgs[0].(map[string]any)["from"] != "ann@testnet" {
-		t.Fatalf("partial args = %v", pa)
-	}
-	// A document addresses nobody: bob and critic, who never heard, get both
-	// entries; helper the new one.
-	rec = dispatch(c, "/msg/post", ann, "", map[string]any{"thread_id": r.ID, "message": map[string]any{"celsius": 100}})
-	if !strings.Contains(rec.Body.String(), `"delivered":3`) {
-		t.Fatalf("document post: %s", rec.Body)
-	}
-	byMember := map[string]int{}
-	for _, tk := range f.taskBodies()[1:] {
-		byMember[tk["required_caller"].(string)] = len(tk["partial_args"].(map[string]any)["message"].([]any))
-	}
-	if byMember["bob@testnet"] != 2 || byMember["helper@testnet"] != 1 || byMember["critic@testnet"] != 2 {
-		t.Errorf("carried = %v", byMember)
-	}
-	_, es, _ := c.store.Room("ann@testnet", r.ID)
-	if len(es) != 2 || string(es[1].Body) != `{"celsius":100}` {
-		t.Errorf("entries = %+v", es)
-	}
-}
-
-// deliveryOf is the newest delivery chat created for member.
-func deliveryOf(f *fakeKernel, member string) float64 {
-	var d float64
-	for _, tk := range f.taskBodies() {
-		if tk["required_caller"] == member {
-			d = tk["partial_args"].(map[string]any)["delivery"].(float64)
-		}
-	}
-	return d
-}
-
-// A member holding a delivery may post once per delivery held (a hand-off at
-// one more than the depth held) and is refused beyond. Completing a delivery
-// after a hand-off adds nothing, and a failure after a post adds nothing.
-// Beyond the cap a post is stored and delivered to nobody. A member the
-// kernel cannot address is skipped, not fatal.
-func TestHandoffRules(t *testing.T) {
-	f := newFakeKernel()
-	defer f.close()
-	c, _ := testChat(t, f)
-	r, _ := c.store.CreateRoom("ann@testnet", "loop", []string{"helper@testnet", "critic@testnet", "remy@nowhere"})
-	ann, helper, critic := joined(t, c, "ann@testnet"), joined(t, c, "helper@testnet"), joined(t, c, "critic@testnet")
-	post := func(key, text string) *httptest.ResponseRecorder {
-		return dispatch(c, "/msg/post", key, "", map[string]any{"thread_id": r.ID, "message": text})
-	}
-	reply := func(member string, d float64, extra map[string]any) {
-		body := map[string]any{"thread_id": r.ID, "member": member, "delivery": d, "message": []any{}}
-		for k, v := range extra {
-			body[k] = v
-		}
-		if rec := dispatch(c, "/reply", "", "S", body); rec.Code != 200 {
-			t.Fatalf("reply: %d %s", rec.Code, rec.Body)
-		}
-	}
-	if rec := post(ann, "debate, everyone"); !strings.Contains(rec.Body.String(), `"delivered":2`) {
-		t.Fatalf("the unknown member must be skipped: %s", rec.Body)
-	}
-	fromAnnToHelper, fromAnnToCritic := deliveryOf(f, "helper@testnet"), deliveryOf(f, "critic@testnet")
-	if rec := post(helper, "critic@testnet tea"); rec.Code != 200 { // depth 1
-		t.Fatalf("hand-off: %d %s", rec.Code, rec.Body)
-	}
-	if rec := post(helper, "critic@testnet more"); rec.Code != 409 {
-		t.Fatalf("second post on one delivery: %d %s", rec.Code, rec.Body)
-	}
-	if rec := post(critic, "helper@testnet coffee"); rec.Code != 200 { // holds two: depth 2
-		t.Fatalf("critic: %d", rec.Code)
-	}
-	reply("helper@testnet", fromAnnToHelper, map[string]any{"answer": "I asked critic."})
-	if rec := post(helper, "critic@testnet again"); rec.Code != 200 { // holds critic's delivery: depth 3
-		t.Fatalf("after settling one: %d %s", rec.Code, rec.Body)
-	}
-	reply("critic@testnet", fromAnnToCritic, map[string]any{"status": "failed", "reason": "budget"})
-	before := len(f.taskBodies())
-	if rec := post(critic, "helper@testnet beyond"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"delivered":0`) {
-		t.Fatalf("beyond the cap must deliver nobody: %d %s", rec.Code, rec.Body)
-	}
-	if len(f.taskBodies()) != before {
-		t.Error("a capped post created a task")
-	}
-	_, es, _ := c.store.Room("ann@testnet", r.ID)
-	var bodies []string
-	for _, e := range es {
-		bodies = append(bodies, e.Author+":"+string(e.Body))
-	}
-	want := `ann@testnet:"debate, everyone"|helper@testnet:"critic@testnet tea"|critic@testnet:"helper@testnet coffee"|helper@testnet:"critic@testnet again"|critic@testnet:"helper@testnet beyond"`
-	if got := strings.Join(bodies, "|"); got != want {
-		t.Errorf("room =\n%s\nwant\n%s", got, want)
-	}
-	if rec := dispatch(c, "/reply", "", "nope", map[string]any{}); rec.Code != 401 {
-		t.Errorf("reply without the bearer: %d", rec.Code)
 	}
 }
 
@@ -698,7 +652,7 @@ func TestReplySettles(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	r, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"assistant@testnet"})
+	r, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"assistant@testnet"})
 	ann, bot := joined(t, c, "ann@testnet"), joined(t, c, "assistant@testnet")
 	say := func(key, text string) {
 		if rec := dispatch(c, "/msg/post", key, "", map[string]any{"thread_id": r.ID, "message": text}); rec.Code != 200 {
@@ -716,19 +670,19 @@ func TestReplySettles(t *testing.T) {
 	}
 	say(ann, "what is 17 times 23?")
 	say(bot, "One moment, checking.")
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil)
+	req := func() *http.Request { return httptest.NewRequest(http.MethodGet, "/chat/room/"+r.ID, nil) }
 	var shown entriesView
-	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, rr *http.Request) { shown = c.tail(rr, r.ID, 1) })).ServeHTTP(httptest.NewRecorder(), req)
+	as2(c, sm, req(), func(rr *http.Request) (template.HTML, error) { shown = c.tail(rr, r.ID, 1, false); return "", nil })
 	if len(shown.Entries) != 1 || shown.Entries[0].Seq != 2 {
 		t.Fatalf("the placeholder is shown: %+v", shown.Entries)
 	}
 	reply(map[string]any{"answer": "391"})
 	// The person reads the room, which settles what was delivered to them.
-	if err := c.store.Answer("ann@testnet", r.ID, int64(deliveryOf(f, "ann@testnet")), nil, false); err != nil {
+	if err := c.svc.Store.Answer("ann@testnet", r.ID, int64(deliveryOf(f, "ann@testnet")), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	var tick entriesView
-	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, rr *http.Request) { tick = c.tail(rr, r.ID, 2) })).ServeHTTP(httptest.NewRecorder(), req)
+	as2(c, sm, req(), func(rr *http.Request) (template.HTML, error) { tick = c.tail(rr, r.ID, 2, false); return "", nil })
 	if len(tick.Entries) != 1 || string(tick.Entries[0].Body) != `"391"` || tick.Entries[0].Seq != 3 || len(tick.Removed) != 1 || tick.Removed[0] != 2 {
 		t.Fatalf("the answer arrives and the placeholder leaves: %+v", tick)
 	}
@@ -736,7 +690,7 @@ func TestReplySettles(t *testing.T) {
 	reply(map[string]any{"answer": ` {"a": 1} `})
 	say(ann, "and fail")
 	reply(map[string]any{"status": "failed", "reason": "repeat-loop"})
-	_, es, _ := c.store.Room("ann@testnet", r.ID)
+	_, es, _ := c.svc.Store.Room("ann@testnet", r.ID)
 	var got []string
 	for _, e := range es {
 		got = append(got, string(e.Body)+"/"+strconv.Itoa(e.Kind))
@@ -747,11 +701,12 @@ func TestReplySettles(t *testing.T) {
 	}
 }
 
-// The landing is the viewer's conversation with the assistant, made once.
-// The viewer is joined with its session and the assistant with its own, each
-// by approving chat, a key chat mints and activates, and the key connected;
-// a joined principal is not joined again. Without the assistant's home the
-// landing is the rooms.
+// The landing is the viewer's conversation with the assistant, made once by
+// the direct action. The viewer is joined with its session and the assistant
+// with its own, each through the kernel alone: approving chat, running register,
+// completing the verification task, connecting the key at chat's root. A joined
+// principal is not joined again. Without the assistant's home the landing is the
+// rooms.
 func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -762,10 +717,15 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	if rec := land(); rec.Code != 200 {
 		t.Fatalf("no assistant and no room: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	if m, ok := c.store.Member(f.keyOf("t")); !ok || m != "ann@testnet" {
+	if m, ok := c.svc.Store.Member(f.keyOf("t")); !ok || m != "ann@testnet" {
 		t.Fatalf("the viewer is joined: %q %v %v", m, ok, f.grants)
 	}
-	f.me = connected("ann@testnet")
+	if !strings.Contains(f.grants[0], `"selector":"chat@testnet"`) {
+		t.Errorf("a join connects at chat's root: %s", f.grants[0])
+	}
+	if len(f.ran(registerName)) != 1 || f.ran(registerName)[0] != `{"handle":"ann@testnet"}` {
+		t.Errorf("a join runs register as the member: %v", f.ran(registerName))
+	}
 	agentHome(t, c, "assistant@testnet", "AT")
 	f.mes["AT"] = `{"address":"assistant@testnet","connectors":[]}`
 	rec := land()
@@ -773,17 +733,19 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	if rec.Code != 303 || !strings.HasPrefix(to, "/chat/room/") || rec.Header().Get("X-Flash") != "" {
 		t.Fatalf("landing: %d %s %s", rec.Code, to, rec.Header().Get("X-Flash"))
 	}
-	if m, ok := c.store.Member(f.keyOf("AT")); !ok || m != "assistant@testnet" {
+	if m, ok := c.svc.Store.Member(f.keyOf("AT")); !ok || m != "assistant@testnet" {
 		t.Fatalf("the assistant is joined with its own session: %q %v", m, ok)
 	}
-	if len(f.decided) != 2 || f.decided[1] != "chat@testnet approve" || len(f.runs) != 0 || len(f.completes) != 0 {
-		t.Errorf("join = decided %v runs %v completes %v", f.decided, f.runs, f.completes)
+	if len(f.decided) != 2 || f.decided[1] != "chat@testnet approve" || len(f.completes) != 0 {
+		t.Errorf("join = decided %v completes %v", f.decided, f.completes)
 	}
-	rooms, _ := c.store.Rooms("ann@testnet")
+	if got := f.ran(roomDirectName); len(got) != 1 || got[0] != `{"member":"assistant@testnet"}` {
+		t.Errorf("the room is opened by the direct action: %v", got)
+	}
+	rooms, _ := c.svc.Store.Rooms("ann@testnet")
 	if len(rooms) != 1 || rooms[0].Name != "assistant" || strings.Join(rooms[0].Members, ",") != "ann@testnet,assistant@testnet" || to != "/chat/room/"+rooms[0].ID {
 		t.Fatalf("rooms = %+v", rooms)
 	}
-	f.mes["AT"] = connected("assistant@testnet")
 	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 {
 		t.Errorf("a second landing joins nobody and opens the same room: %s %v", rec.Header().Get("Location"), f.grants)
 	}
@@ -814,7 +776,7 @@ func TestJoinAgentRefreshesItsSession(t *testing.T) {
 	if saved["token"] != "NEW-R-OLD" || saved["refresh_token"] != "NEXT-R-OLD" || saved["principal_id"] != "P" {
 		t.Fatalf("credential = %v", saved)
 	}
-	if m, ok := c.store.Member(f.keyOf("NEW-R-OLD")); !ok || m != "helper@testnet" {
+	if m, ok := c.svc.Store.Member(f.keyOf("NEW-R-OLD")); !ok || m != "helper@testnet" {
 		t.Fatalf("helper joined with the refreshed token: %q %v", m, ok)
 	}
 	if f.keyOf("X") != "" {
@@ -833,7 +795,7 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	r, _ := c.store.CreateRoom("ann@testnet", "cafe", nil)
+	r, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
 	send := func(raw string, htmx bool) *httptest.ResponseRecorder {
 		form := url.Values{"raw_args": {raw}, "after": {"0"}}
 		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+r.ID+"/message", strings.NewReader(form.Encode()))
@@ -858,18 +820,7 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 	if rec := send(`{"message":"bye"}`, false); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+r.ID {
 		t.Fatalf("no-JS: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	var args []string
-	for _, run := range f.runs {
-		var in struct {
-			Action string          `json:"action"`
-			Args   json.RawMessage `json:"args"`
-		}
-		_ = json.Unmarshal([]byte(run), &in)
-		if in.Action != "chat@testnet/msg/post" {
-			t.Errorf("ran %s", in.Action)
-		}
-		args = append(args, string(in.Args))
-	}
+	args := f.ran(postName)
 	room := `"thread_id":"` + r.ID + `"`
 	want := []string{`{"message":"hello there",` + room + `}`, `{"message":"elsewhere",` + room + `}`, `{` + room + `}`, `{"message":"refuse me",` + room + `}`, `{"message":"bye",` + room + `}`}
 	if strings.Join(args, "\n") != strings.Join(want, "\n") {
@@ -886,7 +837,6 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	f.me = connected("ann@testnet")
 	rnd, err := server.NewRenderer(nil, c.Templates())
 	if err != nil {
 		t.Fatal(err)
@@ -901,8 +851,8 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 		req.SetPathValue("id", id)
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
-	pair, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
-	if _, _, err := c.store.Post(pair.ID, "ann@testnet", json.RawMessage(`"hello"`)); err != nil {
+	pair, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	if _, _, err := c.svc.Store.Post(pair.ID, "ann@testnet", json.RawMessage(`"hello"`)); err != nil {
 		t.Fatal(err)
 	}
 	got := page(pair.ID)
@@ -922,7 +872,7 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 			t.Errorf("the bar carries %s", gone)
 		}
 	}
-	trio, _ := c.store.CreateRoom("ann@testnet", "trio", []string{"bob@testnet", "cy@testnet"})
+	trio, _ := c.svc.Store.CreateRoom("ann@testnet", "trio", []string{"bob@testnet", "cy@testnet"})
 	if !strings.Contains(page(trio.ID), `data-address aria-label="Address a member"`) {
 		t.Error("a room of three offers [@]")
 	}
@@ -935,15 +885,13 @@ func TestRoomSeenAndWatch(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	f.me = connected("ann@testnet")
-	r, _ := c.store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
+	r, _ := c.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
 	bob := joined(t, c, "bob@testnet")
 	dispatch(c, "/msg/post", bob, "", map[string]any{"thread_id": r.ID, "message": "ann@testnet hello"})
-	other, _ := c.store.CreateRoom("bob@testnet", "other", []string{"ann@testnet"})
-	c.store.Post(other.ID, "bob@testnet", raw("x"))
+	other, _ := c.svc.Store.CreateRoom("bob@testnet", "other", []string{"ann@testnet"})
+	c.svc.Store.Post(other.ID, "bob@testnet", raw("x"))
 	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
-	rail, _ := c.store.Rooms("ann@testnet")
-	shown := railDigest(rail)
+	shown := digestOf(t, c, "ann@testnet")
 	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, railKey, shown) }); h != "" {
 		t.Fatalf("an unchanged rail answers nothing, got %s", h)
 	}
@@ -965,7 +913,7 @@ func TestRoomSeenAndWatch(t *testing.T) {
 	if h, _ := as2(c, sm, req, func(r *http.Request) (template.HTML, error) { return c.watch(r, r.URL.Query().Get("k"), "1") }); h != "_chat_tick" {
 		t.Errorf("new entry = %s", h)
 	}
-	rooms, _ := c.store.Rooms("ann@testnet")
+	rooms, _ := c.svc.Store.Rooms("ann@testnet")
 	for _, room := range rooms {
 		if room.ID == r.ID && room.Unread {
 			t.Error("a watched visible room stays unread")
@@ -978,11 +926,12 @@ func withID(req *http.Request, id string) *http.Request {
 	return req
 }
 
-// as2 runs a watcher inside ann's session; the room key rides the query.
+// as2 runs a watcher in ann's session, joined as a chat page would have; the
+// room key rides the query.
 func as2(c *Chat, sm *scs.SessionManager, req *http.Request, fn func(*http.Request) (template.HTML, error)) (template.HTML, error) {
 	var out template.HTML
 	var err error
-	rooms, _ := c.store.Rooms("ann@testnet")
+	rooms, _ := c.svc.Store.Rooms("ann@testnet")
 	q := req.URL.Query()
 	for _, r := range rooms {
 		if r.Name == "cafe" {
@@ -990,15 +939,35 @@ func as2(c *Chat, sm *scs.SessionManager, req *http.Request, fn func(*http.Reque
 		}
 	}
 	req.URL.RawQuery = q.Encode()
-	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "ann@testnet", session.Pin{})
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := c.deps.Sessions.AppSecret(r.Context(), c.Slug()); !ok {
+			if jerr := c.joinViewer(r); jerr != nil {
+				err = jerr
+				return
+			}
+		}
 		out, err = fn(r)
-	})).ServeHTTP(httptest.NewRecorder(), req)
+	}, req)
 	return out, err
 }
 
-// Room management is the signed-in member's own: a creator adds, removes
-// and deletes; a member leaves; an address is required.
+// digestOf is the rail digest of the viewer's rooms as the store holds them.
+func digestOf(t *testing.T, c *Chat, viewer string) string {
+	t.Helper()
+	rooms, err := c.svc.Store.Rooms(viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := make([]roomRow, len(rooms))
+	for i, r := range rooms {
+		rows[i] = roomRow{ID: r.ID, Name: r.Name, Unread: r.Unread}
+	}
+	return railDigest(rows)
+}
+
+// Every room command is a run of chat's action as the viewer: a creator
+// renames, adds, removes and deletes; a member leaves; an address is required;
+// a refusal is said on the page it was asked from.
 func TestRoomRoutes(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1009,7 +978,7 @@ func TestRoomRoutes(t *testing.T) {
 	if rec.Code != 303 || !strings.HasPrefix(rec.Header().Get("Location"), "/chat/room/") {
 		t.Fatalf("create: %d %s %s", rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
 	}
-	rooms, _ := c.store.Rooms("ann@testnet")
+	rooms, _ := c.svc.Store.Rooms("ann@testnet")
 	if len(rooms) != 1 || len(rooms[0].Members) != 4 {
 		t.Fatalf("rooms = %+v", rooms)
 	}
@@ -1025,12 +994,26 @@ func TestRoomRoutes(t *testing.T) {
 	}
 	do(c.postAddMember, "/add-member", "member=dave%40testnet")
 	do(c.postRemoveMember, "/remove-member", "member=carol%40testnet")
-	if rec := do(c.postLeave, "/leave", ""); !strings.Contains(rec.Header().Get("X-Flash"), "forbidden") {
+	if rec := do(c.postLeave, "/leave", ""); !strings.Contains(rec.Header().Get("X-Flash"), "You may not do that") {
 		t.Errorf("creator leaving: %s", rec.Header().Get("X-Flash"))
 	}
-	room, _, _ := c.store.Room("ann@testnet", id)
+	room, _, _ := c.svc.Store.Room("ann@testnet", id)
 	if strings.Join(room.Members, ",") != "ann@testnet,bob@testnet,dave@testnet,helper@testnet" {
 		t.Errorf("members = %v", room.Members)
+	}
+	if rec := do(c.postRename, "/rename", "name=+tea+room+"); rec.Code != 303 || rec.Header().Get("X-Flash") != "" {
+		t.Errorf("rename: %d %s", rec.Code, rec.Header().Get("X-Flash"))
+	}
+	if room, _, _ := c.svc.Store.Room("ann@testnet", id); room.Name != "tea room" {
+		t.Errorf("renamed = %q", room.Name)
+	}
+	if rec := do(c.postRename, "/rename", "name=+"); !strings.Contains(rec.Header().Get("X-Flash"), "needs a name") {
+		t.Errorf("a blank name: %s", rec.Header().Get("X-Flash"))
+	}
+	for name, want := range map[string]string{roomCreateName: "name", roomAddName: "dave@testnet", roomRemoveName: "carol@testnet", roomLeaveName: id, roomRenameName: "tea room"} {
+		if got := f.ran(name); len(got) != 1 || !strings.Contains(got[0], want) {
+			t.Errorf("%s ran %v", name, got)
+		}
 	}
 	if rec := do(c.postDeleteRoom, "/delete", ""); rec.Code != 303 || rec.Header().Get("Location") != "/chat" {
 		t.Errorf("delete: %d", rec.Code)
@@ -1046,21 +1029,8 @@ func TestRoomRoutes(t *testing.T) {
 	if rec := as(c, sm, c.postCreateRoom, unnamed); rec.Code != 303 {
 		t.Fatalf("unnamed: %d %s", rec.Code, rec.Header().Get("X-Flash"))
 	}
-	if rooms, _ := c.store.Rooms("ann@testnet"); len(rooms) != 1 || rooms[0].Name != "helper, bob" {
+	if rooms, _ := c.svc.Store.Rooms("ann@testnet"); len(rooms) != 1 || rooms[0].Name != "helper, bob" {
 		t.Errorf("a blank name is the participants': %+v", rooms)
-	}
-}
-
-func TestIndexAnswersUsageForThisKernel(t *testing.T) {
-	f := newFakeKernel()
-	defer f.close()
-	c, _ := testChat(t, f)
-	rec := dispatch(c, "/index", "", "", map[string]any{})
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "chat@testnet/msg/post") || !strings.Contains(rec.Body.String(), "critic@testnet, which") || strings.Contains(rec.Body.String(), "KERNEL") {
-		t.Fatalf("index: %d %s", rec.Code, rec.Body)
-	}
-	if rec := dispatch(c, "/nope", "", "", nil); rec.Code != 404 {
-		t.Errorf("unknown route: %d", rec.Code)
 	}
 }
 
@@ -1099,11 +1069,11 @@ func TestRail(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.deps.Fragment = rnd.HTML
-	old, _ := c.store.CreateRoom("bob@testnet", "old", []string{"ann@testnet"})
-	c.store.Post(old.ID, "bob@testnet", raw("x"))
-	cafe, _ := c.store.CreateRoom("ann@testnet", "cafe", nil)
-	c.store.Post(cafe.ID, "ann@testnet", raw("y"))
-	c.store.MarkRead("ann@testnet", cafe.ID, 1)
+	old, _ := c.svc.Store.CreateRoom("bob@testnet", "old", []string{"ann@testnet"})
+	c.svc.Store.Post(old.ID, "bob@testnet", raw("x"))
+	cafe, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	c.svc.Store.Post(cafe.ID, "ann@testnet", raw("y"))
+	c.svc.Store.MarkRead("ann@testnet", cafe.ID, 1)
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+cafe.ID+"?form=new", nil)
 	h, err := as2(c, sm, req, c.Rail)
 	if err != nil {
@@ -1128,16 +1098,17 @@ func TestWorkingNamesWhoTheRoomWaitsOn(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, _ := testChat(t, f)
-	r, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet", "cy@testnet"})
+	r, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet", "cy@testnet"})
 	bob, cy := joined(t, c, "bob@testnet"), joined(t, c, "cy@testnet")
 	_, _ = bob, cy
 	ann := joined(t, c, "ann@testnet")
 	dispatch(c, "/msg/post", ann, "", map[string]any{"thread_id": r.ID, "message": "hello"})
-	v := entriesView{Working: c.working(r.ID, "ann@testnet")}
+	waiting, _ := c.svc.Store.Working(r.ID, "ann@testnet")
+	v := entriesView{Working: waiting}
 	if got := v.Waiting(); got != "Waiting on bob@testnet and cy@testnet" {
 		t.Errorf("Waiting = %q", got)
 	}
-	if ws := c.working(r.ID, "bob@testnet"); len(ws) != 1 || ws[0] != "cy@testnet" {
+	if ws, _ := c.svc.Store.Working(r.ID, "bob@testnet"); len(ws) != 1 || ws[0] != "cy@testnet" {
 		t.Errorf("the viewer is never among those waited on: %v", ws)
 	}
 	if (entriesView{}).Waiting() != "" || (entriesView{Working: []string{"a"}}).Waiting() != "Waiting on a" {
@@ -1165,9 +1136,9 @@ func TestContextIsTheRoomAsAModelReadsIt(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	r, _ := c.store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
-	c.store.Post(r.ID, "ann@testnet", raw("find suppliers"))
-	c.store.Post(r.ID, "bob@testnet", json.RawMessage(`{"found":3}`))
+	r, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	c.svc.Store.Post(r.ID, "ann@testnet", raw("find suppliers"))
+	c.svc.Store.Post(r.ID, "bob@testnet", json.RawMessage(`{"found":3}`))
 	var msgs []client.Message
 	var err error
 	as2(c, sm, httptest.NewRequest(http.MethodGet, "/", nil), func(rq *http.Request) (template.HTML, error) {
@@ -1178,12 +1149,246 @@ func TestContextIsTheRoomAsAModelReadsIt(t *testing.T) {
 		msgs[1].Role != "assistant" || msgs[1].Content != `bob@testnet: {"found":3}` {
 		t.Fatalf("context = %+v %v", msgs, err)
 	}
-	other, _ := c.store.CreateRoom("bob@testnet", "private", nil)
+	other, _ := c.svc.Store.CreateRoom("bob@testnet", "private", nil)
 	as2(c, sm, httptest.NewRequest(http.MethodGet, "/", nil), func(rq *http.Request) (template.HTML, error) {
 		_, err = c.Context(rq, other.ID)
 		return "", nil
 	})
 	if err == nil {
-		t.Error("a room the viewer is not in is refused")
+		t.Fatal("a room the viewer is not in is refused")
+	}
+	if strings.ContainsAny(err.Error(), "0123456789") {
+		t.Errorf("a person never reads a raw status: %q", err)
+	}
+}
+
+// A person who holds only the grant an earlier version made is uncovered, and
+// is joined again; so is a session with a grant and no key, which the kernel
+// will not read back. A session covered and holding its key joins nobody.
+func TestJoinFollowsTheKernelsPlan(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	f.granted["t"] = map[string]bool{"chat@testnet/msg/post": true}
+	f.keys["t"] = "OLD"
+	join := func() error {
+		var err error
+		as(c, sm, func(w http.ResponseWriter, r *http.Request) { err = c.joinViewer(r) }, httptest.NewRequest(http.MethodGet, "/chat", nil))
+		return err
+	}
+	if err := join(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.grants) != 1 || !f.granted["t"]["chat@testnet/room/rename"] {
+		t.Fatalf("an uncovered person is joined at the root: %v %v", f.grants, f.granted["t"])
+	}
+	if err := join(); err != nil || len(f.grants) != 1 {
+		t.Errorf("covered, with a key, joins nobody: %v %v", err, f.grants)
+	}
+	// A new action leaves the person uncovered until the next join.
+	delete(f.granted["t"], "chat@testnet/room/add")
+	if err := join(); err != nil || len(f.grants) != 2 {
+		t.Errorf("an ungranted action joins again: %v %v", err, f.grants)
+	}
+}
+
+// A join whose connect fails retires nothing: the key already connected keeps
+// working, and the session keeps it; the failure is the join's.
+func TestAFailedJoinKeepsTheKeyHeld(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	var held string
+	do := func(fn func(r *http.Request)) {
+		as(c, sm, func(w http.ResponseWriter, r *http.Request) { fn(r) }, httptest.NewRequest(http.MethodGet, "/chat", nil))
+	}
+	do(func(r *http.Request) {
+		if err := c.joinViewer(r); err != nil {
+			t.Fatal(err)
+		}
+		held, _ = c.deps.Sessions.AppSecret(r.Context(), c.Slug())
+	})
+	f.failGrant = true
+	delete(f.granted["t"], "chat@testnet/room/add")
+	do(func(r *http.Request) {
+		if err := c.joinViewer(r); err == nil {
+			t.Error("a refused connect is the join's failure")
+		}
+		if k, _ := c.deps.Sessions.AppSecret(r.Context(), c.Slug()); k != held {
+			t.Error("the session lost the key it held")
+		}
+	})
+	if m, ok := c.svc.Store.Member(held); !ok || m != "ann@testnet" {
+		t.Errorf("the earlier key still works: %q %v", m, ok)
+	}
+}
+
+// A read carries the session's key. The rail never joins: a session with no key
+// shows no rooms and makes no read, while a chat read joins it. A key the service
+// no longer knows is dropped and the read joins again.
+func TestReadsCarryTheSessionsKey(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	reads := c.httpc.Transport.(*toService)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	room, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	req := func() *http.Request { return httptest.NewRequest(http.MethodGet, "/settings", nil) }
+	as(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		h, err := c.Rail(r)
+		if err != nil || strings.Contains(string(h), "cafe") {
+			t.Errorf("rail before a join: %v %s", err, h)
+		}
+	}, req())
+	if len(reads.keys) != 0 || len(f.grants) != 0 {
+		t.Fatalf("the rail read %v and joined %v", reads.keys, f.grants)
+	}
+	as(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		v := c.tail(r, room.ID, 0, false)
+		if v.RoomID != room.ID || len(reads.keys) != 1 || reads.keys[0] != f.keyOf("t") || reads.keys[0] == "" {
+			t.Errorf("a read joins, then bears the key: %+v %v", v, reads.keys)
+		}
+		h, err := c.Rail(r)
+		if err != nil || !strings.Contains(string(h), "cafe") {
+			t.Errorf("rail after a join: %v %s", err, h)
+		}
+		c.deps.Sessions.PutAppSecret(r.Context(), c.Slug(), "UNKNOWN")
+		before := len(f.grants)
+		if _, err := c.readRoom(r, room.ID, latest, false); err != nil || len(f.grants) != before+1 {
+			t.Errorf("an unknown key joins again: %v %v", err, f.grants)
+		}
+		if k, _ := c.deps.Sessions.AppSecret(r.Context(), c.Slug()); k == "UNKNOWN" {
+			t.Error("the unknown key was kept")
+		}
+	}, req())
+}
+
+// Of a refusal only the status comes through the kernel, so the UI's sentence is
+// chosen by it, and a room gone is the not-found page.
+func TestRefusalsAreSaidByStatus(t *testing.T) {
+	for status, want := range map[string]string{
+		"400": "not valid", "401": "not joined", "403": "may not", "404": "no longer exists", "409": "already pending",
+	} {
+		err := &client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream returned status " + status}
+		if got := refusal(err); !strings.Contains(got, want) {
+			t.Errorf("%s = %q", status, got)
+		}
+	}
+	for _, err := range []error{
+		&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream returned status 500"},
+		&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "model did not select"},
+		&client.KernelError{Kind: client.KindUnauthorized},
+		errors.New("transport"),
+	} {
+		if got := refusal(err); got != "" {
+			t.Errorf("%v must be no refusal: %q", err, got)
+		}
+	}
+	if got := refusal(&client.KernelError{Kind: client.KindInvalidInput, KernelMessage: "message: required field missing"}); got != "message: required field missing" {
+		t.Errorf("the kernel's reason for input: %q", got)
+	}
+
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	var notFound bool
+	c.deps.HandleErr = func(w http.ResponseWriter, r *http.Request, err error) bool {
+		ke, ok := client.AsKernelError(err)
+		notFound = notFound || (ok && ke.Kind == client.KindNotFound)
+		return err != nil
+	}
+	other, _ := c.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	do := func(h http.HandlerFunc, id, form string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+id, strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("id", id)
+		return as(c, sm, h, req)
+	}
+	if rec := do(c.postRename, other.ID, "name=mine"); !strings.Contains(rec.Header().Get("X-Flash"), "may not") {
+		t.Errorf("a member renaming the creator's room: %s", rec.Header().Get("X-Flash"))
+	}
+	if room, _, _ := c.svc.Store.Room("ann@testnet", other.ID); room.Name != "theirs" {
+		t.Errorf("renamed anyway: %s", room.Name)
+	}
+	if do(c.postRename, "no-such-1", "name=x"); !notFound {
+		t.Error("a room gone is the not-found page")
+	}
+	notFound = false
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+"no-such-1", nil)
+	req.SetPathValue("id", "no-such-1")
+	if as(c, sm, c.getRoom, req); !notFound {
+		t.Error("a room that is not there is the not-found page")
+	}
+	theirs, _ := c.svc.Store.CreateRoom("bob@testnet", "private", nil)
+	notFound = false
+	req = httptest.NewRequest(http.MethodGet, "/chat/room/"+theirs.ID, nil)
+	req.SetPathValue("id", theirs.ID)
+	if as(c, sm, c.getRoom, req); !notFound {
+		t.Error("a room the viewer is not in is the not-found page")
+	}
+}
+
+// The creator is offered Rename, a dialog with the name in it, reachable without
+// script; a member is offered neither.
+func TestRenameIsTheCreators(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
+		if err := rnd.Render(w, status, page, server.Page{Title: title, Data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := func(path string, id string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.SetPathValue("id", id)
+		return as(c, sm, c.getRoom, req).Body.String()
+	}
+	mine, _ := c.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
+	got := page("/chat/room/"+mine.ID, mine.ID)
+	for _, want := range []string{`<a class="btn" href="/chat/room/` + mine.ID + `?form=rename" data-modal="form-rename">Rename</a>`,
+		`id="form-rename" class="modal-form" aria-label="Rename"`, `action="/chat/room/` + mine.ID + `/rename"`, `name="name" value="ca&lt;fe" required`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the creator's page lacks %s", want)
+		}
+	}
+	if got := page("/chat/room/"+mine.ID+"?form=rename", mine.ID); !strings.Contains(got, `id="form-rename" class="modal-form" open`) {
+		t.Error("?form=rename opens the dialog without script")
+	}
+	theirs, _ := c.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	if got := page("/chat/room/"+theirs.ID, theirs.ID); strings.Contains(got, "form-rename") {
+		t.Error("a member is offered no rename")
+	}
+}
+
+// The room routes are mounted, the rename among them.
+func TestRenameRouteIsMounted(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	d := c.deps
+	d.RequireAuth = func(h http.HandlerFunc) http.HandlerFunc { return h }
+	d.Watch = func(string, apps.Watcher) {}
+	mux := http.NewServeMux()
+	c.Mount(mux, d)
+	room, _ := c.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+room.ID+"/rename", strings.NewReader("name=tea"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if rec := inSession(c, sm, mux.ServeHTTP, req); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+room.ID {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := httptest.NewRecorder(); func() bool {
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_kernel/chat/room/list", nil))
+		return rec.Code != 401
+	}() {
+		t.Errorf("a read with no key: %d", rec.Code)
 	}
 }

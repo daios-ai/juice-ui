@@ -37,10 +37,11 @@ core rotting into a monolith; read them before touching this seam.
    (the App: the only Juice + UI-aware piece) ← *core* (imports only the `apps`
    seam, never a concrete app). An app imports `client`, `session`, `apps` — never
    `server`. The arrows never reverse.
-2. **Litmus test: the store knows nothing of Juice.** Chat's `store.go` is SQL
-   over rooms, members, entries, keys and cursors, and decides who may do what by
-   membership alone; it compiles and is tested without a kernel. If the store
-   needs the plugin, the boundary has leaked.
+2. **Litmus test: the store knows nothing of Juice, and the plugin knows nothing
+   of the store.** Chat's `store.go` is SQL over rooms, members, entries, keys and
+   cursors, and decides who may do what by membership alone; it compiles and is
+   tested without a kernel. If the store needs the plugin, or the plugin calls the
+   store rather than the service, the boundary has leaked.
 3. **Ownership split.** The store owns *domain state* and its invariants, each
    as one transaction. The plugin owns *Juice/UI integration* (kernel actions,
    grants, identity, templates, its menu entry and badge, the kernel's dispatches).
@@ -234,15 +235,16 @@ Chat is the worked example — a real **application on top of Juice** — with
 **zero chat-specific code in juice-ui core**. Its rules are `requirements.md`
 §6.7; this is how it sits on the seam.
 
-- **Three files.** `store.go` is the state (SQLite: rooms, members, entries,
-  keys, cursors, the deliveries a member holds), every rule that must hold
-  together one transaction, and no kernel knowledge. `deliver.go` is routing by
-  address and the delivery of a post as kernel tasks. `chat.go` is the App:
-  lifecycle, the five actions and their reconciliation, the kernel's dispatches
-  under `/_kernel/chat/`, joining the installation's principals, the
+- **A service and a client of it.** `store.go` is the state (SQLite: rooms,
+  members, entries, keys, cursors, the deliveries a member holds), every rule
+  that must hold together one transaction, and no kernel knowledge. `deliver.go`
+  is routing by address and the delivery of a post as kernel tasks. `service.go`
+  is the HTTP service: the twelve action contracts, their endpoints and the two
+  reads under `/_kernel/chat/`. These three import nothing of the UI, which a test
+  holds, so they could be served from another program. `chat.go` is the App:
+  lifecycle, reconciling the actions, joining the installation's principals, the
   conversations seam (the rail, the landing, a room's context), the browser
-  routes and the heartbeat watcher (the rail, a room's entries, who is
-  answering).
+  routes and the heartbeat watcher, all of it a client of the service.
 - **Self-provisions.** On `Start` it loads, or generates and persists, the
   `chat@<kernel>` password and the upstream secret its private actions carry,
   and opens the store in the component home (in memory when there is no
@@ -251,8 +253,9 @@ Chat is the worked example — a real **application on top of Juice** — with
   reconciliation as the `setup` callback. The reconcile pushes a changed
   contract whole, a title alone, and deletes any other action chat owns; the
   write-only auth is forced through by the revision kept in app state (above).
-- **Identity at the door.** `msg/post` is `delegated_bearer` on
-  `apps.CallerKeyHeader`; the store resolves the injected key to the member.
+- **Identity at the door.** `msg/post` and the room commands are
+  `delegated_bearer` on `apps.CallerKeyHeader`; the store resolves the injected
+  key to the member. A read presents the same key on the same header.
   `validate` and `reply` are the onwards of tasks and carry chat's bearer, so
   only the kernel completing a task reaches them. `register` and `index` are
   open.
@@ -260,10 +263,13 @@ Chat is the worked example — a real **application on top of Juice** — with
   injected into that dispatch (`client.CallbackCreateTask`), one task per
   recipient, and completing it is the answer. No seed trace, no sentinel, no
   app-side notification: the kernel's one signal to a member is a task.
-- **The UI joins its principals.** It holds the person's session and every
-  local agent's credential file, so it approves chat, mints a key and connects
-  it as each of them; nobody is asked to connect. `register` and `validate` are
-  for members elsewhere.
-- **The browser is a member.** Every post from the page runs `msg/post` as the
-  viewer, so a person and an agent take one path; rooms and membership are the
-  viewer's own writes on the store.
+- **The UI joins its principals, through the kernel alone.** It holds the
+  person's session and every local agent's credential file, so as each of them it
+  approves chat, runs `register`, completes the verification task and connects the
+  key at `chat@<kernel>`; nobody is asked to connect. It keeps the person's key in
+  the session store (`Sessions.PutAppSecret`) for the reads.
+- **The browser is a member.** Every room command on a page is a run of chat's
+  action as the viewer, so a person and an agent take one path. A room is read
+  from the service with the viewer's key, because a read is not an execution. The
+  UI never touches the store. A refused run reaches the UI as its status alone
+  (`KernelError.UpstreamStatus`), so the sentence is the UI's.
