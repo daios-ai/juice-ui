@@ -46,7 +46,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -847,18 +846,7 @@ func defaultRoot(home string) string {
 // the installation's own bin/, which is where the installer puts the family's
 // programs and where a component looks for a sibling (ecosystem-standard §4),
 // else PATH.
-func agentBin(juiceHome string) string {
-	if p := os.Getenv(binEnv); p != "" {
-		return p
-	}
-	if p, err := exec.LookPath(filepath.Join(juiceHome, "bin", "juice-agent")); err == nil {
-		return p
-	}
-	if p, err := exec.LookPath("juice-agent"); err == nil {
-		return p
-	}
-	return ""
-}
+func agentBin(juiceHome string) string { return apps.Bin(binEnv, juiceHome, "juice-agent") }
 
 // account reads the agent's kernel account with the viewer's own token: the
 // kernel's row for the handle's address on this kernel, the login its home is

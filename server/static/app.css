@@ -385,7 +385,6 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .row.compact { gap: var(--space-2); }
 .cluster { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .flush { margin: 0; }
-.grow { flex: 1 1 16rem; }
 .stretch { flex: 1; min-width: 0; }
 .small { font-size: var(--font-size-sm); }
 .tiny { font-size: var(--font-size-xs); }

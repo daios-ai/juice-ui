@@ -81,6 +81,13 @@ func (s *ServiceAccount) Ready() bool {
 	return s.ready
 }
 
+// Tokens is the account's current session.
+func (s *ServiceAccount) Tokens() client.Tokens {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.toks
+}
+
 // loop provisions and maintains the account until ctx is cancelled: ensure account
 // → authenticate → setup, retried as a whole with exponential backoff so it can
 // never saturate the shared per-IP auth limit. On full success it marks Ready and

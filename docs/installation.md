@@ -13,9 +13,10 @@ $JUICE_HOME                       (default ~/.juice; env-overridable, same on ma
 ├── client/               config.json (the kernels this client knows, and which
 │                         login is selected), credentials/<handle@kernel>.json
 │                         (one session each, 0600)
-├── ui/                   config.json, state.json (+ chat.db)
+├── ui/                   config.json, state.json, chat.log
 ├── agents/<name>/        one agent's configuration, persona, memory
-└── services/<name>/      one installed service
+└── services/<name>/      one installed service; services/chat/ is juice-chat's,
+                          holding config.json, state.json, rooms.db, serve.lock
 ```
 
 This is the layout `juicedocs/ecosystem-standard.md` binds every juice program
@@ -28,7 +29,8 @@ one's tokens in its own server-side session.
 `bin/` holds no state: the programs are replaceable, so an installer
 overwrites them and a person deletes them without losing anything. A component
 looks for a sibling program there; the agents app finds `juice-agent` in
-`$JUICE_HOME/bin` before `PATH` (`JUICE_AGENT_BIN` overrides both).
+`$JUICE_HOME/bin` before `PATH` (`JUICE_AGENT_BIN` overrides both), and the chat app
+finds `juice-chat` the same way (`JUICE_CHAT_BIN`).
 
 Rules each repo follows:
 

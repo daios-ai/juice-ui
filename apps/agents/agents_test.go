@@ -617,7 +617,7 @@ func TestPostDeleteRequiresStopped(t *testing.T) {
 	a, fl, cap := testApp(t)
 	a.client = t.TempDir()
 	_ = a.create("research")
-	_ = writeCredential(a.credPath("research"), client.Tokens{}, "P1")
+	_ = client.WriteCredential(a.credPath("research"), client.Tokens{}, "P1")
 	_ = a.sup.start("research", "research@testnet", "")
 	fl.procs[0].drain = true
 	_ = a.sup.stop("research", 0)
@@ -859,7 +859,7 @@ func TestStartAsksForThePasswordWithoutASession(t *testing.T) {
 	if st, _ := a.status(req, "research"); !st.AskPassword {
 		t.Fatal("no credential: ask")
 	}
-	_ = writeCredential(a.credPath("research"), client.Tokens{AccessToken: "t"}, "P1")
+	_ = client.WriteCredential(a.credPath("research"), client.Tokens{AccessToken: "t"}, "P1")
 	if st, _ := a.status(req, "research"); st.AskPassword {
 		t.Fatal("a credential and a clean log: one click")
 	}

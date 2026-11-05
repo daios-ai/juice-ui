@@ -1,5 +1,6 @@
 # Binaries
 /juice-ui
+/juice-chat
 *.exe
 *.test
 *.out

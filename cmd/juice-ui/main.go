@@ -149,13 +149,6 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	if ephemeral {
 		log.Warn("JUICE_UI_SESSION_SECRET not set; using an ephemeral key — sessions reset on restart and this is unsafe for production")
 	}
-	// Resolve a concrete base URL so in-process apps can register kind=http
-	// action sources the kernel calls back (defaults to the listen address for
-	// local use; operators behind a proxy set JUICE_UI_PUBLIC_URL).
-	publicURL := cfg.PublicURL
-	if publicURL == "" {
-		publicURL = "http://" + cfg.ListenAddr
-	}
 	return server.New(server.Options{
 		Client:         w.kernel,
 		Sessions:       sessions,
@@ -164,7 +157,7 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 		CSRFKey:        key,
 		Secure:         cfg.Secure,
 		TrustedOrigins: cfg.TrustedOrigins,
-		PublicURL:      publicURL,
+		PublicURL:      cfg.PublicURL,
 		Apps:           w.apps,
 		StatePath:      cfg.StatePath,
 		Home:           cfg.Home,

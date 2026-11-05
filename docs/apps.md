@@ -19,8 +19,10 @@ Two properties, on two different axes:
   an app is deleting its package and its one wiring line.
 - **Bundled in lifecycle.** An app is *not* a separate deployable. It ships in the
   juice-ui binary, is started by the seam's `Start()`/stopped by `Stop()`, and dies
-  when the UI is torn down. An app that is itself a Juice user (like chat) runs its
-  service **in-process** — no second process, no separate binary.
+  when the UI is torn down. A capability the network should reach is not the app's
+  to serve: it is a service, a program of its own that the kernel wraps as actions,
+  which the app starts and stops and otherwise reaches only by running those actions
+  through the kernel (chat, `services/chat`).
 
 > The **visual grammar stays central**, deliberately. An app owns its Go,
 > templates, and routes — but its components register in the one place
@@ -46,11 +48,11 @@ core rotting into a monolith; read them before touching this seam.
    as one transaction. The plugin owns *Juice/UI integration* (kernel actions,
    grants, identity, templates, its menu entry and badge, the kernel's dispatches).
 4. **The caller is who the kernel says.** A `delegated_bearer` action carries the
-   key the caller connected on `apps.CallerKeyHeader`; the app resolves that key to
-   the caller and trusts nothing else in the request.
+   key the caller connected on a header the service names; the service resolves that
+   key to the caller and trusts nothing else in the request.
 5. **Self-provisioning; new capabilities go in the seam.** An app provisions its own
    secrets into app state (no per-app environment variables). A capability more than
-   one app could want — the app-state store, `ServiceAccount`, `CallerKeyHeader`,
+   one app could want — the app-state store, `ServiceAccount`, `Bin`,
    badge polling, `UserDataDir` — lands in `apps/apps.go`, never hardwired into one
    app. The badge poll is the worked example: chat asked for a live nav count, and
    the answer was a seam capability (a heartbeat watcher under the app's slug)
@@ -85,9 +87,6 @@ shared shell and htmx fragments without importing `server`. It also carries:
   in a `[data-json]` form carrying `Version` in its `version` field, `Read` for
   the save, `ToJSON` and `ToForm` for the switch. The agents app edits an
   agent's `config.json` with it.
-- **`PublicURL`** — the BFF's absolute base URL. An app that registers `kind=http`
-  actions builds their callback source from it under the CSRF-exempt `/_kernel/`
-  prefix (e.g. `PublicURL + "/_kernel/<slug>/ack"`).
 - **`Logger`** — the core's structured logger, for an app's background work.
 
 **Every name is an address** (requirements.md §4): a user is `handle@kernel`,
@@ -125,23 +124,23 @@ the URL, schemas, description, and — usefully — `auth_scheme` + `requires_gr
 but **not** the auth *config* (the header name and token template). A plugin that
 reconciles its actions by reading the kernel therefore cannot detect a change to
 that config: rename the header a `delegated_bearer` action carries (e.g.
-`X-Chat-Key` → `apps.CallerKeyHeader`) and every readable field still matches, so a
+`X-Chat-Key` → `X-Juice-Caller-Key`) and every readable field still matches, so a
 read-based diff sees no drift while the kernel keeps injecting the caller's token
 into the *old* header — the service reads nothing and returns 401.
 
 The fix is to **version the auth config locally** and force a re-push on change:
 
-- Persist a short revision of the pushed auth config in app state (chat stores
-  `AuthRev`, a hash of the auth JSON, in `state.json` via `SaveAppState`).
+- Persist a short revision of the pushed auth config (chat stores a hash of the auth
+  JSON per provider in its home's `state.json`).
 - On reconcile, compute `force := storedRev != currentRev`. When `force`, `Update`
   every action with the **full** contract *including `auth`* (not only the readable
   fields), then persist the new revision. Steady-state restarts (matching revision)
   do nothing.
 - **An auth change revokes the action's grants** (kernel §8 — verified: renaming the
   header alone empties every caller's grant list). So after a forced re-push the
-  app must join its users again — chat finds no connector on the next chat page
-  or sign-in and joins the person and each local agent again (requirements
-  §6.7, rule 8). Without this the actions are correct but every user is
+  app must join its users again — a run the kernel refuses for want of a grant joins
+  the person, and the UI joins each local agent at every start (requirements §6.7,
+  rule 8). Without this the actions are correct but every user is
   unauthenticated.
 
 Also fold the readable signals into the ordinary drift check: treat
@@ -169,11 +168,6 @@ finds it among the apps; chat is it, and contributes no `NavEntry`.
 dir on Linux, `~/Library/Application Support` on macOS) — where an app places its
 database, kept out of the *config* dir. It is `""` when app config is in-memory
 (tests); an app then stays in-memory and writes no file.
-
-The seam also reserves a **CSRF-exempt `/_kernel/` path prefix** for an app's
-kernel-facing endpoints — a `kind=http` action `source` the kernel calls
-server-to-server, without a browser CSRF token. Every browser route stays
-CSRF-protected.
 
 ### Dependency direction (no cycles)
 
@@ -216,12 +210,12 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
    wiring line in `cmd`). Everything else lives in `apps/<name>/`.
 4. Wire it in `cmd/juice-ui/main.go`: construct it, pass `Templates()` to
    `server.NewRenderer`, add it to the `Apps` slice.
-5. State: keep the core BFF stateless. An app that needs a kernel identity, its own
-   actions, and durable state is a **Juice user run in-process** that authenticates
-   as a service account, registers free (price-0) actions, and keeps its own store
-   — as `apps/chat` does. It **self-provisions** its account on first run and
-   persists the password via `SaveAppState`, so there are no per-app env vars. The
-   plugin reads its store and issues writes as the signed-in user.
+5. State: keep the core BFF stateless. An app that needs its own actions and durable
+   state fronts a **service**: a program of its own, under `services/<name>/` of the
+   installation, that registers its actions and keeps its store, as `juice-chat` does.
+   The app **self-provisions** the provider's account on first run and persists the
+   password via `SaveAppState`, so there are no per-app env vars. It reads and writes
+   by running the service's actions as the signed-in user.
 6. Badge (optional): to keep a count on the app's destination, set
    `NavEntry.Live` and register a watcher under the slug answering `badge` with
    `apps.Badge`. Durable data goes under `Deps.Home`, not the config dir.
@@ -235,41 +229,34 @@ Chat is the worked example — a real **application on top of Juice** — with
 **zero chat-specific code in juice-ui core**. Its rules are `requirements.md`
 §6.7; this is how it sits on the seam.
 
-- **A service and a client of it.** `store.go` is the state (SQLite: rooms,
-  members, entries, keys, cursors, the deliveries a member holds), every rule
-  that must hold together one transaction, and no kernel knowledge. `deliver.go`
-  is routing by address and the delivery of a post as kernel tasks. `service.go`
-  is the HTTP service: the twelve action contracts, their endpoints and the two
-  reads under `/_kernel/chat/`. These three import nothing of the UI, which a test
-  holds, so they could be served from another program. `chat.go` is the App:
-  lifecycle, reconciling the actions, joining the installation's principals, the
-  conversations seam (the rail, the landing, a room's context), the browser
-  routes and the heartbeat watcher, all of it a client of the service.
+- **A program and a client of it.** `services/chat` is the program's code:
+  `store.go` is the state (SQLite: rooms, members, entries, keys, cursors, the
+  deliveries a member holds), every rule that must hold together one transaction, and
+  no kernel knowledge; `deliver.go` is routing by address and the delivery of a post
+  as kernel tasks; `service.go` is the HTTP service and the fourteen action contracts;
+  `register.go` reconciles them on a kernel. `cmd/juice-chat` is its main. They import
+  the kernel client and nothing else of this repository, which a test holds. `chat.go`
+  is the App: starting and stopping the program, joining the installation's
+  principals, the conversations seam (the rail, the landing, a room's context), the
+  browser routes and the heartbeat watcher, all of it a client of the actions.
 - **Self-provisions.** On `Start` it loads, or generates and persists, the
-  `chat@<kernel>` password and the upstream secret its private actions carry,
-  and opens the store in the component home (in memory when there is no
-  persistent state).
-- **Owns `chat@<kernel>` via `apps.ServiceAccount`**, handing it the action
-  reconciliation as the `setup` callback. The reconcile pushes a changed
-  contract whole, a title alone, and deletes any other action chat owns; the
-  write-only auth is forced through by the revision kept in app state (above).
-- **Identity at the door.** `msg/post` and the room commands are
-  `delegated_bearer` on `apps.CallerKeyHeader`; the store resolves the injected
-  key to the member. A read presents the same key on the same header.
-  `validate` and `reply` are the onwards of tasks and carry chat's bearer, so
-  only the kernel completing a task reaches them. `register` and `index` are
-  open.
+  `chat@<kernel>` password. Once signed in through `apps.ServiceAccount` it records
+  that session in the client records, restarts the server, runs `juice-chat register`,
+  and joins the local agents. The program keeps its own secret in its own home.
+- **Identity at the door.** `msg/post`, the room commands and the room reads are
+  `delegated_bearer` on `X-Juice-Caller-Key`; the store resolves the injected key to
+  the member. `validate` and `reply` are the onwards of tasks and carry chat's bearer,
+  so only the kernel completing a task reaches them. `register` and `index` are open.
 - **Tasks are the delivery.** A post creates, through the capability the kernel
   injected into that dispatch (`client.CallbackCreateTask`), one task per
   recipient, and completing it is the answer. No seed trace, no sentinel, no
   app-side notification: the kernel's one signal to a member is a task.
-- **The UI joins its principals, through the kernel alone.** It holds the
-  person's session and every local agent's credential file, so as each of them it
-  approves chat, runs `register`, completes the verification task and connects the
-  key at `chat@<kernel>`; nobody is asked to connect. It keeps the person's key in
-  the session store (`Sessions.PutAppSecret`) for the reads.
-- **The browser is a member.** Every room command on a page is a run of chat's
-  action as the viewer, so a person and an agent take one path. A room is read
-  from the service with the viewer's key, because a read is not an execution. The
-  UI never touches the store. A refused run reaches the UI as its status alone
-  (`KernelError.UpstreamStatus`), so the sentence is the UI's.
+- **The UI joins its principals, through the kernel alone.** It holds the person's
+  session and every local agent's credential file, so as each of them it approves
+  chat, runs `register`, completes the verification task and connects the key at
+  `chat@<kernel>`; nobody is asked to connect. It keeps no chat key.
+- **The browser is a member.** Every room read and command on a page is a run of
+  chat's action as the viewer, so a person, an agent and a CLI user take one path. A
+  page runs a read only when the viewer's open chat tasks moved or the person acted
+  (requirements §6.7), so an idle page writes nothing. A refused run reaches the UI as
+  its status alone (`KernelError.UpstreamStatus`), so the sentence is the UI's.

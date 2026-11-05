@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -511,5 +512,56 @@ func TestARoomsWireShape(t *testing.T) {
 	b, _ = json.Marshal(Entry{Seq: 1, Author: "a@k", Body: json.RawMessage(`"x"`), At: "t", Kind: KindAnswer})
 	if string(b) != `{"seq":1,"author":"a@k","body":"x","at":"t","kind":1}` {
 		t.Errorf("entry = %s", b)
+	}
+}
+
+// A store in WAL mode can hold committed entries only in its log. Moving it folds
+// the log in first, so nothing is lost; with the store in use, or a store at the
+// destination, it refuses; with nothing to move it does nothing.
+func TestMoveKeepsWhatTheLogHolds(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "old.db"), filepath.Join(dir, "new.db")
+	if err := Move(from, to); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(from, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.CreateRoom("ann@k", "cafe", []string{"bob@k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Post(r.ID, "ann@k", raw("in the log")); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(from + "-wal"); err != nil || fi.Size() == 0 {
+		t.Fatalf("the entry should be in the log: %v", err)
+	}
+	// The process died here: its log is left behind.
+	saved, _ := os.ReadFile(from + "-wal")
+	snapshot, _ := os.ReadFile(from)
+	_ = s.Close()
+	_ = os.WriteFile(from, snapshot, 0o600)
+	_ = os.WriteFile(from+"-wal", saved, 0o600)
+	if err := Move(from, to); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(from); !os.IsNotExist(err) {
+		t.Errorf("the old store stays: %v", err)
+	}
+	moved, err := Open(to, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer moved.Close()
+	if _, es, err := moved.Room("ann@k", r.ID); err != nil || len(es) != 1 || string(es[0].Body) != `"in the log"` {
+		t.Errorf("after the move: %+v %v", es, err)
+	}
+	if err := os.WriteFile(from, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Move(from, to); err == nil || !strings.Contains(err.Error(), "both") {
+		t.Errorf("a store at both paths: %v", err)
 	}
 }

@@ -474,7 +474,7 @@ func (i *Installation) Reconfigure(version string, config []byte) error {
 	if fileVersion(old) != version {
 		return errors.New("the configuration changed since this page was loaded; reload it")
 	}
-	if err := stop(filepath.Join(dir, "serve.lock")); err != nil {
+	if err := Stop(filepath.Join(dir, "serve.lock")); err != nil {
 		return err
 	}
 	if err := writeConfig(dir, config); err != nil {
@@ -502,10 +502,10 @@ func (i *Installation) serveAnswering(world string) error {
 	return i.answers(done)
 }
 
-// stop ends the kernel holding lock, by the process id it wrote there, and
+// Stop ends the server holding lock, by the process id it wrote there, and
 // returns once the lock is free. The lock, not the number, says whether a
-// kernel holds the home (ecosystem-standard §3).
-func stop(lock string) error {
+// server holds the home (ecosystem-standard §4).
+func Stop(lock string) error {
 	held, err := Locked(lock)
 	if err != nil {
 		return err
@@ -517,11 +517,11 @@ func stop(lock string) error {
 			return fmt.Errorf("serve.lock names no process: %q", strings.TrimSpace(string(b)))
 		}
 		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			return fmt.Errorf("stop the kernel: %w", err)
+			return fmt.Errorf("stop the server: %w", err)
 		}
 		for deadline := time.Now().Add(30 * time.Second); held; {
 			if time.Now().After(deadline) {
-				return errors.New("the kernel did not stop within 30 seconds")
+				return errors.New("the server did not stop within 30 seconds")
 			}
 			time.Sleep(100 * time.Millisecond)
 			if held, err = Locked(lock); err != nil {

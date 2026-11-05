@@ -1179,6 +1179,12 @@ func (c *Client) ListTasks(ctx context.Context, token, status string) ([]Task, e
 	return listAll[Task](ctx, c, token, "/v1/tasks", q)
 }
 
+// OpenTasks lists the caller's open tasks, waiting or running, to exhaustion: a
+// task stays here until its onward has run.
+func (c *Client) OpenTasks(ctx context.Context, token string) ([]Task, error) {
+	return listAll[Task](ctx, c, token, "/v1/tasks", url.Values{})
+}
+
 func (c *Client) GetTask(ctx context.Context, token, id string) (Task, error) {
 	var t Task
 	err := c.do(ctx, http.MethodGet, "/v1/tasks/"+url.PathEscape(id), token, nil, &t)

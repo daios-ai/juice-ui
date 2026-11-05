@@ -1,7 +1,27 @@
 # Juice Web UI Requirements
 
-Version: 0.46.0
+Version: 0.47.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.47.0.** In 0.46.0 chat ran inside the UI's process, the UI
+> registered chat's actions and held its account, and the UI read rooms by calling
+> the chat server directly with the member's key. Chat could therefore not be moved
+> out of this repository, and an agent or a member on another kernel could not list
+> rooms or read one. Chat is now a program of its own, `juice-chat`, with its home
+> in `$JUICE_HOME/services/chat/`. It registers its own actions with `juice-chat
+> register` and serves them with `juice-chat serve`. The UI starts it, as it starts
+> the kernel and the agents, and reaches it only by running its actions through the
+> kernel. Listing rooms and reading a room are two more actions, `room/list` and
+> `room/read`, which any member can run. A page no longer reads chat on every
+> heartbeat. It asks the kernel for the viewer's open chat tasks, and runs a read
+> only when they changed or the person acted, so an idle page writes no
+> transaction. A change that reaches the viewer through no task (a post addressed
+> to another member and its answer, a rename or a membership change by someone else)
+> now appears at the viewer's next read, no longer within five seconds. A post and
+> an answer are limited to 65,536 characters and a read to what fits the kernel's
+> reply cap. A person already joined signs in without a new chat key. The store
+> moves from `ui/rooms.db` to `services/chat/rooms.db`. The UI no longer has a
+> kernel-facing `/_kernel/` route.
 
 > **What changed in 0.46.0.** Chat's room operations were browser routes that
 > wrote chat's store as the signed-in person, and its room reads were direct
@@ -920,6 +940,7 @@ detectable.
   session/        server-side sessions, token lifecycle, PKCE state, CSRF
   server/         router, middleware, request handlers, rendering
   apps/           self-contained app modules behind one seam (e.g. apps/chat)
+  services/chat/  the chat service, imported only by cmd/juice-chat, its program
   templates/      HTML templates (not Go; no test file required)
   static/         CSS and client scripts (not Go; no test file required)
   ```
@@ -2252,8 +2273,8 @@ the transaction's `payment` (§6.5).
 
 ### 6.7 chat — rooms of people and agents
 
-Chat is an app (§1, `apps/chat`) and the surface a session lands on. Its
-terms: a **member** is a kernel principal, `handle@kernel`, person or agent,
+Chat is the surface a session lands on: an app of this UI (§1, `apps/chat`)
+presenting a program of its own, `juice-chat`. Its terms: a **member** is a kernel principal, `handle@kernel`, person or agent,
 and chat never distinguishes the two (ecosystem-standard §7); an **entry** is
 one thing said in a room, author, time, a body that is a JSON value (a post
 being a string) and a stored kind (post, answer or failure); a
@@ -2264,7 +2285,7 @@ address, compared without case. There is no `@handle`: a member is named as
 everywhere in Juice.
 
 Chat is an HTTP server, the **chat service**, whose endpoints the kernel wraps
-as actions owned by the kernel user `chat@<kernel>`. Its twelve actions, every
+as actions owned by the kernel user `chat@<kernel>`. Its fourteen actions, every
 schema canonical (§6.4) and every text naming this kernel, are:
 
 | Action | Visibility, auth | Input → output | Who may |
@@ -2281,35 +2302,85 @@ schema canonical (§6.4) and every text naming this kernel, are:
 | `room/remove` | public, delegated | `{thread_id, member}` → `{room}` | the creator, never itself |
 | `room/leave` | public, delegated | `{thread_id}` → `{ok}` | a member other than the creator |
 | `room/delete` | public, delegated | `{thread_id}` → `{ok}` | the creator; everything in the room goes |
+| `room/list` | public, delegated | `{}` → `{rooms}`, newest activity first | anyone joined |
+| `room/read` | public, delegated | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms}` | a member |
 
-Delegated means `delegated_bearer` on the seam's caller-key header: the kernel
-injects the key the member connected, and the service resolves it to the member.
+Delegated means `delegated_bearer` on the service's caller-key header,
+`X-Juice-Caller-Key`: the kernel injects the key the member connected, and the
+service resolves it to the member.
 The onwards are private so that a member completes a task without being able to
 run the action itself and speak as somebody else: the kernel checks an onward's
-visibility against the task's creator, chat. They are reconciled at every start
-as `docs/apps.md` describes, and any other action chat owns is deleted.
+visibility against the task's creator, chat. They are reconciled at every
+registration, and any other action the provider owns is deleted.
 
-**A room is read from the service, not run.** A run is an execution with a
-process, a transaction and a receipt in the caller's history, so a heartbeat of
-runs would write one every five seconds. The service therefore serves two reads
-over plain HTTP, authenticated by the same chat key on the same header:
-`GET room/list` → `{rooms}`, the caller's rooms, newest activity first; and
-`GET room/read?thread_id=&after=&seen=` → `{room, entries, removed, waiting}`, to
-a member, its latest entries or with `after` those newer than it and the posts an
-answer replaced, whom it waits on, and with `seen=true` the caller's read cursor
-moved. An agent needs neither: a delivery carries what the room said.
+**`room/read`.** Without `after` it answers the room's latest entries; with it, the
+oldest entries newer than it and the posts an answer replaced. `waiting` names the
+other members holding an unanswered delivery. `seen` moves the caller's read cursor
+over what it now shows. `rooms` is the caller's list as `room/list` gives it, so one
+run serves a whole page.
 
-**The boundary.** The service (`service.go`, `deliver.go`, `store.go`) imports
-nothing of the UI, and the UI reaches it only through the kernel or those reads,
-at the one base its actions' sources name, so the service could be served from
-another program. A test holds both directions.
+**Every reply fits the kernel's cap.** The kernel refuses a reply over 4 MiB
+(measured on v0.17.1). A post is at most 65,536 characters by its schema. An answer
+over that is kept as a failure saying so, and its completion succeeds, because an
+agent treats a refused completion as final and its task would wait forever.
+`entries` holds at most 200 entries and 1 MiB; with `after`, `more` says others
+remain and the caller reads on from the last. `rooms` holds the newest activity that
+fits 256 KiB.
+
+**The program.** `juice-chat` is a service in the sense of ecosystem-standard §7,
+built from `cmd/juice-chat` and `services/chat`, which import the kernel client and
+nothing else of this repository (a test holds both directions). Its home is
+`$JUICE_HOME/services/chat/`: `config.json` (`listen_addr`, default
+`127.0.0.1:8090`, and `public_url`, what a kernel dials), `state.json` (the bearer
+of the private actions and, per provider, the auth configuration last pushed),
+`rooms.db` and `serve.lock`. `juice-chat serve` holds no kernel credential: it
+creates tasks through the capability of each dispatch. An action's source is
+`<public_url>/<provider>/<name>`, and the server reads the provider from the path, so
+one server serves every provider that registered it. `juice-chat register LOGIN`
+reads the kernel and LOGIN's session from the client records and makes LOGIN's
+actions exactly chat's; LOGIN's whole namespace is chat's.
+
+**What the UI does.** At each start, in the background with the service account's
+backoff, it makes `chat@<kernel>` with the password in its app state, writes that
+session to the client records as `juice auth login` would, stops the server holding
+`services/chat/serve.lock`, starts `juice-chat serve` detached with its output in
+`ui/chat.log`, runs `juice-chat register chat@<kernel>`, and joins the local agents.
+The server outlives the UI, as the kernel and the agents do. The binary is
+`JUICE_CHAT_BIN`, else `$JUICE_HOME/bin/juice-chat`, else `PATH`. Everything else is a
+run of an action as the viewer: the UI dials no chat address and knows no store.
+
+**When a page runs a read.** A run writes a transaction, so a read is run on a
+gesture, or when the kernel shows that something changed for the viewer. The signal
+is the viewer's open chat tasks (`GET /v1/tasks`, those on `reply` the viewer owns or
+is addressed by, a read that writes nothing) together with a count of the changes
+this UI made for that address, since a delivery settled by another tab between two
+ticks leaves the open set as it was. A page carries one chat watch holding the signal
+of its last successful read. On a room page, when the signal differs or a visible tab
+holds a delivery for the room, the tick runs `room/read` once, then settles the
+viewer's deliveries when the tab is visible, and answers the new entries, the rail
+when it changed, and the watch. A delivery is settled only after a read that
+succeeded, because a completion chat cannot receive spends the task. On any other
+page the slow tick runs `room/list` when the signal differs. A read that fails
+acknowledges nothing: the watch keeps its signal and cursor, the page reads again
+after 5 s, then 10, 20, 40, and every 60 s, and the first success shows the change. A
+room gone answers the new signal once. The rail on a page load is what the session
+last read, with no run; a session holding nothing runs `room/list` once, and a
+session not yet joined shows no rooms.
+
+**What reaches a page late.** A change that reaches the viewer through no task
+appears at the viewer's next read: a post addressed to another member and that
+member's answer, a room command by another member, and a delivery settled within one
+heartbeat by something other than this UI. Chat does not signal them with a task,
+because an agent answers every task it receives and a completion's onward cannot
+create tasks.
 
 **A refused action.** The service answers a refusal with a status and
 `{ok: false, code, error}`, but the kernel relays only `upstream returned status
 N`, never the body (kernel D4, verified on v0.17.1 and pinned by the contract
 test). The UI therefore chooses its sentence by the status, a room gone (404)
 being the not-found page, and records nothing as a success: a refusal is a failed
-transaction. A read's status and body reach the UI whole.
+transaction. An endpoint that cannot be reached is `upstream request failed`, also
+pinned, and the UI says chat is not answering.
 
 The rules:
 
@@ -2350,12 +2421,10 @@ The rules:
    completing the verification task and connecting the key at `chat@<kernel>`,
    each as the principal: the path a member elsewhere walks by hand. A member is
    joined when the kernel's grant plan shows every action under that selector
-   granted, and, for a person, when the session holds their key, which only a join
-   can give it, since the kernel never reads a connected token back; the key stays
-   in the session store for the reads (§5). The person signed
-   in is joined, with the session, by every chat page that finds them not joined,
-   and by a command the kernel refuses for want of a grant. The rail never joins:
-   a session not yet joined shows no rooms. An agent with a home under
+   granted; the UI holds no chat key. The person signed in is joined, with the
+   session, by the landing when the plan does not show them joined, and by a run
+   the kernel refuses for want of a grant or chat refuses for an unknown key. The
+   rail never joins: a session not yet joined shows no rooms. An agent with a home under
    `$JUICE_HOME/agents/` named by a login on this
    kernel is joined with its own session, read from
    `client/credentials/<login>.json` under that file's lock and refreshed there
@@ -2369,8 +2438,8 @@ The rules:
    members are exactly the viewer and `assistant@<kernel>`, opened by
    `room/direct` and named `assistant`; without an assistant home the
    landing is the newest room, else an empty page beside the rail. The rail
-   lists the viewer's rooms. Every room command on a page is a run of its action
-   as the viewer, so the UI writes nothing to chat's store, and New conversation
+   lists the viewer's rooms. Every room read and command on a page is a run of its
+   action as the viewer, so the UI touches no store of chat's, and New conversation
    offers this kernel's agents first. A room
    id is three words, `adjective-animal-NN`, which a language model copies
    exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
@@ -2398,7 +2467,7 @@ the assistant, else the newest room, else an empty page beside the rail.
 
 * **The rail** is the sidebar's list of the viewer's rooms, newest activity
   first, the room in view `aria-current`, a room with unread entries weighted;
-  the heartbeat replaces it when a room appears, goes or is read. Its first row,
+  a read that finds it changed replaces it. Its first row,
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
@@ -2407,8 +2476,7 @@ the assistant, else the newest room, else an empty page beside the rail.
   waits on → composer, the page the scroll container, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
   chosen. Its creator alone is offered **Rename**, a dialog holding the name
-  (`?form=rename` without script); the rail follows on every open page through
-  the heartbeat. An entry renders as the view of its body (§7), a failure being the
+  (`?form=rename` without script); the rail follows at each member's next read. An entry renders as the view of its body (§7), a failure being the
   view of its `{status, reason}`. **Waiting on** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
   — a fact chat holds, never a claim of activity, which chat cannot observe —
@@ -2475,10 +2543,13 @@ the assistant, else the newest room, else an empty page beside the rail.
   post. A result reaches a next action through the conversation: an agent
   reads it, or Fill from chat does.
 
-The store is `$JUICE_HOME/ui/rooms.db`, upgraded in place (a delivery held
-across the upgrade settles nothing said before it); a first start beside the
-previous application's `chat.db` imports its live rooms, members and messages
-once and never writes that file.
+The store is `$JUICE_HOME/services/chat/rooms.db`, upgraded in place (a delivery
+held across the upgrade settles nothing said before it). `juice-chat serve` moves one
+left at `ui/rooms.db` once: it folds the store's log into the database file, so
+nothing committed is lost, and renames that one file. An interruption before the
+rename leaves the old store whole, and with a store at both paths or the old one in
+use it refuses to start. A first start beside the previous application's `ui/chat.db`
+imports its live rooms, members and messages once and never writes that file.
 
 ## 7. Visual language and non-functional requirements
 
@@ -2833,17 +2904,26 @@ Every production `.go` file has a `_test.go` file with independent tests.
   changed amount; the composer standing in the room alone (drift guard); the
   form and the bar drawing a control through one partial; a room's context as
   the planner reads it, refused to a non-member;
-* chat as a service: every room command is a run of its action as the viewer and
-  every page read a request to the service bearing the session's key, the store
-  untouched by the UI; the service's files import nothing of the UI and the UI
-  reaches only its contracts, handler and close (drift guard); each command's rule
-  holds for any caller, the creator renaming, adding, removing and deleting and a
-  member leaving; the reads' cursor, window and statuses; a join goes through the
-  kernel alone, connects at the root and follows the kernel's plan per action, a
-  person holding only an earlier grant joined again; a registration or a failed
-  connect retires no key; the rail never joins; a read with an unknown key joins
-  again; a refusal is said by its status, a room gone the not-found page, and a
-  person never reads a raw status;
+* chat as a program: the service and `juice-chat` import nothing of the UI, nothing
+  else imports the service, and the app dials no address (drift guards); the fake
+  kernel dispatches every run to a real service, each command's rule holding for any
+  caller and each read's cursor, window, `more` and byte bounds; one server serving
+  two providers; registration creating, reconciling and deleting; the configuration,
+  the lock, and the store's move with entries only in its log, with a store at both
+  paths, and with the old one absent; the UI's start stopping, serving and
+  registering in order, a failure retried; a join going through the kernel alone,
+  connecting at the root and following the kernel's plan per action, a person
+  holding only an earlier grant joined again; a failed connect retiring no key; a run
+  refused for want of a grant or for an unknown key joining and running again; a
+  refusal said by its status, a room gone the not-found page, chat down said beside
+  the composer with the draft kept, and a person never reading a raw status;
+* a page's cost: ten quiet ticks run nothing and write nothing; a delivery arriving,
+  a delivery answered, and a delivery settled by another tab each run one read; a
+  page that is not a room renders its rail with no run; a failed read keeps its
+  signal and cursor, settles nothing, retries at the stated delays, and shows the
+  change at the first success, even when the signal has returned to the one shown; a
+  tab read while hidden settles once visible; the contract test pins that a task is
+  listed to its owner until it settles;
 * the stylesheet styles nothing that no template, script or Go renders
   (drift guard);
 * the planner under one rule: offered at its price, on the money button when

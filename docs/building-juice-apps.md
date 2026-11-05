@@ -1,7 +1,7 @@
 # Building Juice Apps
 
 `docs/apps.md` describes the **seam** — the `apps.App` interface, `ServiceAccount`,
-`CallerKeyHeader`, the dependency rules, the checklist. Read it first for the
+the dependency rules, the checklist. Read it first for the
 mechanics. This document is the **mental model and the sharp edges**: how to *think*
 about an app so it composes with the rest of Juice, and the non-obvious things that
 cost real debugging time on the first app (chat). It is prescriptive for every future
@@ -87,14 +87,24 @@ cheap, and both surprised us on the first app:
   *is* the trace). This is how an out-of-kernel service participates in the execution
   graph. See `juicedocs/API.md` §"Composition from a `kind=http` action".
 
-- **Every command is an action; a read is not.** Whatever changes the app's state
-  is an action the app owns, and the UI's control is a run of it, so a person and
-  an agent take one path and the kernel attests, prices and receipts the call. A
-  read is an endpoint of the service authenticated by the caller's key, as the
-  kernel serves its own reads: a run writes a transaction, and polling through runs
-  would fill the caller's history. A UI that writes the app's store directly has
-  given the person a capability no agent can reach, and made the service impossible
-  to move. Chat did this until 0.46.0.
+- **Every operation is an action, reads included, and the UI talks only to the
+  kernel.** An app is an HTTP server Juice wraps, a program of its own that the UI may
+  start and stop as it does the kernel and the agents. Everything the app can do is an
+  action it owns, and the UI's control is a run of it, so a person, an agent and a
+  member on another kernel take one path and the kernel attests, prices and receipts
+  the call. A UI that calls the app's server or writes its store has given the person
+  a capability the network cannot reach, and made the app impossible to move. Chat did
+  this until 0.47.0.
+
+- **Design the actions so that this is cheap.** A run writes a transaction, so a page
+  must not poll an action. A page finds out what changed from a kernel read, which
+  writes nothing: chat compares the viewer's open tasks. It runs a read when they
+  moved or the person acted, one read answers everything the page needs, and a read
+  that fails is retried with a growing delay and acknowledges nothing.
+
+- **Bound every reply in bytes.** The kernel refuses a reply over 4 MiB. Limit what
+  can be stored, cut what a read returns by size as well as count, and say when more
+  remains.
 
 - **A refusal reaches a caller as its status alone.** The kernel answers a non-2xx
   from an HTTP action with `execution_failed` and `upstream returned status N`, and

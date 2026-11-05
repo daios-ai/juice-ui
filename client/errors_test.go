@@ -261,3 +261,13 @@ func TestUpstreamStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestUpstreamDown(t *testing.T) {
+	if !(&KernelError{Kind: KindExecutionFailed, KernelMessage: "upstream request failed"}).UpstreamDown() {
+		t.Error("an endpoint that cannot be reached")
+	}
+	if (&KernelError{Kind: KindExecutionFailed, KernelMessage: "upstream returned status 500"}).UpstreamDown() ||
+		(&KernelError{Kind: KindUnavailable, KernelMessage: "upstream request failed"}).UpstreamDown() {
+		t.Error("anything else")
+	}
+}

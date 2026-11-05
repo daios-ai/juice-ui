@@ -189,7 +189,7 @@ func TestRecordKernelHoldsTheLock(t *testing.T) {
 	}
 	_ = syscall.Flock(int(held.Fd()), syscall.LOCK_EX)
 	done := make(chan error, 1)
-	go func() { done <- a.recordKernel(context.Background()) }()
+	go func() { done <- a.deps.Client.RecordKernel(context.Background(), a.client) }()
 	select {
 	case err := <-done:
 		t.Fatalf("wrote under another writer's lock: %v", err)

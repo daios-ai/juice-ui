@@ -18,28 +18,21 @@
      loses nothing by being replaced). Input: entriesView. */}}
 {{define "_working"}}<p class="muted" id="chat-working" hx-swap-oob="true">{{with .Waiting}}{{.}} <span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>{{end}}</p>{{end}}
 
-{{/* The composer's answer and the poll: new entries append, the posts an
-     answer replaced leave, the cursor and the watch advance, a shown refusal
-     clears. */}}
-{{define "_chat_poll"}}
-{{range .Entries}}{{template "_entry" .}}{{end}}
-{{template "_chat_cursor" .}}
-{{end}}
-
-{{/* The heartbeat's answer: the same, wrapped so the entries land inside the
-     stack (an appended out-of-band element inserts its children). */}}
+{{/* The composer's and the heartbeat's answer: new entries land inside the stack
+     (an appended out-of-band element inserts its children), the posts an answer
+     replaced leave, the watch advances, a shown refusal clears. */}}
 {{define "_chat_tick"}}
 <div hx-swap-oob="beforeend:#chat-messages">{{range .Entries}}{{template "_entry" .}}{{end}}</div>
-{{template "_chat_cursor" .}}
-{{end}}
-
-{{define "_chat_cursor"}}
 {{range .Removed}}<div id="e-{{.}}" hx-swap-oob="delete"></div>{{end}}
-<input type="hidden" id="chat-after" name="after" value="{{.After}}" hx-swap-oob="true">
-<input type="hidden" id="watch-chat-room" name="watch" value="chat:{{.RoomID}}:{{.After}}" hx-swap-oob="true">
+<input type="hidden" id="chat-after" name="after" value="{{.Watch.State.After}}" hx-swap-oob="true">
+{{template "_chat_watch" .Watch}}
 <p class="error-text" id="chat-error" role="alert" hidden hx-swap-oob="true"></p>
 {{template "_working" .}}
 {{end}}
+
+{{/* A page's one chat watch: the rail's in the slow lane, or the room's. One
+     element for the page and every answer, as _working. Input: watchView. */}}
+{{define "_chat_watch"}}<input type="hidden" {{if eq .Key "rail"}}id="watch-rail" name="slow"{{else}}id="watch-chat-room" name="watch"{{end}} value="chat:{{.Key}}:{{.State}}" hx-swap-oob="true">{{end}}
 
 {{/* A refused post: the reason beside the composer, nothing appended. */}}
 {{define "_chat_refused"}}

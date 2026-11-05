@@ -408,6 +408,22 @@ func TestKernelContract(t *testing.T) {
 	if ke, ok := client.AsKernelError(rerr); !ok || ke.UpstreamStatus() != http.StatusConflict || strings.Contains(ke.KernelMessage, "held") {
 		t.Fatalf("an endpoint's refusal reads as its status alone: %v", rerr)
 	}
+	// An endpoint that cannot be reached has its own wording, and an app says so.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "http://" + ln.Addr().String()
+	_ = ln.Close()
+	gone := get(a, "create gone", func() (client.Action, error) {
+		return a.c.CreateAction(ctx, alice, client.CreateActionInput{Name: "gone", Title: "gone", Kind: "http", Source: closed, Method: "POST",
+			Description: "contract gone", InputSchema: schema("x"), OutputSchema: schema("y")})
+	})
+	get(a, "enable gone", func() ([]client.Action, error) { return a.c.EnableAction(ctx, alice, gone.ID) })
+	_, derr := a.c.Run(ctx, alice, a.addr("alice")+"/gone", json.RawMessage(`{"x":"hi"}`), "")
+	if ke, ok := client.AsKernelError(derr); !ok || !ke.UpstreamDown() {
+		t.Fatalf("an unreachable endpoint: %v", derr)
+	}
 	get(a, "transaction", func() (client.Transaction, error) { return a.c.GetTransaction(ctx, bob, reply.TxID) })
 	get(a, "verify receipt", func() (client.ReceiptVerification, error) { return a.c.ReceiptVerification(ctx, bob, reply.TxID) })
 	done(a, "rate", a.c.RateTransaction(ctx, bob, reply.TxID, 1, "good"))
@@ -434,6 +450,12 @@ func TestKernelContract(t *testing.T) {
 	if up.parkErr != nil || len(up.tasks) != 2 {
 		t.Fatalf("park: %v %v", up.tasks, up.parkErr)
 	}
+	// A task is listed to the caller who owns it as well as to its completer,
+	// until it settles: chat's pages read what changed from this list.
+	owned := get(a, "open tasks", func() ([]client.Task, error) { return a.c.OpenTasks(ctx, alice) })
+	if len(owned) != 2 || owned[0].Owner != a.addr("alice") || owned[0].RequiredCaller != a.addr("bob") {
+		t.Fatalf("the owner lists the open tasks it owns: %+v", owned)
+	}
 	get(a, "requesters", func() ([]client.Requester, error) { return a.c.ListRequesters(ctx, bob) })
 	done(a, "approve alice", a.c.DecideRequester(ctx, bob, a.addr("alice"), "approve"))
 	get(a, "requesters", func() ([]client.Requester, error) { return a.c.ListRequesters(ctx, bob) })
@@ -447,6 +469,9 @@ func TestKernelContract(t *testing.T) {
 		return a.c.CompleteTask(ctx, bob, up.tasks[0], json.RawMessage(`{"z":"done"}`))
 	})
 	get(a, "decline", func() (client.Task, error) { return a.c.CancelTask(ctx, bob, up.tasks[1]) })
+	if left := get(a, "open tasks", func() ([]client.Task, error) { return a.c.OpenTasks(ctx, alice) }); len(left) != 0 {
+		t.Fatalf("a settled task leaves the list: %+v", left)
+	}
 	get(a, "all tasks", func() ([]client.Task, error) { return a.c.ListTasks(ctx, bob, "") })
 
 	// A delegated grant: the plan, the connection, and the consent tree on /v1/me.

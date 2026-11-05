@@ -32,8 +32,8 @@
   {{range $d.Entries.Entries}}{{template "_entry" .}}{{end}}
 </div>
 {{template "_working" $d.Entries}}
-<input type="hidden" id="chat-after" name="after" value="{{$d.Entries.After}}">
-<input type="hidden" id="watch-chat-room" name="watch" value="chat:{{$rid}}:{{$d.Entries.After}}">
+<input type="hidden" id="chat-after" name="after" value="{{$d.Watch.State.After}}">
+{{template "_chat_watch" $d.Watch}}
 
 {{/* The composer (requirements §6.7): the post action's form drawn as a bar,
      the one sanctioned exception to the form's card. The text box is the

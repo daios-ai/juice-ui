@@ -176,6 +176,38 @@ func Open(path, legacy string) (*Store, error) {
 	return s, nil
 }
 
+// Move brings a store made elsewhere to path, once: a store in WAL mode can hold
+// committed entries only in its log, so the log is folded into the database file
+// and that one file is renamed. An interruption before the rename leaves the old
+// store whole for the next start. With a store at both paths it refuses, rather
+// than merging, and with the old store in use it refuses too.
+func Move(from, path string) error {
+	_, ferr := os.Stat(from)
+	_, perr := os.Stat(path)
+	switch {
+	case ferr != nil:
+		return nil
+	case perr == nil:
+		return fmt.Errorf("a chat store is at both %s and %s", from, path)
+	}
+	db, err := sql.Open("sqlite", from+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	var busy, logged, moved int
+	err = db.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logged, &moved)
+	if cerr := db.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("chat store: checkpoint %s: %w", from, err)
+	}
+	if st, err := os.Stat(from + "-wal"); busy != 0 || (err == nil && st.Size() > 0) {
+		return fmt.Errorf("chat store: %s is in use", from)
+	}
+	return os.Rename(from, path)
+}
+
 // Close releases the database.
 func (s *Store) Close() error { return s.db.Close() }
 
@@ -526,14 +558,14 @@ func (s *Store) Room(viewer, roomID string) (Room, []Entry, error) {
 	return r, es, err
 }
 
-// After is the room's standing entries newer than seq, oldest first, and the
-// seqs of the posts replaced by an answer newer than seq, which a page showing
+// After is the oldest standing entries newer than seq, up to one past the
+// window, so a caller sees whether more remain, oldest first, and the seqs of the posts replaced by an answer newer than seq, which a page showing
 // them removes; a member only.
 func (s *Store) After(viewer, roomID string, seq int64) ([]Entry, []int64, error) {
 	if _, err := s.requireMember(viewer, roomID); err != nil {
 		return nil, nil, err
 	}
-	es, err := s.entries(`room_id = ? AND seq > ?`, roomID, seq)
+	es, err := s.query(`SELECT * FROM (SELECT seq, author, body, at, kind FROM entries WHERE replaced_by = 0 AND room_id = ? AND seq > ? ORDER BY seq LIMIT ?) ORDER BY seq DESC`, roomID, seq, window+1)
 	if err != nil {
 		return nil, nil, err
 	}

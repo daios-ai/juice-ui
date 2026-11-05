@@ -66,7 +66,7 @@ type carriedEntry struct {
 // post last. The task is created before the delivery is recorded, so a
 // record that fails only repeats a range next time; a recipient the kernel
 // refuses is skipped. It returns how many were created.
-func (s *Service) deliver(ctx context.Context, callback, capability, roomID string, upto, depth int64, to []string) int {
+func (s *Service) deliver(ctx context.Context, self, callback, capability, roomID string, upto, depth int64, to []string) int {
 	n := 0
 	for _, m := range to {
 		entries, err := s.Store.Range(m, roomID, upto, carried)
@@ -85,7 +85,7 @@ func (s *Service) deliver(ctx context.Context, callback, capability, roomID stri
 		}
 		partial, _ := json.Marshal(map[string]any{"thread_id": roomID, "member": m, "delivery": id, "message": carry})
 		if _, err := s.Kernel.CallbackCreateTask(ctx, callback, capability, client.CreateTaskInput{
-			Action: s.Self() + "/" + replyName, RequiredCaller: m, PartialArgs: partial,
+			Action: self + "/" + replyName, RequiredCaller: m, PartialArgs: partial,
 		}); err != nil {
 			s.log().Warn("chat: deliver", "room", roomID, "member", m, "err", err)
 			continue

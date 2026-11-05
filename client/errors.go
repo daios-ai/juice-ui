@@ -61,6 +61,11 @@ type KernelError struct {
 // against the installed kernel.
 var upstreamStatus = regexp.MustCompile(`^upstream returned status (\d{3})$`)
 
+// UpstreamDown reports an HTTP action whose endpoint could not be reached.
+func (e *KernelError) UpstreamDown() bool {
+	return e.Kind == KindExecutionFailed && e.KernelMessage == "upstream request failed"
+}
+
 // UpstreamStatus is the status an HTTP action's endpoint answered, for an
 // execution_failed the kernel reports as such, and 0 for anything else.
 func (e *KernelError) UpstreamStatus() int {

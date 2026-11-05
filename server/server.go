@@ -460,18 +460,7 @@ func New(o Options) (http.Handler, error) {
 		// apply. Behind TLS (Secure=true) the strict check is retained.
 		protected = plaintextMiddleware(protected)
 	}
-	// An app's kernel-facing endpoints live under /_kernel/ and are called
-	// server-to-server by the kernel (no browser, no CSRF token), so they bypass
-	// CSRF; every browser route stays CSRF-protected. Both paths still pass through
-	// session/security/logging below.
-	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/_kernel/") {
-			mux.ServeHTTP(w, r)
-			return
-		}
-		protected.ServeHTTP(w, r)
-	})
-	h = o.Sessions.SCS().LoadAndSave(h)
+	h := o.Sessions.SCS().LoadAndSave(protected)
 	h = securityHeaders(h) // CSP + hardening on every response, including errors
 	h = s.logging(h)
 	h = requestIDMiddleware(h)
@@ -757,7 +746,6 @@ func (s *Server) appDeps() apps.Deps {
 		RequireSuperuser:  s.requireSuperuser,
 		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
 		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
-		PublicURL:         s.publicURL,
 		StatePath:         s.appStore.path,
 		Home:              s.home,
 		FormArgs:          buildArgs,

@@ -20,16 +20,30 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
 )
 
-// CallerKeyHeader is the request header an app's delegated_bearer actions carry
-// the caller's key in: the kernel injects the key the caller connected, and the
-// app resolves it to the caller.
-const CallerKeyHeader = "X-Juice-Caller-Key"
+// Bin resolves a sibling program of the family: the override in the environment
+// variable env, else the installation's own bin/, where the installer puts it,
+// else PATH; "" when not found.
+func Bin(env, juiceHome, name string) string {
+	if p := os.Getenv(env); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath(filepath.Join(juiceHome, "bin", name)); err == nil {
+		return p
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	return ""
+}
 
 // App is one app module. The core calls Templates() and Nav()
 // to fold the module's pages and sidebar entry into the shared shell, Mount() to
@@ -183,11 +197,6 @@ type Deps struct {
 	// no per-app environment variables.
 	LoadAppState func(slug string) (json.RawMessage, error)
 	SaveAppState func(slug string, v json.RawMessage) error
-
-	// PublicURL is the BFF's absolute base URL. An app that registers kind=http
-	// actions builds their callback source from it, under the CSRF-exempt
-	// /_kernel/ prefix (e.g. PublicURL + "/_kernel/<slug>/ack").
-	PublicURL string
 
 	// StatePath is the path to the machine-written app state file (state.json), or
 	// "" when app state is in-memory (tests). An app should fall back to an
