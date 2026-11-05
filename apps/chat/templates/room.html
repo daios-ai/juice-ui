@@ -10,7 +10,7 @@
 <nav class="crumb">
   {{template "_room_name" $d.Room.Name}}
   <details class="thread-members">
-    <summary class="btn-quiet">{{len $d.Room.Members}} members</summary>
+    <summary class="btn">{{len $d.Room.Members}} members</summary>
     <div class="members-panel">
       {{if $d.IsOwner}}<a class="menu-item" href="/chat/room/{{$rid}}?form=add-member" data-modal="form-add-member">+ add member</a>{{end}}
       {{range $d.Room.Members}}

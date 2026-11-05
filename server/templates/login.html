@@ -27,7 +27,7 @@
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
       <button class="btn" type="submit">Sign in</button>
-      <p class="small"><a href="/recover">Forgot password?</a></p>
+      <p><a class="btn" href="/recover">Forgot password?</a></p>
     </form>
 
     <form class="auth-panel stack" method="post" action="/signup" data-panel="signup" data-confirm-password{{if ne $tab "signup"}} hidden{{end}}>

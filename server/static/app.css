@@ -75,7 +75,8 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    conversations, the open one current, an unread one weighted. It scrolls;
    the avatar below it stays. */
 .rail { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
-.rail > .btn-quiet { display: inline-flex; align-items: center; gap: var(--space-2); align-self: flex-start; margin-bottom: var(--space-1); }
+.rail > .btn { flex: none; margin-bottom: var(--space-2); }
+.rail :focus-visible { outline-offset: -2px; } /* the scroller would clip a ring drawn outside */
 .rail-row { display: flex; align-items: center; flex: none; border-radius: var(--radius-s); }
 .rail-row:hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
 .rail-row > a { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -100,9 +101,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    icon form, so the rail's rows go with them. */
 @media (min-width: 721px) {
   html[data-sidebar="collapsed"] .sidebar { width: auto; flex-basis: auto; align-items: center; }
-  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail > .btn-quiet > span, .handle) { display: none; }
+  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail > .btn > span, .handle) { display: none; }
   html[data-sidebar="collapsed"] .sidebar-top { padding: 0 0 var(--space-1); }
-  html[data-sidebar="collapsed"] .rail > .btn-quiet { align-self: center; justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; }
+  html[data-sidebar="collapsed"] .rail > .btn { width: var(--control-h); padding: 0; }
   html[data-sidebar="collapsed"] .profile-trigger { justify-content: center; padding-inline: 0; }
 }
 
@@ -195,7 +196,7 @@ tr.unread > td:first-child a { font-weight: 700; }
 /* A filter tab row can carry one inline command (e.g. "+ new action"), pushed
    to the right and not styled as a tab. */
 .control-tabs { align-items: center; }
-.tabs .tabs-action { margin-left: auto; border-bottom: 0; }
+.tabs .tabs-action { margin-left: auto; margin-bottom: var(--space-1); }
 /* Pager — quiet offset navigation under a list. No accent (money-reserved);
    a boundary is a dimmed non-link. */
 .pager { display: flex; align-items: center; justify-content: center; gap: var(--space-4); margin: var(--space-5) 0 var(--space-2); }
@@ -435,10 +436,9 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
      .btn         the one neutral button — every ordinary action & form submit
      .btn-money   money movement (solid accent) — always names the amount
      .btn-danger  critical (solid danger)
-   Helpers: .btn-icon (icon-only, needs aria-label), .btn-quiet (inline text —
-   Cancel, remove-row, and the quiet "+ new …" / "update account" affordances). */
+   Helper: .btn-icon (icon-only, needs aria-label). */
 /* Bare <button> gets only a reset — the tier geometry below must NOT leak onto
-   non-tier buttons (.menu-item, .profile-trigger, .btn-icon, .btn-quiet), or it
+   non-tier buttons (.menu-item, .profile-trigger, .btn-icon), or it
    centers their content. */
 button { font-family: inherit; cursor: pointer; }
 .btn, .btn-money, .btn-danger {
@@ -453,15 +453,12 @@ button { font-family: inherit; cursor: pointer; }
 .btn-money:hover { background: var(--accent-hover); border-color: var(--accent-hover); text-decoration: none; }
 .btn-danger { background: var(--danger); color: var(--danger-contrast); border-color: var(--danger); font-weight: 600; }
 .btn-danger:hover { filter: brightness(1.08); text-decoration: none; }
-.btn-quiet { background: none; border: none; color: var(--text-muted); padding: var(--space-1) var(--space-2); cursor: pointer; font-family: inherit; font-size: var(--font-size-md); }
-.btn-quiet:hover { color: var(--text); text-decoration: underline; }
-/* The copy control (_copy): an icon-only quiet button beside the whole value
-   it copies — a key, a hash, an address — sized to sit inside a line. */
-.btn-quiet.copy { padding: 0 var(--space-1); vertical-align: middle; line-height: 1; }
-.btn-quiet.copy:hover { text-decoration: none; }
-.btn-quiet.copy .ico { width: var(--icon-sm); height: var(--icon-sm); }
 .fingerprint { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--text-muted); overflow-wrap: anywhere; }
 .btn-icon { display: inline-flex; align-items: center; justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; background: none; border: 1px solid var(--border); border-radius: var(--radius-s); color: var(--text); font-size: var(--font-size-lg); cursor: pointer; }
+/* Inside a row or a line of text — a row's menu trigger, the copy control — an
+   icon button is borderless and muted (with the composer's, below) and small. */
+.btn-icon.inline { flex: none; width: var(--space-5); height: var(--space-5); vertical-align: middle; }
+.btn-icon.inline .ico { width: var(--icon-sm); height: var(--icon-sm); }
 
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: var(--space-1); }
@@ -665,7 +662,7 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 /* Grant tree — the folder directory reads in the provenance (mono) face. */
 .grant-tree .grant-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* you-row — a link/setting row on the settings page. */
+/* you-row — a setting row on the settings page. */
 .you-head { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
 .you-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .you-row label, .you-row .detail form { margin: 0; }
@@ -673,9 +670,8 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
   display: flex; align-items: center; gap: var(--space-3); width: 100%; text-align: left;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: var(--space-3) var(--space-4); font-size: var(--font-size-md);
-  color: var(--text); font-family: inherit; cursor: pointer;
+  color: var(--text); font-family: inherit;
 }
-.you-row:hover { border-color: var(--border-strong); text-decoration: none; }
 .you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); color: var(--text-muted); }
 
 
@@ -701,8 +697,8 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 /* One line of text and every control are the control height, so they share a
    centre line; aligned at the foot, the controls stay level with the last line
    as the text grows. */
-.composer-bar .btn-icon { border-color: transparent; color: var(--text-muted); }
-.composer-bar .btn-icon:hover { color: var(--text); }
+.composer-bar .btn-icon, .btn-icon.inline { border-color: transparent; color: var(--text-muted); }
+.composer-bar .btn-icon:hover, .btn-icon.inline:hover { color: var(--text); }
 /* The send arrow: the bar's one primary act, the one ink-filled control in the
    interface (grammar §5.1) — never the accent, which is money's. */
 .btn-send { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; border: none; border-radius: var(--radius-full); background: var(--text); color: var(--bg); cursor: pointer; }
@@ -719,7 +715,6 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 /* The panel is the one scroller, its head held at the top so the title or the
    way back, and the close, stay in reach over a long list of results. */
 .panel .modal-head { position: sticky; top: 0; z-index: 1; background: var(--surface); }
-.panel .modal-head > .btn-quiet { margin-left: calc(-1 * var(--space-2)); }
 .panel .modal-body { max-height: none; overflow: visible; }
 .panel .modal-body > h2:first-child { margin: 0 0 var(--space-2); font-size: var(--font-size-lg); }
 /* The run form opens a new section of the panel: a step above the form's own

@@ -24,7 +24,7 @@
   {{template "_tab" (tab "all" (actionsHref $d.Scope "") (eq $d.Filter ""))}}
   {{template "_tab" (tab "active" (actionsHref $d.Scope "active") (eq $d.Filter "active"))}}
   {{template "_tab" (tab "inactive" (actionsHref $d.Scope "inactive") (eq $d.Filter "inactive"))}}
-  <button class="btn-quiet tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
+  <button class="btn tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
   <div class="menu" id="menu-new-action" role="menu" hidden>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-create" data-modal="form-action-create">Create manually</a>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-import" data-modal="form-action-import">Import from OpenAPI</a>
@@ -58,7 +58,7 @@
          kernel rejects. */}}
     <td>
       {{if ne $a.Kind "remote_proxy"}}
-      <button class="btn-quiet" data-menu="row-{{$a.ID}}" aria-haspopup="menu" aria-label="Manage">⋯</button>
+      <button class="btn-icon inline" data-menu="row-{{$a.ID}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
       <div class="menu" id="row-{{$a.ID}}" role="menu" hidden>
         <a class="menu-item" role="menuitem" href="/actions/{{$a.ID}}?form=action-edit">Edit…</a>
         {{if $a.Active}}

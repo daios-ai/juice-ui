@@ -1602,7 +1602,8 @@ func TestRailMenus(t *testing.T) {
 	got := string(h)
 	for _, want := range []string{`id="menu-room-` + mine.ID + `"`, `data-menu="menu-room-` + mine.ID + `"`, `hx-get="/chat/room/` + mine.ID + `/rename"`,
 		`hx-post="/chat/room/` + mine.ID + `/delete"`, `data-confirm="Delete mi&lt;ne for everyone?"`,
-		`id="menu-room-` + theirs.ID + `"`, `hx-post="/chat/room/` + theirs.ID + `/leave"`, `data-confirm="Leave theirs?"`,
+		`id="menu-room-` + theirs.ID + `"`, `hx-post="/chat/room/` + theirs.ID + `/leave"`, `data-confirm="Leave theirs?"`, `Leave…`,
+		`<button class="btn-icon inline" data-menu="menu-room-` + mine.ID + `"`, `icons.svg#ellipsis`,
 		`<dialog id="form-rename"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the rail lacks %s", want)

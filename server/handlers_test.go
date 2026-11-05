@@ -1717,10 +1717,10 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	// The create command is one quiet inline "+ new action" menu trigger opening
 	// the four creation methods (each a real ?form= link).
 	if !strings.Contains(body, `id="menu-new-action"`) || !strings.Contains(body, "+ new action") {
-		t.Error("actions create command must be a quiet + new action menu")
+		t.Error("actions create command must be a + new action menu")
 	}
-	if !strings.Contains(body, `class="btn-quiet tabs-action" data-menu="menu-new-action"`) {
-		t.Error("+ new action must be a quiet menu trigger on the tab row, not a solid button")
+	if !strings.Contains(body, `class="btn tabs-action" data-menu="menu-new-action"`) {
+		t.Error("+ new action must be a menu trigger on the tab row")
 	}
 	for _, form := range []string{"action-create", "action-import"} {
 		if !strings.Contains(body, "?form="+form) {

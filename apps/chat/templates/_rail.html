@@ -7,17 +7,17 @@
      railView. */}}
 {{define "_rail"}}
 <nav class="rail" aria-label="Conversations"{{if .OOB}} hx-swap-oob="outerHTML:.rail"{{end}}>
-  <a class="btn-quiet" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>
+  <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>
   {{range .Rooms}}<div class="rail-row">
     <a href="/chat/room/{{.ID}}"{{if .Unread}} class="unread"{{end}}{{if eq .ID $.Current}} aria-current="page"{{end}}>{{.Name}}</a>
-    <button class="btn-quiet" data-menu="menu-room-{{.ID}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage">⋯</button>
+    <button class="btn-icon inline" data-menu="menu-room-{{.ID}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
     <div class="menu" id="menu-room-{{.ID}}" role="menu" hidden>
       {{if eq .Creator $.Me}}
       <a class="menu-item" role="menuitem" href="/chat/room/{{.ID}}?form=rename" hx-get="/chat/room/{{.ID}}/rename" hx-swap="none">Rename…</a>
       <div class="menu-divider"></div>
       <form method="post" action="/chat/room/{{.ID}}/delete" data-confirm="Delete {{.Name}} for everyone?" hx-post="/chat/room/{{.ID}}/delete" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="menu-item danger" type="submit">Delete…</button></form>
       {{else}}
-      <form method="post" action="/chat/room/{{.ID}}/leave" data-confirm="Leave {{.Name}}?" hx-post="/chat/room/{{.ID}}/leave" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="menu-item" type="submit">Leave</button></form>
+      <form method="post" action="/chat/room/{{.ID}}/leave" data-confirm="Leave {{.Name}}?" hx-post="/chat/room/{{.ID}}/leave" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="menu-item" type="submit">Leave…</button></form>
       {{end}}
     </div>
   </div>{{end}}

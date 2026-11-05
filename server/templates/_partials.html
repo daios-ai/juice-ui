@@ -110,7 +110,7 @@
      reason (requirements §6.7). Takes a panelErrorView. */}}
 {{define "_panel_error"}}
 <div class="modal-head">
-  {{if .Back}}<button type="button" class="btn-quiet" data-panel-back>← Results</button>{{else if .Title}}<h2>{{.Title}}</h2>{{end}}
+  {{if .Back}}<button type="button" class="btn" data-panel-back>← Results</button>{{else if .Title}}<h2>{{.Title}}</h2>{{end}}
   <button type="button" class="modal-close" data-panel-close aria-label="Close">×</button>
 </div>
 <div class="modal-body">{{template "_error" .Message}}</div>
@@ -393,7 +393,7 @@
      `copyOf what value`. */}}
 {{define "_addr"}}<span class="mono" title="{{.Value}}">{{shortAddr .Value}}</span> {{template "_copy" .}}{{end}}
 
-{{define "_copy"}}<button type="button" class="btn-quiet copy" data-copy="{{.Value}}" aria-label="Copy {{.What}}" title="Copy {{.What}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#copy"/></svg></button>{{end}}
+{{define "_copy"}}<button type="button" class="btn-icon inline" data-copy="{{.Value}}" aria-label="Copy {{.What}}" title="Copy {{.What}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#copy"/></svg></button>{{end}}
 
 {{/* _call_form — THE run/complete form. Running an action and completing a task
      are the same act, so both render here: locked args (a task's pre-bound input)
@@ -822,7 +822,7 @@
 {{define "_panel_title"}}<h2>{{.Action.Title}} {{template "_action_chips" .}}</h2>{{end}}
 {{define "_action_panel"}}
 <div class="modal-head">
-  {{if .Back}}<button type="button" class="btn-quiet" data-panel-back>← Results</button>{{else}}{{template "_panel_title" .}}{{end}}
+  {{if .Back}}<button type="button" class="btn" data-panel-back>← Results</button>{{else}}{{template "_panel_title" .}}{{end}}
   <button type="button" class="modal-close" data-panel-close aria-label="Close">×</button>
 </div>
 <div class="modal-body">

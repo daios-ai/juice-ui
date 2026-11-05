@@ -1655,7 +1655,7 @@ func TestInspectListsActionsAsDiscoveredRows(t *testing.T) {
 	}
 	// The verbs are buttons in the status card, after the facts, as on the
 	// user page.
-	if !strings.Contains(body, `<a class="btn" href="/admin/peers/KEYC?form=admin-rename" data-modal="form-admin-rename">Name</a>`) || strings.Contains(body, "btn-quiet\" href=\"/admin/peers/KEYC?form") {
+	if !strings.Contains(body, `<a class="btn" href="/admin/peers/KEYC?form=admin-rename" data-modal="form-admin-rename">Name</a>`) {
 		t.Errorf("Name is a .btn in the card: %s", body)
 	}
 }

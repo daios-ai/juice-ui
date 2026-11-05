@@ -58,7 +58,7 @@
     <td class="money">{{money .Amount}}</td>
     <td class="mono muted" title="{{.TxHash}}">{{truncate 12 .TxHash}} {{template "_copy" (copyOf "hash" .TxHash)}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>
-    <td><a class="btn-quiet" href="/admin/peers?form=admin-deposit&amp;ref={{.ID}}">Attribute…</a></td>
+    <td><a class="btn" href="/admin/peers?form=admin-deposit&amp;ref={{.ID}}">Attribute…</a></td>
   </tr>
   {{end}}
   </tbody>
@@ -70,8 +70,8 @@
 {{/* One list: this kernel, its counterparties, then the known network, each
      class marked by a pill (§6.6). */}}
 <div class="row control-row">
-  {{if $d.ShowSuspended}}<a class="btn-quiet" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn-quiet" href="/admin/peers?all=1">Show suspended</a>{{end}}
-  <a class="btn-quiet" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
+  {{if $d.ShowSuspended}}<a class="btn" href="/admin/peers">Hide suspended</a>{{else}}<a class="btn" href="/admin/peers?all=1">Show suspended</a>{{end}}
+  <a class="btn" href="/admin/peers?form=admin-inspect" data-modal="form-admin-inspect">+ inspect a kernel by key</a>
 </div>
 {{if $d.Kernels}}
 <div class="action-list">

@@ -1,8 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.49.0
+Version: 0.50.0
 Status: design draft — endpoint surface gated against the running kernel
 
+> **What changed in 0.50.0.** Many actions read as text: a grey word with no border
+> that underlined on hover, which a phone cannot do. An action is now always a
+> button, and a link only goes somewhere to read. The text button is gone from the
+> grammar. A row's menu and the copy control are icon buttons with icons from the
+> sprite, and an item that leads to a question or a dialog ends in `…`.
+>
 > **What changed in 0.49.0.** A room could be renamed, deleted or left only from
 > the header of the open room, and each command reloaded the page. Every room in
 > the sidebar now has a menu with Rename and Delete for its creator and Leave for
@@ -2539,8 +2545,8 @@ the assistant, else the newest room, else an empty page beside the rail.
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
-  handles. There is no rooms page. Each room carries a `⋯` menu: **Rename…** and
-  **Delete…** for its creator, **Leave** for any other member, the question
+  handles. There is no rooms page. Each room carries a menu: **Rename…** and
+  **Delete…** for its creator, **Leave…** for any other member, the question
   naming the room.
 * **A room** is crumb (name · members · rename and delete, or leave) → entries → whom it
   waits on → composer, the page the scroll container, the composer held at

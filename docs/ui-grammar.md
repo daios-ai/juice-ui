@@ -26,18 +26,18 @@ Three laws underpin everything:
 
 | Component | Class(es) | Role |
 |---|---|---|
-| Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-quiet` · `.btn-send` (the composer's alone) | actions |
+| Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-send` (the composer's alone) | actions |
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
-| Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. quiet "+ new …" |
+| Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. "+ new …" |
 | Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
 | **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, each a `.rail-row` of its link and its `⋯` menu (§5.12), the room in view `aria-current`, an unread one weighted (`.unread`) |
+| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, each a `.rail-row` of its link and its menu (§5.12), the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper; `suggestions` in app.js) | **the** list of suggestions beside a text input, the best match nearest it; ↑/↓ walk the rows, Escape empties, Enter on a row follows it. Over the composer, its `/` — the query is the composer's own text after it: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; Enter submits the search (§5.9); and its addresses. Under Discover's `.search` box: the catalog's actions alone. Rows `.menu-item`, matched in the browser |
-| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
+| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
@@ -246,8 +246,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
-| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`** |
-| `.btn-quiet` | inline text button | — | remove-row, and the quiet inline commands (`+ new action`, `update account`, `+ deposit credits`) |
+| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`**. `.btn-icon.inline`, borderless and muted at `--space-5`, inside a row or a line of text (a row's menu trigger, the copy control) |
 | `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, the one ink-filled control in the interface, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
 
 **One geometry, one row, one look.**
@@ -256,8 +255,8 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 - A record's commands stand in **one `.cluster` row** (gap `--space-2`), primary
   first, destructive last. A command that posts to its own action joins the row
   through the HTML `form="…"` attribute (a task's Decline beside Complete), so
-  no command drops below its row. A quiet text command never shares a row with
-  buttons; navigation inside such a row (`Inspect`, `Rename`) is a `.btn`.
+  no command drops below its row. Navigation inside such a row (`Inspect`,
+  `Rename`) is a `.btn`.
 - One command has one look and one label everywhere: Suspend is `.btn-danger`,
   Unsuspend `.btn`, ending a session `End · refund N` (`.btn-danger`, the one
   `_end` partial; `End` alone when nothing is refunded). There is no
@@ -301,25 +300,29 @@ peer of the state filters — mixing them let two tabs on different variables bo
 light up. Each axis preserves the other's value (`actionsHref`).
 
 A filter row may carry **one** inline command (`+ new action`) as a
-`.btn-quiet.tabs-action`, right-aligned and not styled as a tab. The `.linkbar` is
+`.btn.tabs-action`, right-aligned and not styled as a tab. The `.linkbar` is
 retired.
 
-### 5.3 Commands are inline & quiet
+### 5.3 Commands are inline
 
 The `page-head` carries **no commands** — just the title. A command
 lives **inline, with the content it acts on**. An opener that **adds** something
-is a single quiet affordance: `+ new action` above the actions list,
-`+ deposit credits` in the users section, `+ inspect a kernel by key` — all
-`.btn-quiet` (or a plain link); none float, none are colored. A **record's
-verb** — Name, Rename, Suspend, End — is a `.btn` (§5.1) wherever it appears,
-on the record's page or in its row, so one verb has one face. A `.cluster` of
+is a single `.btn`: `+ new action` above the actions list, `+ record a payment`
+in the users section, `+ inspect a kernel by key`; none float, none are colored.
+**An action is a button.** A link goes somewhere to read: a record's id or title,
+an address, a crumb, the pager, a sentence's next step (`View the receipt →`).
+Anything else a person acts on is a `.btn`, or a `.btn-icon` when it has no words,
+or a `.menu-item` inside an open menu. A **record's verb** — Name, Rename, Suspend,
+End — is a `.btn` (§5.1) on the record's page or in its row, so one verb has one
+face, unless the row gathers its verbs in a menu (§5.12), where each is a
+`.menu-item`. A `.cluster` of
 verbs is a child of a `.stack` (a `.card.stack`, a `form.stack`): that is what
 separates it from the content above, and nothing else does (§4).
 
-- When one group has several create paths, the quiet opener is a `+ new … `
+- When one group has several create paths, the opener is a `+ new … `
   `[data-menu]` trigger opening a `.menu` (§5.12) of the methods — not a row of
   equal buttons (see the action page's four creation methods).
-- Money moves stay deliberate: the quiet opener launches a modal (§5.8) whose
+- Money moves stay deliberate: the opener launches a modal (§5.8) whose
   confirm is the `.btn-money` that names the amount.
 
 ### 5.4 Forms
@@ -698,13 +701,15 @@ obligations above.
 ### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
-  `+ new …` openers, row-lifecycle `⋯` menus (the Workshop's rows, the rail's
-  rooms), and the avatar menu. Activating an item closes the menu.
+  `+ new …` openers, row-lifecycle menus (the Workshop's rows, the rail's rooms),
+  each opened from a `.btn-icon.inline` `#ellipsis`, and the avatar menu.
+  Activating an item closes the menu. An item that leads to a question or a
+  dialog ends in `…`.
 - One SVG sprite (`icons.svg`), recolored via `currentColor`, **never emoji**.
   Every icon-only control carries an `aria-label`. The brand uses
   `juice-logo.svg`.
 - **The copy control** is the `_copy` partial, built with `copyOf <what> <value>`:
-  a `.btn-quiet.copy` icon button whose `data-copy` carries the **whole**
+  a `.btn-icon.inline` whose `data-copy` carries the **whole**
   value — a key, a hash, an address, the recovery phrase — beside the
   truncated or prose rendering of it, labelled `Copy <what>`. It is the one
   way a page yields a value the commands take whole (requirements.md §7);
@@ -761,7 +766,7 @@ obligations above.
   `<table>` sits in a `.table-scroll`.
 - Sentence-case titles, headings and nav labels (`Home · Inbox · Workshop ·
   Wallet · Settings · Network · Admin`); `page-head` (the title only) on index, sticky crumb on detail.
-  Commands are quiet and inline — never a floating page-head cluster (sticky is
+  Commands are inline — never a floating page-head cluster (sticky is
   the page's own header refusing to scroll away, not floating chrome).
 - **Copy is rationed (§3 Copy discipline):** no orientation subtitles; no
   sentence narrates kernel/control behavior; disclosures appear once, at the point

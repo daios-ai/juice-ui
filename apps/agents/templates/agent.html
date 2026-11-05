@@ -32,7 +32,7 @@
 {{end}}
 
 <h2>Agent file</h2>
-<div class="cluster"><a class="btn-quiet" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
+<div class="cluster"><a class="btn" href="/agents/{{$h}}?form=agent" data-modal="form-agent">Edit</a></div>
 {{if $d.Agent}}<pre class="json">{{$d.Agent}}</pre>{{else}}<p class="muted">Empty.</p>{{end}}
 
 {{/* config.json as the form of the daemon's own schema of it, as the kernel's

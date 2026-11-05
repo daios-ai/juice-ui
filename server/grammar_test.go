@@ -18,7 +18,7 @@ import (
 
 var allowedButtonClasses = map[string]bool{
 	"btn": true, "btn-money": true, "btn-danger": true,
-	"btn-icon": true, "btn-quiet": true, "btn-send": true, // btn-send: the composer bar's alone (TestComposerIsTheOneException)
+	"btn-icon": true, "btn-send": true, // btn-send: the composer bar's alone (TestComposerIsTheOneException)
 }
 
 var (
@@ -51,9 +51,30 @@ func TestTemplatesUseOnlyGrammarButtons(t *testing.T) {
 			cleaned := tmplActionRe.ReplaceAllString(m[1], " ")
 			for _, tok := range strings.Fields(cleaned) {
 				if strings.HasPrefix(tok, "btn") && !allowedButtonClasses[tok] {
-					t.Errorf("%s: off-grammar button class %q in class=%q (allowed: btn, btn-money, btn-danger, btn-icon, btn-quiet)", f, tok, m[1])
+					t.Errorf("%s: off-grammar button class %q in class=%q (allowed: btn, btn-money, btn-danger, btn-icon, btn-send)", f, tok, m[1])
 				}
 			}
+		}
+	}
+}
+
+// An icon comes from the sprite (grammar §5.12): a row's menu never opens from a
+// typed character.
+func TestNoTypedIcons(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	for _, f := range core {
+		if strings.Contains(string(mustRead(t, f)), "⋯") {
+			t.Errorf("%s: a typed ⋯; use the sprite's #ellipsis", f)
+		}
+	}
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "⋯") {
+			t.Errorf("%s: a typed ⋯; use the sprite's #ellipsis", f)
 		}
 	}
 }
@@ -435,7 +456,7 @@ func TestAppTemplatesFollowGrammar(t *testing.T) {
 			cleaned := tmplActionRe.ReplaceAllString(m[1], " ")
 			for _, tok := range strings.Fields(cleaned) {
 				if strings.HasPrefix(tok, "btn") && !allowedButtonClasses[tok] {
-					t.Errorf("%s: off-grammar button class %q (allowed: btn, btn-money, btn-danger, btn-icon, btn-quiet)", f, tok)
+					t.Errorf("%s: off-grammar button class %q (allowed: btn, btn-money, btn-danger, btn-icon, btn-send)", f, tok)
 				}
 			}
 		}
@@ -677,15 +698,15 @@ func TestHeadingCase(t *testing.T) {
 func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
 	apps, _ := filepath.Glob("../apps/*/templates/*.html")
-	sizedRe := regexp.MustCompile(`class="btn(?:-money|-danger|-quiet|-icon)?\b[^"]*\bsmall\b`)
+	sizedRe := regexp.MustCompile(`class="btn(?:-money|-danger|-icon)?\b[^"]*\bsmall\b`)
 	confirmRe := regexp.MustCompile(`data-confirm="([^"]*)"`)
 	check := func(f, src string) {
 		if loc := sizedRe.FindStringIndex(src); loc != nil {
 			t.Errorf("%s: a button carries a size modifier — all buttons share one geometry (grammar §5.1): …%s…", f, snippet(src, loc[0]))
 		}
-		for _, bad := range []string{"btn-quiet danger", "row-foot"} {
+		for _, bad := range []string{"row-foot"} {
 			if strings.Contains(src, bad) {
-				t.Errorf("%s: %q is retired — a destructive command is .btn-danger, a command row is .cluster (grammar §5.1)", f, bad)
+				t.Errorf("%s: %q is retired — a command row is .cluster (grammar §5.1)", f, bad)
 			}
 		}
 		for _, m := range confirmRe.FindAllStringSubmatch(src, -1) {

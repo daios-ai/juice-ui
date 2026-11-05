@@ -37,7 +37,7 @@
     <td class="muted">{{shortDate .Since}}</td>
     <td><div class="cluster">
       {{if ne .Status "approved"}}<form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>{{end}}
-      {{if ne .Status "pending"}}<form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<button class="btn-quiet" type="submit">Revoke</button></form>{{end}}
+      {{if ne .Status "pending"}}<form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<button class="btn" type="submit">Revoke</button></form>{{end}}
       {{if ne .Status "blocked"}}<form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>{{end}}
     </div></td>
   </tr>
