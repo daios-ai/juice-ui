@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1295,7 +1296,7 @@ func TestRail(t *testing.T) {
 			t.Errorf("rail lacks %q: %s", want, got)
 		}
 	}
-	if strings.Contains(got, "watch-rail") {
+	if strings.Contains(got, `id="watch-rail"`) {
 		t.Error("a room page keeps one watch, the room's")
 	}
 	if strings.Index(got, ">cafe<") > strings.Index(got, ">old<") {
@@ -1540,18 +1541,288 @@ func TestRenameIsTheCreators(t *testing.T) {
 	}
 	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
 	got := page("/chat/room/"+mine.ID, mine.ID)
-	for _, want := range []string{`<a class="btn" href="/chat/room/` + mine.ID + `?form=rename" data-modal="form-rename">Rename</a>`,
-		`id="form-rename" class="modal-form" aria-label="Rename"`, `action="/chat/room/` + mine.ID + `/rename"`, `name="name" value="ca&lt;fe" required`} {
+	if want := `<a class="btn" href="/chat/room/` + mine.ID + `?form=rename" hx-get="/chat/room/` + mine.ID + `/rename" hx-swap="none">Rename</a>`; !strings.Contains(got, want) {
+		t.Errorf("the creator's page lacks %s", want)
+	}
+	if !strings.Contains(got, `<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`) || strings.Contains(got, `action="/chat/room/`+mine.ID+`/rename"`) {
+		t.Error("a room page holds the dialog closed and empty")
+	}
+	got = page("/chat/room/"+mine.ID+"?form=rename", mine.ID)
+	for _, want := range []string{`hx-swap-oob="true" open>`, `action="/chat/room/` + mine.ID + `/rename"`, `name="name" value="ca&lt;fe" required`} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the creator's page lacks %s", want)
+			t.Errorf("?form=rename opens the dialog without script: lacks %s", want)
 		}
 	}
-	if got := page("/chat/room/"+mine.ID+"?form=rename", mine.ID); !strings.Contains(got, `id="form-rename" class="modal-form" open`) {
-		t.Error("?form=rename opens the dialog without script")
-	}
 	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
-	if got := page("/chat/room/"+theirs.ID, theirs.ID); strings.Contains(got, "form-rename") {
+	got = page("/chat/room/"+theirs.ID+"?form=rename", theirs.ID)
+	if strings.Contains(got, ">Rename</a>") || strings.Contains(got, `hx-swap-oob="true" open>`) {
 		t.Error("a member is offered no rename")
+	}
+}
+
+// rigCommands is a chat that renders its real templates, with a warm rail.
+func rigCommands(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
+	t.Helper()
+	c, sm := testChat(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	c.deps.RenderFragment = rnd.Fragment
+	return c, sm
+}
+
+// command sends a room command as htmx does from a page, with its chat watch.
+func command(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, id, form string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+id+"/x", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.SetPathValue("id", id)
+	return as(c, sm, h, req)
+}
+
+func railWatch(st watchState) string { return "slow=" + url.QueryEscape("chat:rail:"+st.String()) }
+func roomWatch(id string, st watchState) string {
+	return "watch=" + url.QueryEscape("chat:"+id+":"+st.String())
+}
+
+// A room's menu offers its creator rename and delete, any other member leave,
+// each sent in place with the page's watch.
+func TestRailMenus(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "mi<ne", nil)
+	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	h, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(h)
+	for _, want := range []string{`id="menu-room-` + mine.ID + `"`, `data-menu="menu-room-` + mine.ID + `"`, `hx-get="/chat/room/` + mine.ID + `/rename"`,
+		`hx-post="/chat/room/` + mine.ID + `/delete"`, `data-confirm="Delete mi&lt;ne for everyone?"`,
+		`id="menu-room-` + theirs.ID + `"`, `hx-post="/chat/room/` + theirs.ID + `/leave"`, `data-confirm="Leave theirs?"`,
+		`<dialog id="form-rename"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the rail lacks %s", want)
+		}
+	}
+	for _, not := range []string{`/chat/room/` + mine.ID + `/leave`, `/chat/room/` + theirs.ID + `/rename`, `/chat/room/` + theirs.ID + `/delete`} {
+		if strings.Contains(got, not) {
+			t.Errorf("the rail offers %s", not)
+		}
+	}
+}
+
+// Opening the dialog runs nothing, and only a room the viewer made has one.
+func TestGetRename(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail); err != nil {
+		t.Fatal(err)
+	}
+	runs := len(f.runs)
+	get := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id+"/rename", nil)
+		req.SetPathValue("id", id)
+		return as(c, sm, c.getRename, req)
+	}
+	rec := get(mine.ID)
+	for _, want := range []string{`hx-swap-oob="true" open>`, `value="cafe"`, `hx-post="/chat/room/` + mine.ID + `/rename"`, "autofocus"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("the dialog lacks %s: %s", want, rec.Body)
+		}
+	}
+	if get(theirs.ID).Code != 404 || get("no-such-room").Code != 404 {
+		t.Error("a room not the viewer's own has no dialog")
+	}
+	if len(f.runs) != runs {
+		t.Errorf("opening the dialog ran %v", f.runs[runs:])
+	}
+}
+
+// A rename in place is one run and one read: the dialog closes, the rail takes the
+// name, the crumb too when the room is in view, and the next tick has nothing to do.
+func TestRenameInPlace(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	other, _ := f.svc.Store.CreateRoom("ann@testnet", "other", nil)
+
+	lists, renames := len(f.ran(roomListName)), len(f.ran(roomRenameName))
+	got := command(c, sm, c.postRename, room.ID, "name=tea&"+railWatch(watchState{Rail: "old"})).Body.String()
+	for _, want := range []string{`<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`, `hx-swap-oob="outerHTML:.rail"`, ">tea<", `id="watch-rail"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the answer lacks %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "chat-room-name") {
+		t.Error("a page not showing the room has no crumb to change")
+	}
+	if len(f.ran(roomRenameName)) != renames+1 || len(f.ran(roomListName)) != lists+1 {
+		t.Errorf("one run and one read: %d %d", len(f.ran(roomRenameName))-renames, len(f.ran(roomListName))-lists)
+	}
+	m := regexp.MustCompile(`value="chat:rail:([^"]+)"`).FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf("no watch: %s", got)
+	}
+	if h, err := tick(c, sm, railKey, parseWatch(m[1])); err != nil || h != "" {
+		t.Errorf("the tick after the answer swaps nothing: %s %v", h, err)
+	}
+
+	// In view, the crumb follows; another room's rename from that page leaves it.
+	got = command(c, sm, c.postRename, room.ID, "name=coffee&"+roomWatch(room.ID, watchState{Rail: "old"})).Body.String()
+	if !strings.Contains(got, `<b class="stretch" id="chat-room-name" hx-swap-oob="true">coffee</b>`) || !strings.Contains(got, ">coffee<") {
+		t.Errorf("in view, the crumb and the rail follow: %s", got)
+	}
+	got = command(c, sm, c.postRename, other.ID, "name=else&"+roomWatch(room.ID, watchState{Rail: "old"})).Body.String()
+	if strings.Contains(got, "chat-room-name") || !strings.Contains(got, ">else<") {
+		t.Errorf("another room's rename leaves the crumb: %s", got)
+	}
+
+	// A watch waiting out a failed read still reads after a command.
+	wait := watchState{Rail: "old", Fails: 3, Retry: time.Now().Unix() + 60}
+	got = command(c, sm, c.postRename, room.ID, "name=late&"+railWatch(wait)).Body.String()
+	if !strings.Contains(got, ">late<") || strings.Contains(got, ".3.") {
+		t.Errorf("a failed watch is read past and cleared: %s", got)
+	}
+}
+
+// A refused rename comes back open, with the reason and the name typed.
+func TestRenameRefusedInPlace(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	for form, reason := range map[string]string{"name=mi%3Cne": "You may not do that in this room.", "name=+": "A room needs a name."} {
+		rec := command(c, sm, c.postRename, theirs.ID, form+"&"+railWatch(watchState{}))
+		got := rec.Body.String()
+		for _, want := range []string{`hx-swap-oob="true" open>`, reason} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: lacks %s: %s", form, want, got)
+			}
+		}
+		if rec.Code != 200 || strings.Contains(got, `class="rail"`) {
+			t.Errorf("%s: %d %s", form, rec.Code, got)
+		}
+	}
+	if rec := command(c, sm, c.postRename, theirs.ID, "name=mi%3Cne"); !strings.Contains(rec.Body.String(), `value="mi&lt;ne"`) {
+		t.Errorf("the name typed is kept: %s", rec.Body)
+	}
+	if rooms, _ := f.svc.Store.Rooms("ann@testnet"); rooms[0].Name != "theirs" {
+		t.Errorf("rooms = %+v", rooms)
+	}
+}
+
+// Deleting or leaving answers the rail in place; the room in view is left for the
+// landing; a room already gone is done, though no change was counted.
+func TestDropInPlace(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	keep, _ := f.svc.Store.CreateRoom("ann@testnet", "keep", nil)
+	mk := func(creator, name string) string {
+		r, _ := f.svc.Store.CreateRoom(creator, name, []string{"ann@testnet"})
+		return r.ID
+	}
+	gone := func(h http.HandlerFunc, id, watch, name string) {
+		t.Helper()
+		rec := command(c, sm, h, id, watch)
+		if rec.Code != 200 || rec.Header().Get("HX-Redirect") != "" || !strings.Contains(rec.Body.String(), `class="rail"`) ||
+			strings.Contains(rec.Body.String(), ">"+name+"<") || !strings.Contains(rec.Body.String(), ">keep<") {
+			t.Errorf("%s: %d %q %s", name, rec.Code, rec.Header().Get("HX-Redirect"), rec.Body)
+		}
+	}
+	gone(c.postDeleteRoom, mk("ann@testnet", "del"), railWatch(watchState{Rail: "old"}), "del")
+	gone(c.postLeave, mk("bob@testnet", "left"), railWatch(watchState{Rail: "old"}), "left")
+	gone(c.postDeleteRoom, mk("ann@testnet", "del2"), roomWatch(keep.ID, watchState{Rail: "old"}), "del2")
+	gone(c.postLeave, mk("bob@testnet", "left2"), roomWatch(keep.ID, watchState{Rail: "old"}), "left2")
+
+	for _, in := range []struct {
+		h       http.HandlerFunc
+		creator string
+	}{{c.postDeleteRoom, "ann@testnet"}, {c.postLeave, "bob@testnet"}} {
+		id := mk(in.creator, "shown")
+		rec := command(c, sm, in.h, id, roomWatch(id, watchState{}))
+		if rec.Code != 200 || rec.Header().Get("HX-Redirect") != "/chat" {
+			t.Errorf("the room in view goes to the landing: %d %v", rec.Code, rec.Header())
+		}
+	}
+
+	// Already gone, from both kinds of page: the run failed, so nothing moved the
+	// signal, and the read is made all the same.
+	for _, watch := range []string{railWatch(watchState{Rail: "old"}), roomWatch(keep.ID, watchState{Rail: "old"})} {
+		id := mk("ann@testnet", "ghost")
+		if err := f.svc.Store.DeleteRoom("ann@testnet", id); err != nil {
+			t.Fatal(err)
+		}
+		before := c.changes["ann@testnet"]
+		gone(c.postDeleteRoom, id, watch, "ghost")
+		if c.changes["ann@testnet"] != before {
+			t.Error("a failed run counts no change")
+		}
+	}
+	if rec := command(c, sm, c.postDeleteRoom, "no-such", roomWatch("no-such", watchState{})); rec.Header().Get("HX-Redirect") != "/chat" {
+		t.Errorf("the room in view already gone goes to the landing: %v", rec.Header())
+	}
+}
+
+// A page renders no id twice, the rail and the room together.
+func TestRoomPageIDsAreUnique(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	f.svc.Store.CreateRoom("bob@testnet", "other", []string{"ann@testnet"})
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
+		rail, err := c.Rail(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rnd.Render(w, status, page, server.Page{Title: title, Data: data, Rail: rail, Me: "ann@testnet"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+room.ID, nil)
+	req.SetPathValue("id", room.ID)
+	got := as(c, sm, c.getRoom, req).Body.String()
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\sid="([^"]+)"`).FindAllStringSubmatch(got, -1) {
+		if seen[m[1]] {
+			t.Errorf("id %s is rendered twice", m[1])
+		}
+		seen[m[1]] = true
+	}
+	for _, want := range []string{"chat-room-name", "form-rename", "menu-room-" + room.ID} {
+		if !seen[want] {
+			t.Errorf("no id %s: %s", want, got)
+		}
+	}
+}
+
+// A failure no sentence of chat's explains is said too: a page answered in place
+// could not show an error page.
+func TestUnexplainedFailureIsSaid(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+room.ID+"/delete", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := as(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		c.then(w, r, &client.KernelError{Kind: client.KindInsufficientFunds}, "/chat")
+	}, req)
+	if !strings.Contains(rec.Header().Get("X-Flash"), "balance") {
+		t.Errorf("flash = %q", rec.Header().Get("X-Flash"))
 	}
 }
 

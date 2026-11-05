@@ -1,8 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.48.0
+Version: 0.49.0
 Status: design draft — endpoint surface gated against the running kernel
 
+> **What changed in 0.49.0.** A room could be renamed, deleted or left only from
+> the header of the open room, and each command reloaded the page. Every room in
+> the sidebar now has a menu with Rename and Delete for its creator and Leave for
+> any other member. A command is one run and one read, and the page answers in
+> place: the sidebar shows the change, and nothing reloads unless the room deleted
+> or left was the one open. Renaming opens one dialog, on any page.
+>
 > **What changed in 0.48.0.** The UI started the kernel, the agents and chat in
 > three different ways, left them running when it stopped, and never restarted one
 > that died. One process supervisor now runs them all. A program is one file in
@@ -2532,12 +2539,21 @@ the assistant, else the newest room, else an empty page beside the rail.
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
-  handles. There is no rooms page.
+  handles. There is no rooms page. Each room carries a `⋯` menu: **Rename…** and
+  **Delete…** for its creator, **Leave** for any other member, the question
+  naming the room.
 * **A room** is crumb (name · members · rename and delete, or leave) → entries → whom it
   waits on → composer, the page the scroll container, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
-  chosen. Its creator alone is offered **Rename**, a dialog holding the name
-  (`?form=rename` without script); the rail follows at each member's next read. An entry renders as the view of its body (§7), a failure being the
+  chosen. Its creator alone is offered **Rename**, from the crumb or the rail's
+  menu: a dialog holding the name, answered open by the server, with no run
+  (`?form=rename` without script), and held outside the sidebar on a room page,
+  since a narrow screen does not render the sidebar. A room command sent with
+  script is one run and one read, whatever the watch says is due, answered as a
+  tick is: the dialog closes, the rail and the crumb are replaced in place, and
+  no page loads. A rename refused comes back open with the reason and the name
+  typed. Deleting or leaving the room in view goes to `/chat`. A delete or a leave
+  of a room already gone is done. The rail follows at each other member's next read. An entry renders as the view of its body (§7), a failure being the
   view of its `{status, reason}`. **Waiting on** is one line naming the
   members other than the viewer that hold an unanswered delivery in the room
   — a fact chat holds, never a claim of activity, which chat cannot observe —
@@ -2966,7 +2982,11 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * sizes as tokens: no size literal in the stylesheet beyond a hairline, and
   icons and avatars at token sizes;
 * chat as the workspace: the rail newest first with the room in view and an
-  unread one marked, its heartbeat answering only a changed rail; the landing's
+  unread one marked, its heartbeat answering only a changed rail; a room's menu
+  by who made it; the rename dialog opened with no run, refused with the reason
+  and the name typed; a room command one run and one read answered in place,
+  past a watch that failed and for a room already gone, the room in view going to
+  `/chat`; no id rendered twice on a room page; the landing's
   fallbacks; a conversation started from its participants, its blank name
   theirs; whom the room waits on, never the viewer; the room page carries the
   composer bar — the schema's own message control, no label, switch or sealed

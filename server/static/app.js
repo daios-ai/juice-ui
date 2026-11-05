@@ -91,7 +91,10 @@ function closeAllMenus() {
 }
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-menu]');
-  if (!btn) return;
+  if (!btn) {
+    if (e.target.closest('.menu-item')) closeAllMenus(); // an item may act without leaving the page
+    return;
+  }
   const menu = document.getElementById(btn.dataset.menu);
   if (!menu) return;
   const opening = menu.hidden;
@@ -131,6 +134,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMe
     const form = e.target.closest('form[data-confirm]');
     if (!form) return;
     e.preventDefault();
+    e.stopPropagation(); // an htmx form sends on this event: nothing until confirmed
     pending = form;
     openModal(form.dataset.confirm);
   }, true);

@@ -8,7 +8,7 @@
 <div class="room">
 <div class="conversation">
 <nav class="crumb">
-  <b class="stretch">{{$d.Room.Name}}</b>
+  {{template "_room_name" $d.Room.Name}}
   <details class="thread-members">
     <summary class="btn-quiet">{{len $d.Room.Members}} members</summary>
     <div class="members-panel">
@@ -21,7 +21,7 @@
     </div>
   </details>
   {{if $d.IsOwner}}
-  <a class="btn" href="/chat/room/{{$rid}}?form=rename" data-modal="form-rename">Rename</a>
+  <a class="btn" href="/chat/room/{{$rid}}?form=rename" hx-get="/chat/room/{{$rid}}/rename" hx-swap="none">Rename</a>
   <form method="post" action="/chat/room/{{$rid}}/delete" data-confirm="Delete this room for everyone?">{{.CSRFField}}<button class="btn-danger" type="submit">Delete room</button></form>
   {{else}}
   <form method="post" action="/chat/room/{{$rid}}/leave" data-confirm="Leave this room?">{{.CSRFField}}<button class="btn" type="submit">Leave</button></form>
@@ -60,20 +60,8 @@
 <aside class="panel" id="panel" aria-label="Action"></aside>
 </div>
 
+{{template "_rename" $d.Rename}}
 {{if $d.IsOwner}}
-<dialog id="form-rename" class="modal-form"{{if eq $d.OpenForm "rename"}} open{{end}} aria-label="Rename">
-  <div class="modal-head"><h2>Rename</h2><a class="modal-close" href="/chat/room/{{$rid}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/chat/room/{{$rid}}/rename">
-      {{.CSRFField}}
-      <div class="field">
-        <label for="rename-name">Name</label>
-        <input id="rename-name" type="text" name="name" value="{{$d.Room.Name}}" required>
-      </div>
-      <button class="btn" type="submit">Rename</button>
-    </form>
-  </div>
-</dialog>
 <dialog id="form-add-member" class="modal-form"{{if eq $d.OpenForm "add-member"}} open{{end}} aria-label="Add member">
   <div class="modal-head"><h2>Add member</h2><a class="modal-close" href="/chat/room/{{$rid}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">

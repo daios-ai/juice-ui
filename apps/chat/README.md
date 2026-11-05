@@ -19,6 +19,8 @@ A run writes a transaction, so the heartbeat never runs an action to find out wh
 changed. It compares the viewer's open chat tasks, a kernel read that writes nothing,
 and runs `room/read` or `room/list` once when they moved. A read that fails
 acknowledges nothing and is retried after 5, 10, 20, 40 and then every 60 seconds.
+A room command sent from the page's menu or dialog is one run and then one such read,
+whatever the watch says is due, and the page answers in place.
 
 ## Landing
 

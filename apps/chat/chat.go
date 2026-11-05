@@ -108,6 +108,7 @@ func (c *Chat) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("POST /chat/rooms", d.RequireAuth(c.postCreateRoom))
 	mux.HandleFunc("GET /chat/room/{id}", d.RequireAuth(c.getRoom))
 	mux.HandleFunc("POST /chat/room/{id}/message", d.RequireAuth(c.postMessage))
+	mux.HandleFunc("GET /chat/room/{id}/rename", d.RequireAuth(c.getRename))
 	mux.HandleFunc("POST /chat/room/{id}/rename", d.RequireAuth(c.postRename))
 	mux.HandleFunc("POST /chat/room/{id}/delete", d.RequireAuth(c.postDeleteRoom))
 	mux.HandleFunc("POST /chat/room/{id}/leave", d.RequireAuth(c.postLeave))
@@ -647,6 +648,8 @@ func refusal(err error) string {
 // new-conversation dialog with the installation's agents to choose from.
 type railView struct {
 	Rooms     []roomRow
+	Me        string
+	Rename    renameView
 	Watch     *watchView // nil on a room page, whose own watch keeps the rail too
 	Current   string
 	Open      bool
@@ -654,6 +657,14 @@ type railView struct {
 	Path      string
 	CSRFField template.HTML
 	OOB       bool // the heartbeat's out-of-band answer: the rail alone, replacing the one shown
+}
+
+// renameView backs the rename dialog: closed and empty with no Room, else open
+// on it, with the reason a rename was refused.
+type renameView struct {
+	Room      *roomRow
+	Error     string
+	CSRFField template.HTML
 }
 
 // roomView backs the room page. The composer is the form of Post, the post
@@ -665,6 +676,7 @@ type roomView struct {
 	Others   []string // the members other than the viewer: whom [@] and a leading address name
 	IsOwner  bool
 	OpenForm string
+	Rename   renameView
 	Entries  entriesView
 	Watch    watchView
 	Post     json.RawMessage
@@ -777,8 +789,9 @@ func (c *Chat) rail(r *http.Request, rooms []roomRow, current string, watch *wat
 	if current != "" {
 		path = "/chat/room/" + current
 	}
-	return c.deps.Fragment("_rail", railView{Rooms: rooms, Watch: watch, Current: current, Open: r.URL.Query().Get("form") == "new",
-		Agents: c.agents(), Path: path, CSRFField: c.deps.CSRFField(r), OOB: oob})
+	csrf := c.deps.CSRFField(r)
+	return c.deps.Fragment("_rail", railView{Rooms: rooms, Me: c.deps.Me(r), Rename: renameView{CSRFField: csrf}, Watch: watch, Current: current,
+		Open: r.URL.Query().Get("form") == "new", Agents: c.agents(), Path: path, CSRFField: csrf, OOB: oob})
 }
 
 // Context is a room's recent conversation as the planner reads it: the
@@ -837,6 +850,10 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	locked, _ := json.Marshal(map[string]string{"thread_id": id})
+	rename := renameView{CSRFField: c.deps.CSRFField(r)}
+	if r.URL.Query().Get("form") == "rename" && read.Room.Creator == me {
+		rename.Room = &read.Room
+	}
 	var others []string
 	for _, m := range read.Room.Members {
 		if m != me {
@@ -844,7 +861,7 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
-		Room: read.Room, Me: me, Others: others, IsOwner: read.Room.Creator == me, OpenForm: r.URL.Query().Get("form"),
+		Room: read.Room, Me: me, Others: others, IsOwner: read.Room.Creator == me, OpenForm: r.URL.Query().Get("form"), Rename: rename,
 		Entries: entriesView{RoomID: id, Entries: read.Entries, Working: read.Waiting},
 		Watch:   watchView{id, watchState{After: maxSeq(read.Entries), Signal: signal, Rail: railDigest(read.Rooms)}},
 		Post:    post, Locked: locked,
@@ -1003,8 +1020,12 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}
+	writeHTML(w, out)
+}
+
+func writeHTML(w http.ResponseWriter, h template.HTML) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(out))
+	_, _ = w.Write([]byte(h))
 }
 
 // composeFailed shows why a post was refused, beside the composer. An htmx
@@ -1048,10 +1069,60 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 	c.joinMembers(w, r, members, "/chat/room/"+url.PathEscape(out.Room.ID))
 }
 
+// getRename answers the rename dialog, open on a room the viewer made, from the
+// rooms the rail already shows: opening it runs nothing.
+func (c *Chat) getRename(w http.ResponseWriter, r *http.Request) {
+	var cache railCache
+	if b, ok := c.deps.Sessions.AppCache(r.Context(), c.Slug()); ok {
+		_ = json.Unmarshal([]byte(b), &cache)
+	}
+	id, me := r.PathValue("id"), c.deps.Me(r)
+	for i := range cache.Rooms {
+		if cache.Rooms[i].ID == id && cache.Rooms[i].Creator == me {
+			_ = c.deps.RenderFragment(w, http.StatusOK, "_rename", renameView{Room: &cache.Rooms[i], CSRFField: c.deps.CSRFField(r)})
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+// pageWatch is the chat watch a command's form carried: the room in view's, or
+// the rail's on any other page.
+func pageWatch(r *http.Request) (string, watchState) {
+	for _, v := range []string{r.FormValue("watch"), r.FormValue("slow")} {
+		if rest, ok := strings.CutPrefix(v, "chat:"); ok {
+			key, shown, _ := strings.Cut(rest, ":")
+			return key, parseWatch(shown)
+		}
+	}
+	return railKey, watchState{}
+}
+
+// refresh reads after a command, whatever the watch says is due, since the
+// command may have moved nothing the signal counts and a watch that failed waits
+// for its retry; and answers as a tick does. A read that fails answers the watch
+// failed, and the heartbeat retries.
+func (c *Chat) refresh(r *http.Request, key string, st watchState) (template.HTML, error) {
+	tasks, err := c.deliveries(r)
+	if err != nil {
+		c.log().Warn("chat: open tasks", "err", err)
+		return c.deps.Fragment("_chat_watch", watchView{key, st.failed()})
+	}
+	if key == railKey {
+		return c.advanceRail(r, st, c.signal(c.deps.Me(r), tasks))
+	}
+	return c.advance(r, key, st, tasks, true)
+}
+
 // postRename runs chat's rename action as the viewer; the service holds that
-// only the room's creator may, and the rail follows through the heartbeat.
+// only the room's creator may. With script the page answers in place: the dialog
+// closes, or comes back open with the reason, and the rail follows at once.
 func (c *Chat) postRename(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
+	if c.deps.IsHTMX(r) {
+		c.renameInPlace(w, r, name)
+		return
+	}
 	if name == "" {
 		c.deps.FlashRedirect(w, r, roomURL(r), "error", "A room needs a name.")
 		return
@@ -1060,12 +1131,70 @@ func (c *Chat) postRename(w http.ResponseWriter, r *http.Request) {
 	c.then(w, r, c.run(r, roomRenameName, args, nil), roomURL(r))
 }
 
-func (c *Chat) postDeleteRoom(w http.ResponseWriter, r *http.Request) {
-	c.then(w, r, c.run(r, roomDeleteName, map[string]string{"thread_id": r.PathValue("id")}, nil), "/chat")
+func (c *Chat) renameInPlace(w http.ResponseWriter, r *http.Request, name string) {
+	id := r.PathValue("id")
+	refused := func(reason string) {
+		_ = c.deps.RenderFragment(w, http.StatusOK, "_rename", renameView{Room: &roomRow{ID: id, Name: name}, Error: reason, CSRFField: c.deps.CSRFField(r)})
+	}
+	if name == "" {
+		refused("A room needs a name.")
+		return
+	}
+	var out struct {
+		Room roomRow `json:"room"`
+	}
+	err := c.run(r, roomRenameName, map[string]string{"thread_id": id, "name": name}, &out)
+	if reason := refusal(err); reason != "" {
+		refused(reason)
+		return
+	}
+	if err != nil {
+		c.then(w, r, err, roomURL(r))
+		return
+	}
+	key, st := pageWatch(r)
+	closed, err := c.deps.Fragment("_rename", renameView{CSRFField: c.deps.CSRFField(r)})
+	if c.deps.HandleErrFragment(w, r, err) {
+		return
+	}
+	if key == id {
+		h, err := c.deps.Fragment("_room_name", out.Room.Name)
+		if c.deps.HandleErrFragment(w, r, err) {
+			return
+		}
+		closed += h
+	}
+	h, err := c.refresh(r, key, st)
+	if c.deps.HandleErrFragment(w, r, err) {
+		return
+	}
+	writeHTML(w, closed+h)
 }
 
-func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) {
-	c.then(w, r, c.run(r, roomLeaveName, map[string]string{"thread_id": r.PathValue("id")}, nil), "/chat")
+func (c *Chat) postDeleteRoom(w http.ResponseWriter, r *http.Request) { c.drop(w, r, roomDeleteName) }
+
+func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) { c.drop(w, r, roomLeaveName) }
+
+// drop deletes or leaves a room. With script the rail answers in place, unless
+// the page shows the room, which is then gone from under it; a room already gone
+// is done.
+func (c *Chat) drop(w http.ResponseWriter, r *http.Request, action string) {
+	id := r.PathValue("id")
+	err := c.run(r, action, map[string]string{"thread_id": id}, nil)
+	if !c.deps.IsHTMX(r) || (err != nil && !roomGone(err)) {
+		c.then(w, r, err, "/chat")
+		return
+	}
+	key, st := pageWatch(r)
+	if key == id {
+		w.Header().Set("HX-Redirect", "/chat")
+		return
+	}
+	h, err := c.refresh(r, key, st)
+	if c.deps.HandleErrFragment(w, r, err) {
+		return
+	}
+	writeHTML(w, h)
 }
 
 func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
@@ -1102,7 +1231,8 @@ func (c *Chat) postRemoveMember(w http.ResponseWriter, r *http.Request) {
 }
 
 // then redirects after a command: a room gone is the not-found page, any other
-// refusal a flash on the page it was asked from, anything else the error page.
+// refusal a flash on the page it was asked from, anything else the error page,
+// which a command answered in place could not show, so that one is a flash too.
 func (c *Chat) then(w http.ResponseWriter, r *http.Request, err error, to string) {
 	if err == nil {
 		http.Redirect(w, r, to, http.StatusSeeOther)
@@ -1114,6 +1244,10 @@ func (c *Chat) then(w http.ResponseWriter, r *http.Request, err error, to string
 	}
 	if reason := refusal(err); reason != "" {
 		c.deps.FlashRedirect(w, r, to, "error", reason)
+		return
+	}
+	if ke, ok := client.AsKernelError(err); ok && c.deps.IsHTMX(r) && ke.Kind != client.KindUnauthenticated {
+		c.deps.FlashRedirect(w, r, to, "error", ke.UserMessage())
 		return
 	}
 	c.deps.HandleErr(w, r, err)

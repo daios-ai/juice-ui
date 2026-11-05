@@ -76,10 +76,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    the avatar below it stays. */
 .rail { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 .rail > .btn-quiet { display: inline-flex; align-items: center; gap: var(--space-2); align-self: flex-start; margin-bottom: var(--space-1); }
-.rail > a:not(.btn-quiet) { padding: var(--space-1) var(--space-2); border-radius: var(--radius-s); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rail > a:not(.btn-quiet):hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
-.rail > a[aria-current="page"] { background: var(--surface-2); color: var(--text); }
-.rail > a.unread { color: var(--text); font-weight: 700; }
+.rail-row { display: flex; align-items: center; flex: none; border-radius: var(--radius-s); }
+.rail-row:hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
+.rail-row > a { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-row > a:hover { text-decoration: none; }
+.rail-row:hover > a, .rail-row > a[aria-current="page"], .rail-row > a.unread { color: var(--text); }
+.rail-row > a.unread { font-weight: 700; }
 
 /* The avatar at the foot, and its menu: the account, every destination, the
    inbox count, Sign out. */
@@ -98,7 +100,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    icon form, so the rail's rows go with them. */
 @media (min-width: 721px) {
   html[data-sidebar="collapsed"] .sidebar { width: auto; flex-basis: auto; align-items: center; }
-  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail > a:not(.btn-quiet), .rail > .btn-quiet > span, .handle) { display: none; }
+  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail > .btn-quiet > span, .handle) { display: none; }
   html[data-sidebar="collapsed"] .sidebar-top { padding: 0 0 var(--space-1); }
   html[data-sidebar="collapsed"] .rail > .btn-quiet { align-self: center; justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; }
   html[data-sidebar="collapsed"] .profile-trigger { justify-content: center; padding-inline: 0; }

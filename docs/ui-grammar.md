@@ -34,7 +34,7 @@ Three laws underpin everything:
 | **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, the room in view `aria-current`, an unread one weighted (`.unread`) |
+| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, each a `.rail-row` of its link and its `⋯` menu (§5.12), the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper; `suggestions` in app.js) | **the** list of suggestions beside a text input, the best match nearest it; ↑/↓ walk the rows, Escape empties, Enter on a row follows it. Over the composer, its `/` — the query is the composer's own text after it: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; Enter submits the search (§5.9); and its addresses. Under Discover's `.search` box: the catalog's actions alone. Rows `.menu-item`, matched in the browser |
 | **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn-quiet`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
@@ -549,6 +549,11 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   in* (`POST /session`). A dialog that arrives `[open]` — server-rendered or
   swapped in — is made modal by one script (`modalize`), so it traps focus
   like any other. The reason a session ended is the login page's notice.
+- **A record's dialog opened from a list** is the same mechanism: one dialog on
+  the page, closed and empty, which the server answers `[open]` on the record and
+  swaps in by id (`_rename`), with no run when the list already holds the record.
+  It closes when answered closed. A confirmed form may be an htmx form: the
+  confirm gate stops the submit from reaching it until Confirm.
 
 ### 5.9 The registry, the launcher & keyboard
 
@@ -693,7 +698,8 @@ obligations above.
 ### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
-  `+ new …` openers, row-lifecycle `⋯` menus, and the avatar menu.
+  `+ new …` openers, row-lifecycle `⋯` menus (the Workshop's rows, the rail's
+  rooms), and the avatar menu. Activating an item closes the menu.
 - One SVG sprite (`icons.svg`), recolored via `currentColor`, **never emoji**.
   Every icon-only control carries an `aria-label`. The brand uses
   `juice-logo.svg`.
