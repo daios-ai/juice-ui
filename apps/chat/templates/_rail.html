@@ -10,16 +10,7 @@
   <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>
   {{range .Rooms}}<div class="rail-row">
     <a href="/chat/room/{{.ID}}"{{if .Unread}} class="unread"{{end}}{{if eq .ID $.Current}} aria-current="page"{{end}}>{{.Name}}</a>
-    <button class="btn-icon inline" data-menu="menu-room-{{.ID}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
-    <div class="menu" id="menu-room-{{.ID}}" role="menu" hidden>
-      {{if eq .Creator $.Me}}
-      <a class="menu-item" role="menuitem" href="/chat/room/{{.ID}}?form=rename" hx-get="/chat/room/{{.ID}}/rename" hx-swap="none">Rename…</a>
-      <div class="menu-divider"></div>
-      <form method="post" action="/chat/room/{{.ID}}/delete" data-confirm="Delete {{.Name}} for everyone?" hx-post="/chat/room/{{.ID}}/delete" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="menu-item danger" type="submit">Delete…</button></form>
-      {{else}}
-      <form method="post" action="/chat/room/{{.ID}}/leave" data-confirm="Leave {{.Name}}?" hx-post="/chat/room/{{.ID}}/leave" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="menu-item" type="submit">Leave…</button></form>
-      {{end}}
-    </div>
+    {{template "_room_menu" ($.Menu .)}}
   </div>{{end}}
 </nav>
 {{with .Watch}}{{template "_chat_watch" .}}{{template "_rename" $.Rename}}{{end}}
@@ -71,5 +62,23 @@
   {{end}}
 </dialog>{{end}}
 
-{{/* The name in a room's crumb, which a rename answers in place. Input: the name. */}}
-{{define "_room_name"}}<b class="stretch" id="chat-room-name" hx-swap-oob="true">{{.}}</b>{{end}}
+{{/* _room_menu — a room's menu, in its row of the rail and in the crumb of its
+     page, which alone offers the members, whose dialog is on that page. Input:
+     roomMenu. */}}
+{{define "_room_menu"}}<button class="btn-icon inline" data-menu="{{.ID}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
+<div class="menu" id="{{.ID}}" role="menu" hidden>
+  {{if .Head}}<a class="menu-item" role="menuitem" href="/chat/room/{{.Room.ID}}?form=members" data-modal="form-members">Members…</a>{{end}}
+  {{if eq .Room.Creator .Me}}
+  <a class="menu-item" role="menuitem" href="/chat/room/{{.Room.ID}}?form=rename" hx-get="/chat/room/{{.Room.ID}}/rename" hx-swap="none">Rename…</a>
+  <div class="menu-divider"></div>
+  <form method="post" action="/chat/room/{{.Room.ID}}/delete" data-confirm="Delete {{.Room.Name}} for everyone?" hx-post="/chat/room/{{.Room.ID}}/delete" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{.CSRFField}}<button class="menu-item danger" type="submit">Delete…</button></form>
+  {{else}}
+  {{if .Head}}<div class="menu-divider"></div>{{end}}
+  <form method="post" action="/chat/room/{{.Room.ID}}/leave" data-confirm="Leave {{.Room.Name}}?" hx-post="/chat/room/{{.Room.ID}}/leave" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{.CSRFField}}<button class="menu-item" type="submit">Leave…</button></form>
+  {{end}}
+</div>{{end}}
+
+{{/* _crumb — a room's header: its name, on one line, and its menu. A rename
+     answers it whole, so the name and the menu's questions follow together.
+     Input: roomMenu. */}}
+{{define "_crumb"}}<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="{{.Room.Name}}">{{.Room.Name}}</b>{{template "_room_menu" .}}</nav>{{end}}
