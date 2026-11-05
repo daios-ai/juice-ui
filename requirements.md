@@ -1,8 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.51.0
+Version: 0.52.0
 Status: design draft — endpoint surface gated against the running kernel
 
+> **What changed in 0.52.0.** 0.51.0 gave a room two menus that differed, one in its
+> header and one in the sidebar. A room now has one menu, its row in the sidebar:
+> Members, Rename and Delete for its creator, Members and Leave for any other member.
+> The header is the room's name.
+>
 > **What changed in 0.51.0.** A room's header held its name and four controls in one
 > row, so on a phone the name collapsed and overprinted them. The header is now the
 > name, on one line, and one menu: Members, Rename and Delete for its creator,
@@ -2551,15 +2556,16 @@ the assistant, else the newest room, else an empty page beside the rail.
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
-  handles. There is no rooms page. Each room carries a menu: **Rename…** and
-  **Delete…** for its creator, **Leave…** for any other member, the question
+  handles. There is no rooms page. Each room carries its one menu: **Members…**,
+  **Rename…** and **Delete…** for its creator, **Members…** and **Leave…** for any
+  other member, the question
   naming the room.
-* **A room** is crumb (name, truncating on one line · menu) → entries → whom it
+* **A room** is crumb (name, truncating on one line) → entries → whom it
   waits on → composer, the page the scroll container, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
-  chosen. The crumb's menu is the rail's and adds **Members…**, a dialog (`?form=members`
-  without script) listing the members, with adding and removing for the creator.
-  Its creator alone is offered **Rename**, from either menu: a dialog holding the name, answered open by the server, with no run
+  chosen. **Members…** is a dialog (`?form=members`) listing the members, with adding and
+  removing for the creator; for the room in view it opens in place, for another it
+  opens that room. Its creator alone is offered **Rename**: a dialog holding the name, answered open by the server, with no run
   (`?form=rename` without script), and held outside the sidebar on a room page,
   since a narrow screen does not render the sidebar. A room command sent with
   script is one run and one read, whatever the watch says is due, answered as a
@@ -2999,8 +3005,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   by who made it; the rename dialog opened with no run, refused with the reason
   and the name typed; a room command one run and one read answered in place,
   past a watch that failed and for a room already gone, the room in view going to
-  `/chat`; no id rendered twice on a room page; a room's crumb its name and one menu,
-  its members one dialog; the landing's
+  `/chat`; no id rendered twice on a room page; a room's crumb its name, its one menu
+  in the rail, its members one dialog; the landing's
   fallbacks; a conversation started from its participants, its blank name
   theirs; whom the room waits on, never the viewer; the room page carries the
   composer bar — the schema's own message control, no label, switch or sealed

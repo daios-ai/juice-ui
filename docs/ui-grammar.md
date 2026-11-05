@@ -162,8 +162,8 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   - *Index* = `page-head` (the title) → section `<h2>` → a `.tabs` filter
     row (with an optional inline `+ new …` command) → list.
   - *Detail* = crumb (sticky back-link) → `<h1>` → `.subtitle` (the id) → cards.
-  - *Conversation* = crumb (the room's name and its menu; no back-link, the
-    rail is the way across) → entries → whom it waits on →
+  - *Conversation* = crumb (the room's name; no back-link, the rail is the way
+    across and holds its menu) → entries → whom it waits on →
     composer, beside the panel (§5.5). It is neither an index nor a detail.
 
 **Copy discipline — words are a component.** Prose is rationed like color. Every
@@ -246,7 +246,7 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
 | `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
-| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`**. `.btn-icon.inline`, borderless and muted at `--space-5`, inside a row or a line of text (a row's or a conversation's crumb's menu trigger, the copy control) |
+| `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`**. `.btn-icon.inline`, borderless and muted at `--space-5`, inside a row or a line of text (a row's menu trigger, the copy control) |
 | `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, the one ink-filled control in the interface, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
 
 **One geometry, one row, one look.**
@@ -314,8 +314,7 @@ an address, a crumb, the pager, a sentence's next step (`View the receipt →`).
 Anything else a person acts on is a `.btn`, or a `.btn-icon` when it has no words,
 or a `.menu-item` inside an open menu. A **record's verb** — Name, Rename, Suspend,
 End — is a `.btn` (§5.1) on the record's page or in its row, so one verb has one
-face, unless the row, or a conversation's crumb, gathers its verbs in a menu
-(§5.12), where each is a `.menu-item`. A `.cluster` of
+face, unless the row gathers its verbs in a menu (§5.12), where each is a `.menu-item`. A `.cluster` of
 verbs is a child of a `.stack` (a `.card.stack`, a `form.stack`): that is what
 separates it from the content above, and nothing else does (§4).
 
@@ -701,7 +700,7 @@ obligations above.
 ### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
-  `+ new …` openers, row-lifecycle menus (the Workshop's rows, the rail's rooms, a conversation's crumb),
+  `+ new …` openers, row-lifecycle menus (the Workshop's rows, the rail's rooms),
   each opened from a `.btn-icon.inline` `#ellipsis`, and the avatar menu.
   Activating an item closes the menu. An item that leads to a question or a
   dialog ends in `…`.

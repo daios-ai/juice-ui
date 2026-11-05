@@ -659,25 +659,6 @@ type railView struct {
 	OOB       bool // the heartbeat's out-of-band answer: the rail alone, replacing the one shown
 }
 
-// roomMenu backs a room's menu: in the header of the room's page, with Head, or
-// in its row of the rail. Both can be on one page, so their panels differ by id.
-type roomMenu struct {
-	Room      roomRow
-	Me        string
-	Head      bool
-	CSRFField template.HTML
-}
-
-func (m roomMenu) ID() string {
-	if m.Head {
-		return "menu-head"
-	}
-	return "menu-room-" + m.Room.ID
-}
-
-// Menu is a room's menu in its row of the rail.
-func (v railView) Menu(r roomRow) roomMenu { return roomMenu{r, v.Me, false, v.CSRFField} }
-
 // renameView backs the rename dialog: closed and empty with no Room, else open
 // on it, with the reason a rename was refused.
 type renameView struct {
@@ -695,7 +676,6 @@ type roomView struct {
 	Others   []string // the members other than the viewer: whom [@] and a leading address name
 	IsOwner  bool
 	OpenForm string
-	Menu     roomMenu
 	Rename   renameView
 	Entries  entriesView
 	Watch    watchView
@@ -882,7 +862,6 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
 		Room: read.Room, Me: me, Others: others, IsOwner: read.Room.Creator == me, OpenForm: r.URL.Query().Get("form"), Rename: rename,
-		Menu:    roomMenu{read.Room, me, true, c.deps.CSRFField(r)},
 		Entries: entriesView{RoomID: id, Entries: read.Entries, Working: read.Waiting},
 		Watch:   watchView{id, watchState{After: maxSeq(read.Entries), Signal: signal, Rail: railDigest(read.Rooms)}},
 		Post:    post, Locked: locked,
@@ -1179,7 +1158,7 @@ func (c *Chat) renameInPlace(w http.ResponseWriter, r *http.Request, name string
 		return
 	}
 	if key == id {
-		h, err := c.deps.Fragment("_crumb", roomMenu{out.Room, c.deps.Me(r), true, c.deps.CSRFField(r)})
+		h, err := c.deps.Fragment("_crumb", out.Room.Name)
 		if c.deps.HandleErrFragment(w, r, err) {
 			return
 		}

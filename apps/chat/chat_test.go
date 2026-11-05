@@ -1541,9 +1541,6 @@ func TestRenameIsTheCreators(t *testing.T) {
 	}
 	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
 	got := page("/chat/room/"+mine.ID, mine.ID)
-	if want := `<a class="menu-item" role="menuitem" href="/chat/room/` + mine.ID + `?form=rename" hx-get="/chat/room/` + mine.ID + `/rename" hx-swap="none">Rename…</a>`; !strings.Contains(got, want) {
-		t.Errorf("the creator's page lacks %s", want)
-	}
 	if !strings.Contains(got, `<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`) || strings.Contains(got, `action="/chat/room/`+mine.ID+`/rename"`) {
 		t.Error("a room page holds the dialog closed and empty")
 	}
@@ -1555,13 +1552,13 @@ func TestRenameIsTheCreators(t *testing.T) {
 	}
 	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
 	got = page("/chat/room/"+theirs.ID+"?form=rename", theirs.ID)
-	if strings.Contains(got, ">Rename…</a>") || strings.Contains(got, `hx-swap-oob="true" open>`) {
+	if strings.Contains(got, `hx-swap-oob="true" open>`) {
 		t.Error("a member is offered no rename")
 	}
 }
 
-// A room's header is its name and one menu. The menu is the rail's and adds the
-// members, whose dialog lists them for everyone and changes them for the creator.
+// A room's header is its name alone. The members' dialog lists them for everyone
+// and changes them for the creator.
 func TestRoomHeader(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1580,27 +1577,10 @@ func TestRoomHeader(t *testing.T) {
 		req.SetPathValue("id", id)
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
-	crumb := func(got string) string {
-		_, rest, ok := strings.Cut(got, `<nav class="crumb" id="chat-crumb"`)
-		if !ok {
-			t.Fatalf("no crumb: %s", got)
-		}
-		head, _, _ := strings.Cut(rest, "</nav>")
-		return head
-	}
 	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
 	got := page(mine.ID, "")
-	head := crumb(got)
-	for _, want := range []string{`<b class="stretch" title="ca&lt;fe">ca&lt;fe</b>`, `class="btn-icon inline" data-menu="menu-head"`, `id="menu-head"`,
-		`?form=members" data-modal="form-members">Members…</a>`, `>Rename…</a>`, `data-confirm="Delete ca&lt;fe for everyone?"`, `>Delete…</button>`} {
-		if !strings.Contains(head, want) {
-			t.Errorf("the creator's crumb lacks %s: %s", want, head)
-		}
-	}
-	for _, not := range []string{`class="btn"`, `class="btn-danger"`, "<details", "Leave…"} {
-		if strings.Contains(head, not) {
-			t.Errorf("the crumb holds %s: %s", not, head)
-		}
+	if want := `<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="ca&lt;fe">ca&lt;fe</b></nav>`; !strings.Contains(got, want) {
+		t.Errorf("the crumb is not the name alone: %s", got)
 	}
 	for _, want := range []string{`<dialog id="form-members" class="modal-form" aria-label="Members">`, ">bob@testnet<", `/remove-member"`, `/add-member"`} {
 		if !strings.Contains(got, want) {
@@ -1610,26 +1590,10 @@ func TestRoomHeader(t *testing.T) {
 	if !strings.Contains(page(mine.ID, "?form=members"), `<dialog id="form-members" class="modal-form" open aria-label="Members">`) {
 		t.Error("?form=members opens the dialog")
 	}
-
 	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
 	got = page(theirs.ID, "")
-	head = crumb(got)
-	for _, want := range []string{"Members…", `data-confirm="Leave theirs?"`, ">Leave…</button>"} {
-		if !strings.Contains(head, want) {
-			t.Errorf("a member's crumb lacks %s: %s", want, head)
-		}
-	}
-	if strings.Contains(head, "Rename…") || strings.Contains(head, "Delete…") {
-		t.Errorf("a member's crumb offers the creator's: %s", head)
-	}
 	if !strings.Contains(got, ">bob@testnet<") || strings.Contains(got, `/remove-member"`) || strings.Contains(got, `/add-member"`) {
 		t.Error("a member sees the list and cannot change it")
-	}
-
-	// A row of the rail has no members: their dialog is on the room's own page.
-	h, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail)
-	if err != nil || strings.Contains(string(h), "Members…") {
-		t.Errorf("a rail row offers the members: %s %v", h, err)
 	}
 }
 
@@ -1686,6 +1650,21 @@ func TestRailMenus(t *testing.T) {
 		if strings.Contains(got, not) {
 			t.Errorf("the rail offers %s", not)
 		}
+	}
+	// Every menu offers the members: in place for the room in view, whose dialog is
+	// on the page; any other opens that room.
+	if strings.Count(got, ">Members…</a>") != 2 || strings.Contains(got, `data-modal="form-members"`) {
+		t.Errorf("no room is in view, so every Members… goes to its room: %s", got)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+mine.ID, nil)
+	h, err = as2(c, sm, req, c.Rail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(h)
+	if !strings.Contains(got, `href="/chat/room/`+mine.ID+`?form=members" data-modal="form-members">Members…</a>`) ||
+		!strings.Contains(got, `href="/chat/room/`+theirs.ID+`?form=members">Members…</a>`) {
+		t.Errorf("only the room in view opens the members in place: %s", got)
 	}
 }
 
@@ -1751,7 +1730,7 @@ func TestRenameInPlace(t *testing.T) {
 
 	// In view, the crumb follows; another room's rename from that page leaves it.
 	got = command(c, sm, c.postRename, room.ID, "name=coffee&"+roomWatch(room.ID, watchState{Rail: "old"})).Body.String()
-	for _, want := range []string{`<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="coffee">coffee</b>`, `id="menu-head"`, `data-confirm="Delete coffee for everyone?"`, `hx-swap-oob="outerHTML:.rail"`} {
+	for _, want := range []string{`<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="coffee">coffee</b></nav>`, `data-confirm="Delete coffee for everyone?"`, `hx-swap-oob="outerHTML:.rail"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("in view, the crumb and the rail follow, lacking %s: %s", want, got)
 		}
@@ -1878,7 +1857,7 @@ func TestRoomPageIDsAreUnique(t *testing.T) {
 		}
 		seen[m[1]] = true
 	}
-	for _, want := range []string{"chat-crumb", "menu-head", "form-rename", "form-members", "menu-room-" + room.ID} {
+	for _, want := range []string{"chat-crumb", "form-rename", "form-members", "menu-room-" + room.ID} {
 		if !seen[want] {
 			t.Errorf("no id %s: %s", want, got)
 		}

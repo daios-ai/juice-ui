@@ -7,7 +7,7 @@
      panel an action chosen from the composer opens into. */}}
 <div class="room">
 <div class="conversation">
-{{template "_crumb" $d.Menu}}
+{{template "_crumb" $d.Room.Name}}
 
 <div class="msgs" id="chat-messages" data-autoscroll>
   {{range $d.Entries.Entries}}{{template "_entry" .}}{{end}}
