@@ -27,7 +27,19 @@ import (
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
+	"github.com/daios-ai/juice-ui/supervisor"
 )
+
+// Programs is the process supervisor as an app uses it: an app declares the
+// programs it needs, asks for them to start and stop, and reads their state. It
+// starts and signals no process itself.
+type Programs interface {
+	Set(name string, p supervisor.Program) error
+	Remove(name string) error
+	Start(name string) error
+	Stop(name string) error
+	Status(name string) (supervisor.Status, bool)
+}
 
 // Bin resolves a sibling program of the family: the override in the environment
 // variable env, else the installation's own bin/, where the installer puts it,
@@ -207,6 +219,9 @@ type Deps struct {
 	// docs/installation.md), where an app places its database and other durable
 	// files. "" when app state is in-memory (tests) — an app then stays in-memory.
 	Home string
+
+	// Programs is the installation's process supervisor; nil in tests that use none.
+	Programs Programs
 
 	// Logger is the core's structured logger, for an app's background work (e.g.
 	// service-account provisioning). May be nil in tests.

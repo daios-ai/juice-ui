@@ -76,7 +76,7 @@ func newKernel(t *testing.T) *fakeKernel {
 }
 
 // kernelApp is testApp with a fake kernel and a client directory.
-func kernelApp(t *testing.T) (*Agents, *fakeKernel, *fakeLauncher, *capture) {
+func kernelApp(t *testing.T) (*Agents, *fakeKernel, *fakePrograms, *capture) {
 	t.Helper()
 	a, fl, cap := testApp(t)
 	k := newKernel(t)

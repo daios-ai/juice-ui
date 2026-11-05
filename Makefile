@@ -2,6 +2,8 @@ BINARY  := juice-ui
 PKG     := github.com/daios-ai/juice-ui/cmd/juice-ui
 CHAT    := juice-chat
 CHATPKG := github.com/daios-ai/juice-ui/cmd/juice-chat
+SUP     := juice-supervisor
+SUPPKG  := github.com/daios-ai/juice-ui/cmd/juice-supervisor
 # The family's executables live in $JUICE_HOME/bin (ecosystem-standard §2).
 PREFIX  ?= $(or $(JUICE_HOME),$(HOME)/.juice)
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -18,21 +20,22 @@ SECRET  ?= dev-secret
 build:
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
 	go build -ldflags "-X main.version=$(VERSION)" -o $(CHAT) $(CHATPKG)
+	go build -ldflags "-X main.version=$(VERSION)" -o $(SUP) $(SUPPKG)
 
 test:
 	go test ./... -count=1
 
 clean:
-	rm -f $(BINARY) $(CHAT) coverage.out
+	rm -f $(BINARY) $(CHAT) $(SUP) coverage.out
 
 install: build
 	mkdir -p $(PREFIX)/bin
-	install -m 755 $(BINARY) $(CHAT) $(PREFIX)/bin/
+	install -m 755 $(BINARY) $(CHAT) $(SUP) $(PREFIX)/bin/
 
 # Removes the installed binary only; $JUICE_HOME state (keys, config, stores) is
 # left intact.
 uninstall:
-	rm -f $(PREFIX)/bin/$(BINARY) $(PREFIX)/bin/$(CHAT)
+	rm -f $(PREFIX)/bin/$(BINARY) $(PREFIX)/bin/$(CHAT) $(PREFIX)/bin/$(SUP)
 
 # --- juice-ui extras (offline test above is the regression gate) ---
 

@@ -38,12 +38,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
-	"github.com/daios-ai/juice-ui/kernel"
+	"github.com/daios-ai/juice-ui/supervisor"
 )
 
 //go:embed templates/*.html
@@ -77,10 +76,10 @@ const assistantHandle = "assistant"
 
 // Chat is the app.
 type Chat struct {
-	deps   apps.Deps
-	sa     *apps.ServiceAccount
-	st     chatState
-	launch launcher // nil until Start; a test sets its own
+	deps     apps.Deps
+	sa       *apps.ServiceAccount
+	st       chatState
+	register func(login string) error // `juice-chat register`; a test sets its own
 
 	mu      sync.Mutex
 	changes map[string]int64 // per address, what this UI changed: see signal
@@ -130,19 +129,19 @@ func (c *Chat) Start(ctx context.Context) error {
 			return fmt.Errorf("chat: persist credentials: %w", err)
 		}
 	}
-	if c.launch == nil {
-		c.launch = osLauncher{root: c.root()}
+	if c.register == nil {
+		c.register = c.runRegister
 	}
 	c.sa = apps.NewServiceAccount(c.deps, chatHandle, c.st.Password)
 	return c.sa.Start(ctx, c.setup)
 }
 
 // setup runs each time chat signs in, and again after a failure. It records the
-// provider's session where any program finds a login, restarts the server, so a
-// new binary takes effect, has it register the provider's actions, and joins
-// every local agent, since joining connects a key to those actions.
+// provider's session where any program finds a login, declares the server to the
+// supervisor, has it register the provider's actions, and joins every local agent,
+// since joining connects a key to those actions.
 func (c *Chat) setup(ctx context.Context) error {
-	if c.deps.Home == "" {
+	if c.deps.Home == "" || c.deps.Programs == nil {
 		return errors.New("chat: this UI has no home to run the chat server in")
 	}
 	toks := c.sa.Tokens()
@@ -157,21 +156,17 @@ func (c *Chat) setup(ctx context.Context) error {
 	if err := client.WriteCredential(filepath.Join(records, "credentials", c.self()+".json"), toks, me.ID); err != nil {
 		return err
 	}
-	if err := c.launch.stop(); err != nil {
+	if err := c.serve(ctx); err != nil {
 		return err
 	}
-	if err := c.launch.serve(); err != nil {
-		return err
-	}
-	if err := c.launch.register(c.self()); err != nil {
+	if err := c.register(c.self()); err != nil {
 		return err
 	}
 	c.joinAgents(ctx)
 	return nil
 }
 
-// Stop ends the sign-in loop. The chat server outlives the UI, as the kernel and
-// the agents do.
+// Stop ends the sign-in loop. The supervisor stops the chat server when it closes.
 func (c *Chat) Stop(ctx context.Context) error {
 	if c.sa != nil {
 		c.sa.Stop()
@@ -190,69 +185,56 @@ func (c *Chat) log() *slog.Logger {
 
 // ---- the program ----
 
-// launcher is the UI's one direct contact with the chat server: starting and
-// stopping it. An interface so tests exec no binary.
-type launcher interface {
-	stop() error
-	serve() error // returns once the server holds its lock
-	register(login string) error
-}
+const programName = "chat"
 
-// osLauncher runs the real juice-chat with JUICE_HOME pinned and nothing else
-// passed, detached, so it outlives the UI, with its output in ui/chat.log.
-type osLauncher struct{ root string }
-
-func (l osLauncher) bin() (string, error) {
-	if b := apps.Bin(binEnv, l.root, "juice-chat"); b != "" {
-		return b, nil
-	}
-	return "", fmt.Errorf("juice-chat binary not found (install it or set %s)", binEnv)
-}
-
-func (l osLauncher) lock() string { return filepath.Join(l.root, "services", "chat", "serve.lock") }
-
-func (l osLauncher) stop() error { return kernel.Stop(l.lock()) }
-
-func (l osLauncher) serve() error {
-	bin, err := l.bin()
-	if err != nil {
-		return err
-	}
-	logPath := filepath.Join(l.root, "ui", "chat.log")
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	cmd := exec.Command(bin, "serve")
-	cmd.Env = append(os.Environ(), "JUICE_HOME="+l.root)
-	cmd.Stdout, cmd.Stderr = f, f
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		select {
-		case <-exited:
-			return fmt.Errorf("juice-chat exited; see %s", logPath)
-		default:
+// serve declares the chat server to the supervisor, once (after that the program's
+// file is the operator's), and returns once its child holds the server's lock. The
+// supervisor is the UI's one contact with the server.
+func (c *Chat) serve(ctx context.Context) error {
+	lock := filepath.Join(c.root(), "services", "chat", "serve.lock")
+	if _, ok := c.deps.Programs.Status(programName); !ok {
+		bin := os.Getenv(binEnv)
+		if bin == "" {
+			bin = "juice-chat"
 		}
-		if held, err := kernel.Locked(l.lock()); err != nil || held {
+		err := c.deps.Programs.Set(programName, supervisor.Program{
+			Command: []string{bin, "serve"},
+			Env:     map[string]string{"JUICE_HOME": c.root()},
+			Lock:    lock,
+		})
+		if err != nil {
 			return err
 		}
 	}
-	return fmt.Errorf("juice-chat did not start; see %s", logPath)
+	var st supervisor.Status
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		st, _ = c.deps.Programs.Status(programName)
+		if st.Disabled { // the operator runs it
+			return nil
+		}
+		if st.Err != "" {
+			return fmt.Errorf("juice-chat: %s", st.Err)
+		}
+		if held, err := supervisor.Held(lock); err != nil || (st.Running && held) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("juice-chat did not start; see %s", st.Log)
 }
 
-func (l osLauncher) register(login string) error {
-	bin, err := l.bin()
-	if err != nil {
-		return err
+// runRegister is `juice-chat register LOGIN`, a command that ends by itself.
+func (c *Chat) runRegister(login string) error {
+	bin := apps.Bin(binEnv, c.root(), "juice-chat")
+	if bin == "" {
+		return fmt.Errorf("juice-chat binary not found (install it or set %s)", binEnv)
 	}
 	cmd := exec.Command(bin, "register", login)
-	cmd.Env = append(os.Environ(), "JUICE_HOME="+l.root)
+	cmd.Env = append(os.Environ(), "JUICE_HOME="+c.root())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("juice-chat register: %s", strings.TrimSpace(string(out)))
 	}

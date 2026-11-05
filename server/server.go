@@ -35,6 +35,7 @@ type Options struct {
 	Apps           []apps.App    // app modules to mount (their templates must already be in Renderer)
 	StatePath      string        // path to state.json for per-app persisted state; "" = in-memory
 	Home           string        // component home dir ($JUICE_HOME/ui) handed to apps; "" = none
+	Programs       apps.Programs // the process supervisor handed to apps; nil = none
 	BadgeInterval  time.Duration // nav-badge poll interval + task-badge cache TTL; 0 → default 30s
 
 	// Identity is the kernel this UI is for: built once at wiring, held to the key
@@ -62,6 +63,7 @@ type Server struct {
 	apps       []apps.App
 	appStore   *appStore               // per-app persisted state (state.json), keyed by kernel
 	home       string                  // component home dir handed to apps
+	programs   apps.Programs           // the process supervisor handed to apps
 	badgeTTL   time.Duration           // the heartbeat's slow lane, and the task badge's cache TTL
 	watchers   map[string]apps.Watcher // the heartbeat's watchers by kind (tick.go)
 	conv       apps.Conversations      // the app whose rooms are the workspace; nil when none
@@ -272,6 +274,7 @@ func New(o Options) (http.Handler, error) {
 		publicURL:  strings.TrimRight(o.PublicURL, "/"),
 		apps:       o.Apps,
 		home:       o.Home,
+		programs:   o.Programs,
 		badgeTTL:   badgeTTL,
 		identity:   o.Identity,
 		kernelName: o.KernelName,
@@ -748,6 +751,7 @@ func (s *Server) appDeps() apps.Deps {
 		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
 		StatePath:         s.appStore.path,
 		Home:              s.home,
+		Programs:          s.programs,
 		FormArgs:          buildArgs,
 		ConfigEditor: func(schema json.RawMessage, hidden ...string) apps.ConfigEditor {
 			return s.editor(schema, hidden...)

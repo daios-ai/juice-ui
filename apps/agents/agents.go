@@ -5,22 +5,21 @@
 // requirements.md §11, ecosystem-standard §2).
 //
 // Unlike apps/chat, this app has no dedicated kernel account: it is a local
-// filesystem editor and child-process supervisor, not a kernel-HTTP feature. It
+// filesystem editor and a client of the process supervisor, not a kernel-HTTP feature. It
 //
 //   - creates a home with a blank agent.md;
 //   - edits agent.md, and config.json through the form of the daemon's own
 //     schema of it, $JUICE_HOME/schemas/juice-agent.schema.json, written at
 //     every start (agent requirements §11); the daemon reads the file at its
 //     next start;
-//   - starts `juice-agent serve <login>` detached, and stops the daemon
-//     serving a login with SIGTERM, whoever started it.
+//   - declares `juice-agent serve <login>` to the process supervisor, and asks
+//     it to start and stop the daemon serving a login, whoever started it.
 //
 // "Running" is the daemon's own word: it holds `serve.lock` in its home for as
 // long as it serves (agent requirements §11, as a kernel holds its home,
 // ecosystem-standard §4), so an agent served from a terminal is seen, stopped
-// and protected like one the UI started. The UI keeps only the children it
-// spawned, for the moment before a child takes the lock. A daemon outlives the
-// UI, as the kernel does.
+// and protected like one the supervisor started, whose own word covers the moment
+// before a child takes the lock.
 //
 // The daemon holds its own session in the installation's client records. The
 // UI makes that session as `juice auth login <login>` would — from a password
@@ -51,16 +50,18 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/supervisor"
 )
 
 //go:embed templates/*.html
 var tmplFS embed.FS
 
-// binEnv overrides the juice-agent binary path (otherwise resolved from
-// $JUICE_HOME/bin, then PATH).
+// binEnv overrides the juice-agent binary path (otherwise the supervisor resolves
+// it from $JUICE_HOME/bin, then PATH).
 const binEnv = "JUICE_AGENT_BIN"
 
 // The files of an agent home the UI edits (agent requirements.md §11), and
@@ -89,26 +90,24 @@ var (
 	errStale     = errors.New("the configuration changed since this page was loaded; reload it")
 )
 
-// Agents is the app. Its only mutable runtime state is the supervisor's process
-// table; nothing is persisted (no app-state, no store).
+// Agents is the app. It holds no runtime state: the process supervisor runs the
+// daemons, each a program declared here.
 type Agents struct {
 	deps   apps.Deps
-	root   string      // $JUICE_HOME/agents; overridable in tests
-	logs   string      // $JUICE_HOME/ui/agents, one <login>.log per daemon run
-	client string      // $JUICE_HOME/client, the records an agent's session lives in
-	schema string      // $JUICE_HOME/schemas/juice-agent.schema.json, the daemon's schema of config.json
-	sup    *supervisor // the children this UI spawned; overridable in tests (fake launcher)
-	mu     sync.Mutex  // one lifecycle post at a time (create, start, stop, delete)
+	root   string     // $JUICE_HOME/agents; overridable in tests
+	client string     // $JUICE_HOME/client, the records an agent's session lives in
+	schema string     // $JUICE_HOME/schemas/juice-agent.schema.json, the daemon's schema of config.json
+	mu     sync.Mutex // one lifecycle post at a time (create, start, stop, delete)
 }
 
-// New constructs the app. Root and supervisor resolve on Start.
+// New constructs the app. Root resolves on Start.
 func New() *Agents { return &Agents{} }
 
 func (a *Agents) Slug() string { return "agents" }
 
 // Nav contributes the Agents destination (no badge — this app has no async
 // attention signal), to the operator alone. Everything this app does happens on
-// the UI host — it writes the installation's files and spawns a long-lived
+// the UI host — it writes the installation's files and runs a long-lived
 // daemon — so it is an operator surface, and an entry a non-superuser could not
 // use would be an invitation to a 403.
 func (a *Agents) Nav(me string, superuser bool) []apps.NavEntry {
@@ -123,7 +122,7 @@ func (a *Agents) Templates() fs.FS { return tmplFS }
 // Mount gates every route on the SUPERUSER, not merely on a session. The
 // authority exercised here is the operator's machine: these handlers scaffold
 // and delete directories under the installation root, write the files a daemon
-// reads, and spawn that daemon as a child of this process. A kernel account
+// reads, and have the supervisor run that daemon. A kernel account
 // confers none of that, and while any signed-in user could reach them, one
 // account could edit and stop another's agent, and anyone could start a process
 // on the host.
@@ -142,27 +141,80 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
 }
 
-// Start resolves the agent root, the log directory and the supervisor. Each is
-// left untouched when already set (tests inject them).
+// Start resolves the agent root and declares the agents. Each path is left
+// untouched when already set (tests inject them).
 func (a *Agents) Start(ctx context.Context) error {
 	if a.root == "" {
 		a.root = defaultRoot(a.deps.Home)
 	}
 	home := filepath.Dir(a.root)
-	if a.logs == "" {
-		a.logs = filepath.Join(home, "ui", "agents")
-	}
 	if a.client == "" {
 		a.client = filepath.Join(home, "client")
 	}
 	if a.schema == "" {
 		a.schema = filepath.Join(home, "schemas", schemaFile)
 	}
-	if a.sup == nil {
-		a.sup = newSupervisor(osLauncher{bin: agentBin(home), home: home})
-	}
 	a.ensureAssistant(ctx)
+	a.adopt()
 	return nil
+}
+
+// programName is an agent's name as the supervisor knows it.
+func programName(login string) string { return "agent-" + login }
+
+// declare gives the supervisor handle's daemon, once, running when on and
+// otherwise stopped. After that the program's file says whether it runs.
+func (a *Agents) declare(handle string, on bool) (string, error) {
+	dir, err := a.agentDir(handle)
+	if err != nil {
+		return "", err
+	}
+	login := a.deps.Address(handle)
+	name := programName(login)
+	if _, ok := a.deps.Programs.Status(name); ok {
+		return name, nil
+	}
+	bin := os.Getenv(binEnv)
+	if bin == "" {
+		bin = "juice-agent"
+	}
+	return name, a.deps.Programs.Set(name, supervisor.Program{
+		Command:  []string{bin, "serve", login},
+		Env:      map[string]string{"JUICE_HOME": filepath.Dir(a.root)},
+		Lock:     filepath.Join(dir, "serve.lock"),
+		Disabled: !on,
+	})
+}
+
+// start runs handle's daemon now, and from now on at every start.
+func (a *Agents) start(handle string) error {
+	name, err := a.declare(handle, false)
+	if err != nil {
+		return err
+	}
+	return a.deps.Programs.Start(name)
+}
+
+// adopt declares every agent home of this kernel that has no program, as an
+// installation made before the supervisor holds: one with a session runs. Whether
+// its lock is held now says nothing, since an old daemon may have exited with the
+// kernel under it.
+func (a *Agents) adopt() {
+	if a.deps.Programs == nil || a.deps.Address == nil {
+		return
+	}
+	entries, _ := os.ReadDir(a.root)
+	suffix := strings.TrimPrefix(a.deps.Address("x"), "x")
+	for _, e := range entries {
+		h, ok := strings.CutSuffix(e.Name(), suffix)
+		if !e.IsDir() || suffix == "" || !ok || !validHandle(h) {
+			continue
+		}
+		_, err := os.Stat(a.credPath(h))
+		if _, err := a.declare(h, err == nil); err != nil {
+			a.log().Warn("agents: adopt", "handle", h, "err", err)
+		}
+	}
 }
 
 // assistantHandle is the agent every session lands in conversation with
@@ -178,11 +230,11 @@ type agentsState struct {
 // ensureAssistant makes the assistant exist and run: the account, made with
 // the password the app keeps (a handle the kernel already holds is adopted
 // only when that password signs in, which proves it is the app's), the
-// session, the home, and the daemon when it holds a session and is not
-// running. Never fatal: what fails is logged, and the operator can do it from
-// the page.
+// session, the home, and the daemon when it holds a session and has no program
+// yet: one it has says whether it runs, since a person may have stopped it. Never
+// fatal: what fails is logged, and the operator can do it from the page.
 func (a *Agents) ensureAssistant(ctx context.Context) {
-	if a.deps.Client == nil || a.deps.LoadAppState == nil {
+	if a.deps.Client == nil || a.deps.LoadAppState == nil || a.deps.Programs == nil {
 		return
 	}
 	a.mu.Lock()
@@ -220,13 +272,10 @@ func (a *Agents) ensureAssistant(ctx context.Context) {
 			return
 		}
 	}
-	if running, err := a.running(h); err != nil || running {
-		return
-	}
 	if _, err := os.Stat(a.credPath(h)); err != nil {
 		return
 	}
-	if err := a.sup.start(h, a.deps.Address(h), a.logPath(h)); err != nil {
+	if _, err := a.declare(h, true); err != nil {
 		fail("start", err)
 	}
 }
@@ -244,8 +293,7 @@ func (a *Agents) log() *slog.Logger {
 	return slog.Default()
 }
 
-// Stop stops nothing: a daemon outlives the UI as the kernel does, detached in
-// its own session, and the next UI finds it through its lock.
+// Stop stops nothing: the supervisor stops every program when it closes.
 func (a *Agents) Stop(ctx context.Context) error { return nil }
 
 // ---- store (filesystem, traversal-guarded) ----
@@ -266,11 +314,6 @@ func (a *Agents) agentDir(handle string) (string, error) {
 }
 
 func validHandle(h string) bool { return len(h) <= 64 && handleRe.MatchString(h) }
-
-// logPath is where handle's daemon writes its current run.
-func (a *Agents) logPath(handle string) string {
-	return filepath.Join(a.logs, a.deps.Address(handle)+".log")
-}
 
 // list returns this kernel's agents under root: the homes named by one of its
 // logins, the page reading each account on this kernel.
@@ -391,10 +434,8 @@ func (a *Agents) remove(handle string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range []string{a.logPath(handle), a.credPath(handle)} {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	if err := os.Remove(a.credPath(handle)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return os.RemoveAll(dir)
 }
@@ -433,7 +474,11 @@ func (a *Agents) status(r *http.Request, handle string) (status, error) {
 	running, err := a.running(handle)
 	st := status{Handle: handle, Running: running, CSRF: a.deps.CSRFField(r)}
 	if !running {
-		st.LastLine = exitError(a.logPath(handle))
+		prog, _ := a.deps.Programs.Status(programName(a.deps.Address(handle)))
+		st.LastLine = exitError(prog.Log)
+		if prog.Err != "" {
+			st.LastLine = prog.Err
+		}
 		_, statErr := os.Stat(a.credPath(handle))
 		st.AskPassword = os.IsNotExist(statErr) || strings.Contains(st.LastLine, "juice auth login")
 	}
@@ -468,16 +513,50 @@ func (a *Agents) watch(r *http.Request, handle, shown string) (template.HTML, er
 	return a.deps.Fragment("_agent_status", st)
 }
 
-// running is whether a daemon serves handle: one holds the home's lock, or a
-// child this UI spawned a moment ago is alive and has not taken it yet. An
-// unreadable lock is an error, never "stopped".
+// running is whether a daemon serves handle: one holds the home's lock, or the
+// supervisor's child is alive and has not taken it yet. An unreadable lock is an
+// error, never "stopped".
 func (a *Agents) running(handle string) (bool, error) {
 	dir, err := a.agentDir(handle)
 	if err != nil {
 		return false, err
 	}
-	h, err := held(dir)
-	return h || a.sup.alive(handle), err
+	h, err := supervisor.Held(filepath.Join(dir, "serve.lock"))
+	st, _ := a.deps.Programs.Status(programName(a.deps.Address(handle)))
+	return h || st.Running, err
+}
+
+// errHeld: a daemon holds the home's lock.
+var errHeld = errors.New("a daemon holds serve.lock")
+
+// hold takes home's serve.lock — the daemon's own lock, so a daemon that starts
+// meanwhile is refused by its own rule — and returns the file holding it, held
+// until closed. errHeld when a daemon holds it.
+func hold(home string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(home, "serve.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errHeld
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// exitError is the daemon's exit reason from its last run: the log's last
+// non-empty line when it is the daemon's `error: …` line, else "". A daemon
+// that was stopped ends on its own "stopped" event, which states no reason.
+func exitError(logPath string) string {
+	b, _ := os.ReadFile(logPath)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if last := lines[len(lines)-1]; strings.HasPrefix(last, "error:") {
+		return last
+	}
+	return ""
 }
 
 type listView struct {
@@ -561,7 +640,7 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		a.deps.HandleErr(w, r, err)
 		return
 	}
-	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
+	if err := a.start(handle); err != nil {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
 		return
 	}
@@ -719,11 +798,18 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
-	// The home's lock is held through the removal — a daemon started meanwhile
-	// is refused by its own rule, and none is left holding a deleted lock — once
-	// no child of ours is on its way to taking it.
-	if a.sup.alive(handle) {
+	// The program goes first, so nothing restarts the daemon, and then the home's
+	// lock is held through the removal: a daemon started meanwhile is refused by
+	// its own rule, and none is left holding a deleted lock.
+	running, err := a.running(handle)
+	if a.deps.HandleErr(w, r, err) {
+		return
+	}
+	if running {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Stop the agent first.")
+		return
+	}
+	if err := a.deps.Programs.Remove(programName(a.deps.Address(handle))); a.deps.HandleErr(w, r, err) {
 		return
 	}
 	lock, err := hold(dir)
@@ -742,11 +828,11 @@ func (a *Agents) postDelete(w http.ResponseWriter, r *http.Request) {
 	a.deps.FlashRedirect(w, r, "/agents", "success", "Agent deleted.")
 }
 
-// postStart spawns `juice-agent serve <login>` unless a daemon already serves
-// it. A password in the post makes the login's session first (an agent with
-// none, or whose session died); a refusal returns the dialog open and spawns
-// nothing. The daemon brings its own session, and a refusal of its own is read
-// back from its log by the status.
+// postStart has the supervisor run `juice-agent serve <login>` unless a daemon
+// already serves it. A password in the post makes the login's session first (an
+// agent with none, or whose session died); a refusal returns the dialog open and
+// starts nothing. The daemon brings its own session, and a refusal of its own is
+// read back from its log by the status.
 func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -770,31 +856,26 @@ func (a *Agents) postStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := a.sup.start(handle, a.deps.Address(handle), a.logPath(handle)); err != nil {
+	if err := a.start(handle); err != nil {
 		a.deps.FlashRedirect(w, r, back, "error", "Could not start: "+err.Error())
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// postStop signals the daemon serving handle, whoever started it: the process
-// in the home's lock, else the child this UI spawned.
+// postStop has the supervisor stop the daemon serving handle, whoever started it,
+// and keep it stopped across restarts.
 func (a *Agents) postStop(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	handle := r.PathValue("handle")
-	dir, err := a.agentDir(handle)
-	if err != nil {
+	if _, err := a.agentDir(handle); err != nil {
 		a.notFound(w, r)
 		return
 	}
-	var pid int
-	h, err := held(dir)
-	if err == nil && h {
-		pid, err = lockedPid(dir)
-	}
+	name, err := a.declare(handle, false)
 	if err == nil {
-		err = a.sup.stop(handle, pid)
+		err = a.deps.Programs.Stop(name)
 	}
 	if a.deps.HandleErr(w, r, err) {
 		return
@@ -841,12 +922,6 @@ func defaultRoot(home string) string {
 	}
 	return filepath.Join(base, "agents")
 }
-
-// agentBin resolves the juice-agent executable: the explicit override, else
-// the installation's own bin/, which is where the installer puts the family's
-// programs and where a component looks for a sibling (ecosystem-standard §4),
-// else PATH.
-func agentBin(juiceHome string) string { return apps.Bin(binEnv, juiceHome, "juice-agent") }
 
 // account reads the agent's kernel account with the viewer's own token: the
 // kernel's row for the handle's address on this kernel, the login its home is

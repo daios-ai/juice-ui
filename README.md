@@ -65,7 +65,7 @@ make run KERNEL=https://kernel.example.com ADDR=127.0.0.1:9000 SECRET=change-me
 Or build and run the binary yourself, or install it to your `PATH`:
 
 ```sh
-make build            # → ./juice-ui, ./juice-chat
+make build            # → ./juice-ui, ./juice-chat, ./juice-supervisor
 ./juice-ui
 
 make install          # → $JUICE_HOME/bin/  (default ~/.juice; override PREFIX=…)
@@ -117,7 +117,8 @@ never a concrete app).
 | Path | Contents |
 |---|---|
 | `cmd/juice-ui/` | entrypoint: configuration, dependency wiring, serve |
-| `cmd/juice-chat/`, `services/chat/` | the chat service, a program of its own that the UI starts and reaches through the kernel |
+| `cmd/juice-chat/`, `services/chat/` | the chat service, a program of its own that the supervisor runs and the UI reaches through the kernel |
+| `cmd/juice-supervisor/`, `supervisor/` | the process supervisor: runs the kernel, the agents, chat and an operator's programs, inside the UI or from the command line |
 | `client/` | typed kernel HTTP API client and error mapping |
 | `session/` | server-side sessions, token lifecycle, PKCE state, CSRF |
 | `server/` | router, middleware, handlers, rendering (+ `templates/`, `static/`) |
@@ -130,7 +131,7 @@ never a concrete app).
 
 | Target | Does |
 |---|---|
-| `make build` | compile `./juice-ui` and `./juice-chat` (version stamped from `git describe`) |
+| `make build` | compile `./juice-ui`, `./juice-chat` and `./juice-supervisor` (version stamped from `git describe`) |
 | `make run` | build and run with local dev defaults |
 | `make install` | install the binary to `$(PREFIX)/bin` (`PREFIX ?= $JUICE_HOME`, default `~/.juice`) |
 | `make test` | `go test ./...` |

@@ -1,7 +1,22 @@
 # Juice Web UI Requirements
 
-Version: 0.47.0
+Version: 0.48.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.48.0.** The UI started the kernel, the agents and chat in
+> three different ways, left them running when it stopped, and never restarted one
+> that died. One process supervisor now runs them all. A program is one file in
+> `$JUICE_HOME/supervisor/programs/`, and an operator adds a program by writing one.
+> The supervisor starts each program as its child, restarts it when it dies, and
+> stops it when asked. Stopping the UI stops the kernel, the agents and chat, and
+> starting it starts them. An agent a person stopped stays stopped; every other
+> agent starts with the UI. A copy of a program started elsewhere is stopped and
+> replaced. On a machine with no UI, `juice-supervisor` runs the same programs from
+> the command line. One installation has one supervisor, so two UIs need two
+> installations. Logs are in `supervisor/log/`, at most 20 MiB per program. If the UI
+> crashes its programs go down with it, at their next line of output or at the next
+> start. Stopping the UI while an agent is answering takes up to 30 seconds, and the
+> agent answers after the next start, calling its model again.
 
 > **What changed in 0.47.0.** In 0.46.0 chat ran inside the UI's process, the UI
 > registered chat's actions and held its account, and the UI read rooms by calling
@@ -883,10 +898,16 @@ kernel answers `/health`, when the application takes the listener:
   while a phrase is pending and with its "I understand" box. The screen is headed Juice installation; the world and the
   kernel name each state their one consequence, and the superuser's name,
   `sys`, stands read-only above its password;
-* otherwise → **start** `juice kernel serve <world>`, detached so the kernel
-  outlives the UI; the kernel's own lock makes this safe beside an operator's
-  start. A home whose kernel does not start is reported with the kernel's own
-  words and never created again, and a directory holding `juice.db` whose
+* otherwise → **start**: the kernel is declared to the process supervisor once,
+  as the program `kernel-<world>`, which runs `juice kernel serve <world>`. The
+  first boot's kernel carries two secrets, so it is not a program: it ends before
+  the first boot returns, within the same 30 seconds and SIGKILL as any program,
+  and the supervisor then starts the kernel without them. The gate examines the
+  installation only while no first boot runs. A kernel answers for the gate only
+  once it is the supervisor's child; a program the operator disabled is theirs, and
+  is waited for. A kernel with no usable binary here that answers is followed and
+  not declared. A home whose kernel does not start is reported with the kernel's
+  own words and never created again, and a directory holding `juice.db` whose
   `config.json` is missing or unreadable is reported as such.
 
 The first boot is a local act: the form, its post and the phrase page are
@@ -924,6 +945,42 @@ is mandatory only once its prerequisite is confirmed. Where a reference is
 unavoidable it names the target as well as its number, so a stale number remains
 detectable.
 
+**The process supervisor.** Package `supervisor` runs the installation's programs:
+the kernel, the agents, chat and anything an operator adds. The UI embeds it and
+owns one, opened at start and closed at exit; `juice-supervisor` is the same package
+for a machine with no UI. It imports only the standard library and knows nothing of
+Juice. The UI proper starts and signals no process, and the owners (`kernel`,
+`apps/agents`, `apps/chat`) declare their programs and keep what is specific to
+them. A test holds this.
+
+* A program runs in the foreground and ends on SIGTERM. Nothing else is asked of it.
+* A program is one file, `$JUICE_HOME/supervisor/programs/<name>.json`, with `command`
+  required and `env`, `dir`, `restart` (`always`, the default, or `no`), `disabled`,
+  `stop_seconds` (30) and `lock` optional. Its schema is
+  `schemas/juice-supervisor.schema.json`. A key the schema does not know refuses that
+  program, which is reported; the others run. An owner writes a file once, when it is
+  absent; after that it is the operator's, and Start and Stop change only `disabled`.
+  A bare command is looked up in `bin/`, then `PATH`.
+* Each program is a child in its own process group, and its output is written to
+  `supervisor/log/<name>.log` through a pipe, rotated at 10 MiB with one old file kept.
+* A program that ends by itself is started again after 1 s, doubling to 60 s, back to
+  1 s after a run of 60 s, indefinitely. An unchanged declaration does not disturb the
+  delay; Start and Restart try at once.
+* Stop is SIGTERM to the group, then SIGKILL to whatever remains of it after
+  `stop_seconds`; a program counts as ended only when its group has. It writes `disabled`,
+  so the program stays stopped across starts of the UI, until Start clears it. Closing
+  stops every program at once, waits, and writes nothing.
+* One supervisor per installation, by an exclusive lock on `supervisor/supervisor.lock`;
+  a second is refused, naming the first.
+* A supervisor that was killed leaves its programs running. The next one stops them
+  before it starts anything, whether their files say enabled, disabled or nothing,
+  from `supervisor/run/<name>`, which holds the child's id and start time. This is
+  best effort: a start time has whole seconds, and the check and the signal are two
+  steps. With no way to read a start time, nothing is signalled. A program may name
+  its own `lock`: a process holding it is stopped by the id in it (ecosystem-standard
+  §4) at open, before each start and when the program is disabled. That is how the
+  detached programs of 0.47.0 are taken over.
+
 ## 2. Implementation constraints
 
 * Use Go. `go build ./...` and `go test ./...` MUST pass without external network
@@ -941,6 +998,7 @@ detectable.
   server/         router, middleware, request handlers, rendering
   apps/           self-contained app modules behind one seam (e.g. apps/chat)
   services/chat/  the chat service, imported only by cmd/juice-chat, its program
+  supervisor/     the process supervisor; standard library only, Juice unknown to it
   templates/      HTML templates (not Go; no test file required)
   static/         CSS and client scripts (not Go; no test file required)
   ```
@@ -1261,13 +1319,16 @@ and absent until then.
   schema exists: a save replaces the file whole, by rename, which the daemon
   reads at its next start, and a running agent's flash says so; a save from a
   page older than the file is refused, since the daemon's start writes the
-  keys a file lacks (juice-agent 0.7.0 §11). It runs
-  `juice-agent serve <login>` detached, so the daemon outlives the UI as the
-  kernel does. An agent is running when a daemon holds `serve.lock` in its
-  home (juice-agent 0.6.0 §11, as a kernel holds its own, ecosystem-standard
-  §4), whoever started it, or when a child the UI just spawned has not yet
-  taken the lock; a lock whose state cannot be read is an error, never
-  "stopped". Stop signals the process named in the lock. The daemon's session
+  keys a file lacks (juice-agent 0.7.0 §11). Each agent is the program
+  `agent-<login>` of the process supervisor (§1), running `juice-agent serve
+  <login>`. The assistant is declared when it has a session and no program; any
+  other home with no program is declared once at start, running when it has a
+  session and otherwise stopped. An agent is running when a daemon holds
+  `serve.lock` in its home (juice-agent 0.6.0 §11, as a kernel holds its own,
+  ecosystem-standard §4), whoever started it, or when the supervisor's child has
+  not yet taken the lock; a lock whose state cannot be read is an error, never
+  "stopped". Stop has the supervisor stop whoever serves it, and keeps it stopped
+  across restarts; Start undoes that and retries at once. The daemon's session
   is the login's own, made as `juice auth login <login>` would (§5): New agent
   creates the account when the kernel has none and the session, from the
   handle and a kernel password; Start is one click while the login has a
@@ -2342,11 +2403,11 @@ actions exactly chat's; LOGIN's whole namespace is chat's.
 
 **What the UI does.** At each start, in the background with the service account's
 backoff, it makes `chat@<kernel>` with the password in its app state, writes that
-session to the client records as `juice auth login` would, stops the server holding
-`services/chat/serve.lock`, starts `juice-chat serve` detached with its output in
-`ui/chat.log`, runs `juice-chat register chat@<kernel>`, and joins the local agents.
-The server outlives the UI, as the kernel and the agents do. The binary is
-`JUICE_CHAT_BIN`, else `$JUICE_HOME/bin/juice-chat`, else `PATH`. Everything else is a
+session to the client records as `juice auth login` would, declares the program `chat`
+to the process supervisor (§1), which runs `juice-chat serve`, waits until it holds
+`services/chat/serve.lock`, runs `juice-chat register chat@<kernel>`, and joins the
+local agents. The binary is `JUICE_CHAT_BIN`, else `$JUICE_HOME/bin/juice-chat`, else
+`PATH`. Everything else is a
 run of an action as the viewer: the UI dials no chat address and knows no store.
 
 **When a page runs a read.** A run writes a transaction, so a read is run on a
@@ -2755,6 +2816,16 @@ Every production `.go` file has a `_test.go` file with independent tests.
 `go test ./...` passes without network access; the kernel API is faked as an
 `httptest.Server`, except in one test. Required coverage:
 
+* the process supervisor (`supervisor`), with real short-lived processes: output and
+  its bound while a program runs, restart and its growing delay, an unchanged
+  declaration leaving the delay alone, SIGTERM then SIGKILL to the group, Start and
+  Stop keeping the file, one supervisor per installation, the leftovers of a supervisor
+  killed with SIGKILL including a disabled and a deleted program, a record of another
+  process signalling nothing, a program's own lock, a refused file, reload; process
+  control appearing nowhere else;
+* the first boot: its child has ended when it returns and when the UI shuts down, one
+  ignoring SIGTERM is killed, and a round of the gate during it neither declares the
+  kernel nor reports it serving;
 * the kernel contract (`client/contract_test.go`): the installed kernel binary,
   on throwaway loopback kernels — two federated play kernels and one on a local
   anvil chain with juice-rail's mocks — is driven into the states that fill

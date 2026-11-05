@@ -39,7 +39,8 @@ Every key is optional:
   another kernel.
 
   One UI process serves one kernel, as one `juice kernel serve` process serves
-  one kernel home. To offer two, run two.
+  one kernel home. To offer two, run two, each with its own `$JUICE_HOME`: one
+  installation has one process supervisor, and a second UI on it is refused.
 
   The UI reads only the `kernels` half of that file. It never reads or writes
   `client/credentials/`: it authenticates browser people and holds each one's

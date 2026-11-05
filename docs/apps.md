@@ -21,8 +21,9 @@ Two properties, on two different axes:
   juice-ui binary, is started by the seam's `Start()`/stopped by `Stop()`, and dies
   when the UI is torn down. A capability the network should reach is not the app's
   to serve: it is a service, a program of its own that the kernel wraps as actions,
-  which the app starts and stops and otherwise reaches only by running those actions
-  through the kernel (chat, `services/chat`).
+  which the app declares to the process supervisor (`Deps.Programs`, package
+  `supervisor`) and otherwise reaches only by running those actions through the kernel
+  (chat, `services/chat`). An app starts and signals no process itself.
 
 > The **visual grammar stays central**, deliberately. An app owns its Go,
 > templates, and routes — but its components register in the one place
@@ -241,8 +242,8 @@ Chat is the worked example — a real **application on top of Juice** — with
   browser routes and the heartbeat watcher, all of it a client of the actions.
 - **Self-provisions.** On `Start` it loads, or generates and persists, the
   `chat@<kernel>` password. Once signed in through `apps.ServiceAccount` it records
-  that session in the client records, restarts the server, runs `juice-chat register`,
-  and joins the local agents. The program keeps its own secret in its own home.
+  that session in the client records, declares the program `chat` to the supervisor,
+  runs `juice-chat register`, and joins the local agents. The program keeps its own secret in its own home.
 - **Identity at the door.** `msg/post`, the room commands and the room reads are
   `delegated_bearer` on `X-Juice-Caller-Key`; the store resolves the injected key to
   the member. `validate` and `reply` are the onwards of tasks and carry chat's bearer,

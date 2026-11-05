@@ -88,8 +88,8 @@ cheap, and both surprised us on the first app:
   graph. See `juicedocs/API.md` §"Composition from a `kind=http` action".
 
 - **Every operation is an action, reads included, and the UI talks only to the
-  kernel.** An app is an HTTP server Juice wraps, a program of its own that the UI may
-  start and stop as it does the kernel and the agents. Everything the app can do is an
+  kernel.** An app is an HTTP server Juice wraps, a program of its own that the UI's
+  process supervisor runs, as it runs the kernel and the agents. Everything the app can do is an
   action it owns, and the UI's control is a run of it, so a person, an agent and a
   member on another kernel take one path and the kernel attests, prices and receipts
   the call. A UI that calls the app's server or writes its store has given the person

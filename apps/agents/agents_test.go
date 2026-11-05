@@ -3,14 +3,15 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/session"
+	"github.com/daios-ai/juice-ui/supervisor"
 )
 
 // capture records what a handler asked the core to render or flash, so tests
@@ -56,12 +58,13 @@ func (c *capture) ToForm(w http.ResponseWriter, r *http.Request, file []byte) {
 	c.switchd = "form:" + string(file)
 }
 
-func testApp(t *testing.T) (*Agents, *fakeLauncher, *capture) {
+func testApp(t *testing.T) (*Agents, *fakePrograms, *capture) {
 	t.Helper()
-	fl := &fakeLauncher{}
-	a := &Agents{root: t.TempDir(), logs: t.TempDir(), client: t.TempDir(), schema: filepath.Join(t.TempDir(), schemaFile), sup: newSupervisor(fl)}
+	fl := &fakePrograms{logs: t.TempDir()}
+	a := &Agents{root: t.TempDir(), client: t.TempDir(), schema: filepath.Join(t.TempDir(), schemaFile)}
 	cap := &capture{}
 	a.deps = apps.Deps{
+		Programs: fl,
 		ConfigEditor: func(schema json.RawMessage, hidden ...string) apps.ConfigEditor {
 			cap.schema, cap.hidden = string(schema), hidden
 			return cap
@@ -181,15 +184,11 @@ func TestListSorted(t *testing.T) {
 func TestRemove(t *testing.T) {
 	a, _, _ := testApp(t)
 	_ = a.create("x")
-	_ = os.WriteFile(a.logPath("x"), []byte("error: x\n"), 0o600)
 	if err := a.remove("x"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(a.root, "x@testnet")); !os.IsNotExist(err) {
 		t.Fatal("home not removed")
-	}
-	if _, err := os.Stat(a.logPath("x")); !os.IsNotExist(err) {
-		t.Fatal("the run log goes with the agent")
 	}
 }
 
@@ -354,8 +353,8 @@ func TestPostStartWithPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal("the session must be written before the spawn")
 	}
-	fl.procs[0].drain = true
-	_ = a.sup.stop("research", 0)
+	fl.drain = true
+	_ = fl.Stop(programName("research@testnet"))
 	post("password=pw")
 	if len(fl.started) != 1 {
 		t.Fatalf("a draining daemon is alive: no second spawn, started=%d", len(fl.started))
@@ -526,11 +525,16 @@ func TestPostStartRunsTheLogin(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || cap.flashMsg != "" || len(fl.started) != 1 {
 		t.Fatalf("start: code=%d flash=%q started=%d", rec.Code, cap.flashMsg, len(fl.started))
 	}
-	if got := fl.started[0]; got != (startRec{"research@testnet", a.logPath("research")}) {
-		t.Fatalf("launcher got %+v", got)
+	p := fl.progs["agent-research@testnet"]
+	if got := strings.Join(p.Command, " "); got != "juice-agent serve research@testnet" {
+		t.Fatalf("command = %s", got)
 	}
-	if !a.sup.alive("research") {
-		t.Fatal("want running after start, tracked by handle")
+	dir, _ := a.agentDir("research")
+	if p.Env["JUICE_HOME"] != filepath.Dir(a.root) || len(p.Env) != 1 || p.Lock != filepath.Join(dir, "serve.lock") || p.Disabled {
+		t.Fatalf("program = %+v", p)
+	}
+	if !fl.running("research@testnet") {
+		t.Fatal("want running after start")
 	}
 }
 
@@ -580,16 +584,16 @@ func TestStatusShapeIsShared(t *testing.T) {
 		t.Errorf("detail LastLine = %q", dv.LastLine)
 	}
 	// A running agent states no exit.
-	_ = a.sup.start("research", "research@testnet", a.logPath("research"))
+	_ = a.start("research")
 	if st, _ := a.status(req, "research"); !st.Running || st.LastLine != "" {
 		t.Errorf("running status = %+v", st)
 	}
 }
 
 func TestPostStopAndStatusFragment(t *testing.T) {
-	a, _, cap := testApp(t)
+	a, fl, cap := testApp(t)
 	_ = a.create("research")
-	_ = a.sup.start("research", "research@testnet", "")
+	_ = a.start("research")
 
 	// The heartbeat reports running.
 	req := httptest.NewRequest(http.MethodGet, "/tick", nil)
@@ -605,8 +609,11 @@ func TestPostStopAndStatusFragment(t *testing.T) {
 	req = postForm("/agents/research/stop", "")
 	req.SetPathValue("handle", "research")
 	a.postStop(httptest.NewRecorder(), req)
-	if a.sup.alive("research") {
+	if fl.running("research@testnet") {
 		t.Fatal("want not running after stop")
+	}
+	if !fl.progs["agent-research@testnet"].Disabled {
+		t.Fatal("a stopped agent stays stopped")
 	}
 }
 
@@ -618,21 +625,25 @@ func TestPostDeleteRequiresStopped(t *testing.T) {
 	a.client = t.TempDir()
 	_ = a.create("research")
 	_ = client.WriteCredential(a.credPath("research"), client.Tokens{}, "P1")
-	_ = a.sup.start("research", "research@testnet", "")
-	fl.procs[0].drain = true
-	_ = a.sup.stop("research", 0)
+	_ = a.start("research")
+	fl.drain = true
+	_ = fl.Stop(programName("research@testnet"))
 	req := postForm("/agents/research/delete", "")
 	req.SetPathValue("handle", "research")
 	a.postDelete(httptest.NewRecorder(), req)
 	if cap.flashKind != "error" || !a.exists("research") {
 		t.Fatalf("delete while alive: %q %q", cap.flashKind, cap.flashMsg)
 	}
-	fl.procs[0].kill()
+	fl.up["agent-research@testnet"] = false
+	_ = os.WriteFile(a.logPath("research"), []byte("error: x\n"), 0o600)
 	a.postDelete(httptest.NewRecorder(), req)
 	if cap.flashKind != "success" {
 		t.Fatalf("delete flash = %q %q", cap.flashKind, cap.flashMsg)
 	}
-	for _, p := range []string{filepath.Join(a.root, "research@testnet"), a.credPath("research")} {
+	if _, ok := fl.progs["agent-research@testnet"]; ok {
+		t.Error("the program goes with the agent")
+	}
+	for _, p := range []string{filepath.Join(a.root, "research@testnet"), a.credPath("research"), a.logPath("research")} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("%s not removed on delete", p)
 		}
@@ -782,26 +793,21 @@ func TestAgentAccountIsOneReadByAddress(t *testing.T) {
 	}
 }
 
-// Running is the daemon's own word, its lock in the home, whoever started it:
-// a locked home is running with no child of ours, Start spawns nothing, Delete
-// is refused, and Stop signals the process the lock names. A lock nobody holds
-// is a stale number; a lock that cannot be read is an error, never "stopped".
+// Running is the daemon's own word, its lock in the home, whoever started it: a
+// locked home is running with no child of the supervisor's, Start starts nothing,
+// Delete is refused, and Stop goes to the supervisor, which stops the holder. A
+// lock nobody holds is a stale number; a lock that cannot be read is an error,
+// never "stopped".
 func TestRunningByTheLock(t *testing.T) {
 	a, fl, cap := testApp(t)
 	_ = a.create("research")
 	dir, _ := a.agentDir("research")
 	lock := filepath.Join(dir, "serve.lock")
-	sleep := exec.Command("sleep", "30")
-	if err := sleep.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = sleep.Process.Kill(); _ = sleep.Wait() }()
 	f, err := os.OpenFile(lock, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%d\n", sleep.Process.Pid)
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
@@ -815,33 +821,22 @@ func TestRunningByTheLock(t *testing.T) {
 	}
 	post("/agents/research/start", a.postStart)
 	if len(fl.started) != 0 || cap.err != nil {
-		t.Fatalf("Start on a served agent spawns nothing: started=%d %v", len(fl.started), cap.err)
+		t.Fatalf("Start on a served agent starts nothing: started=%d %v", len(fl.started), cap.err)
 	}
 	post("/agents/research/delete", a.postDelete)
 	if cap.flashKind != "error" || !a.exists("research") {
 		t.Fatalf("Delete on a served agent is refused: %q", cap.flashKind)
 	}
 	post("/agents/research/stop", a.postStop)
-	if cap.err != nil {
-		t.Fatalf("Stop: %v", cap.err)
-	}
-	if err := sleep.Wait(); err == nil || !strings.Contains(err.Error(), "terminated") {
-		t.Fatalf("the process in the lock must get SIGTERM, got %v", err)
+	if cap.err != nil || !fl.progs["agent-research@testnet"].Disabled || fl.stops != 1 {
+		t.Fatalf("Stop declares the agent, disabled, and stops it: %v %+v %d", cap.err, fl.progs, fl.stops)
 	}
 	// Released: the number is stale, nobody serves.
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	if running, err := a.running("research"); err != nil || running {
 		t.Fatalf("a free lock is stopped: %v %v", running, err)
 	}
-	// A held lock naming no process is an error on Stop, not a stop.
-	_ = f.Truncate(0)
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-	post("/agents/research/stop", a.postStop)
-	if cap.err == nil || !strings.Contains(cap.err.Error(), "names no process") {
-		t.Fatalf("want an error for a blank pid, got %v", cap.err)
-	}
 	// An unreadable lock is an error, in the list and in the fragment.
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	_ = os.Chmod(lock, 0)
 	cap.err = nil
 	a.getIndex(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/agents", nil))
@@ -869,34 +864,195 @@ func TestStartAsksForThePasswordWithoutASession(t *testing.T) {
 	}
 }
 
-// The daemon is found where the installer puts the family's programs,
-// $JUICE_HOME/bin, before PATH; the explicit override still wins.
-func TestAgentBinResolvesTheInstallationBinFirst(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv(binEnv, "")
-	t.Setenv("PATH", t.TempDir())
-	if got := agentBin(home); got != "" {
-		t.Fatalf("nothing installed, got %q", got)
-	}
-	bin := filepath.Join(home, "bin", "juice-agent")
-	if err := os.MkdirAll(filepath.Dir(bin), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := agentBin(home); got != bin {
-		t.Errorf("agentBin = %q, want the installation's %q", got, bin)
-	}
+// The supervisor finds a bare name in the installation's bin/, then PATH; the
+// explicit override is written into the program.
+func TestTheBinaryOverrideIsTheProgramsCommand(t *testing.T) {
+	a, fl, _ := testApp(t)
+	_ = a.create("research")
 	t.Setenv(binEnv, "/opt/juice-agent")
-	if got := agentBin(home); got != "/opt/juice-agent" {
-		t.Errorf("the override must win, got %q", got)
+	if err := a.start("research"); err != nil {
+		t.Fatal(err)
 	}
+	if got := fl.progs["agent-research@testnet"].Command[0]; got != "/opt/juice-agent" {
+		t.Errorf("command = %s", got)
+	}
+}
+
+// Why a program could not be started is what the page says.
+func TestTheSupervisorsErrorIsTheLastLine(t *testing.T) {
+	a, fl, _ := testApp(t)
+	_ = a.create("research")
+	_ = a.start("research")
+	fl.up["agent-research@testnet"] = false
+	fl.errs = "exec: \"juice-agent\": executable file not found"
+	st, _ := a.status(httptest.NewRequest(http.MethodGet, "/agents/research", nil), "research")
+	if st.LastLine != fl.errs {
+		t.Errorf("last line = %q", st.LastLine)
+	}
+}
+
+// adopt carries over an installation made before the supervisor: every home of
+// this kernel gets a program, one with a session running and one without stopped,
+// and a program the agent already has is left as it says.
+func TestAdoptDeclaresTheExistingAgents(t *testing.T) {
+	a, fl, _ := testApp(t)
+	_ = a.create("withsession")
+	_ = a.create("nosession")
+	_ = a.create("stopped")
+	_ = os.MkdirAll(filepath.Join(a.root, "other@elsewhere"), 0o700)
+	_ = client.WriteCredential(a.credPath("withsession"), client.Tokens{}, "P1")
+	_ = client.WriteCredential(a.credPath("stopped"), client.Tokens{}, "P2")
+	if _, err := a.declare("stopped", false); err != nil {
+		t.Fatal(err)
+	}
+	a.adopt()
+	if p, ok := fl.progs["agent-withsession@testnet"]; !ok || p.Disabled {
+		t.Errorf("with a session it runs: %+v", p)
+	}
+	if p, ok := fl.progs["agent-nosession@testnet"]; !ok || !p.Disabled {
+		t.Errorf("without one it is stopped: %+v", p)
+	}
+	if !fl.progs["agent-stopped@testnet"].Disabled {
+		t.Error("a program the agent has says whether it runs")
+	}
+	if len(fl.progs) != 3 {
+		t.Errorf("another kernel's agent is not this UI's: %+v", fl.progs)
+	}
+}
+
+// hold takes the home's lock and keeps it until closed: a second hold, and the
+// probe, see it held; a daemon's lock refuses hold with errHeld; a home with no
+// lock file yet is free. (Delete holds it through the removal.)
+func TestHoldTakesTheLockUntilClosed(t *testing.T) {
+	home := t.TempDir()
+	lock := filepath.Join(home, "serve.lock")
+	f, err := hold(home)
+	if err != nil {
+		t.Fatalf("a home with no lock file is free: %v", err)
+	}
+	if _, err := hold(home); !errors.Is(err, errHeld) {
+		t.Fatalf("second hold = %v, want errHeld", err)
+	}
+	if h, err := supervisor.Held(lock); err != nil || !h {
+		t.Fatalf("held = %v %v", h, err)
+	}
+	_ = f.Close()
+	if h, err := supervisor.Held(lock); err != nil || h {
+		t.Fatalf("after close held = %v %v", h, err)
+	}
+	if _, err := hold(filepath.Join(home, "absent")); err == nil || errors.Is(err, errHeld) {
+		t.Fatalf("a missing home is an error, not held: %v", err)
+	}
+}
+
+// Only the daemon's own `error:` line reads as an exit reason.
+func TestExitError(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "a.log")
+	if got := exitError(log); got != "" {
+		t.Fatalf("no log states no reason, got %q", got)
+	}
+	_ = os.WriteFile(log, []byte("{\"event\":\"login\"}\nerror: no session for a@k\n"), 0o600)
+	if got := exitError(log); got != "error: no session for a@k" {
+		t.Fatalf("exitError = %q", got)
+	}
+	_ = os.WriteFile(log, []byte("error: old\n{\"event\":\"stopped\"}\n"), 0o600)
+	if got := exitError(log); got != "" {
+		t.Fatalf("a later run replaces the old refusal, got %q", got)
+	}
+}
+
+// startRec is one start the fake supervisor saw.
+type startRec struct{ login string }
+
+// fakePrograms stands in for the supervisor.
+type fakePrograms struct {
+	mu      sync.Mutex
+	logs    string
+	progs   map[string]supervisor.Program
+	up      map[string]bool
+	started []startRec
+	stops   int
+	drain   bool // a daemon that keeps running after SIGTERM to finish its tasks
+	errs    string
+}
+
+func (f *fakePrograms) begin(name string) {
+	if f.up == nil {
+		f.up = map[string]bool{}
+	}
+	if !f.up[name] {
+		f.up[name] = true
+		f.started = append(f.started, startRec{f.progs[name].Command[2]})
+	}
+}
+
+func (f *fakePrograms) Set(name string, p supervisor.Program) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.progs == nil {
+		f.progs = map[string]supervisor.Program{}
+	}
+	f.progs[name] = p
+	if !p.Disabled {
+		f.begin(name)
+	}
+	return nil
+}
+
+func (f *fakePrograms) Remove(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.progs, name)
+	delete(f.up, name)
+	_ = os.Remove(filepath.Join(f.logs, name+".log"))
+	return nil
+}
+
+func (f *fakePrograms) Start(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := f.progs[name]
+	p.Disabled = false
+	f.progs[name] = p
+	f.begin(name)
+	return nil
+}
+
+func (f *fakePrograms) Stop(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := f.progs[name]
+	p.Disabled = true
+	f.progs[name] = p
+	f.stops++
+	if f.up == nil {
+		f.up = map[string]bool{}
+	}
+	f.up[name] = f.drain
+	return nil
+}
+
+func (f *fakePrograms) Status(name string) (supervisor.Status, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.progs[name]
+	return supervisor.Status{Running: f.up[name], Log: filepath.Join(f.logs, name+".log"), Err: f.errs}, ok
+}
+
+func (f *fakePrograms) running(login string) bool {
+	st, _ := f.Status(programName(login))
+	return st.Running
+}
+
+// logPath is where handle's program writes.
+func (a *Agents) logPath(handle string) string {
+	st, _ := a.deps.Programs.Status(programName(a.deps.Address(handle)))
+	return st.Log
 }
 
 // assistantApp is kernelApp with the app's state kept in memory, seeded with
 // state; saves counts the writes.
-func assistantApp(t *testing.T, state string) (*Agents, *fakeKernel, *fakeLauncher, *int) {
+func assistantApp(t *testing.T, state string) (*Agents, *fakeKernel, *fakePrograms, *int) {
 	t.Helper()
 	a, k, fl, _ := kernelApp(t)
 	k.me = "assistant@testnet"
@@ -963,7 +1119,8 @@ func TestEnsureAssistantAdoptsOnlyItsOwnAccount(t *testing.T) {
 	}
 }
 
-// A stopped assistant holding a session is started; one without is left.
+// An assistant with no program, holding a session, is started; one without a
+// session is left; one a person stopped stays stopped.
 func TestEnsureAssistantStartsAStoppedOne(t *testing.T) {
 	a, _, fl, _ := assistantApp(t, `{"assistant_password":"pw"}`)
 	if err := a.create("assistant"); err != nil {
@@ -978,6 +1135,11 @@ func TestEnsureAssistantStartsAStoppedOne(t *testing.T) {
 	}
 	a.ensureAssistant(context.Background())
 	if len(fl.started) != 1 {
-		t.Fatal("a stopped assistant with a session is started")
+		t.Fatal("an assistant with a session is started")
+	}
+	_ = fl.Stop(programName("assistant@testnet"))
+	a.ensureAssistant(context.Background())
+	if fl.running("assistant@testnet") || len(fl.started) != 1 {
+		t.Fatal("a stopped assistant stays stopped")
 	}
 }

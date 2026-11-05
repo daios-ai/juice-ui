@@ -12,16 +12,18 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/daios-ai/juice-ui/supervisor"
 )
 
 func inst(t *testing.T, rawURL string) *Installation {
@@ -204,13 +206,13 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 	var up atomic.Bool
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
-	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		if !slices.Contains(env, "JUICE_BOOTSTRAP_PASSWORD=secret123") || !slices.Contains(env, "JUICE_BOOTSTRAP_RECOVERY_KEY=PUBKEY") {
 			t.Errorf("the child's environment carries both: %v", env)
 		}
 		fmt.Fprintln(stderr, "server.ready")
 		go func() { time.Sleep(300 * time.Millisecond); up.Store(true) }()
-		return make(chan struct{}), nil
+		return endsWith(ctx), nil
 	}
 	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
 		t.Fatal(err)
@@ -234,18 +236,18 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 	if !strings.Contains(string(log), "server.ready") || strings.Contains(string(log), "secret123") || strings.Contains(string(log), "PUBKEY") {
 		t.Errorf("the boot's output goes to kernel.log, without the credentials: %s", log)
 	}
-	// The real launcher hands the script both variables; a start, neither.
+	// The real launcher hands the script both variables.
 	i.launch = nil
+	up.Store(false)
+	bootLog := filepath.Join(i.Home, "ui", "kernel.log")
+	answerOnce(&up, bootLog, "boot ")
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, `echo "server.ready" >&2; exit 0`, `exec sleep 60`, 1)), 0o755)
 	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
 		t.Fatal(err)
 	}
-	if err := i.serveAnswering("play"); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(200 * time.Millisecond)
 	log, _ = os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
-	if !strings.Contains(string(log), "boot "+i.Home+" pw key") || !strings.Contains(string(log), "boot "+i.Home+"  \n") {
-		t.Errorf("a first boot gets both variables and a start neither: %s", log)
+	if !strings.Contains(string(log), "boot "+i.Home+" pw key") {
+		t.Errorf("a first boot gets both variables: %s", log)
 	}
 	if w, _, _ := i.home(); w != "play" {
 		t.Error("the created home is this installation's kernel")
@@ -264,7 +266,7 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
 	cfg := filepath.Join(i.Home, "kernels", "play", "config.json")
-	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		fmt.Fprintln(stderr, "error: JUICE_BOOTSTRAP_PASSWORD: password must be at least 8 characters")
 		done := make(chan struct{})
 		close(done)
@@ -276,15 +278,15 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 	if !exists(cfg) {
 		t.Error("a declined boot leaves its home for the retry")
 	}
-	i.launch = func(string, []string, []string, *os.File, *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, _ string, _, _ []string, _ *os.File) (<-chan struct{}, error) {
 		return nil, fmt.Errorf("exec: not permitted")
 	}
 	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err == nil || !exists(cfg) {
 		t.Fatalf("a child that never starts is an error and deletes nothing: %v", err)
 	}
-	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		up.Store(true)
-		return make(chan struct{}), nil
+		return endsWith(ctx), nil
 	}
 	if err := i.Create("play", "beta", "secret123", "PUBKEY"); err != nil {
 		t.Fatal(err)
@@ -301,7 +303,7 @@ func TestCreateSucceedsOnceTheKernelExists(t *testing.T) {
 	var up atomic.Bool
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
-	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		os.WriteFile(filepath.Join(i.Home, "kernels", "play", "juice.db"), []byte("db"), 0o644)
 		fmt.Fprintln(stderr, "error: federation transport: port in use")
 		done := make(chan struct{})
@@ -324,9 +326,9 @@ func TestCreateNeverTouchesAKernel(t *testing.T) {
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
 	installFake(t, i)
 	launched := false
-	i.launch = func(string, []string, []string, *os.File, *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, _ string, _, _ []string, _ *os.File) (<-chan struct{}, error) {
 		launched = true
-		return make(chan struct{}), nil
+		return endsWith(ctx), nil
 	}
 	cfg := filepath.Join(i.Home, "kernels", "play", "config.json")
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
@@ -384,11 +386,11 @@ func TestFirstBootLockSerializes(t *testing.T) {
 	installFake(t, i)
 	release := make(chan struct{})
 	started := make(chan struct{})
-	i.launch = func(string, []string, []string, *os.File, *os.File) (<-chan struct{}, error) {
+	i.launch = func(ctx context.Context, _ string, _, _ []string, _ *os.File) (<-chan struct{}, error) {
 		close(started)
 		<-release
 		up.Store(true)
-		return make(chan struct{}), nil
+		return endsWith(ctx), nil
 	}
 	first := make(chan error)
 	go func() { first <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
@@ -476,13 +478,14 @@ func TestEnsureOrdersTheFacts(t *testing.T) {
 	}))
 	defer health.Close()
 	u, _ := url.Parse(health.URL)
-	local := &Installation{Home: t.TempDir(), URL: u, Releases: releases(t, tarball(t, fakeJuice), "").URL}
-	local.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
+	local := &Installation{Home: t.TempDir(), URL: u, Releases: releases(t, tarball(t, fakeJuice), "").URL,
+		Programs: &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { return supervisor.Status{Running: true} }}}
+	local.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		up = true
 		if strings.Join(args, " ") != "kernel serve play" {
 			t.Errorf("args = %v", args)
 		}
-		return make(chan struct{}), nil
+		return endsWith(ctx), nil
 	}
 	var seen []State
 	done := make(chan struct{})
@@ -508,29 +511,25 @@ func TestEnsureOrdersTheFacts(t *testing.T) {
 	}
 }
 
-// A booted home is started, never offered the first boot; a kernel whose
-// config.json is unreadable is a failure, never a first boot either.
-func TestEnsureClassifiesHomes(t *testing.T) {
+// A booted home is declared to the supervisor, with no secret, and never offered
+// the first boot; a kernel whose config.json is unreadable is a failure, never a
+// first boot either.
+func TestEnsureDeclaresABootedHome(t *testing.T) {
 	var up atomic.Bool
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
+	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
 	installFake(t, i)
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
-	var env []string
-	i.launch = func(bin string, args, e []string, stdout, stderr *os.File) (<-chan struct{}, error) {
-		env = e
-		up.Store(true)
-		return make(chan struct{}), nil
-	}
 	var seen []State
 	i.Ensure(context.Background(), func(s State, _ string) { seen = append(seen, s) })
-	if strings.Join(stateStrings(seen), ",") != "starting,serving" {
+	if seen[len(seen)-1] != Serving || slices.Contains(seen, NeedsCreate) {
 		t.Errorf("a booted home: %v", seen)
 	}
-	for _, e := range env {
-		if strings.HasPrefix(e, "JUICE_BOOTSTRAP_") {
-			t.Errorf("a start carries no bootstrap answer: %s", e)
-		}
+	got := p.set["kernel-play"]
+	if strings.Join(got.Command, " ") != "juice kernel serve play" || got.Env["JUICE_HOME"] != i.Home || len(got.Env) != 1 ||
+		got.Lock != filepath.Join(i.Home, "kernels", "play", "serve.lock") || got.Disabled {
+		t.Errorf("program = %+v", got)
 	}
 
 	up.Store(false)
@@ -545,35 +544,208 @@ func TestEnsureClassifiesHomes(t *testing.T) {
 	}
 }
 
-// Every round re-examines the facts: a kernel another program boots — a second
-// UI, a terminal — ends the wait for a first boot, and a home a server holds is
-// waited for, never served a second time.
-func TestEnsureFollowsAKernelStartedElsewhere(t *testing.T) {
+// The kernel is declared once however many rounds pass, so the gate never
+// disturbs the supervisor's restart delay; a kernel that keeps exiting is reported
+// with its last words, and one that recovers ends the loop.
+func TestEnsureDeclaresOnceAndReportsAFailingKernel(t *testing.T) {
 	var up atomic.Bool
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
+	log := filepath.Join(t.TempDir(), "kernel.log")
+	os.WriteFile(log, []byte("\x1b[92mINF\x1b[0m start\nerror: \x1b[1mport\x1b[0m in use\n"), 0o600)
+	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { return supervisor.Status{Exit: "exit status 1", Log: log} }}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
 	installFake(t, i)
-	launched := 0
-	i.launch = func(string, []string, []string, *os.File, *os.File) (<-chan struct{}, error) {
-		launched++
-		return make(chan struct{}), nil
+	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
+	booted(t, i, "play")
+	var details []string
+	rounds := 0
+	i.Ensure(context.Background(), func(s State, d string) {
+		if s == Failed {
+			details = append(details, d)
+		}
+		if rounds++; rounds == 2 {
+			p.mu.Lock()
+			p.status["kernel-play"] = supervisor.Status{Running: true}
+			p.mu.Unlock()
+			up.Store(true)
+		}
+	})
+	if p.sets != 1 {
+		t.Errorf("declared %d times", p.sets)
 	}
+	if len(details) == 0 || details[0] != "error: port in use" {
+		t.Errorf("last words: %v", details)
+	}
+}
+
+// A kernel that answers while its program is not yet running is the one about to
+// be replaced, so the loop waits; a program the operator disabled is theirs: the
+// kernel is waited for, and followed once it answers.
+func TestEnsureWaitsForTheSupervisorsKernel(t *testing.T) {
+	var up atomic.Bool
+	up.Store(true)
+	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { return supervisor.Status{} }}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
+	installFake(t, i)
+	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
+	booted(t, i, "play")
 	var seen []State
 	i.Ensure(context.Background(), func(s State, _ string) {
 		seen = append(seen, s)
-		if s != NeedsCreate || slices.Contains(seen[:len(seen)-1], NeedsCreate) {
-			return
+		if len(seen) == 1 {
+			p.mu.Lock()
+			p.status["kernel-play"] = supervisor.Status{Running: true}
+			p.mu.Unlock()
 		}
-		// Elsewhere: a first boot creates the kernel and holds its home.
-		writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
-		booted(t, i, "play")
-		lock := filepath.Join(i.Home, "kernels", "play", "serve.lock")
-		os.WriteFile(lock, []byte("1\n"), 0o600)
-		f, _ := os.Open(lock)
-		syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-		go func() { time.Sleep(1500 * time.Millisecond); up.Store(true); f.Close() }()
 	})
-	if seen[len(seen)-1] != Serving || launched != 0 {
-		t.Errorf("states %v, launched %d: the kernel started elsewhere is followed, never served again", seen, launched)
+	if strings.Join(stateStrings(seen), ",") != "starting,serving" {
+		t.Errorf("states = %v", seen)
+	}
+
+	up.Store(false)
+	p.status["kernel-play"] = supervisor.Status{Disabled: true}
+	seen = nil
+	i.Ensure(context.Background(), func(s State, _ string) {
+		seen = append(seen, s)
+		up.Store(true)
+	})
+	if strings.Join(stateStrings(seen), ",") != "waiting,serving" {
+		t.Errorf("a disabled program: %v", seen)
+	}
+}
+
+// A kernel that answers with no binary of this installation's to run it is
+// followed and not declared; so is one on another machine, or one that another
+// program boots while the first boot is awaited, until the home is booted.
+func TestEnsureFollowsAKernelWithNoBinaryHere(t *testing.T) {
+	var up atomic.Bool
+	up.Store(true)
+	p := &fakePrograms{}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
+	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
+	booted(t, i, "play")
+	var seen []State
+	i.Ensure(context.Background(), func(s State, _ string) { seen = append(seen, s) })
+	if strings.Join(stateStrings(seen), ",") != "serving" || p.sets != 0 {
+		t.Errorf("states %v, declared %d", seen, p.sets)
+	}
+}
+
+// A round of Ensure during a first boot neither declares the kernel, which would
+// stop the boot, nor reports Serving, though the database exists and /health
+// answers. When Create returns, the kernel is declared, and then it serves.
+func TestEnsureWaitsForAFirstBoot(t *testing.T) {
+	var up atomic.Bool
+	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
+	installFake(t, i)
+	inBoot, release := make(chan struct{}), make(chan struct{})
+	i.launch = func(ctx context.Context, bin string, args, env []string, _ *os.File) (<-chan struct{}, error) {
+		os.WriteFile(filepath.Join(i.Home, "kernels", "play", "juice.db"), []byte("db"), 0o644)
+		up.Store(true)
+		close(inBoot)
+		<-release
+		done := make(chan struct{})
+		go func() { <-ctx.Done(); up.Store(false); close(done) }() // the boot's kernel ends with Create
+		return done, nil
+	}
+	created := make(chan error, 1)
+	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
+	<-inBoot
+	reported := make(chan State, 16)
+	ended := make(chan struct{})
+	go func() {
+		i.Ensure(context.Background(), func(s State, _ string) { reported <- s })
+		close(ended)
+	}()
+	select {
+	case s := <-reported:
+		t.Fatalf("a round reported %s during the first boot", s)
+	case <-time.After(300 * time.Millisecond):
+	}
+	p.mu.Lock()
+	if p.sets != 0 {
+		t.Fatal("declared during the first boot")
+	}
+	p.mu.Unlock()
+	close(release)
+	if err := <-created; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Ensure did not reach Serving")
+	}
+	if p.sets != 1 {
+		t.Errorf("declared %d times", p.sets)
+	}
+	for _, e := range p.set["kernel-play"].Env {
+		if strings.Contains(e, "secret123") || strings.Contains(e, "PUBKEY") {
+			t.Errorf("a program carries no secret: %v", e)
+		}
+	}
+}
+
+// The first boot's child, a real process, has ended when Create returns.
+func TestCreateEndsItsChild(t *testing.T) {
+	var up atomic.Bool
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
+	installFake(t, i)
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	answerOnce(&up, pidFile, "")
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho $$ > "+pidFile+"\nexec sleep 60\n"), 0o755)
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(pidFile)
+	if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid == 0 || syscall.Kill(pid, 0) == nil {
+		t.Errorf("the first boot's kernel %q is still running", b)
+	}
+}
+
+// A first-boot kernel that ignores SIGTERM is killed after the same bound as any
+// program, so it can hang neither Create nor shutdown.
+func TestCreateKillsAChildThatDoesNotEnd(t *testing.T) {
+	stopTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { stopTimeout = 30 * time.Second })
+	var up atomic.Bool
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
+	installFake(t, i)
+	mark := filepath.Join(t.TempDir(), "mark")
+	answerOnce(&up, mark, "")
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\ntrap '' TERM\necho up > "+mark+"\nwhile :; do sleep 0.05; done\n"), 0o755)
+	began := time.Now()
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(began); took > 5*time.Second {
+		t.Errorf("took %v", took)
+	}
+}
+
+// Shutdown ends a first boot in flight: Create returns and WaitBoot follows.
+func TestShutdownEndsAFirstBoot(t *testing.T) {
+	var up atomic.Bool
+	ctx, shutdown := context.WithCancel(context.Background())
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Ctx: ctx}
+	installFake(t, i)
+	started := make(chan struct{})
+	i.launch = func(ctx context.Context, bin string, args, env []string, _ *os.File) (<-chan struct{}, error) {
+		close(started)
+		return endsWith(ctx), nil
+	}
+	created := make(chan error, 1)
+	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
+	<-started
+	shutdown()
+	i.WaitBoot()
+	select {
+	case err := <-created:
+		if err == nil {
+			t.Error("a boot ended before it made the kernel is an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Create did not return")
 	}
 }
 
@@ -585,44 +757,10 @@ func stateStrings(s []State) []string {
 	return out
 }
 
-// running stands in for a serving kernel: a child whose id is in serve.lock,
-// the lock held for it until it exits, and /health up meanwhile.
-func running(t *testing.T, i *Installation, up *atomic.Bool, pid string) (child *exec.Cmd, exited <-chan struct{}) {
-	t.Helper()
-	lock := filepath.Join(i.Home, "kernels", "play", "serve.lock")
-	child = exec.Command("sleep", "60")
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { child.Process.Kill() })
-	if pid == "" {
-		pid = strconv.Itoa(child.Process.Pid)
-	}
-	os.WriteFile(lock, []byte(pid+"\n"), 0o644)
-	f, _ := os.Open(lock)
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatal(err)
-	}
-	up.Store(true)
-	done := make(chan struct{})
-	go func() { child.Wait(); up.Store(false); f.Close(); close(done) }()
-	return child, done
-}
-
-// closed reports whether c closes within a second.
-func closed(c <-chan struct{}) bool {
-	select {
-	case <-c:
-		return true
-	case <-time.After(time.Second):
-		return false
-	}
-}
-
-// Reconfigure is the operator's edit-and-restart: the kernel named in
-// serve.lock is stopped, the file written, the kernel served again. A file the
-// kernel refuses is replaced by the old one, which is served; a stale version
-// and a lock naming no process change nothing.
+// Reconfigure is the operator's edit-and-restart: the file is written and the
+// supervisor restarts the kernel. A file the kernel refuses is replaced by the old
+// one, which is served; a stale version changes nothing; a kernel the supervisor
+// cannot start is rolled back too.
 func TestReconfigureRestartsAndRollsBack(t *testing.T) {
 	var up atomic.Bool
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up)}
@@ -630,31 +768,36 @@ func TestReconfigureRestartsAndRollsBack(t *testing.T) {
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
 	file := filepath.Join(i.Home, "kernels", "play", "config.json")
-	i.launch = func(bin string, args, env []string, stdout, stderr *os.File) (<-chan struct{}, error) {
-		done := make(chan struct{})
-		if cfg, _ := os.ReadFile(file); strings.Contains(string(cfg), "bad") {
-			fmt.Fprintln(stderr, "\x1b[92mINF\x1b[0m server.shutdown\nerror: \x1b[1mbad\x1b[0m is not a setting")
-			close(done)
-		} else {
-			up.Store(true)
+	log := filepath.Join(t.TempDir(), "kernel.log")
+	os.WriteFile(log, []byte("\x1b[92mINF\x1b[0m server.shutdown\nerror: \x1b[1mbad\x1b[0m is not a setting\n"), 0o600)
+	p := &fakePrograms{status: map[string]supervisor.Status{"kernel-play": {Running: true}}, onStart: func(supervisor.Program) supervisor.Status {
+		cfg, _ := os.ReadFile(file)
+		if strings.Contains(string(cfg), "bad") {
+			up.Store(false)
+			return supervisor.Status{Exit: "exit status 1", Log: log}
 		}
-		return done, nil
-	}
+		if strings.Contains(string(cfg), "held") {
+			up.Store(false)
+			return supervisor.Status{Err: "serve.lock names no process"}
+		}
+		up.Store(true)
+		return supervisor.Status{Running: true}
+	}}
+	i.Programs = p
+	up.Store(true)
 	good := []byte(`{"kernel_handle":"x","listen_addr":"127.0.0.1:` + i.URL.Port() + `","fee_bps":1}`)
 
-	_, exited := running(t, i, &up, "")
 	_, _, v, _ := i.Config()
 	if err := i.Reconfigure(v, good); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(file); string(got) != string(good) || !closed(exited) {
-		t.Errorf("the kernel is stopped and the file written: %s", got)
+	if got, _ := os.ReadFile(file); string(got) != string(good) || p.restarts != 1 {
+		t.Errorf("the file is written and the kernel restarted: %s, %d", got, p.restarts)
 	}
 	if st, _ := os.Stat(file); st.Mode().Perm() != 0o600 {
 		t.Errorf("config.json mode = %v, want 0600", st.Mode().Perm())
 	}
 
-	running(t, i, &up, "")
 	_, _, v, _ = i.Config()
 	err := i.Reconfigure(v, []byte(`{"bad":1}`))
 	if err == nil || !strings.HasSuffix(err.Error(), "previous one is restored: the kernel did not start: error: bad is not a setting") {
@@ -667,21 +810,83 @@ func TestReconfigureRestartsAndRollsBack(t *testing.T) {
 	if err := i.Reconfigure("stale", []byte(`{}`)); err == nil || !strings.Contains(err.Error(), "changed since") {
 		t.Errorf("a stale version is refused: %v", err)
 	}
-	for _, pid := range []string{"0", "-1", "x"} {
-		child, exited := running(t, i, &up, pid)
-		_, _, v, _ = i.Config()
-		if err := i.Reconfigure(v, []byte(`{"fee_bps":2}`)); err == nil || !strings.Contains(err.Error(), "names no process") {
-			t.Errorf("serve.lock %q: %v", pid, err)
-		}
-		select {
-		case <-exited:
-			t.Errorf("serve.lock %q signalled a process", pid)
-		case <-time.After(100 * time.Millisecond):
-		}
-		child.Process.Kill()
-		<-exited
+
+	_, _, v, _ = i.Config()
+	err = i.Reconfigure(v, []byte(`{"held":1}`))
+	if err == nil || !strings.Contains(err.Error(), "names no process") {
+		t.Errorf("a start the supervisor refuses is an error: %v", err)
 	}
-	if got, _ := os.ReadFile(file); string(got) == `{"fee_bps":2}` {
-		t.Error("a lock naming no process leaves the old file")
+	if got, _ := os.ReadFile(file); string(got) != string(good) {
+		t.Errorf("and it leaves the old file: %s", got)
 	}
+
+	delete(p.status, "kernel-play")
+	p.refuse = true
+	_, _, v, _ = i.Config()
+	if err := i.Reconfigure(v, []byte(`{}`)); err == nil || !strings.Contains(err.Error(), "no program") {
+		t.Errorf("no program: %v", err)
+	}
+}
+
+// fakePrograms stands in for the supervisor; onStart says what a start leaves.
+type fakePrograms struct {
+	mu       sync.Mutex
+	set      map[string]supervisor.Program
+	status   map[string]supervisor.Status
+	sets     int
+	restarts int
+	refuse   bool
+	onStart  func(supervisor.Program) supervisor.Status
+}
+
+func (f *fakePrograms) Set(name string, p supervisor.Program) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sets++
+	if f.set == nil {
+		f.set = map[string]supervisor.Program{}
+	}
+	if f.status == nil {
+		f.status = map[string]supervisor.Status{}
+	}
+	f.set[name] = p
+	f.status[name] = f.onStart(p)
+	return nil
+}
+
+func (f *fakePrograms) Restart(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refuse {
+		return fmt.Errorf("no program %q", name)
+	}
+	f.restarts++
+	f.status[name] = f.onStart(f.set[name])
+	return nil
+}
+
+func (f *fakePrograms) Status(name string) (supervisor.Status, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.status[name]
+	return st, ok
+}
+
+// answerOnce makes /health answer once path holds want: the child is running.
+func answerOnce(up *atomic.Bool, path, want string) {
+	go func() {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if b, err := os.ReadFile(path); err == nil && len(b) > 0 && strings.Contains(string(b), want) {
+				up.Store(true)
+				return
+			}
+		}
+	}()
+}
+
+// endsWith is the channel of a first-boot kernel that ends when ctx does.
+func endsWith(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	go func() { <-ctx.Done(); close(done) }()
+	return done
 }

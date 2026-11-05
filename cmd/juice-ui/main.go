@@ -31,6 +31,7 @@ import (
 	"github.com/daios-ai/juice-ui/kernel"
 	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
+	"github.com/daios-ai/juice-ui/supervisor"
 )
 
 // Build metadata, injected at link time via -ldflags "-X main.version=... -X main.commit=...".
@@ -66,6 +67,8 @@ type wiring struct {
 	// config is this installation's kernel configuration; nil when the kernel
 	// is not this installation's.
 	config server.Configuration
+	// programs is the process supervisor, handed to the kernel gate and the apps.
+	programs apps.Programs
 }
 
 // wire constructs the client, the identity (pinned to the recorded key when
@@ -161,6 +164,7 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 		Apps:           w.apps,
 		StatePath:      cfg.StatePath,
 		Home:           cfg.Home,
+		Programs:       w.programs,
 		BadgeInterval:  cfg.BadgeInterval,
 		Identity:       w.identity,
 		KernelName:     cfg.Kernel,
@@ -195,28 +199,43 @@ func (s *switcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	(*s.h.Load()).ServeHTTP(w, r)
 }
 
-func main() {
+func main() { os.Exit(run()) }
+
+// run is the program, returning its exit code, so that every way out closes the
+// supervisor: stopping the UI stops the programs it runs.
+func run() int {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version" || os.Args[1] == "version") {
 		fmt.Printf("juice-ui %s (%s)\n", version, commit)
-		return
+		return 0
 	}
 	log := slog.New(newLogHandler(os.Stderr))
 	cfg, err := LoadConfig(os.Getenv, os.ReadFile)
 	if err != nil {
 		log.Error("invalid configuration", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	log.Info("config resolved", "home", cfg.Home, "state", cfg.StatePath, "badge_interval", cfg.BadgeInterval)
 	for _, n := range cfg.Notices {
 		log.Warn("migration: " + n)
 	}
+	// SIGTERM or SIGINT ends the UI gracefully, during the gate as well.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	sup, err := supervisor.Open(cfg.Root)
+	if err != nil {
+		log.Error("startup failed", "err", err)
+		return 1
+	}
+	defer sup.Close()
 	w, err := wire(cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
-		os.Exit(1)
+		return 1
 	}
+	w.programs = sup
 	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
-	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log}
+	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
+	defer inst.WaitBoot() // ctx has ended: a first boot in flight is ending
 	gate := server.NewGate(w.renderer, steps{inst}, cfg.KernelBaseURL, cfg.ListenAddr, log)
 
 	var sw switcher
@@ -226,12 +245,16 @@ func main() {
 	go func() { served <- srv.ListenAndServe() }()
 	log.Info("juice-ui listening", "version", version, "commit", commit, "addr", cfg.ListenAddr, "kernel", cfg.KernelBaseURL, "secure", cfg.Secure)
 
-	go gate.Run(context.Background())
+	go gate.Run(ctx)
 	select {
 	case <-gate.Ready():
 	case err := <-served:
 		log.Error("server stopped", "err", err)
-		os.Exit(1)
+		stop()
+		return 1
+	case <-ctx.Done():
+		shutdown(srv, w.apps, log)
+		return 0
 	}
 	// Only this installation's kernel is configured here: a kernel elsewhere
 	// is its operator's, edited and restarted where it runs.
@@ -241,25 +264,25 @@ func main() {
 	handler, err := build(w, cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
-		os.Exit(1)
+		stop()
+		return 1
 	}
 	sw.Store(gate.Behind(handler))
 	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
-	// SIGTERM or SIGINT ends the UI gracefully, so each app stops what it owns:
-	// the agents app signals the daemons it started, which would otherwise
-	// outlive the UI unsupervised.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-	defer stop()
 	select {
 	case err := <-served:
 		log.Error("server stopped", "err", err)
-		os.Exit(1)
+		stop()
+		shutdown(srv, w.apps, log)
+		return 1
 	case <-ctx.Done():
 	}
 	shutdown(srv, w.apps, log)
+	return 0
 }
 
-// shutdown drains the listener, then stops every app, all within one deadline.
+// shutdown drains the listener, then stops every app, all within one deadline. The
+// supervisor closes after it, when run returns.
 func shutdown(srv *http.Server, mods []apps.App, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/daios-ai/juice-ui/server"
 	svc "github.com/daios-ai/juice-ui/services/chat"
 	"github.com/daios-ai/juice-ui/session"
+	"github.com/daios-ai/juice-ui/supervisor"
 )
 
 func testAddress(h string) string { return h + "@testnet" }
@@ -414,7 +416,9 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	cl := client.New(f.srv.URL, nil)
 	sm := scs.New()
 	c.st = chatState{Password: "pw"}
-	c.launch = &fakeLauncher{}
+	prog := &fakePrograms{}
+	t.Cleanup(prog.close)
+	c.register = prog.register
 	store, err := svc.Open("", "")
 	if err != nil {
 		t.Fatal(err)
@@ -430,6 +434,7 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 		Client:            cl,
 		Sessions:          session.NewManager(sm, cl),
 		Home:              filepath.Join(root, "ui"),
+		Programs:          prog,
 		Me:                func(*http.Request) string { return "ann@testnet" },
 		CSRFField:         func(*http.Request) template.HTML { return "" },
 		IsHTMX:            func(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" },
@@ -463,17 +468,48 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	return c, sm
 }
 
-// fakeLauncher stands in for the juice-chat program.
-type fakeLauncher struct {
+// fakePrograms stands in for the supervisor and the juice-chat program: a
+// declared server holds its lock, as the real one does.
+type fakePrograms struct {
 	calls []string
 	fail  error
+	prog  map[string]supervisor.Program
+	lock  *os.File
 }
 
-func (l *fakeLauncher) stop() error  { l.calls = append(l.calls, "stop"); return nil }
-func (l *fakeLauncher) serve() error { l.calls = append(l.calls, "serve"); return nil }
-func (l *fakeLauncher) register(login string) error {
-	l.calls = append(l.calls, "register "+login)
-	return l.fail
+func (f *fakePrograms) Set(name string, p supervisor.Program) error {
+	f.calls = append(f.calls, "set "+name)
+	if f.prog == nil {
+		f.prog = map[string]supervisor.Program{}
+	}
+	f.prog[name] = p
+	if err := os.MkdirAll(filepath.Dir(p.Lock), 0o700); err != nil {
+		return err
+	}
+	var err error
+	if f.lock, err = os.OpenFile(p.Lock, os.O_CREATE|os.O_RDWR, 0o600); err != nil {
+		return err
+	}
+	return syscall.Flock(int(f.lock.Fd()), syscall.LOCK_EX)
+}
+
+func (f *fakePrograms) close() {
+	if f.lock != nil {
+		f.lock.Close()
+	}
+}
+
+func (f *fakePrograms) Remove(string) error { return nil }
+func (f *fakePrograms) Start(string) error  { return nil }
+func (f *fakePrograms) Stop(string) error   { return nil }
+func (f *fakePrograms) Status(name string) (supervisor.Status, bool) {
+	_, ok := f.prog[name]
+	return supervisor.Status{Running: ok}, ok
+}
+
+func (f *fakePrograms) register(login string) error {
+	f.calls = append(f.calls, "register "+login)
+	return f.fail
 }
 
 // sessions is each session manager's cookie, so requests in a test share one
@@ -631,9 +667,14 @@ func TestSetupBringsTheServerUp(t *testing.T) {
 	if err := c.setup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	l := c.launch.(*fakeLauncher)
-	if got := strings.Join(l.calls, ","); got != "stop,serve,register chat@testnet" {
+	l := c.deps.Programs.(*fakePrograms)
+	if got := strings.Join(l.calls, ","); got != "set chat,register chat@testnet" {
 		t.Errorf("calls = %s", got)
+	}
+	p := l.prog["chat"]
+	if strings.Join(p.Command, " ") != "juice-chat serve" || p.Env["JUICE_HOME"] != c.root() ||
+		p.Lock != filepath.Join(c.root(), "services", "chat", "serve.lock") {
+		t.Errorf("program = %+v", p)
 	}
 	b, err := os.ReadFile(filepath.Join(c.root(), "client", "credentials", "chat@testnet.json"))
 	if err != nil || !strings.Contains(string(b), `"principal_id":"P1"`) {
@@ -645,6 +686,9 @@ func TestSetupBringsTheServerUp(t *testing.T) {
 	l.fail = errors.New("refused")
 	if err := c.setup(context.Background()); err == nil {
 		t.Error("a failed registration is setup's failure")
+	}
+	if got := strings.Count(strings.Join(l.calls, ","), "set chat"); got != 1 {
+		t.Errorf("the program is declared once: %v", l.calls)
 	}
 	c.deps.Home = ""
 	if err := c.setup(context.Background()); err == nil {
