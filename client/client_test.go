@@ -117,34 +117,28 @@ func TestBearerAndRequestID(t *testing.T) {
 	}
 }
 
-func TestListTransactionsPagination(t *testing.T) {
+// A page of transactions asks for that page and returns it, process scope kept.
+func TestTransactionsPage(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	// limit>0 → a single server page: the kernel caps, the client sends ?limit and
-	// returns the page as-is (no client-side slice).
 	f.reply = `[{"id":"A"},{"id":"B"}]`
-	got, err := f.client().ListTransactions(context.Background(), "tok", "", 2)
+	got, err := f.client().TransactionsPage(context.Background(), "tok", "P1", 21, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.lastPath, "limit=2") {
-		t.Errorf("limit not sent: %s", f.lastPath)
+	for _, want := range []string{"limit=21", "offset=40", "process_id=P1"} {
+		if !strings.Contains(f.lastPath, want) {
+			t.Errorf("%s not sent: %s", want, f.lastPath)
+		}
 	}
 	if len(got) != 2 {
-		t.Errorf("single page = %+v", got)
+		t.Errorf("page = %+v", got)
 	}
-	// limit==0 → fetch ALL by paging with the ceiling; a short first page (2 < 200)
-	// ends the loop in one request, and the process scope is carried on every page.
-	f.reply = `[{"id":"X"},{"id":"Y"}]`
-	all, err := f.client().ListTransactions(context.Background(), "tok", "P1", 0)
-	if err != nil {
+	if _, err := f.client().TransactionsPage(context.Background(), "tok", "", 21, 0); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.lastPath, "limit=200") || !strings.Contains(f.lastPath, "process_id=P1") {
-		t.Errorf("get-all must page with the ceiling limit + process scope: %s", f.lastPath)
-	}
-	if len(all) != 2 {
-		t.Errorf("get-all one page = %+v", all)
+	if strings.Contains(f.lastPath, "offset") || strings.Contains(f.lastPath, "process_id") {
+		t.Errorf("the first page names neither: %s", f.lastPath)
 	}
 }
 
@@ -314,38 +308,43 @@ func TestTaskDecodesItsParties(t *testing.T) {
 // The task list is read to exhaustion, and asks for what it shows: a status
 // when one is chosen, every task otherwise — the kernel answers only open
 // tasks unless asked (4dbfedd).
-func TestListTasksAsksForWhatItShowsAndPages(t *testing.T) {
+func TestTasksAskForWhatTheyShow(t *testing.T) {
 	f := newFake()
 	defer f.close()
+	f.reply = `[{"id":"t","status":"done"}]`
+	if _, err := f.client().TasksPage(context.Background(), "tok", "", 21, 20); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"all=1", "limit=21", "offset=20"} {
+		if !strings.Contains(f.lastPath, want) {
+			t.Errorf("%s not sent: %s", want, f.lastPath)
+		}
+	}
+	if _, err := f.client().TasksPage(context.Background(), "tok", "done", 21, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.lastPath, "status=done") || strings.Contains(f.lastPath, "all=1") {
+		t.Errorf("a status page = %s", f.lastPath)
+	}
+	// The work still to do is read whole, so no task waits unseen.
 	var queries []string
 	f.replyFn = func(r *http.Request) string {
 		queries = append(queries, r.URL.RawQuery)
 		if r.URL.Query().Get("offset") == "" {
 			rows := make([]string, 200)
 			for i := range rows {
-				rows[i] = `{"id":"t","status":"done"}`
+				rows[i] = `{"id":"t","status":"waiting"}`
 			}
 			return "[" + strings.Join(rows, ",") + "]"
 		}
-		return `[{"id":"last","status":"done"}]`
+		return `[{"id":"last","status":"waiting"}]`
 	}
-	got, err := f.client().ListTasks(context.Background(), "tok", "")
+	got, err := f.client().WaitingTasks(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 201 || got[200].ID != "last" {
-		t.Fatalf("paged %d rows, want 201", len(got))
-	}
-	if len(queries) != 2 || !strings.Contains(queries[0], "all=1") || !strings.Contains(queries[1], "offset=200") {
-		t.Errorf("queries = %v", queries)
-	}
-	f.replyFn = nil
-	f.reply = `[]`
-	if _, err := f.client().ListTasks(context.Background(), "tok", "waiting"); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(f.lastPath, "status=waiting") || strings.Contains(f.lastPath, "all=1") {
-		t.Errorf("status list = %s", f.lastPath)
+	if len(got) != 201 || len(queries) != 2 || !strings.Contains(queries[0], "status=waiting") || !strings.Contains(queries[1], "offset=200") {
+		t.Errorf("waiting = %d rows, queries %v", len(got), queries)
 	}
 }
 
@@ -362,18 +361,20 @@ func TestCancelTaskPostsTheDecline(t *testing.T) {
 	}
 }
 
-// Processes are open-only unless asked; the sessions page asks.
-func TestListProcessesAsksForClosedOnesWhenAll(t *testing.T) {
+// Processes are open-only unless asked; the sessions page asks, by the page.
+func TestProcessesAskForClosedOnesByThePage(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `[]`
-	if _, err := f.client().ListProcesses(context.Background(), "tok", true); err != nil {
+	if _, err := f.client().ProcessesPage(context.Background(), "tok", 21, 20); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(f.lastPath, "/v1/processes?") || !strings.Contains(f.lastPath, "all=1") {
-		t.Errorf("all = %s", f.lastPath)
+	for _, want := range []string{"/v1/processes?", "all=1", "limit=21", "offset=20"} {
+		if !strings.Contains(f.lastPath, want) {
+			t.Errorf("%s not sent: %s", want, f.lastPath)
+		}
 	}
-	if _, err := f.client().ListProcesses(context.Background(), "tok", false); err != nil {
+	if _, err := f.client().OpenProcesses(context.Background(), "tok"); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(f.lastPath, "all=1") {

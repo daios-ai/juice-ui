@@ -7,9 +7,7 @@
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
-{{/* Earnings — folded from your transactions in the BFF (never kernel settlement). */}}
-{{$calls := "calls"}}{{if eq $d.Earnings.Count 1}}{{$calls = "call"}}{{end}}
-{{template "_figures" (figures (linked (figure $d.MonthEarned "this month" "credited") (printf "%d %s all-time" $d.Earnings.Count $calls) "/transactions") (linked (lockedFigure $d.User.Locked $d.Superuser) "open sessions" "/wallet") (linked (figure $d.Earnings.Earned "all time" "credited") "full ledger" "/transactions"))}}
+{{template "_figures" (figures (linked (lockedFigure $d.User.Locked $d.Superuser) "open sessions" "/wallet"))}}
 
 <div class="subhead">
   <h2>{{if eq $d.Scope "all"}}All actions{{else}}Your actions{{end}}</h2>
@@ -35,7 +33,7 @@
 {{if $d.Mine}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>action</th><th>state</th><th class="money">price</th><th class="money">runs</th><th>success</th><th>rating</th><th class="money">earned</th><th></th></tr></thead>
+  <thead><tr><th>action</th><th>state</th><th class="money">price</th><th class="money">runs</th><th>success</th><th>rating</th><th></th></tr></thead>
   <tbody>
   {{range $d.Mine}}
   {{$a := .Action}}{{$st := $a.Experience}}
@@ -43,7 +41,6 @@
     <td>
       <a href="/actions/{{$a.ID}}">{{$a.Title}}</a>
       {{if $a.IsPrivate}}<span class="chip" title="Private"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $a.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
-      {{if .LastFailure}}<span class="chip" title="Last failure: {{.LastFailure}}">!</span>{{end}}
       <div class="small">{{template "_ref" (ref $a.Ref "")}}</div>
     </td>
     <td>{{if $a.Active}}<span class="pill status-credited">active</span>{{else}}<span class="pill inactive">inactive</span>{{end}}</td>
@@ -51,7 +48,6 @@
     <td class="money">{{if $st}}{{$st.Uses}}{{else}}0{{end}}</td>
     <td>{{if and $st (gt $st.Uses 0)}}{{pct $st.Successes $st.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
     <td>{{if and $st (gt $st.RatingCount 0)}}{{ratingPct $st.RatingEstimate $st.RatingCount}}% <span class="muted mono">({{$st.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>
-    <td class="money">{{if gt .Earned 0}}<span class="sig-credited">+{{money .Earned}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
     {{/* A cached remote proxy has no lifecycle here: the kernel owns its active
          bit (enable/disable is refused), and the lever over a peer's actions is
          suspend, on network. The cell stays empty rather than offering verbs the

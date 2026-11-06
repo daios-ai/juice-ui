@@ -354,6 +354,41 @@ func newUpstream(t *testing.T) *upstream {
 	return u
 }
 
+// pagesAgree walks a list two rows at a time and compares it with one read of all
+// of it: no page short before the end, the same rows, in the same order.
+func pagesAgree[T any](t *testing.T, what string, read func(limit, offset int) ([]T, error), id func(T) string) {
+	t.Helper()
+	whole, err := read(200, 0)
+	if err != nil {
+		t.Fatalf("%s: %v", what, err)
+	}
+	var walked []string
+	for offset := 0; ; offset += 2 {
+		page, err := read(2, offset)
+		if err != nil {
+			t.Fatalf("%s at %d: %v", what, offset, err)
+		}
+		if len(page) < 2 && offset+len(page) < len(whole) {
+			t.Errorf("%s: a short page at offset %d of %d rows", what, offset, len(whole))
+		}
+		for _, r := range page {
+			walked = append(walked, id(r))
+		}
+		if len(page) < 2 {
+			break
+		}
+	}
+	if len(walked) != len(whole) {
+		t.Errorf("%s: the walk found %d rows of %d", what, len(walked), len(whole))
+		return
+	}
+	for i := range whole {
+		if id(whole[i]) != walked[i] {
+			t.Errorf("%s: row %d differs", what, i)
+		}
+	}
+}
+
 func TestKernelContract(t *testing.T) {
 	bin := juiceBinary(t)
 	for _, tool := range []string{"anvil", "cast"} {
@@ -438,9 +473,19 @@ func TestKernelContract(t *testing.T) {
 		return act, err
 	})
 	get(a, "catalog", func() ([]client.Action, error) { return a.c.ListActions(ctx, bob, "") })
-	get(a, "transactions", func() ([]client.Transaction, error) { return a.c.ListTransactions(ctx, bob, "", 0) })
-	get(a, "processes", func() ([]client.Process, error) { return a.c.ListProcesses(ctx, bob, true) })
+	get(a, "transactions", func() ([]client.Transaction, error) { return a.c.TransactionsPage(ctx, bob, "", 200, 0) })
+	get(a, "processes", func() ([]client.Process, error) { return a.c.ProcessesPage(ctx, bob, 200, 0) })
 	get(a, "ledger", func() ([]client.LedgerEntry, error) { return a.c.Ledger(ctx, bob, 0, 0) })
+
+	// A page is full until the list ends: the kernel pages after it decides what the
+	// caller may see. The UI reads each of these one page at a time on this promise,
+	// so a walk in small pages must equal the whole read, for a user whose rows sit
+	// among another's, and for the superuser who sees them all.
+	for name, tok := range map[string]string{"alice": alice, "bob": bob, "sys": sys} {
+		pagesAgree(t, name+"'s transactions", func(l, o int) ([]client.Transaction, error) { return a.c.TransactionsPage(ctx, tok, "", l, o) }, func(r client.Transaction) string { return r.ID })
+		pagesAgree(t, name+"'s tasks", func(l, o int) ([]client.Task, error) { return a.c.TasksPage(ctx, tok, "", l, o) }, func(r client.Task) string { return r.ID })
+		pagesAgree(t, name+"'s processes", func(l, o int) ([]client.Process, error) { return a.c.ProcessesPage(ctx, tok, l, o) }, func(r client.Process) string { return r.ID })
+	}
 
 	// Tasks: alice's run leaves two waiting on bob, through the trace capability,
 	// withheld from him until he approves her as a requester (kernel U52).
@@ -459,7 +504,7 @@ func TestKernelContract(t *testing.T) {
 	get(a, "requesters", func() ([]client.Requester, error) { return a.c.ListRequesters(ctx, bob) })
 	done(a, "approve alice", a.c.DecideRequester(ctx, bob, a.addr("alice"), "approve"))
 	get(a, "requesters", func() ([]client.Requester, error) { return a.c.ListRequesters(ctx, bob) })
-	get(a, "waiting tasks", func() ([]client.Task, error) { return a.c.ListTasks(ctx, bob, "waiting") })
+	get(a, "waiting tasks", func() ([]client.Task, error) { return a.c.WaitingTasks(ctx, bob) })
 	get(a, "task", func() (client.Task, error) { return a.c.GetTask(ctx, bob, up.tasks[0]) })
 	get(a, "parked process", func() (client.Process, error) {
 		tx := get(a, "park tx", func() (client.Transaction, error) { return a.c.GetTransaction(ctx, alice, preply.TxID) })
@@ -472,7 +517,7 @@ func TestKernelContract(t *testing.T) {
 	if left := get(a, "open tasks", func() ([]client.Task, error) { return a.c.OpenTasks(ctx, alice) }); len(left) != 0 {
 		t.Fatalf("a settled task leaves the list: %+v", left)
 	}
-	get(a, "all tasks", func() ([]client.Task, error) { return a.c.ListTasks(ctx, bob, "") })
+	get(a, "all tasks", func() ([]client.Task, error) { return a.c.TasksPage(ctx, bob, "", 200, 0) })
 
 	// A delegated grant: the plan, the connection, and the consent tree on /v1/me.
 	get(a, "plan", func() (client.GrantPlan, error) { return a.c.PlanGrants(ctx, bob, a.addr("alice")+"/secret") })
@@ -509,7 +554,7 @@ func TestKernelContract(t *testing.T) {
 	get(a, "withdraw", func() (client.Withdrawal, error) {
 		return a.c.Withdraw(ctx, bob, "6f1c2a3b-4d5e-4f60-8a1b-2c3d4e5f6a7b", 1_000_000, "contract")
 	})
-	get(a, "withdrawals", func() ([]client.Withdrawal, error) { return a.c.ListWithdrawals(ctx, bob) })
+	get(a, "withdrawals", func() ([]client.Withdrawal, error) { return a.c.WithdrawalsPage(ctx, bob, 200, 0) })
 
 	// An application imported from an OpenAPI document.
 	get(a, "import", func() (client.ImportResult, error) {
@@ -608,7 +653,7 @@ func TestKernelContract(t *testing.T) {
 	get(a, "run park for dave", func() (client.CallReply, error) {
 		return a.c.Run(ctx, alice, a.addr("alice")+"/park", json.RawMessage(`{"x":"p"}`), "")
 	})
-	get(a, "tasks waiting on a peer", func() ([]client.Task, error) { return a.c.ListTasks(ctx, alice, "") })
+	get(a, "tasks waiting on a peer", func() ([]client.Task, error) { return a.c.TasksPage(ctx, alice, "", 200, 0) })
 
 	// A seller that dies mid-call: bravo's buyer is left awaiting a receipt it
 	// may owe, and bravo's next contact with alpha fails.
@@ -622,7 +667,7 @@ func TestKernelContract(t *testing.T) {
 	<-up.hung
 	a.stop()
 	eventually(t, "dave's process awaits a receipt", func() bool {
-		for _, p := range get(bv, "processes", func() ([]client.Process, error) { return bv.c.ListProcesses(ctx, dave, false) }) {
+		for _, p := range get(bv, "processes", func() ([]client.Process, error) { return bv.c.OpenProcesses(ctx, dave) }) {
 			if p.AwaitingReceipt {
 				return true
 			}
@@ -747,7 +792,7 @@ func chainWorld(t *testing.T, led *ledger, bin string) {
 		return c.c.Withdraw(ctx, etok, "0d4c0b8e-3a7f-4c1e-9b2d-5e6f7a8b9c0d", 1_000_000, "")
 	})
 	eventually(t, "the payout confirms", func() bool {
-		ws := get(c, "withdrawals", func() ([]client.Withdrawal, error) { return c.c.ListWithdrawals(ctx, etok) })
+		ws := get(c, "withdrawals", func() ([]client.Withdrawal, error) { return c.c.WithdrawalsPage(ctx, etok, 200, 0) })
 		return len(ws) > 0 && ws[0].Status == "confirmed"
 	})
 	setGas("0x0")
@@ -755,7 +800,7 @@ func chainWorld(t *testing.T, led *ledger, bin string) {
 		return c.c.Withdraw(ctx, etok, "1e5d1c9f-4b80-4d2f-8c3e-6f708192a3b4", 1_000_000, "")
 	})
 	eventually(t, "the payout blocks", func() bool {
-		for _, w := range get(c, "withdrawals", func() ([]client.Withdrawal, error) { return c.c.ListWithdrawals(ctx, etok) }) {
+		for _, w := range get(c, "withdrawals", func() ([]client.Withdrawal, error) { return c.c.WithdrawalsPage(ctx, etok, 200, 0) }) {
 			if w.Status == "blocked" {
 				return true
 			}

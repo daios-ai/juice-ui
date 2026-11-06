@@ -480,7 +480,7 @@ separates it from the content above, and nothing else does (§4).
 - **Headline money figures are one component, `_figures`**: a `.stat-row` of
   `.stat` blocks — the label muted on top, the amount in mono coloured by its
   signal (`sig-credited` with a `+`, `sig-escrow`), and a quiet link to the
-  records behind it when there are any. Wallet, home, workshop earnings and a
+  records behind it when there are any. Wallet, home, workshop's parked funds and a
   session's funds all render through it; no page draws its own figures. An
   account's locked balance is one helper, `lockedFigure`: `parked ◷` (escrow)
   for everyone, `locked ◷` unsignalled for the operator, whose locked also holds

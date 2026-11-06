@@ -108,7 +108,7 @@ func (s *Server) taskBadgeCount(r *http.Request) int {
 		if e != nil {
 			return e
 		}
-		tasks, e := s.client.ListTasks(ctx, tok, "waiting")
+		tasks, e := s.client.WaitingTasks(ctx, tok)
 		if e != nil {
 			return e
 		}

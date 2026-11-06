@@ -807,15 +807,9 @@ func (c *Client) Withdraw(ctx context.Context, token, id string, amount int64, r
 	return wd, err
 }
 
-// ListWithdrawals lists the caller's own withdrawals and where each stands.
-//
-// It pages to exhaustion. Every kernel list endpoint pages (default 50, ceiling
-// 200, §R6), withdrawals included — measured: with four rows, ?limit=2&offset=2
-// answers the third and fourth. An unpaged read would silently lose a person's
-// fifty-first withdrawal, and a wallet that hides money is worse than one that
-// takes a second request to show it.
-func (c *Client) ListWithdrawals(ctx context.Context, token string) ([]Withdrawal, error) {
-	return listAll[Withdrawal](ctx, c, token, "/v1/withdrawals", nil)
+// WithdrawalsPage reads one page of the caller's withdrawals.
+func (c *Client) WithdrawalsPage(ctx context.Context, token string, limit, offset int) ([]Withdrawal, error) {
+	return listPage[Withdrawal](ctx, c, token, "/v1/withdrawals", nil, limit, offset)
 }
 
 // listAll reads a kernel list to exhaustion. Every list endpoint pages (default
@@ -845,6 +839,28 @@ func listAll[T any](ctx context.Context, c *Client, token, path string, q url.Va
 	}
 }
 
+// listPage reads one page of a kernel list. The kernel pages after it decides what
+// the caller may see, so a page is full until the list ends. A limit of 0 leaves
+// the kernel's default.
+func listPage[T any](ctx context.Context, c *Client, token, path string, q url.Values, limit, offset int) ([]T, error) {
+	pq := url.Values{}
+	for k, v := range q {
+		pq[k] = v
+	}
+	if limit > 0 {
+		pq.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		pq.Set("offset", strconv.Itoa(offset))
+	}
+	if len(pq) > 0 {
+		path += "?" + pq.Encode()
+	}
+	var rows []T
+	err := c.do(ctx, http.MethodGet, path, token, nil, &rows)
+	return rows, err
+}
+
 // AddressResult is the outcome of registering a payout address: the canonical
 // form the kernel stored, and the ledger entries crediting the payments already
 // received from that sender (an array, measured on v0.16.0).
@@ -871,20 +887,7 @@ func (c *Client) RegisterAddress(ctx context.Context, token, address, signature,
 
 // Ledger lists the caller's own balance movements (newest first), paginated.
 func (c *Client) Ledger(ctx context.Context, token string, limit, offset int) ([]LedgerEntry, error) {
-	q := url.Values{}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	if offset > 0 {
-		q.Set("offset", strconv.Itoa(offset))
-	}
-	path := "/v1/ledger"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	var out []LedgerEntry
-	err := c.do(ctx, http.MethodGet, path, token, nil, &out)
-	return out, err
+	return listPage[LedgerEntry](ctx, c, token, "/v1/ledger", nil, limit, offset)
 }
 
 // ---- actions ----
@@ -1017,56 +1020,23 @@ func (c *Client) ImportOpenAPI(ctx context.Context, token, name, specURL string,
 	return r, err
 }
 
-// ActionRatings lists an action's ratings (newest first). limit>0 fetches a
-// single page of that size at offset; limit==0 fetches the FULL set (paging with
-// the ceiling) so the UI can slice its own pages — the kernel would otherwise
-// truncate at its default of 50.
+// ActionRatings reads one page of an action's ratings, newest first.
 func (c *Client) ActionRatings(ctx context.Context, token, id string, limit, offset int) ([]Rating, error) {
-	if limit > 0 {
-		return c.ratingsPage(ctx, token, id, limit, offset)
-	}
-	const page = 200 // server ceiling
-	var out []Rating
-	for off := 0; ; off += page {
-		batch, err := c.ratingsPage(ctx, token, id, page, off)
-		if err != nil {
-			return out, err
-		}
-		out = append(out, batch...)
-		if len(batch) < page {
-			return out, nil
-		}
-	}
-}
-
-func (c *Client) ratingsPage(ctx context.Context, token, id string, limit, offset int) ([]Rating, error) {
-	q := url.Values{}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	if offset > 0 {
-		q.Set("offset", strconv.Itoa(offset))
-	}
-	path := "/v1/actions/" + url.PathEscape(id) + "/ratings"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	var r []Rating
-	err := c.do(ctx, http.MethodGet, path, token, nil, &r)
-	return r, err
+	return listPage[Rating](ctx, c, token, "/v1/actions/"+url.PathEscape(id)+"/ratings", nil, limit, offset)
 }
 
 // ---- processes ----
 
-// ListProcesses lists the caller's processes to exhaustion: the open ones, and
-// the closed ones too when all is set — the kernel answers only what is open
-// unless asked (?all=1).
-func (c *Client) ListProcesses(ctx context.Context, token string, all bool) ([]Process, error) {
-	q := url.Values{}
-	if all {
-		q.Set("all", "1")
-	}
-	return listAll[Process](ctx, c, token, "/v1/processes", q)
+// OpenProcesses lists the caller's open processes to exhaustion: a small set, since
+// a process closes when its work ends.
+func (c *Client) OpenProcesses(ctx context.Context, token string) ([]Process, error) {
+	return listAll[Process](ctx, c, token, "/v1/processes", nil)
+}
+
+// ProcessesPage reads one page of the processes the caller may see, closed ones
+// included.
+func (c *Client) ProcessesPage(ctx context.Context, token string, limit, offset int) ([]Process, error) {
+	return listPage[Process](ctx, c, token, "/v1/processes", url.Values{"all": {"1"}}, limit, offset)
 }
 
 func (c *Client) GetProcess(ctx context.Context, token, id string) (Process, error) {
@@ -1098,49 +1068,15 @@ func (c *Client) Run(ctx context.Context, token, action string, args json.RawMes
 
 // ---- transactions ----
 
-// ListTransactions lists the caller's transactions (GET /v1/transactions),
-// optionally scoped to a process. limit>0 returns a single server page of that
-// size (newest first). limit==0 returns the FULL set: the kernel pages every list
-// endpoint with a default of 50 (ceiling 200, §R6), so an unpaged call would
-// silently truncate — earnings, the full ledger, and process views need all rows,
-// so we page through with offset.
-func (c *Client) ListTransactions(ctx context.Context, token, processID string, limit int) ([]Transaction, error) {
-	if limit > 0 {
-		return c.txPage(ctx, token, processID, limit, 0)
-	}
-	const page = 200 // server ceiling
-	var all []Transaction
-	for offset := 0; ; offset += page {
-		batch, err := c.txPage(ctx, token, processID, page, offset)
-		if err != nil {
-			return all, err
-		}
-		all = append(all, batch...)
-		if len(batch) < page {
-			return all, nil
-		}
-	}
-}
-
-// txPage fetches one page of transactions (GET /v1/transactions?limit=&offset=).
-func (c *Client) txPage(ctx context.Context, token, processID string, limit, offset int) ([]Transaction, error) {
+// TransactionsPage reads one page of the caller's transactions, newest first,
+// optionally of one process. There is no whole read: the ledger can hold tens of
+// thousands of rows, and most of a kernel's calls move no money.
+func (c *Client) TransactionsPage(ctx context.Context, token, processID string, limit, offset int) ([]Transaction, error) {
 	q := url.Values{}
 	if processID != "" {
 		q.Set("process_id", processID)
 	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	if offset > 0 {
-		q.Set("offset", strconv.Itoa(offset))
-	}
-	path := "/v1/transactions"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	var t []Transaction
-	err := c.do(ctx, http.MethodGet, path, token, nil, &t)
-	return t, err
+	return listPage[Transaction](ctx, c, token, "/v1/transactions", q, limit, offset)
 }
 
 func (c *Client) GetTransaction(ctx context.Context, token, id string) (Transaction, error) {
@@ -1166,17 +1102,21 @@ func (c *Client) RateTransaction(ctx context.Context, token, id string, rating i
 
 // ---- tasks ----
 
-// ListTasks lists the tasks the caller may see, to exhaustion: those with the
-// given status, or every task when status is empty — the kernel answers only
-// open ones (waiting, running) unless asked (?all=1).
-func (c *Client) ListTasks(ctx context.Context, token, status string) ([]Task, error) {
-	q := url.Values{}
+// WaitingTasks lists the waiting tasks the caller may see, to exhaustion: work still
+// to do, a small set.
+func (c *Client) WaitingTasks(ctx context.Context, token string) ([]Task, error) {
+	return listAll[Task](ctx, c, token, "/v1/tasks", url.Values{"status": {"waiting"}})
+}
+
+// TasksPage reads one page of the tasks the caller may see: those with the given
+// status, or every task when status is empty, since the kernel answers only open
+// ones unless asked (?all=1).
+func (c *Client) TasksPage(ctx context.Context, token, status string, limit, offset int) ([]Task, error) {
+	q := url.Values{"all": {"1"}}
 	if status != "" {
-		q.Set("status", status)
-	} else {
-		q.Set("all", "1")
+		q = url.Values{"status": {status}}
 	}
-	return listAll[Task](ctx, c, token, "/v1/tasks", q)
+	return listPage[Task](ctx, c, token, "/v1/tasks", q, limit, offset)
 }
 
 // OpenTasks lists the caller's open tasks, waiting or running, to exhaustion: a

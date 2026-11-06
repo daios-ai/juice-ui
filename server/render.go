@@ -936,14 +936,34 @@ func pageNav(r *http.Request, offset, size int, hasNext bool) Pager {
 	return p
 }
 
-// pageRows is one page of rows at the request's offset, and whether more follow.
+// fetchRows reads the request's page through read, asking for one row more than a
+// page holds to learn whether another follows, since the kernel answers no total.
+func fetchRows[T any](r *http.Request, read func(limit, offset int) ([]T, error)) ([]T, bool, error) {
+	rows, err := read(pageSize+1, queryOffset(r))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(rows) > pageSize {
+		return rows[:pageSize], true, nil
+	}
+	return rows, false, nil
+}
+
+// fetchPage is fetchRows for a page's only list, with its pager.
+func fetchPage[T any](r *http.Request, read func(limit, offset int) ([]T, error)) ([]T, Pager, error) {
+	rows, more, err := fetchRows(r, read)
+	return rows, pageNav(r, queryOffset(r), pageSize, more), err
+}
+
+// pageRows is one page of a list already in hand, and whether more follow. It
+// serves a list the kernel cannot order or filter as the page needs, or does not
+// page at all; any other list is read with fetchRows.
 func pageRows[T any](r *http.Request, rows []T) ([]T, bool) {
 	start, end, more := pageSlice(len(rows), queryOffset(r), pageSize)
 	return rows[start:end], more
 }
 
-// pageOf is one page of a page's only list, with its pager. A page of several
-// lists pages each with pageRows under one pager.
+// pageOf is pageRows for a page's only list, with its pager.
 func pageOf[T any](r *http.Request, rows []T) ([]T, Pager) {
 	page, more := pageRows(r, rows)
 	return page, pageNav(r, queryOffset(r), pageSize, more)
@@ -951,12 +971,6 @@ func pageOf[T any](r *http.Request, rows []T) ([]T, Pager) {
 
 // pageSlice returns the [start,end) window of n items for the given offset and
 // page size, plus whether a further page exists — clamping offset into range.
-//
-// The UI paginates client-side over a fully-fetched list because the kernel
-// applies `limit`/`offset` to RAW rows *before* its visibility/party filter, so a
-// server-side page of a filtered list (browse actions, a user's transactions) can
-// come back with fewer — or zero — visible rows than exist. Fetching the visible
-// set whole and slicing here is the only correct offset pagination for those.
 func pageSlice(n, offset, size int) (start, end int, hasNext bool) {
 	if size < 1 {
 		size = pageSize

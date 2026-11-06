@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -2439,5 +2440,31 @@ func TestPageOf(t *testing.T) {
 	}
 	if page, more := pageRows[int](httptest.NewRequest(http.MethodGet, "/x?offset=20", nil), nil); len(page) != 0 || more {
 		t.Errorf("no rows: %v %v", page, more)
+	}
+}
+
+// One row more than a page holds says whether another follows.
+func TestFetchRows(t *testing.T) {
+	read := func(n int) func(limit, offset int) ([]int, error) {
+		return func(limit, offset int) ([]int, error) {
+			if limit != pageSize+1 || offset != 40 {
+				t.Errorf("read limit=%d offset=%d", limit, offset)
+			}
+			return make([]int, min(n, limit)), nil
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "/x?offset=40", nil)
+	for _, c := range []struct {
+		n, rows int
+		more    bool
+	}{{0, 0, false}, {5, 5, false}, {pageSize, pageSize, false}, {pageSize + 1, pageSize, true}, {500, pageSize, true}} {
+		rows, more, err := fetchRows(r, read(c.n))
+		if len(rows) != c.rows || more != c.more || err != nil {
+			t.Errorf("%d rows: %d %v %v", c.n, len(rows), more, err)
+		}
+	}
+	boom := errors.New("boom")
+	if _, p, err := fetchPage(r, func(int, int) ([]int, error) { return nil, boom }); err != boom || p.NextHref != "" {
+		t.Errorf("a failed read: %v %+v", err, p)
 	}
 }

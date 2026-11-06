@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1951,35 +1952,133 @@ func TestWalletShowsLedger(t *testing.T) {
 	}
 }
 
-func TestStudioShowsEarnings(t *testing.T) {
+// Workshop adds up no money: only a read of every transaction could, so it reads
+// none. Every page that leads with money draws it through the one figures component.
+func TestWorkshopAddsUpNoMoney(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-
-	body := getBody(t, cl, srv.URL+"/workshop")
-	// T2 in authKernel is a seller transaction for U1 (net 45). The three stat
-	// tiles (this month / parked / all time) must render, all-time showing +45.
-	lower := strings.ToLower(body)
-	for _, tile := range []string{"this month", "parked", "all time"} {
-		if !strings.Contains(lower, tile) {
-			t.Errorf("workshop must show the %q earnings tile", tile)
+	lower := strings.ToLower(getBody(t, cl, srv.URL+"/workshop"))
+	for _, gone := range []string{"this month", "all time", "all-time", ">earned<", "last failure"} {
+		if strings.Contains(lower, gone) {
+			t.Errorf("workshop shows %q", gone)
 		}
 	}
-	if !strings.Contains(body, "+45 credits") {
-		t.Errorf("all-time earnings must show the +45 credits net: %s", body)
-	}
-	// Every page that leads with money draws it through the one figures
-	// component, and links each earnings figure to its transactions.
-	if !strings.Contains(body, `<a href="/transactions">1 call all-time →</a>`) {
-		t.Error("an earnings figure must link to its transactions")
+	if !strings.Contains(lower, "parked") {
+		t.Error("workshop keeps what is parked")
 	}
 	for _, page := range []string{"/workshop", "/wallet", "/"} {
 		b := getBody(t, cl, srv.URL+page)
 		if !strings.Contains(b, `<div class="stat-row">`) || strings.Contains(b, `class="balance`) {
 			t.Errorf("%s must render its money through the figures component", page)
 		}
+	}
+}
+
+// bigKernel holds a thousand rows of every long list, answers as the kernel does,
+// and records each list read.
+func bigKernel(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	var mu sync.Mutex
+	reads := []string{}
+	serve := func(mux *http.ServeMux, path, row string) {
+		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reads = append(reads, path+"?"+r.URL.RawQuery)
+			mu.Unlock()
+			q := r.URL.Query()
+			limit, offset := 50, 0
+			if v, err := strconv.Atoi(q.Get("limit")); err == nil {
+				limit = min(v, 200)
+			}
+			if v, err := strconv.Atoi(q.Get("offset")); err == nil {
+				offset = v
+			}
+			rows := []string{}
+			if !(path == "/v1/processes" && q.Get("all") == "") && !(path == "/v1/tasks" && q.Get("status") == "waiting") {
+				for i := offset; i < min(offset+limit, 1000); i++ {
+					rows = append(rows, fmt.Sprintf(row, i))
+				}
+			}
+			w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
+		})
+	}
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"redirect":"?code=CODE"}`))
+	})
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":5000000,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/me/requesters", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/processes/P1", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"P1","status":"closed","owner":"alice@testnet"}`))
+	})
+	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	serve(mux, "/v1/transactions", `{"id":"T%d","status":"success","owner":"alice@testnet","caller":"alice@testnet","target":"bob@testnet","action":"bob@testnet/a"}`)
+	serve(mux, "/v1/tasks", `{"id":"K%d","status":"done","owner":"alice@testnet","required_caller":"bob@testnet","action":"bob@testnet/a"}`)
+	serve(mux, "/v1/processes", `{"id":"P%d","status":"closed","owner":"alice@testnet"}`)
+	serve(mux, "/v1/withdrawals", `{"id":"W%d","kind":"payout","amount":1,"status":"confirmed","created_at":"2026-09-09T09:17:26Z"}`)
+	k := httptest.NewServer(mux)
+	t.Cleanup(k.Close)
+	return k, &reads
+}
+
+// A page reads one page from the kernel, however long the list: it asks for one row
+// more than it shows, at its own offset, and never walks the list. Its pager follows.
+func TestListPagesReadOnePage(t *testing.T) {
+	k, reads := bigKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	for _, c := range []struct{ page, list, query, row string }{
+		{"/transactions", "/v1/transactions", "limit=21", "T0"},
+		{"/processes/P1", "/v1/transactions", "limit=21&process_id=P1", "T0"},
+		{"/inbox", "/v1/tasks", "all=1&limit=21", "K0"},
+		{"/inbox?status=done", "/v1/tasks", "limit=21&status=done", "K0"},
+		{"/processes", "/v1/processes", "all=1&limit=21", "P0"},
+		{"/wallet", "/v1/withdrawals", "limit=21", "W0"},
+	} {
+		*reads = (*reads)[:0]
+		body := getBody(t, cl, srv.URL+c.page)
+		var got []string
+		for _, r := range *reads {
+			if q, ok := strings.CutPrefix(r, c.list+"?"); ok && q != "limit=200&status=waiting" && q != "limit=200" {
+				got = append(got, q)
+			}
+		}
+		if len(got) != 1 || got[0] != c.query {
+			t.Errorf("%s read %v, want only %s", c.page, got, c.query)
+		}
+		if !strings.Contains(body, c.row) {
+			t.Errorf("%s lacks its first row", c.page)
+		}
+		if !strings.Contains(body, `rel="next"`) {
+			t.Errorf("%s has no next page", c.page)
+		}
+	}
+	// A later page asks at its offset; the last page offers no next.
+	*reads = (*reads)[:0]
+	body := getBody(t, cl, srv.URL+"/transactions?offset=980")
+	if !strings.Contains(strings.Join(*reads, " "), "limit=21&offset=980") || strings.Contains(body, `rel="next"`) || !strings.Contains(body, `rel="prev"`) {
+		t.Errorf("the last page: %v", *reads)
+	}
+	// Past the end there is no row, and still a way back.
+	if body := getBody(t, cl, srv.URL+"/transactions?offset=5000"); !strings.Contains(body, `rel="prev"`) || strings.Contains(body, `rel="next"`) {
+		t.Error("past the end, a page offers the way back")
+	}
+	// Workshop reads no transaction at all.
+	*reads = (*reads)[:0]
+	getBody(t, cl, srv.URL+"/workshop")
+	if strings.Contains(strings.Join(*reads, " "), "/v1/transactions") {
+		t.Errorf("workshop read %v", *reads)
 	}
 }
 

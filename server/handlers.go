@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -64,19 +63,9 @@ type userView struct {
 	Error    string
 }
 
-// studioEarnings is money that came to the user, folded from their transactions:
-// their net as a seller, plus the platform fee on every settled call when they are
-// the superuser (sys's tax). Mirrors the ledger's per-viewer amounts (txAmount).
-type studioEarnings struct {
-	Earned int64
-	Count  int
-}
-
 type actionCardView struct {
 	Action       client.Action // a detail read, so it carries the evidence block
 	NeedsConnect bool          // demands a per-caller grant the viewer hasn't connected
-	Earned       int64         // net earned by this action (folded from transactions), workshop table
-	LastFailure  string        // reason of the latest failed call, a quiet peek
 	// Discovered marks a lookup hit this kernel has only learned of through
 	// gossip: no local row backs it, so it carries no experience of this kernel's
 	// and its page is built from the lookup row alone (requirements.md §6.2). It
@@ -174,22 +163,20 @@ type actionView struct {
 	Back bool
 }
 
-// actionsView is the action room: manage your own actions, with earnings folded
-// in. Discovery/browse lives in /run; Scope="all" for a superuser widens Mine to
+// actionsView is the action room: manage your own actions. Discovery/browse lives
+// in /run; Scope="all" for a superuser widens Mine to
 // every owner's actions.
 type actionsView struct {
-	User        client.User
-	Mine        []actionCardView // the signed-in user's own actions (management)
-	Earnings    studioEarnings
-	MonthEarned int64  // net earned this calendar month (the "this month" tile)
-	Filter      string // "active" | "inactive" | "" (all) — applies to Mine
-	Scope       string // "" (own+public) | "all" (superuser sees every action)
-	Superuser   bool
-	Pager       Pager // paging over the (filtered) management table
-	OpenForm    string
-	Create      actionDraft // the create dialog's values
-	Error       string
-	Notice      string
+	User      client.User
+	Mine      []actionCardView // the signed-in user's own actions (management)
+	Filter    string           // "active" | "inactive" | "" (all) — applies to Mine
+	Scope     string           // "" (own+public) | "all" (superuser sees every action)
+	Superuser bool
+	Pager     Pager // paging over the (filtered) management table
+	OpenForm  string
+	Create    actionDraft // the create dialog's values
+	Error     string
+	Notice    string
 }
 
 type processesView struct {
@@ -1006,7 +993,13 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Me = me.Address
-		tasks, e := s.client.ListTasks(ctx, tok, filter)
+		tasks, e := s.client.WaitingTasks(ctx, tok)
+		if e != nil {
+			return e
+		}
+		history, historyMore, e := fetchRows(r, func(limit, offset int) ([]client.Task, error) {
+			return s.client.TasksPage(ctx, tok, filter, limit, offset)
+		})
 		if e != nil {
 			return e
 		}
@@ -1020,18 +1013,12 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 			}
 			return rq[i].Since < rq[j].Since
 		})
-		var waiting []client.Task
-		for _, t := range tasks {
-			if t.Waiting() && t.RequiredCaller == me.Address {
-				waiting = append(waiting, t)
-			} else {
-				view.History = append(view.History, t)
-			}
-		}
-		var waitingMore, requestersMore, historyMore bool
+		mine := func(t client.Task) bool { return t.Waiting() && t.RequiredCaller == me.Address }
+		waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !mine(t) })
+		view.History = slices.DeleteFunc(history, mine) // above, in Waiting for you
+		var waitingMore, requestersMore bool
 		waiting, waitingMore = pageRows(r, waiting)
 		view.Requesters, requestersMore = pageRows(r, rq)
-		view.History, historyMore = pageRows(r, view.History)
 		view.Pager = pageNav(r, queryOffset(r), pageSize, waitingMore || requestersMore || historyMore)
 		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
 		for _, t := range waiting {
@@ -1129,9 +1116,10 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 			return e
 		}
 		view.OpenForm = openForm(r, "action-detail")
-		// Ratings: fetch all, slice one page here (uniform with the other lists).
-		if all, e := s.client.ActionRatings(ctx, tok, id, 0, 0); e == nil {
-			view.Ratings, view.RatingsPager = pageOf(r, all)
+		if rows, pager, e := fetchPage(r, func(limit, offset int) ([]client.Rating, error) {
+			return s.client.ActionRatings(ctx, tok, id, limit, offset)
+		}); e == nil {
+			view.Ratings, view.RatingsPager = rows, pager
 		}
 		return nil
 	})
@@ -1183,7 +1171,7 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 	// already transacted with this action's owner. Bounded, best-effort.
 	if owner := refOwner(a.Action); a.Price > 0 && owner != me.Address {
 		view.FirstPayee = true
-		if txs, e := s.client.ListTransactions(ctx, tok, "", 200); e == nil {
+		if txs, e := s.client.TransactionsPage(ctx, tok, "", 200, 0); e == nil {
 			for _, t := range txs {
 				if t.Target == owner {
 					view.FirstPayee = false
@@ -1403,8 +1391,6 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 		scope = ""
 	}
 	view := actionsView{Filter: filter, Scope: scope, Superuser: super, OpenForm: openForm(r, "action")}
-	var mine []actionCardView
-	var txs []client.Transaction
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.me(r)
 		if e != nil {
@@ -1421,63 +1407,20 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 		}
 		// The workshop manages this kernel's actions: a row known only from a
 		// peer's gossip is not one to manage here.
+		var mine []actionCardView
 		for i := range a {
-			if !a[i].Discovered {
-				mine = append(mine, cardOf(a[i]))
+			if a[i].Discovered || (filter == "active" && !a[i].Active) || (filter == "inactive" && a[i].Active) {
+				continue
 			}
+			mine = append(mine, cardOf(a[i]))
 		}
-		s.fetchEvidence(ctx, tok, mine)
-		txs, _ = s.client.ListTransactions(ctx, tok, "", 0)
+		view.Mine, view.Pager = pageOf(r, mine)
+		s.fetchEvidence(ctx, tok, view.Mine)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	// Fold transactions once: aggregate earnings (all-time + this month) and bucket
-	// per-action earned + latest failure for the management table.
-	monthPrefix := time.Now().UTC().Format("2006-01")
-	perActionEarned := map[string]int64{}
-	perActionFailure := map[string]string{} // latest failure reason (txs are newest-first)
-	for _, tx := range txs {
-		if tx.Status == "failure" {
-			if _, seen := perActionFailure[tx.ActionID]; !seen && tx.Reason != "" {
-				perActionFailure[tx.ActionID] = tx.Reason
-			}
-			continue
-		}
-		if tx.Status != "success" {
-			continue
-		}
-		var inflow int64
-		if tx.Target == view.User.Address {
-			inflow += tx.Net // net as the seller
-			perActionEarned[tx.ActionID] += tx.Net
-		}
-		if super {
-			inflow += tx.Fee // sys earns the platform fee on every settled call
-		}
-		if inflow > 0 {
-			view.Earnings.Earned += inflow
-			view.Earnings.Count++
-			if strings.HasPrefix(tx.StartedAt, monthPrefix) {
-				view.MonthEarned += inflow
-			}
-		}
-	}
-	for _, c := range mine {
-		if filter == "active" && !c.Action.Active {
-			continue
-		}
-		if filter == "inactive" && c.Action.Active {
-			continue
-		}
-		c.Earned = perActionEarned[c.Action.ID]
-		c.LastFailure = perActionFailure[c.Action.ID]
-		view.Mine = append(view.Mine, c)
-	}
-	// Page the (filtered) management table; earnings tiles above still reflect the
-	// full fold, not the visible page.
-	view.Mine, view.Pager = pageOf(r, view.Mine)
 	status := http.StatusOK
 	if create != nil {
 		view.Create, view.OpenForm, status = *create, "action-create", http.StatusUnprocessableEntity
@@ -1927,12 +1870,12 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		}
 		// An unread list is not an empty one: a table claiming no withdrawals
 		// while money is in flight would misstate it.
-		withdrawals, e := s.client.ListWithdrawals(ctx, tok)
-		if e != nil {
+		if view.Withdrawals, view.Pager, e = fetchPage(r, func(limit, offset int) ([]client.Withdrawal, error) {
+			return s.client.WithdrawalsPage(ctx, tok, limit, offset)
+		}); e != nil {
 			return e
 		}
-		view.Withdrawals, view.Pager = pageOf(r, withdrawals)
-		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
+		if procs, e := s.client.OpenProcesses(ctx, tok); e == nil {
 			view.Open = ownSessions(procs, me.Address)
 		}
 		// The ledger journals every movement between accounts — deposits,
@@ -1992,14 +1935,14 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
 		// Waiting tasks only: an empty status would read the whole history.
 		// A superuser lists everyone's, so keep the ones addressed to the viewer,
 		// the inbox's own rule.
-		if tasks, e := s.client.ListTasks(ctx, tok, "waiting"); e == nil {
+		if tasks, e := s.client.WaitingTasks(ctx, tok); e == nil {
 			for _, t := range tasks {
 				if t.Waiting() && t.RequiredCaller == me.Address && len(view.Waiting) < homePreview {
 					view.Waiting = append(view.Waiting, t)
 				}
 			}
 		}
-		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
+		if procs, e := s.client.OpenProcesses(ctx, tok); e == nil {
 			own := ownSessions(procs, me.Address)
 			view.Open = own[:min(len(own), homePreview)]
 		}
@@ -2151,25 +2094,36 @@ func (s *Server) postRegisterAddress(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var procs []client.Process
+	me := s.sessions.Address(ctx)
+	var open, page []client.Process
+	var more bool
 	err := s.sessions.Do(ctx, func(tok string) error {
-		p, e := s.client.ListProcesses(ctx, tok, true)
-		procs = p
+		// The viewer's open sessions are read whole, since this is where they are
+		// ended, and an old one must not hide on a later page.
+		var e error
+		if open, e = s.client.OpenProcesses(ctx, tok); e != nil {
+			return e
+		}
+		page, more, e = fetchRows(r, func(limit, offset int) ([]client.Process, error) {
+			return s.client.ProcessesPage(ctx, tok, limit, offset)
+		})
 		return e
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
-	open := filterStatus(procs, "open", true)
-	closed := filterStatus(procs, "open", false)
-	openPage, openMore := pageRows(r, open)
-	closedPage, closedMore := pageRows(r, closed)
+	// A superuser's page also holds other owners' open sessions.
+	for _, p := range filterStatus(page, "open", true) {
+		if p.Owner != me {
+			open = append(open, p)
+		}
+	}
 	s.renderPage(w, r, http.StatusOK, "processes", "Processes", processesView{
-		Open:      openPage,
-		Closed:    closedPage,
+		Open:      open,
+		Closed:    filterStatus(page, "open", false),
 		Superuser: s.isSuperuser(r),
 		CSRFField: csrf.TemplateField(r),
-		Pager:     pageNav(r, queryOffset(r), pageSize, openMore || closedMore),
+		Pager:     pageNav(r, queryOffset(r), pageSize, more),
 	})
 }
 
@@ -2184,8 +2138,9 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Process = p
 		view.Me = s.sessions.Address(ctx)
-		txs, _ := s.client.ListTransactions(ctx, tok, id, 0)
-		view.Transactions, view.Pager = pageOf(r, txs)
+		view.Transactions, view.Pager, _ = fetchPage(r, func(limit, offset int) ([]client.Transaction, error) {
+			return s.client.TransactionsPage(ctx, tok, id, limit, offset)
+		})
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
@@ -2216,15 +2171,10 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		if me, e = s.me(r); e != nil {
 			return e
 		}
-		// Fetch the full ledger and slice one page here: the kernel paginates raw
-		// rows before its party filter, so a server-side page can't page the
-		// viewer's filtered set (see pageSlice).
-		all, e := s.client.ListTransactions(ctx, tok, "", 0)
-		if e != nil {
-			return e
-		}
-		txs, pager = pageOf(r, all)
-		return nil
+		txs, pager, e = fetchPage(r, func(limit, offset int) ([]client.Transaction, error) {
+			return s.client.TransactionsPage(ctx, tok, "", limit, offset)
+		})
+		return e
 	})
 	if s.handleErr(w, r, err) {
 		return

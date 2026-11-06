@@ -1,8 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.53.0
+Version: 0.54.0
 Status: design draft — endpoint surface gated against the running kernel
 
+> **What changed in 0.54.0.** 0.53.0's pagers cut the page after reading the whole
+> list, so `sys`'s transactions took 92 kernel calls and 74 seconds to show 20 rows. A
+> page now reads one page from the kernel. A comment had claimed the kernel pages before
+> it filters by visibility, which it does not, and a contract test now holds that.
+> Workshop's earnings figures, its Earned column and its last-failure peek are removed:
+> the kernel has no figure for them, and adding them up meant reading every transaction
+> on every load. They can return when the kernel offers a total.
+>
 > **What changed in 0.53.0.** `room/direct` is gone: the landing finds the room of
 > exactly the viewer and the assistant among the viewer's rooms, and starts it with
 > `room/create` on the first visit. A change of members refused comes back in the open
@@ -477,7 +485,7 @@ Status: design draft — endpoint surface gated against the running kernel
 > action list and never from `sys/lookup`, which is a priced run (§6.2). A rowable row is
 > keyboard-navigable and its link is the pointer target, so no row shows a
 > pointer cursor it cannot honour (§6.1). Every headline money figure —
-> wallet, home, workshop earnings, a session's funds — renders through one
+> wallet, home, workshop's parked funds, a session's funds — renders through one
 > component, one block per figure (§6.4). **No remarks**: a page carries no orientation
 > subtitle, and no control or field carries a sentence explaining behaviour
 > (the paid-run caption, the deactivation note, the import, secret and
@@ -960,8 +968,7 @@ dashboard over the others; discovery + execution (`run` + the catalog) is
 Discover and the composer's launcher; `inbox` is `task` — work addressed to the
 user, carrying the sole attention badge, which counts the waiting tasks
 addressed to the user and the requesters awaiting the user's decision (§6.3);
-`workshop` is the provider surface (`action` management + earnings +
-creation); `wallet` is money evidence (`user` balances + `process` lifetimes +
+`workshop` is the provider surface (`action` management + creation); `wallet` is money evidence (`user` balances + `process` lifetimes +
 the `tx` ledger + receipts); `settings` is account, preferences, and connected
 accounts; `network` is federation (peers), and `admin` is operator
 supervision. Moving a page out of the sidebar grants and removes no authority —
@@ -1101,8 +1108,7 @@ them. A test holds this.
 * **browse / workshop** — catalog browse plus owner action management: create,
   list/show (including inactive, via `GET /v1/actions?owner=<self>`), update,
   enable, disable, delete; three-way `visibility` (private/local/public);
-  OpenAPI import by name; the evidence an action read carries; ratings list;
-  earnings folded from the owner's transactions.
+  OpenAPI import by name; the evidence an action read carries; ratings list.
 * **process** — computation lifetimes (`GET /v1/processes`, show, force-end),
   surfacing parked funds and awaiting-receipt state.
 * **tx** — the immutable ledger: transactions list/show/rate; receipt
@@ -1855,18 +1861,18 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 ### 6.4 action — catalog and provider workspace
 
-* Workshop MUST present, in order: earnings, action list, creation zone. Its
+* Workshop MUST present, in order: what is parked, action list, creation zone. Its
   action list is this kernel's actions (`?owner=` the viewer, or the whole
   catalog for the superuser); a discovered row is not one to manage and MUST be
   left out.
-* Earnings MUST be computed in the BFF by folding the user's own transactions;
-  each figure MUST link to its underlying transactions. Earnings, like every
-  headline money figure (wallet, home, a session), MUST render through the one
-  figures component: one block per figure (§7). The BFF MUST NOT
-  reproduce kernel settlement.
+* Workshop MUST NOT read the user's transactions: no kernel figure totals a person's
+  earnings, and a fold would read every transaction on every load. What is parked,
+  like every headline money figure (wallet, home, a session), MUST render through
+  the one figures component: one block per figure (§7). The BFF MUST NOT reproduce
+  kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
-  actions, filter by state, and show kind, price, success rate, rating trend, a
-  last-failure peek, an inline active/inactive toggle, and a **visibility**
+  actions, filter by state, and show kind, price, success rate, rating trend, an
+  inline active/inactive toggle, and a **visibility**
   control (below).
 * **Visibility** MUST be set via `PUT /v1/actions` with
   `{target, visibility: "private" | "local" | "public"}` — the kernel's three-way
@@ -2732,13 +2738,20 @@ imports its live rooms, members and messages once and never writes that file.
   with a glyph: credited green `+`, refunded slate-blue `↩`, escrow-pending
   (parked / in-flight) plum `◷`. These signals MUST be confined to text and
   glyphs, not fills.
-* **Pagination.** No list renders unbounded. Every long list — Discover, the
-  transaction ledger, the workshop management table, the admin roster, an action's
-  ratings, open/closed sessions, the inbox, a user's actions, a wallet's withdrawals, a
-  session's transactions, and Network's obligations, held payments and kernels — MUST page with `limit`/`offset` at **20 per
-  page** through **one shared, quiet pager** (`← previous · page N · next →`; a
-  boundary renders a dimmed non-link). Several lists on one page share one pager. The
-  pager carries no accent (money-reserved).
+* **Pagination.** No list renders unbounded, and no page reads more than it shows when
+  the kernel can page the list. The ledger of transactions, a session's transactions,
+  task history, sessions, withdrawals and ratings MUST each be read one page at a time,
+  through the kernel's `limit` and `offset`, one row beyond the page saying whether
+  another follows, since the kernel answers no total. A page is full until the list
+  ends, since the kernel pages after visibility, and a contract test holds this. Read
+  whole and cut here, each for its reason: Discover (a sort orders the whole catalog),
+  the workshop table (its state tabs filter what the kernel does not), a user's actions
+  (a page of actions is not promised full), the admin roster (sorted here), Network's
+  kernels (merged from classes here), and obligations, held payments and requesters
+  (the kernel does not page them). Open tasks and open sessions are read whole: they are
+  work still to do, and small. All of them page at **20 per page** through **one shared,
+  quiet pager** (`← previous · page N · next →`; a boundary renders a dimmed non-link).
+  Several lists on one page share one pager. The pager carries no accent (money-reserved).
 * **Themes.** The UI ships **multiple selectable themes**, each defined
   by a **Ghostty 16-colour ANSI palette** (`palette 0–15` plus
   background/foreground/cursor/selection). Every theme MUST derive from one set of
@@ -3011,6 +3024,10 @@ Every production `.go` file has a `_test.go` file with independent tests.
   reads the viewer once;
 * sizes as tokens: no size literal in the stylesheet beyond a hairline, and
   icons and avatars at token sizes;
+* a page's reads: with a thousand rows of each list, a page asks the kernel for one page
+  at its own offset and never walks the list, its pager following; Workshop reads no
+  transaction; against the real kernel, a walk in small pages equals the whole read for
+  each user and the superuser;
 * chat as the workspace: the rail newest first with the room in view and an
   unread one marked, its heartbeat answering only a changed rail; a room's menu
   by who made it; the rename dialog opened with no run, refused with the reason
