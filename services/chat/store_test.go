@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -195,44 +194,6 @@ func TestAnswerSettles(t *testing.T) {
 	}
 }
 
-// The direct room of two is found, or made once, named by the other's
-// handle; a room with a third member is not it; concurrent first visits make
-// one room.
-func TestDirect(t *testing.T) {
-	s := mustStore(t)
-	s.CreateRoom("ann@k", "group", []string{"assistant@k", "bob@k"})
-	var wg sync.WaitGroup
-	ids := make([]string, 8)
-	for i := range ids {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			r, err := s.Direct("ann@k", "assistant@k")
-			if err != nil {
-				t.Error(err)
-			}
-			ids[i] = r.ID
-		}(i)
-	}
-	wg.Wait()
-	for _, id := range ids {
-		if id != ids[0] {
-			t.Fatalf("two rooms: %v", ids)
-		}
-	}
-	r, _, err := s.Room("ann@k", ids[0])
-	if err != nil || r.Name != "assistant" || strings.Join(r.Members, ",") != "ann@k,assistant@k" {
-		t.Fatalf("direct = %+v %v", r, err)
-	}
-	if b, _ := s.Direct("bob@k", "assistant@k"); b.ID == ids[0] {
-		t.Error("another viewer has its own room")
-	}
-	if _, err := s.Direct("ann@k", "ann@k"); !errors.Is(err, ErrBadInput) {
-		t.Errorf("a room with oneself = %v", err)
-	}
-}
-
-// Room ids are words, adjective-animal-NN.
 func TestWordID(t *testing.T) {
 	re := regexp.MustCompile(`^[a-z]+-[a-z]+-[1-9][0-9]$`)
 	for i := 0; i < 200; i++ {

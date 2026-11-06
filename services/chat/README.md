@@ -27,7 +27,7 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 |---|---|
 | `store.go` | SQLite: rooms, members, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one. No kernel knowledge; every rule one transaction. |
 | `deliver.go` | Routing by address (the first word of a post), and the delivery of a post as kernel tasks. |
-| `service.go` | The fourteen action contracts and their endpoints. |
+| `service.go` | The thirteen action contracts and their endpoints. |
 | `register.go` | The service's state, and reconciling the actions on a kernel. |
 
 ## The actions, under `chat@<kernel>/`
@@ -40,7 +40,6 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 | `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered}` |
 | `reply` | the kernel, as a delivery's onward | `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` |
 | `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room}` |
-| `room/direct` | anyone joined | `{member}` → `{room}`: the room of exactly those two |
 | `room/rename` | the creator | `{thread_id, name}` → `{room}` |
 | `room/add` | the creator | `{thread_id, member}` → `{room}` |
 | `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}` |

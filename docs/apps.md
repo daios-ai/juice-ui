@@ -74,7 +74,7 @@ type App interface {
 
 `Deps` is the core capability surface handed to an app at `Mount` time — the kernel
 `client`, the `session` manager, and helpers as closures over the core server:
-`RenderPage`, `RenderFragment`, `HandleErr`, `HandleErrFragment`, `FlashRedirect`,
+`RenderPage`, `RenderFragment`, `HandleErr`, `HandleErrFragment`, `Redirect`, `FlashRedirect`,
 `CSRFField`, `IsHTMX`, `Me` (the signed-in address), `Address`, `RequireAuth`. An app renders full pages in the
 shared shell and htmx fragments without importing `server`. It also carries:
 

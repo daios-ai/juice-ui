@@ -450,6 +450,13 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 			return nil
 		},
 		Fragment: func(name string, data any) (template.HTML, error) { return template.HTML(name), nil },
+		Redirect: func(w http.ResponseWriter, r *http.Request, to string) {
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", to)
+				return
+			}
+			http.Redirect(w, r, to, http.StatusSeeOther)
+		},
 		FlashRedirect: func(w http.ResponseWriter, r *http.Request, to, kind, msg string) {
 			w.Header().Set("X-Flash", kind+": "+msg)
 			w.Header().Set("X-Flash-To", to)
@@ -735,15 +742,22 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	if len(f.decided) != 2 || f.decided[1] != "chat@testnet approve" || len(f.completes) != 0 {
 		t.Errorf("join = decided %v completes %v", f.decided, f.completes)
 	}
-	if got := f.ran(roomDirectName); len(got) != 1 || got[0] != `{"member":"assistant@testnet"}` {
-		t.Errorf("the room is opened by the direct action: %v", got)
+	if got := f.ran(roomCreateName); len(got) != 1 || !strings.Contains(got[0], `"members":["assistant@testnet"]`) || !strings.Contains(got[0], `"name":"assistant"`) {
+		t.Errorf("the first visit starts the room: %v", got)
 	}
 	rooms, _ := f.svc.Store.Rooms("ann@testnet")
 	if len(rooms) != 1 || rooms[0].Name != "assistant" || strings.Join(rooms[0].Members, ",") != "ann@testnet,assistant@testnet" || to != "/chat/room/"+rooms[0].ID {
 		t.Fatalf("rooms = %+v", rooms)
 	}
-	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 {
-		t.Errorf("a second landing joins nobody and opens the same room: %s %v", rec.Header().Get("Location"), f.grants)
+	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 || len(f.ran(roomCreateName)) != 1 {
+		t.Errorf("a second landing joins nobody and opens the same room: %s %v %v", rec.Header().Get("Location"), f.grants, f.ran(roomCreateName))
+	}
+	// A room with a third member is not the conversation with the assistant.
+	if _, err := f.svc.Store.CreateRoom("ann@testnet", "three", []string{"assistant@testnet", "bob@testnet"}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := land(); rec.Header().Get("Location") != to {
+		t.Errorf("the landing opened %s, not %s", rec.Header().Get("Location"), to)
 	}
 	// A join that cannot be made is said on the room the landing opens.
 	f.expired["AT"], f.expired["R-AT"] = true, true
@@ -1582,12 +1596,12 @@ func TestRoomHeader(t *testing.T) {
 	if want := `<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="ca&lt;fe">ca&lt;fe</b></nav>`; !strings.Contains(got, want) {
 		t.Errorf("the crumb is not the name alone: %s", got)
 	}
-	for _, want := range []string{`<dialog id="form-members" class="modal-form" aria-label="Members">`, ">bob@testnet<", `/remove-member"`, `/add-member"`} {
+	for _, want := range []string{`<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true">`, ">bob@testnet<", `/remove-member"`, `/add-member"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the creator's dialog lacks %s", want)
 		}
 	}
-	if !strings.Contains(page(mine.ID, "?form=members"), `<dialog id="form-members" class="modal-form" open aria-label="Members">`) {
+	if !strings.Contains(page(mine.ID, "?form=members"), `<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true" open>`) {
 		t.Error("?form=members opens the dialog")
 	}
 	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
@@ -1861,6 +1875,87 @@ func TestRoomPageIDsAreUnique(t *testing.T) {
 		if !seen[want] {
 			t.Errorf("no id %s: %s", want, got)
 		}
+	}
+}
+
+// A change of members refused comes back in the open dialog with the reason and
+// the address typed; done, the page reloads with the dialog open.
+func TestMembersInPlace(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail); err != nil {
+		t.Fatal(err)
+	}
+	rec := command(c, sm, c.postAddMember, mine.ID, "member=bare")
+	got := rec.Body.String()
+	for _, want := range []string{`<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true" open>`, "A member is an address", `value="bare"`, ">bob@testnet<"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a bare address: lacks %s: %s", want, got)
+		}
+	}
+	if rec.Code != 200 || rec.Header().Get("HX-Redirect") != "" {
+		t.Errorf("a refusal stays on the page: %d %v", rec.Code, rec.Header())
+	}
+	got = command(c, sm, c.postAddMember, theirs.ID, "member=dave%40testnet").Body.String()
+	for _, want := range []string{" open>", "You may not do that"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("not the creator: lacks %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, `/add-member"`) {
+		t.Errorf("a member's dialog offers no adding: %s", got)
+	}
+	got = command(c, sm, c.postRemoveMember, theirs.ID, "member=bob%40testnet").Body.String()
+	if !strings.Contains(got, " open>") || !strings.Contains(got, "You may not do that") {
+		t.Errorf("a refused removal: %s", got)
+	}
+	to := "/chat/room/" + mine.ID + "?form=members"
+	if rec := command(c, sm, c.postAddMember, mine.ID, "member=dave%40testnet"); rec.Header().Get("HX-Redirect") != to {
+		t.Errorf("an addition: %v", rec.Header())
+	}
+	if rec := command(c, sm, c.postRemoveMember, mine.ID, "member=dave%40testnet"); rec.Header().Get("HX-Redirect") != to {
+		t.Errorf("a removal: %v", rec.Header())
+	}
+	if room, _, _ := f.svc.Store.Room("ann@testnet", mine.ID); strings.Join(room.Members, ",") != "ann@testnet,bob@testnet" {
+		t.Errorf("members = %v", room.Members)
+	}
+}
+
+// A conversation refused keeps the dialog open with the reason and all that was
+// chosen and typed; started, the page goes to it.
+func TestNewRoomInPlace(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	agentHome(t, c, "helper@testnet", "AH")
+	post := func(form string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		return as(c, sm, c.postCreateRoom, req)
+	}
+	rec := post("name=tea")
+	got := rec.Body.String()
+	for _, want := range []string{`<dialog id="form-new" class="modal-form" open aria-label="New conversation" hx-swap-oob="true">`, "Choose who the conversation is with.", `name="name" value="tea"`, `value="helper@testnet">`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nobody chosen: lacks %s: %s", want, got)
+		}
+	}
+	if rec.Code != 200 || rec.Header().Get("HX-Redirect") != "" || len(f.ran(roomCreateName)) != 0 {
+		t.Errorf("a refusal stays on the page and runs nothing: %d %v %v", rec.Code, rec.Header(), f.ran(roomCreateName))
+	}
+	got = post("agent=helper%40testnet&members=bare&name=tea").Body.String()
+	for _, want := range []string{"bare is not an address", `value="helper@testnet" checked>`, ">bare</textarea>", `name="name" value="tea"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a bad address: lacks %s: %s", want, got)
+		}
+	}
+	rec = post("members=bob%40testnet&name=tea")
+	if to := rec.Header().Get("HX-Redirect"); !strings.HasPrefix(to, "/chat/room/") {
+		t.Errorf("a start goes to the room: %d %v", rec.Code, rec.Header())
 	}
 }
 

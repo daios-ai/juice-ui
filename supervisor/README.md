@@ -3,8 +3,9 @@
 The process supervisor: it runs an installation's programs as its children, restarts
 them when they end, and stops them when asked or when it closes. The UI embeds it;
 `juice-supervisor` runs it from the command line on a machine with no UI. It imports
-only the standard library and knows nothing of Juice, so moving it to a repository
-of its own is moving this directory and `cmd/juice-supervisor`.
+only the standard library. Of Juice it knows only the installation's layout: its own
+`supervisor/` directory and `bin/` under `$JUICE_HOME`. So moving it to a repository of
+its own is moving this directory and `cmd/juice-supervisor`.
 
 ## A program
 

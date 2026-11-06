@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"html/template"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
@@ -2408,5 +2409,35 @@ func TestControlIsOneRenderer(t *testing.T) {
 	_ = r.Fragment(plain, 200, "_balance", balanceView{Amount: 3})
 	if strings.Contains(plain.Body.String(), "hx-swap-oob") {
 		t.Error("the page's own balance is not out of band")
+	}
+}
+
+// One page of rows at the request's offset, with whether more follow and a pager
+// that keeps the rest of the query.
+func TestPageOf(t *testing.T) {
+	rows := make([]int, 45)
+	for i := range rows {
+		rows[i] = i
+	}
+	for _, c := range []struct {
+		query      string
+		first, n   int
+		prev, next string
+	}{
+		{"?status=open", 0, 20, "", "/x?offset=20&status=open"},
+		{"?offset=20&status=open", 20, 20, "/x?status=open", "/x?offset=40&status=open"},
+		{"?offset=40&status=open", 40, 5, "/x?offset=20&status=open", ""},
+		{"?offset=999", 45, 0, "/x?offset=979", ""},
+	} {
+		page, p := pageOf(httptest.NewRequest(http.MethodGet, "/x"+c.query, nil), rows)
+		if len(page) != c.n || (c.n > 0 && page[0] != c.first) || p.PrevHref != c.prev || p.NextHref != c.next {
+			t.Errorf("%s: %v %+v", c.query, page, p)
+		}
+	}
+	if page, more := pageRows(httptest.NewRequest(http.MethodGet, "/x", nil), []int{1, 2}); len(page) != 2 || more {
+		t.Errorf("a short list: %v %v", page, more)
+	}
+	if page, more := pageRows[int](httptest.NewRequest(http.MethodGet, "/x?offset=20", nil), nil); len(page) != 0 || more {
+		t.Errorf("no rows: %v %v", page, more)
 	}
 }

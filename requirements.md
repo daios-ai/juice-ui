@@ -1,8 +1,18 @@
 # Juice Web UI Requirements
 
-Version: 0.52.0
+Version: 0.53.0
 Status: design draft — endpoint surface gated against the running kernel
 
+> **What changed in 0.53.0.** `room/direct` is gone: the landing finds the room of
+> exactly the viewer and the assistant among the viewer's rooms, and starts it with
+> `room/create` on the first visit. A change of members refused comes back in the open
+> dialog with the reason and the address typed, and one that succeeds returns to the
+> dialog. Starting a conversation refused keeps its dialog open with the reason and
+> what was chosen and typed, on the page it was opened from. The inbox, a user's actions,
+> a wallet's withdrawals, a session's transactions and Network's money lists now page
+> like every other long list. Long text no longer overflows at phone width on Network, an
+> action's page and the configuration page.
+>
 > **What changed in 0.52.0.** 0.51.0 gave a room two menus that differed, one in its
 > header and one in the sidebar. A room now has one menu, its row in the sidebar:
 > Members, Rename and Delete for its creator, Members and Leave for any other member.
@@ -972,8 +982,8 @@ detectable.
 **The process supervisor.** Package `supervisor` runs the installation's programs:
 the kernel, the agents, chat and anything an operator adds. The UI embeds it and
 owns one, opened at start and closed at exit; `juice-supervisor` is the same package
-for a machine with no UI. It imports only the standard library and knows nothing of
-Juice. The UI proper starts and signals no process, and the owners (`kernel`,
+for a machine with no UI. It imports only the standard library, and of Juice it knows
+only the installation's layout. The UI proper starts and signals no process, and the owners (`kernel`,
 `apps/agents`, `apps/chat`) declare their programs and keep what is specific to
 them. A test holds this.
 
@@ -2370,7 +2380,7 @@ address, compared without case. There is no `@handle`: a member is named as
 everywhere in Juice.
 
 Chat is an HTTP server, the **chat service**, whose endpoints the kernel wraps
-as actions owned by the kernel user `chat@<kernel>`. Its fourteen actions, every
+as actions owned by the kernel user `chat@<kernel>`. Its thirteen actions, every
 schema canonical (§6.4) and every text naming this kernel, are:
 
 | Action | Visibility, auth | Input → output | Who may |
@@ -2381,7 +2391,6 @@ schema canonical (§6.4) and every text naming this kernel, are:
 | `reply` | private, chat's bearer | a delivery's onward: `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` | the kernel |
 | `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered}` | a member |
 | `room/create` | public, delegated | `{members, name?}` → `{room}` | anyone joined, who becomes the creator; a blank name is the members' handles |
-| `room/direct` | public, delegated | `{member}` → `{room}` | anyone joined: the room of exactly those two, made when absent |
 | `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
 | `room/add` | public, delegated | `{thread_id, member}` → `{room}` | the creator |
 | `room/remove` | public, delegated | `{thread_id, member}` → `{room}` | the creator, never itself |
@@ -2520,8 +2529,8 @@ The rules:
    anyone revoke a member's credential, and a failed connect leaves the earlier key
    working. A contract change revokes grants; the next join restores them.
 9. **`/chat` is the viewer's conversation with the assistant**: the room whose
-   members are exactly the viewer and `assistant@<kernel>`, opened by
-   `room/direct` and named `assistant`; without an assistant home the
+   members are exactly the viewer and `assistant@<kernel>`, found among the viewer's
+   rooms, or started with `room/create` and named `assistant`; without an assistant home the
    landing is the newest room, else an empty page beside the rail. The rail
    lists the viewer's rooms. Every room read and command on a page is a run of its
    action as the viewer, so the UI touches no store of chat's, and New conversation
@@ -2556,7 +2565,7 @@ the assistant, else the newest room, else an empty page beside the rail.
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
-  handles. There is no rooms page. Each room carries its one menu: **Members…**,
+  handles. Refused, it stays open with the reason and what was chosen and typed. There is no rooms page. Each room carries its one menu: **Members…**,
   **Rename…** and **Delete…** for its creator, **Members…** and **Leave…** for any
   other member, the question
   naming the room.
@@ -2725,9 +2734,11 @@ imports its live rooms, members and messages once and never writes that file.
   glyphs, not fills.
 * **Pagination.** No list renders unbounded. Every long list — Discover, the
   transaction ledger, the workshop management table, the admin roster, an action's
-  ratings, and open/closed sessions — MUST page with `limit`/`offset` at **20 per
+  ratings, open/closed sessions, the inbox, a user's actions, a wallet's withdrawals, a
+  session's transactions, and Network's obligations, held payments and kernels — MUST page with `limit`/`offset` at **20 per
   page** through **one shared, quiet pager** (`← previous · page N · next →`; a
-  boundary renders a dimmed non-link). The pager carries no accent (money-reserved).
+  boundary renders a dimmed non-link). Several lists on one page share one pager. The
+  pager carries no accent (money-reserved).
 * **Themes.** The UI ships **multiple selectable themes**, each defined
   by a **Ghostty 16-colour ANSI palette** (`palette 0–15` plus
   background/foreground/cursor/selection). Every theme MUST derive from one set of
@@ -3006,7 +3017,7 @@ Every production `.go` file has a `_test.go` file with independent tests.
   and the name typed; a room command one run and one read answered in place,
   past a watch that failed and for a room already gone, the room in view going to
   `/chat`; no id rendered twice on a room page; a room's crumb its name, its one menu
-  in the rail, its members one dialog; the landing's
+  in the rail, its members one dialog, a change refused coming back in it; the landing's
   fallbacks; a conversation started from its participants, its blank name
   theirs; whom the room waits on, never the viewer; the room page carries the
   composer bar — the schema's own message control, no label, switch or sealed

@@ -22,7 +22,6 @@ const (
 	postName       = "msg/post"
 	replyName      = "reply"
 	roomCreateName = "room/create"
-	roomDirectName = "room/direct"
 	roomRenameName = "room/rename"
 	roomAddName    = "room/add"
 	roomRemoveName = "room/remove"
@@ -50,7 +49,7 @@ const usage = "Chat rooms for people and agents; every member is an address, han
 	"To ask another member something, run chat@KERNEL/msg/post with {thread_id: the room, message: your text} and write that member's address as the first word, " +
 	"as in \"critic@KERNEL, which is best?\"; only that member receives it. A post that starts with no address reaches every other member. " +
 	"While you hold tasks you may post once per task; then complete them. " +
-	"Any member can start a room with chat@KERNEL/room/create or chat@KERNEL/room/direct, and leave one with chat@KERNEL/room/leave. " +
+	"Any member can start a room with chat@KERNEL/room/create, and leave one with chat@KERNEL/room/leave. " +
 	"A member reads with chat@KERNEL/room/list and chat@KERNEL/room/read. " +
 	"The room's creator can rename it with chat@KERNEL/room/rename, change its members with chat@KERNEL/room/add and chat@KERNEL/room/remove, and delete it with chat@KERNEL/room/delete. " +
 	"Members of this installation are joined by its UI. A member elsewhere joins by approving chat@KERNEL as a requester, running chat@KERNEL/register with its own address, " +
@@ -151,9 +150,6 @@ func contracts(self, secret string) []contract {
 			in: obj(`"members":{"type":"array","minItems":1,`+descr+`"The members' addresses, handle@kernel.","items":{"type":"string"}},"name":{"type":"string",`+descr+`"The room's name."}`,
 				"members"),
 			out: roomOut},
-		{name: roomDirectName, title: "Open a direct chat", vis: "public", auth: delegated,
-			desc: "The room whose members are exactly you and the member named, started when there is none.",
-			in:   obj(memberProp, "member"), out: roomOut},
 		{name: roomRenameName, title: "Rename a chat room", vis: "public", auth: delegated,
 			desc: "Change a room's name, for instance when its subject has changed. Only the room's creator can.",
 			in:   obj(threadProp+`,"name":{"type":"string",`+descr+`"The room's new name."}`, "thread_id", "name"), out: roomOut},
@@ -214,8 +210,6 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveReply(w, r)
 	case roomCreateName:
 		s.serveRoomCreate(w, r)
-	case roomDirectName:
-		s.serveRoomDirect(w, r)
 	case roomRenameName:
 		s.serveRoomRename(w, r)
 	case roomAddName:
@@ -439,26 +433,6 @@ func (s *Service) serveRoomCreate(w http.ResponseWriter, r *http.Request) {
 		name = strings.Join(handles, ", ")
 	}
 	room, err := s.Store.CreateRoom(member, name, in.Members)
-	if err != nil {
-		refuseErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"room": room})
-}
-
-func (s *Service) serveRoomDirect(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Member string `json:"member"`
-	}
-	member, ok := s.memberCommand(w, r, &in)
-	if !ok {
-		return
-	}
-	if !strings.Contains(in.Member, "@") {
-		refuseErr(w, fmt.Errorf("%w: %s is not an address, handle@kernel", ErrBadInput, in.Member))
-		return
-	}
-	room, err := s.Store.Direct(member, in.Member)
 	if err != nil {
 		refuseErr(w, err)
 		return

@@ -200,6 +200,7 @@ type processesView struct {
 }
 
 type processView struct {
+	Pager        Pager
 	Process      client.Process
 	Transactions []client.Transaction
 	Me           string // the viewer's address
@@ -242,6 +243,7 @@ type taskGroup struct {
 }
 
 type tasksView struct {
+	Pager       Pager
 	Me          string             // the viewer's address
 	InboxGroups []taskGroup        // waiting tasks that require this user, grouped by created_by
 	History     []client.Task      // every other task the viewer may see
@@ -417,6 +419,7 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 // kernel has no public user-profile endpoint, so there is no bio — the address
 // and its catalogue are the page.
 type ownerView struct {
+	Pager   Pager
 	Address string
 	Cards   []actionCardView
 }
@@ -433,6 +436,7 @@ func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
+		acts, view.Pager = pageOf(r, acts)
 		cards := make([]actionCardView, len(acts))
 		for i, a := range acts {
 			cards[i] = cardOf(a)
@@ -748,7 +752,6 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	offset := queryOffset(r)
 	order := sortOrder(r)
 	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, order)}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -785,9 +788,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 			s.fetchEvidence(ctx, tok, cards)
 		}
 		sortCards(cards, order)
-		start, end, hasNext := pageSlice(len(cards), offset, pageSize)
-		cards = cards[start:end]
-		view.Pager = pageNav(r, offset, pageSize, hasNext)
+		cards, view.Pager = pageOf(r, cards)
 		s.fetchEvidence(ctx, tok, cards)
 		view.Catalog = cards
 		return nil
@@ -1019,12 +1020,21 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 			}
 			return rq[i].Since < rq[j].Since
 		})
-		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
+		var waiting []client.Task
 		for _, t := range tasks {
-			if !t.Waiting() || t.RequiredCaller != me.Address {
+			if t.Waiting() && t.RequiredCaller == me.Address {
+				waiting = append(waiting, t)
+			} else {
 				view.History = append(view.History, t)
-				continue
 			}
+		}
+		var waitingMore, requestersMore, historyMore bool
+		waiting, waitingMore = pageRows(r, waiting)
+		view.Requesters, requestersMore = pageRows(r, rq)
+		view.History, historyMore = pageRows(r, view.History)
+		view.Pager = pageNav(r, queryOffset(r), pageSize, waitingMore || requestersMore || historyMore)
+		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
+		for _, t := range waiting {
 			entry := s.taskEntryOf(t, me.Address)
 			i, ok := groupIdx[t.CreatedBy]
 			if !ok {
@@ -1120,11 +1130,8 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 		}
 		view.OpenForm = openForm(r, "action-detail")
 		// Ratings: fetch all, slice one page here (uniform with the other lists).
-		ratingsOffset := queryOffset(r)
 		if all, e := s.client.ActionRatings(ctx, tok, id, 0, 0); e == nil {
-			start, end, hasNext := pageSlice(len(all), ratingsOffset, pageSize)
-			view.Ratings = all[start:end]
-			view.RatingsPager = pageNav(r, ratingsOffset, pageSize, hasNext)
+			view.Ratings, view.RatingsPager = pageOf(r, all)
 		}
 		return nil
 	})
@@ -1470,10 +1477,7 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 	}
 	// Page the (filtered) management table; earnings tiles above still reflect the
 	// full fold, not the visible page.
-	offset := queryOffset(r)
-	start, end, hasNext := pageSlice(len(view.Mine), offset, pageSize)
-	view.Mine = view.Mine[start:end]
-	view.Pager = pageNav(r, offset, pageSize, hasNext)
+	view.Mine, view.Pager = pageOf(r, view.Mine)
 	status := http.StatusOK
 	if create != nil {
 		view.Create, view.OpenForm, status = *create, "action-create", http.StatusUnprocessableEntity
@@ -1857,6 +1861,7 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 // unless it awaits a peer's receipt), the activity list, and the money acts of
 // package wallet. A review names the amount a confirm will move.
 type walletView struct {
+	Pager     Pager
 	Available int64
 	Locked    int64
 	Open      []client.Process
@@ -1922,9 +1927,11 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		}
 		// An unread list is not an empty one: a table claiming no withdrawals
 		// while money is in flight would misstate it.
-		if view.Withdrawals, e = s.client.ListWithdrawals(ctx, tok); e != nil {
+		withdrawals, e := s.client.ListWithdrawals(ctx, tok)
+		if e != nil {
 			return e
 		}
+		view.Withdrawals, view.Pager = pageOf(r, withdrawals)
 		if procs, e := s.client.ListProcesses(ctx, tok, false); e == nil {
 			view.Open = ownSessions(procs, me.Address)
 		}
@@ -2155,25 +2162,14 @@ func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 	open := filterStatus(procs, "open", true)
 	closed := filterStatus(procs, "open", false)
-	offset := queryOffset(r)
-	page := func(rows []client.Process) ([]client.Process, bool) {
-		if offset >= len(rows) {
-			return nil, false
-		}
-		end := offset + pageSize
-		if end >= len(rows) {
-			return rows[offset:], false
-		}
-		return rows[offset:end], true
-	}
-	openPage, openMore := page(open)
-	closedPage, closedMore := page(closed)
+	openPage, openMore := pageRows(r, open)
+	closedPage, closedMore := pageRows(r, closed)
 	s.renderPage(w, r, http.StatusOK, "processes", "Processes", processesView{
 		Open:      openPage,
 		Closed:    closedPage,
 		Superuser: s.isSuperuser(r),
 		CSRFField: csrf.TemplateField(r),
-		Pager:     pageNav(r, offset, pageSize, openMore || closedMore),
+		Pager:     pageNav(r, queryOffset(r), pageSize, openMore || closedMore),
 	})
 }
 
@@ -2188,7 +2184,8 @@ func (s *Server) getProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Process = p
 		view.Me = s.sessions.Address(ctx)
-		view.Transactions, _ = s.client.ListTransactions(ctx, tok, id, 0)
+		txs, _ := s.client.ListTransactions(ctx, tok, id, 0)
+		view.Transactions, view.Pager = pageOf(r, txs)
 		return nil
 	})
 	if s.handleErrFragment(w, r, err) {
@@ -2213,8 +2210,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var txs []client.Transaction
 	var me client.User
-	offset := queryOffset(r)
-	hasNext := false
+	var pager Pager
 	err := s.sessions.Do(ctx, func(tok string) error {
 		var e error
 		if me, e = s.me(r); e != nil {
@@ -2227,9 +2223,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		start, end, more := pageSlice(len(all), offset, pageSize)
-		hasNext = more
-		txs = all[start:end]
+		txs, pager = pageOf(r, all)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -2237,7 +2231,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{
 		Transactions: txs, Me: me.Address, Superuser: s.isSuperuser(r),
-		Pager: pageNav(r, offset, pageSize, hasNext),
+		Pager: pager,
 	})
 }
 

@@ -25,24 +25,31 @@
   </div>{{end}}
 </nav>
 {{with .Watch}}{{template "_chat_watch" .}}{{template "_rename" $.Rename}}{{end}}
-{{if not .OOB}}<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New conversation">
+{{if not .OOB}}{{template "_new_room" .New}}{{end}}
+{{end}}
+
+{{/* _new_room — the new-conversation dialog; the name is optional. Refused, it
+     comes back open with the reason and what was chosen and typed. Input:
+     newRoomView. */}}
+{{define "_new_room"}}<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New conversation" hx-swap-oob="true">
   <div class="modal-head"><h2>New conversation</h2><a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
-    <form class="stack" method="post" action="/chat/rooms">
+  <div class="modal-body stack">
+    {{with .Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/chat/rooms" hx-post="/chat/rooms" hx-swap="none">
       {{.CSRFField}}
       {{if .Agents}}
       <div class="field">
         <label>Agents</label>
-        {{range .Agents}}<label class="check"><input type="checkbox" name="agent" value="{{.}}"> <span class="mono">{{.}}</span></label>{{end}}
+        {{range .Agents}}<label class="check"><input type="checkbox" name="agent" value="{{.Address}}"{{if .Chosen}} checked{{end}}> <span class="mono">{{.Address}}</span></label>{{end}}
       </div>
       {{end}}
       <div class="field">
         <label for="room-members">Addresses</label>
-        <textarea id="room-members" name="members" rows="1" class="mono" placeholder="handle{{"@"}}kernel"></textarea>
+        <textarea id="room-members" name="members" rows="1" class="mono" placeholder="handle{{"@"}}kernel">{{.Members}}</textarea>
       </div>
       <div class="field">
         <label for="room-name">Name</label>
-        <input id="room-name" type="text" name="name">
+        <input id="room-name" type="text" name="name" value="{{.Name}}">
       </div>
       <div class="cluster">
         <button class="btn" type="submit">Start</button>
@@ -51,7 +58,6 @@
     </form>
   </div>
 </dialog>{{end}}
-{{end}}
 
 {{/* _rename — the one rename dialog: closed and empty until the server answers
      it open on a room of the viewer's, and closed again when renamed; refused,
@@ -59,7 +65,7 @@
 {{define "_rename"}}<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true"{{if .Room}} open{{end}}>
   {{with .Room}}
   <div class="modal-head"><h2>Rename</h2><a class="modal-close" href="/chat/room/{{.ID}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body">
+  <div class="modal-body stack">
     {{with $.Error}}{{template "_error" .}}{{end}}
     <form class="stack" method="post" action="/chat/room/{{.ID}}/rename" hx-post="/chat/room/{{.ID}}/rename" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">
       {{$.CSRFField}}
@@ -71,6 +77,33 @@
     </form>
   </div>
   {{end}}
+</dialog>{{end}}
+
+{{/* _members — the members dialog: the list for everyone, adding and removing for
+     the creator. A change refused comes back open with the reason and the address
+     typed. Input: membersView. */}}
+{{define "_members"}}{{$v := .}}<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true"{{if .Open}} open{{end}}>
+  <div class="modal-head"><h2>Members</h2><a class="modal-close" href="/chat/room/{{.Room.ID}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body stack">
+    {{with .Error}}{{template "_error" .}}{{end}}
+    <div>
+      {{range .Room.Members}}
+      <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span>
+        {{if and (eq $v.Room.Creator $v.Me) (ne . $v.Me)}}<form method="post" action="/chat/room/{{$v.Room.ID}}/remove-member" hx-post="/chat/room/{{$v.Room.ID}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{if eq .Room.Creator .Me}}
+    <form class="stack" method="post" action="/chat/room/{{.Room.ID}}/add-member" hx-post="/chat/room/{{.Room.ID}}/add-member" hx-swap="none">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="add-member-address">Address</label>
+        <input id="add-member-address" type="text" name="member" class="mono" placeholder="handle{{"@"}}kernel" value="{{.Typed}}" required>
+      </div>
+      <button class="btn" type="submit">Add member</button>
+    </form>
+    {{end}}
+  </div>
 </dialog>{{end}}
 
 {{/* _crumb — a room's header: its name, on one line. A rename answers it. The

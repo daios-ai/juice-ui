@@ -211,10 +211,7 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 		return strings.ToLower(a.Address) < strings.ToLower(b.Address)
 	})
-	offset := queryOffset(r)
-	start, end, hasNext := pageSlice(len(view.Users), offset, pageSize)
-	view.Users = view.Users[start:end]
-	view.Pager = pageNav(r, offset, pageSize, hasNext)
+	view.Users, view.Pager = pageOf(r, view.Users)
 	s.renderPage(w, r, http.StatusOK, "admin", "Admin", view)
 }
 
@@ -394,10 +391,11 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 	if s.handleErr(w, r, err) {
 		return
 	}
-	offset := queryOffset(r)
-	start, end, hasNext := pageSlice(len(view.Kernels), offset, pageSize)
-	view.Kernels = view.Kernels[start:end]
-	view.Pager = pageNav(r, offset, pageSize, hasNext)
+	var owedMore, heldMore, kernelsMore bool
+	view.Deposits.Owed, owedMore = pageRows(r, view.Deposits.Owed)
+	view.Deposits.Held, heldMore = pageRows(r, view.Deposits.Held)
+	view.Kernels, kernelsMore = pageRows(r, view.Kernels)
+	view.Pager = pageNav(r, queryOffset(r), pageSize, owedMore || heldMore || kernelsMore)
 	s.renderPage(w, r, http.StatusOK, "admin_peers", "Peers", view)
 }
 

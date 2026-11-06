@@ -936,6 +936,19 @@ func pageNav(r *http.Request, offset, size int, hasNext bool) Pager {
 	return p
 }
 
+// pageRows is one page of rows at the request's offset, and whether more follow.
+func pageRows[T any](r *http.Request, rows []T) ([]T, bool) {
+	start, end, more := pageSlice(len(rows), queryOffset(r), pageSize)
+	return rows[start:end], more
+}
+
+// pageOf is one page of a page's only list, with its pager. A page of several
+// lists pages each with pageRows under one pager.
+func pageOf[T any](r *http.Request, rows []T) ([]T, Pager) {
+	page, more := pageRows(r, rows)
+	return page, pageNav(r, queryOffset(r), pageSize, more)
+}
+
 // pageSlice returns the [start,end) window of n items for the given offset and
 // page size, plus whether a further page exists — clamping offset into range.
 //

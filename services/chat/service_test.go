@@ -199,7 +199,7 @@ func TestContractsAreCanonical(t *testing.T) {
 			t.Errorf("a message is a string: %s", k.in)
 		}
 	}
-	if len(contracts(self, "S")) != 14 {
+	if len(contracts(self, "S")) != 13 {
 		t.Errorf("%d contracts", len(contracts(self, "S")))
 	}
 	for _, k := range contracts(self, "S") {
@@ -453,20 +453,8 @@ func TestRoomCommands(t *testing.T) {
 	if code, out := cmd(roomDeleteName, ann, map[string]any{"thread_id": id}); code != 200 || out["ok"] != true {
 		t.Errorf("delete: %d %v", code, out)
 	}
-	// room/direct: one room per pair, whichever opens it.
-	_, first := cmd(roomDirectName, ann, map[string]any{"member": "bob@testnet"})
-	_, second := cmd(roomDirectName, bob, map[string]any{"member": "ann@testnet"})
-	if first["room"].(map[string]any)["thread_id"] != second["room"].(map[string]any)["thread_id"] {
-		t.Errorf("two direct rooms: %v %v", first, second)
-	}
-	if code, _ := cmd(roomDirectName, ann, map[string]any{"member": "ann@testnet"}); code != 400 {
-		t.Errorf("a direct room with oneself: %d", code)
-	}
-	if code, _ := cmd(roomDirectName, ann, map[string]any{"member": "bare"}); code != 400 {
-		t.Errorf("a direct room with a bare name: %d", code)
-	}
 	// Every command needs a key the store knows, and a body it can read.
-	for _, name := range []string{roomCreateName, roomDirectName, roomRenameName, roomAddName, roomRemoveName, roomLeaveName, roomDeleteName, roomListName, roomReadName} {
+	for _, name := range []string{roomCreateName, roomRenameName, roomAddName, roomRemoveName, roomLeaveName, roomDeleteName, roomListName, roomReadName} {
 		if code, out := cmd(name, "nokey", map[string]any{}); code != 401 || out["code"] != "unknown_key" {
 			t.Errorf("%s with an unknown key: %d %v", name, code, out)
 		}
@@ -721,7 +709,7 @@ func TestEveryOperationIsADelegatedAction(t *testing.T) {
 	for _, k := range contracts(self, "S") {
 		by[k.name] = k
 	}
-	for _, name := range []string{postName, roomCreateName, roomDirectName, roomRenameName, roomAddName, roomRemoveName, roomLeaveName, roomDeleteName, roomListName, roomReadName} {
+	for _, name := range []string{postName, roomCreateName, roomRenameName, roomAddName, roomRemoveName, roomLeaveName, roomDeleteName, roomListName, roomReadName} {
 		k, ok := by[name]
 		if !ok || k.vis != "public" || schemeOf(k.auth) != "delegated_bearer" || !strings.Contains(string(k.auth), CallerKey) {
 			t.Errorf("%s = %+v", name, k)

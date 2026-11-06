@@ -300,38 +300,6 @@ func (s *Store) CreateRoom(creator, name string, members []string) (Room, error)
 	return s.withMembers(id)
 }
 
-// Direct is the room whose members are exactly viewer and other, the oldest
-// when there are several, created when there is none, named by other's
-// handle. Lookup and creation are one transaction on the store's one
-// connection, so two first visits make one room.
-func (s *Store) Direct(viewer, other string) (Room, error) {
-	if viewer == "" || other == "" || viewer == other {
-		return Room{}, ErrBadInput
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return Room{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var id string
-	err = tx.QueryRow(`SELECT r.id FROM rooms r
-		WHERE (SELECT COUNT(*) FROM members m WHERE m.room_id = r.id) = 2
-		  AND EXISTS (SELECT 1 FROM members m WHERE m.room_id = r.id AND m.member = ?)
-		  AND EXISTS (SELECT 1 FROM members m WHERE m.room_id = r.id AND m.member = ?)
-		ORDER BY r.created_at LIMIT 1`, viewer, other).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		handle, _, _ := strings.Cut(other, "@")
-		id, err = insertRoom(tx, viewer, handle, []string{other})
-	}
-	if err != nil {
-		return Room{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Room{}, err
-	}
-	return s.withMembers(id)
-}
-
 // insertRoom writes a room under a fresh word id, and its members.
 func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, error) {
 	var id string

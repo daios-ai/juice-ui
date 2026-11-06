@@ -171,6 +171,10 @@ type Deps struct {
 	// _error fragment / HX-Redirect).
 	HandleErrFragment func(w http.ResponseWriter, r *http.Request, err error) bool
 
+	// Redirect sends the browser to a page: a 303, or under htmx HX-Redirect, since
+	// htmx would follow a 303 out of sight.
+	Redirect func(w http.ResponseWriter, r *http.Request, to string)
+
 	// FlashRedirect sets a one-shot flash cookie and redirects. kind is
 	// "success" | "error" | "info".
 	FlashRedirect func(w http.ResponseWriter, r *http.Request, to, kind, msg string)

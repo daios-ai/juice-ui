@@ -740,6 +740,7 @@ func (s *Server) appDeps() apps.Deps {
 		Superuser:         s.isSuperuser,
 		HandleErr:         s.handleErr,
 		HandleErrFragment: s.handleErrFragment,
+		Redirect:          hxRedirect,
 		FlashRedirect:     s.flashRedirect,
 		CSRFField:         func(r *http.Request) template.HTML { return csrf.TemplateField(r) },
 		IsHTMX:            isHTMX,

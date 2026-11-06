@@ -1,6 +1,5 @@
 {{define "content"}}
 {{$d := .Data}}
-{{$me := $d.Me}}
 {{$rid := $d.Room.ID}}
 
 {{/* A room (requirements §6.7): the conversation, and beside it the action
@@ -42,26 +41,5 @@
 </div>
 
 {{template "_rename" $d.Rename}}
-<dialog id="form-members" class="modal-form"{{if eq $d.OpenForm "members"}} open{{end}} aria-label="Members">
-  <div class="modal-head"><h2>Members</h2><a class="modal-close" href="/chat/room/{{$rid}}" data-modal-close aria-label="Close">×</a></div>
-  <div class="modal-body stack">
-    <div>
-      {{range $d.Room.Members}}
-      <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span>
-        {{if and $d.IsOwner (ne . $me)}}<form method="post" action="/chat/room/{{$rid}}/remove-member">{{$.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
-      </div>
-      {{end}}
-    </div>
-    {{if $d.IsOwner}}
-    <form class="stack" method="post" action="/chat/room/{{$rid}}/add-member">
-      {{.CSRFField}}
-      <div class="field">
-        <label for="add-member-address">Address</label>
-        <input id="add-member-address" type="text" name="member" class="mono" placeholder="handle{{"@"}}kernel" required>
-      </div>
-      <button class="btn" type="submit">Add member</button>
-    </form>
-    {{end}}
-  </div>
-</dialog>
+{{template "_members" $d.Members}}
 {{end}}

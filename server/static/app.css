@@ -136,7 +136,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .price .free { color: var(--text-muted); font-weight: 500; }
 
 /* Stat strips — icon + number pairs in a horizontal row */
-.stat-strip { display: flex; gap: var(--space-4); flex-wrap: nowrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
+.stat-strip { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 /* A stat cell (_stat_success, _stat_rating, _stat_latency): icon and value,
    the meaning in its title — in the stats line and in the evidence table. */
 .stat-cell { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
@@ -383,7 +383,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .chip.filled { background: var(--surface-2); color: var(--text); }
 .chip.tag { min-width: 0; padding: 0 var(--space-1); text-transform: lowercase; }
 .chip .ico { width: var(--icon-sm); height: var(--icon-sm); }
-.action-row .stat-strip { font-size: var(--font-size-xs); gap: var(--space-2); margin: var(--space-1) 0 0; flex-wrap: wrap; justify-content: flex-start; }
+.action-row .stat-strip { font-size: var(--font-size-xs); gap: var(--space-2); margin: var(--space-1) 0 0; justify-content: flex-start; }
 .stack > * + * { margin-top: var(--space-4); }
 .row { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; }
 .row.compact { gap: var(--space-2); }
@@ -401,6 +401,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .control-row { margin-bottom: var(--space-4); }
 .details-panel { margin-top: var(--space-5); }
 .details-panel summary { cursor: pointer; font-weight: 600; }
+.details-panel li { overflow-wrap: anywhere; }
 .details-panel form { margin-top: var(--space-3); }
 .auth-panel { margin-top: var(--space-2); margin-bottom: var(--space-4); }
 .auth-panel summary { cursor: pointer; font-weight: 600; font-size: var(--font-size-md); }
@@ -501,7 +502,7 @@ form[aria-busy="true"] [inert] { opacity: .5; }
 .task-card .card { border: none; padding: 0; background: none; }
 .field.inline { margin: 0; }
 .field.flush  { margin: 0; }
-.field .help { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 400; margin: 0 0 var(--space-1); }
+.field .help { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 400; margin: 0 0 var(--space-1); overflow-wrap: anywhere; }
 .req { color: var(--accent); }
 :where(input[type=text], input[type=password], input[type=email], input[type=number],
 input[type=search], textarea, select) {
@@ -751,5 +752,5 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
   .btn, .btn-money, .btn-danger { transition: border-color .14s ease, background .14s ease, transform .14s ease; }
 }
 @media (max-width: 720px) {
-  .hero { grid-template-columns: 1fr; }
+  .hero { grid-template-columns: minmax(0, 1fr); }
 }
