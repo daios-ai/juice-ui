@@ -947,6 +947,40 @@ func TestStylesUseTokens(t *testing.T) {
 	}
 }
 
+// TestStandardSizeIsOneRem: body text and every control read at 1rem, because
+// iOS Safari zooms the page when a text field is under 16px (grammar §3). Only
+// tokens.css defines what 1rem is.
+func TestStandardSizeIsOneRem(t *testing.T) {
+	tokens, err := os.ReadFile("static/tokens.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`--font-size-md:\s*1rem;`).Match(tokens) {
+		t.Error("tokens.css: --font-size-md must be 1rem: an iPhone zooms on a text field under 16px")
+	}
+	if !regexp.MustCompile(`(?s)html\s*\{[^}]*font-size:\s*100%;`).Match(tokens) {
+		t.Error("tokens.css: the html rule defines 1rem")
+	}
+	b, err := os.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(b), "")
+	field := regexp.MustCompile(`:where\(([^)]*)\)\s*\{[^}]*font-size:\s*var\(--font-size-md\)`).FindStringSubmatch(css)
+	if field == nil {
+		t.Fatal("app.css: the text-field rule must read --font-size-md: an iPhone zooms on a text field under 16px")
+	}
+	// Every type a template writes, and every type inputType generates from a schema.
+	for _, kind := range []string{"text", "password", "email", "url", "date", "number", "search"} {
+		if !strings.Contains(field[1], "input[type="+kind+"]") {
+			t.Errorf("app.css: the text-field rule omits input[type=%s], which would keep the browser's small default", kind)
+		}
+	}
+	if regexp.MustCompile(`(?:^|[,}\s])(?:html|:root)\s*\{[^}]*font-size`).MatchString(css) {
+		t.Error("app.css sets the root's size; only tokens.css defines 1rem")
+	}
+}
+
 // TestSidebarHasTwoStatesPerWidth: the width picks one of two models, which
 // never mix (requirements §6.1). Collapsing is a wide screen's; the drawer
 // and the topbar a narrow one's; and the frame is sized to the visible screen.

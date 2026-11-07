@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.55.0
+Version: 0.56.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.56.0.** The standard size is `1rem`, 16px at the browser's
+> default, where it was 14px, so body text and every control read larger, and a text
+> field no longer makes an iPhone zoom. The other sizes rise with it. One line in
+> `tokens.css` defines `1rem`. A schema's `url` and `date` fields now take the shared
+> field style, where they had the browser's default.
 
 > **What changed in 0.55.0.** Amounts showed every decimal the world declares. An amount
 > is now rounded where it is read: two decimals at one unit or more, two significant
@@ -2796,9 +2802,11 @@ imports its live rooms, members and messages once and never writes that file.
   tighter control radius, both tokens); no drop shadows. The `terminal` theme
   reverts the UI face to monospace and the radius to square.
 * **Sizes are tokens.** Font sizes, spacing, icon and avatar sizes, radii and
-  one control height MUST be design tokens on a 4px base, and the stylesheet
-  MUST write no size literal in their place (hairlines excepted), enforced by
-  test. Every button, input, select, one-line textarea and icon button is the
+  one control height MUST be design tokens, the spacing on a 4px base, and the
+  stylesheet MUST write no size literal in their place (hairlines excepted),
+  enforced by test. Body text and every control MUST read at the standard size,
+  `1rem`, which one line of the stylesheet defines, since iOS Safari zooms the page
+  on a text field under 16px. Every button, input, select, one-line textarea and icon button is the
   control height, so controls side by side align.
 * **Icons.** One set (Heroicons, outline/solid for inactive/active), recolorable
   to tokens, never emoji. Every icon-only control MUST carry an `aria-label`;

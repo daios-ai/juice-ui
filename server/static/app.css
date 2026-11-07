@@ -171,7 +171,7 @@ td.money, th.money { text-align: right; }
 .ico-badge-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
 .badge {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 1rem; height: 1rem; padding: 0 var(--space-1);
+  min-width: 1.33em; height: 1.33em; padding: 0 var(--space-1);
   border-radius: var(--radius-full); background: var(--accent); color: var(--accent-contrast);
   font-size: var(--font-size-xs); font-weight: 700; line-height: 1;
   position: absolute; top: -5px; right: -6px;
@@ -375,7 +375,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
    weight (.filled), never by hue: every theme color is a money/trust signal. */
 .chip {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 1.15rem; height: 1.15rem; padding: 0 var(--space-1);
+  min-width: 1.5em; height: 1.5em; padding: 0 var(--space-1);
   border: 1px solid var(--border-strong); border-radius: var(--radius-s);
   font-family: var(--font-mono); font-size: var(--font-size-xs); font-weight: 600;
   line-height: 1; color: var(--text-muted);
@@ -392,7 +392,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .stretch { flex: 1; min-width: 0; }
 .small { font-size: var(--font-size-sm); }
 .tiny { font-size: var(--font-size-xs); }
-.input-sm { width: 6rem; }
+.input-sm { width: 7em; }
 .card > h2 { margin: 0 0 var(--space-3); }
 .card > h3 { margin: 0 0 var(--space-1); }
 .card-list > .card + .card { margin-top: var(--space-2); }
@@ -426,7 +426,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 /* Balances */
 /* Headline money figures (_figures, grammar §5.6) — one block each: wallet,
    home, workshop, session. */
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5em, 1fr)); gap: var(--space-3); }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3) var(--space-4); }
 .stat .label { color: var(--text-muted); font-size: var(--font-size-sm); }
 .stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-2xl); font-weight: 700; margin: var(--space-1) 0 0; }
@@ -504,13 +504,13 @@ form[aria-busy="true"] [inert] { opacity: .5; }
 .field.flush  { margin: 0; }
 .field .help { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 400; margin: 0 0 var(--space-1); overflow-wrap: anywhere; }
 .req { color: var(--accent); }
-:where(input[type=text], input[type=password], input[type=email], input[type=number],
+:where(input[type=text], input[type=password], input[type=email], input[type=url], input[type=date], input[type=number],
 input[type=search], textarea, select) {
   width: 100%; padding: 0 var(--space-2); font-family: inherit; font-size: var(--font-size-md);
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-s);
 }
-:where(input[type=text], input[type=password], input[type=email], input[type=number],
+:where(input[type=text], input[type=password], input[type=email], input[type=url], input[type=date], input[type=number],
 input[type=search], select) { height: var(--control-h); }
 /* A textarea sizes to its content (field-sizing), from a one-line floor the
    height of every control, and its height can be dragged. A read-only box of

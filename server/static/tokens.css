@@ -28,14 +28,15 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
     Menlo, Consolas, "Liberation Mono", monospace;
 
-  /* Sizes: every size app.css writes is one of these (grammar §3, §4), on a
-     4px base at the browser's 16px rem. */
-  --font-size-xs: .75rem;      /* badges, chips, fingerprints, .tiny */
-  --font-size-sm: .8125rem;    /* .small, captions, labels */
-  --font-size-md: .875rem;     /* body and every control */
-  --font-size-lg: 1rem;        /* h3, the brand */
-  --font-size-xl: 1.125rem;    /* h2 */
-  --font-size-2xl: 1.375rem;   /* h1, a headline figure */
+  /* Sizes: every size app.css writes is one of these (grammar §3, §4). The type
+     is anchored at 1rem, which an iPhone needs of a text field so as not to zoom
+     (TestStandardSizeIsOneRem); the spacing is on a 4px base at a 16px rem. */
+  --font-size-xs: .875rem;     /* badges, chips, fingerprints, .tiny */
+  --font-size-sm: .9375rem;    /* .small, captions, labels */
+  --font-size-md: 1rem;        /* body and every control */
+  --font-size-lg: 1.125rem;    /* h3, the brand */
+  --font-size-xl: 1.25rem;     /* h2 */
+  --font-size-2xl: 1.5625rem;  /* h1, a headline figure */
 
   --space-1: .25rem;
   --space-2: .5rem;
@@ -60,6 +61,9 @@
 }
 
 html {
+  /* 1rem, the one size the interface scales from. 100% is the browser's, 16px by
+     default, and keeps a reader's larger setting. */
+  font-size: 100%;
   /* Hint form controls and scrollbars to match the active theme's polarity.
      Explicit theme choices are stamped on <html data-theme>. */
   color-scheme: light dark;

@@ -131,11 +131,16 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   `partial_args`. The typeface itself marks kernel-vouched facts apart from
   chrome and from counterparty prose. (The `terminal` theme overrides `--font-ui`
   back to mono; components never assume one or the other — they use the token.)
-- **Scale:** six steps on a 4px base — `--font-size-2xl` (`1.375rem`, h1 and
-  a headline figure) · `-xl` (`1.125rem`, h2) · `-lg` (`1rem`, h3, the brand)
-  · `-md` (`.875rem`, body and every control) · `-sm` (`.8125rem`, `.small`,
-  captions) · `-xs` (`.75rem`, `.tiny`, badges, chips, fingerprints). Headings
-  carry slight `letter-spacing`.
+- **Scale:** six steps anchored at the standard size — `--font-size-2xl`
+  (`1.5625rem`, h1 and a headline figure) · `-xl` (`1.25rem`, h2) · `-lg`
+  (`1.125rem`, h3, the brand) · `-md` (`1rem`, body and every control) · `-sm`
+  (`.9375rem`, `.small`, captions) · `-xs` (`.875rem`, `.tiny`, badges, chips,
+  fingerprints). Headings carry slight `letter-spacing`.
+- **The standard size is `1rem`,** 16px at the browser's default, since iOS Safari
+  zooms the page on a text field under 16px (`TestStandardSizeIsOneRem`). The `html`
+  rule of `tokens.css` is the one definition of `1rem`. A size that holds text
+  (`.badge`, `.chip`, `.input-sm`, `.stat-row`'s column) is written in `em`, so it
+  follows its text.
 - **The brand names the kernel and its world** (`.brand` + `.brand .world`,
   the one `_brand` partial), in the sidebar and in the topbar of a narrow
   screen. A kernel serves one
