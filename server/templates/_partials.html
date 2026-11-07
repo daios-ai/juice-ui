@@ -159,7 +159,7 @@
      an endable session (open, not awaiting a peer's receipt, §6.5); it states a
      refund only when there is one. Takes endOf. */}}
 {{define "_end"}}{{if .P.Endable}}<form method="post" action="/processes/{{.P.ID}}/end" data-confirm="End this session?">
-  {{.CSRF}}<button class="btn-danger" type="submit">End{{with sum .P.Available .P.Locked}} · refund {{money .}}{{end}}</button>
+  {{.CSRF}}<button class="btn-danger" type="submit">End{{with sum .P.Available .P.Locked}} · refund {{moneyExact .}}{{end}}</button>
 </form>{{end}}{{end}}
 
 {{/* _activity — the ledger preview: every movement between accounts,
@@ -223,13 +223,13 @@
 {{define "_cost_breakdown"}}
 <div class="cost" aria-label="cost breakdown">
   {{if .Remote}}
-  <span class="g">paid <b class="money">{{money .Gross}}</b></span>
-  <span class="f">import fee <b class="money">{{money .Fee}}</b></span>
-  <span class="n">obligation <b class="money">{{money .Net}}</b></span>
+  <span class="g">paid <b class="money">{{moneyExact .Gross}}</b></span>
+  <span class="f">import fee <b class="money">{{moneyExact .Fee}}</b></span>
+  <span class="n">obligation <b class="money">{{moneyExact .Net}}</b></span>
   {{else}}
-  <span class="g">gross <b class="money">{{money .Gross}}</b></span>
-  <span class="f">fee <b class="money">{{money .Fee}}</b></span>
-  <span class="n">net <b class="money">{{money .Net}}</b></span>
+  <span class="g">gross <b class="money">{{moneyExact .Gross}}</b></span>
+  <span class="f">fee <b class="money">{{moneyExact .Fee}}</b></span>
+  <span class="n">net <b class="money">{{moneyExact .Net}}</b></span>
   {{end}}
 </div>
 {{end}}
@@ -246,7 +246,7 @@
      delivered stays paid, so a non-zero charge is named rather than a refund
      claimed. */}}
 <div class="outcome failed" role="status">
-  <strong>{{if .Charged}}Failed — {{money .Charged}} charged.{{else}}Failed — fully refunded.{{end}}</strong>
+  <strong>{{if .Charged}}Failed — {{moneyExact .Charged}} charged.{{else}}Failed — fully refunded.{{end}}</strong>
   <p>{{.Message}}</p>
   {{if .TxID}}<p><a href="/transactions/{{.TxID}}">View the receipt →</a></p>{{end}}
 </div>
@@ -256,7 +256,7 @@
      omitted when we don't hold it — a figure here is a kernel-vouched fact or it
      is absent. */}}
 <div class="outcome parked" role="status">
-  <strong class="sig-escrow">◷ Result pending{{if .Reserved}} — {{money .Reserved}} reserved{{end}}.</strong>
+  <strong class="sig-escrow">◷ Result pending{{if .Reserved}} — {{moneyExact .Reserved}} reserved{{end}}.</strong>
   <p>{{.Message}}</p>
   {{if .ProcessID}}<p><a href="/processes/{{.ProcessID}}">Follow the reserved funds →</a></p>{{end}}
 </div>
@@ -278,7 +278,7 @@
      terms moved while the page was open, and the buyer is asked again. */}}
 <div class="outcome rejected" role="status">
   <strong>Terms changed — you were not charged.</strong>
-  <p>{{.Message}}{{if .Price}} It now costs {{money .Price}}.{{end}}</p>
+  <p>{{.Message}}{{if .Price}} It now costs {{moneyExact .Price}}.{{end}}</p>
   <p class="muted">Run it again to accept the new terms.</p>
 </div>
 {{else if .IsGrantRequired}}
@@ -421,7 +421,7 @@
   {{if or .Structured .Fill}}<div class="form-tools">
     {{if .Fill}}{{template "_progress" (progress "" "Filling…")}}<p class="error-text" data-fill-error hidden></p>{{end}}
     {{if .Structured}}{{template "_json_switch"}}{{end}}
-    {{with .Fill}}{{$p := gt .Price 0}}{{$name := "Fill from chat"}}{{if $p}}{{$name = printf "Fill from chat — %s" (money .Price)}}{{end}}<button type="button" class="{{if $p}}btn-money{{else}}btn-icon{{end}}" data-fill="{{$.FillURL}}" title="{{$name}}" aria-label="{{$name}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg>{{if $p}}<span>{{money .Price}}</span>{{end}}</button>{{end}}
+    {{with .Fill}}{{$p := gt .Price 0}}{{$name := "Fill from chat"}}{{if $p}}{{$name = printf "Fill from chat — %s" (moneyExact .Price)}}{{end}}<button type="button" class="{{if $p}}btn-money{{else}}btn-icon{{end}}" data-fill="{{$.FillURL}}" title="{{$name}}" aria-label="{{$name}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg>{{if $p}}<span>{{moneyExact .Price}}</span>{{end}}</button>{{end}}
   </div>{{end}}
   {{/* The sealed part (a task's pre-bound args), read-only, above the fields the
        completer must still supply — the two halves of one form. */}}
@@ -433,7 +433,7 @@
          when the task was made (requirements.md §6.3). A paid run names its
          price. */}}
     {{$spend := and (gt .Price 0) (not .OneShot)}}
-    <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{money .Price}}){{end}}</button>
+    <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{moneyExact .Price}}){{end}}</button>
     {{if .DeclineID}}{{template "_decline_button" .DeclineID}}{{end}}
     {{template "_progress" (progress (printf "%s-progress" .ResultID) "Running…")}}
   </div>

@@ -334,7 +334,7 @@ func (s *Server) postAdminDeposit(w http.ResponseWriter, r *http.Request) {
 	})
 	msg := "Recorded " + ref + " · " + address + "."
 	if amount > 0 {
-		msg = "Recorded " + s.render.money(amount) + " · " + address + "."
+		msg = "Recorded " + s.render.moneyExact(amount) + " · " + address + "."
 	}
 	s.flashResult(w, r, err, back, msg)
 }

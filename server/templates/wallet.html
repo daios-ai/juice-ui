@@ -95,12 +95,12 @@
 <dialog id="form-fund-review" class="modal-form" open aria-label="Deposit">
   <div class="modal-head"><h2>Deposit</h2><a class="modal-close" href="/wallet" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
-    <p>Deposit {{money $d.Review.Amount}}?</p>
+    <p>Deposit {{moneyExact $d.Review.Amount}}?</p>
     <dl class="kv"><dt>From</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd><dt>To</dt><dd>your Juice balance, via {{template "_addr" (copyOf "address" $d.KernelAddress)}}</dd></dl>
     <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
     <div class="cluster" data-wallet-choose hidden></div>
     <div class="cluster">
-      <button class="btn-money" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Deposit ({{money $d.Review.Amount}})</button>
+      <button class="btn-money" type="button" data-wallet-send data-amount="{{$d.Review.Typed}}">Deposit ({{moneyExact $d.Review.Amount}})</button>
       <button type="button" class="btn" data-modal-close>Cancel</button>
     </div>
   </div>
@@ -113,7 +113,7 @@
   <div class="modal-body">
     <form class="stack" method="post" action="/wallet/withdraw/review">
       {{.CSRFField}}
-      <dl class="kv"><dt>From</dt><dd>your Juice balance, <span class="money">{{money $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd>{{end}}</dl>
+      <dl class="kv"><dt>From</dt><dd>your Juice balance, <span class="money">{{moneyExact $d.Available}}</span> available</dd>{{if $d.MyAddress}}<dt>To</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd>{{end}}</dl>
       <div class="field">
         <label for="wd-amt">Amount<span class="req">*</span></label>
         <input id="wd-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
@@ -137,10 +137,10 @@
       <input type="hidden" name="id" value="{{$d.Review.ID}}">
       <input type="hidden" name="amount" value="{{$d.Review.Typed}}">
       <input type="hidden" name="reason" value="{{$d.Review.Reason}}">
-      <p>Withdraw {{money $d.Review.Amount}}?</p>
+      <p>Withdraw {{moneyExact $d.Review.Amount}}?</p>
       {{if $d.MyAddress}}<dl class="kv"><dt>To</dt><dd>your crypto wallet {{template "_addr" (copyOf "address" $d.MyAddress)}}</dd></dl>{{end}}
       <div class="cluster">
-        <button class="btn-money" type="submit">Withdraw ({{money $d.Review.Amount}})</button>
+        <button class="btn-money" type="submit">Withdraw ({{moneyExact $d.Review.Amount}})</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>

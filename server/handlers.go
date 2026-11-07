@@ -847,7 +847,7 @@ func (s *Server) discover(ctx context.Context, tok string, granted map[string]bo
 		// The price moved since the row named it: nothing ran, nothing was
 		// charged, and the person is asked again at the new price — never
 		// shown a fallback that would hide what happened.
-		view.Requote = &searchTerms{Price: s.render.money(out.Price), QuoteHash: out.QuoteHash}
+		view.Requote = &searchTerms{Price: s.render.moneyExact(out.Price), QuoteHash: out.QuoteHash}
 		return view, nil
 	default:
 		// Degrade honestly to catalog search (R6.2.4). The reason is the
@@ -2820,7 +2820,7 @@ func (s *Server) lookupTerms(ctx context.Context, tok string) *searchTerms {
 	}
 	t := &searchTerms{QuoteHash: a.QuoteHash}
 	if a.Price > 0 {
-		t.Price = s.render.money(a.Price)
+		t.Price = s.render.moneyExact(a.Price)
 	}
 	return t
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,6 +91,40 @@ func TestUnitRendersMoneyTheKernelsWay(t *testing.T) {
 	}
 }
 
+func TestUnitRound(t *testing.T) {
+	usdc := Unit{Decimals: 6, Symbol: "USDC"}
+	cases := []struct {
+		u    Unit
+		in   int64
+		want string
+	}{
+		{usdc, 1234567891, "1234.57 USDC"},
+		{usdc, 1500000, "1.50 USDC"},
+		{usdc, 537000, "0.54 USDC"},
+		{usdc, 133, "0.00013 USDC"},
+		{usdc, 0, "0.00 USDC"},
+		{usdc, 1, "0.000001 USDC"},
+		// A carry crosses into the next form.
+		{usdc, 999999, "1.00 USDC"},
+		{usdc, 99500, "0.10 USDC"},
+		{usdc, 1005000, "1.01 USDC"},
+		// The sign keeps out of the arithmetic: half rounds away from zero.
+		{usdc, -1005000, "-1.01 USDC"},
+		{usdc, -133, "-0.00013 USDC"},
+		// Too large to round is shown exact, as is the most negative amount.
+		{usdc, math.MaxInt64, "9223372036854.775807 USDC"},
+		{usdc, math.MinInt64, "-9223372036854.775808 USDC"},
+		// A world with two decimals or fewer has nothing to round.
+		{Unit{Decimals: 0, Symbol: "credits"}, 1234567, "1234567 credits"},
+		{Unit{Decimals: 2, Symbol: "EUR"}, 133, "1.33 EUR"},
+	}
+	for _, c := range cases {
+		if got := c.u.Round(c.in); got != c.want {
+			t.Errorf("Unit{%d,%q}.Round(%d) = %q want %q", c.u.Decimals, c.u.Symbol, c.in, got, c.want)
+		}
+	}
+}
+
 func TestUnitInputAndStepMatchTheWorld(t *testing.T) {
 	// An input's value is the amount without its symbol, so what the field shows
 	// is what the parser takes back; the step is the smallest amount that exists.
@@ -116,6 +151,19 @@ func TestUnitInputAndStepMatchTheWorld(t *testing.T) {
 // A kernel that has not said what its money is gets no figure and no form value:
 // scaling by an assumed unit would put a number in front of someone that they
 // did not type and the kernel did not quote (§7).
+func TestMoneyCarriesTheExactAmount(t *testing.T) {
+	r := &Renderer{identity: &KernelIdentity{id: client.Health{Handle: "k", Decimals: 6, Symbol: "<U>"}}}
+	if got, want := r.money(1234567), template.HTML(`<span title="1.234567 &lt;U&gt;">1.23 &lt;U&gt;</span>`); got != want {
+		t.Errorf("a rounded amount: %q want %q", got, want)
+	}
+	if got, want := r.money(1500000), template.HTML(`1.50 &lt;U&gt;`); got != want {
+		t.Errorf("an amount rounding left alone: %q want %q", got, want)
+	}
+	if got, want := r.moneyExact(1234567), "1.234567 <U>"; got != want {
+		t.Errorf("moneyExact: %q want %q", got, want)
+	}
+}
+
 func TestMoneyRefusesAnUnknownUnit(t *testing.T) {
 	r, err := NewRenderer(unknownKernel)
 	if err != nil {

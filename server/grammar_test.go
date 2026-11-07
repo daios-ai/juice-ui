@@ -156,10 +156,13 @@ func TestTablesAreScrollable(t *testing.T) {
 // picks is a claim about a world it does not get to make, so `$` before a figure
 // is banned along with the ¤ character and the retired gem/diamond mark. A
 // hard-coded `step` is the same mistake in an input: how finely money divides is
-// the world's fact, and `amountStep` is where it is read.
+// the world's fact, and `amountStep` is where it is read. A button commits what it
+// names, so it names the exact amount, never the rounded one.
 func TestMoneyGrammar(t *testing.T) {
 	dollarAmount := regexp.MustCompile(`\$\s*(?:[0-9]|\{\{\s*money)`)
 	fixedStep := regexp.MustCompile(`step="[0-9.]+"`)
+	button := regexp.MustCompile(`(?s)<button[^>]*>.*?</button>`)
+	rounded := regexp.MustCompile(`\{\{[^}]*\bmoney\b`)
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
@@ -175,6 +178,11 @@ func TestMoneyGrammar(t *testing.T) {
 		// A schema-derived number field may fix its own step; an amount may not.
 		if m := fixedStep.FindString(src); m != "" && strings.Contains(src, "amountInput") || (m != "" && strings.Contains(src, `name="amount"`)) {
 			t.Errorf("%s: %q — an amount's step is the world's own, from {{amountStep}} (§7)", f, m)
+		}
+		for _, b := range button.FindAllString(src, -1) {
+			if rounded.MatchString(b) {
+				t.Errorf("%s: %q — a button commits the amount it names, so it reads {{moneyExact}} (§7)", f, b)
+			}
 		}
 	}
 }

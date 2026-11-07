@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.54.0
+Version: 0.55.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.55.0.** Amounts showed every decimal the world declares. An amount
+> is now rounded where it is read: two decimals at one unit or more, two significant
+> digits below it, with the exact amount in its title. It stays exact where a control
+> commits it, where a result or a transaction states what was charged, and in every
+> input. The exact form is still the kernel's own.
 
 > **What changed in 0.54.0.** 0.53.0's pagers cut the page after reading the whole
 > list, so `sys`'s transactions took 92 kernel calls and 74 seconds to show 20 rows. A
@@ -1764,7 +1770,7 @@ one question — what happened to the money — so no two may share a sentence:
   balance moves from available to locked, and `meta` carries `process_id` and
   `pending_since`. Only the peer's signed answer settles it; no age expires it,
   so no date is stated. The card MUST carry the escrow-pending signal (§7), name
-  the reserved amount through the money helper, and link to the process it
+  the reserved amount exactly (§7), and link to the process it
   names. It MUST NOT claim a refund has happened or will, and MUST NOT poll the
   peer (§6.6).
 * **refreshed** (`execution_failed` with `meta.retry = "refresh"`) → "The
@@ -2670,8 +2676,8 @@ imports its live rooms, members and messages once and never writes that file.
   Juice: the confirm of a deposit or a withdrawal (§6.5). A control that opens a confirm or otherwise moves no money MUST NOT use
   the accent.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
-  as `verb (N)` (e.g. "Run (133.000000)") — the same figure the money helper
-  renders everywhere (`Deposit (N)`, `Withdraw (N)`). Primary
+  as `verb (N)` (e.g. "Run (1.234567 USDC)") — the exact amount (§7), since the
+  button commits it (`Deposit (N)`, `Withdraw (N)`). Primary
   non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist. (A task completion is the neutral
@@ -2714,13 +2720,21 @@ imports its live rooms, members and messages once and never writes that file.
   wire is an integer in the base unit of the world this kernel serves, and only
   the kernel knows how that unit scales and what it is called: `GET /health`
   carries `decimals` (0 where money has no fractional unit, 6 on a token world)
-  and `symbol` (`credits`, `USDC`). The kernel also publishes ONE rendering, and
-  the UI MUST use it rather than invent a second: the amount, its trailing zeros
-  trimmed to a **two-digit floor**, **no thousands separators**, the world's
-  symbol appended — `133 credits`, `1.50 USDC`, `0.000133 USDC`, `-2500 credits`.
-  Separators are absent by design: the text is meant to paste back into an amount
-  field unchanged. It renders through **one** helper (`money`) reading the live
-  identity — never a currency mark the UI chose, never a `¤` or gem.
+  and `symbol` (`credits`, `USDC`). The kernel also publishes ONE rendering, which
+  is the UI's **exact** form: the amount, its trailing zeros trimmed to a
+  **two-digit floor**, **no thousands separators**, the world's symbol appended —
+  `133 credits`, `1.50 USDC`, `0.000133 USDC`, `-2500 credits`. Separators are
+  absent by design: the text is meant to paste back into an amount field unchanged.
+
+  An amount is **rounded where it is read**: two decimals at one whole unit or more,
+  two significant digits below it, rounded half away from zero — `1234.57 USDC`,
+  `0.54 USDC`, `0.00013 USDC` — in the same form otherwise, with the exact amount as
+  its title. An amount MUST be **exact** where a control commits it, where a
+  confirmation or notice names it, where a result or a transaction states what was
+  charged, and where it bounds an input. No rounded value is ever parsed or sent. A
+  world with two decimals or fewer has nothing to round. These render through **two**
+  helpers on one type (`money`, `moneyExact`) reading the live identity — never a
+  currency mark the UI chose, never a `¤` or gem.
 
   An editable amount is typed in that same form without the symbol, its `step`
   the world's own smallest unit, and parsed server-side back to base units; a

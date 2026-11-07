@@ -490,16 +490,20 @@ separates it from the content above, and nothing else does (§4).
   `.status-credited / -refunded / -escrow / -danger`.
 - Money value + signal glyph: `+`/`↩`/`◷` via `.sig-credited / -refunded /
   -escrow`. Signals are text/glyph only, never fills.
-- **Money display** renders mono + tabular through the single `money` helper,
-  which renders the kernel's own way: the base-unit integer scaled by the world's
-  `decimals`, trailing zeros trimmed to a **two-digit floor**, **no separators**,
-  the world's `symbol` appended — `133 credits`, `1.50 USDC`, `0.000133 USDC`,
-  `-2500 credits`. Separators are absent by design: the text pastes back into an
-  amount field. A symbol the UI picks is a claim about a world it does not own,
+- **Money display** renders mono + tabular through two helpers. `moneyExact` is
+  the kernel's own form: the base-unit integer scaled by the world's `decimals`,
+  trailing zeros trimmed to a **two-digit floor**, **no separators**, the world's
+  `symbol` appended — `133 credits`, `1.50 USDC`, `0.000133 USDC`, `-2500 credits`.
+  Separators are absent by design: the text pastes back into an amount field.
+  `money` rounds that for reading: two decimals at one whole unit or more, two
+  significant digits below it — `1234.57 USDC`, `0.00013 USDC` — with the exact
+  amount as its title. **An amount is rounded where it is read. It is exact where a
+  control commits it, where a confirmation or notice names it, where a result or a
+  transaction states what was charged, and where it bounds an input.** A symbol the UI picks is a claim about a world it does not own,
   so `$`, `¤` and the retired gem/diamond mark are **banned from every template**,
   as is a hard-coded `step` on an amount input (`{{amountStep}}` reads the world's).
-  A spend button names the amount the same way — `verb (N)` (§5.1) — and money in
-  prose (help/flash/error) is written in the same form. Where the unit is not yet
+  A spend button names the exact amount — `verb (N)` (§5.1) — and money in prose
+  (help/flash/error) is written in the exact form. Where the unit is not yet
   known, a money cell renders an em dash and no amount is accepted.
 
 ### 5.7 Refs

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -77,12 +78,11 @@ type Unit struct {
 	Symbol   string
 }
 
-// Format renders a base-unit integer the way the kernel renders it, symbol and
-// all: "133 credits" on a world with no fractional unit, "1.50 USDC" on one with
-// six. Trailing zeros are trimmed to a two-digit floor — a round amount reads
-// 1.50, not 1.500000, while extra digits are kept, because rounding money for
-// display is a lie the reconciliation finds — and there are NO separators, so
-// the text pastes back into an amount field unchanged.
+// Format renders a base-unit integer exactly, the way the kernel renders it,
+// symbol and all: "133 credits" on a world with no fractional unit, "1.50 USDC"
+// on one with six. Trailing zeros are trimmed to a two-digit floor, every other
+// digit is kept, and there are NO separators, so the text pastes back into an
+// amount field unchanged.
 //
 // This is a transcription of the kernel's own Network.Amount. The BFF may not
 // import kernel packages (CLAUDE.md), so the algorithm is copied; the test pins
@@ -93,6 +93,36 @@ func (u Unit) Format(v int64) string {
 		unit = " " + u.Symbol
 	}
 	return u.digits(v) + unit
+}
+
+// Round renders v for reading: two decimals at one whole unit or more, two
+// significant digits below it, rounded half away from zero. A world with two
+// decimals or fewer has nothing to round. Only the text is rounded: no rounded
+// value is ever parsed or sent.
+func (u Unit) Round(v int64) string {
+	if u.Decimals <= 2 {
+		return u.Format(v)
+	}
+	abs := v
+	if abs < 0 {
+		abs = -abs
+	}
+	drop := u.Decimals - 2
+	if n := len(strconv.FormatInt(abs, 10)); n <= u.Decimals {
+		drop = max(n-2, 0)
+	}
+	p := int64(1)
+	for range drop {
+		p *= 10
+	}
+	if abs < 0 || abs > math.MaxInt64-p/2 {
+		return u.Format(v) // too large to round without overflowing
+	}
+	rounded := (abs + p/2) / p * p
+	if v < 0 {
+		rounded = -rounded
+	}
+	return u.Format(rounded)
 }
 
 // Input renders the same amount without its symbol, for a number input's value:
@@ -188,6 +218,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 	r := &Renderer{identity: identity}
 	funcs := template.FuncMap{
 		"money":          r.money,
+		"moneyExact":     r.moneyExact,
 		"amountInput":    r.amountInput,
 		"amountStep":     r.amountStep,
 		"sum":            func(a, b int64) int64 { return a + b },
@@ -329,9 +360,23 @@ func launcherOf(pages template.JS, members []string, room string) launcherView {
 // money is. An em dash claims nothing; a number would claim a unit (§7).
 const noAmount = "—"
 
-// money formats a base-unit amount — the single source of truth for every amount
-// the UI shows (§7) — or refuses when the unit is unknown.
-func (r *Renderer) money(n int64) string {
+// money renders an amount for reading (§7): rounded, with the exact amount as its
+// title wherever rounding changed it, or a refusal when the unit is unknown.
+func (r *Renderer) money(n int64) template.HTML {
+	u, ok := r.identity.Unit()
+	if !ok {
+		return noAmount
+	}
+	exact, shown := u.Format(n), u.Round(n)
+	if shown == exact {
+		return template.HTML(template.HTMLEscapeString(shown))
+	}
+	return template.HTML(`<span title="` + template.HTMLEscapeString(exact) + `">` + template.HTMLEscapeString(shown) + `</span>`)
+}
+
+// moneyExact renders the exact amount (§7): what a control commits and what a
+// record states, or a refusal when the unit is unknown.
+func (r *Renderer) moneyExact(n int64) string {
 	u, ok := r.identity.Unit()
 	if !ok {
 		return noAmount
@@ -1204,5 +1249,5 @@ func (r *Renderer) sigAmount(sig, glyph string, n int64) template.HTML {
 	if sig != "" {
 		cls += " " + sig
 	}
-	return template.HTML(`<span class="` + cls + `">` + glyph + template.HTMLEscapeString(r.money(n)) + `</span>`)
+	return template.HTML(`<span class="` + cls + `">` + glyph + string(r.money(n)) + `</span>`)
 }
