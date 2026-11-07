@@ -2966,8 +2966,10 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * no surface decorates a name: no template puts an `@` before a name, and the
   only `@` a template may carry joins an address (§4), enforced by a drift
   guard over the core and app templates;
-* the money unit: amounts render through the one `money` helper in the
-  kernel's form (§7); an amount finer than the base unit is refused, not
+* the money unit: an amount renders rounded through `money` where it is read, and
+  in the kernel's form through `moneyExact` where it is committed or recorded (§7),
+  which a drift guard holds for buttons and a render test for the other sites; an
+  amount finer than the base unit is refused, not
   rounded; and no template renders a currency symbol (drift guard);
 * the session pin: a login records the kernel's key and network fingerprint, an
   address that answers for another kernel ends the session without sending

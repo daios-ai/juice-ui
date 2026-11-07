@@ -150,22 +150,37 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
-// TestMoneyGrammar enforces the money rule (§7): every amount renders through the
-// single `money` helper, which scales the kernel's base-unit integer by the
-// world's own decimals and names it with the world's own symbol. A symbol the UI
+// TestMoneyGrammar enforces the money rule (§7) over the core and app templates:
+// every amount renders through `money` or `moneyExact`, which scale the kernel's
+// base-unit integer by the world's own decimals and name it with the world's own
+// symbol. A symbol the UI
 // picks is a claim about a world it does not get to make, so `$` before a figure
 // is banned along with the ¤ character and the retired gem/diamond mark. A
 // hard-coded `step` is the same mistake in an input: how finely money divides is
 // the world's fact, and `amountStep` is where it is read. A button commits what it
-// names, so it names the exact amount, never the rounded one.
+// names, so it names the exact amount, never the rounded one, and text composed
+// by printf reaches attributes, where only the exact form is plain text. The other
+// exact sites render in TestRecordedAmountsAreExact.
 func TestMoneyGrammar(t *testing.T) {
 	dollarAmount := regexp.MustCompile(`\$\s*(?:[0-9]|\{\{\s*money)`)
 	fixedStep := regexp.MustCompile(`step="[0-9.]+"`)
 	button := regexp.MustCompile(`(?s)<button[^>]*>.*?</button>`)
 	rounded := regexp.MustCompile(`\{\{[^}]*\bmoney\b`)
-	files, _ := fs.Glob(tmplFS, "templates/*.html")
-	for _, f := range files {
-		src := string(mustRead(t, f))
+	composed := regexp.MustCompile(`\{\{[^}]*printf[^}]*\bmoney\b`)
+	sources := map[string]string{}
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range core {
+		sources[f] = string(mustRead(t, f))
+	}
+	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[f] = string(b)
+	}
+	for f, src := range sources {
 		if strings.ContainsRune(src, '¤') {
 			t.Errorf("%s: the ¤ glyph is banned — render amounts with the {{money}} helper (§7)", f)
 		}
@@ -183,6 +198,9 @@ func TestMoneyGrammar(t *testing.T) {
 			if rounded.MatchString(b) {
 				t.Errorf("%s: %q — a button commits the amount it names, so it reads {{moneyExact}} (§7)", f, b)
 			}
+		}
+		if m := composed.FindString(src); m != "" {
+			t.Errorf("%s: %q — composed text reads {{moneyExact}} (§7)", f, m)
 		}
 	}
 }

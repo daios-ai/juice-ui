@@ -164,6 +164,57 @@ func TestMoneyCarriesTheExactAmount(t *testing.T) {
 	}
 }
 
+// An amount is exact where a sentence commits or records it (§7). Each case names
+// the sentence, since the rounded form also holds the exact figure, in its title.
+func TestRecordedAmountsAreExact(t *testing.T) {
+	r, err := NewRenderer(testKernel(client.Health{Handle: "testnet", Decimals: 6, Symbol: "USDC"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n, exact = 1234567, "1.234567 USDC"
+	fragments := []struct {
+		name string
+		data any
+		want []string
+	}{
+		{"_cost_breakdown", Cost{Gross: n, Fee: n, Net: n}, []string{
+			`gross <b class="money">` + exact, `fee <b class="money">` + exact, `net <b class="money">` + exact}},
+		{"_cost_breakdown", Cost{Gross: n, Fee: n, Net: n, Remote: true}, []string{
+			`paid <b class="money">` + exact, `import fee <b class="money">` + exact, `obligation <b class="money">` + exact}},
+		{"_call_outcome", Outcome{Class: Failed, Charged: n}, []string{"Failed — " + exact + " charged."}},
+		{"_call_outcome", Outcome{Class: Parked, Reserved: n}, []string{"Result pending — " + exact + " reserved."}},
+		{"_call_outcome", Outcome{Class: TermsChanged, Price: n}, []string{"It now costs " + exact + "."}},
+	}
+	for _, c := range fragments {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, c.name, c.data); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range c.want {
+			if !strings.Contains(rec.Body.String(), want) {
+				t.Errorf("%s %+v: want %q in\n%s", c.name, c.data, want, rec.Body)
+			}
+		}
+	}
+	dialogs := []struct {
+		view walletView
+		want string
+	}{
+		{walletView{OpenForm: "fund-review", Chain: true, MyAddress: "0xabc", Review: walletReview{Amount: n}}, "Deposit " + exact + "?"},
+		{walletView{OpenForm: "withdraw-review", Review: walletReview{Amount: n}}, "Withdraw " + exact + "?"},
+		{walletView{OpenForm: "withdraw", Available: n}, `<span class="money">` + exact + `</span> available`},
+	}
+	for _, c := range dialogs {
+		rec := httptest.NewRecorder()
+		if err := r.Render(rec, 200, "wallet", Page{Title: "Wallet", Data: c.view}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("wallet %s: want %q", c.view.OpenForm, c.want)
+		}
+	}
+}
+
 func TestMoneyRefusesAnUnknownUnit(t *testing.T) {
 	r, err := NewRenderer(unknownKernel)
 	if err != nil {

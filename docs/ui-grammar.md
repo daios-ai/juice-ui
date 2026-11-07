@@ -799,7 +799,7 @@ obligations above.
   outside `_value_block` (`TestJSONRendersThroughTheView`), any class
   `app.css` styles that nothing renders (`TestNoDeadCSS`), and the retired
   `data-param-*` row attributes — money is the
-  world's unit and symbol through the `money` helper, the step is the world's
-  through `{{amountStep}}`, and buttons read `verb (N)` (§5.6). `TestNoRetiredSurfaces` fails on the
+  world's unit and symbol through the `money` and `moneyExact` helpers, the step is the world's
+  through `{{amountStep}}`, and buttons read `verb (N)`, exact (§5.6). `TestRecordedAmountsAreExact` renders the other sites that must be exact. `TestNoRetiredSurfaces` fails on the
   vocabulary the kernel retired: settle, unimport, the transfer queue, admin
   withdraw, a peer's balance.
