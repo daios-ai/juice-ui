@@ -538,6 +538,37 @@ func TestDueFollowsOneRule(t *testing.T) {
 	}
 }
 
+// What cannot be read is never taken for an absence: with a kernel beneath an
+// unreadable kernels/, or a kernel home whose juice.db cannot be looked for, the
+// installation is not fresh, nothing older is replaced, and the home lookup is
+// an error.
+func TestAnUnreadableInstallationIsNotFresh(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	i := inst(t, "http://127.0.0.1:4040")
+	installFake(t, i)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, "v9.9.9", "v0.1.0", 1)), 0o755)
+	writeHome(t, i, "polygon", "127.0.0.1:4040")
+	booted(t, i, "polygon")
+	for _, dir := range []string{filepath.Join(i.Home, "kernels"), filepath.Join(i.Home, "kernels", "polygon")} {
+		os.Chmod(dir, 0)
+		if fresh, err := i.Fresh(); fresh || err == nil {
+			t.Errorf("%s unreadable: fresh %v, %v", dir, fresh, err)
+		}
+		if due, err := i.Due(false); len(due) != 0 || err == nil {
+			t.Errorf("%s unreadable: due %v, %v", dir, due, err)
+		}
+		if _, _, err := i.Booted(); err == nil {
+			t.Errorf("%s unreadable: the home lookup is an error", dir)
+		}
+		os.Chmod(dir, 0o700)
+	}
+	if fresh, err := i.Fresh(); fresh || err != nil {
+		t.Errorf("readable again: %v %v", fresh, err)
+	}
+}
+
 // A first boot needs a kernel binary of at least Release, which honours the
 // recovery key; an older one kept for another kernel is refused, naming both
 // versions.

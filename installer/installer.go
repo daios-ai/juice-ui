@@ -134,10 +134,15 @@ func (in *Installer) Run(ctx context.Context) {
 	seq, err := in.choose(ctx)
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	in.ctx, in.seq = ctx, seq
+	in.ctx = ctx
 	if err != nil {
+		// No sequence: the page states why and the installation never ends,
+		// since the application would be handed a listener with no kernel.
 		in.err = err.Error()
+		in.o.Log.Error("installer", "err", err)
+		return
 	}
+	in.seq = seq
 	in.enter(0)
 }
 

@@ -63,7 +63,7 @@
     <li class="{{.State}}">{{if eq .State "running"}}<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>{{.Title}}</span></div>{{else}}{{if eq .State "done"}}<svg class="ico" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{end}}<span>{{.Title}}</span>{{end}}
       {{if eq .State "failed"}}{{template "_error" .Err}}{{end}}</li>{{end}}
   </ol>
-  {{if not .Jobs}}<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span></div>{{end}}
+  {{if and (not .Jobs) (not .Error)}}<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span></div>{{end}}
   {{if and .Failed .Local}}<form method="post" action="/install/retry"><input type="hidden" name="step" value="{{.Step}}"><button class="btn" type="submit">Try again</button></form>{{end}}
   {{end}}
 </div>

@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.58.0
+Version: 0.58.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.58.1.** An installation whose `kernels/` could not be read
+> counted as fresh, so an older binary could be replaced under a kernel nobody
+> could see; what cannot be read is now an error, and nothing is replaced. A
+> failure to make the recovery phrase ended the installer and handed the
+> listener to the application with no kernel; the installer now stays on its
+> page with the reason (§1).
 
 > **What changed in 0.58.0.** The first start is an installer: a sequence of
 > pages and jobs in the shape OS installers use, in its own package, `installer`
@@ -960,7 +967,8 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
   (`juice`) then the agent (`juice-agent`), each at the release this UI was
   verified against. A component **missing** from `$JUICE_HOME/bin` is due; one
   **older than its release is due only in a fresh installation**, one whose
-  `kernels/` holds no `juice.db` at all. Otherwise nothing present is replaced: a
+  `kernels/` holds no `juice.db` at all, read to the end: a directory that cannot
+  be read is an error, never an absence. Otherwise nothing present is replaced: a
   kernel that exists was last served by the binaries beside it, and a newer one
   may refuse its home (kernel v0.18.1 refuses v0.16.0's configuration, which
   stopped a polygon kernel on 2026-11-10). Upgrading under an existing kernel is

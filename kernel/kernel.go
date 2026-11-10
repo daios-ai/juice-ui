@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -191,13 +192,15 @@ func (i *Installation) home() (world string, booted bool, err error) {
 	if port == "" {
 		port = "80"
 	}
-	entries, _ := os.ReadDir(filepath.Join(i.Home, "kernels"))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	dirs, err := i.kernelDirs()
+	if err != nil {
+		return "", false, err
+	}
+	for _, dir := range dirs {
+		db, err := hasDB(dir)
+		if err != nil {
+			return "", false, err
 		}
-		dir := filepath.Join(i.Home, "kernels", e.Name())
-		db := exists(filepath.Join(dir, "juice.db"))
 		var c struct {
 			ListenAddr string `json:"listen_addr"`
 		}
@@ -215,7 +218,7 @@ func (i *Installation) home() (world string, booted bool, err error) {
 			c.ListenAddr = ":4040" // the kernel's default
 		}
 		if host, p, err := net.SplitHostPort(c.ListenAddr); err == nil && p == port && isLoopback(host) {
-			return e.Name(), db, nil
+			return filepath.Base(dir), db, nil
 		}
 	}
 	return "", false, nil
@@ -662,9 +665,52 @@ func (i *Installation) Booted() (world string, booted bool, err error) {
 // Fresh reports an installation that holds no kernel at all: no juice.db under
 // kernels/. Only there may a component be replaced, since every kernel of an
 // installation runs from its one bin/.
+// What cannot be read is an error, never an absence: an installation whose
+// kernels cannot be listed is not known to be fresh.
 func (i *Installation) Fresh() (bool, error) {
-	dbs, err := filepath.Glob(filepath.Join(i.Home, "kernels", "*", "juice.db"))
-	return len(dbs) == 0, err
+	dirs, err := i.kernelDirs()
+	if err != nil {
+		return false, err
+	}
+	for _, dir := range dirs {
+		if db, err := hasDB(dir); err != nil || db {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// kernelDirs are the directories under kernels/, none when it does not exist;
+// one that exists and cannot be read is an error.
+func (i *Installation) kernelDirs() ([]string, error) {
+	root := filepath.Join(i.Home, "kernels")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s, so whether a kernel lives there is unknown: %w", root, err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(root, e.Name()))
+		}
+	}
+	return dirs, nil
+}
+
+// hasDB reports whether a kernel lives in dir (its juice.db); one whose
+// presence cannot be established is an error.
+func hasDB(dir string) (bool, error) {
+	_, err := os.Stat(filepath.Join(dir, "juice.db"))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, fmt.Errorf("cannot read %s, so whether a kernel lives there is unknown: %w", dir, err)
 }
 
 // Due are the components to install now, in the order of Components. One

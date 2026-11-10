@@ -101,6 +101,7 @@ func (k *fakeKernel) Start(context.Context) error {
 type chrome struct {
 	r      *server.Renderer
 	phrase string
+	broken bool // no phrase can be made
 }
 
 func (c chrome) Page(w http.ResponseWriter, status int, page, title string, data any) error {
@@ -109,12 +110,22 @@ func (c chrome) Page(w http.ResponseWriter, status int, page, title string, data
 func (c chrome) Fragment(w http.ResponseWriter, status int, name string, data any) error {
 	return c.r.Fragment(w, status, name, data)
 }
-func (c chrome) NewPhrase() (string, string, error) { return c.phrase, "PUBKEY", nil }
+func (c chrome) NewPhrase() (string, string, error) {
+	if c.broken {
+		return "", "", errors.New("no entropy")
+	}
+	return c.phrase, "PUBKEY", nil
+}
 
 const phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident"
 
 // start runs an installer over k, listening on loopback.
 func start(t *testing.T, k *fakeKernel) (*Installer, http.Handler) {
+	t.Helper()
+	return startWith(t, k, false)
+}
+
+func startWith(t *testing.T, k *fakeKernel, broken bool) (*Installer, http.Handler) {
 	t.Helper()
 	retryPause = 20 * time.Millisecond
 	t.Cleanup(func() { retryPause = 10 * time.Second })
@@ -122,7 +133,7 @@ func start(t *testing.T, k *fakeKernel) (*Installer, http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := New(Options{Kernel: k, Chrome: chrome{r: r, phrase: phrase}, URL: "http://127.0.0.1:4040",
+	in := New(Options{Kernel: k, Chrome: chrome{r: r, phrase: phrase, broken: broken}, URL: "http://127.0.0.1:4040",
 		Listen: "127.0.0.1:8080", Home: "/home/x/.juice", Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -303,6 +314,25 @@ func TestAFreshInstallWalksEveryStep(t *testing.T) {
 	}
 	if in.phrase != "" || in.password != "" || in.pub != "" {
 		t.Error("the secrets leave memory with the sequence")
+	}
+}
+
+// With no recovery phrase there is no sequence: the page states why, offers no
+// form and no progress, and the installation never ends, since the application
+// would be handed the listener with no kernel.
+func TestNoPhraseKeepsTheInstallerStopped(t *testing.T) {
+	in, h := startWith(t, &fakeKernel{}, true)
+	select {
+	case <-in.Ready():
+		t.Fatal("a failed start ended the sequence")
+	case <-time.After(100 * time.Millisecond):
+	}
+	b := page(t, h)
+	if !strings.Contains(b, "couldn&#39;t set up account recovery") || strings.Contains(b, "<form") || strings.Contains(b, `class="progress`) {
+		t.Errorf("the page: %s", b)
+	}
+	if rec := next(t, h, "world", url.Values{"world": {"play"}}); rec.Code != http.StatusSeeOther {
+		t.Errorf("a post changes nothing: %d", rec.Code)
 	}
 }
 
