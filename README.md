@@ -1,9 +1,8 @@
 # juice-ui
 
-A terminal-flavoured web interface for the [Juice](#) kernel.
-
-> **Status:** v0.2.0 · design draft. The endpoint surface is gated against a
-> running kernel; see [`requirements.md`](requirements.md).
+The desktop edition of [Juice](https://github.com/daios-ai/juice): a web interface
+that installs and runs a whole Juice installation — the kernel, chat, and an
+assistant agent — and gives people and agents one workspace to work in.
 
 juice-ui is a Go **backend-for-frontend (BFF)**: an HTTP server that renders the
 Juice user flows and proxies every request to the kernel **over its documented HTTP
@@ -36,39 +35,51 @@ responses rather than reproducing kernel logic.
   is the reference implementation; **agents** manages the installation's
   juice-agents.
 
-## Prerequisites
+## Install
 
-- **Go 1.22+**.
-- A Juice kernel at `http://127.0.0.1:4040` by default — or none: on a machine
-  with no kernel the UI installs the kernel binary into `$JUICE_HOME/bin`,
-  creates the kernel from a first-boot page, and starts it (the kernel gate,
-  `requirements.md` §1).
-
-SQLite is provided by `modernc.org/sqlite` (pure Go, no cgo), so `go build` and
-`go test ./...` need no C toolchain and run fully offline.
-
-## Quick start
+On macOS or Linux, Intel or ARM:
 
 ```sh
-# build and run against a local kernel, with dev defaults
-make run
-# → serving on http://127.0.0.1:8080
+curl -fsSL https://raw.githubusercontent.com/daios-ai/juice-ui/main/install.sh | sh
 ```
 
-`make run` uses local defaults (kernel `http://127.0.0.1:4040`, address
-`127.0.0.1:8080`, an ephemeral dev session secret). Override them inline:
+That puts `juice-ui`, `juice-chat` and `juice-supervisor` in `~/.juice/bin` and adds
+it to your PATH. Options go after `sh -s --`:
 
 ```sh
-make run KERNEL=https://kernel.example.com ADDR=127.0.0.1:9000 SECRET=change-me
+curl -fsSL https://raw.githubusercontent.com/daios-ai/juice-ui/main/install.sh | sh -s -- VERSION
+curl -fsSL https://raw.githubusercontent.com/daios-ai/juice-ui/main/install.sh | sh -s -- --no-modify-path
 ```
 
-Or build and run the binary yourself, or install it to your `PATH`:
+Then start it and open `http://127.0.0.1:8080`:
+
+```sh
+juice-ui
+```
+
+The first start installs the rest of Juice into `~/.juice/bin`, the
+[kernel](https://github.com/daios-ai/juice) and the
+[agent](https://github.com/daios-ai/juice-agent), each at the release this UI was
+verified against, and asks you to create your kernel in the browser
+(`requirements.md` §1). `JUICE_HOME` moves the whole installation.
+
+## Build from source
+
+Building needs **Go 1.22+**. SQLite is provided by `modernc.org/sqlite` (pure Go,
+no cgo), so `go build` and `go test ./...` need no C toolchain and run fully
+offline.
 
 ```sh
 make build            # → ./juice-ui, ./juice-chat, ./juice-supervisor
-./juice-ui
-
 make install          # → $JUICE_HOME/bin/  (default ~/.juice; override PREFIX=…)
+```
+
+`make run` builds and runs against a local kernel with dev defaults (kernel
+`http://127.0.0.1:4040`, address `127.0.0.1:8080`, an ephemeral session secret).
+Override them inline:
+
+```sh
+make run KERNEL=https://kernel.example.com ADDR=127.0.0.1:9000 SECRET=change-me
 ```
 
 ## Configuration
@@ -171,7 +182,7 @@ Copyright (C) 2026 Pedro A. Ortega <pedro.ortega@gmail.com>.
 
 Juice-UI is licensed under the [Apache License 2.0](LICENSE). What was copied
 from the [juice](https://github.com/daios-ai/juice) repository keeps its licence,
-the [GNU AGPL 3.0 only](LICENSES/AGPL-3.0-only.txt): `juicedocs/` and the Juice
-logo, with the icons rendered from it. Third-party assets keep theirs.
-[`NOTICE`](NOTICE) lists every exception, and [`REUSE.toml`](REUSE.toml) states
-each file's licence.
+the [GNU AGPL 3.0 only](LICENSES/AGPL-3.0-only.txt): `juicedocs/`, the Juice
+logo with the icons rendered from it, and `install.sh`, adapted from the
+kernel's. Third-party assets keep theirs. [`NOTICE`](NOTICE) lists every
+exception, and [`REUSE.toml`](REUSE.toml) states each file's licence.

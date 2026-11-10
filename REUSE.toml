@@ -11,10 +11,12 @@ SPDX-FileCopyrightText = "2026 Pedro A. Ortega <pedro.ortega@gmail.com>"
 SPDX-License-Identifier = "Apache-2.0"
 
 # Copied from the juice repository, or rendered from what was: the kernel's
-# documents, and the name's logo with the icons rendered from it.
+# documents, the name's logo with the icons rendered from it, and the installer
+# adapted from the kernel's.
 [[annotations]]
 path = [
   "juicedocs/**",
+  "install.sh",
   "server/static/juice-logo.svg",
   "server/static/favicon.ico",
   "server/static/apple-touch-icon.png",

@@ -26,6 +26,13 @@ import (
 	"github.com/daios-ai/juice-ui/supervisor"
 )
 
+// TestMain points the default release base at a closed port, so a test that
+// forgets its fake releases fails rather than downloading from GitHub.
+func TestMain(m *testing.M) {
+	Releases = "http://127.0.0.1:9"
+	os.Exit(m.Run())
+}
+
 func inst(t *testing.T, rawURL string) *Installation {
 	t.Helper()
 	u, _ := url.Parse(rawURL)
@@ -115,6 +122,12 @@ kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRA
 esac
 `
 
+// fakeAgent is a fake juice-agent: it answers --version.
+const fakeAgent = "#!/bin/sh\necho 'juice-agent v9.9.9 (test)'\n"
+
+// fakes are the components' fake binaries, by name.
+var fakes = map[string]string{"juice": fakeJuice, "juice-agent": fakeAgent}
+
 // health is a fake /health that answers once up is set.
 func health(t *testing.T, up *atomic.Bool) *url.URL {
 	t.Helper()
@@ -130,12 +143,12 @@ func health(t *testing.T, up *atomic.Bool) *url.URL {
 	return u
 }
 
-func tarball(t *testing.T, script string) []byte {
+func tarball(t *testing.T, name, script string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	if err := tw.WriteHeader(&tar.Header{Name: "juice", Mode: 0o755, Size: int64(len(script)), Typeflag: tar.TypeReg}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(script)), Typeflag: tar.TypeReg}); err != nil {
 		t.Fatal(err)
 	}
 	tw.Write([]byte(script))
@@ -144,50 +157,81 @@ func tarball(t *testing.T, script string) []byte {
 	return buf.Bytes()
 }
 
-// releases serves one release the way GitHub does: the asset and checksums.txt
-// under <base>/<Release>/. sum overrides the checksum line.
-func releases(t *testing.T, asset []byte, sum string) *httptest.Server {
+// release is one component's release as a test serves it: the tarball, and the
+// checksum line to publish for it ("" for its true SHA-256).
+type release struct {
+	asset []byte
+	sum   string
+}
+
+// releases serves the components' releases the way GitHub does, under
+// <base>/<repo>/releases/download/<release>/: each one's asset and checksums.txt.
+// A component given no release is served its fake binary; fail counts down
+// requests to refuse with 503 before serving.
+func releases(t *testing.T, given map[string]release, fail *atomic.Int32) *httptest.Server {
 	t.Helper()
-	name := fmt.Sprintf("juice_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
-	if sum == "" {
-		s := sha256.Sum256(asset)
-		sum = hex.EncodeToString(s[:])
-	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/"+Release+"/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "%s  %s\n", sum, name)
-	})
-	mux.HandleFunc("/"+Release+"/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(asset) })
-	srv := httptest.NewServer(mux)
+	for _, c := range Components {
+		r, ok := given[c.Name]
+		if !ok {
+			r = release{asset: tarball(t, c.Name, fakes[c.Name])}
+		}
+		sum := r.sum
+		if sum == "" {
+			s := sha256.Sum256(r.asset)
+			sum = hex.EncodeToString(s[:])
+		}
+		name := fmt.Sprintf("%s_%s_%s.tar.gz", c.Name, runtime.GOOS, runtime.GOARCH)
+		dir := "/" + c.Repo + "/releases/download/" + c.Release + "/"
+		mux.HandleFunc(dir+"checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "%s  %s\n", sum, name)
+		})
+		asset := r.asset
+		mux.HandleFunc(dir+name, func(w http.ResponseWriter, r *http.Request) { w.Write(asset) })
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail != nil && fail.Add(-1) >= 0 {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
+// Every component installs by one routine: from its own repository's release,
+// verified, tried and renamed, so a refusal leaves a working binary untouched.
 func TestInstallVerifiesAndRenamesAtomically(t *testing.T) {
-	i := inst(t, "http://127.0.0.1:4040")
-	i.Releases = releases(t, tarball(t, fakeJuice), "").URL
-	if err := i.Install(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if i.Binary() == "" {
-		t.Fatal("bin/juice must be installed")
-	}
-	// A wrong checksum, a bad binary: refused, and the working binary stays.
-	before, _ := os.ReadFile(i.Binary())
-	i.Releases = releases(t, tarball(t, fakeJuice), strings.Repeat("0", 64)).URL
-	if err := i.Install(context.Background()); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
-		t.Errorf("a wrong checksum must refuse: %v", err)
-	}
-	i.Releases = releases(t, tarball(t, "#!/bin/sh\nexit 3\n"), "").URL
-	if err := i.Install(context.Background()); err == nil || !strings.Contains(err.Error(), "does not run") {
-		t.Errorf("a binary that fails --version must refuse: %v", err)
-	}
-	after, _ := os.ReadFile(i.Binary())
-	if !bytes.Equal(before, after) {
-		t.Error("a refused install must leave bin/juice untouched")
-	}
-	if left, _ := filepath.Glob(filepath.Join(i.Home, "bin", "juice.new.*")); len(left) != 0 {
-		t.Errorf("staged files left behind: %v", left)
+	for _, c := range Components {
+		i := inst(t, "http://127.0.0.1:4040")
+		i.Releases = releases(t, nil, nil).URL
+		if err := i.Install(context.Background(), c); err != nil {
+			t.Fatal(c.Name, err)
+		}
+		if i.bin(c.Name) == "" || i.version(c.Name) != "v9.9.9" {
+			t.Fatalf("bin/%s must be installed, reporting v9.9.9: %q", c.Name, i.version(c.Name))
+		}
+		// A wrong checksum, a bad binary, an asset without it: refused, and the
+		// working binary stays.
+		before, _ := os.ReadFile(i.bin(c.Name))
+		for want, r := range map[string]release{
+			"checksum mismatch": {asset: tarball(t, c.Name, fakes[c.Name]), sum: strings.Repeat("0", 64)},
+			"does not run":      {asset: tarball(t, c.Name, "#!/bin/sh\nexit 3\n")},
+			"does not contain a " + c.Name + " binary": {asset: tarball(t, "other", fakes[c.Name])},
+		} {
+			i.Releases = releases(t, map[string]release{c.Name: r}, nil).URL
+			if err := i.Install(context.Background(), c); err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: want %q, got %v", c.Name, want, err)
+			}
+		}
+		after, _ := os.ReadFile(i.bin(c.Name))
+		if !bytes.Equal(before, after) {
+			t.Errorf("a refused install must leave bin/%s untouched", c.Name)
+		}
+		if left, _ := filepath.Glob(filepath.Join(i.Home, "bin", c.Name+".new.*")); len(left) != 0 {
+			t.Errorf("staged files left behind: %v", left)
+		}
 	}
 }
 
@@ -195,8 +239,10 @@ func installFake(t *testing.T, i *Installation) {
 	t.Helper()
 	dir := filepath.Join(i.Home, "bin")
 	os.MkdirAll(dir, 0o700)
-	if err := os.WriteFile(filepath.Join(dir, "juice"), []byte(fakeJuice), 0o755); err != nil {
-		t.Fatal(err)
+	for name, script := range fakes {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -434,7 +480,7 @@ func TestWorldsAreWhatTheKernelLists(t *testing.T) {
 // would ignore the recovery key; the version is what --version says.
 func TestEnsureReplacesAnOlderBinary(t *testing.T) {
 	var up atomic.Bool
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Releases: releases(t, tarball(t, fakeJuice), "").URL}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Releases: releases(t, nil, nil).URL}
 	installFake(t, i)
 	if v := i.Version(); v != "v9.9.9" {
 		t.Fatalf("Version = %q", v)
@@ -449,7 +495,7 @@ func TestEnsureReplacesAnOlderBinary(t *testing.T) {
 			cancel()
 		}
 	})
-	if strings.Join(stateStrings(seen), ",") != "installing,needs-create" || i.Version() != "v9.9.9" {
+	if strings.Join(stateStrings(seen), ",") != "installing,needs-create" || i.Version() != "v9.9.9" || i.version("juice-agent") != "v9.9.9" {
 		t.Errorf("states = %v, version %s", seen, i.Version())
 	}
 }
@@ -478,7 +524,7 @@ func TestEnsureOrdersTheFacts(t *testing.T) {
 	}))
 	defer health.Close()
 	u, _ := url.Parse(health.URL)
-	local := &Installation{Home: t.TempDir(), URL: u, Releases: releases(t, tarball(t, fakeJuice), "").URL,
+	local := &Installation{Home: t.TempDir(), URL: u, Releases: releases(t, nil, nil).URL,
 		Programs: &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { return supervisor.Status{Running: true} }}}
 	local.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		up = true
@@ -505,9 +551,76 @@ func TestEnsureOrdersTheFacts(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Ensure did not reach Serving")
 	}
-	want := []State{Installing, NeedsCreate, Serving}
+	want := []State{Installing, Installing, NeedsCreate, Serving}
 	if strings.Join(stateStrings(seen), ",") != strings.Join(stateStrings(want), ",") {
 		t.Errorf("states = %v, want %v", seen, want)
+	}
+}
+
+// The components follow one rule. A fresh home installs each in order, the
+// kernel first; a missing agent is installed beside a declared kernel, an older
+// one beside it is left; an override set leaves its component to the override; a
+// failed download is reported and the next round installs it; a UI configured
+// for a kernel elsewhere installs nothing.
+func TestEnsureInstallsEachComponentByOneRule(t *testing.T) {
+	retryPause = 10 * time.Millisecond
+	t.Cleanup(func() { retryPause = 10 * time.Second })
+	run := func(i *Installation, until State) (states, details []string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		i.Ensure(ctx, func(s State, d string) {
+			states, details = append(states, string(s)), append(details, d)
+			if s == until {
+				cancel()
+			}
+		})
+		return
+	}
+	var down atomic.Bool
+	fresh := &Installation{Home: t.TempDir(), URL: health(t, &down), Releases: releases(t, nil, nil).URL}
+	fresh.launch = func(context.Context, string, []string, []string, *os.File) (<-chan struct{}, error) {
+		return nil, fmt.Errorf("unused")
+	}
+	if s, d := run(fresh, NeedsCreate); strings.Join(s, ",") != "installing,installing,needs-create" ||
+		d[0] != "juice v0.18.1" || d[1] != "juice-agent v0.10.0" || fresh.version("juice-agent") != "v9.9.9" {
+		t.Errorf("a fresh home: %v %v", s, d)
+	}
+
+	// A declared, running kernel: the agent missing is installed, after a
+	// download refused once.
+	var up atomic.Bool
+	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
+	var fail atomic.Int32
+	fail.Store(1)
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p, Releases: releases(t, nil, &fail).URL}
+	installFake(t, i)
+	os.Remove(filepath.Join(i.Home, "bin", "juice-agent"))
+	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
+	booted(t, i, "play")
+	s, d := run(i, Serving)
+	if strings.Join(s, ",") != "installing,failed,installing,serving" || !strings.Contains(d[1], "503") || i.bin("juice-agent") == "" {
+		t.Errorf("a missing agent beside a declared kernel: %v %v", s, d)
+	}
+
+	// An older agent beside the declared kernel is left.
+	old := strings.Replace(fakeAgent, "v9.9.9", "v0.1.0", 1)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice-agent"), []byte(old), 0o755)
+	if s, _ := run(i, Serving); strings.Join(s, ",") != "serving" || i.version("juice-agent") != "v0.1.0" {
+		t.Errorf("an older agent beside a declared kernel: %v, %s", s, i.version("juice-agent"))
+	}
+
+	// An override leaves the agent to it, even when bin/ has none.
+	os.Remove(filepath.Join(i.Home, "bin", "juice-agent"))
+	t.Setenv("JUICE_AGENT_BIN", "/elsewhere/juice-agent")
+	if s, _ := run(i, Serving); strings.Join(s, ",") != "serving" || i.bin("juice-agent") != "" {
+		t.Errorf("an override: %v", s)
+	}
+
+	remote := inst(t, "http://10.0.0.9:4040")
+	remote.Releases = releases(t, nil, nil).URL
+	if s, _ := run(remote, Waiting); s[0] != "waiting" || remote.Binary() != "" || remote.bin("juice-agent") != "" {
+		t.Errorf("a kernel elsewhere: %v", s)
 	}
 }
 
@@ -614,19 +727,22 @@ func TestEnsureWaitsForTheSupervisorsKernel(t *testing.T) {
 }
 
 // A kernel that answers with no binary of this installation's to run it is
-// followed and not declared; so is one on another machine, or one that another
-// program boots while the first boot is awaited, until the home is booted.
+// followed and not declared, its binary never installed; the agent, which the
+// installation still lacks, is. So is one on another machine, or one that
+// another program boots while the first boot is awaited, until the home is
+// booted.
 func TestEnsureFollowsAKernelWithNoBinaryHere(t *testing.T) {
 	var up atomic.Bool
 	up.Store(true)
 	p := &fakePrograms{}
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p, Releases: releases(t, nil, nil).URL}
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
-	var seen []State
-	i.Ensure(context.Background(), func(s State, _ string) { seen = append(seen, s) })
-	if strings.Join(stateStrings(seen), ",") != "serving" || p.sets != 0 {
-		t.Errorf("states %v, declared %d", seen, p.sets)
+	var seen, details []string
+	i.Ensure(context.Background(), func(s State, d string) { seen, details = append(seen, string(s)), append(details, d) })
+	if strings.Join(seen, ",") != "installing,serving" || details[0] != "juice-agent v0.10.0" || p.sets != 0 ||
+		i.Binary() != "" || i.bin("juice-agent") == "" {
+		t.Errorf("states %v %v, declared %d, kernel %q", seen, details, p.sets, i.Binary())
 	}
 }
 

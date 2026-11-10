@@ -2,9 +2,11 @@ name: release
 
 # Tag a version and push it to publish a release:
 #   git tag v0.4.0 && git push origin v0.4.0
-# This cross-compiles the pure-Go binary for all supported platforms and
-# uploads version-less assets (juice-ui_<os>_<arch>.tar.gz) plus checksums.txt,
-# which is exactly what install.sh downloads from .../releases/latest/download/.
+# This cross-compiles Juice-UI's three programs (juice-ui, juice-chat and
+# juice-supervisor) for all supported platforms, packs each platform's three in one
+# version-less asset (juice-ui_<os>_<arch>.tar.gz), and uploads them plus
+# checksums.txt, which is exactly what install.sh downloads from
+# .../releases/latest/download/.
 
 on:
   push:
@@ -39,10 +41,12 @@ jobs:
             os="${target%/*}"
             arch="${target#*/}"
             echo "building ${os}/${arch}"
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -ldflags "$LDFLAGS" -o dist/juice-ui ./cmd/juice-ui/
-            tar -C dist -czf "dist/juice-ui_${os}_${arch}.tar.gz" juice-ui
-            rm dist/juice-ui
+            for p in juice-ui juice-chat juice-supervisor; do
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+                go build -ldflags "$LDFLAGS" -o "dist/$p" "./cmd/$p/"
+            done
+            tar -C dist -czf "dist/juice-ui_${os}_${arch}.tar.gz" juice-ui juice-chat juice-supervisor
+            rm dist/juice-ui dist/juice-chat dist/juice-supervisor
           done
           ( cd dist && sha256sum juice-ui_*.tar.gz > checksums.txt )
           echo "--- artifacts ---"

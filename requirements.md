@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.56.1
+Version: 0.57.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.57.0.** Juice-UI installs with one command, `install.sh`,
+> which puts its three programs in `$JUICE_HOME/bin` from one verified release
+> tarball. The rest of Juice is installed by the UI on its first start, from one
+> list of components: the kernel, as before, and now the agent, so a fresh
+> installation's assistant starts without anything installed by hand. Both are
+> installed by one routine, under one rule, and the screen names each (§1).
 
 > **What changed in 0.56.1.** The configuration page withheld the keys of
 > `native.llm.endpoints`, which the kernel replaced with `native.llm.models` in
@@ -926,12 +933,19 @@ kernel answers `/health`, when the application takes the listener:
 
 * the configured kernel URL is not loopback → **wait** (a kernel elsewhere is an
   operator's; it is never installed or started);
-* `$JUICE_HOME/bin/juice` is missing or older than the release this UI was
-  verified against → **install** it: the release this UI was
-  verified against, the platform's asset and `checksums.txt` from the kernel's
-  GitHub releases, refused without a matching SHA-256, tried with `--version`,
-  renamed atomically into `bin/` (the contract of the kernel's own
-  `install.sh`);
+* a **component** is due → **install** it. The components are one list, the
+  kernel (`juice`) then the agent (`juice-agent`), each at the release this UI was
+  verified against. One is due when it is missing from `$JUICE_HOME/bin`, or older
+  than its release while no kernel has been declared to the supervisor (an older
+  kernel would ignore the recovery key a first boot passes; a newer one is kept,
+  and once the kernel is declared nothing present is replaced). A component whose
+  override variable is set (`JUICE_AGENT_BIN`) is the operator's, and the kernel
+  binary is left alone while a kernel answers, which is followed. Each is
+  installed by one routine, the contract of the family's own `install.sh`: the
+  platform's asset and `checksums.txt` from that component's GitHub releases,
+  refused without a matching SHA-256, tried with `--version`, renamed atomically
+  into `bin/`. The screen names the component and its release, and a failed
+  download is reported and tried again;
 * no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port, or
   the one that does holds no kernel — no `juice.db`, which the kernel creates
   only with its first boot's answers in hand → **create**: a first-boot form (world, kernel name, superuser password; the
@@ -1004,6 +1018,18 @@ content) in §8. An obligation marked *Conditional* is indexed in §10; the feat
 is mandatory only once its prerequisite is confirmed. Where a reference is
 unavoidable it names the target as well as its number, so a stale number remains
 detectable.
+
+**The installer.** Juice-UI is installed in two stages, as a desktop product is.
+`install.sh`, at the repository root, is the bootstrap, adapted from the kernel's:
+it installs this repository's three programs (`juice-ui`, `juice-chat`,
+`juice-supervisor`) from one release tarball, `juice-ui_<os>_<arch>.tar.gz`,
+refused unless it matches the release's `checksums.txt`; each program is staged
+and tried with `--version` before any replaces an installed one, so a bad
+download changes nothing; it runs `juice-supervisor setup` by its path, adds
+`$JUICE_HOME/bin` to the shell profile once (`--no-modify-path` prints the line
+instead), starts nothing and asks for nothing. The UI then installs its
+components (the kernel gate, above). The release workflow packs the three
+programs into each platform's tarball.
 
 **The process supervisor.** Package `supervisor` runs the installation's programs:
 the kernel, the agents, chat and anything an operator adds. The UI embeds it and
@@ -2908,6 +2934,18 @@ Every production `.go` file has a `_test.go` file with independent tests.
   killed with SIGKILL including a disabled and a deleted program, a record of another
   process signalling nothing, a program's own lock, a refused file, reload; process
   control appearing nowhere else;
+* the installer (`install.sh`), run for real with a fake `curl` serving a release
+  built by the test: a clean install places the three programs and the schema and
+  adds `bin/` to the profile once over two runs; a wrong checksum, a missing
+  checksum entry, a program that does not run and a tarball lacking one each leave
+  the installation as it was; a relative `JUICE_HOME` is refused;
+  `--no-modify-path` writes no profile; a VERSION names its release;
+* the components (§1): each installs by the one routine, refused on a wrong
+  checksum, a binary that does not run or an asset without it; a fresh home
+  installs both in order before the first boot; a missing agent is installed
+  beside a declared kernel and an older one is left; an override is respected; a
+  failed download is reported and retried; a kernel elsewhere installs nothing,
+  and no test reaches the network;
 * the first boot: its child has ended when it returns and when the UI shuts down, one
   ignoring SIGTERM is killed, and a round of the gate during it neither declares the
   kernel nor reports it serving;

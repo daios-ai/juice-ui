@@ -33,17 +33,39 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// Release is the kernel release this UI was verified against; it is what the
-// gate installs when the binary is missing or older. The kernel's releases ship one
-// tarball per platform and a checksums.txt, built by its release workflow.
-const Release = "v0.18.1"
+// Component is a program of the family this UI installs into $JUICE_HOME/bin:
+// its repository, its binary's name, and the release this UI was verified
+// against. Each repository's releases ship one tarball per platform,
+// <name>_<os>_<arch>.tar.gz, and a checksums.txt, built by its release workflow.
+// Env names a variable that, when set, points at a binary of the operator's
+// choosing, which the gate then leaves alone.
+type Component struct {
+	Repo, Name, Release, Env string
+}
 
-// Releases is the kernel's release download base.
-const Releases = "https://github.com/daios-ai/juice/releases/download"
+// Components are the programs this UI installs, in the order the gate installs
+// them: the kernel first, since nothing is created or served without it.
+var Components = []Component{
+	{Repo: "daios-ai/juice", Name: "juice", Release: "v0.18.1"},
+	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Release: "v0.10.0", Env: "JUICE_AGENT_BIN"},
+}
+
+// Release is the kernel's: the release a first boot needs, since an older
+// kernel ignores the recovery key it is given.
+var Release = Components[0].Release
+
+// Releases is the release download base, under which each repository serves
+// <repo>/releases/download/<release>/<asset>. A variable so tests point it at
+// nothing and no test can reach the network.
+var Releases = "https://github.com"
 
 // stopTimeout is how long the first boot's kernel is given between SIGTERM and
 // SIGKILL: the supervisor's default for any program. A variable so tests shorten it.
 var stopTimeout = 30 * time.Second
+
+// retryPause is how long the gate waits after a failed round before the next,
+// a download that failed included. A variable so tests shorten it.
+var retryPause = 10 * time.Second
 
 // State is one of the gate's states.
 type State string
@@ -68,7 +90,7 @@ type Programs interface {
 type Installation struct {
 	Home     string   // $JUICE_HOME
 	URL      *url.URL // the kernel URL the UI is configured for
-	Releases string   // release download base; "" means Releases
+	Releases string   // release download base; "" means Releases (GitHub)
 	Log      *slog.Logger
 	Programs Programs        // runs this installation's kernel
 	Ctx      context.Context // ends at shutdown, ending a first boot in flight; nil never ends
@@ -96,16 +118,22 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Version is the release the installed binary reports (`juice version v0.15.7
-// (…)` → v0.15.7), or "" when it is absent or does not say.
-func (i *Installation) Version() string {
-	bin := i.Binary()
+// Version is the release the installed kernel reports, or "".
+func (i *Installation) Version() string { return i.version("juice") }
+
+// version is the release the installed binary name reports: the first word of
+// its --version that is a semantic version (`juice version v0.18.1 (…)`,
+// `juice-agent v0.10.0 (…)`), or "" when it is absent or does not say.
+func (i *Installation) version(name string) string {
+	bin := i.bin(name)
 	if bin == "" {
 		return ""
 	}
 	out, _ := exec.Command(bin, "--version").Output()
-	if f := strings.Fields(string(out)); len(f) >= 3 {
-		return f[2]
+	for _, f := range strings.Fields(string(out)) {
+		if semver.IsValid(f) {
+			return f
+		}
 	}
 	return ""
 }
@@ -149,8 +177,12 @@ func (i *Installation) env() []string {
 
 // Binary is the installation's kernel executable, $JUICE_HOME/bin/juice, or ""
 // when it is absent.
-func (i *Installation) Binary() string {
-	p := filepath.Join(i.Home, "bin", "juice")
+func (i *Installation) Binary() string { return i.bin("juice") }
+
+// bin is the installation's executable name in $JUICE_HOME/bin, or "" when it
+// is absent.
+func (i *Installation) bin(name string) string {
+	p := filepath.Join(i.Home, "bin", name)
 	if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
 		return p
 	}
@@ -232,18 +264,18 @@ func (i *Installation) client() *http.Client {
 	return i.http
 }
 
-// Install puts the kernel binary of Release in $JUICE_HOME/bin/juice, the
-// contract of the kernel's own install.sh: the asset for this platform and the
+// Install puts component c's binary of its release in $JUICE_HOME/bin, the
+// contract of the family's install.sh: the asset for this platform and the
 // release's checksums.txt are downloaded, the asset is refused unless its
 // SHA-256 matches, the binary is tried with --version, and only then renamed
-// over bin/juice, so a failure leaves a working installation untouched.
-func (i *Installation) Install(ctx context.Context) error {
-	asset := fmt.Sprintf("juice_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+// over bin/<name>, so a failure leaves a working installation untouched.
+func (i *Installation) Install(ctx context.Context, c Component) error {
+	asset := fmt.Sprintf("%s_%s_%s.tar.gz", c.Name, runtime.GOOS, runtime.GOARCH)
 	base := i.Releases
 	if base == "" {
 		base = Releases
 	}
-	base = base + "/" + Release + "/"
+	base = base + "/" + c.Repo + "/releases/download/" + c.Release + "/"
 	sums, err := i.fetch(ctx, base+"checksums.txt")
 	if err != nil {
 		return err
@@ -264,7 +296,7 @@ func (i *Installation) Install(ctx context.Context) error {
 	if got := sha256.Sum256(body); hex.EncodeToString(got[:]) != want {
 		return fmt.Errorf("checksum mismatch for %s", asset)
 	}
-	bin, err := untarJuice(body)
+	bin, err := untar(body, c.Name)
 	if err != nil {
 		return err
 	}
@@ -272,7 +304,7 @@ func (i *Installation) Install(ctx context.Context) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	staged := filepath.Join(dir, fmt.Sprintf("juice.new.%d", os.Getpid()))
+	staged := filepath.Join(dir, fmt.Sprintf("%s.new.%d", c.Name, os.Getpid()))
 	if err := os.WriteFile(staged, bin, 0o755); err != nil {
 		return err
 	}
@@ -280,9 +312,9 @@ func (i *Installation) Install(ctx context.Context) error {
 		os.Remove(staged)
 		return fmt.Errorf("the downloaded binary does not run on this machine; nothing was changed")
 	} else if i.Log != nil {
-		i.Log.Info("kernel binary verified", "version", strings.TrimSpace(string(out)))
+		i.Log.Info("component verified", "component", c.Name, "version", strings.TrimSpace(string(out)))
 	}
-	return os.Rename(staged, filepath.Join(dir, "juice"))
+	return os.Rename(staged, filepath.Join(dir, c.Name))
 }
 
 func (i *Installation) fetch(ctx context.Context, u string) ([]byte, error) {
@@ -301,8 +333,8 @@ func (i *Installation) fetch(ctx context.Context, u string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 256<<20))
 }
 
-// untarJuice returns the `juice` entry of a .tar.gz.
-func untarJuice(tgz []byte) ([]byte, error) {
+// untar returns the entry name of a .tar.gz.
+func untar(tgz []byte, name string) ([]byte, error) {
 	gz, err := gzip.NewReader(strings.NewReader(string(tgz)))
 	if err != nil {
 		return nil, fmt.Errorf("could not unpack the asset: %w", err)
@@ -311,9 +343,9 @@ func untarJuice(tgz []byte) ([]byte, error) {
 	for {
 		h, err := tr.Next()
 		if err != nil {
-			return nil, fmt.Errorf("the asset does not contain a juice binary")
+			return nil, fmt.Errorf("the asset does not contain a %s binary", name)
 		}
-		if filepath.Base(h.Name) == "juice" && h.Typeflag == tar.TypeReg {
+		if filepath.Base(h.Name) == name && h.Typeflag == tar.TypeReg {
 			return io.ReadAll(tr)
 		}
 	}
@@ -630,13 +662,37 @@ func (i *Installation) declare(world string, booted bool) (supervisor.Status, bo
 	return i.Programs.Status(name)
 }
 
+// due is the first component this installation lacks, in the order of
+// Components: one missing from bin/, or, while no kernel is declared, one older
+// than its release (an older kernel would ignore the recovery key a first boot
+// passes; a newer one is kept). After the kernel is declared, nothing present is
+// replaced. A component whose override variable is set is the override's; the
+// kernel binary is left alone while a kernel answers, since one that answers
+// without being this installation's is followed, never replaced; and a UI
+// configured for a kernel elsewhere installs nothing.
+func (i *Installation) due(declared, answers bool) (Component, bool) {
+	if !i.Local() {
+		return Component{}, false
+	}
+	for _, c := range Components {
+		if (c.Env != "" && os.Getenv(c.Env) != "") || (c.Name == "juice" && answers) {
+			continue
+		}
+		if i.bin(c.Name) == "" || (!declared && semver.Compare(i.version(c.Name), c.Release) < 0) {
+			return c, true
+		}
+	}
+	return Component{}, false
+}
+
 // Ensure runs the gate's loop until the kernel answers, reporting each state.
 // Each round examines the installation under boot, so it never sees a first boot
 // half done: it would otherwise find its database, and have the supervisor stop
 // it, or read its /health and report a kernel about to end. A kernel elsewhere is
-// waited for and never installed or started; a loopback kernel is installed,
-// created (by the first boot, which the caller runs while NeedsCreate is reported)
-// and then declared to the supervisor, which starts it. A kernel answers for this
+// waited for and never installed or started; a loopback installation has its
+// components installed (due), its kernel created (by the first boot, which the
+// caller runs while NeedsCreate is reported) and then declared to the
+// supervisor, which starts it. A kernel answers for this
 // loop only once it is the supervisor's, or the operator disabled that program.
 func (i *Installation) Ensure(ctx context.Context, report func(State, string)) {
 	wait := func(d time.Duration) bool {
@@ -651,28 +707,28 @@ func (i *Installation) Ensure(ctx context.Context, report func(State, string)) {
 		i.boot.Lock()
 		world, booted, err := i.home()
 		st, declared := i.declare(world, booted && err == nil)
-		serving := i.Serving(ctx) && (!declared || st.Running || st.Disabled)
+		answers := i.Serving(ctx)
+		serving := answers && (!declared || st.Running || st.Disabled)
+		c, due := i.due(declared, answers)
 		i.boot.Unlock()
 		pause := time.Second
 		switch {
+		case due:
+			report(Installing, c.Name+" "+c.Release)
+			pause = 0
+			if err := i.Install(ctx, c); err != nil {
+				report(Failed, err.Error())
+				pause = retryPause
+			}
 		case serving:
 			report(Serving, "")
 			return
 		case !i.Local():
 			report(Waiting, i.URL.String())
 			pause = 2 * time.Second
-		case !declared && (i.Binary() == "" || semver.Compare(i.Version(), Release) < 0):
-			// An older binary would ignore the recovery key a first boot
-			// passes; a newer one is kept.
-			report(Installing, Release)
-			pause = 0
-			if err := i.Install(ctx); err != nil {
-				report(Failed, err.Error())
-				pause = 10 * time.Second
-			}
 		case err != nil:
 			report(Failed, err.Error())
-			pause = 10 * time.Second
+			pause = retryPause
 		case !booted:
 			// A home with a kernel is started, never created again; one with
 			// none — absent, or left by a boot the kernel declined — awaits the

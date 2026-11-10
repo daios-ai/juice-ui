@@ -9,6 +9,7 @@ Copied from the juice repository, under the GNU Affero General Public License,
 version 3 only (LICENSES/AGPL-3.0-only.txt):
 
   juicedocs/                          the kernel's documents
+  install.sh                          adapted from the kernel's installer
   server/static/juice-logo.svg        the Juice logo
   server/static/favicon.ico           rendered from the logo
   server/static/apple-touch-icon.png  rendered from the logo

@@ -112,10 +112,10 @@ func TestGateScreenFollowsTheState(t *testing.T) {
 	g, steps := newGate(t, "127.0.0.1:8080")
 	h := g.Handler()
 	for state, want := range map[string]string{
-		"installing": "Installing the kernel", "starting": "Starting the kernel",
+		"installing": `Installing <span class="mono">juice-agent v0.10.0</span>`, "starting": "Starting the kernel",
 		"waiting": "Waiting for", "failed": "could not bind",
 	} {
-		steps.say(state, map[string]string{"installing": "v0.15.6", "failed": "could not bind :4040"}[state])
+		steps.say(state, map[string]string{"installing": "juice-agent v0.10.0", "failed": "could not bind :4040"}[state])
 		body := do(t, h, http.MethodGet, "/anything/at/all", nil, nil).Body.String()
 		if !strings.Contains(body, want) || !strings.Contains(body, `hx-get="/kernel/status"`) || !strings.Contains(body, "Juice installation") {
 			t.Errorf("%s: screen missing %q", state, want)
