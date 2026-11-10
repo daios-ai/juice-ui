@@ -743,6 +743,21 @@ obligations above.
   **outside** it (the media is in the hero; the run form and its money control are
   a separate section below).
 
+### 5.14 Steps (the installer)
+
+- The installer's one frame is an entry card, `.auth-card.auth-card-install`,
+  holding `.install-body`: the sequence's steps, `.install-steps`, on the side
+  (a wrapping row above the step on a narrow screen), and the current step
+  beside them. A step is `.done` (ticked with `#check`), current
+  (`aria-current="step"`, its title weighted) or to come, muted.
+- A job step lists its jobs in `.install-jobs`, each `.pending` (muted),
+  `.running` (the one in-flight `.progress` bar, with the job's title), `.done`
+  (ticked) or `.failed` (its words in a `.banner-error` beneath). A failure
+  that waits for the person adds one `Try again` button.
+- A page is a `.stack` form of ordinary `.field`s with one row of commands:
+  `Back` where the page offers it, then `Next` (`Install` on the summary,
+  `Open Juice` on the last). No accent: nothing here moves money.
+
 ---
 
 ## 6. Invariants (enforced)

@@ -1,0 +1,70 @@
+{{/* _install_step — the current step: a page's form, or a job step's jobs.
+     A request from elsewhere is told the terminal command instead of a form. */}}
+{{define "_install_step"}}
+{{if .Ended}}{{template "_install_jobs" .}}
+{{else if not .Page}}{{template "_install_jobs" .}}
+{{else if not .Local}}
+<p>No kernel at <span class="mono">{{.URL}}</span>. Create one at its terminal:</p>
+<pre class="json">{{.Command}}</pre>
+{{else}}
+<form class="stack" method="post" action="/install/next"{{if eq .Step "kernel"}} data-confirm-password{{end}}>
+  <input type="hidden" name="step" value="{{.Step}}">
+  <h2 class="flush">{{.Title}}</h2>
+  {{if .Error}}{{template "_error" .Error}}{{end}}
+  {{if eq .Step "world"}}
+  <div class="field">
+    <label for="i-world">World</label>
+    <p class="help">The network this kernel joins, for life.</p>
+    <select id="i-world" name="world" class="mono" required>{{range .Worlds}}<option value="{{.Name}}"{{if .Error}} disabled{{else if eq .Name $.Chosen}} selected{{end}}>{{.Name}}{{with .Symbol}} · {{.}}{{end}}</option>{{end}}</select>
+  </div>
+  <dl class="kv">{{range .Worlds}}<dt class="mono">{{.Name}}</dt><dd>{{if .Error}}{{.Error}}{{else}}{{.Description}}{{end}}</dd>{{end}}</dl>
+  {{else if eq .Step "kernel"}}
+  <div class="field">
+    <label for="i-handle">Kernel name</label>
+    <p class="help">Its name on the network. It cannot be changed.</p>
+    <input id="i-handle" name="handle" type="text" class="mono" value="{{.Handle}}" autocomplete="off" required>
+  </div>
+  <div class="field"><label>Superuser name</label><div class="box mono">sys</div></div>
+  <div class="field"><label for="i-pw">Superuser password</label><input id="i-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+  <div class="field"><label for="i-pw2">Confirm password</label><input id="i-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
+  {{else if eq .Step "phrase"}}
+  <p>Please save the following recovery phrase. It is the only way to recover the superuser's password. <strong>Never share it with anyone.</strong></p>
+  {{template "_phrase_words" .}}
+  <label><input type="checkbox" name="understand" required> I understand this phrase is the only way to recover the superuser's password.</label>
+  {{else if eq .Step "summary"}}
+  <dl class="kv">
+    <dt>World</dt><dd><span class="mono">{{.World.Name}}</span>{{with .World.Description}} — {{.}}{{end}}</dd>
+    <dt>Kernel name</dt><dd class="mono">{{.Handle}}</dd>
+    <dt>Superuser</dt><dd class="mono">sys</dd>
+    <dt>Kernel home</dt><dd class="mono">{{.Home}}</dd>
+  </dl>
+  {{if eq .World.Rail "evm"}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> The keys of this kernel's vault are kept in <span class="mono">{{.Home}}</span>. Losing that directory loses the money the vault holds.</p>{{end}}
+  {{else if eq .Step "done"}}
+  <p>The kernel <span class="mono">{{.Handle}}</span> is running.</p>
+  {{end}}
+  <div class="row compact">
+    {{if .Back}}<button class="btn" type="submit" formaction="/install/back" formnovalidate>Back</button>{{end}}
+    <button class="btn" type="submit">{{if eq .Step "summary"}}Install{{else if eq .Step "done"}}Open Juice{{else}}Next{{end}}</button>
+  </div>
+</form>
+{{end}}
+{{end}}
+
+{{/* _install_jobs — a job step's jobs, polled every 2 s while the step is
+     current; the poll sends the page on once the step changes. */}}
+{{define "_install_jobs"}}
+<div id="install-status" class="stack" hx-get="/install/status?step={{.Step}}" hx-trigger="every 2s" hx-swap="outerHTML">
+  {{if .Ended}}<h2 class="flush">Opening Juice</h2>
+  <div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span></div>
+  {{else}}
+  <h2 class="flush">{{if .Title}}{{.Title}}{{else}}Preparing{{end}}</h2>
+  {{if .Error}}{{template "_error" .Error}}{{end}}
+  <ol class="install-jobs">{{range .Jobs}}
+    <li class="{{.State}}">{{if eq .State "running"}}<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>{{.Title}}</span></div>{{else}}{{if eq .State "done"}}<svg class="ico" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{end}}<span>{{.Title}}</span>{{end}}
+      {{if eq .State "failed"}}{{template "_error" .Err}}{{end}}</li>{{end}}
+  </ol>
+  {{if not .Jobs}}<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span></div>{{end}}
+  {{if and .Failed .Local}}<form method="post" action="/install/retry"><input type="hidden" name="step" value="{{.Step}}"><button class="btn" type="submit">Try again</button></form>{{end}}
+  {{end}}
+</div>
+{{end}}

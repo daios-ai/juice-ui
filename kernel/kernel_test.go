@@ -467,7 +467,7 @@ func TestWorldsAreWhatTheKernelLists(t *testing.T) {
 	}
 	installFake(t, i)
 	ws, err := i.Worlds()
-	if err != nil || len(ws) != 2 || ws[0] != (World{Name: "play"}) || ws[1] != (World{Name: "bad", Error: i.Home}) {
+	if err != nil || len(ws) != 2 || ws[0] != (World{Name: "play", Description: "no real money"}) || ws[1] != (World{Name: "bad", Error: i.Home}) {
 		t.Fatalf("Worlds = %+v, %v", ws, err)
 	}
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho 'unreadable worlds' >&2; exit 1\n"), 0o755)
@@ -476,210 +476,116 @@ func TestWorldsAreWhatTheKernelLists(t *testing.T) {
 	}
 }
 
-// A binary older than Release is replaced before anything is created, since it
-// would ignore the recovery key; the version is what --version says.
-func TestEnsureReplacesAnOlderBinary(t *testing.T) {
-	var up atomic.Bool
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Releases: releases(t, nil, nil).URL}
+// The components follow one rule. A fresh installation installs what is
+// missing and replaces what is older; an installation holding a kernel, declared
+// or not, keeps an older kernel and an older agent (a newer kernel may refuse
+// the home they last served, as on TitanPlus on 2026-11-10) and installs only
+// what is missing; an override leaves its component to the operator; a kernel
+// that is followed has no binary installed; a kernel elsewhere installs nothing.
+func TestDueFollowsOneRule(t *testing.T) {
+	names := func(i *Installation, answers bool) string {
+		t.Helper()
+		due, err := i.Due(answers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, c := range due {
+			out = append(out, c.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	older := func(i *Installation, name string) {
+		t.Helper()
+		os.WriteFile(filepath.Join(i.Home, "bin", name), []byte(strings.Replace(fakes[name], "v9.9.9", "v0.1.0", 1)), 0o755)
+	}
+	i := inst(t, "http://127.0.0.1:4040")
+	if got := names(i, false); got != "juice,juice-agent" {
+		t.Errorf("an empty installation: %q", got)
+	}
 	installFake(t, i)
-	if v := i.Version(); v != "v9.9.9" {
-		t.Fatalf("Version = %q", v)
+	if got := names(i, false); got != "" {
+		t.Errorf("a current installation: %q", got)
+	}
+	older(i, "juice")
+	older(i, "juice-agent")
+	if got := names(i, false); got != "juice,juice-agent" {
+		t.Errorf("a fresh installation replaces what is older: %q", got)
+	}
+	if got := names(i, true); got != "juice-agent" {
+		t.Errorf("a followed kernel has no binary installed: %q", got)
+	}
+
+	// A kernel of another world, never declared: nothing present is replaced.
+	writeHome(t, i, "polygon", "127.0.0.1:4999")
+	booted(t, i, "polygon")
+	if fresh, _ := i.Fresh(); fresh {
+		t.Error("an installation holding a kernel is not fresh")
+	}
+	if got := names(i, false); got != "" {
+		t.Errorf("an existing kernel keeps the older binaries: %q", got)
+	}
+	os.Remove(filepath.Join(i.Home, "bin", "juice-agent"))
+	if got := names(i, false); got != "juice-agent" {
+		t.Errorf("a missing agent beside an existing kernel: %q", got)
+	}
+	t.Setenv("JUICE_AGENT_BIN", "/elsewhere/juice-agent")
+	if got := names(i, false); got != "" {
+		t.Errorf("an override: %q", got)
+	}
+	if got := names(inst(t, "http://10.0.0.9:4040"), false); got != "" {
+		t.Errorf("a kernel elsewhere: %q", got)
+	}
+}
+
+// A first boot needs a kernel binary of at least Release, which honours the
+// recovery key; an older one kept for another kernel is refused, naming both
+// versions.
+func TestCanCreateNamesAnOlderKernel(t *testing.T) {
+	i := inst(t, "http://127.0.0.1:4040")
+	if err := i.CanCreate(); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Errorf("no binary: %v", err)
+	}
+	installFake(t, i)
+	if err := i.CanCreate(); err != nil {
+		t.Errorf("a current binary: %v", err)
 	}
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, "v9.9.9", "v0.1.0", 1)), 0o755)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	var seen []State
-	i.Ensure(ctx, func(s State, _ string) {
-		seen = append(seen, s)
-		if s == NeedsCreate {
-			cancel()
-		}
-	})
-	if strings.Join(stateStrings(seen), ",") != "installing,needs-create" || i.Version() != "v9.9.9" || i.version("juice-agent") != "v9.9.9" {
-		t.Errorf("states = %v, version %s", seen, i.Version())
+	if err := i.CanCreate(); err == nil || !strings.Contains(err.Error(), "v0.1.0") || !strings.Contains(err.Error(), Release) {
+		t.Errorf("an older binary: %v", err)
 	}
 }
 
-// Ensure classifies before acting: a kernel elsewhere is waited for and never
-// installed; a local installation is installed, then asks for creation and
-// blocks until it is acknowledged, then starts and serves.
-func TestEnsureOrdersTheFacts(t *testing.T) {
-	remote := inst(t, "http://10.0.0.9:4040")
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	var states []State
-	remote.Ensure(ctx, func(s State, _ string) { states = append(states, s) })
-	if len(states) == 0 || states[0] != Waiting || remote.Binary() != "" {
-		t.Fatalf("a remote silent kernel is waited for, nothing installed: %v", states)
-	}
-
-	// Local: a fake kernel that answers /health once started.
-	up := false
-	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if up {
-			w.Write([]byte(`{"public_key":"K"}`))
-			return
-		}
-		http.Error(w, "down", 503)
-	}))
-	defer health.Close()
-	u, _ := url.Parse(health.URL)
-	local := &Installation{Home: t.TempDir(), URL: u, Releases: releases(t, nil, nil).URL,
-		Programs: &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { return supervisor.Status{Running: true} }}}
-	local.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
-		up = true
-		if strings.Join(args, " ") != "kernel serve play" {
-			t.Errorf("args = %v", args)
-		}
-		return endsWith(ctx), nil
-	}
-	var seen []State
-	done := make(chan struct{})
-	go func() {
-		local.Ensure(context.Background(), func(s State, _ string) {
-			seen = append(seen, s)
-			if s == NeedsCreate {
-				if err := local.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
-					t.Error(err)
-				}
-			}
-		})
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Ensure did not reach Serving")
-	}
-	want := []State{Installing, Installing, NeedsCreate, Serving}
-	if strings.Join(stateStrings(seen), ",") != strings.Join(stateStrings(want), ",") {
-		t.Errorf("states = %v, want %v", seen, want)
-	}
-}
-
-// The components follow one rule. A fresh home installs each in order, the
-// kernel first; a missing agent is installed beside a declared kernel, an older
-// one beside it is left; an override set leaves its component to the override; a
-// failed download is reported and the next round installs it; a UI configured
-// for a kernel elsewhere installs nothing.
-func TestEnsureInstallsEachComponentByOneRule(t *testing.T) {
-	retryPause = 10 * time.Millisecond
-	t.Cleanup(func() { retryPause = 10 * time.Second })
-	run := func(i *Installation, until State) (states, details []string) {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		i.Ensure(ctx, func(s State, d string) {
-			states, details = append(states, string(s)), append(details, d)
-			if s == until {
-				cancel()
-			}
-		})
-		return
-	}
-	var down atomic.Bool
-	fresh := &Installation{Home: t.TempDir(), URL: health(t, &down), Releases: releases(t, nil, nil).URL}
-	fresh.launch = func(context.Context, string, []string, []string, *os.File) (<-chan struct{}, error) {
-		return nil, fmt.Errorf("unused")
-	}
-	if s, d := run(fresh, NeedsCreate); strings.Join(s, ",") != "installing,installing,needs-create" ||
-		d[0] != "juice v0.18.1" || d[1] != "juice-agent v0.10.0" || fresh.version("juice-agent") != "v9.9.9" {
-		t.Errorf("a fresh home: %v %v", s, d)
-	}
-
-	// A declared, running kernel: the agent missing is installed, after a
-	// download refused once.
-	var up atomic.Bool
-	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
-	var fail atomic.Int32
-	fail.Store(1)
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p, Releases: releases(t, nil, &fail).URL}
-	installFake(t, i)
-	os.Remove(filepath.Join(i.Home, "bin", "juice-agent"))
-	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
-	booted(t, i, "play")
-	s, d := run(i, Serving)
-	if strings.Join(s, ",") != "installing,failed,installing,serving" || !strings.Contains(d[1], "503") || i.bin("juice-agent") == "" {
-		t.Errorf("a missing agent beside a declared kernel: %v %v", s, d)
-	}
-
-	// An older agent beside the declared kernel is left.
-	old := strings.Replace(fakeAgent, "v9.9.9", "v0.1.0", 1)
-	os.WriteFile(filepath.Join(i.Home, "bin", "juice-agent"), []byte(old), 0o755)
-	if s, _ := run(i, Serving); strings.Join(s, ",") != "serving" || i.version("juice-agent") != "v0.1.0" {
-		t.Errorf("an older agent beside a declared kernel: %v, %s", s, i.version("juice-agent"))
-	}
-
-	// An override leaves the agent to it, even when bin/ has none.
-	os.Remove(filepath.Join(i.Home, "bin", "juice-agent"))
-	t.Setenv("JUICE_AGENT_BIN", "/elsewhere/juice-agent")
-	if s, _ := run(i, Serving); strings.Join(s, ",") != "serving" || i.bin("juice-agent") != "" {
-		t.Errorf("an override: %v", s)
-	}
-
-	remote := inst(t, "http://10.0.0.9:4040")
-	remote.Releases = releases(t, nil, nil).URL
-	if s, _ := run(remote, Waiting); s[0] != "waiting" || remote.Binary() != "" || remote.bin("juice-agent") != "" {
-		t.Errorf("a kernel elsewhere: %v", s)
-	}
-}
-
-// A booted kernel home not yet declared to the supervisor (one made before the
-// supervisor, or by the command line) has its older agent replaced in the round
-// that declares it: whether the kernel was declared is read before this round
-// declares it, so the declaration cannot shut the replacement out.
-func TestEnsureReplacesAnOlderAgentBeforeTheFirstDeclaration(t *testing.T) {
-	var up atomic.Bool
-	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p, Releases: releases(t, nil, nil).URL}
-	installFake(t, i)
-	os.WriteFile(filepath.Join(i.Home, "bin", "juice-agent"), []byte(strings.Replace(fakeAgent, "v9.9.9", "v0.1.0", 1)), 0o755)
-	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
-	booted(t, i, "play")
-	var seen []State
-	i.Ensure(context.Background(), func(s State, _ string) { seen = append(seen, s) })
-	if strings.Join(stateStrings(seen), ",") != "installing,serving" || i.version("juice-agent") != "v9.9.9" || p.sets != 1 {
-		t.Errorf("states %v, agent %s, declared %d", seen, i.version("juice-agent"), p.sets)
-	}
-}
-
-// A booted home is declared to the supervisor, with no secret, and never offered
-// the first boot; a kernel whose config.json is unreadable is a failure, never a
-// first boot either.
-func TestEnsureDeclaresABootedHome(t *testing.T) {
+// A booted home is declared to the supervisor once, with no secret, whatever
+// its binary's version, and Start returns once it answers; a kernel whose
+// config.json is unreadable is an error.
+func TestStartDeclaresABootedHome(t *testing.T) {
 	var up atomic.Bool
 	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
 	installFake(t, i)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, "v9.9.9", "v0.1.0", 1)), 0o755)
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
-	var seen []State
-	i.Ensure(context.Background(), func(s State, _ string) { seen = append(seen, s) })
-	if seen[len(seen)-1] != Serving || slices.Contains(seen, NeedsCreate) {
-		t.Errorf("a booted home: %v", seen)
+	if err := i.Start(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	got := p.set["kernel-play"]
 	if strings.Join(got.Command, " ") != "juice kernel serve play" || got.Env["JUICE_HOME"] != i.Home || len(got.Env) != 1 ||
-		got.Lock != filepath.Join(i.Home, "kernels", "play", "serve.lock") || got.Disabled {
-		t.Errorf("program = %+v", got)
+		got.Lock != filepath.Join(i.Home, "kernels", "play", "serve.lock") || got.Disabled || i.Version() != "v0.1.0" {
+		t.Errorf("program = %+v, binary %s", got, i.Version())
 	}
-
 	up.Store(false)
 	os.WriteFile(filepath.Join(i.Home, "kernels", "play", "config.json"), []byte("{not json"), 0o600)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	var details []string
-	seen = nil
-	i.Ensure(ctx, func(s State, d string) { seen = append(seen, s); details = append(details, d) })
-	if len(seen) == 0 || seen[0] != Failed || !strings.Contains(details[0], "holds a kernel (juice.db)") || slices.Contains(seen, NeedsCreate) {
-		t.Errorf("a damaged kernel: %v %v", seen, details)
+	if err := i.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
+		t.Errorf("a damaged kernel: %v", err)
 	}
 }
 
-// The kernel is declared once however many rounds pass, so the gate never
-// disturbs the supervisor's restart delay; a kernel that keeps exiting is reported
-// with its last words, and one that recovers ends the loop.
-func TestEnsureDeclaresOnceAndReportsAFailingKernel(t *testing.T) {
+// A kernel that keeps exiting fails Start with its last words; the supervisor
+// restarts it, so a later Start observes the run that recovers, and the kernel is
+// declared once however often Start runs.
+func TestStartReportsAFailingKernel(t *testing.T) {
 	var up atomic.Bool
 	log := filepath.Join(t.TempDir(), "kernel.log")
 	os.WriteFile(log, []byte("\x1b[92mINF\x1b[0m start\nerror: \x1b[1mport\x1b[0m in use\n"), 0o600)
@@ -688,31 +594,22 @@ func TestEnsureDeclaresOnceAndReportsAFailingKernel(t *testing.T) {
 	installFake(t, i)
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
-	var details []string
-	rounds := 0
-	i.Ensure(context.Background(), func(s State, d string) {
-		if s == Failed {
-			details = append(details, d)
-		}
-		if rounds++; rounds == 2 {
-			p.mu.Lock()
-			p.status["kernel-play"] = supervisor.Status{Running: true}
-			p.mu.Unlock()
-			up.Store(true)
-		}
-	})
-	if p.sets != 1 {
-		t.Errorf("declared %d times", p.sets)
+	if err := i.Start(context.Background()); err == nil || err.Error() != "error: port in use" {
+		t.Errorf("last words: %v", err)
 	}
-	if len(details) == 0 || details[0] != "error: port in use" {
-		t.Errorf("last words: %v", details)
+	p.mu.Lock()
+	p.status["kernel-play"] = supervisor.Status{Running: true}
+	p.mu.Unlock()
+	up.Store(true)
+	if err := i.Start(context.Background()); err != nil || p.sets != 1 {
+		t.Errorf("recovered: %v, declared %d times", err, p.sets)
 	}
 }
 
 // A kernel that answers while its program is not yet running is the one about to
-// be replaced, so the loop waits; a program the operator disabled is theirs: the
-// kernel is waited for, and followed once it answers.
-func TestEnsureWaitsForTheSupervisorsKernel(t *testing.T) {
+// be replaced, so Start waits; a program the operator disabled is theirs, and the
+// kernel is followed once it answers.
+func TestStartWaitsForTheSupervisorsKernel(t *testing.T) {
 	var up atomic.Bool
 	up.Store(true)
 	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { return supervisor.Status{} }}
@@ -720,55 +617,48 @@ func TestEnsureWaitsForTheSupervisorsKernel(t *testing.T) {
 	installFake(t, i)
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
-	var seen []State
-	i.Ensure(context.Background(), func(s State, _ string) {
-		seen = append(seen, s)
-		if len(seen) == 1 {
-			p.mu.Lock()
-			p.status["kernel-play"] = supervisor.Status{Running: true}
-			p.mu.Unlock()
-		}
-	})
-	if strings.Join(stateStrings(seen), ",") != "starting,serving" {
-		t.Errorf("states = %v", seen)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		p.mu.Lock()
+		p.status["kernel-play"] = supervisor.Status{Running: true}
+		p.mu.Unlock()
+	}()
+	began := time.Now()
+	if err := i.Start(context.Background()); err != nil || time.Since(began) < 300*time.Millisecond {
+		t.Errorf("Start = %v after %v", err, time.Since(began))
 	}
-
 	up.Store(false)
+	p.mu.Lock()
 	p.status["kernel-play"] = supervisor.Status{Disabled: true}
-	seen = nil
-	i.Ensure(context.Background(), func(s State, _ string) {
-		seen = append(seen, s)
-		up.Store(true)
-	})
-	if strings.Join(stateStrings(seen), ",") != "waiting,serving" {
-		t.Errorf("a disabled program: %v", seen)
+	p.mu.Unlock()
+	go func() { time.Sleep(300 * time.Millisecond); up.Store(true) }()
+	if err := i.Start(context.Background()); err != nil {
+		t.Errorf("a disabled program: %v", err)
 	}
 }
 
 // A kernel that answers with no binary of this installation's to run it is
-// followed and not declared, its binary never installed; the agent, which the
-// installation still lacks, is. So is one on another machine, or one that
-// another program boots while the first boot is awaited, until the home is
-// booted.
-func TestEnsureFollowsAKernelWithNoBinaryHere(t *testing.T) {
+// followed and not declared.
+func TestStartFollowsAKernelWithNoBinaryHere(t *testing.T) {
 	var up atomic.Bool
 	up.Store(true)
 	p := &fakePrograms{}
-	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p, Releases: releases(t, nil, nil).URL}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
 	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
 	booted(t, i, "play")
-	var seen, details []string
-	i.Ensure(context.Background(), func(s State, d string) { seen, details = append(seen, string(s)), append(details, d) })
-	if strings.Join(seen, ",") != "installing,serving" || details[0] != "juice-agent v0.10.0" || p.sets != 0 ||
-		i.Binary() != "" || i.bin("juice-agent") == "" {
-		t.Errorf("states %v %v, declared %d, kernel %q", seen, details, p.sets, i.Binary())
+	if err := i.Start(context.Background()); err != nil || p.sets != 0 {
+		t.Errorf("Start = %v, declared %d", err, p.sets)
+	}
+	up.Store(false)
+	if err := i.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Errorf("no binary and no answer: %v", err)
 	}
 }
 
-// A round of Ensure during a first boot neither declares the kernel, which would
-// stop the boot, nor reports Serving, though the database exists and /health
-// answers. When Create returns, the kernel is declared, and then it serves.
-func TestEnsureWaitsForAFirstBoot(t *testing.T) {
+// A round of Start during a first boot neither declares the kernel, which would
+// stop the boot, nor returns, though the database exists and /health answers.
+// When Create returns, the kernel is declared, and then it serves.
+func TestStartWaitsForAFirstBoot(t *testing.T) {
 	var up atomic.Bool
 	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
 	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p}
@@ -786,15 +676,11 @@ func TestEnsureWaitsForAFirstBoot(t *testing.T) {
 	created := make(chan error, 1)
 	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
 	<-inBoot
-	reported := make(chan State, 16)
-	ended := make(chan struct{})
-	go func() {
-		i.Ensure(context.Background(), func(s State, _ string) { reported <- s })
-		close(ended)
-	}()
+	started := make(chan error, 1)
+	go func() { started <- i.Start(context.Background()) }()
 	select {
-	case s := <-reported:
-		t.Fatalf("a round reported %s during the first boot", s)
+	case err := <-started:
+		t.Fatalf("Start returned %v during the first boot", err)
 	case <-time.After(300 * time.Millisecond):
 	}
 	p.mu.Lock()
@@ -807,9 +693,12 @@ func TestEnsureWaitsForAFirstBoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case <-ended:
+	case err := <-started:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Ensure did not reach Serving")
+		t.Fatal("Start did not return")
 	}
 	if p.sets != 1 {
 		t.Errorf("declared %d times", p.sets)
@@ -882,14 +771,6 @@ func TestShutdownEndsAFirstBoot(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Create did not return")
 	}
-}
-
-func stateStrings(s []State) []string {
-	out := make([]string, len(s))
-	for i, v := range s {
-		out[i] = string(v)
-	}
-	return out
 }
 
 // Reconfigure is the operator's edit-and-restart: the file is written and the

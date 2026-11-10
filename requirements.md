@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.57.1
+Version: 0.58.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.58.0.** The first start is an installer: a sequence of
+> pages and jobs in the shape OS installers use, in its own package, `installer`
+> (§1). It asks for the world, then the kernel's name and password, then shows
+> the recovery phrase, then a summary, and only then does the work, as jobs with
+> progress; the page no longer freezes while the kernel is created. Nothing
+> present is replaced under a kernel that exists: 0.57.0 replaced an older kernel
+> binary under an existing polygon kernel, which the newer kernel then refused to
+> serve. The kernel gate, its screen and its form are gone.
 
 > **What changed in 0.57.1.** A booted kernel the supervisor had not yet been
 > given, one made before the supervisor or at the command line, kept an older
@@ -932,70 +941,101 @@ the composer's launcher.
   responses and never reproduces kernel business logic (fees, settlement, schema
   validation): the UI presents kernel results; the kernel decides.
 
-**The kernel gate.** The UI is the desktop to the kernel's server: a person who
+**The installer.** The UI is the desktop to the kernel's server: a person who
 installs the UI has a kernel. At start the listener answers at once with the
-**kernel screen** and a loop acts on observable facts, in this order, until the
-kernel answers `/health`, when the application takes the listener:
+**installer**, package `installer`, and the application takes the listener when
+its sequence ends. The installer is a sequence of steps in the shape OS
+installers use (Calamares, Ubuntu's installer): **pages**, which ask and change
+nothing, a summary, one step whose work runs as **jobs** with progress, and a
+finish. The sequence is chosen once, at start, from facts tested in this order:
 
-* the configured kernel URL is not loopback → **wait** (a kernel elsewhere is an
-  operator's; it is never installed or started);
-* a **component** is due → **install** it. The components are one list, the
-  kernel (`juice`) then the agent (`juice-agent`), each at the release this UI was
-  verified against. One is due when it is missing from `$JUICE_HOME/bin`, or older
-  than its release while no kernel has been declared to the supervisor (an older
-  kernel would ignore the recovery key a first boot passes; a newer one is kept,
-  and once the kernel is declared nothing present is replaced). A component whose
+| Fact | Sequence |
+|---|---|
+| The configured kernel URL is not loopback (a kernel elsewhere is an operator's) | Wait |
+| A kernel home `$JUICE_HOME/kernels/<world>/` for the URL's port holds a kernel (`juice.db`), or is unreadable | Components → Start |
+| No home here, but a kernel answers at the URL: it is followed, never created over, since a creation would collide with its port | Components → Wait |
+| Otherwise | Components → World → Kernel → Recovery phrase → Summary → Install → Done |
+
+* **Components** installs what is due, one job each, from one list: the kernel
+  (`juice`) then the agent (`juice-agent`), each at the release this UI was
+  verified against. A component **missing** from `$JUICE_HOME/bin` is due; one
+  **older than its release is due only in a fresh installation**, one whose
+  `kernels/` holds no `juice.db` at all. Otherwise nothing present is replaced: a
+  kernel that exists was last served by the binaries beside it, and a newer one
+  may refuse its home (kernel v0.18.1 refuses v0.16.0's configuration, which
+  stopped a polygon kernel on 2026-11-10). Upgrading under an existing kernel is
+  the operator's act, with that component's own installer. A component whose
   override variable is set (`JUICE_AGENT_BIN`) is the operator's, and the kernel
-  binary is left alone while a kernel answers, which is followed. Each is
-  installed by one routine, the contract of the family's own `install.sh`: the
-  platform's asset and `checksums.txt` from that component's GitHub releases,
-  refused without a matching SHA-256, tried with `--version`, renamed atomically
-  into `bin/`. The screen names the component and its release, and a failed
-  download is reported and tried again;
-* no kernel home `$JUICE_HOME/kernels/<world>/` listens on the URL's port, or
-  the one that does holds no kernel — no `juice.db`, which the kernel creates
-  only with its first boot's answers in hand → **create**: a first-boot form (world, kernel name, superuser password; the
-  world one of those `juice kernel worlds` lists — the world files and the
-  shipped worlds not yet written — each by its name, `play`
-  preselected, a world the kernel would refuse shown disabled with its error,
-  and only a listed, servable world accepted on the server) writes that home's `config.json` and serves
-  the kernel once with the password and the superuser's recovery public key in
-  the child's environment, the kernel's documented non-interactive first boot.
-  The first boot never touches a kernel: it writes `config.json` only into a
+  binary is not installed for a kernel that is followed. Each is installed by one
+  routine, the contract of the family's own `install.sh`: the platform's asset and
+  `checksums.txt` from that component's GitHub releases, refused without a
+  matching SHA-256, tried with `--version`, renamed atomically into `bin/`. A
+  failed download is shown and tried again every 10 s. Before a first boot the
+  step also checks the kernel binary: one older than its release, kept because
+  another kernel of this installation runs on it, would ignore the recovery key,
+  so the step stops there, naming both versions, until Try again.
+* **World** is one of those `juice kernel worlds` lists (the world files and the
+  shipped worlds not yet written), each with its symbol and the kernel's own
+  description, `play` preselected, one the kernel would refuse shown disabled with
+  its error; only a listed, servable world is accepted. **Kernel** takes the
+  kernel's name and the superuser's password, twice, with `sys` read-only above
+  it. The world and the kernel name each state their one consequence.
+* **Recovery phrase** comes before the work, so the person holds it before the
+  key is enrolled: the UI generates it as at signup and the first boot passes
+  only its public key. It is one phrase for the whole sequence, across Back and
+  across a failed boot, shown on its page alone, acknowledged with its "I
+  understand" box, held in memory and stored nowhere, and dropped when the
+  sequence ends.
+* **Summary** names the world, the kernel name, the superuser and the kernel's
+  home, and is the point of no return: nothing before it writes anything. On a
+  world whose rail is a chain (`evm`) it states, behind the alert icon, that the
+  vault's keys live in that home and that losing it loses the money. Its button
+  is **Install**.
+* **Install** runs the first boot, then the start. The first boot writes that
+  home's `config.json` and serves the kernel once with the password and the
+  recovery public key in the child's environment, the kernel's documented
+  non-interactive first boot. It never touches a kernel: it writes only into a
   home holding no `juice.db` that no server holds (`serve.lock`), refuses any
   directory holding `juice.db` whatever its configuration says, and deletes
-  nothing, even when it fails — a home the kernel declined is left for the
-  retry, which rewrites its answers. One first boot runs at a time per
-  installation, under an exclusive lock in the UI's own state directory. The
-  form is accepted only while the screen waits for it, and its outcome is
-  always reached by a redirect, so a reload, a back-navigation or a second
-  submit boots nothing. A boot that leaves `juice.db` has created the kernel —
-  its recovery key is enrolled — so the phrase is shown even if it then fails
-  to serve, which the start reports;
-  The UI generates the recovery phrase as at signup, one for every attempt of
-  the boot (a kernel that enrolled the key and then failed to serve keeps it),
-  and shows it once the kernel answers, held in memory until acknowledged and
-  stored nowhere; the acknowledgement follows signup's rule, counting only
-  while a phrase is pending and with its "I understand" box. The screen is headed Juice installation; the world and the
-  kernel name each state their one consequence, and the superuser's name,
-  `sys`, stands read-only above its password;
-* otherwise → **start**: the kernel is declared to the process supervisor once,
-  as the program `kernel-<world>`, which runs `juice kernel serve <world>`. The
-  first boot's kernel carries two secrets, so it is not a program: it ends before
-  the first boot returns, within the same 30 seconds and SIGKILL as any program,
-  and the supervisor then starts the kernel without them. The gate examines the
-  installation only while no first boot runs. A kernel answers for the gate only
-  once it is the supervisor's child; a program the operator disabled is theirs, and
-  is waited for. A kernel with no usable binary here that answers is followed and
-  not declared. A home whose kernel does not start is reported with the kernel's
-  own words and never created again, and a directory holding `juice.db` whose
-  `config.json` is missing or unreadable is reported as such.
+  nothing, even when it fails. One first boot runs at a time per installation,
+  under an exclusive lock in the UI's own state directory. A boot that made no
+  kernel returns to the Kernel page with the kernel's words, where the password
+  is typed again; one that made a kernel goes on to start it. The password is
+  held in memory from its page to the boot and dropped when the boot returns.
+* **Start** declares the kernel to the process supervisor once, as the program
+  `kernel-<world>`, which runs `juice kernel serve <world>`, whatever the version
+  of the binary beside it. The first boot's kernel carries two secrets, so it is
+  not a program: it ends before the first boot returns, within the same 30
+  seconds and SIGKILL as any program, and the supervisor then starts the kernel
+  without them; the installation is examined only while no first boot runs. A
+  kernel answers for the start only once it is the supervisor's child; a program
+  the operator disabled is theirs, and is waited for; a kernel with no usable
+  binary here that answers is followed and not declared. A kernel that does not
+  start is shown with its own words and tried again, and a directory holding
+  `juice.db` whose `config.json` is missing or unreadable is reported as such.
+* **Done** offers **Open Juice**, which ends the sequence. The Start and Wait
+  sequences end by themselves once the kernel answers.
 
-The first boot is a local act: the form, its post and the phrase page are
-served only to a request from this machine (a loopback listener, a loopback
-peer, no proxy header); any other request is told the terminal command. The
-UI never removes a kernel. A UI configured with a named kernel or an
-operator's running kernel sees no screen: the first fact is true.
+Every step renders in one frame headed Juice installation: the sequence's steps
+on the side (above them on a narrow screen), done ones ticked and the current
+one marked, and the step beside them. A job step lists its jobs, each pending,
+running (the in-flight bar), done or failed with its words, and is polled every
+2 s until the step changes. The server holds the position and the answers, so
+every path renders the current step: a reload, a second tab or a back-navigation
+shows where the installation is. A step's post is accepted only from the step
+that is current and is answered by a redirect, so a reload or a second submit
+changes nothing; a page that refuses its answers is shown again with what to say
+and what was typed, never a password. Back is offered on the pages after the
+first and never once Install has begun. A job step starts its jobs when it is
+entered, in the background, so no post waits for the work. A UI restarted
+mid-sequence begins again from the facts.
+
+The installer is a local act: a page's form, its posts and the phrase are served
+only to a request from this machine (a loopback listener, a loopback peer, no
+proxy header, the same origin); any other request is told the terminal command.
+The UI never removes a kernel. The package imports nothing of this repository: it
+reaches the kernel package and the application's renderer through two small
+interfaces the entrypoint satisfies, and a test holds that.
 
 **Navigation model.** The UI's permanent elements are three: the
 conversations, the composer, and the avatar menu (§6.1). The destinations —
@@ -1025,7 +1065,7 @@ is mandatory only once its prerequisite is confirmed. Where a reference is
 unavoidable it names the target as well as its number, so a stale number remains
 detectable.
 
-**The installer.** Juice-UI is installed in two stages, as a desktop product is.
+**The bootstrap.** Juice-UI is installed in two stages, as a desktop product is.
 `install.sh`, at the repository root, is the bootstrap, adapted from the kernel's:
 it installs this repository's three programs (`juice-ui`, `juice-chat`,
 `juice-supervisor`) from one release tarball, `juice-ui_<os>_<arch>.tar.gz`,
@@ -1034,7 +1074,7 @@ and tried with `--version` before any replaces an installed one, so a bad
 download changes nothing; it runs `juice-supervisor setup` by its path, adds
 `$JUICE_HOME/bin` to the shell profile once (`--no-modify-path` prints the line
 instead), starts nothing and asks for nothing. The UI then installs its
-components (the kernel gate, above). The release workflow packs the three
+components (the installer, above). The release workflow packs the three
 programs into each platform's tarball.
 
 **The process supervisor.** Package `supervisor` runs the installation's programs:
@@ -1091,6 +1131,7 @@ them. A test holds this.
   apps/           self-contained app modules behind one seam (e.g. apps/chat)
   services/chat/  the chat service, imported only by cmd/juice-chat, its program
   supervisor/     the process supervisor; standard library only, Juice unknown to it
+  installer/      the first start's sequence, imported only by cmd/juice-ui
   templates/      HTML templates (not Go; no test file required)
   static/         CSS and client scripts (not Go; no test file required)
   ```
@@ -2947,14 +2988,26 @@ Every production `.go` file has a `_test.go` file with independent tests.
   the installation as it was; a relative `JUICE_HOME` is refused;
   `--no-modify-path` writes no profile; a VERSION names its release;
 * the components (§1): each installs by the one routine, refused on a wrong
-  checksum, a binary that does not run or an asset without it; a fresh home
-  installs both in order before the first boot; a missing agent is installed
-  beside a declared kernel and an older one is left; an override is respected; a
-  failed download is reported and retried; a kernel elsewhere installs nothing,
-  and no test reaches the network;
+  checksum, a binary that does not run or an asset without it; a fresh
+  installation installs what is missing and replaces what is older; one holding a
+  kernel, declared or not, keeps an older kernel and an older agent and installs
+  only what is missing; an override is respected; a followed kernel has no binary
+  installed; a kernel elsewhere installs nothing; a first boot is refused on an
+  older kernel binary, naming both versions; no test reaches the network;
+* the installer (§1): each sequence is chosen by its facts; a fresh one walks
+  every step in order and changes nothing before Install, which answers at once
+  while its job runs, once however often it is posted; a page's refusal shows what
+  to say and what was typed and never a password; Back works on the pages and not
+  once Install has begun; a first boot that made no kernel returns to the Kernel
+  page with no password held, and one that made a kernel goes on; a failed
+  download is retried and a failure that waits is run again by Try again; a
+  followed kernel is offered no page and nothing is created; the phrase is one
+  for the sequence, on its page alone, and gone when it ends; a request from
+  elsewhere sees the terminal command and may not post; the package imports
+  nothing of this repository and only the entrypoint imports it;
 * the first boot: its child has ended when it returns and when the UI shuts down, one
-  ignoring SIGTERM is killed, and a round of the gate during it neither declares the
-  kernel nor reports it serving;
+  ignoring SIGTERM is killed, and a start during it neither declares the kernel
+  nor returns;
 * the kernel contract (`client/contract_test.go`): the installed kernel binary,
   on throwaway loopback kernels — two federated play kernels and one on a local
   anvil chain with juice-rail's mocks — is driven into the states that fill

@@ -873,39 +873,10 @@
 {{end}}
 {{end}}
 
-{{/* _kernel_status — the gate's state, polled every 2s until the kernel
-     answers (then HX-Redirect to /). needs-create on a local request is the
-     first-boot form; elsewhere it names the terminal command. */}}
-{{define "_kernel_status"}}
-<div id="kernel-status"{{if ne .State "needs-create"}} hx-get="/kernel/status" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
-  {{if eq .State "needs-create"}}
-    {{if .Local}}
-    {{if .Error}}{{template "_error" .Error}}{{end}}
-    <form class="stack" method="post" action="/kernel/create" data-confirm-password>
-      <div class="field">
-        <label for="k-world">World</label>
-        <p class="help">The network this kernel joins, for life.</p>
-        <select id="k-world" name="world" class="mono" required>{{range .Worlds}}<option value="{{.Name}}"{{if .Error}} disabled{{else if eq .Name $.World}} selected{{end}}>{{.Name}}{{if .Error}} — {{.Error}}{{end}}</option>{{end}}</select>
-      </div>
-      <div class="field">
-        <label for="k-handle">Kernel name</label>
-        <p class="help">Its name on the network. It cannot be changed.</p>
-        <input id="k-handle" name="handle" type="text" class="mono" value="{{.Handle}}" autocomplete="off" required>
-      </div>
-      <div class="field"><label>Superuser name</label><div class="box mono">sys</div></div>
-      <div class="field"><label for="k-pw">Superuser password</label><input id="k-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
-      <div class="field"><label for="k-pw2">Confirm password</label><input id="k-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
-      <button class="btn" type="submit">Create kernel</button>
-    </form>
-    {{else}}
-    <p>No kernel at <span class="mono">{{.URL}}</span>. Create one at its terminal:</p>
-    <pre class="json">{{.Command}}</pre>
-    {{end}}
-  {{else if eq .State "failed"}}
-    {{template "_error" .Detail}}
-  {{else}}
-    <p>{{if eq .State "installing"}}Installing <span class="mono">{{.Detail}}</span>{{else if eq .State "starting"}}Starting the kernel{{else if eq .State "serving"}}Opening Juice{{else}}Waiting for <span class="mono">{{.URL}}</span>{{end}}</p>
-    <div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span></div>
-  {{end}}
-</div>
-{{end}}
+{{/* _phrase_words — a recovery phrase's words and the copy control that
+     carries them whole; takes .Words and .Phrase. Signup's page and the
+     installer's both show a phrase through it. */}}
+{{define "_phrase_words"}}<ol class="phrase-grid" id="phrase-words">
+  {{range .Words}}<li>{{.}}</li>{{end}}
+</ol>
+<div class="row compact">{{template "_copy" (copyOf "phrase" .Phrase)}}</div>{{end}}

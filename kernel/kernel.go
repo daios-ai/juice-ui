@@ -63,23 +63,7 @@ var Releases = "https://github.com"
 // SIGKILL: the supervisor's default for any program. A variable so tests shorten it.
 var stopTimeout = 30 * time.Second
 
-// retryPause is how long the gate waits after a failed round before the next,
-// a download that failed included. A variable so tests shorten it.
-var retryPause = 10 * time.Second
-
-// State is one of the gate's states.
-type State string
-
-const (
-	Serving     State = "serving"      // /health answers: the application takes over
-	Installing  State = "installing"   // the kernel binary is being downloaded and verified
-	NeedsCreate State = "needs-create" // no kernel home: the first-boot form is wanted
-	Starting    State = "starting"     // this installation's kernel is being served
-	Waiting     State = "waiting"      // a kernel elsewhere does not answer yet
-	Failed      State = "failed"       // a step failed; Detail says what, the next round retries
-)
-
-// Programs is the process supervisor as the kernel gate uses it.
+// Programs is the process supervisor as the installation uses it.
 type Programs interface {
 	Set(name string, p supervisor.Program) error
 	Restart(name string) error
@@ -99,7 +83,7 @@ type Installation struct {
 	launch func(ctx context.Context, bin string, args, env []string, out *os.File) (<-chan struct{}, error)
 	http   *http.Client
 	cfgMu  sync.Mutex // one reconfiguration at a time: compare, write, restart
-	boot   sync.Mutex // held through a first boot, and by each round of Ensure while it examines the installation
+	boot   sync.Mutex // held through a first boot, and by each round of Start while it examines the installation
 }
 
 // Local reports whether the configured kernel is this installation's to manage:
@@ -139,10 +123,14 @@ func (i *Installation) version(name string) string {
 }
 
 // World is one network this installation can serve, as `juice kernel worlds`
-// reports it: its name, and the error serve would give, if any.
+// reports it: its name, what it is and how its money moves, as the kernel says,
+// and the error serve would give, if any.
 type World struct {
-	Name  string `json:"world"`
-	Error string `json:"error"`
+	Name        string `json:"world"`
+	Description string `json:"description"`
+	Rail        string `json:"rail"` // "manual" (play money) or "evm" (a chain)
+	Symbol      string `json:"symbol"`
+	Error       string `json:"error"`
 }
 
 // Worlds are the networks this installation can serve, as the kernel lists
@@ -359,7 +347,7 @@ func untar(tgz []byte, name string) ([]byte, error) {
 // answers in hand, enrolling the recovery key. A boot that leaves no database
 // was declined, and its last words are the error. The caller holds the
 // recovery phrase. The child has ended when Create returns: the two secrets
-// cannot be a program's file, so Ensure's next round has the supervisor start
+// cannot be a program's file, so Start has the supervisor start
 // the kernel without them.
 //
 // It writes only where no kernel lives and deletes nothing. One first boot runs
@@ -637,7 +625,8 @@ func lastLine(path string) string {
 func programName(world string) string { return "kernel-" + world }
 
 // declare gives the supervisor this installation's kernel, once: a local kernel
-// that has been booted and whose binary is in place. After that the program's
+// that has been booted and whose binary is in place, whatever its version, since
+// that binary is the one its home was last served by. After that the program's
 // file is the operator's. The status reports what the supervisor knows, false
 // when the kernel is not the supervisor's.
 func (i *Installation) declare(world string, booted bool) (supervisor.Status, bool) {
@@ -648,7 +637,7 @@ func (i *Installation) declare(world string, booted bool) (supervisor.Status, bo
 	if st, ok := i.Programs.Status(name); ok {
 		return st, true
 	}
-	if i.Binary() == "" || semver.Compare(i.Version(), Release) < 0 {
+	if i.Binary() == "" {
 		return supervisor.Status{}, false
 	}
 	err := i.Programs.Set(name, supervisor.Program{
@@ -662,103 +651,105 @@ func (i *Installation) declare(world string, booted bool) (supervisor.Status, bo
 	return i.Programs.Status(name)
 }
 
-// declared reports whether the supervisor already holds this installation's
-// kernel, declaring nothing.
-func (i *Installation) declared(world string, booted bool) bool {
-	if !i.Local() || !booted || i.Programs == nil {
-		return false
-	}
-	_, ok := i.Programs.Status(programName(world))
-	return ok
+// Booted is the world of the kernel home for the configured address, and
+// whether a kernel lives in it (its juice.db); "" and false when there is none.
+func (i *Installation) Booted() (world string, booted bool, err error) {
+	i.boot.Lock()
+	defer i.boot.Unlock()
+	return i.home()
 }
 
-// due is the first component this installation lacks, in the order of
-// Components: one missing from bin/, or, while no kernel is declared, one older
-// than its release (an older kernel would ignore the recovery key a first boot
-// passes; a newer one is kept). After the kernel is declared, nothing present is
-// replaced. A component whose override variable is set is the override's; the
-// kernel binary is left alone while a kernel answers, since one that answers
-// without being this installation's is followed, never replaced; and a UI
-// configured for a kernel elsewhere installs nothing.
-func (i *Installation) due(declared, answers bool) (Component, bool) {
+// Fresh reports an installation that holds no kernel at all: no juice.db under
+// kernels/. Only there may a component be replaced, since every kernel of an
+// installation runs from its one bin/.
+func (i *Installation) Fresh() (bool, error) {
+	dbs, err := filepath.Glob(filepath.Join(i.Home, "kernels", "*", "juice.db"))
+	return len(dbs) == 0, err
+}
+
+// Due are the components to install now, in the order of Components. One
+// missing from bin/ is due; one older than its release is due only in a fresh
+// installation; otherwise nothing present is replaced, since a kernel that
+// exists was last served by the binaries beside it, and a newer one may refuse
+// its home (kernel v0.18.1 refuses the configuration of v0.16.0). Upgrading under
+// an existing kernel is the operator's act. A component whose override variable
+// is set is the override's; the kernel binary is left alone while a kernel
+// answers that is followed (answers); and a UI configured for a kernel
+// elsewhere installs nothing.
+func (i *Installation) Due(answers bool) ([]Component, error) {
 	if !i.Local() {
-		return Component{}, false
+		return nil, nil
 	}
+	fresh, err := i.Fresh()
+	if err != nil {
+		return nil, err
+	}
+	var due []Component
 	for _, c := range Components {
 		if (c.Env != "" && os.Getenv(c.Env) != "") || (c.Name == "juice" && answers) {
 			continue
 		}
-		if i.bin(c.Name) == "" || (!declared && semver.Compare(i.version(c.Name), c.Release) < 0) {
-			return c, true
+		if i.bin(c.Name) == "" || (fresh && semver.Compare(i.version(c.Name), c.Release) < 0) {
+			due = append(due, c)
 		}
 	}
-	return Component{}, false
+	return due, nil
 }
 
-// Ensure runs the gate's loop until the kernel answers, reporting each state.
-// Each round examines the installation under boot, so it never sees a first boot
-// half done: it would otherwise find its database, and have the supervisor stop
-// it, or read its /health and report a kernel about to end. A kernel elsewhere is
-// waited for and never installed or started; a loopback installation has its
-// components installed (due), its kernel created (by the first boot, which the
-// caller runs while NeedsCreate is reported) and then declared to the
-// supervisor, which starts it. A kernel answers for this
-// loop only once it is the supervisor's, or the operator disabled that program.
-func (i *Installation) Ensure(ctx context.Context, report func(State, string)) {
-	wait := func(d time.Duration) bool {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(d):
-			return true
-		}
+// CanCreate refuses a first boot the installed kernel binary cannot perform: an
+// absent one, or one older than Release, which ignores the recovery key a first
+// boot passes. Due replaces an older one only in a fresh installation, so this
+// names the case where another kernel keeps it.
+func (i *Installation) CanCreate() error {
+	switch v := i.Version(); {
+	case i.Binary() == "":
+		return errors.New("the kernel binary is not installed")
+	case semver.Compare(v, Release) < 0:
+		return fmt.Errorf("the installed kernel is %s, and a new kernel needs %s or newer; upgrade it with the kernel's installer, which another kernel of this installation then also runs on", orNone(v), Release)
 	}
+	return nil
+}
+
+func orNone(v string) string {
+	if v == "" {
+		return "of an unknown version"
+	}
+	return v
+}
+
+// Start has this installation's kernel served and returns once it answers: it
+// declares a booted home to the supervisor, once, and waits for the
+// supervisor's child to answer. A kernel that answers without being the
+// supervisor's (no binary here, or the operator disabled the program) is
+// followed. It fails with the kernel's last words when the supervisor reports
+// it exiting, and the supervisor restarts it meanwhile, so a caller that tries
+// again observes the next run. Each round examines the installation under
+// boot, so it never sees a first boot half done.
+func (i *Installation) Start(ctx context.Context) error {
 	for {
 		i.boot.Lock()
 		world, booted, err := i.home()
-		// Whether the kernel was declared is read before this round may declare
-		// it, so a first declaration cannot shut out a component it should
-		// replace.
-		before := i.declared(world, booted && err == nil)
 		st, declared := i.declare(world, booted && err == nil)
-		answers := i.Serving(ctx)
-		serving := answers && (!declared || st.Running || st.Disabled)
-		c, due := i.due(before, answers)
+		serving := i.Serving(ctx) && (!declared || st.Running || st.Disabled)
 		i.boot.Unlock()
-		pause := time.Second
 		switch {
-		case due:
-			report(Installing, c.Name+" "+c.Release)
-			pause = 0
-			if err := i.Install(ctx, c); err != nil {
-				report(Failed, err.Error())
-				pause = retryPause
-			}
 		case serving:
-			report(Serving, "")
-			return
-		case !i.Local():
-			report(Waiting, i.URL.String())
-			pause = 2 * time.Second
+			return nil
 		case err != nil:
-			report(Failed, err.Error())
-			pause = retryPause
+			return err
 		case !booted:
-			// A home with a kernel is started, never created again; one with
-			// none — absent, or left by a boot the kernel declined — awaits the
-			// first boot.
-			report(NeedsCreate, "")
-		case st.Disabled:
-			report(Waiting, i.URL.String()) // the operator runs it
+			return errors.New("no kernel lives here")
+		case !declared:
+			return errors.New("the kernel binary is not installed")
 		case st.Err != "":
-			report(Failed, st.Err)
+			return errors.New(st.Err)
 		case !st.Running && st.Exit != "":
-			report(Failed, lastLine(st.Log))
-		default:
-			report(Starting, world)
+			return errors.New(lastLine(st.Log))
 		}
-		if !wait(pause) {
-			return
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
 		}
 	}
 }

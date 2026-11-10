@@ -21,8 +21,8 @@ import (
 	"testing"
 
 	"github.com/daios-ai/juice-ui/apps"
+	"github.com/daios-ai/juice-ui/installer"
 	"github.com/daios-ai/juice-ui/kernel"
-	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
 )
 
@@ -266,16 +266,21 @@ func TestVersionDefaults(t *testing.T) {
 	}
 }
 
-// The adapter carries the kernel's worlds to the gate field for field.
-func TestStepsCarryTheKernelsWorlds(t *testing.T) {
+// The adapter carries the kernel's worlds to the installer field for field, and
+// names a component by the kernel's list.
+func TestInstallationAdaptsTheKernel(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "bin"), 0o700)
-	script := "#!/bin/sh\necho '[{\"world\":\"play\",\"description\":\"no real money\"},{\"world\":\"bad\",\"error\":\"parse world file\"}]'\n"
+	script := "#!/bin/sh\necho '[{\"world\":\"play\",\"description\":\"no real money\",\"rail\":\"manual\",\"symbol\":\"fUSD\"},{\"world\":\"bad\",\"error\":\"parse world file\"}]'\n"
 	os.WriteFile(filepath.Join(home, "bin", "juice"), []byte(script), 0o755)
-	ws, err := steps{&kernel.Installation{Home: home}}.Worlds()
-	want := []server.World{{Name: "play"}, {Name: "bad", Error: "parse world file"}}
+	k := installation{&kernel.Installation{Home: home}}
+	ws, err := k.Worlds()
+	want := []installer.World{{Name: "play", Description: "no real money", Rail: "manual", Symbol: "fUSD"}, {Name: "bad", Error: "parse world file"}}
 	if err != nil || !slices.Equal(ws, want) {
 		t.Errorf("Worlds = %+v, %v", ws, err)
+	}
+	if err := k.Install(context.Background(), installer.Component{Name: "nothing"}); err == nil {
+		t.Error("an unknown component is refused")
 	}
 }
 

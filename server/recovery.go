@@ -40,8 +40,19 @@ type recoveryChallenge struct {
 }
 
 // recoverySetupFailed is what a person sees when no phrase could be generated
-// or derived, at signup and at the first boot alike.
+// or derived at signup.
 const recoverySetupFailed = "Couldn't set up account recovery. Please try again."
+
+// NewRecoveryPhrase is a fresh recovery phrase and the public key it derives,
+// the one a kernel enrolls: the installer's first boot passes only the key, as
+// signup does.
+func NewRecoveryPhrase() (phrase, publicKey string, err error) {
+	if phrase, err = generateMnemonic(); err != nil {
+		return "", "", err
+	}
+	publicKey, err = recoveryPubKey(phrase)
+	return phrase, publicKey, err
+}
 
 // generateMnemonic returns a fresh 12-word BIP-39 mnemonic (128-bit entropy).
 func generateMnemonic() (string, error) {

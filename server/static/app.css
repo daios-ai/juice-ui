@@ -316,6 +316,24 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .auth-panel[hidden] { display: none; }
 .auth-panel .btn { width: 100%; }
 .auth-card-wide { max-width: 460px; } /* the recovery-phrase card holds a word grid */
+/* The installer: the sequence's steps on the side, done ones ticked and the
+   current one marked; the step beside them; a job step's jobs, each pending,
+   running (the in-flight bar), done or failed. One column on a narrow screen. */
+.auth-card-install { max-width: 720px; }
+.install-body { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-6); margin-top: var(--space-4); }
+.install-steps, .install-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.install-steps li, .install-jobs li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.install-steps li { color: var(--text-muted); }
+.install-steps li:not(.done), .install-jobs li.pending, .install-jobs li.failed { padding-left: calc(var(--icon-md) + var(--space-2)); }
+.install-steps li.done, .install-steps li[aria-current] { color: var(--text); }
+.install-steps li[aria-current] { font-weight: 600; }
+.install-jobs { gap: var(--space-3); }
+.install-jobs li.pending { color: var(--text-muted); }
+.install-jobs li > .banner { flex-basis: 100%; }
+@media (max-width: 720px) {
+  .install-body { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+  .install-steps { flex-direction: row; flex-wrap: wrap; column-gap: var(--space-4); }
+}
 /* Recovery phrase: the twelve words as plain monospace rows (three per line, read
    left-to-right) inside one box — no numbering, no per-word chrome. */
 .phrase-grid { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2) var(--space-3); margin: var(--space-4) 0; padding: var(--space-4); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s); font-family: var(--font-mono); text-align: center; }
@@ -406,9 +424,9 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .auth-panel { margin-top: var(--space-2); margin-bottom: var(--space-4); }
 .auth-panel summary { cursor: pointer; font-weight: 600; font-size: var(--font-size-md); }
 /* A label/value list of kernel facts (an account's balances). */
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); margin: 0; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; }
 .kv dt { font-weight: 600; }
-.kv dd { margin: 0; }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
 .parties { width: auto; }
 .parties th { padding-right: var(--space-6); }
 /* Action detail header: title on owner/name + card-consistent chips beside it. */

@@ -5,10 +5,7 @@
     <h1>Recovery phrase</h1>
     <p>Please save the following recovery phrase. It is the only way to recover your account if you lose your password. <strong>Never share it with anyone.</strong></p>
 
-    <ol class="phrase-grid" id="phrase-words">
-      {{range .Data.Words}}<li>{{.}}</li>{{end}}
-    </ol>
-    <div class="row compact">{{template "_copy" (copyOf "phrase" .Data.Phrase)}}</div>
+    {{template "_phrase_words" .Data}}
 
     <form class="stack" method="post" action="{{if .Data.Action}}{{.Data.Action}}{{else}}/recovery-phrase{{end}}">
       {{.CSRFField}}

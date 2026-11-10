@@ -470,6 +470,16 @@ func New(o Options) (http.Handler, error) {
 	return h, nil
 }
 
+// Shell serves h as a page of this UI that runs before the application does
+// (the installer): the static assets, and every response under the
+// application's security headers.
+func Shell(h http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(StaticFS()))))
+	mux.Handle("/", h)
+	return securityHeaders(mux)
+}
+
 // securityHeaders serves a strict Content-Security-Policy and related hardening
 // on every response (R8): no inline scripts, self-hosted assets only, no framing,
 // no referrer leakage. The command registry and no-JS forms are designed

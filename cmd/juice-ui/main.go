@@ -2,10 +2,10 @@
 // loads configuration from the environment, wires the kernel client, the
 // server-side session manager, CSRF protection, and the router, then serves.
 //
-// Before the application serves, the kernel gate runs (requirements.md §1): the
-// listener answers at once with the kernel screen while the kernel is
-// installed, created, started or awaited, and the application takes the
-// listener the moment the kernel answers.
+// Before the application serves, the installer runs (requirements.md §1): the
+// listener answers at once with its steps while the components are installed
+// and the kernel is created, started or awaited, and the application takes the
+// listener when the installer's sequence ends.
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps/agents"
 	"github.com/daios-ai/juice-ui/apps/chat"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/installer"
 	"github.com/daios-ai/juice-ui/kernel"
 	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
@@ -57,7 +58,7 @@ func csrfKey(secret string) (key []byte, ephemeral bool, err error) {
 	return k, true, nil
 }
 
-// wiring is what both the gate and the application are built from: one
+// wiring is what both the installer and the application are built from: one
 // client, one identity, one renderer. Nothing here asks the kernel anything.
 type wiring struct {
 	kernel   *client.Client
@@ -67,7 +68,7 @@ type wiring struct {
 	// config is this installation's kernel configuration; nil when the kernel
 	// is not this installation's.
 	config server.Configuration
-	// programs is the process supervisor, handed to the kernel gate and the apps.
+	// programs is the process supervisor, handed to the installation and the apps.
 	programs apps.Programs
 }
 
@@ -94,6 +95,8 @@ func wire(cfg Config, log *slog.Logger) (*wiring, error) {
 
 	// The renderer must include each enabled app's templates so its pages
 	// render in the shared layout.
+	// The installer's steps render in the same layout.
+	appTemplates = append(appTemplates, installer.Templates())
 	r, err := server.NewRenderer(w.identity, appTemplates...)
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
@@ -172,24 +175,51 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 	})
 }
 
-// steps adapts the kernel package to the gate's Steps; each package keeps its
-// own types.
-type steps struct{ *kernel.Installation }
+// installation adapts the kernel package to the installer's Kernel; each
+// package keeps its own types.
+type installation struct{ *kernel.Installation }
 
-func (s steps) Ensure(ctx context.Context, report func(state, detail string)) {
-	s.Installation.Ensure(ctx, func(st kernel.State, d string) { report(string(st), d) })
-}
-
-func (s steps) Worlds() ([]server.World, error) {
-	ws, err := s.Installation.Worlds()
-	out := make([]server.World, len(ws))
-	for n, w := range ws {
-		out[n] = server.World(w)
+func (k installation) Due(answers bool) ([]installer.Component, error) {
+	due, err := k.Installation.Due(answers)
+	out := make([]installer.Component, len(due))
+	for n, c := range due {
+		out[n] = installer.Component{Name: c.Name, Release: c.Release}
 	}
 	return out, err
 }
 
-// switcher is the listener's handler: the gate first, the application once it
+func (k installation) Install(ctx context.Context, c installer.Component) error {
+	for _, kc := range kernel.Components {
+		if kc.Name == c.Name {
+			return k.Installation.Install(ctx, kc)
+		}
+	}
+	return fmt.Errorf("no component %s", c.Name)
+}
+
+func (k installation) Worlds() ([]installer.World, error) {
+	ws, err := k.Installation.Worlds()
+	out := make([]installer.World, len(ws))
+	for n, w := range ws {
+		out[n] = installer.World{Name: w.Name, Description: w.Description, Rail: w.Rail, Symbol: w.Symbol, Error: w.Error}
+	}
+	return out, err
+}
+
+// chrome is the application's renderer as the installer uses it.
+type chrome struct{ r *server.Renderer }
+
+func (c chrome) Page(w http.ResponseWriter, status int, page, title string, data any) error {
+	return c.r.Render(w, status, page, server.Page{Title: title, Data: data})
+}
+
+func (c chrome) Fragment(w http.ResponseWriter, status int, name string, data any) error {
+	return c.r.Fragment(w, status, name, data)
+}
+
+func (chrome) NewPhrase() (string, string, error) { return server.NewRecoveryPhrase() }
+
+// switcher is the listener's handler: the installer first, the application once it
 // is built. One listener, swapped atomically, so the address answers from the
 // first moment and never changes hands.
 type switcher struct{ h atomic.Pointer[http.Handler] }
@@ -218,7 +248,7 @@ func run() int {
 	for _, n := range cfg.Notices {
 		log.Warn("migration: " + n)
 	}
-	// SIGTERM or SIGINT ends the UI gracefully, during the gate as well.
+	// SIGTERM or SIGINT ends the UI gracefully, during the installer as well.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	sup, err := supervisor.Open(cfg.Root)
@@ -236,18 +266,19 @@ func run() int {
 	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
 	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
 	defer inst.WaitBoot() // ctx has ended: a first boot in flight is ending
-	gate := server.NewGate(w.renderer, steps{inst}, cfg.KernelBaseURL, cfg.ListenAddr, log)
+	in := installer.New(installer.Options{Kernel: installation{inst}, Chrome: chrome{w.renderer},
+		URL: cfg.KernelBaseURL, Listen: cfg.ListenAddr, Home: cfg.Root, Log: log})
 
 	var sw switcher
-	sw.Store(gate.Handler())
+	sw.Store(server.Shell(in.Handler()))
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: &sw, ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- srv.ListenAndServe() }()
 	log.Info("juice-ui listening", "version", version, "commit", commit, "addr", cfg.ListenAddr, "kernel", cfg.KernelBaseURL, "secure", cfg.Secure)
 
-	go gate.Run(ctx)
+	go in.Run(ctx)
 	select {
-	case <-gate.Ready():
+	case <-in.Ready():
 	case err := <-served:
 		log.Error("server stopped", "err", err)
 		stop()
@@ -267,7 +298,7 @@ func run() int {
 		stop()
 		return 1
 	}
-	sw.Store(gate.Behind(handler))
+	sw.Store(in.Behind(handler))
 	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
 	select {
 	case err := <-served:

@@ -62,7 +62,7 @@ func TestTemplatesUseOnlyGrammarButtons(t *testing.T) {
 // typed character.
 func TestNoTypedIcons(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	app, _ := outsideTemplates()
 	for _, f := range core {
 		if strings.Contains(string(mustRead(t, f)), "⋯") {
 			t.Errorf("%s: a typed ⋯; use the sprite's #ellipsis", f)
@@ -172,7 +172,7 @@ func TestMoneyGrammar(t *testing.T) {
 	for _, f := range core {
 		sources[f] = string(mustRead(t, f))
 	}
-	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	app, _ := outsideTemplates()
 	for _, f := range app {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -263,7 +263,7 @@ func TestNoRetiredSurfaces(t *testing.T) {
 	}
 	// The routes live in the client, the apps and the scripts as much as here.
 	var goFiles []string
-	for _, pat := range []string{"*.go", "../client/*.go", "../apps/*/*.go", "../apps/*/*/*.go", "static/app.js", "static/keys.js", "../apps/*/templates/*.html"} {
+	for _, pat := range []string{"*.go", "../client/*.go", "../apps/*/*.go", "../apps/*/*/*.go", "static/app.js", "static/keys.js", "../apps/*/templates/*.html", "../installer/*.go", "../installer/templates/*.html"} {
 		f, _ := filepath.Glob(pat)
 		goFiles = append(goFiles, f...)
 	}
@@ -297,7 +297,7 @@ func TestNoRetiredSurfaces(t *testing.T) {
 // "← previous") are the one sanctioned ← outside a crumb.
 func TestBackLinksLiveInCrumbs(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	app, _ := outsideTemplates()
 	crumbRe := regexp.MustCompile(`(?s)<nav class="crumb">.*?</nav>`)
 	backRe := regexp.MustCompile(`<a[^>]*>←`)
 	read := func(f string, isApp bool) string {
@@ -343,7 +343,7 @@ func TestBackLinksLiveInCrumbs(t *testing.T) {
 // ref and chips. The retired chat frame components are banned with it.
 func TestNoRowThumbnails(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	app, _ := outsideTemplates()
 	banned := []string{"thumb-s", "chat-frame", "chat-back", `class="rooms"`, "thread-head", "msg-text"}
 	check := func(f, src string) {
 		for _, bad := range banned {
@@ -455,12 +455,23 @@ func TestProseNotesAreShort(t *testing.T) {
 	}
 }
 
+// outsideTemplates are the templates that live outside this package: the app
+// modules' and the installer's. The grammar binds them as it binds the core's.
+func outsideTemplates() ([]string, error) {
+	apps, err := filepath.Glob("../apps/*/templates/*.html")
+	if err != nil {
+		return nil, err
+	}
+	inst, err := filepath.Glob("../installer/templates/*.html")
+	return append(apps, inst...), err
+}
+
 // TestAppTemplatesFollowGrammar extends the drift guard to app-module
-// templates (apps/*/templates/*.html): the visual grammar is central, so a
-// module's templates obey the same button, inline-style, table, and
+// templates (apps/*/templates/*.html) and the installer's: the visual grammar is
+// central, so a module's templates obey the same button, inline-style, table, and
 // retired-component rules as the core, wherever the file lives.
 func TestAppTemplatesFollowGrammar(t *testing.T) {
-	files, err := filepath.Glob("../apps/*/templates/*.html")
+	files, err := outsideTemplates()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +542,7 @@ func TestTemplatesNeverDecorateNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := filepath.Glob("../apps/*/templates/*.html")
+	app, err := outsideTemplates()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +681,7 @@ func TestChromeNamesTheWorld(t *testing.T) {
 // template never writes a second one after it (it rendered "451333e4……").
 func TestTruncateOwnsItsEllipsis(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	app, _ := outsideTemplates()
 	twice := regexp.MustCompile(`\{\{truncate [^}]*\}\}…`)
 	for _, f := range core {
 		if m := twice.FindString(string(mustRead(t, f))); m != "" {
@@ -694,7 +705,7 @@ func TestTruncateOwnsItsEllipsis(t *testing.T) {
 // title rendered from data keeps its own case.
 func TestHeadingCase(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	apps, _ := filepath.Glob("../apps/*/templates/*.html")
+	apps, _ := outsideTemplates()
 	headRe := regexp.MustCompile(`(?s)<h[12][^>]*>(.*?)</h[12]>`)
 	// A chip is a one-letter mark beside a name (§5.5), not a word of it.
 	chipRe := regexp.MustCompile(`(?s)<span class="chip[^"]*"[^>]*>.*?</span>`)
@@ -723,7 +734,7 @@ func TestHeadingCase(t *testing.T) {
 // command-row container, and every confirm a single plain question.
 func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	apps, _ := filepath.Glob("../apps/*/templates/*.html")
+	apps, _ := outsideTemplates()
 	sizedRe := regexp.MustCompile(`class="btn(?:-money|-danger|-icon)?\b[^"]*\bsmall\b`)
 	confirmRe := regexp.MustCompile(`data-confirm="([^"]*)"`)
 	check := func(f, src string) {
@@ -759,7 +770,7 @@ func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 // the no-JS way out.
 func TestCancelIsOneButton(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	apps, _ := filepath.Glob("../apps/*/templates/*.html")
+	apps, _ := outsideTemplates()
 	cancelRe := regexp.MustCompile(`<(\w+)([^>]*)>\s*Cancel\s*</\w+>`)
 	for _, f := range append(core, apps...) {
 		b, err := fs.ReadFile(tmplFS, f)
@@ -832,7 +843,7 @@ func TestNoDeadCSS(t *testing.T) {
 		t.Fatal(err)
 	}
 	var corpus strings.Builder
-	for _, glob := range []string{"templates/*.html", "../apps/*/templates/*.html", "static/*.js", "../wallet/*.mjs", "*.go", "../apps/*.go", "../apps/*/*.go"} {
+	for _, glob := range []string{"templates/*.html", "../apps/*/templates/*.html", "../installer/templates/*.html", "static/*.js", "../wallet/*.mjs", "*.go", "../apps/*.go", "../apps/*/*.go"} {
 		files, _ := filepath.Glob(glob)
 		for _, f := range files {
 			if strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "htmx.min.js") {
@@ -873,7 +884,7 @@ func TestNoDeadCSS(t *testing.T) {
 // alone; no other template draws a bar around a form.
 func TestComposerIsTheOneException(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
-	app, _ := filepath.Glob("../apps/*/templates/*.html")
+	app, _ := outsideTemplates()
 	for _, f := range append(core, app...) {
 		var b []byte
 		var err error
