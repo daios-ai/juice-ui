@@ -68,9 +68,12 @@ type Options struct {
 }
 
 // Step is one entry of a sequence: a page, which asks and changes nothing, or a
-// job step, which runs its jobs in order as soon as it is entered.
+// job step, which runs its jobs in order as soon as it is entered. An installer
+// step is drawn in the installer's frame; the one launch step that ends every
+// sequence is not drawn at all while it runs within holdTimeout.
 type Step struct {
 	ID, Title string
+	Installer bool
 	Page      bool
 	Back      bool                         // a page that offers Back to the page before it
 	Submit    func(form url.Values) string // a page's answers stored, or what to say
@@ -89,6 +92,10 @@ type Job struct {
 // attempt. A variable so tests shorten it.
 var retryPause = 10 * time.Second
 
+// holdTimeout is how long a page request waits for the launch before it is
+// answered with what the launch is doing. A variable so tests shorten it.
+var holdTimeout = 15 * time.Second
+
 // job is a job as shown: its title, its state, and a failure's words.
 type job struct {
 	Title, State, Err string // State: "pending", "running", "done", "failed"
@@ -97,22 +104,21 @@ type job struct {
 
 // Installer serves the first start's steps until the sequence ends.
 type Installer struct {
-	o     Options
-	ready chan struct{}
-	once  sync.Once
+	o      Options
+	ready  chan struct{}
+	once   sync.Once
+	served chan struct{} // closed once the application holds the listener
+	sOnce  sync.Once
 
-	mu  sync.Mutex
-	ctx context.Context
-	seq []Step
-	at  int
-	// installing is the sequence that creates a kernel: the one shown as an
-	// installer. Starting or awaiting a kernel that exists is a plain start.
-	installing bool
-	run        []Job  // the current job step's jobs
-	jobs       []job  // and how each stands
-	gen        int    // the job run in progress; a run that is not the current one changes nothing
-	err        string // a page's refusal, or the words of a job that returned to it
-	world      string
+	mu    sync.Mutex
+	ctx   context.Context
+	seq   []Step
+	at    int
+	run   []Job  // the current job step's jobs
+	jobs  []job  // and how each stands
+	gen   int    // the job run in progress; a run that is not the current one changes nothing
+	err   string // a page's refusal, or the words of a job that returned to it
+	world string
 	handle,
 	password string // held from its page to the first boot, never rendered
 	phrase,
@@ -124,8 +130,12 @@ func New(o Options) *Installer {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
-	return &Installer{o: o, ready: make(chan struct{})}
+	return &Installer{o: o, ready: make(chan struct{}), served: make(chan struct{})}
 }
+
+// Served is called once the application holds the listener, so a request held
+// for the launch is sent on to it.
+func (in *Installer) Served() { in.sOnce.Do(func() { close(in.served) }) }
 
 // Ready is closed once the sequence has ended; the application then takes the
 // listener.
@@ -149,54 +159,68 @@ func (in *Installer) Run(ctx context.Context) {
 	in.enter(0)
 }
 
-// choose is the sequence the facts call for, tested in this order: a kernel
-// elsewhere is waited for; a kernel home for the address is started; a kernel
-// that answers with no home here is followed, never created over, since a
-// creation would collide with its port; otherwise a kernel is created.
+// choose is the sequence the facts call for. It is the installer's steps this
+// machine needs, which may be none, then the launch. Download comes when a
+// component is missing; the pages and Install when a kernel is: the kernel is
+// this machine's, no home exists for its address, and nothing answers there (one
+// that answers without a home here is followed, never created over, since a
+// creation would collide with its port). The launch starts this installation's
+// kernel, or waits for one that is not this machine's to start.
 func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 	k := in.o.Kernel
 	if !k.Local() {
-		return []Step{in.waiting()}, nil
+		return []Step{in.launch(false)}, nil
 	}
 	answers := k.Serving(ctx)
-	if _, booted, err := k.Booted(); booted || err != nil {
-		return []Step{in.prepare(answers, false), in.starting()}, nil
+	_, booted, berr := k.Booted()
+	ours := booted || berr != nil
+	creating := !ours && !answers
+	var seq []Step
+	if dl, ok := in.download(answers && !ours, creating); ok {
+		seq = append(seq, dl)
 	}
-	if answers {
-		return []Step{in.prepare(true, false), in.waiting()}, nil
+	if creating {
+		phrase, pub, err := in.o.Chrome.NewPhrase()
+		if err != nil {
+			return nil, errors.New("couldn't set up account recovery; restart Juice to try again")
+		}
+		in.phrase, in.pub = phrase, pub
+		seq = append(seq, in.worldPage(), in.kernelPage(), in.phrasePage(), in.summaryPage(), in.install())
 	}
-	phrase, pub, err := in.o.Chrome.NewPhrase()
-	if err != nil {
-		return nil, errors.New("couldn't set up account recovery; restart Juice to try again")
-	}
-	in.phrase, in.pub = phrase, pub
-	in.installing = true
-	return []Step{in.prepare(false, true), in.worldPage(), in.kernelPage(), in.phrasePage(),
-		in.summaryPage(), in.install(), in.donePage()}, nil
+	return append(seq, in.launch(ours || creating)), nil
 }
 
-// prepare installs the components due; before a first boot it also checks that
-// the kernel binary can perform one.
-func (in *Installer) prepare(answers, creating bool) Step {
-	return Step{ID: "prepare", Title: "Components", Jobs: func() []Job {
-		due, err := in.o.Kernel.Due(answers)
-		if err != nil {
-			return []Job{{Title: "Read the installation", Run: func(context.Context) error { return err }}}
-		}
-		var jobs []Job
-		for _, c := range due {
-			jobs = append(jobs, Job{Title: "Install " + c.Name + " " + c.Release, Retry: true,
-				Run: func(ctx context.Context) error { return in.o.Kernel.Install(ctx, c) }})
-		}
-		if creating {
-			jobs = append(jobs, Job{Title: "Check the kernel", Run: func(context.Context) error { return in.o.Kernel.CanCreate() }})
-		}
-		return jobs
-	}}
+// download installs the components due, and before a first boot checks that the
+// kernel program can perform one; ok is false when there is nothing to do. An
+// installation that cannot be read is one job that reads it again, and installs
+// what is due, when it is tried again.
+func (in *Installer) download(followed, creating bool) (Step, bool) {
+	k := in.o.Kernel
+	var jobs []Job
+	due, err := k.Due(followed)
+	if err != nil {
+		jobs = append(jobs, Job{Title: "Read the installation", Run: func(ctx context.Context) error {
+			due, err := k.Due(followed)
+			for _, c := range due {
+				if err == nil {
+					err = k.Install(ctx, c)
+				}
+			}
+			return err
+		}})
+	}
+	for _, c := range due {
+		jobs = append(jobs, Job{Title: "Install " + c.Name + " " + c.Release, Retry: true,
+			Run: func(ctx context.Context) error { return k.Install(ctx, c) }})
+	}
+	if creating && (len(jobs) > 0 || k.CanCreate() != nil) {
+		jobs = append(jobs, Job{Title: "Check the kernel", Run: func(context.Context) error { return k.CanCreate() }})
+	}
+	return Step{ID: "download", Title: "Download", Installer: true, Jobs: func() []Job { return jobs }}, len(jobs) > 0
 }
 
 func (in *Installer) worldPage() Step {
-	return Step{ID: "world", Title: "World", Page: true, Submit: func(f url.Values) string {
+	return Step{ID: "world", Title: "World", Installer: true, Page: true, Submit: func(f url.Values) string {
 		w := f.Get("world")
 		ws, err := in.o.Kernel.Worlds()
 		if err != nil {
@@ -213,7 +237,7 @@ func (in *Installer) worldPage() Step {
 }
 
 func (in *Installer) kernelPage() Step {
-	return Step{ID: "kernel", Title: "Kernel", Page: true, Back: true, Submit: func(f url.Values) string {
+	return Step{ID: "kernel", Title: "Kernel", Installer: true, Page: true, Back: true, Submit: func(f url.Values) string {
 		in.handle = strings.TrimSpace(f.Get("handle"))
 		pw, pw2 := f.Get("password"), f.Get("confirm_password")
 		switch {
@@ -230,7 +254,7 @@ func (in *Installer) kernelPage() Step {
 }
 
 func (in *Installer) phrasePage() Step {
-	return Step{ID: "phrase", Title: "Recovery phrase", Page: true, Back: true, Submit: func(f url.Values) string {
+	return Step{ID: "phrase", Title: "Recovery phrase", Installer: true, Page: true, Back: true, Submit: func(f url.Values) string {
 		if f.Get("understand") == "" {
 			return "Confirm that you have saved the phrase."
 		}
@@ -239,39 +263,34 @@ func (in *Installer) phrasePage() Step {
 }
 
 func (in *Installer) summaryPage() Step {
-	return Step{ID: "summary", Title: "Summary", Page: true, Back: true, Submit: func(url.Values) string { return "" }}
+	return Step{ID: "summary", Title: "Summary", Installer: true, Page: true, Back: true, Submit: func(url.Values) string { return "" }}
 }
 
-// install is the point of no return: the first boot, then the start. A first
-// boot that made no kernel returns to the kernel page with the kernel's words,
-// where the password is typed again; one that made a kernel goes on to start it.
+// install is the point of no return: the first boot. One that made no kernel
+// returns to the kernel page with the kernel's words, where the password is
+// typed again; one that made a kernel goes on to the launch, which starts it.
 func (in *Installer) install() Step {
-	return Step{ID: "install", Title: "Install", Jobs: func() []Job {
-		return []Job{
-			{Title: "Create the kernel", Return: "kernel", Run: func(context.Context) error {
-				in.mu.Lock()
-				world, handle, pw, pub := in.world, in.handle, in.password, in.pub
-				in.password = ""
-				in.mu.Unlock()
-				return in.o.Kernel.Create(world, handle, pw, pub)
-			}},
-			{Title: "Start the kernel", Retry: true, Run: in.o.Kernel.Start},
-		}
+	return Step{ID: "install", Title: "Install", Installer: true, Jobs: func() []Job {
+		return []Job{{Title: "Create the kernel", Return: "kernel", Run: func(context.Context) error {
+			in.mu.Lock()
+			world, handle, pw, pub := in.world, in.handle, in.password, in.pub
+			in.password = ""
+			in.mu.Unlock()
+			return in.o.Kernel.Create(world, handle, pw, pub)
+		}}}
 	}}
 }
 
-func (in *Installer) donePage() Step {
-	return Step{ID: "done", Title: "Done", Page: true, Submit: func(url.Values) string { return "" }}
-}
-
-func (in *Installer) starting() Step {
-	return Step{ID: "start", Title: "Start", Jobs: func() []Job {
-		return []Job{{Title: "Start the kernel", Retry: true, Run: in.o.Kernel.Start}}
-	}}
-}
-
-// waiting follows a kernel that is not this installation's to start.
-func (in *Installer) waiting() Step {
+// launch ends every sequence: it starts this installation's kernel, or waits
+// for one that is not this machine's to start, and then the application takes
+// the listener. It is the same on every launch, after the installer or without
+// it.
+func (in *Installer) launch(start bool) Step {
+	if start {
+		return Step{ID: "start", Title: "Start", Jobs: func() []Job {
+			return []Job{{Title: "Start the kernel", Retry: true, Run: in.o.Kernel.Start}}
+		}}
+	}
 	return Step{ID: "wait", Title: "Wait", Jobs: func() []Job {
 		return []Job{{Title: "Wait for " + in.o.URL, Run: func(ctx context.Context) error {
 			for !in.o.Kernel.Serving(ctx) {
@@ -406,7 +425,7 @@ func (in *Installer) Behind(app http.Handler) http.Handler {
 
 // view is what a step renders.
 type view struct {
-	Installing               bool // the installer's frame; otherwise the plain start screen
+	Installing               bool // the installer's frame; otherwise the launch's message
 	Steps                    []stepView
 	At                       int // the current step's place, from 1; 0 with no sequence
 	Step, Title              string
@@ -428,31 +447,31 @@ type stepView struct { // State: "done", "current", "todo"
 
 // view builds the current step's view, under mu.
 func (in *Installer) view(r *http.Request) view {
-	v := view{Installing: in.installing, Local: in.local(r), URL: in.o.URL, Command: "juice kernel serve play", Error: in.err,
+	v := view{Local: in.local(r), URL: in.o.URL, Command: "juice kernel serve play", Error: in.err,
 		Chosen: in.world, Handle: in.handle}
+	// The rail counts the installer's steps alone.
 	for n, st := range in.seq {
+		if !st.Installer {
+			continue
+		}
 		s := "todo"
 		if n < in.at {
 			s = "done"
 		} else if n == in.at {
 			s = "current"
+			v.At = len(v.Steps) + 1
 		}
-		v.Steps = append(v.Steps, stepView{N: n + 1, Title: st.Title, State: s})
-	}
-	if len(in.seq) > 0 {
-		v.At = min(in.at+1, len(in.seq))
+		v.Steps = append(v.Steps, stepView{N: len(v.Steps) + 1, Title: st.Title, State: s})
 	}
 	if in.seq == nil {
 		return v // not chosen yet: the fragment polls until it is
 	}
 	if in.at >= len(in.seq) {
-		// The application is taking the listener: one job says so until the
-		// page's poll is sent on.
-		v.Ended, v.Title = true, "Done"
-		v.Jobs = []job{{Title: "Open Juice", State: "running"}}
+		v.Ended = true // the application is taking the listener
 		return v
 	}
 	st := in.seq[in.at]
+	v.Installing = st.Installer
 	v.Step, v.Title, v.Page, v.Back = st.ID, st.Title, st.Page, st.Back
 	v.Jobs = append([]job(nil), in.jobs...)
 	for _, j := range v.Jobs {
@@ -484,15 +503,61 @@ func (in *Installer) view(r *http.Request) view {
 	return v
 }
 
+// getStep renders the current step. While the launch runs, a page request is
+// held instead, and answered by the application once it holds the listener; it
+// is answered with what the launch is doing only when a launch job fails or the
+// launch outlasts holdTimeout.
 func (in *Installer) getStep(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && in.hold(r.Context()) {
+		select {
+		case <-in.served:
+		case <-time.After(holdTimeout):
+		case <-r.Context().Done():
+			return
+		}
+		http.Redirect(w, r, r.URL.RequestURI(), http.StatusSeeOther)
+		return
+	}
 	in.render(w, r, http.StatusOK)
+}
+
+// hold waits while the launch runs, reporting whether the sequence ended. It
+// stops at an installer step, a failed job, a failed start of the package, or
+// holdTimeout.
+func (in *Installer) hold(ctx context.Context) bool {
+	deadline := time.After(holdTimeout)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		in.mu.Lock()
+		stop := in.seq == nil && in.err != ""
+		if in.seq != nil && in.at < len(in.seq) {
+			stop = in.seq[in.at].Installer
+			for _, j := range in.jobs {
+				stop = stop || j.State == "failed"
+			}
+		}
+		in.mu.Unlock()
+		if stop {
+			return false
+		}
+		select {
+		case <-in.ready:
+			return true
+		case <-deadline:
+			return false
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
 }
 
 func (in *Installer) render(w http.ResponseWriter, r *http.Request, status int) {
 	in.mu.Lock()
 	v := in.view(r)
 	in.mu.Unlock()
-	title := "Starting"
+	title := "Juice"
 	if v.Installing {
 		title = "Juice installation"
 	}

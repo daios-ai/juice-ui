@@ -36,6 +36,7 @@ type fakeKernel struct {
 	dueAsked  []bool
 	started   int
 	holdStart chan struct{} // Start waits on it, when set
+	startErr  error         // Start fails with it, when set
 }
 
 func (k *fakeKernel) Local() bool { return !k.remote }
@@ -96,6 +97,9 @@ func (k *fakeKernel) Start(context.Context) error {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.startErr != nil {
+		return k.startErr
+	}
 	k.started++
 	k.answers = true
 	return nil
@@ -121,6 +125,13 @@ func (c chrome) NewPhrase() (string, string, error) {
 	return c.phrase, "PUBKEY", nil
 }
 
+// TestMain shortens the waits once for the whole package, so no installer a
+// test leaves running reads them while another test sets them.
+func TestMain(m *testing.M) {
+	retryPause, holdTimeout = 20*time.Millisecond, 300*time.Millisecond
+	os.Exit(m.Run())
+}
+
 const phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident"
 
 // start runs an installer over k, listening on loopback.
@@ -131,8 +142,6 @@ func start(t *testing.T, k *fakeKernel) (*Installer, http.Handler) {
 
 func startWith(t *testing.T, k *fakeKernel, broken bool) (*Installer, http.Handler) {
 	t.Helper()
-	retryPause = 20 * time.Millisecond
-	t.Cleanup(func() { retryPause = 10 * time.Second })
 	r, err := server.NewRenderer(nil, Templates())
 	if err != nil {
 		t.Fatal(err)
@@ -142,6 +151,7 @@ func startWith(t *testing.T, k *fakeKernel, broken bool) (*Installer, http.Handl
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	in.Run(ctx)
+	go func() { <-in.Ready(); in.Served() }() // as the entrypoint does once the application serves
 	return in, in.Handler()
 }
 
@@ -208,29 +218,34 @@ func ids(in *Installer) string {
 	return strings.Join(out, ",")
 }
 
-// The sequence is the one the facts call for, tested in order: a kernel
-// elsewhere is waited for; a home for the address is started; a kernel that
-// answers with no home here is followed, its binary not installed; otherwise a
-// kernel is created.
-func TestTheFactsChooseTheSequence(t *testing.T) {
+// The installer's steps are those this machine needs, which may be none, and
+// every sequence ends with the launch: nothing missing gives no installer step;
+// a missing component gives Download; a missing kernel gives the pages and
+// Install; both give both. A kernel elsewhere is waited for, and one that answers
+// with no home here is followed, its binary not installed, never created over.
+func TestTheMachineChoosesTheSteps(t *testing.T) {
+	agent := []Component{{"juice-agent", "v0.10.0"}}
+	both := []Component{{"juice", "v0.18.1"}, {"juice-agent", "v0.10.0"}}
 	for _, c := range []struct {
 		k    *fakeKernel
 		want string
 	}{
+		{&fakeKernel{booted: true}, "start"},
+		{&fakeKernel{booted: true, due: agent}, "download,start"},
+		{&fakeKernel{}, "world,kernel,phrase,summary,install,start"},
+		{&fakeKernel{due: both}, "download,world,kernel,phrase,summary,install,start"},
+		{&fakeKernel{canCreate: errors.New("older")}, "download,world,kernel,phrase,summary,install,start"},
+		{&fakeKernel{bootErr: errors.New("damaged")}, "start"},
 		{&fakeKernel{remote: true}, "wait"},
-		{&fakeKernel{booted: true}, "prepare,start"},
-		{&fakeKernel{bootErr: errors.New("damaged")}, "prepare,start"},
-		{&fakeKernel{answers: true}, "prepare,wait"},
-		{&fakeKernel{}, "prepare,world,kernel,phrase,summary,install,done"},
+		{&fakeKernel{answers: true}, "wait"},
 	} {
 		in, _ := start(t, c.k)
 		if got := ids(in); got != c.want {
-			t.Errorf("%+v: sequence %s, want %s", c.k, got, c.want)
+			t.Errorf("%+v: %s, want %s", c.k, got, c.want)
 		}
 	}
 	k := &fakeKernel{answers: true}
 	start(t, k)
-	time.Sleep(50 * time.Millisecond)
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if len(k.dueAsked) != 1 || !k.dueAsked[0] || len(k.created) != 0 {
@@ -238,34 +253,91 @@ func TestTheFactsChooseTheSequence(t *testing.T) {
 	}
 }
 
-// A fresh installation walks every step in order. The pages change nothing;
-// Install answers at once while the first boot runs, its job shown running;
-// the first boot gets the password and the phrase's key; the phrase is shown on
-// its page alone and is gone when the sequence ends; the listener is handed
-// over only after Open Juice.
-func TestAFreshInstallWalksEveryStep(t *testing.T) {
+// A complete installation drops into the UI: a page request is held while the
+// kernel starts, then sent on to the application, and no installer markup is
+// ever served.
+func TestACompleteInstallationOpensTheUI(t *testing.T) {
+	k := &fakeKernel{booted: true, holdStart: make(chan struct{})}
+	in, h := start(t, k)
+	got := make(chan *httptest.ResponseRecorder, 1)
+	go func() { got <- do(t, h, http.MethodGet, "/chat", nil, nil) }()
+	select {
+	case <-got:
+		t.Fatal("the request is held while the kernel starts")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(k.holdStart)
+	rec := <-got
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/chat" || strings.Contains(rec.Body.String(), "installation") {
+		t.Errorf("sent on to the application: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if k.started != 1 {
+		t.Errorf("started %d", k.started)
+	}
+	select {
+	case <-in.Ready():
+	default:
+		t.Error("the sequence has ended")
+	}
+}
+
+// A kernel that has not answered within holdTimeout, or one that fails to
+// start, is the one case a launch shows something: the entry card, the job in
+// hand and the kernel's words, polled until it answers. Nothing names an
+// installation.
+func TestALaunchThatCannotBeHeldSaysWhy(t *testing.T) {
+	k := &fakeKernel{booted: true, holdStart: make(chan struct{})}
+	_, h := start(t, k)
+	b := page(t, h)
+	for _, want := range []string{"<span>Start the kernel</span>", `hx-get="/install/status?step=start"`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the slow launch lacks %q", want)
+		}
+	}
+	for _, not := range []string{"Juice installation", "install-steps", "<form", "<h2>"} {
+		if strings.Contains(b, not) {
+			t.Errorf("the slow launch has %q", not)
+		}
+	}
+	close(k.holdStart)
+
+	f := &fakeKernel{booted: true, startErr: errors.New("error: port in use")}
+	_, h = start(t, f)
+	began := time.Now()
+	if b := page(t, h); !strings.Contains(b, "error: port in use") || time.Since(began) >= holdTimeout {
+		t.Errorf("a failing start is said at once, with its words: %s", b)
+	}
+}
+
+// A new machine runs the steps it needs and the launch, with no further page: the
+// rail counts the installer's own steps, Install answers at once and runs one
+// job, the first boot gets the password and the phrase's key, the phrase is shown
+// on its page alone and gone when the sequence ends, and the request after
+// Install is sent on to the application.
+func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	k := &fakeKernel{due: []Component{{"juice", "v0.18.1"}, {"juice-agent", "v0.10.0"}}, hold: make(chan struct{})}
 	in, h := start(t, k)
 	waitFor(t, in, "world")
-	if k.installed == nil || strings.Join(k.installed, ",") != "juice,juice-agent" {
+	if strings.Join(k.installed, ",") != "juice,juice-agent" {
 		t.Errorf("installed %v", k.installed)
 	}
 	b := page(t, h)
-	for _, want := range []string{`aria-current="step"><span class="install-mark" aria-hidden="true">2</span><span>World</span>`, "Step 2 of 7", `name="world"`, `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
-		`<option value="broken" disabled>broken</option>`, `<dt class="mono">broken</dt><dd>parse world file</dd>`, "<span>Components</span></li>"} {
+	for _, want := range []string{`aria-current="step"><span class="install-mark" aria-hidden="true">2</span><span>World</span>`,
+		"Step 2 of 6", `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
+		`<option value="broken" disabled>broken</option>`, "<span>Download</span>", "<span>Install</span>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("world page lacks %q", want)
 		}
 	}
-	if strings.Contains(b, `formaction="/install/back"`) {
-		t.Error("the first page has no Back")
+	for _, not := range []string{`formaction="/install/back"`, "<span>Start</span>", "Done", "Open Juice"} {
+		if strings.Contains(b, not) {
+			t.Errorf("world page has %q", not)
+		}
 	}
 	next(t, h, "world", url.Values{"world": {"polygon"}})
 	waitFor(t, in, "kernel")
-	// The step's command comes first in the markup, so Enter submits it and
-	// never Back, which the stylesheet places on the left.
 	if b := page(t, h); strings.Index(b, `>Next</button>`) > strings.Index(b, `formaction="/install/back"`) {
-		t.Error("the command precedes Back in the markup")
+		t.Error("the command precedes Back in the markup, so Enter submits it")
 	}
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
 	waitFor(t, in, "phrase")
@@ -288,39 +360,32 @@ func TestAFreshInstallWalksEveryStep(t *testing.T) {
 		t.Fatalf("Install answers at once: %d after %v", rec.Code, time.Since(began))
 	}
 	waitFor(t, in, "install")
-	var b2 string
+	var st string
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-		if b2 = do(t, h, http.MethodGet, "/install/status?step=install", nil, nil).Body.String(); strings.Contains(b2, `<li class="running">`) {
+		if st = do(t, h, http.MethodGet, "/install/status?step=install", nil, nil).Body.String(); strings.Contains(st, `<li class="running">`) {
 			break
 		}
 	}
-	if !strings.Contains(b2, `<span>Create the kernel</span><div class="progress htmx-request"`) || !strings.Contains(b2, `class="pending"`) {
-		t.Errorf("the job shows running, the next pending: %s", b2)
+	if !strings.Contains(st, "<span>Create the kernel</span>") || strings.Contains(st, "Start the kernel") {
+		t.Errorf("Install runs one job: %s", st)
 	}
 	next(t, h, "summary", nil) // a second Install starts nothing
 	close(k.hold)
-	waitFor(t, in, "done")
+	for deadline := time.Now().Add(3 * time.Second); current(in) == "install" && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	rec := do(t, h, http.MethodGet, "/", nil, nil) // the request after Install: held, then sent on
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Errorf("after Install the page goes to the application: %d", rec.Code)
+	}
 	if len(k.created) != 1 || k.created[0] != "polygon alpha secret123 PUBKEY" || k.started != 1 {
 		t.Errorf("created %v, started %d", k.created, k.started)
 	}
 	if rec := do(t, h, http.MethodGet, "/install/status?step=install", nil, nil); rec.Header().Get("HX-Redirect") != "/" {
 		t.Error("the status sends a page on once its step ends")
 	}
-	select {
-	case <-in.Ready():
-		t.Fatal("ready before Open Juice")
-	default:
-	}
-	b = page(t, h)
-	if !strings.Contains(b, ">Open Juice</button>") || strings.Contains(b, "abandon") || strings.Contains(b, "secret123") {
-		t.Error("the done page: Open Juice, and neither the phrase nor the password")
-	}
-	next(t, h, "done", nil)
-	select {
-	case <-in.Ready():
-	case <-time.After(time.Second):
-		t.Fatal("Open Juice ends the sequence")
-	}
+	in.mu.Lock()
+	defer in.mu.Unlock()
 	if in.phrase != "" || in.password != "" || in.pub != "" {
 		t.Error("the secrets leave memory with the sequence")
 	}
@@ -372,7 +437,6 @@ func TestAPageRefusesItsAnswers(t *testing.T) {
 	if current(in) != "kernel" {
 		t.Error("a refusal stays on its page")
 	}
-	waitFor(t, in, "kernel")
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
 	waitFor(t, in, "phrase")
 	if rec := next(t, h, "phrase", nil); rec.Code != http.StatusUnprocessableEntity {
@@ -381,8 +445,8 @@ func TestAPageRefusesItsAnswers(t *testing.T) {
 }
 
 // Back returns to the page before, on pages that offer it; the kernel page
-// shown again holds no password. Once Install has begun nothing goes back, and
-// a post from a step that is not current changes nothing.
+// shown again holds no password. Once Install has begun nothing goes back, and a
+// post from a step that is not current changes nothing.
 func TestBackGoesToThePageBefore(t *testing.T) {
 	k := &fakeKernel{hold: make(chan struct{})}
 	in, h := start(t, k)
@@ -414,26 +478,20 @@ func TestBackGoesToThePageBefore(t *testing.T) {
 		t.Error("nothing goes back once Install has begun")
 	}
 	close(k.hold)
-	waitFor(t, in, "done")
-	if strings.Contains(page(t, h), `formaction="/install/back"`) {
-		t.Error("the done page has no Back")
-	}
+	waitFor(t, in, "")
 }
 
 // A first boot that made no kernel returns to the kernel page with the kernel's
 // words and no password held; the next attempt boots with the password typed
-// then, and the same phrase. One that made a kernel goes on.
+// then, and the same phrase. One that made a kernel goes on to the launch.
 func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	k := &fakeKernel{createErr: errors.New("kernel name refused")}
 	in, h := start(t, k)
 	waitFor(t, in, "world")
-	walk := func(pw string) {
-		next(t, h, "world", url.Values{"world": {"play"}})
-		next(t, h, "kernel", url.Values{"handle": {"Bad"}, "password": {pw}, "confirm_password": {pw}})
-		next(t, h, "phrase", url.Values{"understand": {"on"}})
-		next(t, h, "summary", nil)
-	}
-	walk("secret123")
+	next(t, h, "world", url.Values{"world": {"play"}})
+	next(t, h, "kernel", url.Values{"handle": {"Bad"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "phrase", url.Values{"understand": {"on"}})
+	next(t, h, "summary", nil)
 	waitFor(t, in, "kernel")
 	if b := page(t, h); !strings.Contains(b, "kernel name refused") || !strings.Contains(b, `value="Bad"`) || in.password != "" {
 		t.Error("the kernel page with the kernel's words and no password")
@@ -448,9 +506,9 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	}
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
-	waitFor(t, in, "done")
-	if len(k.created) != 2 || k.created[1] != "play alpha another12 PUBKEY" {
-		t.Errorf("created %v", k.created)
+	waitFor(t, in, "")
+	if len(k.created) != 2 || k.created[1] != "play alpha another12 PUBKEY" || k.started != 1 {
+		t.Errorf("created %v, started %d", k.created, k.started)
 	}
 
 	made := &fakeKernel{createErr: errors.New("did not answer"), makes: true}
@@ -460,7 +518,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
-	waitFor(t, in, "done")
+	waitFor(t, in, "")
 }
 
 // A failed download is shown and tried again; a failure that does not retry
@@ -475,61 +533,30 @@ func TestAFailedJobIsShownAndTriedAgain(t *testing.T) {
 
 	c := &fakeKernel{canCreate: errors.New("the installed kernel is v0.16.0, and a new kernel needs v0.18.1")}
 	in, h := start(t, c)
+	var b string
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-		if strings.Contains(page(t, h), "Try again") {
+		if b = do(t, h, http.MethodGet, "/install/status?step=download", nil, nil).Body.String(); strings.Contains(b, "Try again") {
 			break
 		}
 	}
-	b := do(t, h, http.MethodGet, "/install/status?step=prepare", nil, nil).Body.String()
-	if !strings.Contains(b, "a new kernel needs v0.18.1") || !strings.Contains(b, `action="/install/retry"`) || current(in) != "prepare" {
+	if !strings.Contains(b, "a new kernel needs v0.18.1") || !strings.Contains(b, `action="/install/retry"`) || current(in) != "download" {
 		t.Fatalf("the failure waits for Try again: %s", b)
 	}
 	c.mu.Lock()
 	c.canCreate = nil
 	c.mu.Unlock()
-	do(t, h, http.MethodPost, "/install/retry", url.Values{"step": {"prepare"}}, nil)
+	do(t, h, http.MethodPost, "/install/retry", url.Values{"step": {"download"}}, nil)
 	waitFor(t, in, "world")
 }
 
-// A kernel that exists is started on the plain start screen, never dressed as
-// an installation: no installer title, no steps, only the job in hand; and the
-// application takes the listener once the kernel answers.
-func TestAnExistingKernelStartsWithoutTheInstaller(t *testing.T) {
-	k := &fakeKernel{booted: true, holdStart: make(chan struct{})}
-	in, h := start(t, k)
-	waitFor(t, in, "start")
-	b := page(t, h)
-	for _, not := range []string{"Juice installation", "install-steps", "auth-card-install", "<form", "<h2>"} {
-		if strings.Contains(b, not) {
-			t.Errorf("the start screen has %q", not)
-		}
-	}
-	if !strings.Contains(b, "<span>Start the kernel</span>") || !strings.Contains(b, `hx-get="/install/status?step=start"`) {
-		t.Errorf("the start screen names its job and polls: %s", b)
-	}
-	close(k.holdStart)
-	select {
-	case <-in.Ready():
-	case <-time.After(3 * time.Second):
-		t.Fatal("the kernel answering ends the start")
-	}
-	if b := page(t, h); !strings.Contains(b, "<span>Open Juice</span>") || strings.Contains(b, "Juice installation") {
-		t.Error("the ended start says Open Juice until the page is sent on")
-	}
-}
-
-// A kernel that answers with no home here is followed: no page is offered,
-// nothing is created, and the listener is handed over once it answers.
+// A kernel that answers with no home here is followed: no page is offered and
+// nothing is created or started; the request goes to the application.
 func TestAFollowedKernelIsNotCreatedOver(t *testing.T) {
 	k := &fakeKernel{answers: true}
 	in, h := start(t, k)
-	select {
-	case <-in.Ready():
-	case <-time.After(3 * time.Second):
-		t.Fatal("a kernel that answers ends the sequence")
-	}
-	if b := page(t, h); strings.Contains(b, "<form") {
-		t.Error("no page is offered")
+	waitFor(t, in, "")
+	if rec := do(t, h, http.MethodGet, "/", nil, nil); rec.Code != http.StatusSeeOther {
+		t.Errorf("the request goes to the application: %d", rec.Code)
 	}
 	if len(k.created) != 0 || k.started != 0 {
 		t.Errorf("created %v, started %d", k.created, k.started)
@@ -561,7 +588,7 @@ func TestOnlyThisMachineInstalls(t *testing.T) {
 
 // Once the application serves, a page still open is sent to it by its poll.
 func TestBehindSendsAnOpenPageOn(t *testing.T) {
-	in, _ := start(t, &fakeKernel{remote: true})
+	in, _ := start(t, &fakeKernel{remote: true, answers: true})
 	app := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "app") })
 	h := in.Behind(app)
 	if rec := do(t, h, http.MethodGet, "/install/status?step=wait", nil, nil); rec.Header().Get("HX-Redirect") != "/" {

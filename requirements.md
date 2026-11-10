@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.58.4
+Version: 0.59.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.59.0.** One rule decides a launch: an installation that is
+> complete opens the UI, and one that is not runs the installer, which shows only
+> the steps the machine needs. Starting the kernel belongs to every launch and
+> has no screen: the page is held while it comes up, and only a kernel that is
+> slow or fails is said. The installer's Components step is Download, shown only
+> when something is missing; Install only creates the kernel; the Done page and
+> the start screen of 0.58.4 are gone (§1).
 
 > **What changed in 0.58.4.** Every start showed the installer, although only a
 > machine with no kernel installs anything. The installer's frame now appears
@@ -964,21 +972,38 @@ the composer's launcher.
   validation): the UI presents kernel results; the kernel decides.
 
 **The installer.** The UI is the desktop to the kernel's server: a person who
-installs the UI has a kernel. At start the listener answers at once with the
-**installer**, package `installer`, and the application takes the listener when
-its sequence ends. The installer is a sequence of steps in the shape OS
-installers use (Calamares, Ubuntu's installer): **pages**, which ask and change
-nothing, a summary, one step whose work runs as **jobs** with progress, and a
-finish. The sequence is chosen once, at start, from facts tested in this order:
+installs the UI has a kernel. One rule decides what a launch shows: **an
+installation that is complete opens the UI; one that is not runs the
+installer**, package `installer`, which shows only the steps this machine needs
+and then opens the UI. The installer has the shape OS installers use
+(Calamares, Ubuntu's installer): **pages**, which ask and change nothing, a
+summary, and one step whose work runs as **jobs** with progress. What is missing
+is read once, at start:
 
-| Fact | Sequence |
+| What is missing | The installer's steps |
 |---|---|
-| The configured kernel URL is not loopback (a kernel elsewhere is an operator's) | Wait |
-| A kernel home `$JUICE_HOME/kernels/<world>/` for the URL's port holds a kernel (`juice.db`), or is unreadable | Components → Start |
-| No home here, but a kernel answers at the URL: it is followed, never created over, since a creation would collide with its port | Components → Wait |
-| Otherwise | Components → World → Kernel → Recovery phrase → Summary → Install → Done |
+| Nothing | none: the installer does not appear |
+| A component only | Download |
+| A kernel only | World → Kernel → Recovery phrase → Summary → Install |
+| Both | Download → World → Kernel → Recovery phrase → Summary → Install |
 
-* **Components** installs what is due, one job each, from one list: the kernel
+A kernel is missing when the configured kernel is this machine's (a loopback
+URL), no kernel home `$JUICE_HOME/kernels/<world>/` for the URL's port holds one
+(`juice.db`, a home that cannot be read counting as one), and nothing answers at
+the URL: a kernel that answers without a home here is followed, never created
+over, since a creation would collide with its port. A kernel elsewhere is an
+operator's; it is never installed, created or started.
+
+Every launch then does the same, whether or not the installer ran: it **starts
+this installation's kernel**, or waits for one that is not this machine's to
+start, and the application takes the listener. While it does, a page request is
+held and then answered by the application, so the page loads for those seconds
+and then shows sign-in, with no screen in between. Only a kernel that has not
+answered within 15 seconds, or that fails to start, is said: on the entry card,
+the job in hand ("Start the kernel", "Wait for `<url>`") with the kernel's own
+words, polled until it answers. Nothing on that card names an installation.
+
+* **Download** installs what is due, one job each, from one list: the kernel
   (`juice`) then the agent (`juice-agent`), each at the release this UI was
   verified against. A component **missing** from `$JUICE_HOME/bin` is due; one
   **older than its release is due only in a fresh installation**, one whose
@@ -993,7 +1018,8 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
   routine, the contract of the family's own `install.sh`: the platform's asset and
   `checksums.txt` from that component's GitHub releases, refused without a
   matching SHA-256, tried with `--version`, renamed atomically into `bin/`. A
-  failed download is shown and tried again every 10 s. Before a first boot the
+  failed download is shown and tried again every 10 s. It comes first because the
+  World page lists the worlds by running the kernel program. Before a first boot the
   step also checks the kernel binary: one older than its release, kept because
   another kernel of this installation runs on it, would ignore the recovery key,
   so the step stops there, naming both versions, until Try again.
@@ -1014,7 +1040,7 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
   world whose rail is a chain (`evm`) it states, behind the alert icon, that the
   vault's keys live in that home and that losing it loses the money. Its button
   is **Install**.
-* **Install** runs the first boot, then the start. The first boot writes that
+* **Install** runs the first boot and nothing else. The first boot writes that
   home's `config.json` and serves the kernel once with the password and the
   recovery public key in the child's environment, the kernel's documented
   non-interactive first boot. It never touches a kernel: it writes only into a
@@ -1023,9 +1049,10 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
   nothing, even when it fails. One first boot runs at a time per installation,
   under an exclusive lock in the UI's own state directory. A boot that made no
   kernel returns to the Kernel page with the kernel's words, where the password
-  is typed again; one that made a kernel goes on to start it. The password is
+  is typed again; one that made a kernel goes on to the launch, which starts it,
+  and the UI opens with no further page. The password is
   held in memory from its page to the boot and dropped when the boot returns.
-* **Start** declares the kernel to the process supervisor once, as the program
+* **Starting the kernel**, at every launch, declares it to the process supervisor once, as the program
   `kernel-<world>`, which runs `juice kernel serve <world>`, whatever the version
   of the binary beside it. The first boot's kernel carries two secrets, so it is
   not a program: it ends before the first boot returns, within the same 30
@@ -1036,19 +1063,11 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
   binary here that answers is followed and not declared. A kernel that does not
   start is shown with its own words and tried again, and a directory holding
   `juice.db` whose `config.json` is missing or unreadable is reported as such.
-* **Done** offers **Open Juice**, which ends the sequence. The Start and Wait
-  sequences end by themselves once the kernel answers.
-
-Only the last sequence, which creates a kernel, is shown as an installer. The
-others install nothing a person decides, so they render on a **plain start
-screen**: the entry card with the brand and the jobs in hand ("Start the
-kernel", or a missing component being installed), with no installation title
-and no steps.
 
 Every step of the installer renders in one frame headed Juice installation (grammar §5.14): the
-sequence's numbered steps on the side, done ones ticked and the current one
+installer's numbered steps on the side, done ones ticked and the current one
 marked, and beside them the step, in three slots: its heading, its content and
-its commands at the foot. On a narrow screen one line, "Step 3 of 7", stands in
+its commands at the foot. On a narrow screen one line, "Step 3 of 6", stands in
 for the list. A step supplies content only; no step sets a size of its own. A job step lists its jobs, each pending,
 running (the in-flight bar), done or failed with its words, and is polled every
 2 s until the step changes. The server holds the position and the answers, so
@@ -1057,7 +1076,7 @@ shows where the installation is. A step's post is accepted only from the step
 that is current and is answered by a redirect, so a reload or a second submit
 changes nothing; a page that refuses its answers is shown again with what to say
 and what was typed, never a password. Back is offered on the pages after the
-first and never once Install has begun. A job step starts its jobs when it is
+first and never once Install has begun. Nothing follows Install: no finish page. A job step starts its jobs when it is
 entered, in the background, so no post waits for the work. A UI restarted
 mid-sequence begins again from the facts.
 
@@ -3034,9 +3053,11 @@ Every production `.go` file has a `_test.go` file with independent tests.
   download is retried and a failure that waits is run again by Try again; a
   followed kernel is offered no page and nothing is created; the phrase is one
   for the sequence, on its page alone, and gone when it ends; a request from
-  elsewhere sees the terminal command and may not post; a kernel that exists is
-  started on the plain start screen, with no installer title, steps or form; the
-  package imports
+  elsewhere sees the terminal command and may not post; each state of the
+  machine gives exactly the steps of §1's table, a complete one none; a page
+  request during the launch is held and sent on to the application, and only a
+  slow or failing start is said, with the kernel's words; nothing follows
+  Install; the package imports
   nothing of this repository and only the entrypoint imports it;
 * the first boot: its child has ended when it returns and when the UI shuts down, one
   ignoring SIGTERM is killed, and a start during it neither declares the kernel

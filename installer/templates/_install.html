@@ -46,12 +46,10 @@
       <dt>Kernel home</dt><dd class="mono">{{.Home}}</dd>
     </dl>
     {{if eq .World.Rail "evm"}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The keys of this kernel's vault are kept in <span class="mono">{{.Home}}</span>. Losing that directory loses the money the vault holds.</span></p>{{end}}
-    {{else if eq .Step "done"}}
-    <p>The kernel <span class="mono">{{.Handle}}</span> is running.</p>
     {{end}}
   </div>
   <div class="install-actions cluster">
-    <button class="btn" type="submit">{{if eq .Step "summary"}}Install{{else if eq .Step "done"}}Open Juice{{else}}Next{{end}}</button>
+    <button class="btn" type="submit">{{if eq .Step "summary"}}Install{{else}}Next{{end}}</button>
     {{if .Back}}<button class="btn" type="submit" formaction="/install/back" formnovalidate>Back</button>{{end}}
   </div>
 </form>

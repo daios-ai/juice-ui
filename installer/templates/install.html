@@ -3,8 +3,9 @@
      step. The head, the sequence's steps on the side, and the current step,
      which fills three slots: its heading, its content, its commands. */}}
 {{if not .Data.Installing}}
-{{/* A kernel that exists is started, or awaited, on the plain start screen: an
-     entry card with the jobs in hand. Nothing here is an installation. */}}
+{{/* The launch's message, shown only when a page cannot be held for it: the
+     kernel has not answered within holdTimeout, or a launch job failed. An
+     entry card with the job in hand and, where it has them, the kernel's words. */}}
 <div class="auth">
   <div class="card auth-card">
     <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>

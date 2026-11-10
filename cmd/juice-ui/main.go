@@ -299,6 +299,7 @@ func run() int {
 		return 1
 	}
 	sw.Store(in.Behind(handler))
+	in.Served() // a request held for the launch is sent on to the application
 	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
 	select {
 	case err := <-served:

@@ -757,14 +757,14 @@ content only: no step sets a size or a spacing of its own.
   title on a `--space-5` line. The slot holds the step's number
   (`.install-mark`), or the `#check` tick once `.done`; the current step
   (`aria-current="step"`) is weighted, the ones to come muted. On a narrow
-  screen the list gives way to one line, `.install-at`, "Step 3 of 7".
+  screen the list gives way to one line, `.install-at`, "Step 3 of 6".
 - **A step**, `.install-step`, fills three slots `--space-5` apart: its heading
   (an `h2` on the steps' line height, so the two columns start level), its
   content (`.install-content`, a `.stack` of ordinary `.field`s, a `.kv` or
   text), and its commands (`.install-actions`, a `.cluster` over a hairline,
   held at the foot). The row follows the installers' convention, the one
   exception to §5.1's order: `Back` at the left edge and the step's command
-  (`Next`, `Install`, `Open Juice`, `Try again`) at the right. The command stays
+  (`Next`, `Install`, `Try again`) at the right. The command stays
   first in the markup, so Enter in a field submits it and never goes back.
 - **A job step** uses the same three slots. Its jobs, `.install-jobs`, share the
   steps' marker slot: `.pending` muted, `.running` followed by the one
@@ -772,10 +772,12 @@ content only: no step sets a size or a spacing of its own.
   `.banner-error` beneath. A failure that waits for the person puts
   `Try again` in the commands slot.
 - No accent: nothing here moves money.
-- **The plain start screen.** The frame is the installer's alone. A kernel
-  that exists is started, or awaited, on the ordinary entry card
+- **The launch has no screen.** The frame is the installer's alone, and shows
+  only the steps the machine needs. Starting the kernel is held behind the page
+  request; only when it is slow or fails is it said, on the ordinary entry card
   (`.auth-card`): the brand, then the same `.install-jobs` list with the job in
-  hand. No title, no steps, no commands unless a job waits for `Try again`.
+  hand and its words. No title, no steps, no commands unless a job waits for
+  `Try again`.
 
 ---
 
