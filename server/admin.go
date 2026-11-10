@@ -509,7 +509,7 @@ func (s *Server) editor(schema json.RawMessage, hidden ...string) configEditor {
 
 // kernelEditor edits the kernel's file: the schema pointer and credentials_key
 // hidden; kernel_handle, the first boot's name, and listen_addr, the port this
-// UI finds its kernel by (kernel.World), read-only; each endpoint key, which
+// UI finds its kernel by (kernel.World), read-only; each model's key, which
 // the kernel gives no command-line flag, write-only and kept by its name.
 func (s *Server) kernelEditor(schema json.RawMessage) configEditor {
 	e := s.editor(schema, "$schema", "credentials_key")
@@ -518,14 +518,14 @@ func (s *Server) kernelEditor(schema json.RawMessage) configEditor {
 	return e
 }
 
-// configured is the placeholder of an endpoint key the file holds.
+// configured is the placeholder of a model key the file holds.
 const configured = "configured ✓ (replace)"
 
-// endpoints are the file's language-model endpoints, `native.llm.endpoints`,
-// each holding its `name` and the key the kernel gives no command-line flag
-// (kernel requirements, Config).
-func endpoints(cfg map[string]any) []map[string]any {
-	list, _ := getDotted(cfg, "native.llm.endpoints").([]any)
+// models are the file's language models, `native.llm.models`, each holding
+// its `name` and the key the kernel gives no command-line flag (kernel
+// requirements D17, Config).
+func models(cfg map[string]any) []map[string]any {
+	list, _ := getDotted(cfg, "native.llm.models").([]any)
 	out := make([]map[string]any, 0, len(list))
 	for _, e := range list {
 		if m, ok := e.(map[string]any); ok {
@@ -548,12 +548,12 @@ func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // configShown withholds the file's secrets from what the page shows:
-// credentials_key, and each endpoint's key, its row saying only that it holds
-// one. It returns the endpoint names that held a key.
+// credentials_key, and each model's key, its row saying only that it holds
+// one. It returns the model names that held a key.
 func configShown(cfg map[string]any) map[string]bool {
 	delete(cfg, "credentials_key")
 	keyed := map[string]bool{}
-	for _, e := range endpoints(cfg) {
+	for _, e := range models(cfg) {
 		if name, ok := e["name"].(string); ok {
 			keyed[name] = e["key"] != nil
 		}
@@ -562,10 +562,10 @@ func configShown(cfg map[string]any) map[string]bool {
 	return keyed
 }
 
-// maskKeys makes each endpoint row's key write-only, its placeholder saying so
-// where the file holds one for that endpoint's name.
+// maskKeys makes each model row's key write-only, its placeholder saying so
+// where the file holds one for that model's name.
 func maskKeys(f *Field, keyed map[string]bool) {
-	if f.Path == "/native/llm/endpoints" {
+	if f.Path == "/native/llm/models" {
 		for _, row := range f.Rows {
 			i := slices.IndexFunc(row.Fields, func(c Field) bool { return c.Name == "name" })
 			for j := range row.Fields {
@@ -583,16 +583,16 @@ func maskKeys(f *Field, keyed map[string]bool) {
 	}
 }
 
-// keepKeys keeps an endpoint key not replaced — matched by the endpoint's
-// name, never its row.
+// keepKeys keeps a model key not replaced — matched by the model's name,
+// never its row.
 func keepKeys(saved, to map[string]any) {
 	keys := map[string]any{}
-	for _, e := range endpoints(saved) {
+	for _, e := range models(saved) {
 		if name, ok := e["name"].(string); ok {
 			keys[name] = e["key"]
 		}
 	}
-	for _, e := range endpoints(to) {
+	for _, e := range models(to) {
 		name, ok := e["name"].(string)
 		if _, typed := e["key"]; ok && !typed && keys[name] != nil {
 			e["key"] = keys[name]

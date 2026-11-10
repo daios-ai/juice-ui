@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.56.0
+Version: 0.56.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.56.1.** The configuration page withheld the keys of
+> `native.llm.endpoints`, which the kernel replaced with `native.llm.models` in
+> v0.17.0, so a model's key was shown and written back as typed. The page now
+> withholds each model's key and keeps it by the model's name (§6.6). The kernel
+> release the gate installs is v0.18.1, where it was v0.16.0, whose file has the
+> old list.
 
 > **What changed in 0.56.0.** The standard size is `1rem`, 16px at the browser's
 > default, where it was 14px, so body text and every control read larger, and a text
@@ -2352,26 +2359,23 @@ kernel's secrets; an agent's `config.json` is its second instance (§6.1).
 * `kernel_handle`, decided at first boot, and `listen_addr`, the port this UI
   finds its kernel by, are read-only. The file's secrets — the keys the kernel
   gives no command-line flag: `credentials_key` and the `key` of each entry of
-  the `native.llm.endpoints` list — are never shown. `credentials_key` is kept
-  as saved. An endpoint's key is a write-only input in its own row, shown only
+  the `native.llm.models` list — are never shown. `credentials_key` is kept
+  as saved. A model's key is a write-only input in its own row, shown only
   as "configured ✓ (replace)" where the file holds one; a row added by Add
-  claims none. A key is kept by the endpoint's **name**, never its row: a typed
+  claims none. A key is kept by the model's **name**, never its row: a typed
   key replaces it, a blank one keeps the saved key of that name, a removed
-  endpoint takes its key with it, and a renamed one has none until typed.
+  model takes its key with it, and a renamed one has none until typed.
 * A field cleared is removed from the file, restoring the kernel's default; a
   blank field where the file holds an empty value is no change, since a blank
   input cannot tell the two apart. A form unchanged writes nothing.
-* **An installation upgraded from an older kernel** has no
-  `native.llm.endpoints` in its file: the kernel writes the shipped endpoints
-  only on a first boot, so it serves on its defaults while the form, filled
+* **A file without `native.llm.models`** is served on the kernel's default
+  models (the kernel writes them only on a first boot), while the form, filled
   from the file, shows an empty list. A list replaces its default whole
-  (kernel Config), so the first saved row replaces every default endpoint, and
-  the operator enters each endpoint to keep, `ollama` included, in the same
-  form. A list dropping `ollama` while the default bindings name it is refused
-  at boot and rolled back with the kernel's words; the other shipped endpoints
-  are disabled, so leaving them out changes no active native. The defaults are
-  not shown as rows: they are not the file, and an unchanged save would write
-  them.
+  (kernel Config), so the first saved row replaces every default model, and
+  the operator enters each model to keep in the same form. A list lacking a
+  model that a binding names (`chat`, `json`, `decide`, `embed`) is refused at
+  boot and rolled back with the kernel's words. The defaults are not shown as
+  rows: they are not the file, and an unchanged save would write them.
 * A save is refused if the file changed since the page was read (its SHA-256).
   Otherwise the kernel is stopped by SIGTERM to the process id in its
   `serve.lock`, once the lock shows a server holds it and only for a positive
