@@ -1,0 +1,25 @@
+Juice-UI
+Copyright (C) 2026 Pedro A. Ortega <pedro.ortega@gmail.com>
+
+Juice-UI is licensed under the Apache License, Version 2.0 (LICENSE), except
+the files below, which keep the licences they came with. REUSE.toml states the
+same file by file, and LICENSES/ holds every licence text.
+
+Copied from the juice repository, under the GNU Affero General Public License,
+version 3 only (LICENSES/AGPL-3.0-only.txt):
+
+  juicedocs/                          the kernel's documents
+  server/static/juice-logo.svg        the Juice logo
+  server/static/favicon.ico           rendered from the logo
+  server/static/apple-touch-icon.png  rendered from the logo
+
+Third-party:
+
+  server/static/htmx.min.js   htmx 1.9.12, Big Sky Software, 0BSD
+  server/static/icons.svg     Lucide icons, Lucide Icons and Contributors (ISC),
+                              some derived from Feather, Cole Bemis (MIT),
+                              with local edits
+  icons/index.json.gz         Material Icons artwork, Material Design Authors,
+                              Apache-2.0; icons/NOTICE states the changes
+  server/themes/*.ghostty     iTerm2-Color-Schemes, Mark Badolato, MIT,
+                              except paper, ink and terminal

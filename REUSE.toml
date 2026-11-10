@@ -1,0 +1,68 @@
+version = 1
+SPDX-PackageName = "juice-ui"
+SPDX-PackageSupplier = "Pedro A. Ortega <pedro.ortega@gmail.com>"
+SPDX-PackageDownloadLocation = "https://github.com/daios-ai/juice-ui"
+
+# Everything written for Juice-UI.
+[[annotations]]
+path = "**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Pedro A. Ortega <pedro.ortega@gmail.com>"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Copied from the juice repository, or rendered from what was: the kernel's
+# documents, and the name's logo with the icons rendered from it.
+[[annotations]]
+path = [
+  "juicedocs/**",
+  "server/static/juice-logo.svg",
+  "server/static/favicon.ico",
+  "server/static/apple-touch-icon.png",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Pedro A. Ortega <pedro.ortega@gmail.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# htmx 1.9.12.
+[[annotations]]
+path = "server/static/htmx.min.js"
+precedence = "override"
+SPDX-FileCopyrightText = "Big Sky Software"
+SPDX-License-Identifier = "0BSD"
+
+# The icon sprite: Lucide icons, some derived from Feather, with local edits.
+[[annotations]]
+path = "server/static/icons.svg"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Lucide Icons and Contributors",
+  "2013-present Cole Bemis",
+  "2026 Pedro A. Ortega <pedro.ortega@gmail.com>",
+]
+SPDX-License-Identifier = "ISC AND MIT"
+
+# Material Icons artwork (icons/NOTICE states the modifications).
+[[annotations]]
+path = ["icons/index.json.gz", "icons/LICENSE", "icons/NOTICE"]
+precedence = "override"
+SPDX-FileCopyrightText = "Material Design Authors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Terminal palettes from the iTerm2-Color-Schemes collection; paper, ink and
+# terminal are Juice-UI's own.
+[[annotations]]
+path = [
+  "server/themes/catppuccin-mocha.ghostty",
+  "server/themes/dracula.ghostty",
+  "server/themes/github-light.ghostty",
+  "server/themes/gruvbox-dark.ghostty",
+  "server/themes/gruvbox-light.ghostty",
+  "server/themes/nord.ghostty",
+  "server/themes/one-dark.ghostty",
+  "server/themes/rose-pine-dawn.ghostty",
+  "server/themes/rose-pine-moon.ghostty",
+  "server/themes/tokyo-night.ghostty",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2011-present Mark Badolato"
+SPDX-License-Identifier = "MIT"

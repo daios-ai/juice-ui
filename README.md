@@ -167,4 +167,11 @@ back end.
 
 ## License
 
-TBD (not yet licensed).
+Copyright (C) 2026 Pedro A. Ortega <pedro.ortega@gmail.com>.
+
+Juice-UI is licensed under the [Apache License 2.0](LICENSE). What was copied
+from the [juice](https://github.com/daios-ai/juice) repository keeps its licence,
+the [GNU AGPL 3.0 only](LICENSES/AGPL-3.0-only.txt): `juicedocs/` and the Juice
+logo, with the icons rendered from it. Third-party assets keep theirs.
+[`NOTICE`](NOTICE) lists every exception, and [`REUSE.toml`](REUSE.toml) states
+each file's licence.
