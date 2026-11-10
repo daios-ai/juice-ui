@@ -488,13 +488,13 @@ func TestLoginTabsAndNoJSFallback(t *testing.T) {
 	if strings.Contains(up, `data-panel="signup" hidden`) {
 		t.Error("?tab=signup must show the signup panel")
 	}
-	// Each auth panel's action is the single neutral .btn (color is money/danger
-	// only); a "Sign in" and a "Create account" submit exist.
-	if !strings.Contains(def, `class="btn" type="submit">Sign in<`) {
-		t.Error("sign-in panel must have a neutral .btn Sign in action")
+	// Each auth panel's action is its form's primary (grammar §5.1), never a
+	// money colour; a "Sign in" and a "Create account" submit exist.
+	if !strings.Contains(def, `class="btn-primary" type="submit">Sign in<`) {
+		t.Error("sign-in panel must have a primary Sign in action")
 	}
-	if !strings.Contains(def, `class="btn" type="submit">Create account<`) {
-		t.Error("signup panel must have a neutral .btn Create account action")
+	if !strings.Contains(def, `class="btn-primary" type="submit">Create account<`) {
+		t.Error("signup panel must have a primary Create account action")
 	}
 }
 
@@ -1707,12 +1707,9 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	body := getBody(t, cl, srv.URL+"/workshop")
 
-	// Content-first: no floating command chrome, and color stays money/danger only.
+	// Content-first: no floating command chrome.
 	if strings.Contains(body, `class="toolbar"`) {
 		t.Error("actions page must not carry a page-head toolbar")
-	}
-	if strings.Contains(body, "btn-primary") {
-		t.Error("actions page must not use the retired btn-primary tier")
 	}
 
 	// The create command is one quiet inline "+ new action" menu trigger opening
@@ -2845,7 +2842,7 @@ func taskKernel() *httptest.Server {
 // included: answering a task spends nothing of the completer's (kernel U52),
 // so the inbox reads no action to tell the two apart. The card names the
 // requester the task acts for.
-func TestInboxCompletionIsNeutral(t *testing.T) {
+func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -2856,8 +2853,8 @@ func TestInboxCompletionIsNeutral(t *testing.T) {
 	if strings.Contains(page, "btn-money") || strings.Contains(page, "Complete (") {
 		t.Errorf("no completion names an amount: %s", page)
 	}
-	if !regexp.MustCompile(`(?s)<form[^>]*action="/inbox/SP/complete".*?<button class="btn" type="submit">Complete</button>`).MatchString(page) {
-		t.Errorf("a transfer task completes with the neutral Complete: %s", page)
+	if !regexp.MustCompile(`(?s)<form[^>]*action="/inbox/SP/complete".*?<button class="btn-primary" type="submit">Complete</button>`).MatchString(page) {
+		t.Errorf("a transfer task completes with Complete, its form's primary and never a money button: %s", page)
 	}
 	if !strings.Contains(page, `name="f_/answer"`) {
 		t.Errorf("completion form must derive from allowed_input: %s", page)

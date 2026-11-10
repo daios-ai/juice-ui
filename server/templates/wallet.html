@@ -83,7 +83,7 @@
         <input id="fund-amt" name="amount" type="number" min="0" step="{{amountStep}}" required class="input-sm">
       </div>
       <div class="cluster">
-        <button class="btn" type="submit">Review</button>
+        <button class="btn-primary" type="submit">Review</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
@@ -120,7 +120,7 @@
       </div>
       <div class="field"><label for="wd-why">Reason (optional)</label><input id="wd-why" name="reason" type="text"></div>
       <div class="cluster">
-        <button class="btn" type="submit">Review</button>
+        <button class="btn-primary" type="submit">Review</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
@@ -162,7 +162,7 @@
     <form class="stack" method="get" action="/wallet" data-wallet-step>
       <input type="hidden" name="form" value="address">
       <div class="field"><label for="ad-step">Address<span class="req">*</span></label><input id="ad-step" name="address" type="text" class="mono" required></div>
-      <div class="cluster"><button class="btn" type="submit">Next</button></div>
+      <div class="cluster"><button class="btn-primary" type="submit">Next</button></div>
     </form>
     {{end}}
     <form class="stack" method="post" action="/wallet/address">
@@ -174,7 +174,7 @@
         <input id="ad-pw" name="current_password" type="password" autocomplete="current-password" required>
       </div>
       <div class="cluster">
-        <button class="btn" type="submit">Register</button>
+        <button class="btn-primary" type="submit">Register</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>

@@ -11,6 +11,6 @@
   <input type="hidden" name="version" value="{{$d.Version}}">
   {{if not $d.Form.UseRawFallback}}{{template "_json_switch"}}{{end}}
   {{template "_form_fields" $d.Form}}
-  <div class="cluster"><button class="btn" type="submit">Save and restart</button></div>
+  <div class="cluster"><button class="btn-primary" type="submit">Save and restart</button></div>
 </form>
 {{end}}

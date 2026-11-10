@@ -104,8 +104,8 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 		t.Error("/admin must not show the 'This kernel' identity (it lives on /admin/peers)")
 	}
 	// Content-first: no floating command chrome; credits are quiet inline commands.
-	if strings.Contains(body, `class="toolbar"`) || strings.Contains(body, "btn-primary") {
-		t.Error("/admin must not carry a page-head toolbar or btn-primary")
+	if strings.Contains(body, `class="toolbar"`) {
+		t.Error("/admin must not carry a page-head toolbar")
 	}
 	if !strings.Contains(body, "?form=admin-deposit") {
 		t.Error("/admin must offer the deposit command inline")
@@ -962,7 +962,7 @@ func TestAdminConfigPage(t *testing.T) {
 		`name="f_/native/llm/models/1/key" type="password"`, `name="f_/native/llm/models/2/key" type="password" autocomplete="off">`,
 		`fee_bps&#34;: 2000`,
 		`data-to-json="/admin/config/json" data-to-form="/admin/config/form"`,
-		`<button class="btn" type="submit">Save and restart</button>`,
+		`<button class="btn-primary" type="submit">Save and restart</button>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)

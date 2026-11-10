@@ -2289,7 +2289,7 @@ func TestCompleteFormCarriesDeclineInItsRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	if !regexp.MustCompile(`(?s)<div class="cluster">\s*<button class="btn" type="submit">Complete</button>\s*<button class="btn-danger" type="submit" form="decline-T7">Decline</button>`).MatchString(body) {
+	if !regexp.MustCompile(`(?s)<div class="cluster">\s*<button class="btn-primary" type="submit">Complete</button>\s*<button class="btn-danger" type="submit" form="decline-T7">Decline</button>`).MatchString(body) {
 		t.Errorf("Decline must follow Complete in one row: %s", body)
 	}
 	if !regexp.MustCompile(`(?s)</form>\s*<form id="decline-T7" method="post" action="/inbox/T7/cancel" data-confirm="Decline this task\?">`).MatchString(body) {

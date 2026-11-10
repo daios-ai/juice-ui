@@ -26,7 +26,7 @@
           <option value="">System default</option>
           {{range .Themes}}<option value="{{.Slug}}"{{if eq $.Theme .Slug}} selected{{end}}>{{.Name}}</option>{{end}}
         </select>
-        <noscript><button class="btn" type="submit">Apply</button></noscript>
+        <noscript><button class="btn-primary" type="submit">Apply</button></noscript>
       </form>
     </span>
   </div>

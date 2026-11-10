@@ -49,7 +49,7 @@
     {{end}}
   </div>
   <div class="install-actions cluster">
-    <button class="btn" type="submit">{{if eq .Step "summary"}}Install{{else}}Next{{end}}</button>
+    <button class="btn-primary" type="submit">{{if eq .Step "summary"}}Install{{else}}Next{{end}}</button>
     {{if .Back}}<button class="btn" type="submit" formaction="/install/back" formnovalidate>Back</button>{{end}}
   </div>
 </form>

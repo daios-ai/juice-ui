@@ -295,7 +295,7 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
     flex-direction: column-reverse; align-items: stretch;
   }
   .modal-actions .btn, .modal-actions .btn-danger, .modal-actions .btn-money,
-  .modal-form .cluster:last-child .btn, .modal-form .cluster:last-child .btn-money {
+  .modal-form .cluster:last-child :is(.btn, .btn-primary, .btn-money) {
     width: 100%;
   }
 }
@@ -314,7 +314,7 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .kernel-fp .ico { width: var(--icon-sm); height: var(--icon-sm); }
 .auth-card .tabs .tab { flex: 1; text-align: center; } /* entry tabs fill the card width */
 .auth-panel[hidden] { display: none; }
-.auth-panel .btn { width: 100%; }
+.auth-panel :is(.btn, .btn-primary) { width: 100%; }
 .auth-card-wide { max-width: 460px; } /* the recovery-phrase card holds a word grid */
 /* The installer (grammar §5.14): one frame for every step. Its head; the
    sequence's steps on the side, each a marker slot (its number, or a tick once
@@ -352,7 +352,7 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 /* Recovery phrase: the twelve words as plain monospace rows (three per line, read
    left-to-right) inside one box — no numbering, no per-word chrome. */
 .phrase-grid { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2) var(--space-3); margin: var(--space-4) 0; padding: var(--space-4); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s); font-family: var(--font-mono); text-align: center; }
-.auth-card-wide .btn { width: 100%; }
+.auth-card-wide :is(.btn, .btn-primary) { width: 100%; }
 
 h1 { font-size: var(--font-size-2xl); margin: 0 0 var(--space-1); letter-spacing: .01em; }
 h2 { font-size: var(--font-size-xl); margin: var(--space-6) 0 var(--space-3); letter-spacing: .01em; }
@@ -465,18 +465,19 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-2xl); font-weight: 700; margin: var(--space-1) 0 0; }
 .stat a { font-size: var(--font-size-sm); color: var(--text-muted); }
 
-/* Buttons — ONE geometry (grammar §5.1). Color is reserved for the real
-   money/danger moment; everything else is the single neutral .btn, so two
-   ordinary buttons never read as "different types":
-     .btn         the one neutral button — every ordinary action & form submit
-     .btn-money   money movement (solid accent) — always names the amount
-     .btn-danger  critical (solid danger)
+/* Buttons — ONE geometry (grammar §5.1), four tiers:
+     .btn          the neutral button — every command, and every other button
+     .btn-primary  a form's default action (solid ink): the submit of a form
+                   with something to fill in or a second button to choose
+     .btn-money    money movement (solid accent) — always names the amount
+     .btn-danger   critical (solid danger)
+   Money and danger take the primary's place when they are the form's action.
    Helper: .btn-icon (icon-only, needs aria-label). */
 /* Bare <button> gets only a reset — the tier geometry below must NOT leak onto
    non-tier buttons (.menu-item, .profile-trigger, .btn-icon), or it
    centers their content. */
 button { font-family: inherit; cursor: pointer; }
-.btn, .btn-money, .btn-danger {
+.btn, .btn-primary, .btn-money, .btn-danger {
   font-family: inherit; font-size: var(--font-size-md); line-height: 1.2;
   height: var(--control-h); padding: 0 var(--space-4); border-radius: var(--radius-s);
   border: 1px solid transparent; cursor: pointer; text-decoration: none;
@@ -484,6 +485,8 @@ button { font-family: inherit; cursor: pointer; }
 }
 .btn { background: none; color: var(--text); border-color: var(--border-strong); font-weight: 500; }
 .btn:hover { border-color: var(--text-muted); text-decoration: none; }
+.btn-primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+.btn-primary:hover { filter: brightness(1.15); text-decoration: none; }
 .btn-money { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); font-weight: 600; }
 .btn-money:hover { background: var(--accent-hover); border-color: var(--accent-hover); text-decoration: none; }
 .btn-danger { background: var(--danger); color: var(--danger-contrast); border-color: var(--danger); font-weight: 600; }
@@ -783,7 +786,7 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .btn, .btn-money, .btn-danger { transition: border-color .14s ease, background .14s ease, transform .14s ease; }
+  .btn, .btn-primary, .btn-money, .btn-danger { transition: border-color .14s ease, background .14s ease, transform .14s ease; }
 }
 @media (max-width: 720px) {
   .hero { grid-template-columns: minmax(0, 1fr); }

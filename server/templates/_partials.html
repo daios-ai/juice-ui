@@ -433,7 +433,7 @@
          when the task was made (requirements.md §6.3). A paid run names its
          price. */}}
     {{$spend := and (gt .Price 0) (not .OneShot)}}
-    <button class="{{if $spend}}btn-money{{else}}btn{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{moneyExact .Price}}){{end}}</button>
+    <button class="{{if $spend}}btn-money{{else}}btn-primary{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{moneyExact .Price}}){{end}}</button>
     {{if .DeclineID}}{{template "_decline_button" .DeclineID}}{{end}}
     {{template "_progress" (progress (printf "%s-progress" .ResultID) "Running…")}}
   </div>

@@ -17,7 +17,7 @@ import (
 // inline style, so the visual grammar cannot silently rot again.
 
 var allowedButtonClasses = map[string]bool{
-	"btn": true, "btn-money": true, "btn-danger": true,
+	"btn": true, "btn-primary": true, "btn-money": true, "btn-danger": true, // btn-primary: a form's action alone (TestAFormsActionIsItsPrimary)
 	"btn-icon": true, "btn-send": true, // btn-send: the composer bar's alone (TestComposerIsTheOneException)
 }
 
@@ -51,7 +51,7 @@ func TestTemplatesUseOnlyGrammarButtons(t *testing.T) {
 			cleaned := tmplActionRe.ReplaceAllString(m[1], " ")
 			for _, tok := range strings.Fields(cleaned) {
 				if strings.HasPrefix(tok, "btn") && !allowedButtonClasses[tok] {
-					t.Errorf("%s: off-grammar button class %q in class=%q (allowed: btn, btn-money, btn-danger, btn-icon, btn-send)", f, tok, m[1])
+					t.Errorf("%s: off-grammar button class %q in class=%q (allowed: btn, btn-primary, btn-money, btn-danger, btn-icon, btn-send)", f, tok, m[1])
 				}
 			}
 		}
@@ -80,18 +80,15 @@ func TestNoTypedIcons(t *testing.T) {
 }
 
 // TestNoFloatingCommandChrome enforces the content-first pull-back: the
-// page-head carries no command cluster, so the retired .toolbar component and
-// the retired .btn-primary tier must never reappear in a template. Commands are
-// quiet and inline; color is reserved for money (.btn-money) and danger.
+// page-head carries no command cluster, so the retired .toolbar component must
+// never reappear in a template. Commands are quiet and inline; the one solid
+// non-money button is a form's own action (TestAFormsActionIsItsPrimary).
 func TestNoFloatingCommandChrome(t *testing.T) {
 	files, _ := fs.Glob(tmplFS, "templates/*.html")
 	for _, f := range files {
 		src := string(mustRead(t, f))
 		if strings.Contains(src, `class="toolbar"`) {
 			t.Errorf("%s: retired .toolbar — put commands inline with their content", f)
-		}
-		if strings.Contains(src, "btn-primary") {
-			t.Errorf("%s: retired .btn-primary — use the single neutral .btn (color is money/danger only)", f)
 		}
 	}
 }
@@ -493,14 +490,14 @@ func TestAppTemplatesFollowGrammar(t *testing.T) {
 			cleaned := tmplActionRe.ReplaceAllString(m[1], " ")
 			for _, tok := range strings.Fields(cleaned) {
 				if strings.HasPrefix(tok, "btn") && !allowedButtonClasses[tok] {
-					t.Errorf("%s: off-grammar button class %q (allowed: btn, btn-money, btn-danger, btn-icon, btn-send)", f, tok)
+					t.Errorf("%s: off-grammar button class %q (allowed: btn, btn-primary, btn-money, btn-danger, btn-icon, btn-send)", f, tok)
 				}
 			}
 		}
 		if tables, wrapped := len(tableRe.FindAllString(src, -1)), len(wrapRe.FindAllString(src, -1)); tables != wrapped {
 			t.Errorf("%s: %d <table> but %d wrapped in .table-scroll", f, tables, wrapped)
 		}
-		for _, bad := range []string{`class="toolbar"`, "btn-primary", "linkbar", "auth-tab"} {
+		for _, bad := range []string{`class="toolbar"`, "linkbar", "auth-tab"} {
 			if strings.Contains(src, bad) {
 				t.Errorf("%s: retired component %q must not reappear", f, bad)
 			}
@@ -762,6 +759,68 @@ func TestButtonsHaveOneGeometryAndOneLook(t *testing.T) {
 			t.Fatal(err)
 		}
 		check(f, string(b))
+	}
+}
+
+// A form's action is its primary (grammar §5.1): a form with something to fill
+// in, or a second button to choose, has its first submit solid — the primary
+// in ink, or money or danger in their colours — and a form with a lone button
+// and nothing to fill is a command, never a primary. Icon-only submits (a
+// rating's thumbs) are not a form's action.
+func TestAFormsActionIsItsPrimary(t *testing.T) {
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	outside, _ := outsideTemplates()
+	formRe := regexp.MustCompile(`(?s)<form\b[^>]*>(.*?)</form>`)
+	buttonRe := regexp.MustCompile(`<button\b([^>]*)>`)
+	fieldRe := regexp.MustCompile(`<input\b[^>]*>|<select\b|<textarea\b|\{\{template "_form_fields"`)
+	notField := regexp.MustCompile(`type="(hidden|checkbox)"`)
+	solid := regexp.MustCompile(`btn-(primary|money|danger)\b`)
+	checked := 0
+	for _, f := range append(core, outside...) {
+		b, err := fs.ReadFile(tmplFS, f)
+		if err != nil {
+			b, err = os.ReadFile(f)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range formRe.FindAllStringSubmatch(string(b), -1) {
+			body := m[1]
+			var buttons, submits []string
+			for _, bm := range buttonRe.FindAllStringSubmatch(body, -1) {
+				if strings.Contains(bm[1], "btn-icon") || strings.Contains(bm[1], "btn-send") || strings.Contains(bm[1], "menu-item") {
+					continue
+				}
+				buttons = append(buttons, bm[1])
+				if !strings.Contains(bm[1], `type="button"`) {
+					submits = append(submits, bm[1])
+				}
+			}
+			if len(submits) == 0 {
+				continue
+			}
+			fields := false
+			for _, fm := range fieldRe.FindAllStringSubmatch(body, -1) {
+				fields = fields || !notField.MatchString(fm[0])
+			}
+			chooses := len(buttons) >= 2 && !strings.Contains(body, "{{else}}<button")
+			if fields || chooses {
+				checked++
+				if !solid.MatchString(submits[0]) {
+					t.Errorf("%s: a form's action is its primary (grammar §5.1): %s", f, strings.TrimSpace(submits[0]))
+				}
+				for _, s := range submits[1:] {
+					if strings.Contains(s, "btn-primary") {
+						t.Errorf("%s: one primary per form: %s", f, strings.TrimSpace(s))
+					}
+				}
+			} else if strings.Contains(strings.Join(buttons, " "), "btn-primary") {
+				t.Errorf("%s: a lone command with nothing to fill stays neutral: %s", f, strings.TrimSpace(submits[0]))
+			}
+		}
+	}
+	if checked < 20 {
+		t.Errorf("only %d forms checked: the scan has lost its forms", checked)
 	}
 }
 

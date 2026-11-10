@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.59.0
+Version: 0.60.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.60.0.** A form's default action, the button Enter presses,
+> is solid ink, as in the established design systems: the submit of every form
+> that has something to fill in or offers a second button (Next and Install in
+> the installer, Save, Create, Sign in, Search, a task's Complete). Every other
+> button stays outlined, and money and danger keep their colours (§7, grammar
+> §5.1).
 
 > **What changed in 0.59.0.** One rule decides a launch: an installation that is
 > complete opens the UI, and one that is not runs the installer, which shows only
@@ -1974,8 +1981,8 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   §8 defer here.** Answering a task spends nothing of the person who answers
   it (kernel U52): its price was parked by whoever created it, and a transfer
   task's value was reserved from its requester at creation and is paid on
-  completion. The completion control is therefore a **neutral `Complete`**
-  naming **no** amount, with no funds-mechanics narration — a `verb (N)` money
+  completion. The completion control is therefore **`Complete`, never a money
+  button**, naming **no** amount (the form's primary, in solid ink, §7), with no funds-mechanics narration — a `verb (N)` money
   button here would state a spend that does not happen. The card names only
   *who asks* and *what* and shows the sealed `partial_args` as an inert
   read-only detail. No action is read to decide how a task renders.
@@ -2811,7 +2818,10 @@ imports its live rooms, members and messages once and never writes that file.
 * **Button vocabulary (closed set).** Spend: the accent, solid, names the amount
   as `verb (N)` (e.g. "Run (1.234567 USDC)") — the exact amount (§7), since the
   button commits it (`Deposit (N)`, `Withdraw (N)`). Primary
-  non-spend: solid ink. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
+  non-spend: solid ink, the default action of a form that has something to fill
+  in or offers a second button, one per form, its first submit (grammar §5.1);
+  a lone button on a form with nothing to fill is a command and stays
+  secondary. Secondary: outline/ghost. Destructive: maroon, distinct from the accent —
   Delete, Disable, Decline, and force-end; force-end MUST name the refund, not a
   price. No other button styles exist. (A task completion is the neutral
   `Complete` naming no amount, §6.3.)

@@ -71,7 +71,7 @@
         <option value="local"{{if $d.Action.IsLocal}} selected{{end}}>local</option>
         <option value="public"{{if $d.Action.IsPublic}} selected{{end}}>public</option>
       </select>
-      <button class="btn" type="submit">Set visibility</button>
+      <button class="btn-primary" type="submit">Set visibility</button>
     </form>
     <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
     <form method="post" action="/actions/delete" data-confirm="Delete this action?">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn-danger" type="submit">Delete</button></form>
@@ -106,7 +106,7 @@
       </div>
       {{template "_form_schemas" $e}}
       <div class="cluster">
-        <button class="btn" type="submit">Save changes</button>
+        <button class="btn-primary" type="submit">Save changes</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
@@ -115,7 +115,7 @@
       {{$.CSRFField}}
       <label for="new-price" class="flush">Price only</label>
       <input id="new-price" name="price" type="number" min="0" step="{{amountStep}}" value="{{amountInput $d.Action.Price}}" class="input-sm">
-      <button class="btn" type="submit">Update price</button>
+      <button class="btn-primary" type="submit">Update price</button>
     </form>
   </div>
 </dialog>

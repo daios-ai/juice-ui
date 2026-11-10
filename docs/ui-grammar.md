@@ -239,20 +239,26 @@ templates.
 
 ## 5. Components
 
-### 5.1 Buttons — one neutral, plus money & danger
+### 5.1 Buttons — neutral, primary, money & danger
 
 All buttons share **one geometry** (padding, height, radius, font-size); the
 height is `--control-h`, the same as every input's.
-**Color is reserved for the real money/danger moment**; everything else is the
-single neutral `.btn`, so two ordinary buttons never read as "different types."
+**Fill marks the one action a form is for.** As in the established systems
+(Material's filled button, Apple's default button, GOV.UK's primary), a form's
+default action is solid and every other button is outlined: solid ink when it
+moves no money and destroys nothing, the accent when it moves money, danger when
+it destroys. So one form never shows two solid buttons for its own action, and
+two ordinary buttons side by side never read as "different types" except where
+one is the action Enter presses.
 
 | Class | Tier | Fill | Use |
 |---|---|---|---|
-| `.btn` | **the one neutral** | transparent + border, weight 500 | every ordinary action & form submit: create, save, import, unimport, complete (unpaid), update, sign in, search, inspect, navigate, add-row, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
+| `.btn-primary` | **a form's default action** (solid ink) | `--text` / `--bg`, weight 600 | the submit of a form that has something to fill in or offers a second button: the action Enter presses (`Save changes`, `Create action`, `Sign in`, `Search`, `Next`, `Install`). One per form, the form's first submit. A form with one button and nothing to fill is a command and stays `.btn` |
+| `.btn` | **the neutral** | transparent + border, weight 500 | every other button: a command standing alone (approve, start, stop, inspect, rename…), navigation, add-row, `Back`, and **Cancel** — always `<button type="button" class="btn" data-modal-close>`, never a link (the dialog's × link is the no-JS way out; `TestCancelIsOneButton`) |
 | `.btn-money` | **money movement** (solid accent) | `--accent` / `--accent-contrast`, weight 600 | run/pay, deposit, withdraw, and a priced planner's `Choose for me (N)` — **names the amount in parens** as `verb (N)` (e.g. `Run (12)`, `Synthesize (20)`); the accent color conveys it's credits, so **no credit glyph on the button**. An **ordinary task completion is NOT a money button** — it is the neutral `.btn` reading `Complete` (no amount): the completer does the work, but the money was reserved by the task's creator, so `Complete (N)` would falsely read as "you pay N". A **payment task** (its target bears the kernel's `effect="transfer"`, requirements.md §6.3) IS a spend of the completer's own balance and uses `.btn-money` naming the all-in amount |
 | `.btn-danger` | **critical** (solid danger) | `--danger` / `--danger-contrast`, weight 600 | delete, suspend, force-end, decline a task |
 | `.btn-icon` | icon-only | — | icon buttons, a `--control-h` square; **MUST carry `aria-label`**. `.btn-icon.inline`, borderless and muted at `--space-5`, inside a row or a line of text (a row's menu trigger, the copy control) |
-| `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, the one ink-filled control in the interface, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
+| `.btn-send` | the composer's send (room alone) | `--text` / `--bg`, round, icon-only | the bar's one primary act, `.btn-primary`'s fill in the composer's round icon form, part of the composer exception; disabled while the box is empty. Never the accent: sending moves no money |
 
 **One geometry, one row, one look.**
 - No size modifier exists: every button, in a table cell or a card, has the
@@ -267,6 +273,10 @@ single neutral `.btn`, so two ordinary buttons never read as "different types."
   `_end` partial; `End` alone when nothing is refunded). There is no
   quiet-danger tier.
 - `TestButtonsHaveOneGeometryAndOneLook` enforces this on every template.
+- `TestAFormsActionIsItsPrimary` holds the primary rule on every form: one with
+  something to fill in or a second button has its first submit solid
+  (`.btn-primary`, `.btn-money` or `.btn-danger`), and one with a lone button
+  and nothing to fill has no `.btn-primary`.
 
 **Rules.** These are the *only* button styles. The money tier is the **authorizing
 control** — the form submit that actually moves credits (`Run (12)`,
@@ -357,7 +367,7 @@ separates it from the content above, and nothing else does (§4).
   (action run **and** task completion), always inline (never a modal): optional
   **locked block** (a task's pre-bound args as the view, `.view.locked`,
   no verbal label — the sealed half of the form), the **editable input**, **one
-  button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's neutral `Complete`; a payment task's money button, §5.1)
+  button** (a paid run's `Run (N)` money button, §5.1; an ordinary task's `Complete`, the form's primary and never a money button; a payment task's money button, §5.1)
   with `_progress` + `hx-disabled-elt`, then the **result attached below**
   (`.outcome`, never nested). Tasks are **one-shot** (`data-oneshot`); actions repeat.
   The form's **tools** stand in its top row above the fields they act on

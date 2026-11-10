@@ -52,7 +52,7 @@
         <input id="room-name" type="text" name="name" value="{{.Name}}">
       </div>
       <div class="cluster">
-        <button class="btn" type="submit">Start</button>
+        <button class="btn-primary" type="submit">Start</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>
@@ -73,7 +73,7 @@
         <label for="rename-name">Name</label>
         <input id="rename-name" type="text" name="name" value="{{.Name}}" required autofocus>
       </div>
-      <button class="btn" type="submit">Rename</button>
+      <button class="btn-primary" type="submit">Rename</button>
     </form>
   </div>
   {{end}}
@@ -100,7 +100,7 @@
         <label for="add-member-address">Address</label>
         <input id="add-member-address" type="text" name="member" class="mono" placeholder="handle{{"@"}}kernel" value="{{.Typed}}" required>
       </div>
-      <button class="btn" type="submit">Add member</button>
+      <button class="btn-primary" type="submit">Add member</button>
     </form>
     {{end}}
   </div>

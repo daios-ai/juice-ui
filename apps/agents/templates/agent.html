@@ -44,7 +44,7 @@
   <input type="hidden" name="version" value="{{$d.Version}}">
   {{if not $d.Config.UseRawFallback}}{{template "_json_switch"}}{{end}}
   {{template "_form_fields" $d.Config}}
-  <div class="cluster"><button class="btn" type="submit">Save</button></div>
+  <div class="cluster"><button class="btn-primary" type="submit">Save</button></div>
 </form>
 
 {{if not $d.Running}}
@@ -64,7 +64,7 @@
         <label for="start-password">Kernel password</label>
         <input id="start-password" type="password" name="password" autocomplete="current-password" required>
       </div>
-      <button class="btn" type="submit">Start</button>
+      <button class="btn-primary" type="submit">Start</button>
     </form>
   </div>
 </dialog>
@@ -76,7 +76,7 @@
     <form class="stack" method="post" action="/agents/{{$h}}/files/agent.md">
       {{.CSRFField}}
       <div class="field"><textarea name="content" rows="1" aria-label="agent.md">{{$d.Agent}}</textarea></div>
-      <button class="btn" type="submit">Save</button>
+      <button class="btn-primary" type="submit">Save</button>
     </form>
   </div>
 </dialog>
