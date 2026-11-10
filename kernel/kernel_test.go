@@ -624,6 +624,25 @@ func TestEnsureInstallsEachComponentByOneRule(t *testing.T) {
 	}
 }
 
+// A booted kernel home not yet declared to the supervisor (one made before the
+// supervisor, or by the command line) has its older agent replaced in the round
+// that declares it: whether the kernel was declared is read before this round
+// declares it, so the declaration cannot shut the replacement out.
+func TestEnsureReplacesAnOlderAgentBeforeTheFirstDeclaration(t *testing.T) {
+	var up atomic.Bool
+	p := &fakePrograms{onStart: func(supervisor.Program) supervisor.Status { up.Store(true); return supervisor.Status{Running: true} }}
+	i := &Installation{Home: t.TempDir(), URL: health(t, &up), Programs: p, Releases: releases(t, nil, nil).URL}
+	installFake(t, i)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice-agent"), []byte(strings.Replace(fakeAgent, "v9.9.9", "v0.1.0", 1)), 0o755)
+	writeHome(t, i, "play", "127.0.0.1:"+i.URL.Port())
+	booted(t, i, "play")
+	var seen []State
+	i.Ensure(context.Background(), func(s State, _ string) { seen = append(seen, s) })
+	if strings.Join(stateStrings(seen), ",") != "installing,serving" || i.version("juice-agent") != "v9.9.9" || p.sets != 1 {
+		t.Errorf("states %v, agent %s, declared %d", seen, i.version("juice-agent"), p.sets)
+	}
+}
+
 // A booted home is declared to the supervisor, with no secret, and never offered
 // the first boot; a kernel whose config.json is unreadable is a failure, never a
 // first boot either.

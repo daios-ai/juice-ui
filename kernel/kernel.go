@@ -662,6 +662,16 @@ func (i *Installation) declare(world string, booted bool) (supervisor.Status, bo
 	return i.Programs.Status(name)
 }
 
+// declared reports whether the supervisor already holds this installation's
+// kernel, declaring nothing.
+func (i *Installation) declared(world string, booted bool) bool {
+	if !i.Local() || !booted || i.Programs == nil {
+		return false
+	}
+	_, ok := i.Programs.Status(programName(world))
+	return ok
+}
+
 // due is the first component this installation lacks, in the order of
 // Components: one missing from bin/, or, while no kernel is declared, one older
 // than its release (an older kernel would ignore the recovery key a first boot
@@ -706,10 +716,14 @@ func (i *Installation) Ensure(ctx context.Context, report func(State, string)) {
 	for {
 		i.boot.Lock()
 		world, booted, err := i.home()
+		// Whether the kernel was declared is read before this round may declare
+		// it, so a first declaration cannot shut out a component it should
+		// replace.
+		before := i.declared(world, booted && err == nil)
 		st, declared := i.declare(world, booted && err == nil)
 		answers := i.Serving(ctx)
 		serving := answers && (!declared || st.Running || st.Disabled)
-		c, due := i.due(declared, answers)
+		c, due := i.due(before, answers)
 		i.boot.Unlock()
 		pause := time.Second
 		switch {

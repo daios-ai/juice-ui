@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.57.0
+Version: 0.57.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.57.1.** A booted kernel the supervisor had not yet been
+> given, one made before the supervisor or at the command line, kept an older
+> agent: the round that declared it read the kernel as declared and replaced
+> nothing. Whether the kernel was declared is now read before that round
+> declares it (§1).
 
 > **What changed in 0.57.0.** Juice-UI installs with one command, `install.sh`,
 > which puts its three programs in `$JUICE_HOME/bin` from one verified release
