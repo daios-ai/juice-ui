@@ -403,6 +403,7 @@ func (in *Installer) Behind(app http.Handler) http.Handler {
 // view is what a step renders.
 type view struct {
 	Steps                    []stepView
+	At                       int // the current step's place, from 1; 0 with no sequence
 	Step, Title              string
 	Page, Back, Local, Ended bool
 	Error, URL, Command      string
@@ -415,7 +416,10 @@ type view struct {
 	Phrase                   string
 }
 
-type stepView struct{ Title, State string } // State: "done", "current", "todo"
+type stepView struct { // State: "done", "current", "todo"
+	N            int
+	Title, State string
+}
 
 // view builds the current step's view, under mu.
 func (in *Installer) view(r *http.Request) view {
@@ -428,7 +432,10 @@ func (in *Installer) view(r *http.Request) view {
 		} else if n == in.at {
 			s = "current"
 		}
-		v.Steps = append(v.Steps, stepView{Title: st.Title, State: s})
+		v.Steps = append(v.Steps, stepView{N: n + 1, Title: st.Title, State: s})
+	}
+	if len(in.seq) > 0 {
+		v.At = min(in.at+1, len(in.seq))
 	}
 	if in.seq == nil {
 		return v // not chosen yet: the fragment polls until it is

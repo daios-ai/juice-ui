@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.58.1
+Version: 0.58.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.58.2.** The installer's proportions follow one system
+> (grammar §5.14): one frame for every step, with a head, numbered steps at a
+> fixed width and three slots per step (heading, content, commands at the foot),
+> every measure taken from the spacing scale. The card keeps its size from step
+> to step, and a phone shows "Step 3 of 7" in place of the list. A banner's
+> sentence wraps beside its icon.
 
 > **What changed in 0.58.1.** An installation whose `kernels/` could not be read
 > counted as fresh, so an older binary could be replaced under a kernel nobody
@@ -1024,9 +1031,11 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
 * **Done** offers **Open Juice**, which ends the sequence. The Start and Wait
   sequences end by themselves once the kernel answers.
 
-Every step renders in one frame headed Juice installation: the sequence's steps
-on the side (above them on a narrow screen), done ones ticked and the current
-one marked, and the step beside them. A job step lists its jobs, each pending,
+Every step renders in one frame headed Juice installation (grammar §5.14): the
+sequence's numbered steps on the side, done ones ticked and the current one
+marked, and beside them the step, in three slots: its heading, its content and
+its commands at the foot. On a narrow screen one line, "Step 3 of 7", stands in
+for the list. A step supplies content only; no step sets a size of its own. A job step lists its jobs, each pending,
 running (the in-flight bar), done or failed with its words, and is polled every
 2 s until the step changes. The server holds the position and the answers, so
 every path renders the current step: a reload, a second tab or a back-navigation

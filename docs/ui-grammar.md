@@ -743,20 +743,33 @@ obligations above.
   **outside** it (the media is in the hero; the run form and its money control are
   a separate section below).
 
-### 5.14 Steps (the installer)
+### 5.14 The installer's frame
 
-- The installer's one frame is an entry card, `.auth-card.auth-card-install`,
-  holding `.install-body`: the sequence's steps, `.install-steps`, on the side
-  (a wrapping row above the step on a narrow screen), and the current step
-  beside them. A step is `.done` (ticked with `#check`), current
-  (`aria-current="step"`, its title weighted) or to come, muted.
-- A job step lists its jobs in `.install-jobs`, each `.pending` (muted),
-  `.running` (the one in-flight `.progress` bar, with the job's title), `.done`
-  (ticked) or `.failed` (its words in a `.banner-error` beneath). A failure
-  that waits for the person adds one `Try again` button.
-- A page is a `.stack` form of ordinary `.field`s with one row of commands:
-  `Back` where the page offers it, then `Next` (`Install` on the summary,
-  `Open Juice` on the last). No accent: nothing here moves money.
+Every step of the installer renders in **one frame**, and a step supplies
+content only: no step sets a size or a spacing of its own.
+
+- **The frame** is an entry card, `.auth-card.auth-card-install`, padded
+  `--space-6` (`--space-4` on a narrow screen). `.install-head` holds the brand
+  and the title over a hairline. `.install-body` is two columns, the steps
+  (five `--space-6` wide) and the step, `--space-6` apart, with a minimum height
+  of thirteen `--control-h`, so the card keeps its size from step to step.
+- **The steps**, `.install-steps`: each is a marker slot (`--space-5`) and its
+  title on a `--space-5` line. The slot holds the step's number
+  (`.install-mark`), or the `#check` tick once `.done`; the current step
+  (`aria-current="step"`) is weighted, the ones to come muted. On a narrow
+  screen the list gives way to one line, `.install-at`, "Step 3 of 7".
+- **A step**, `.install-step`, fills three slots `--space-5` apart: its heading
+  (an `h2` on the steps' line height, so the two columns start level), its
+  content (`.install-content`, a `.stack` of ordinary `.field`s, a `.kv` or
+  text), and its commands (`.install-actions`, a `.cluster` over a hairline,
+  held at the foot, primary first as in §5.1: `Next`, `Install` or
+  `Open Juice`, then `Back`).
+- **A job step** uses the same three slots. Its jobs, `.install-jobs`, share the
+  steps' marker slot: `.pending` muted, `.running` followed by the one
+  in-flight `.progress` bar, `.done` ticked, `.failed` with its words in a
+  `.banner-error` beneath. A failure that waits for the person puts
+  `Try again` in the commands slot.
+- No accent: nothing here moves money.
 
 ---
 

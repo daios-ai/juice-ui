@@ -1,15 +1,19 @@
 {{define "content"}}
-{{/* The installer (requirements.md §1): the sequence's steps on the side, the
-     current step beside them. Every path is this page until the sequence ends. */}}
+{{/* The installer (requirements.md §1; grammar §5.14): one frame for every
+     step. The head, the sequence's steps on the side, and the current step,
+     which fills three slots: its heading, its content, its commands. */}}
 <div class="auth">
   <div class="card auth-card auth-card-install">
-    <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
-    <h1>Juice installation</h1>
+    <div class="install-head">
+      <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
+      <h1>Juice installation</h1>
+    </div>
     <div class="install-body">
       <ol class="install-steps">{{range .Data.Steps}}
-        <li class="{{.State}}"{{if eq .State "current"}} aria-current="step"{{end}}>{{if eq .State "done"}}<svg class="ico" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{end}}{{.Title}}</li>{{end}}
+        <li class="{{.State}}"{{if eq .State "current"}} aria-current="step"{{end}}>{{if eq .State "done"}}<svg class="ico" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{else}}<span class="install-mark" aria-hidden="true">{{.N}}</span>{{end}}<span>{{.Title}}</span></li>{{end}}
       </ol>
-      <div class="install-step">{{template "_install_step" .Data}}</div>
+      {{if .Data.At}}<p class="install-at muted small flush">Step {{.Data.At}} of {{len .Data.Steps}}</p>{{end}}
+      {{template "_install_step" .Data}}
     </div>
   </div>
 </div>

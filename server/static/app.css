@@ -316,23 +316,35 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .auth-panel[hidden] { display: none; }
 .auth-panel .btn { width: 100%; }
 .auth-card-wide { max-width: 460px; } /* the recovery-phrase card holds a word grid */
-/* The installer: the sequence's steps on the side, done ones ticked and the
-   current one marked; the step beside them; a job step's jobs, each pending,
-   running (the in-flight bar), done or failed. One column on a narrow screen. */
-.auth-card-install { max-width: 720px; }
-.install-body { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-6); margin-top: var(--space-4); }
-.install-steps, .install-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-.install-steps li, .install-jobs li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.install-steps li { color: var(--text-muted); }
-.install-steps li:not(.done), .install-jobs li.pending, .install-jobs li.failed { padding-left: calc(var(--icon-md) + var(--space-2)); }
+/* The installer (grammar §5.14): one frame for every step. Its head; the
+   sequence's steps on the side, each a marker slot (its number, or a tick once
+   done) and its title; and the current step in three slots: heading, content,
+   commands, the commands held at the foot. A job step's jobs use the same
+   marker slot. Every size derives from the spacing scale and the control
+   height, so no step sets its own. On a narrow screen the steps give way to
+   one line naming the place. */
+.auth-card-install.card { max-width: 720px; padding: var(--space-6); }
+.install-head { padding-bottom: var(--space-5); margin-bottom: var(--space-5); border-bottom: 1px solid var(--border); }
+.install-head h1 { margin: var(--space-2) 0 0; }
+.install-body { display: grid; grid-template-columns: calc(var(--space-6) * 5) minmax(0, 1fr); gap: var(--space-6); min-height: calc(var(--control-h) * 13); }
+.install-steps, .install-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.install-steps li, .install-jobs li { display: grid; grid-template-columns: var(--space-5) auto minmax(0, 1fr); column-gap: 0; align-items: center; line-height: var(--space-5); }
+.install-jobs li > .progress { margin-left: var(--space-3); }
+.install-steps li, .install-jobs li.pending { color: var(--text-muted); }
 .install-steps li.done, .install-steps li[aria-current] { color: var(--text); }
 .install-steps li[aria-current] { font-weight: 600; }
-.install-jobs { gap: var(--space-3); }
-.install-jobs li.pending { color: var(--text-muted); }
-.install-jobs li > .banner { flex-basis: 100%; }
+.install-mark { font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+.install-jobs li > .banner { grid-column: 2 / -1; margin-top: var(--space-2); }
+.install-at { display: none; }
+.install-step { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+.install-step > h2 { margin: 0; line-height: var(--space-5); }
+.install-content > :first-child { margin-top: 0; }
+.install-actions { margin-top: auto; padding-top: var(--space-4); border-top: 1px solid var(--border); }
 @media (max-width: 720px) {
-  .install-body { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
-  .install-steps { flex-direction: row; flex-wrap: wrap; column-gap: var(--space-4); }
+  .auth-card-install.card { padding: var(--space-4); }
+  .install-body { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-height: 0; }
+  .install-steps { display: none; }
+  .install-at { display: block; }
 }
 /* Recovery phrase: the twelve words as plain monospace rows (three per line, read
    left-to-right) inside one box — no numbering, no per-word chrome. */
@@ -645,6 +657,7 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 
 .banner { display: flex; align-items: baseline; gap: var(--space-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: var(--space-3) var(--space-4); color: var(--text-muted); }
 .banner[hidden] { display: none; }
+.banner > span { min-width: 0; overflow-wrap: anywhere; } /* a banner's sentence, beside its icon */
 .banner-error   { border-color: var(--danger); color: var(--danger); }
 .banner-info    { border-color: var(--border-strong); color: var(--text-muted); }
 .banner-success { border-color: var(--credited); color: var(--credited); }

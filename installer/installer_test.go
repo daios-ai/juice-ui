@@ -247,8 +247,8 @@ func TestAFreshInstallWalksEveryStep(t *testing.T) {
 		t.Errorf("installed %v", k.installed)
 	}
 	b := page(t, h)
-	for _, want := range []string{`aria-current="step">World`, `name="world"`, `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
-		`<option value="broken" disabled>broken</option>`, `<dt class="mono">broken</dt><dd>parse world file</dd>`, "Components</li>"} {
+	for _, want := range []string{`aria-current="step"><span class="install-mark" aria-hidden="true">2</span><span>World</span>`, "Step 2 of 7", `name="world"`, `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
+		`<option value="broken" disabled>broken</option>`, `<dt class="mono">broken</dt><dd>parse world file</dd>`, "<span>Components</span></li>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("world page lacks %q", want)
 		}
@@ -285,7 +285,7 @@ func TestAFreshInstallWalksEveryStep(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(b2, `<span>Create the kernel</span></div>`) || !strings.Contains(b2, `class="pending"`) {
+	if !strings.Contains(b2, `<span>Create the kernel</span><div class="progress htmx-request"`) || !strings.Contains(b2, `class="pending"`) {
 		t.Errorf("the job shows running, the next pending: %s", b2)
 	}
 	next(t, h, "summary", nil) // a second Install starts nothing
