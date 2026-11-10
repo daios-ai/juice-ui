@@ -101,15 +101,18 @@ type Installer struct {
 	ready chan struct{}
 	once  sync.Once
 
-	mu    sync.Mutex
-	ctx   context.Context
-	seq   []Step
-	at    int
-	run   []Job  // the current job step's jobs
-	jobs  []job  // and how each stands
-	gen   int    // the job run in progress; a run that is not the current one changes nothing
-	err   string // a page's refusal, or the words of a job that returned to it
-	world string
+	mu  sync.Mutex
+	ctx context.Context
+	seq []Step
+	at  int
+	// installing is the sequence that creates a kernel: the one shown as an
+	// installer. Starting or awaiting a kernel that exists is a plain start.
+	installing bool
+	run        []Job  // the current job step's jobs
+	jobs       []job  // and how each stands
+	gen        int    // the job run in progress; a run that is not the current one changes nothing
+	err        string // a page's refusal, or the words of a job that returned to it
+	world      string
 	handle,
 	password string // held from its page to the first boot, never rendered
 	phrase,
@@ -167,6 +170,7 @@ func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 		return nil, errors.New("couldn't set up account recovery; restart Juice to try again")
 	}
 	in.phrase, in.pub = phrase, pub
+	in.installing = true
 	return []Step{in.prepare(false, true), in.worldPage(), in.kernelPage(), in.phrasePage(),
 		in.summaryPage(), in.install(), in.donePage()}, nil
 }
@@ -402,6 +406,7 @@ func (in *Installer) Behind(app http.Handler) http.Handler {
 
 // view is what a step renders.
 type view struct {
+	Installing               bool // the installer's frame; otherwise the plain start screen
 	Steps                    []stepView
 	At                       int // the current step's place, from 1; 0 with no sequence
 	Step, Title              string
@@ -423,7 +428,7 @@ type stepView struct { // State: "done", "current", "todo"
 
 // view builds the current step's view, under mu.
 func (in *Installer) view(r *http.Request) view {
-	v := view{Local: in.local(r), URL: in.o.URL, Command: "juice kernel serve play", Error: in.err,
+	v := view{Installing: in.installing, Local: in.local(r), URL: in.o.URL, Command: "juice kernel serve play", Error: in.err,
 		Chosen: in.world, Handle: in.handle}
 	for n, st := range in.seq {
 		s := "todo"
@@ -441,7 +446,10 @@ func (in *Installer) view(r *http.Request) view {
 		return v // not chosen yet: the fragment polls until it is
 	}
 	if in.at >= len(in.seq) {
-		v.Ended = true
+		// The application is taking the listener: one job says so until the
+		// page's poll is sent on.
+		v.Ended, v.Title = true, "Done"
+		v.Jobs = []job{{Title: "Open Juice", State: "running"}}
 		return v
 	}
 	st := in.seq[in.at]
@@ -484,7 +492,11 @@ func (in *Installer) render(w http.ResponseWriter, r *http.Request, status int) 
 	in.mu.Lock()
 	v := in.view(r)
 	in.mu.Unlock()
-	_ = in.o.Chrome.Page(w, status, "install", "Juice installation", v)
+	title := "Starting"
+	if v.Installing {
+		title = "Juice installation"
+	}
+	_ = in.o.Chrome.Page(w, status, "install", title, v)
 }
 
 // getStatus is a job step's fragment, polled while it runs; once the step has

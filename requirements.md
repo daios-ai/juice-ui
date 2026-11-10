@@ -1,7 +1,12 @@
 # Juice Web UI Requirements
 
-Version: 0.58.3
+Version: 0.58.4
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.58.4.** Every start showed the installer, although only a
+> machine with no kernel installs anything. The installer's frame now appears
+> only while a kernel is being created; starting a kernel that exists, or
+> awaiting one elsewhere, shows a plain start screen with the job in hand (§1).
 
 > **What changed in 0.58.3.** In the installer, Back stands at the left of the
 > commands and the step's command at the right.
@@ -1034,7 +1039,13 @@ finish. The sequence is chosen once, at start, from facts tested in this order:
 * **Done** offers **Open Juice**, which ends the sequence. The Start and Wait
   sequences end by themselves once the kernel answers.
 
-Every step renders in one frame headed Juice installation (grammar §5.14): the
+Only the last sequence, which creates a kernel, is shown as an installer. The
+others install nothing a person decides, so they render on a **plain start
+screen**: the entry card with the brand and the jobs in hand ("Start the
+kernel", or a missing component being installed), with no installation title
+and no steps.
+
+Every step of the installer renders in one frame headed Juice installation (grammar §5.14): the
 sequence's numbered steps on the side, done ones ticked and the current one
 marked, and beside them the step, in three slots: its heading, its content and
 its commands at the foot. On a narrow screen one line, "Step 3 of 7", stands in
@@ -3023,7 +3034,9 @@ Every production `.go` file has a `_test.go` file with independent tests.
   download is retried and a failure that waits is run again by Try again; a
   followed kernel is offered no page and nothing is created; the phrase is one
   for the sequence, on its page alone, and gone when it ends; a request from
-  elsewhere sees the terminal command and may not post; the package imports
+  elsewhere sees the terminal command and may not post; a kernel that exists is
+  started on the plain start screen, with no installer title, steps or form; the
+  package imports
   nothing of this repository and only the entrypoint imports it;
 * the first boot: its child has ended when it returns and when the UI shuts down, one
   ignoring SIGTERM is killed, and a start during it neither declares the kernel

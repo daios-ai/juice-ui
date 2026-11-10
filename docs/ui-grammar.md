@@ -772,6 +772,10 @@ content only: no step sets a size or a spacing of its own.
   `.banner-error` beneath. A failure that waits for the person puts
   `Try again` in the commands slot.
 - No accent: nothing here moves money.
+- **The plain start screen.** The frame is the installer's alone. A kernel
+  that exists is started, or awaited, on the ordinary entry card
+  (`.auth-card`): the brand, then the same `.install-jobs` list with the job in
+  hand. No title, no steps, no commands unless a job waits for `Try again`.
 
 ---
 

@@ -2,6 +2,16 @@
 {{/* The installer (requirements.md §1; grammar §5.14): one frame for every
      step. The head, the sequence's steps on the side, and the current step,
      which fills three slots: its heading, its content, its commands. */}}
+{{if not .Data.Installing}}
+{{/* A kernel that exists is started, or awaited, on the plain start screen: an
+     entry card with the jobs in hand. Nothing here is an installation. */}}
+<div class="auth">
+  <div class="card auth-card">
+    <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
+    {{template "_install_jobs" .Data}}
+  </div>
+</div>
+{{else}}
 <div class="auth">
   <div class="card auth-card auth-card-install">
     <div class="install-head">
@@ -17,4 +27,5 @@
     </div>
   </div>
 </div>
+{{end}}
 {{end}}

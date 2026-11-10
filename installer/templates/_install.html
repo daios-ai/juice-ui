@@ -3,7 +3,7 @@
      A page is a form; a job step is the polled job list. A request from
      elsewhere is told the terminal command instead of a page's form. */}}
 {{define "_install_step"}}
-{{if or .Ended (not .Page)}}{{template "_install_jobs" .}}
+{{if not .Page}}{{template "_install_jobs" .}}
 {{else if not .Local}}
 <div class="install-step">
   <h2>{{.Title}}</h2>
@@ -62,7 +62,7 @@
      the step is current; the poll sends the page on once the step changes. */}}
 {{define "_install_jobs"}}
 <div id="install-status" class="install-step" hx-get="/install/status?step={{.Step}}" hx-trigger="every 2s" hx-swap="outerHTML">
-  <h2>{{if .Ended}}Opening Juice{{else if .Title}}{{.Title}}{{else}}Preparing{{end}}</h2>
+  {{if .Installing}}<h2>{{.Title}}</h2>{{end}}
   <div class="install-content stack">
     {{if .Error}}{{template "_error" .Error}}{{end}}
     {{if .Jobs}}<ol class="install-jobs">{{range .Jobs}}

@@ -35,6 +35,7 @@ type fakeKernel struct {
 	created   []string      // world handle password key, per Create
 	dueAsked  []bool
 	started   int
+	holdStart chan struct{} // Start waits on it, when set
 }
 
 func (k *fakeKernel) Local() bool { return !k.remote }
@@ -90,6 +91,9 @@ func (k *fakeKernel) Create(world, handle, password, key string) error {
 	return nil
 }
 func (k *fakeKernel) Start(context.Context) error {
+	if k.holdStart != nil {
+		<-k.holdStart
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.started++
@@ -485,6 +489,33 @@ func TestAFailedJobIsShownAndTriedAgain(t *testing.T) {
 	c.mu.Unlock()
 	do(t, h, http.MethodPost, "/install/retry", url.Values{"step": {"prepare"}}, nil)
 	waitFor(t, in, "world")
+}
+
+// A kernel that exists is started on the plain start screen, never dressed as
+// an installation: no installer title, no steps, only the job in hand; and the
+// application takes the listener once the kernel answers.
+func TestAnExistingKernelStartsWithoutTheInstaller(t *testing.T) {
+	k := &fakeKernel{booted: true, holdStart: make(chan struct{})}
+	in, h := start(t, k)
+	waitFor(t, in, "start")
+	b := page(t, h)
+	for _, not := range []string{"Juice installation", "install-steps", "auth-card-install", "<form", "<h2>"} {
+		if strings.Contains(b, not) {
+			t.Errorf("the start screen has %q", not)
+		}
+	}
+	if !strings.Contains(b, "<span>Start the kernel</span>") || !strings.Contains(b, `hx-get="/install/status?step=start"`) {
+		t.Errorf("the start screen names its job and polls: %s", b)
+	}
+	close(k.holdStart)
+	select {
+	case <-in.Ready():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the kernel answering ends the start")
+	}
+	if b := page(t, h); !strings.Contains(b, "<span>Open Juice</span>") || strings.Contains(b, "Juice installation") {
+		t.Error("the ended start says Open Juice until the page is sent on")
+	}
 }
 
 // A kernel that answers with no home here is followed: no page is offered,
