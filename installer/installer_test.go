@@ -258,6 +258,11 @@ func TestAFreshInstallWalksEveryStep(t *testing.T) {
 	}
 	next(t, h, "world", url.Values{"world": {"polygon"}})
 	waitFor(t, in, "kernel")
+	// The step's command comes first in the markup, so Enter submits it and
+	// never Back, which the stylesheet places on the left.
+	if b := page(t, h); strings.Index(b, `>Next</button>`) > strings.Index(b, `formaction="/install/back"`) {
+		t.Error("the command precedes Back in the markup")
+	}
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
 	waitFor(t, in, "phrase")
 	if b := page(t, h); !strings.Contains(b, "<li>abandon</li>") || !strings.Contains(b, `name="understand"`) {

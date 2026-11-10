@@ -762,8 +762,10 @@ content only: no step sets a size or a spacing of its own.
   (an `h2` on the steps' line height, so the two columns start level), its
   content (`.install-content`, a `.stack` of ordinary `.field`s, a `.kv` or
   text), and its commands (`.install-actions`, a `.cluster` over a hairline,
-  held at the foot, primary first as in §5.1: `Next`, `Install` or
-  `Open Juice`, then `Back`).
+  held at the foot). The row follows the installers' convention, the one
+  exception to §5.1's order: `Back` at the left edge and the step's command
+  (`Next`, `Install`, `Open Juice`, `Try again`) at the right. The command stays
+  first in the markup, so Enter in a field submits it and never goes back.
 - **A job step** uses the same three slots. Its jobs, `.install-jobs`, share the
   steps' marker slot: `.pending` muted, `.running` followed by the one
   in-flight `.progress` bar, `.done` ticked, `.failed` with its words in a

@@ -1,7 +1,10 @@
 # Juice Web UI Requirements
 
-Version: 0.58.2
+Version: 0.58.3
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.58.3.** In the installer, Back stands at the left of the
+> commands and the step's command at the right.
 
 > **What changed in 0.58.2.** The installer's proportions follow one system
 > (grammar §5.14): one frame for every step, with a head, numbered steps at a

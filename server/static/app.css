@@ -339,7 +339,9 @@ dialog.palette::backdrop { background: rgba(0,0,0,.4); }
 .install-step { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
 .install-step > h2 { margin: 0; line-height: var(--space-5); }
 .install-content > :first-child { margin-top: 0; }
-.install-actions { margin-top: auto; padding-top: var(--space-4); border-top: 1px solid var(--border); }
+/* Back on the left, the step's command on the right, as installers have them.
+   The command stays first in the markup, so Enter in a field submits it. */
+.install-actions { margin-top: auto; padding-top: var(--space-4); border-top: 1px solid var(--border); flex-direction: row-reverse; justify-content: space-between; }
 @media (max-width: 720px) {
   .auth-card-install.card { padding: var(--space-4); }
   .install-body { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-height: 0; }
