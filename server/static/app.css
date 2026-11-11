@@ -193,10 +193,7 @@ tr.unread > td:first-child a { font-weight: 700; }
 }
 .tabs .tab:hover { color: var(--text); text-decoration: none; }
 .tabs .tab.active, .tabs .tab[aria-current] { color: var(--text); border-bottom-color: var(--text); }
-/* A filter tab row can carry one inline command (e.g. "+ new action"), pushed
-   to the right and not styled as a tab. */
 .control-tabs { align-items: center; }
-.tabs .tabs-action { margin-left: auto; margin-bottom: var(--space-1); }
 /* Pager — quiet offset navigation under a list. No accent (money-reserved);
    a boundary is a dimmed non-link. */
 .pager { display: flex; align-items: center; justify-content: center; gap: var(--space-4); margin: var(--space-5) 0 var(--space-2); }
@@ -654,7 +651,6 @@ details.card > summary .cluster { margin-left: auto; }
 /* Keyboard-navigable rows: focusable, j/k moves and Enter follows data-href
    (keys.js). The row's link is the pointer target, so no pointer cursor. */
 tr.rowable:hover { background: var(--surface-2); }
-tr.dim td { opacity: .55; }
 tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 .banner { display: flex; align-items: baseline; gap: var(--space-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: var(--space-3) var(--space-4); color: var(--text-muted); }

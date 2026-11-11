@@ -9,7 +9,9 @@
 {{/* _action_row — an action in a ranked list (§5.5): the tile, then the
      title (the link) with its chips and the price right-aligned, the ref,
      the description, and the stat strip. The title is the one pointer
-     target; rowable gives the row j/k/Enter only.
+     target; rowable gives the row j/k/Enter only. On the Workshop (.Manage)
+     the row states its status in one pill — inactive, else who may call it —
+     in place of the chips, is not faded, and its strip shows the counts.
 
      A DISCOVERED row is the unresolved counterpart of an ordinary one: the
      kernel has only heard of the action through gossip, so nothing local backs
@@ -34,20 +36,23 @@
   </div>
 </article>
 {{else}}
-<article class="action-row rowable{{if not .Action.Active}} inactive{{end}}" tabindex="-1" data-href="/actions/{{.Action.ID}}"{{template "_rank" .Rank}}>
+<article class="action-row rowable{{if and (not .Action.Active) (not .Manage)}} inactive{{end}}" tabindex="-1" data-href="/actions/{{.Action.ID}}"{{template "_rank" .Rank}}>
   {{template "_tile" .Action}}
   <div class="action-body">
     <div class="action-line">
       <a class="action-title" href="/actions/{{.Action.ID}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
       {{- if eq .Action.Kind "remote_proxy"}} <span class="chip filled" title="Remote — imported from a peer kernel">R</span>{{end -}}
+      {{- if .Manage}} <span class="pill{{if .Action.Active}} status-credited{{end}}">{{.Status}}</span>
+      {{- else}}
       {{- if .Action.IsPrivate}} <span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if .Action.IsLocal}} <span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end -}}
+      {{- end -}}
       {{- if .NeedsConnect}} <span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end -}}
-      {{- if not .Action.Active}} <span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
+      {{- if and (not .Action.Active) (not .Manage)}} <span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
       {{template "_price" (price .Action.Price false)}}
     </div>
     <p class="action-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
     <p class="action-desc">{{.Action.Description}}</p>
-    {{template "_stat_strip" (statStrip .Action.Price .Action.Experience false false)}}
+    {{template "_stat_strip" (statStrip .Action.Price .Action.Experience .Manage false)}}
   </div>
 </article>
 {{end}}
@@ -127,7 +132,6 @@
   <div class="stat">
     <div class="label">{{.Label}}</div>
     <div class="value{{if .Signal}} sig-{{.Signal}}{{end}}">{{if eq .Signal "credited"}}+{{end}}{{money .Amount}}</div>
-    {{if .Href}}<a href="{{.Href}}">{{.Link}} →</a>{{end}}
   </div>
   {{end}}
 </div>

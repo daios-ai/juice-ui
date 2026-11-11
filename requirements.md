@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.65.0
+Version: 0.66.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.66.0.** The workshop shows what you offer, how it does,
+> and how to make more: your actions as the one action row, each with one status
+> (inactive, else who may call it) and its runs, the inactive first and then the
+> most run; New action beside the heading. A row holds no controls: an action is
+> managed on its page, which the superuser now sees for anyone's action. The
+> parked figure and the superuser's everyone view are gone; Discover already
+> lists every action to the superuser (§6.4, §6.5, §7, §9).
 
 > **What changed in 0.65.0.** A task is drawn as an action run, every task
 > alike: what runs, then who asked, via what and when, then the one form card,
@@ -2104,19 +2112,34 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 ### 6.4 action — catalog and provider workspace
 
-* Workshop MUST present, in order: what is parked, action list, creation zone. Its
-  action list is this kernel's actions (`?owner=` the viewer, or the whole
-  catalog for the superuser); a discovered row is not one to manage and MUST be
-  left out.
+* **The Workshop is where you see what you offer, how it does, and make more**,
+  as seller and developer consoles are (one status per item, performance on the
+  item's row, one New button, settings on the item's page). It presents the
+  section "Your actions" with **New action** beside its heading (a `.btn` with
+  the plus icon, opening Create manually · Import from OpenAPI), the state
+  filter (all · active · inactive), then the list. It is the viewer's own
+  actions for everyone, the superuser included: there is no everyone view,
+  since Discover already lists every action to the superuser (verified live)
+  and an owner's name narrows it. A discovered row is not one to manage and
+  MUST be left out.
 * Workshop MUST NOT read the user's transactions: no kernel figure totals a person's
-  earnings, and a fold would read every transaction on every load. What is parked,
-  like every headline money figure (wallet, a session), MUST render through
-  the one figures component: one block per figure (§7). The BFF MUST NOT reproduce
-  kernel settlement.
+  earnings, and a fold would read every transaction on every load. It shows no
+  money figure: what is parked is the wallet's, a buyer's figure and no seller's
+  headline, and earnings return when the kernel serves a total. The BFF MUST
+  NOT reproduce kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
-  actions, filter by state, and show kind, price, success rate, rating trend, an
-  inline active/inactive toggle, and a **visibility**
-  control (below).
+  actions, and filter by state. Each action is **the one action row** (§6.2),
+  wearing **one status pill** in place of the catalog's chips — `inactive`
+  (neutral), else who may call it, `private`, `local` or `public` (the live
+  green) — unfaded, and its stats strip **with counts** (success and runs,
+  rating and raters). The list is ordered by what needs attention: the
+  inactive first, then the most run, which costs each row its detail read
+  (a list row carries no counts), as Discover's rating sort does.
+* **A row holds no controls.** An action is managed on its own page, whose
+  Manage section (enable/disable, visibility, edit, delete) is shown, whole, to
+  whoever the kernel lets manage it: its owner, or the superuser (verified live:
+  the kernel accepts every one of these verbs from the superuser on another
+  user's action). It is withheld on a remote proxy (§6.6).
 * **Visibility** MUST be set via `PUT /v1/actions` with
   `{target, visibility: "private" | "local" | "public"}` — the kernel's three-way
   caller-scope (`private` owner-only, `local` any local caller of this kernel but
@@ -2179,7 +2202,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   rail until the payment is final (`sys.pending_payouts`). So the operator's
   `locked` mixes escrow and transit, and the UI cannot split it without
   arithmetic. For a superuser the figure is labelled **locked**, the kernel's
-  word, without the escrow signal — on the wallet and the workshop alike; the network page's `in transit` figure itemises the transit
+  word, without the escrow signal — on the wallet; the network page's `in transit` figure itemises the transit
   part. Every other account sees **parked**.
 * **The wallet is the viewer's own money.** It lists the viewer's own open
   sessions — a superuser is served every account's; the sessions page is where
@@ -2499,7 +2522,7 @@ symmetry, but because the kernel refuses anything else.
   cleared by the kernel (verified live: `enable`/`disable` on a `kind=remote_proxy`
   action returns `ErrInvalidState`, "use admin suspend to block a peer"), so the
   UI MUST NOT offer lifecycle verbs — enable/disable, visibility, delete — on a
-  proxy row anywhere it lists actions, including the superuser-scoped workshop.
+  proxy anywhere: its page withholds Manage, and no Workshop row carries a verb.
   The peer-level lever is suspend, on the peer's page.
 * `peer_unfunded` on a run means **the serving kernel will not serve this one on
   credit** — its limit is reached, or its own provider cannot fund the work, a
@@ -3037,7 +3060,8 @@ imports its live rooms, members and messages once and never writes that file.
   ends, since the kernel pages after visibility, and a contract test holds this — except
   Sent and Done, which keep their own rows of the kernel's page, so one may hold fewer. Read
   whole and cut here, each for its reason: Discover (a sort orders the whole catalog),
-  the workshop table (its state tabs filter what the kernel does not), a user's actions
+  the workshop list (its state tabs filter what the kernel does not, and it is ordered
+  here), a user's actions
   (a page of actions is not promised full), the admin roster (sorted here), Network's
   kernels (merged from classes here), and obligations, held payments and requesters
   (the kernel does not page them). Open tasks and open sessions are read whole: they are
@@ -3351,8 +3375,10 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * discovery: lookup path and catalog fallback on `ErrInvalidState`;
 * the workshop offers no synthesis affordance, `sys/make` being absent from the
   kernel;
-* access control of owner-only UI affordances (Studio surfaces shown only to the
-  owner);
+* access control of manage affordances: an action's Manage section shown to its
+  owner and the superuser, and to nobody else; the Workshop lists the viewer's
+  own actions, the superuser's too, inactive first and then by runs, each with
+  one status pill and its counts, and no row carries a control (§6.4);
 * security invariants: counterparty content renders inert; trust affordances key
   on kernel fields, not payload shape; no spend reachable by GET — including
   that a search on a kernel which prices `sys/lookup` degrades instead of

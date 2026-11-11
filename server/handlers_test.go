@@ -1569,17 +1569,19 @@ func TestActionCardChips(t *testing.T) {
 		t.Error("browse row must lead with a tile")
 	}
 
-	// The workshop management table carries the visibility + state cells: a private
-	// inactive action shows the lock chip, the inactive pill, and a dimmed row.
+	// The Workshop draws the same row with one status pill in place of the
+	// chips: the inactive draft says so, unfaded; the live action names who
+	// may call it (the fixture serves no visibility: private, the kernel's
+	// default), in the live green. Discover keeps its chips.
 	body := getBody(t, cl, srv.URL+"/workshop")
-	if !strings.Contains(body, `/static/icons.svg#lock`) {
-		t.Error("a private action must show the lock chip in the workshop table")
+	if !strings.Contains(body, `<span class="pill">inactive</span>`) || !strings.Contains(body, `<span class="pill status-credited">private</span>`) {
+		t.Errorf("a Workshop row states its status in one pill: %s", body)
 	}
-	if !strings.Contains(body, `class="pill inactive">inactive`) {
-		t.Error("an inactive action must show the inactive pill")
+	if strings.Contains(body, `/static/icons.svg#lock`) || strings.Contains(body, `title="Inactive — not callable"`) || strings.Contains(body, `action-row rowable inactive`) {
+		t.Error("a Workshop row wears no chips and is not faded")
 	}
-	if !strings.Contains(body, `class="rowable dim"`) {
-		t.Error("an inactive action's row must be dimmed")
+	if !strings.Contains(getBody(t, cl, srv.URL+"/browse?owner=alice@testnet"), `title="Inactive — not callable"`) {
+		t.Error("Discover's row keeps its chips")
 	}
 	// The old cluttered card markup is gone.
 	for _, gone := range []string{"action-card-name", "action-card-meta"} {
@@ -1715,70 +1717,105 @@ func TestActionsCommandAndFilters(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 	body := getBody(t, cl, srv.URL+"/workshop")
 
-	// Content-first: no floating command chrome.
-	if strings.Contains(body, `class="toolbar"`) {
-		t.Error("actions page must not carry a page-head toolbar")
-	}
-
-	// The create command is one quiet inline "+ new action" menu trigger opening
-	// the four creation methods (each a real ?form= link).
-	if !strings.Contains(body, `id="menu-new-action"`) || !strings.Contains(body, "+ new action") {
-		t.Error("actions create command must be a + new action menu")
-	}
-	if !strings.Contains(body, `class="btn tabs-action" data-menu="menu-new-action"`) {
-		t.Error("+ new action must be a menu trigger on the tab row")
+	// New action is the section's command, beside its heading: one button with
+	// its icon, opening the two ways to make one (each a real ?form= link).
+	if !regexp.MustCompile(`(?s)<div class="subhead">\s*<h2>Your actions</h2>\s*<button class="btn" data-menu="menu-new-action"[^>]*><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New action</span></button>`).MatchString(body) {
+		t.Errorf("New action stands beside the heading: %s", body)
 	}
 	for _, form := range []string{"action-create", "action-import"} {
 		if !strings.Contains(body, "?form="+form) {
-			t.Errorf("+ new action menu missing the %q method", form)
+			t.Errorf("New action menu missing the %q method", form)
 		}
 	}
-	// There is no unimport: an application is switched off or removed with the
-	// ordinary verbs over its path (kernel §D21).
-	if strings.Contains(body, "unimport") {
-		t.Error("the kernel serves no unimport")
+	// The filter row is filters only; there is no unimport (kernel §D21).
+	if strings.Contains(body, "tabs-action") || strings.Contains(body, "unimport") {
+		t.Error("the filter row holds no command, and the kernel serves no unimport")
 	}
-
-	// Filters are the unified .tabs view-switch component (not the retired linkbar).
-	if strings.Contains(body, "linkbar") {
-		t.Error("filters must use .tabs, not the retired .linkbar")
+	if !strings.Contains(body, `class="tab active" href="/workshop" aria-current="page">all`) || !strings.Contains(body, `href="/workshop?filter=active"`) {
+		t.Error("the filters are all, active and inactive, all current by default")
 	}
-	if !strings.Contains(body, `class="tabs control-tabs"`) {
-		t.Error("action filters must render as a .tabs row")
-	}
-	if !strings.Contains(body, `class="tab active" href="/workshop" aria-current="page">all`) {
-		t.Error("action filter tabs must mark 'all' active")
-	}
-	if !strings.Contains(body, `href="/workshop?filter=active"`) {
-		t.Error("action filter tabs must offer the 'active' filter")
+	// A row holds no controls: its page manages it.
+	for _, gone := range []string{`id="row-`, `action="/actions/disable"`, `action="/actions/enable"`, `action="/actions/visibility"`, `action="/actions/delete"`, `<table`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the Workshop carries %q", gone)
+		}
 	}
 }
 
-// The superuser ownership scope is its own switch (yours | everyone), separate
-// from the state-filter row — so the old "all actions" tab that double-lit with
-// "all" is gone, and the two axes preserve each other.
-func TestActionsScopeSwitch(t *testing.T) {
+// Everyone's Workshop is their own actions, the superuser's too: there is no
+// second, everyone's Workshop. The superuser finds another user's action on
+// Discover, and manages it on its page as its owner does.
+func TestOneWorkshopTheSuperuserManagesOnThePage(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
-	cl := loginClientAs(t, srv.URL, "sys")
-	body := getBody(t, cl, srv.URL+"/workshop?scope=all")
+	// The fixture's /v1/me answers alice@testnet for every session; signing in
+	// as sys makes the session the superuser's. sys@testnet/gmail-send (AG) is
+	// not the viewer's.
+	sys := loginClientAs(t, srv.URL, "sys")
+	for _, u := range []string{"/workshop", "/workshop?scope=all"} {
+		body := getBody(t, sys, srv.URL+u)
+		if strings.Contains(body, ">everyone<") || strings.Contains(body, `href="/actions/AG"`) || !strings.Contains(body, `href="/actions/A1"`) {
+			t.Errorf("%s: the superuser's Workshop is the viewer's own actions, with no scope switch", u)
+		}
+	}
+	page := getBody(t, sys, srv.URL+"/actions/AG") // not the viewer's
+	for _, want := range []string{"<h2>Manage</h2>", `action="/actions/disable"`, `action="/actions/visibility"`, `action="/actions/delete"`, `?form=action-edit`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("sys on another user's action lacks %q", want)
+		}
+	}
+	resp := postTo(t, sys, srv.URL+"/actions/disable", page, url.Values{"target": {"AG"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/actions/AG" {
+		t.Errorf("disable = %d → %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	// An ordinary user on another's action has nothing to manage.
+	if strings.Contains(getBody(t, loginClient(t, srv.URL), srv.URL+"/actions/AG"), "<h2>Manage</h2>") {
+		t.Error("an ordinary user manages only their own actions")
+	}
+}
 
-	if strings.Contains(body, ">all actions<") {
-		t.Error("the confusing 'all actions' filter tab must be gone (scope is its own switch)")
+// The Workshop lists what needs attention first — the inactive — then the most
+// run, each row with its counts, which come with its detail read.
+func TestWorkshopOrdersInactiveThenRuns(t *testing.T) {
+	rows := map[string]string{
+		"few":   `{"id":"few","action":"alice@testnet/few","title":"Few","kind":"http","active":true,"visibility":"public","price":0}`,
+		"many":  `{"id":"many","action":"alice@testnet/many","title":"Many","kind":"http","active":true,"visibility":"local","price":0}`,
+		"draft": `{"id":"draft","action":"alice@testnet/draft","title":"Draft","kind":"http","active":false,"visibility":"private","price":0}`,
 	}
-	if !strings.Contains(body, `>everyone</a>`) || !strings.Contains(body, `>yours</a>`) {
-		t.Error("superuser must get a yours|everyone scope switch")
+	uses := map[string]int{"few": 2, "many": 20, "draft": 0}
+	mux := http.NewServeMux()
+	fakeHealth(mux)
+	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"redirect":"?code=CODE"}`)) })
+	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+	})
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":0,"locked":0}`))
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if pastEnd(w, r) {
+			return
+		}
+		w.Write([]byte("[" + rows["few"] + "," + rows["many"] + "," + rows["draft"] + "]"))
+	})
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		w.Write([]byte(withEvidence(rows[id], fmt.Sprintf(`{"uses":%d,"successes":%d}`, uses[id], uses[id]))))
+	})
+	k := httptest.NewServer(mux)
+	defer k.Close()
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	body := getBody(t, loginClient(t, srv.URL), srv.URL+"/workshop")
+	d, m, f := strings.Index(body, `title="Draft"`), strings.Index(body, `title="Many"`), strings.Index(body, `title="Few"`)
+	if d < 0 || m < d || f < m {
+		t.Errorf("order must be inactive, then most run: draft %d, many %d, few %d", d, m, f)
 	}
-	// everyone active on ?scope=all…
-	if !strings.Contains(body, `class="tab active" href="/workshop?scope=all" aria-current="page">everyone`) {
-		t.Error("the 'everyone' scope tab must be active on ?scope=all")
-	}
-	// …and the state-filter tabs preserve the scope (carry scope=all; html/template
-	// escapes the & in the href).
-	if !strings.Contains(body, `href="/workshop?filter=active&amp;scope=all"`) {
-		t.Error("filter tabs must preserve the scope (carry scope=all)")
+	if !strings.Contains(body, "100% (20)") || !strings.Contains(body, `<span class="pill status-credited">local</span>`) {
+		t.Errorf("a row shows its counts and who may call it: %s", body)
 	}
 }
 
@@ -1979,14 +2016,12 @@ func TestWorkshopAddsUpNoMoney(t *testing.T) {
 			t.Errorf("workshop shows %q", gone)
 		}
 	}
-	if !strings.Contains(lower, "parked") {
-		t.Error("workshop keeps what is parked")
+	// What is parked is the wallet's: a buyer's figure is no seller's headline.
+	if strings.Contains(lower, "parked") || strings.Contains(lower, `class="stat-row"`) {
+		t.Error("the workshop shows no money figure")
 	}
-	for _, page := range []string{"/workshop", "/wallet"} {
-		b := getBody(t, cl, srv.URL+page)
-		if !strings.Contains(b, `<div class="stat-row">`) || strings.Contains(b, `class="balance`) {
-			t.Errorf("%s must render its money through the figures component", page)
-		}
+	if b := getBody(t, cl, srv.URL+"/wallet"); !strings.Contains(b, `<div class="stat-row">`) || strings.Contains(b, `class="balance`) {
+		t.Error("the wallet renders its money through the figures component")
 	}
 }
 

@@ -2,84 +2,34 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>Workshop</h1>
-  {{if $d.Superuser}}<p class="subtitle"><span class="scope-note">superuser scope available</span></p>{{end}}
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
-{{template "_figures" (figures (linked (lockedFigure $d.User.Locked $d.Superuser) "open sessions" "/wallet"))}}
-
+{{/* Your actions (requirements §6.4): each as the one action row, its status
+     in one word and its counts, what needs attention first. A row holds no
+     controls: its page manages it. New action is the section's command. */}}
 <div class="subhead">
-  <h2>{{if eq $d.Scope "all"}}All actions{{else}}Your actions{{end}}</h2>
-  {{if $d.Superuser}}
-  <nav class="tabs" aria-label="Scope">
-    {{template "_tab" (tab "yours" (actionsHref "" $d.Filter) (ne $d.Scope "all"))}}
-    {{template "_tab" (tab "everyone" (actionsHref "all" $d.Filter) (eq $d.Scope "all"))}}
-  </nav>
-  {{end}}
-</div>
-<nav class="tabs control-tabs" aria-label="Filter actions">
-  {{template "_tab" (tab "all" (actionsHref $d.Scope "") (eq $d.Filter ""))}}
-  {{template "_tab" (tab "active" (actionsHref $d.Scope "active") (eq $d.Filter "active"))}}
-  {{template "_tab" (tab "inactive" (actionsHref $d.Scope "inactive") (eq $d.Filter "inactive"))}}
-  <button class="btn tabs-action" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false">+ new action</button>
+  <h2>Your actions</h2>
+  <button class="btn" data-menu="menu-new-action" aria-haspopup="menu" aria-expanded="false"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New action</span></button>
   <div class="menu" id="menu-new-action" role="menu" hidden>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-create" data-modal="form-action-create">Create manually</a>
     <a class="menu-item" role="menuitem" href="/workshop?form=action-import" data-modal="form-action-import">Import from OpenAPI</a>
-    <div class="menu-divider"></div>
   </div>
+</div>
+<nav class="tabs control-tabs" aria-label="Filter actions">
+  {{template "_tab" (tab "all" "/workshop" (eq $d.Filter ""))}}
+  {{template "_tab" (tab "active" "/workshop?filter=active" (eq $d.Filter "active"))}}
+  {{template "_tab" (tab "inactive" "/workshop?filter=inactive" (eq $d.Filter "inactive"))}}
 </nav>
 
 {{if $d.Mine}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>action</th><th>state</th><th class="money">price</th><th class="money">runs</th><th>success</th><th>rating</th><th></th></tr></thead>
-  <tbody>
-  {{range $d.Mine}}
-  {{$a := .Action}}{{$st := $a.Experience}}
-  <tr class="rowable{{if not $a.Active}} dim{{end}}" tabindex="-1" data-href="/actions/{{$a.ID}}">
-    <td>
-      <a href="/actions/{{$a.ID}}">{{$a.Title}}</a>
-      {{if $a.IsPrivate}}<span class="chip" title="Private"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if $a.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
-      <div class="small">{{template "_ref" (ref $a.Ref "")}}</div>
-    </td>
-    <td>{{if $a.Active}}<span class="pill status-credited">active</span>{{else}}<span class="pill inactive">inactive</span>{{end}}</td>
-    <td class="money">{{template "_price" (price $a.Price false)}}</td>
-    <td class="money">{{if $st}}{{$st.Uses}}{{else}}0{{end}}</td>
-    <td>{{if and $st (gt $st.Uses 0)}}{{pct $st.Successes $st.Uses}}%{{else}}<span class="muted">—</span>{{end}}</td>
-    <td>{{if and $st (gt $st.RatingCount 0)}}{{ratingPct $st.RatingEstimate $st.RatingCount}}% <span class="muted mono">({{$st.RatingCount}})</span>{{else}}<span class="muted">—</span>{{end}}</td>
-    {{/* A cached remote proxy has no lifecycle here: the kernel owns its active
-         bit (enable/disable is refused), and the lever over a peer's actions is
-         suspend, on network. The cell stays empty rather than offering verbs the
-         kernel rejects. */}}
-    <td>
-      {{if ne $a.Kind "remote_proxy"}}
-      <button class="btn-icon inline" data-menu="row-{{$a.ID}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
-      <div class="menu" id="row-{{$a.ID}}" role="menu" hidden>
-        <a class="menu-item" role="menuitem" href="/actions/{{$a.ID}}?form=action-edit">Edit…</a>
-        {{if $a.Active}}
-        <form method="post" action="/actions/disable">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><button class="menu-item" type="submit">Disable</button></form>
-        {{else}}
-        <form method="post" action="/actions/enable">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><button class="menu-item" type="submit">Enable</button></form>
-        {{end}}
-        <div class="menu-divider"></div>
-        <div class="menu-caption">visibility</div>
-        <form method="post" action="/actions/visibility">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><input type="hidden" name="visibility" value="private"><button class="menu-item" type="submit">private{{if $a.IsPrivate}} ✓{{end}}</button></form>
-        <form method="post" action="/actions/visibility">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><input type="hidden" name="visibility" value="local"><button class="menu-item" type="submit">local{{if $a.IsLocal}} ✓{{end}}</button></form>
-        <form method="post" action="/actions/visibility">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><input type="hidden" name="visibility" value="public"><button class="menu-item" type="submit">public{{if $a.IsPublic}} ✓{{end}}</button></form>
-        <div class="menu-divider"></div>
-        <form method="post" action="/actions/delete" data-confirm="Delete {{$a.Ref}}?">{{$.CSRFField}}<input type="hidden" name="target" value="{{$a.ID}}"><button class="menu-item danger" type="submit">Delete…</button></form>
-      </div>
-      {{end}}
-    </td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
+<div class="action-list">
+  {{range $d.Mine}}{{template "_action_row" .}}{{end}}
 </div>
 {{template "_pager" $d.Pager}}
 {{else}}
-<p class="muted">No actions yet. Create one, or import an OpenAPI spec.</p>
+<p class="muted">No actions yet.</p>
 {{end}}
 
 {{template "_form_action_create" .}}

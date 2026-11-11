@@ -454,20 +454,6 @@ func TestTabRenderer(t *testing.T) {
 	}
 }
 
-func TestActionsHref(t *testing.T) {
-	cases := []struct{ scope, filter, want string }{
-		{"", "", "/workshop"},
-		{"all", "", "/workshop?scope=all"},
-		{"", "active", "/workshop?filter=active"},
-		{"all", "inactive", "/workshop?filter=inactive&scope=all"},
-	}
-	for _, c := range cases {
-		if got := actionsHref(c.scope, c.filter); got != c.want {
-			t.Errorf("actionsHref(%q,%q) = %q want %q", c.scope, c.filter, got, c.want)
-		}
-	}
-}
-
 func TestCallOutcomeGrantRequired(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -1862,8 +1848,9 @@ func TestFormWireForTheSwitch(t *testing.T) {
 }
 
 // A cached remote proxy is kernel-managed state: the kernel refuses enable and
-// disable on it, so neither the workshop row nor the action page may offer a
-// lifecycle verb for one. The peer-level lever is suspend, on network.
+// disable on it, so the action page offers no lifecycle verb for one, and no
+// Workshop row offers a verb for any action: its page manages it. The
+// peer-level lever is suspend, on network.
 func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -1874,25 +1861,19 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: actionsView{
-		Mine: []actionCardView{{Action: proxy}, {Action: own}}, Superuser: true, Scope: "all",
+		Mine: []actionCardView{{Action: proxy, Manage: true}, {Action: own, Manage: true}},
 	}}
 	if err := r.Render(rec, 200, "workshop", p); err != nil {
 		t.Fatalf("render workshop: %v", err)
 	}
-	body := rec.Body.String()
-	// A mutation names its target in the body, so a proxy offering no verb means
-	// no form carries its id.
-	if strings.Contains(body, `name="target" value="P1"`) {
-		t.Errorf("workshop must offer no lifecycle verb on a proxy row: %s", body)
-	}
-	// The operator's own action keeps its full menu — the rule is about proxies.
-	if !strings.Contains(body, `name="target" value="A1"`) {
-		t.Errorf("an ordinary owned action must keep its lifecycle menu: %s", body)
+	// A mutation names its target in the body: no Workshop row carries one.
+	if body := rec.Body.String(); strings.Contains(body, `name="target"`) {
+		t.Errorf("a Workshop row offers no lifecycle verb: %s", body)
 	}
 
 	rec2 := httptest.NewRecorder()
 	p2 := Page{Me: "sys@testnet", CSRFField: template.HTML("<input>"), Data: actionView{
-		Action: proxy, IsOwner: true, Form: BuildForm(nil),
+		Action: proxy, CanManage: true, Form: BuildForm(nil),
 	}}
 	if err := r.Render(rec2, 200, "action_detail", p2); err != nil {
 		t.Fatalf("render action_detail: %v", err)
@@ -2047,7 +2028,7 @@ func TestLockedFigureFollowsTheAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string]any{"wallet": walletView{Superuser: true}, "workshop": actionsView{Superuser: true}} {
+	for name, data := range map[string]any{"wallet": walletView{Superuser: true}} {
 		rec := httptest.NewRecorder()
 		if err := r.Render(rec, 200, name, Page{Me: "sys@testnet", IsSuperuser: true, Data: data}); err != nil {
 			t.Fatal(err)
@@ -2251,7 +2232,7 @@ func TestFiguresAreBlocks(t *testing.T) {
 	if err := r.Fragment(rec, 200, "_figures", figures(
 		figure(5, "available", ""),
 		figure(1, "parked ◷", "escrow"),
-		linked(figure(2, "this month", "credited"), "full ledger", "/transactions"),
+		figure(2, "this month", "credited"),
 	)); err != nil {
 		t.Fatal(err)
 	}
@@ -2264,14 +2245,10 @@ func TestFiguresAreBlocks(t *testing.T) {
 		`<div class="value">5 credits</div>`,
 		`<div class="value sig-escrow">1 credits</div>`,
 		`<div class="value sig-credited">+2 credits</div>`,
-		`<a href="/transactions">full ledger →</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("figures must render %q: %s", want, body)
 		}
-	}
-	if strings.Count(body, "<a ") != 1 {
-		t.Errorf("only a figure with records behind it links: %s", body)
 	}
 }
 

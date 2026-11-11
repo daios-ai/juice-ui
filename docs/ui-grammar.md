@@ -31,7 +31,7 @@ Three laws underpin everything:
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. "+ new …" |
 | Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
-| **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, workshop and a session |
+| **Figures** | `.stat-row` + `.stat` (label · value) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal. One component on the wallet and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, each a `.rail-row` of its link and its menu (§5.12), the room in view `aria-current`, an unread one weighted (`.unread`) |
@@ -300,7 +300,7 @@ hand-writes `class="tab{{if …`; a drift guard enforces it.
 
 ```
 ┌ .tabs ─────────────────────────────────────────┐
-│  all   active   inactive            + new action │
+│  all   active   inactive                         │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -314,20 +314,18 @@ hand-writes `class="tab{{if …`; a drift guard enforces it.
 inbox's views) carries its icon; a tab that narrows a list (`all/active`,
 `relevance/rating/price`) or toggles an entry is a word.
 
-**Distinct axes get distinct rows, never mixed.** The actions page's *ownership
-scope* (`yours | everyone`, `sys`) is its **own** switch on the heading, not a
-peer of the state filters — mixing them let two tabs on different variables both
-light up. Each axis preserves the other's value (`actionsHref`).
-
-A filter row may carry **one** inline command (`+ new action`) as a
-`.btn.tabs-action`, right-aligned and not styled as a tab. The `.linkbar` is
+**Distinct axes get distinct rows, never mixed**: two tabs on different
+variables in one row both light up. **A filter row holds filters only**; the
+section's command stands beside its heading (`.subhead`: the heading left, the
+`.btn` right), as the Workshop's **New action** does. The `.linkbar` is
 retired.
 
 ### 5.3 Commands are inline
 
 The `page-head` carries **no commands** — just the title. A command
 lives **inline, with the content it acts on**. An opener that **adds** something
-is a single `.btn`: `+ new action` above the actions list, `+ record a payment`
+is a single `.btn`: **New action** (the plus icon and the words) beside "Your
+actions", `+ record a payment`
 in the users section, `+ inspect a kernel by key`; none float, none are colored.
 **An action is a button.** A link goes somewhere to read: a record's id or title,
 an address, a crumb, the pager, a sentence's next step (`View the receipt →`).
@@ -516,9 +514,8 @@ separates it from the content above, and nothing else does (§4).
 
 - **Headline money figures are one component, `_figures`**: a `.stat-row` of
   `.stat` blocks — the label muted on top, the amount in mono coloured by its
-  signal (`sig-credited` with a `+`, `sig-escrow`), and a quiet link to the
-  records behind it when there are any. Wallet, workshop's parked funds and a
-  session's funds all render through it; no page draws its own figures. An
+  signal (`sig-credited` with a `+`, `sig-escrow`). The wallet's and a
+  session's funds render through it; no page draws its own figures. An
   account's locked balance is one helper, `lockedFigure`: `parked ◷` (escrow)
   for everyone, `locked ◷` unsignalled for the operator, whose locked also holds
   payouts in transit.
@@ -564,7 +561,9 @@ segment in the `title`. A bound petname is not key-shaped and renders whole. A
 
 Wherever an action is presented as a thing — a card, the action page's `<h1>`,
 a workshop row, a peer's action list — its **title** leads and its ref follows
-beneath it. Where a row only names the action a record is about (a receipt, a
+beneath it. A Workshop row is the same `_action_row`, with one status `.pill`
+on the title line in place of the chips — `inactive`, else `private`, `local`
+or `public` (`.status-credited`) — unfaded, and its strip's counts shown. Where a row only names the action a record is about (a receipt, a
 task, a ledger entry), the ref alone stands: the kernel serves no title there.
 
 ### 5.8 Modals & floating forms
@@ -744,7 +743,7 @@ obligations above.
 ### 5.12 Menus & icons
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
-  `+ new …` openers, row-lifecycle menus (the Workshop's rows, the rail's rooms),
+  `+ new …` openers (the Workshop's New action), row-lifecycle menus (the rail's rooms),
   each opened from a `.btn-icon.inline` `#ellipsis`, and the avatar menu.
   Activating an item closes the menu. An item that leads to a question or a
   dialog ends in `…`.

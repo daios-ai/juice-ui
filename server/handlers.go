@@ -80,6 +80,17 @@ type actionCardView struct {
 	// Rank is a search row's place under each order, so the panel rearranges
 	// the rows it holds without searching again; nil on a catalog row.
 	Rank *cardRank
+	// Manage marks a Workshop row (§6.4): it states its status in one word and
+	// shows its counts, where a catalog row wears chips.
+	Manage bool
+}
+
+// Status is the one word a Workshop row wears: inactive, else who may call it.
+func (c actionCardView) Status() string {
+	if !c.Action.Active {
+		return "inactive"
+	}
+	return c.Action.Vis()
 }
 
 // Observed reports whether this row's terms were last verified against a remote
@@ -140,7 +151,7 @@ type actionView struct {
 	Ratings      []client.Rating
 	RatingsPager Pager
 	Form         FormModel
-	IsOwner      bool
+	CanManage    bool // the owner, or the superuser: whom the kernel lets manage it
 	IsPaid       bool
 	NeedsConnect bool // demands a per-caller grant the viewer hasn't connected
 	FirstPayee   bool // viewer has never paid this action's owner (first-payee hint)
@@ -169,16 +180,12 @@ type actionView struct {
 // in /run; Scope="all" for a superuser widens Mine to
 // every owner's actions.
 type actionsView struct {
-	User      client.User
-	Mine      []actionCardView // the signed-in user's own actions (management)
-	Filter    string           // "active" | "inactive" | "" (all) — applies to Mine
-	Scope     string           // "" (own+public) | "all" (superuser sees every action)
-	Superuser bool
-	Pager     Pager // paging over the (filtered) management table
-	OpenForm  string
-	Create    actionDraft // the create dialog's values
-	Error     string
-	Notice    string
+	Mine     []actionCardView // the viewer's own actions, what needs attention first
+	Filter   string           // "active" | "inactive" | "" (all)
+	Pager    Pager
+	OpenForm string
+	Create   actionDraft // the create dialog's values
+	Error    string
 }
 
 type processesView struct {
@@ -1165,7 +1172,7 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 	view := actionView{
 		Action:       a,
 		Form:         BuildForm(a.InputSchema),
-		IsOwner:      refOwner(a.Action) == me.Address,
+		CanManage:    refOwner(a.Action) == me.Address || s.isSuperuser(r),
 		IsPaid:       a.Price > 0,
 		NeedsConnect: needsConnect(a, grantedRefs(me)),
 		CSRFField:    csrf.TemplateField(r),
@@ -1383,28 +1390,20 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 	s.renderWorkshop(w, r, nil)
 }
 
-// renderWorkshop renders the workshop. create is a refused create to re-render
-// in the open dialog; nil renders the page as opened.
+// renderWorkshop renders the workshop: the viewer's own actions, everyone's
+// alike (§6.4), what needs attention first — the inactive ones — then the
+// most run. create is a refused create to re-render in the open dialog; nil
+// renders the page as opened.
 func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *actionDraft) {
 	ctx := r.Context()
 	filter := r.URL.Query().Get("filter") // "active" | "inactive" | "" (all)
-	scope := r.URL.Query().Get("scope")   // "" | "all" (superuser)
-	super := s.isSuperuser(r)
-	if scope == "all" && !super {
-		scope = ""
-	}
-	view := actionsView{Filter: filter, Scope: scope, Superuser: super, OpenForm: openForm(r, "action")}
+	view := actionsView{Filter: filter, OpenForm: openForm(r, "action")}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.me(r)
 		if e != nil {
 			return e
 		}
-		view.User = u
-		ownerFilter := u.Address
-		if scope == "all" {
-			ownerFilter = "" // whole catalog; superuser sees all rows
-		}
-		a, e := s.client.ListActions(ctx, tok, ownerFilter)
+		a, e := s.client.ListActions(ctx, tok, u.Address)
 		if e != nil {
 			return e
 		}
@@ -1415,10 +1414,19 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 			if a[i].Discovered || (filter == "active" && !a[i].Active) || (filter == "inactive" && a[i].Active) {
 				continue
 			}
-			mine = append(mine, cardOf(a[i]))
+			mine = append(mine, actionCardView{Action: a[i], Manage: true})
 		}
+		// A list row carries no counts, so the order costs every row its
+		// detail read, as Discover's rating sort does.
+		s.fetchEvidence(ctx, tok, mine)
+		sort.SliceStable(mine, func(i, j int) bool {
+			a, b := mine[i].Action, mine[j].Action
+			if a.Active != b.Active {
+				return !a.Active
+			}
+			return runs(a) > runs(b)
+		})
 		view.Mine, view.Pager = pageOf(r, mine)
-		s.fetchEvidence(ctx, tok, view.Mine)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -1429,6 +1437,14 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 		view.Create, view.OpenForm, status = *create, "action-create", http.StatusUnprocessableEntity
 	}
 	s.renderPage(w, r, status, "workshop", "Workshop", view)
+}
+
+// runs is how often this kernel has run the action, 0 where it holds no record.
+func runs(a client.Action) int64 {
+	if st := a.Experience(); st != nil {
+		return st.Uses
+	}
+	return 0
 }
 
 func (s *Server) postCreateAction(w http.ResponseWriter, r *http.Request) {

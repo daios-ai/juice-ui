@@ -55,7 +55,7 @@
      the kernel refuses enable/disable on it and the peer-level lever is suspend,
      on network. So Manage is withheld for a proxy even from a viewer the
      ownership check would otherwise admit. */}}
-{{if and $d.IsOwner (ne $d.Action.Kind "remote_proxy")}}
+{{if and $d.CanManage (ne $d.Action.Kind "remote_proxy")}}
 <h2>Manage</h2>
 <div class="card stack">
   <div class="cluster">

@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -258,13 +257,11 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"tab":            tab,
 		"icontab":        icontab,
 		"paneltab":       paneltab,
-		"actionsHref":    actionsHref,
 		"runForm":        r.runForm,
 		"resultText":     resultText,
 		"completeForm":   completeForm,
 		"statStrip":      statStrip,
 		"figure":         figure,
-		"linked":         linked,
 		"lockedFigure":   lockedFigure,
 		"figures":        figures,
 		"cardArt":        CardArt,
@@ -874,26 +871,17 @@ func (v idleView) State() string {
 
 // Figure is one headline money figure, drawn as a block: what it is, the
 // amount with its signal (§7) — "" plain, "credited" earned (signed +),
-// "escrow" parked — and, when records stand behind it, a link to them (Link is
-// its text, Href its target). Every page that leads with money renders its
-// figures through the one _figures partial.
+// "escrow" parked. Every page that leads with money renders its figures
+// through the one _figures partial.
 type Figure struct {
 	Amount int64
 	Label  string
 	Signal string
-	Link   string
-	Href   string
 }
 
-// figure builds a Figure (template helper); linked adds its link.
+// figure builds a Figure (template helper).
 func figure(amount int64, label, signal string) Figure {
 	return Figure{Amount: amount, Label: label, Signal: signal}
-}
-
-// linked adds to f a link to the records behind it.
-func linked(f Figure, link, href string) Figure {
-	f.Link, f.Href = link, href
-	return f
 }
 
 // lockedFigure is the account's served `locked`, whole (§6.5): for everyone it
@@ -1049,23 +1037,6 @@ func queryOffset(r *http.Request) int {
 		return 0
 	}
 	return n
-}
-
-// actionsHref builds the /workshop URL for a given ownership scope ("" | "all")
-// and state filter ("" | "active" | "inactive"), so a tab in one axis preserves
-// the other axis's current value.
-func actionsHref(scope, filter string) string {
-	q := url.Values{}
-	if scope == "all" {
-		q.Set("scope", "all")
-	}
-	if filter != "" {
-		q.Set("filter", filter)
-	}
-	if len(q) == 0 {
-		return "/workshop"
-	}
-	return "/workshop?" + q.Encode()
 }
 
 // badgeView is the model for the _badge_poll partial: a nav attention badge that
