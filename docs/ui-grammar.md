@@ -31,7 +31,7 @@ Three laws underpin everything:
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. "+ new …" |
 | Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
-| **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, home, workshop and a session |
+| **Figures** | `.stat-row` + `.stat` (label · value · link) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal, a link to the records behind it. One component on wallet, workshop and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, each a `.rail-row` of its link and its menu (§5.12), the room in view `aria-current`, an unread one weighted (`.unread`) |
@@ -151,7 +151,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   and not judged: the UI never labels a world play or real, it names it.
 - **One capitalization: sentence case.** Page titles (`<h1>`), section
   headings (`<h2>`) and nav labels all start with a capital and continue as
-  written. A page is named as the nav and the lists name it: `Home · Inbox ·
+  written. A page is named as the nav and the lists name it: `Inbox ·
   Workshop · Wallet · Settings · Network · Admin`, a detail page the singular
   of its list (`Transaction`, `Session`, `Task`), and pages outside the nav
   likewise (`Recovery phrase`, `Connect`, `Error`, `Juice installation` — the gate's
@@ -512,7 +512,7 @@ separates it from the content above, and nothing else does (§4).
 - **Headline money figures are one component, `_figures`**: a `.stat-row` of
   `.stat` blocks — the label muted on top, the amount in mono coloured by its
   signal (`sig-credited` with a `+`, `sig-escrow`), and a quiet link to the
-  records behind it when there are any. Wallet, home, workshop's parked funds and a
+  records behind it when there are any. Wallet, workshop's parked funds and a
   session's funds all render through it; no page draws its own figures. An
   account's locked balance is one helper, `lockedFigure`: `parked ◷` (escrow)
   for everyone, `locked ◷` unsignalled for the operator, whose locked also holds
@@ -613,7 +613,7 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   results; the panel's sort tabs arrange the rows it holds (their hrefs are
   Discover's). There is no palette, no search pill, no command prefix.
   Discover's box carries the same list under it, the catalog's actions alone.
-- Shortcuts: `g`+letter (destinations, `g h` home, `g d` discover) · `/` (the
+- Shortcuts: `g`+letter (destinations, `g d` discover, `g i` inbox) · `/` (the
   launcher, or Discover's box) · `?` (help overlay, `dialog.palette`) ·
   `j/k/Enter` (table and list rows; Enter opens a row as its own link does,
   so a row in the panel opens in the panel) · `Esc` (close topmost) · `↑` from the
@@ -838,7 +838,7 @@ content only: no step sets a size or a spacing of its own.
   link to the record; referenced entities link to their pages; list money is the
   signed perspective amount (gross/fee/parties live on the detail page). Every
   `<table>` sits in a `.table-scroll`.
-- Sentence-case titles, headings and nav labels (`Home · Inbox · Workshop ·
+- Sentence-case titles, headings and nav labels (`Inbox · Workshop ·
   Wallet · Settings · Network · Admin`); `page-head` (the title only) on index, sticky crumb on detail.
   Commands are inline — never a floating page-head cluster (sticky is
   the page's own header refusing to scroll away, not floating chrome).

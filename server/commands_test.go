@@ -36,7 +36,7 @@ func TestMenuListsTheDestinations(t *testing.T) {
 	defer srv.Close()
 
 	alice := menuOf(getBody(t, loginClient(t, srv.URL), srv.URL+"/wallet"))
-	for name, href := range map[string]string{"Home": "/", "Inbox": "/inbox", "Discover": "/browse",
+	for name, href := range map[string]string{"Inbox": "/inbox", "Discover": "/browse",
 		"Workshop": "/workshop", "Wallet": "/wallet", "Settings": "/settings"} {
 		if alice[name] != href {
 			t.Errorf("menu row %q = %q, want %q", name, alice[name], href)
@@ -90,8 +90,8 @@ func TestLauncherReadsTheRegistry(t *testing.T) {
 		}
 		return out
 	}
-	core := cmds([]Command{{Name: "Create an action", Href: "/workshop?form=action-create"}, {Slug: "home", Name: "Home", Href: "/", Nav: true}})
-	if core["Create an action"] != "/workshop?form=action-create" || core["Home"] != "/" {
+	core := cmds([]Command{{Name: "Create an action", Href: "/workshop?form=action-create"}, {Slug: "inbox", Name: "Inbox", Href: "/inbox", Nav: true}})
+	if core["Create an action"] != "/workshop?form=action-create" || core["Inbox"] != "/inbox" {
 		t.Errorf("registry JSON = %v", core)
 	}
 	if !formWhitelist["action"]["action-create"] || !formWhitelist["admin"]["admin-inspect"] {
@@ -102,7 +102,7 @@ func TestLauncherReadsTheRegistry(t *testing.T) {
 // A composer's launcher carries the registry, the room's members and the
 // room, as one inert JSON block.
 func TestLauncherBlock(t *testing.T) {
-	v := launcherOf(`[{"name":"Home","href":"/"}]`, []string{"ana@k", "bot@k"}, "red-fox-12")
+	v := launcherOf(`[{"name":"Inbox","href":"/inbox"}]`, []string{"ana@k", "bot@k"}, "red-fox-12")
 	var got struct {
 		Pages   []map[string]string `json:"pages"`
 		Members []string            `json:"members"`
@@ -111,7 +111,7 @@ func TestLauncherBlock(t *testing.T) {
 	if err := json.Unmarshal([]byte(v.JSON), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Pages) != 1 || got.Pages[0]["href"] != "/" || len(got.Members) != 2 || got.Room != "red-fox-12" {
+	if len(got.Pages) != 1 || got.Pages[0]["href"] != "/inbox" || len(got.Members) != 2 || got.Room != "red-fox-12" {
 		t.Errorf("launcher block = %+v", got)
 	}
 	if empty := launcherOf("", nil, ""); !strings.Contains(string(empty.JSON), `"pages":[]`) {

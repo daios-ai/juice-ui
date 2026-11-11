@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.61.3
+Version: 0.62.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.62.0.** Home is gone: every figure and list it showed is
+> on the wallet or the inbox, and nothing was done on it. The root address
+> sends a session to where it begins, and the old page addresses (`/run`,
+> `/discover`, `/actions`, `/steps`, `/studio`, `/user`, `/you`) no longer
+> forward (§1, §6.1, §6.4, §6.5, §9).
 
 > **What changed in 0.61.3.** The local providers are named Ollama (local) and
 > LM Studio (local) and carry no count of models. A provider is asked for its
@@ -984,8 +990,8 @@ server-side.
 The UI is one collaborative workspace (§6.1, §6.7): conversations among people
 and agents are its frame, and actions are operations within them — chosen from
 the composer, prepared, run and their results reused without leaving the
-conversation. Every other page — the dashboard, the inbox, the catalog, the
-workshop, the wallet — stays a destination, reached from the avatar menu and
+conversation. Every other page — the inbox, the catalog, the workshop, the
+wallet — stays a destination, reached from the avatar menu and
 the composer's launcher.
 
 * The browser communicates only with the BFF. The BFF is the sole client of the
@@ -1128,11 +1134,10 @@ interfaces the entrypoint satisfies, and a test holds that.
 
 **Navigation model.** The UI's permanent elements are three: the
 conversations, the composer, and the avatar menu (§6.1). The destinations —
-**Home**, **Inbox**, **Discover**, **Workshop**, **Wallet**,
+**Inbox**, **Discover**, **Workshop**, **Wallet**,
 **Settings**, plus **Network**, **Admin** and an app's operator surfaces for
 `sys` alone — are one registry, which the avatar menu lists and the launcher
-searches. Each still maps to the CLI concepts it always did: `home` is the
-dashboard over the others; discovery + execution (`run` + the catalog) is
+searches. Each still maps to the CLI concepts it always did: discovery + execution (`run` + the catalog) is
 Discover and the composer's launcher; `inbox` is `task` — work addressed to the
 user, carrying the sole attention badge, which counts the waiting tasks
 addressed to the user and the requesters awaiting the user's decision (§6.3);
@@ -1492,17 +1497,11 @@ and absent until then.
   strip. The choice is persisted server-side (`sidebar` cookie, stamped on
   `<html>`) and applies to wide screens alone. There is no topbar and no
   overlay on a wide screen.
-* **Sign-in lands in a conversation** (§6.7): the conversations app's landing.
-  **Home is the dashboard** (`/`). It MUST show the
-  viewer's available and parked balance, the waiting tasks addressed to them
-  (read as `status=waiting`, never the whole history), their open sessions,
-  and their most recent ledger entries — at most five rows each, every section
-  linking to its full page. Recent activity MUST come from the ledger, which
-  holds only the viewer's entries, not from the transaction list, which the
-  kernel pages before its party filter. Home MUST NOT complete a task (the
-  inbox is the one surface that spends on a task) and MUST NOT draw a balance
-  chart (the kernel serves no series). An action page belongs to no
-  destination: it is reached from the launcher, Discover or a row.
+* **Sign-in lands in a conversation** (§6.7): the conversations app's landing,
+  or Discover where no conversations app is mounted. The root address (`/`)
+  renders no page: it MUST redirect a session to that landing. An action page
+  belongs to no destination: it is reached from the launcher, Discover or a
+  row.
 * The account summary (address, available balance) heads the avatar menu.
   Preferences are not chrome: the theme picker MUST appear exactly once, on
   `settings`; Sign out is the menu's.
@@ -2049,7 +2048,7 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   left out.
 * Workshop MUST NOT read the user's transactions: no kernel figure totals a person's
   earnings, and a fold would read every transaction on every load. What is parked,
-  like every headline money figure (wallet, home, a session), MUST render through
+  like every headline money figure (wallet, a session), MUST render through
   the one figures component: one block per figure (§7). The BFF MUST NOT reproduce
   kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
@@ -2118,13 +2117,11 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   rail until the payment is final (`sys.pending_payouts`). So the operator's
   `locked` mixes escrow and transit, and the UI cannot split it without
   arithmetic. For a superuser the figure is labelled **locked**, the kernel's
-  word, without the escrow signal — on the wallet, the dashboard and the
-  workshop alike; the network page's `in transit` figure itemises the transit
+  word, without the escrow signal — on the wallet and the workshop alike; the network page's `in transit` figure itemises the transit
   part. Every other account sees **parked**.
-* **The wallet and the dashboard are the viewer's own money.** They list the
-  viewer's own open sessions — a superuser is served every account's — the
-  dashboard taking its five after that filter; the sessions page is where every
-  account's are read.
+* **The wallet is the viewer's own money.** It lists the viewer's own open
+  sessions — a superuser is served every account's; the sessions page is where
+  every account's are read.
 * **A session awaiting a peer's receipt is not force-endable.** The kernel
   refuses to end it (409), because the peer may already have earned the funds,
   so the control MUST be withheld wherever it appears — the wallet, the sessions
@@ -3248,8 +3245,7 @@ Every production `.go` file has a `_test.go` file with independent tests.
   text; an absent side reads `outside Juice`, and a self-entry carries no sign
   (§6.5);
 * the End control is one component that states a refund only when there is
-  one; the wallet and the dashboard list the viewer's own sessions, the
-  dashboard filtering before it takes five; the operator's locked figure reads
+  one; the wallet lists the viewer's own sessions; the operator's locked figure reads
   `locked` without the escrow signal on every page that shows it; a blocked
   payout's reason renders (§6.5);
 * the network page's halt banner is led by `#alert`, a banner in page flow owns

@@ -7,7 +7,7 @@ import { openDialog } from "/static/app.js";
 const help = document.getElementById("help");
 
 // --- global shortcuts ---
-const GO = { h: "/", d: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/settings", n: "/admin/peers", x: "/admin" };
+const GO = { d: "/browse", i: "/inbox", k: "/workshop", w: "/wallet", y: "/settings", n: "/admin/peers", x: "/admin" };
 let goArmed = false;
 
 function typingContext(el) {

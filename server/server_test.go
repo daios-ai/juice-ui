@@ -361,7 +361,7 @@ func TestHeartbeatIsNotActivity(t *testing.T) {
 
 	busy := loginClient(t, srv.URL)
 	c.advance(20 * time.Minute)
-	get(t, busy, srv.URL+"/", false)
+	get(t, busy, srv.URL+"/wallet", false)
 	c.advance(20 * time.Minute)
 	if resp, _ := get(t, busy, srv.URL+"/tick", true); resp.Header.Get("HX-Redirect") != "" {
 		t.Error("a page the person opened 20 minutes ago keeps the session")
@@ -375,7 +375,7 @@ func TestIdleWarningOpensAndCloses(t *testing.T) {
 	c := newClock()
 	srv, _ := sessionServer(t, c)
 	cl := loginClient(t, srv.URL)
-	_, page := get(t, cl, srv.URL+"/", false)
+	_, page := get(t, cl, srv.URL+"/wallet", false)
 	if strings.Count(page, `id="watch-session"`) != 1 || !strings.Contains(page, `value="session::"`) || strings.Contains(page, `class="modal-confirm" aria-labelledby="idle-msg" hx-swap-oob="true" open`) {
 		t.Fatal("a page carries the closed warning and its watch once")
 	}
@@ -418,12 +418,12 @@ func TestAgedSessionIsSignedOut(t *testing.T) {
 	const step = 20 * time.Minute
 	for i := 1; i < int(session.AgeLimit/step); i++ {
 		c.advance(step)
-		if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
+		if resp, _ := get(t, cl, srv.URL+"/wallet", false); resp.StatusCode != 200 {
 			t.Fatalf("step %d: a session in use serves, got %d", i, resp.StatusCode)
 		}
 	}
 	c.advance(step)
-	resp, _ := get(t, cl, srv.URL+"/", false)
+	resp, _ := get(t, cl, srv.URL+"/wallet", false)
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
 		t.Fatalf("at the age limit: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -439,7 +439,7 @@ func TestAgedSessionIsSignedOut(t *testing.T) {
 func TestSignOutRevokesTheRefreshToken(t *testing.T) {
 	srv, revoked := sessionServer(t, newClock())
 	cl := loginClient(t, srv.URL)
-	_, page := get(t, cl, srv.URL+"/", false)
+	_, page := get(t, cl, srv.URL+"/wallet", false)
 	form := url.Values{"gorilla.csrf.Token": {csrfTokenFrom(t, page)}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/logout", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -536,11 +536,11 @@ func TestKernelIdentityAddressAndLocal(t *testing.T) {
 	}
 }
 
-// Home is current only on /, Discover on its results; an action page is
-// reached from the launcher or a row, and belongs to no group.
-func TestActiveGroupHome(t *testing.T) {
+// Discover is current on its results; an action page is reached from the
+// launcher or a row, and belongs to no group.
+func TestActiveGroup(t *testing.T) {
 	for path, want := range map[string]string{
-		"/": "home", "/browse": "browse", "/actions/A1": "", "/discovered": "",
+		"/browse": "browse", "/actions/A1": "", "/discovered": "",
 		"/inbox/T1": "inbox", "/transactions": "wallet", "/workshop": "workshop",
 	} {
 		if got := activeGroup(path); got != want {
@@ -572,7 +572,7 @@ func TestAnAbandonedTickKeepsTheSession(t *testing.T) {
 	if rec.Header().Get("HX-Redirect") != "" || revoked.Load() != 0 {
 		t.Fatalf("an abandoned tick signed out: %q, revocations %d", rec.Header().Get("HX-Redirect"), revoked.Load())
 	}
-	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
+	if resp, _ := get(t, cl, srv.URL+"/wallet", false); resp.StatusCode != 200 {
 		t.Errorf("the session must survive an abandoned tick: %d", resp.StatusCode)
 	}
 }
@@ -674,7 +674,7 @@ func TestARotationSurvivesAStaleSave(t *testing.T) {
 	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	k.arm(true, false, false)
 	slow := make(chan int)
-	go func() { slow <- status(cl, srv.URL+"/") }()
+	go func() { slow <- status(cl, srv.URL+"/wallet") }()
 	release := <-k.holdMe // A has loaded its copy, holding "at", and waits on the kernel
 	k.expired.Store(true)
 	if resp, _ := get(t, cl, srv.URL+"/wallet", false); resp.StatusCode != 200 {
@@ -684,7 +684,7 @@ func TestARotationSurvivesAStaleSave(t *testing.T) {
 	if code := <-slow; code != 200 {
 		t.Fatalf("A serves: %d", code)
 	}
-	if resp, _ := get(t, cl, srv.URL+"/", false); resp.StatusCode != 200 {
+	if resp, _ := get(t, cl, srv.URL+"/wallet", false); resp.StatusCode != 200 {
 		t.Fatalf("C after A's late save: %d %q, want the session alive", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if k.refreshes != 1 {
@@ -700,7 +700,7 @@ func TestASignOutDuringARefreshRevokesTheNewPair(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	_, page := get(t, cl, srv.URL+"/", false)
+	_, page := get(t, cl, srv.URL+"/wallet", false)
 	token := csrfTokenFrom(t, page)
 
 	k.expired.Store(true)
@@ -737,7 +737,7 @@ func TestARefreshDuringASignOutsRevocationIsRevoked(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	_, page := get(t, cl, srv.URL+"/", false)
+	_, page := get(t, cl, srv.URL+"/wallet", false)
 	token := csrfTokenFrom(t, page)
 
 	k.expired.Store(true)

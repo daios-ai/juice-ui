@@ -16,7 +16,7 @@ responses rather than reproducing kernel logic.
 - **One collaborative workspace** — conversations among people and agents are
   the frame; actions are chosen from the composer's `/`, run in a panel beside
   the conversation, and their results carried into the next message or action.
-  Home, Inbox, Discover, Workshop, Wallet and Settings (and Network, Admin and
+  Inbox, Discover, Workshop, Wallet and Settings (and Network, Admin and
   Agents for `sys`) are destinations of the avatar menu.
 - **Terminal aesthetic** — a monospace face and selectable **Ghostty 16-colour ANSI
   themes**, every theme derived from one set of design tokens and held to WCAG AA by

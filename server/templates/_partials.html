@@ -134,7 +134,7 @@
 {{end}}
 
 {{/* _open_sessions — the viewer's open processes, each with its parked funds
-     and, when endable, the end-and-refund command. Shared by wallet and home;
+     and, when endable, the end-and-refund command. The wallet's;
      takes the page (it needs the CSRF field). */}}
 {{define "_open_sessions"}}
 {{if .Data.Open}}
@@ -639,7 +639,7 @@
      Input: balanceView (the `balance` helper); OOB answers the heartbeat. */}}
 {{define "_balance"}}<p class="muted tiny money flush" id="balance"{{if .OOB}} hx-swap-oob="true"{{end}}>{{money .Amount}}</p><input type="hidden" id="watch-balance" name="watch" value="balance::{{.Amount}}"{{if .OOB}} hx-swap-oob="true"{{end}}>{{end}}
 
-{{/* _brand — the kernel and the world it serves (§7), linking home. */}}
+{{/* _brand — the kernel and the world it serves (§7), linking to the landing. */}}
 {{define "_brand"}}<a class="brand" href="/"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="24" height="26"><span>{{if .KernelHandle}}{{.KernelHandle}}{{else}}juice{{end}}{{if .KernelNet}} <span class="world">{{.KernelNet}}</span>{{end}}</span></a>{{end}}
 
 {{/* _sidebar — the workspace's one sidebar (requirements §6.1): the brand

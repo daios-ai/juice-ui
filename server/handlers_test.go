@@ -456,7 +456,7 @@ func loginClient(t *testing.T, base string) *http.Client {
 		t.Fatal(err)
 	}
 	resp2.Body.Close()
-	if resp2.StatusCode != 200 { // followed redirect to dashboard
+	if resp2.StatusCode != 200 { // followed redirect to the landing
 		t.Fatalf("login landed on status %d", resp2.StatusCode)
 	}
 	return cl
@@ -1072,7 +1072,7 @@ func TestGrantConnectPostsToken(t *testing.T) {
 			w.Write([]byte(`{"status":"connected"}`))
 			return
 		}
-		base.Config.Handler.ServeHTTP(w, r) // delegate login/dashboard reads to authKernel
+		base.Config.Handler.ServeHTTP(w, r) // delegate login and landing reads to authKernel
 	}))
 	defer wrap.Close()
 
@@ -1966,7 +1966,7 @@ func TestWorkshopAddsUpNoMoney(t *testing.T) {
 	if !strings.Contains(lower, "parked") {
 		t.Error("workshop keeps what is parked")
 	}
-	for _, page := range []string{"/workshop", "/wallet", "/"} {
+	for _, page := range []string{"/workshop", "/wallet"} {
 		b := getBody(t, cl, srv.URL+page)
 		if !strings.Contains(b, `<div class="stat-row">`) || strings.Contains(b, `class="balance`) {
 			t.Errorf("%s must render its money through the figures component", page)
@@ -2107,7 +2107,7 @@ func TestUpdateActionPrice(t *testing.T) {
 }
 
 // actionDetailKernel serves a single owned action A1 (given as raw JSON) plus the
-// endpoints the action page and post-login dashboard need.
+// endpoints the action page and the post-login landing need.
 func actionDetailKernel(actionJSON string) *http.ServeMux {
 	mux := http.NewServeMux()
 	fakeHealth(mux)
@@ -2848,6 +2848,7 @@ func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
+	taskActionReads = nil // what the inbox asks, not the landing signed in to
 
 	page := getBody(t, cl, srv.URL+"/inbox")
 	if strings.Contains(page, "btn-money") || strings.Contains(page, "Complete (") {
@@ -3563,7 +3564,7 @@ func TestPricedPlannerIsPaidOnItsButton(t *testing.T) {
 type convApp struct{ launchApp }
 
 func (convApp) Rail(*http.Request) (template.HTML, error) { return `<nav class="rail"></nav>`, nil }
-func (convApp) Landing() string                           { return "/" }
+func (convApp) Landing() string                           { return "/browse" }
 func (convApp) Context(_ *http.Request, room string) ([]client.Message, error) {
 	if room != "r1" {
 		return nil, fmt.Errorf("not a member")
@@ -3998,20 +3999,18 @@ func TestReceiptStatesATransferPayment(t *testing.T) {
 	}
 }
 
-// homeKernel is a fake kernel for the dashboard and the type-ahead. It records
-// every task-list query and counts action-list reads and runs, so a test can
-// assert what each page asked the kernel for.
-type homeKernel struct {
+// catalogKernel is a fake kernel for the catalog and the type-ahead. It counts
+// action-list reads and runs, so a test can assert what each page asked the
+// kernel for.
+type catalogKernel struct {
 	*httptest.Server
-	taskQueries []string
 	actionLists int
 	runs        int
-	failLedger  bool
 	lookup      string // the sys/lookup row a ref read answers; none when empty
 }
 
-func newHomeKernel(t *testing.T) *homeKernel {
-	k := &homeKernel{}
+func newCatalogKernel(t *testing.T) *catalogKernel {
+	k := &catalogKernel{}
 	mux := http.NewServeMux()
 	fakeHealth(mux)
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -4022,35 +4021,6 @@ func newHomeKernel(t *testing.T) *homeKernel {
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"U1","address":"alice@testnet","available":500,"locked":40}`))
-	})
-	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
-		k.taskQueries = append(k.taskQueries, r.URL.RawQuery)
-		// Seven waiting tasks for alice and one for bob (a superuser's view).
-		var rows []string
-		for i := 0; i < 7; i++ {
-			rows = append(rows, fmt.Sprintf(`{"id":"T%d","required_caller":"alice@testnet","owner":"bob@testnet","action":"alice@testnet/hello","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`, i))
-		}
-		rows = append(rows, `{"id":"TBOB","required_caller":"bob@testnet","owner":"bob@testnet","action":"bob@testnet/x","price":5,"status":"waiting","created_at":"2026-01-01T00:00:00Z"}`)
-		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
-	})
-	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
-		// Another account's sessions first, as a superuser is served them: the
-		// dashboard keeps the viewer's own, and only then takes five.
-		var rows []string
-		for i := 0; i < 3; i++ {
-			rows = append(rows, fmt.Sprintf(`{"id":"Q%d000000","owner":"bob@testnet","status":"open","available":10,"locked":0}`, i))
-		}
-		for i := 0; i < 7; i++ {
-			rows = append(rows, fmt.Sprintf(`{"id":"P%d000000","owner":"alice@testnet","status":"open","available":10,"locked":0}`, i))
-		}
-		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
-	})
-	mux.HandleFunc("GET /v1/ledger", func(w http.ResponseWriter, r *http.Request) {
-		if k.failLedger {
-			http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
-			return
-		}
-		w.Write([]byte(`[{"amount":300,"reason":"","created_at":"2024-01-02T12:00:00Z","operator":"sys@testnet","from":"sys@testnet","to":"alice@testnet"}]`))
 	})
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		if pastEnd(w, r) {
@@ -4083,55 +4053,21 @@ func newHomeKernel(t *testing.T) *homeKernel {
 	return k
 }
 
-// Home is the dashboard: balances, the waiting tasks addressed to the viewer
-// (at most five, asked for as waiting so no history is read), open sessions
-// (at most five), and recent ledger activity, each linking to its full page.
-func TestHomeIsTheDashboard(t *testing.T) {
-	k := newHomeKernel(t)
+// The root address renders nothing: it sends a session to where it begins,
+// the catalog when no conversations app is mounted (§6.1).
+func TestRootSendsToTheLanding(t *testing.T) {
+	k := newCatalogKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-
-	k.taskQueries = nil
+	cl.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := cl.Get(srv.URL + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	page := string(body)
-	if resp.StatusCode != http.StatusOK || resp.Request.URL.Path != "/" {
-		t.Fatalf("/ must render the dashboard, got %d at %s", resp.StatusCode, resp.Request.URL.Path)
-	}
-	for _, want := range []string{"500 credits", "40 credits", `href="/inbox"`, `href="/processes"`, `href="/transactions"`, `href="/wallet"`, "from sys@testnet"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("home must show %q", want)
-		}
-	}
-	if n := strings.Count(page, `data-href="/inbox/T`); n != 5 {
-		t.Errorf("home shows %d waiting tasks, want 5", n)
-	}
-	if strings.Contains(page, "/inbox/TBOB") {
-		t.Error("home must show only tasks addressed to the viewer")
-	}
-	if n := strings.Count(page, `<a class="mono" href="/processes/P`); n != 5 {
-		t.Errorf("home shows %d open sessions, want 5", n)
-	}
-	if strings.Contains(page, `href="/processes/Q`) {
-		t.Error("the dashboard lists only the viewer's own sessions")
-	}
-	for _, q := range k.taskQueries {
-		if !strings.Contains(q, "status=waiting") || strings.Contains(q, "all=1") {
-			t.Errorf("home must ask for waiting tasks only, asked %q", q)
-		}
-	}
-	if !regexp.MustCompile(`<a href="/" class="menu-item" role="menuitem" aria-current="page"><svg[^>]*>.*?</svg>Home</a>`).MatchString(page) {
-		t.Error("Home must be the current destination on /")
-	}
-	// A secondary read failing leaves the rest of the page standing.
-	k.failLedger = true
-	if page := getBody(t, cl, srv.URL+"/"); !strings.Contains(page, "500 credits") || !strings.Contains(page, "No activity yet.") {
-		t.Error("home must still render when the ledger read fails")
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/browse" {
+		t.Errorf("/ = %d to %q, want 303 to /browse", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
 
@@ -4229,7 +4165,7 @@ func pastEnd(w http.ResponseWriter, r *http.Request) bool {
 // ordered by key. It is read in one catalog read, never runs anything, and is
 // never stored by the browser (it holds the account's private titles).
 func TestSearchCatalogServesEveryAction(t *testing.T) {
-	k := newHomeKernel(t)
+	k := newCatalogKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
@@ -4283,7 +4219,7 @@ func TestSearchCatalogServesEveryAction(t *testing.T) {
 // when free, and no search at all when the lookup is absent, switched off, or
 // priced without a quote to pin — a priced search is never offered unpinned.
 func TestSearchCatalogNamesTheSearchsTerms(t *testing.T) {
-	k := newHomeKernel(t)
+	k := newCatalogKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
@@ -4321,7 +4257,7 @@ func TestSearchCatalogNamesTheSearchsTerms(t *testing.T) {
 // to resolve on open, never to a local action page it does not have — and
 // the workshop, which manages this kernel's actions, leaves it out.
 func TestCatalogDiscoveredRows(t *testing.T) {
-	k := newHomeKernel(t)
+	k := newCatalogKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)

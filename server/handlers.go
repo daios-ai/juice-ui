@@ -268,12 +268,17 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // landing is where a session begins: its conversations (requirements §6.1),
-// else the dashboard.
+// else the catalog.
 func (s *Server) landing() string {
 	if s.conv != nil {
 		return s.conv.Landing()
 	}
-	return "/"
+	return "/browse"
+}
+
+// getRoot sends the root address to where a session begins.
+func (s *Server) getRoot(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, s.landing(), http.StatusSeeOther)
 }
 
 func (s *Server) postSignup(w http.ResponseWriter, r *http.Request) {
@@ -1896,20 +1901,9 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view)
 }
 
-// homeView is the dashboard: what the viewer has, what waits on them, and what
-// just moved. Each list is a preview of the page its "all" link opens.
-type homeView struct {
-	Available int64
-	Locked    int64
-	Superuser bool
-	Waiting   []client.Task
-	Open      []client.Process
-	Activity  []entryRow
-}
-
 // ownSessions keeps the viewer's own open sessions. A superuser lists every
-// account's, but the wallet and the dashboard are the viewer's money — the
-// inbox's rule for tasks; the sessions page is where every account's are read.
+// account's, but the wallet is the viewer's money — the inbox's rule for
+// tasks; the sessions page is where every account's are read.
 func ownSessions(procs []client.Process, me string) []client.Process {
 	var own []client.Process
 	for _, p := range procs {
@@ -1918,47 +1912,6 @@ func ownSessions(procs []client.Process, me string) []client.Process {
 		}
 	}
 	return own
-}
-
-// homePreview is how many rows each dashboard section shows.
-const homePreview = 5
-
-func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	view := homeView{Superuser: s.isSuperuser(r)}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		me, e := s.me(r)
-		if e != nil {
-			return e
-		}
-		view.Available, view.Locked = me.Available, me.Locked
-		// Waiting tasks only: an empty status would read the whole history.
-		// A superuser lists everyone's, so keep the ones addressed to the viewer,
-		// the inbox's own rule.
-		if tasks, e := s.client.WaitingTasks(ctx, tok); e == nil {
-			for _, t := range tasks {
-				if t.Waiting() && t.RequiredCaller == me.Address && len(view.Waiting) < homePreview {
-					view.Waiting = append(view.Waiting, t)
-				}
-			}
-		}
-		if procs, e := s.client.OpenProcesses(ctx, tok); e == nil {
-			own := ownSessions(procs, me.Address)
-			view.Open = own[:min(len(own), homePreview)]
-		}
-		// The ledger, not the transaction list: the kernel pages transactions
-		// before its party filter, so a short page could hide the viewer's rows;
-		// the ledger holds only the viewer's entries.
-		entries, _ := s.client.Ledger(ctx, tok, homePreview, 0)
-		for _, e := range entries {
-			view.Activity = append(view.Activity, entryRowOf(e, me.Address))
-		}
-		return nil
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "home", "Home", view)
 }
 
 // walletAmount reads a review's typed amount, flashing a refusal back to the

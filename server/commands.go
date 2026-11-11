@@ -32,7 +32,6 @@ type Command struct {
 // group.
 func (s *Server) commands(r *http.Request) []Command {
 	cmds := []Command{
-		{Slug: "home", Name: "Home", Href: "/", Icon: iconHome, Nav: true},
 		{Slug: "inbox", Name: "Inbox", Href: "/inbox", Icon: iconInbox, Nav: true, Live: true},
 		{Slug: "browse", Name: "Discover", Href: "/browse", Icon: iconDiscover, Nav: true},
 		{Slug: "workshop", Name: "Workshop", Href: "/workshop", Icon: iconWorkshop, Nav: true},
@@ -85,7 +84,6 @@ func navIcon(paths string) template.HTML {
 }
 
 var (
-	iconHome     = navIcon(`<path d="M4 11l8-7 8 7"/><path d="M6 9.5V19a1 1 0 0 0 1 1h3.5v-5h3v5H17a1 1 0 0 0 1-1V9.5"/>`)            // house
 	iconInbox    = navIcon(`<path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5a3 3 0 0 0 6 0h5"/>`)    // tray
 	iconDiscover = navIcon(`<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/>`)                                            // magnifier
 	iconWorkshop = navIcon(`<path d="M9 3h6M10 3v6l-4.4 8.1A2 2 0 0 0 7.4 20h9.2a2 2 0 0 0 1.8-2.9L14 9V3"/><path d="M7.7 13h8.6"/>`) // lab beaker

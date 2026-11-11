@@ -328,8 +328,8 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /theme", s.postTheme)
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
-	// Home.
-	mux.HandleFunc("GET /{$}", s.requireAuth(s.getHome))
+	// The root address is where a session begins.
+	mux.HandleFunc("GET /{$}", s.requireAuth(s.getRoot))
 
 	// Browse — discovery, catalog, and execution.
 	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))
@@ -827,8 +827,6 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 // aria-current highlighting.
 func activeGroup(path string) string {
 	switch {
-	case path == "/":
-		return "home"
 	case strings.HasPrefix(path, "/browse"):
 		return "browse"
 	case strings.HasPrefix(path, "/workshop"):

@@ -2047,7 +2047,7 @@ func TestLockedFigureFollowsTheAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string]any{"wallet": walletView{Superuser: true}, "home": homeView{Superuser: true}, "workshop": actionsView{Superuser: true}} {
+	for name, data := range map[string]any{"wallet": walletView{Superuser: true}, "workshop": actionsView{Superuser: true}} {
 		rec := httptest.NewRecorder()
 		if err := r.Render(rec, 200, name, Page{Me: "sys@testnet", IsSuperuser: true, Data: data}); err != nil {
 			t.Fatal(err)

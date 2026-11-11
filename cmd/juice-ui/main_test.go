@@ -209,7 +209,7 @@ func TestBuildRequiresAuthRedirect(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther {
-		t.Errorf("dashboard without auth should redirect, got %d", resp.StatusCode)
+		t.Errorf("the root without auth should redirect, got %d", resp.StatusCode)
 	}
 	if loc := resp.Header.Get("Location"); loc != "/login" {
 		t.Errorf("redirect to %q want /login", loc)
