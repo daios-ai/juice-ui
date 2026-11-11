@@ -219,13 +219,13 @@ func (k installation) Create(world, handle, password, recoveryKey string, m any)
 }
 
 // Models reads the installer's models page through package models: the
-// machine's first choice, a list asked for, or answers checked with the
+// kernel's own default models, a list asked for, or answers checked with the
 // providers.
 func (k installation) Models(ctx context.Context, form url.Values, held any) (any, string, bool) {
 	h, ok := held.(models.Setup)
 	switch {
 	case form == nil && !ok:
-		return models.Initial(ctx, k.Schema()), "", false
+		return models.From(models.Defaults(k.Schema())), "", false
 	case form == nil:
 		return h, "", false
 	}

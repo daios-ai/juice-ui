@@ -14,8 +14,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/daios-ai/juice-ui/models"
 )
 
 // loginClientAs logs in through the BFF with a chosen handle. The session handle
@@ -1084,9 +1082,6 @@ func TestAdminConfigSwitch(t *testing.T) {
 // fake provider; nothing on this machine is asked.
 func modelsServer(t *testing.T) (*fakeConfig, *httptest.Server, *http.Client, string) {
 	t.Helper()
-	saved := models.Providers
-	t.Cleanup(func() { models.Providers = saved })
-	models.Providers = saved[2:]
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "Bearer wrong" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -1139,12 +1134,12 @@ func TestAdminModelsPage(t *testing.T) {
 		`<h1>Models</h1>`, `name="version" value="v1"`,
 		`<option value="other" selected>Other (OpenAI-compatible)</option>`, `value="` + addr + `"`, `value="chat-1"`,
 		`<select id="m-chat-model" name="chat_model" class="mono">`, `<option value="chat-1" selected>chat-1</option>`, `<option value="chat-2">chat-2</option>`,
-		`hx-target="#m-chat-model-field"`, `hx-sync="closest [data-group]:replace"`,
-		`<select id="m-chat-provider" name="chat_provider" data-reveal="provider" hx-post="/admin/models/model">`,
-		`name="chat_url" type="url" class="mono" placeholder="http://localhost:8000/v1" value="` + addr + `" autocomplete="off" hx-post="/admin/models/model">`,
+		`hx-target="#m-chat-model-field" hx-select="#m-chat-model-field"`, `hx-sync="#m-chat:replace"`,
+		`<select id="m-chat-provider" name="chat_provider" hx-post="/admin/models/model" hx-target="#m-chat" hx-select="#m-chat" hx-vals='{"chat_url": ""}'>`,
+		`name="chat_url" type="url" class="mono" value="` + addr + `" autocomplete="off" hx-post="/admin/models/model">`,
 		`<h3 class="flush">Chat model</h3>`, `<h3 class="flush">Embedding model</h3>`,
 		`placeholder="configured ✓ (replace)"`, `name="chat_price"`, `value="5"`,
-		`<option value="" selected>None</option>`, `data-reveal="provider"`,
+		`<option value="" selected>None</option>`,
 		`<button class="btn-primary" type="submit" data-confirm="Restart the kernel to apply?">Save and restart</button>`,
 		`>List models</button>`, `<h2>Other models</h2>`, `<td class="mono">sold</td>`,
 	} {
@@ -1182,7 +1177,7 @@ func TestAdminModelsSave(t *testing.T) {
 		{"chat_model", "nope"}:          "serves no model nope",
 		{"chat_key", "wrong"}:           "Incorrect API key provided.",
 		{"chat_price", "1.5"}:           "Price: amount must be a whole number here.",
-		{"embed_provider", "anthropic"}: "Anthropic serves no embedding models",
+		{"embed_provider", "anthropic"}: "serves no embedding models",
 		{"chat_provider", "same"}:       "Choose a provider for the chat model.",
 	} {
 		code, body, _ := modelsPost(t, cl, srv.URL, with(kv[0], kv[1], "embed_key", "k"))
@@ -1240,15 +1235,15 @@ func TestAdminModelsField(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
 	}
-	code, body := field(url.Values{"block": {"embed"}, "list": {"1"}, "embed_provider": {"other"}, "embed_url": {addr}})
+	code, body := field(url.Values{"block": {"embed"}, "list": {"1"}, "embed_provider": {"other"}, "embed_url": {addr}, "embed_price": {"3"}})
 	for _, want := range []string{`id="m-embed-model-field"`, `<select id="m-embed-model" name="embed_model" class="mono">`,
-		`<option value="" selected></option>`, `<option value="embed-1">embed-1</option>`} {
+		`<option value="" selected></option>`, `<option value="embed-1">embed-1</option>`, `name="embed_price" type="number" min="0" step="1" value="3"`} {
 		if code != 200 || !strings.Contains(body, want) {
 			t.Errorf("field %d lacks %q: %s", code, want, body)
 		}
 	}
 	if strings.Contains(body, "m-chat-model") || fc.wrote != "" {
-		t.Error("the answer is the one block's field, and nothing is written")
+		t.Error("the answer is the one block, and nothing is written")
 	}
 	notFound := httptest.NewServer(http.NotFoundHandler())
 	defer notFound.Close()

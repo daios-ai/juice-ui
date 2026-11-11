@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -780,7 +781,12 @@ func (s *Server) getAdminModels(w http.ResponseWriter, r *http.Request) {
 // renderModels renders the page for setup, the keys of held said to be held,
 // each block naming the native it backs.
 func (s *Server) renderModels(w http.ResponseWriter, r *http.Request, status int, cfg map[string]any, version string, setup, held models.Setup, msg string) {
-	ctx := r.Context()
+	s.renderPage(w, r, status, "admin_models", "Models", modelsView{Form: s.modelsForm(r.Context(), setup, held), Others: models.Others(cfg), Version: version, Error: msg})
+}
+
+// modelsForm is the form for setup, the keys of held said to be held, each
+// block naming the native it backs and refreshed from the page's address.
+func (s *Server) modelsForm(ctx context.Context, setup, held models.Setup) models.Form {
 	form := models.View(ctx, setup, held)
 	form.Refresh(modelsRefresh)
 	for _, b := range []*models.Block{&form.Chat, &form.Embed} {
@@ -793,10 +799,37 @@ func (s *Server) renderModels(w http.ResponseWriter, r *http.Request, status int
 			return err
 		})
 	}
-	s.renderPage(w, r, status, "admin_models", "Models", modelsView{Form: form, Others: models.Others(cfg), Version: version, Error: msg})
+	return form
 }
 
-// modelsRefresh is where the page asks for a block's model field again.
+// postedModels is the setup a post of the page holds, its keys kept from the
+// file and its prices read in the world's money, with what a price could not
+// be read as.
+func (s *Server) postedModels(r *http.Request) (cfg map[string]any, setup, held models.Setup, msg string, err error) {
+	if cfg, _, err = s.kernelConfig(); err == nil {
+		err = r.ParseForm()
+	}
+	if err != nil {
+		return nil, setup, held, "", err
+	}
+	held = models.From(cfg)
+	setup = models.Read(r.PostForm)
+	setup.Keep(held)
+	setup.Priced = true
+	for _, b := range []struct {
+		c     *models.Choice
+		field string
+	}{{&setup.Chat, "chat_price"}, {&setup.Embed, "embed_price"}} {
+		p, err := s.parseAmount(r.PostFormValue(b.field))
+		if err != nil && msg == "" {
+			msg = "Price: " + err.Error() + "."
+		}
+		b.c.Price = p
+	}
+	return cfg, setup, held, msg, nil
+}
+
+// modelsRefresh is where the page asks for a block again.
 const modelsRefresh = "/admin/models/model"
 
 // modelsField is a refresh's answer: the form as posted, and the block asked.
@@ -805,30 +838,20 @@ type modelsField struct {
 	Field string
 }
 
-// postAdminModelsModel answers a block's model field for the form as posted —
-// the provider, address and key typed — with the models that provider lists.
-// It writes nothing.
+// postAdminModelsModel answers a block for the form as posted — the provider,
+// address and key typed — with the models that provider lists. It writes
+// nothing.
 func (s *Server) postAdminModelsModel(w http.ResponseWriter, r *http.Request) {
 	if !s.modelsSupported() {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "The form could not be read.", http.StatusBadRequest)
-		return
-	}
-	cfg, _, err := s.kernelConfig()
+	_, setup, held, _, err := s.postedModels(r)
 	if err != nil {
 		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
 		return
 	}
-	held := models.From(cfg)
-	setup := models.Read(r.PostForm)
-	setup.Keep(held)
-	setup.Priced = true
-	form := models.View(r.Context(), setup, held)
-	form.Refresh(modelsRefresh)
-	_ = s.render.Fragment(w, http.StatusOK, "_models_refresh", modelsField{Form: form, Field: r.PostFormValue("block")})
+	_ = s.render.Fragment(w, http.StatusOK, "_models_refresh", modelsField{Form: s.modelsForm(r.Context(), setup, held), Field: r.PostFormValue("block")})
 }
 
 // postAdminModels writes the models chosen into the kernel's file and restarts
@@ -842,30 +865,12 @@ func (s *Server) postAdminModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	const back = "/admin/models"
-	cfg, _, err := s.kernelConfig()
-	if err == nil {
-		err = r.ParseForm()
-	}
+	cfg, setup, held, msg, err := s.postedModels(r)
 	if err != nil {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}
 	version := r.PostFormValue("version")
-	held := models.From(cfg)
-	setup := models.Read(r.PostForm)
-	setup.Keep(held)
-	setup.Priced = true
-	msg := ""
-	for _, b := range []struct {
-		c     *models.Choice
-		field string
-	}{{&setup.Chat, "chat_price"}, {&setup.Embed, "embed_price"}} {
-		p, err := s.parseAmount(r.PostFormValue(b.field))
-		if err != nil && msg == "" {
-			msg = "Price: " + err.Error() + "."
-		}
-		b.c.Price = p
-	}
 	if r.PostFormValue("list") != "" {
 		s.renderModels(w, r, http.StatusOK, cfg, version, setup, held, "")
 		return

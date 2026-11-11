@@ -225,12 +225,12 @@ func TestApplyNamesAreDistinct(t *testing.T) {
 func TestFromTheFile(t *testing.T) {
 	cfg := file(t)
 	s := From(cfg)
-	if s.Chat != (Choice{Provider: "ollama", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: "ollama", ID: "nomic-embed-text"}) {
+	if s.Chat != (Choice{Provider: "ollama", URL: "http://localhost:11434/v1", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: "ollama", URL: "http://localhost:11434/v1", ID: "nomic-embed-text"}) {
 		t.Errorf("from %+v", s)
 	}
 	Apply(cfg, Setup{Chat: Choice{Provider: "anthropic", Key: "ak", ID: "claude"}, Embed: Choice{Provider: Other, URL: "http://e/v1", ID: "e", Price: 4}, Priced: true})
 	s = From(cfg)
-	if s.Chat != (Choice{Provider: "anthropic", Key: "ak", ID: "claude"}) || s.Embed != (Choice{Provider: Other, URL: "http://e/v1", ID: "e", Price: 4}) {
+	if s.Chat != (Choice{Provider: "anthropic", URL: "https://api.anthropic.com/v1", Key: "ak", ID: "claude"}) || s.Embed != (Choice{Provider: Other, URL: "http://e/v1", ID: "e", Price: 4}) {
 		t.Errorf("round trip %+v", s)
 	}
 	if got := Others(file(t, map[string]any{"name": "x", "id": "big", "url": "u", "kind": "chat"})); len(got) != 1 || got[0].Name != "x" {
@@ -253,7 +253,6 @@ func TestCheck(t *testing.T) {
 		{Setup{Chat: other(srv.URL, "")}, "Choose a chat model."},
 		{Setup{Chat: other("localhost:9", "x")}, "starting with http"},
 		{Setup{Chat: Choice{Provider: "bogus"}}, "Choose a provider for the chat model."},
-		{Setup{Chat: Choice{Provider: "openai", ID: "gpt-5"}}, "OpenAI needs a key."},
 		{Setup{Chat: other(keyed.URL, "m")}, "Incorrect API key provided."},
 		{Setup{Chat: Choice{Provider: Other, URL: keyed.URL, Key: "sk", ID: "m"}}, ""},
 		{Setup{Embed: Choice{Provider: "same", ID: "e"}}, "Choose a provider for the embedding model."},
@@ -276,48 +275,36 @@ func TestView(t *testing.T) {
 	srv, _ := fakeProvider(t, []string{"a", "b"}, "")
 	saved := Providers
 	t.Cleanup(func() { Providers = saved })
-	Providers = append([]Provider{{ID: "here", Name: "Here", Protocol: "openai", URL: srv.URL, Local: true},
-		{ID: "gone", Name: "Gone", Protocol: "openai", URL: "http://127.0.0.1:1", Local: true}}, saved[2:]...)
+	Providers = append([]Provider{{ID: "here", Name: "Here", Protocol: "openai", URL: srv.URL}}, saved...)
 	typed := Setup{Chat: Choice{Provider: "here", ID: "a", Key: "k"}, Embed: Choice{Provider: Other, URL: "http://127.0.0.1:1", ID: "e"}}
 	if f := View(context.Background(), typed, Setup{}); f.Chat.Held {
 		t.Error("a key typed and not held is not said to be held")
 	}
 	f := View(context.Background(), typed, typed)
-	note := func(b Block, id string) string {
-		for _, o := range b.Options {
-			if o.ID == id {
-				return o.Note
-			}
-		}
-		return "absent"
+	offers := func(b Block, id string) bool {
+		return slices.ContainsFunc(b.Options, func(p Provider) bool { return p.ID == id })
 	}
-	if note(f.Chat, "here") != "2 models" || note(f.Chat, "gone") != "not running" || note(f.Chat, "openai") != "" {
-		t.Errorf("notes %+v", f.Chat.Options)
-	}
-	if !slices.Equal(f.Chat.Models, []string{"a", "b"}) || f.Chat.Unlisted || !f.Chat.Held || f.Chat.Summary != "a · Here" {
+	if !slices.Equal(f.Chat.Models, []string{"a", "b"}) || f.Chat.Unlisted || !f.Chat.Held || f.Chat.Summary != "a · Here" || f.Chat.URL != srv.URL {
 		t.Errorf("chat block %+v", f.Chat)
 	}
-	if note(f.Embed, "anthropic") != "absent" || note(f.Embed, "other-anthropic") != "absent" || note(f.Chat, "anthropic") != "" {
+	if offers(f.Embed, "anthropic") || offers(f.Embed, "other-anthropic") || !offers(f.Chat, "anthropic") {
 		t.Error("the embedding block offers no anthropic-protocol provider, the chat block does")
 	}
-	if f.Embed.Problem == "" {
-		t.Error("a provider that could not be asked says why")
-	}
-	if !f.Chat.Shown(f.Chat.ForModel) || f.Chat.Shown(f.Chat.ForURL) || f.Chat.Shown(f.Chat.ForKey) || !f.Embed.Shown(f.Embed.ForKey) || !f.Embed.Shown(f.Embed.ForURL) {
-		t.Errorf("parts shown: %+v %+v", f.Chat, f.Embed)
+	if f.Embed.Problem == "" || f.Embed.URL != "http://127.0.0.1:1" {
+		t.Errorf("a provider that could not be asked says why: %+v", f.Embed)
 	}
 	// A model the provider no longer lists stays chosen, marked; the form
-	// answers a block's field where its host says.
+	// answers a block where its host says.
 	f = View(context.Background(), Setup{Chat: Choice{Provider: "here", ID: "gone-model"}}, Setup{})
 	f.Refresh("/x")
 	if !f.Chat.Unlisted || f.Block("chat").Refresh != "/x" || f.Block("embed").Field != "embed" {
 		t.Errorf("unlisted %+v", f.Chat)
 	}
-
-	// A provider that needs a key is not asked without one.
-	f = View(context.Background(), Setup{Chat: Choice{Provider: "anthropic", ID: "c"}}, Setup{})
-	if f.Chat.Problem != "" || f.Chat.Models != nil {
-		t.Errorf("anthropic without a key: %+v", f.Chat)
+	// A provider's address is changed like any other; the provider is then
+	// named by its address.
+	f = View(context.Background(), Setup{Chat: Choice{Provider: "openai", URL: srv.URL, ID: "a"}}, Setup{})
+	if !slices.Contains(f.Chat.Models, "a") || f.Chat.Summary != "a · "+srv.URL {
+		t.Errorf("a changed address is asked: %+v", f.Chat)
 	}
 	// A provider the embedding block cannot use is not asked for it.
 	f = View(context.Background(), Setup{Embed: Choice{Provider: "anthropic", Key: "k", ID: "e"}}, Setup{})
@@ -326,24 +313,21 @@ func TestView(t *testing.T) {
 	}
 }
 
-func TestInitialAndSupported(t *testing.T) {
-	srv, _ := fakeProvider(t, []string{"gemma4:26b", "nomic-embed-text"}, "")
-	saved := Providers
-	t.Cleanup(func() { Providers = saved })
-	Providers = append([]Provider{{ID: "here", Name: "Here", Protocol: "openai", URL: srv.URL + "/v1", Local: true}}, saved[2:]...)
-	schema := []byte(`{"properties":{"native":{"properties":{"llm":{"properties":{"models":{
-	  "default":[{"url":"` + srv.URL + `/v1","id":"gemma4:26b","kind":"chat"},{"url":"` + srv.URL + `/v1","id":"nomic-embed-text","kind":"embed"}],
+func TestDefaultsAndSupported(t *testing.T) {
+	schema := []byte(`{"properties":{"listen_addr":{"default":"127.0.0.1:4040"},"native":{"properties":{"llm":{"properties":{
+	  "chat":{"default":"g"},"embed":{"default":"n"},"models":{
+	  "default":[{"name":"g","protocol":"openai","url":"http://localhost:11434/v1","id":"gemma4:26b","kind":"chat"},{"name":"n","protocol":"openai","url":"http://localhost:11434/v1","id":"nomic-embed-text","kind":"embed"}],
 	  "items":{"properties":{"name":{},"enabled":{},"protocol":{},"url":{},"key":{},"id":{},"kind":{},"price":{}}}}}}}}}}`)
-	s := Initial(context.Background(), schema)
-	if s.Chat != (Choice{Provider: "here", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: "here", ID: "nomic-embed-text"}) {
-		t.Errorf("initial %+v", s)
+	d := Defaults(schema)
+	if d["listen_addr"] != "127.0.0.1:4040" {
+		t.Errorf("defaults %v", d)
 	}
-	if s := Initial(context.Background(), nil); s.Chat.Provider != "here" || s.Chat.ID != "" || s.Embed.Provider != None {
-		t.Errorf("no schema guesses no model: %+v", s)
+	s := From(d)
+	if s.Chat != (Choice{Provider: "ollama", URL: "http://localhost:11434/v1", ID: "gemma4:26b"}) || s.Embed.ID != "nomic-embed-text" {
+		t.Errorf("the kernel's own models %+v", s)
 	}
-	Providers = saved[2:]
-	if s := Initial(context.Background(), schema); s != (Setup{}) {
-		t.Errorf("nothing running is no model: %+v", s)
+	if From(Defaults(nil)) != (Setup{}) {
+		t.Error("no schema, no model")
 	}
 	if !Supported(schema) || Supported([]byte(`{"properties":{"native":{"properties":{"llm":{"properties":{"models":{"items":{"properties":{"name":{}}}}}}}}}}`)) || Supported(nil) {
 		t.Error("supported")
@@ -387,12 +371,7 @@ func TestMalformedAndUnlistedSetups(t *testing.T) {
 	}
 	srv, gotHdr := fakeProvider(t, []string{"claude"}, "k")
 	f := View(context.Background(), Setup{Chat: Choice{Provider: "other-anthropic", URL: srv.URL, Key: "k", ID: "claude"}}, Setup{})
-	if (*gotHdr).Get("x-api-key") != "k" || !slices.Contains(f.Chat.Models, "claude") || !f.Chat.Shown(f.Chat.ForURL) || !f.Chat.Shown(f.Chat.ForKey) {
+	if (*gotHdr).Get("x-api-key") != "k" || !slices.Contains(f.Chat.Models, "claude") {
 		t.Errorf("asked at its own address: %+v", f.Chat)
-	}
-	for _, o := range f.Embed.Options {
-		if o.ID == "other-anthropic" {
-			t.Error("the embedding block offers no Anthropic-compatible address")
-		}
 	}
 }

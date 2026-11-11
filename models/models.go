@@ -28,11 +28,7 @@ import (
 
 // Provider is an address that serves models over one of the kernel's wire
 // protocols, `openai` (the OpenAI-compatible API) or `anthropic`.
-type Provider struct {
-	ID, Name, Protocol, URL string
-	Key                     bool // asks for a key
-	Local                   bool // runs on this machine: asked for its models whenever the form is shown
-}
+type Provider struct{ ID, Name, Protocol, URL string }
 
 // The choices that are not a listed provider.
 const (
@@ -40,17 +36,17 @@ const (
 	Other = "other" // an OpenAI-compatible address the person types; "other-anthropic" is the Anthropic-compatible one
 )
 
-// Providers are the providers offered, in the order offered. Each only fills
-// in an address and a protocol; one with no address takes any, typed (an
-// OpenAI- or Anthropic-compatible gateway or proxy).
+// Providers are the providers offered, in the order offered. Each is data
+// alone: a protocol and the address it fills in, which the person may change;
+// one with no address takes any, typed (a gateway or proxy).
 var Providers = []Provider{
-	{ID: "ollama", Name: "Ollama on this machine", Protocol: "openai", URL: "http://localhost:11434/v1", Local: true},
-	{ID: "lmstudio", Name: "LM Studio on this machine", Protocol: "openai", URL: "http://localhost:1234/v1", Local: true},
-	{ID: "openai", Name: "OpenAI", Protocol: "openai", URL: "https://api.openai.com/v1", Key: true},
-	{ID: "anthropic", Name: "Anthropic", Protocol: "anthropic", URL: "https://api.anthropic.com/v1", Key: true},
-	{ID: "openrouter", Name: "OpenRouter", Protocol: "openai", URL: "https://openrouter.ai/api/v1", Key: true},
+	{ID: "ollama", Name: "Ollama (local)", Protocol: "openai", URL: "http://localhost:11434/v1"},
+	{ID: "lmstudio", Name: "LM Studio (local)", Protocol: "openai", URL: "http://localhost:1234/v1"},
+	{ID: "openai", Name: "OpenAI", Protocol: "openai", URL: "https://api.openai.com/v1"},
+	{ID: "anthropic", Name: "Anthropic", Protocol: "anthropic", URL: "https://api.anthropic.com/v1"},
+	{ID: "openrouter", Name: "OpenRouter", Protocol: "openai", URL: "https://openrouter.ai/api/v1"},
 	{ID: Other, Name: "Other (OpenAI-compatible)", Protocol: "openai"},
-	{ID: "other-anthropic", Name: "Other (Anthropic-compatible)", Protocol: "anthropic", Key: true},
+	{ID: "other-anthropic", Name: "Other (Anthropic-compatible)", Protocol: "anthropic"},
 }
 
 func provider(id string) (Provider, bool) {
@@ -68,8 +64,8 @@ func embeds(protocol string) bool { return protocol != "anthropic" }
 // Choice is one block of the form: a provider and the model it serves.
 type Choice struct {
 	Provider string // a Providers ID, or None
-	URL      string // the address typed, for a provider that has none
-	Key      string // the key; empty when the provider needs none or none is held
+	URL      string // the address; empty, the provider's own
+	Key      string // the key; empty when none is held
 	ID       string // the provider's name for the model
 	Price    int64  // what a call costs its caller, in base units
 }
@@ -87,9 +83,9 @@ func (s Setup) address(c Choice) (protocol, addr, key string) {
 	if !ok {
 		return "", "", c.Key
 	}
-	addr = p.URL
+	addr = c.URL
 	if addr == "" {
-		addr = c.URL
+		addr = p.URL
 	}
 	return p.Protocol, strings.TrimRight(addr, "/"), c.Key
 }
@@ -259,9 +255,6 @@ func Check(ctx context.Context, s Setup) error {
 		if c.ID == "" {
 			return fmt.Errorf("Choose a %s model.", role)
 		}
-		if p, _ := provider(c.Provider); p.Key && key == "" {
-			return fmt.Errorf("%s needs a key.", s.name(c))
-		}
 		asks = append(asks, block{c, role, protocol, addr, key})
 	}
 	for _, b := range asks {
@@ -279,10 +272,10 @@ func Check(ctx context.Context, s Setup) error {
 
 // name is how a choice's provider is called in a sentence.
 func (s Setup) name(c Choice) string {
-	if p, ok := provider(c.Provider); ok && p.URL != "" {
+	_, addr, _ := s.address(c)
+	if p, _ := provider(c.Provider); p.URL != "" && p.URL == addr {
 		return p.Name
 	}
-	_, addr, _ := s.address(c)
 	return addr
 }
 
@@ -299,46 +292,33 @@ func (f Form) Block(field string) Block {
 	return f.Chat
 }
 
-// Refresh names the address a host answers a block's model field from, so a
-// change of provider, address or key lists that provider's models in place.
+// Refresh names the address a host answers a block from, so a change of
+// provider, address or key lists that provider's models in place.
 func (f *Form) Refresh(addr string) { f.Chat.Refresh, f.Embed.Refresh = addr, addr }
 
 // Block is one block of the form.
 type Block struct {
-	Field    string // the inputs' prefix: chat_…, embed_…
-	Options  []Option
-	Provider string // the chosen option
-	URL, ID  string
+	Field    string     // the inputs' prefix: chat_…, embed_…
+	Options  []Provider // the providers the block offers, None aside
+	Provider string     // the chosen one
+	URL, ID  string     // the address, the provider's own unless changed
 	Price    int64
 	Priced   bool     // the price is asked (the Models page)
 	Held     bool     // a key is held for the chosen provider
 	Models   []string // the models the chosen provider lists: the model is chosen among them; nil, it is typed
 	Unlisted bool     // the model chosen is not among them, as a provider may drop one; it stays chosen
 	Problem  string   // why the chosen provider could not be asked
-	Refresh  string   // where the host answers this block's model field
+	Refresh  string   // where the host answers this block
 	Summary  string   // the choice in a sentence: the model and its provider
 	Action   string   // the native the block backs, on the page: its address
 	Href     string   // and its page
-	// The options each part of the block belongs to, space-separated: the
-	// reveal shows a part only for those (grammar §5.4).
-	ForURL, ForKey, ForModel string
-}
-
-// Option is one provider in a block's list.
-type Option struct {
-	ID, Name, Note string // Note: what a provider on this machine serves, or that it is not running
-}
-
-// Shown reports a part of the block shown for the chosen option.
-func (b Block) Shown(forList string) bool {
-	return slices.Contains(strings.Fields(forList), b.Provider)
 }
 
 // View is the form for s: each block's options, and the models its chosen
-// provider serves, asked of it now with the key typed or held; the providers
-// on this machine are asked too, so their options say whether they run. A
-// block says a key is held only where held, what the server keeps between
-// requests, has one for its address: a key typed and not kept is typed again.
+// provider serves, asked of it now at its address with the key typed or held;
+// no other provider is asked. A block says a key is held only where held, what
+// the server keeps between requests, has one for its address: a key typed and
+// not kept is typed again.
 func View(ctx context.Context, s, held Setup) Form {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -348,15 +328,8 @@ func View(ctx context.Context, s, held Setup) Form {
 		err error
 	}
 	asks := map[ask]*answer{}
-	for _, p := range Providers {
-		if p.Local {
-			asks[ask{p.Protocol, p.URL, ""}] = nil
-		}
-	}
-	// A provider that needs a key is asked only once one is held: without it
-	// the answer is a refusal, already known.
 	for i, c := range []Choice{s.Chat, s.Embed} {
-		if p, a, k := s.address(c); p != "" && a != "" && (k != "" || !needsKey(c)) && (i == 0 || embeds(p)) {
+		if p, a, k := s.address(c); p != "" && a != "" && (i == 0 || embeds(p)) {
 			asks[ask{p, a, k}] = nil
 		}
 	}
@@ -374,44 +347,16 @@ func View(ctx context.Context, s, held Setup) Form {
 	}
 	wg.Wait()
 
-	options := func(embedding bool) []Option {
-		var out []Option
-		for _, p := range Providers {
-			if embedding && !embeds(p.Protocol) {
-				continue
-			}
-			o := Option{ID: p.ID, Name: p.Name}
-			if p.Local {
-				switch a := asks[ask{p.Protocol, p.URL, ""}]; {
-				case a.err == nil:
-					o.Note = strconv.Itoa(len(a.ids)) + " models"
-				case !errors.Is(a.err, ErrNoList):
-					o.Note = "not running"
-				}
-			}
-			out = append(out, o)
-		}
-		return append(out, Option{ID: None, Name: "None"})
-	}
 	block := func(field string, c Choice, embedding bool) Block {
-		b := Block{Field: field, Options: options(embedding), Provider: c.Provider, URL: c.URL, ID: c.ID, Price: c.Price, Priced: s.Priced, Summary: s.Summary(c)}
-		p, a, _ := s.address(c)
-		b.Held = held.keyAt(p, a, map[string]int{"chat": 0, "embed": 1}[field]) != ""
-		var url, key, model []string
-		for _, o := range b.Options {
-			p, _ := provider(o.ID)
-			if p.URL == "" && o.ID != None {
-				url = append(url, o.ID)
-			}
-			if p.Key || (p.URL == "" && o.ID != None) {
-				key = append(key, o.ID)
-			}
-			if o.ID != None {
-				model = append(model, o.ID)
+		p, a, k := s.address(c)
+		b := Block{Field: field, Provider: c.Provider, URL: a, ID: c.ID, Price: c.Price, Priced: s.Priced, Summary: s.Summary(c)}
+		for _, o := range Providers {
+			if !embedding || embeds(o.Protocol) {
+				b.Options = append(b.Options, o)
 			}
 		}
-		b.ForURL, b.ForKey, b.ForModel = strings.Join(url, " "), strings.Join(key, " "), strings.Join(model, " ")
-		if p, a, k := s.address(c); p != "" && a != "" {
+		b.Held = held.keyAt(p, a, map[string]int{"chat": 0, "embed": 1}[field]) != ""
+		if p != "" && a != "" {
 			if r := asks[ask{p, a, k}]; r != nil {
 				switch {
 				case r.err == nil && len(r.ids) > 0:
@@ -427,74 +372,31 @@ func View(ctx context.Context, s, held Setup) Form {
 	return Form{Chat: block("chat", s.Chat, false), Embed: block("embed", s.Embed, true)}
 }
 
-// needsKey reports a choice whose provider asks for a key.
-func needsKey(c Choice) bool {
-	p, _ := provider(c.Provider)
-	return p.Key
-}
-
-// Initial is a new machine's first choice: the first provider on this machine
-// that runs, with the models the kernel would use by default where it serves
-// them, read from the kernel's own schema of its configuration; otherwise no
-// model. Nothing else is guessed.
-func Initial(ctx context.Context, schema []byte) Setup {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	defaults := defaultIDs(schema)
-	for _, p := range Providers {
-		if !p.Local {
-			continue
-		}
-		ids, err := List(ctx, p.Protocol, p.URL, "")
-		if err != nil {
-			continue
-		}
-		pick := func(kind string) string {
-			for _, d := range defaults {
-				if d.kind == kind && strings.TrimRight(d.url, "/") == p.URL && slices.Contains(ids, d.id) {
-					return d.id
-				}
-			}
-			return ""
-		}
-		s := Setup{Chat: Choice{Provider: p.ID, ID: pick("chat")}, Embed: Choice{Provider: p.ID, ID: pick("embed")}}
-		if s.Embed.ID == "" {
-			s.Embed = Choice{}
-		}
-		return s
-	}
-	return Setup{}
-}
-
-type defaultModel struct{ url, id, kind string }
-
-// defaultIDs are the models the kernel's schema states as its default list.
-func defaultIDs(schema []byte) []defaultModel {
-	var s struct {
-		Properties struct {
-			Native struct {
-				Properties struct {
-					LLM struct {
-						Properties struct {
-							Models struct {
-								Default []struct {
-									URL  string `json:"url"`
-									ID   string `json:"id"`
-									Kind string `json:"kind"`
-								} `json:"default"`
-							} `json:"models"`
-						} `json:"properties"`
-					} `json:"llm"`
-				} `json:"properties"`
-			} `json:"native"`
-		} `json:"properties"`
-	}
-	if json.Unmarshal(schema, &s) != nil {
+// Defaults is the file a kernel writes when it is given none: each
+// property's default in its schema of its configuration.
+func Defaults(schema []byte) map[string]any {
+	var n node
+	if json.Unmarshal(schema, &n) != nil {
 		return nil
 	}
-	var out []defaultModel
-	for _, m := range s.Properties.Native.Properties.LLM.Properties.Models.Default {
-		out = append(out, defaultModel{m.URL, m.ID, m.Kind})
+	m, _ := n.value().(map[string]any)
+	return m
+}
+
+type node struct {
+	Default    any             `json:"default"`
+	Properties map[string]node `json:"properties"`
+}
+
+func (n node) value() any {
+	if n.Default != nil || n.Properties == nil {
+		return n.Default
+	}
+	out := map[string]any{}
+	for k, p := range n.Properties {
+		if v := p.value(); v != nil {
+			out[k] = v
+		}
 	}
 	return out
 }
@@ -541,22 +443,16 @@ var chatRoles = []string{"chat", "json", "decide"}
 func From(cfg map[string]any) Setup {
 	llm := object(object(cfg, "native"), "llm")
 	list := entries(llm)
-	choice := func(binding string) (Choice, map[string]any) {
+	choice := func(binding string) Choice {
 		name, _ := llm[binding].(string)
 		i := slices.IndexFunc(list, func(e map[string]any) bool { return str(e, "name") == name })
 		if name == "" || i < 0 {
-			return Choice{}, nil
+			return Choice{}
 		}
 		e := list[i]
-		c := Choice{Provider: providerOf(str(e, "protocol"), str(e, "url")), Key: str(e, "key"), ID: str(e, "id"), Price: number(e["price"])}
-		if p, _ := provider(c.Provider); p.URL == "" {
-			c.URL = str(e, "url")
-		}
-		return c, e
+		return Choice{Provider: providerOf(str(e, "protocol"), str(e, "url")), URL: str(e, "url"), Key: str(e, "key"), ID: str(e, "id"), Price: number(e["price"])}
 	}
-	chat, _ := choice("chat")
-	embed, _ := choice("embed")
-	return Setup{Chat: chat, Embed: embed}
+	return Setup{Chat: choice("chat"), Embed: choice("embed")}
 }
 
 // providerOf is the listed provider at an address, else the one of that

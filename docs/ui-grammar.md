@@ -361,23 +361,23 @@ separates it from the content above, and nothing else does (§4).
   container names its array's path, renumbers the clone to one past the highest
   index in every `name`, `id`, `for` and nested `data-rows`), and **the
   reveal**: a `select[data-reveal="X"]` shows only the sections whose `data-X`
-  lists the value chosen, space-separated, within its nearest `[data-group]`,
-  else its form (`data-kind`, `data-auth-scheme`, a models block's
-  `data-provider`); the server renders the same state, so a page without
+  lists the value chosen, space-separated, within its form, else its details
+  panel (`data-kind`, `data-auth-scheme`); the server renders the same state, so a page without
   script shows the sections of what is selected. Both disable hidden inputs so
   they aren't submitted. Secrets are masked, write-only, never pre-filled; a
   held one says so in its placeholder, `configured ✓ (replace)`.
 - **The models form** (`_models_form`, requirements.md §6.6) is one partial for
-  the installer's Models step and the Models page: two `[data-group]` blocks,
-  Chat model and Embedding model, each an `h3.flush` and its `.field`s
-  (provider, address, key, model, and on the page the price). The model is a
-  `select` of the provider's models, a text input only where it lists none.
-  The htmx pattern of dependent selects refreshes it: the block's provider,
-  address and key each carry `hx-post` to the host's refresh address, and the
-  block holds the rest (`hx-target` its model field, `_models_model`,
-  `hx-include` the form, one `hx-sync` replacing a request still in flight).
-  The field is only swapped and carries no listener, so no change is lost
-  while it is, and nothing typed elsewhere moves. The host holds the commands:
+  the installer's Models step and the Models page: two blocks, Chat model and
+  Embedding model, each an `h3.flush` and the same `.field`s for every provider
+  (provider, address, key, model, and on the page the price; None shows the
+  provider alone). The model is a `select` of the provider's models, a text
+  input only where it lists none. The htmx pattern of dependent selects
+  refreshes it: the provider, address and key each carry `hx-post` to the
+  host's refresh address, which answers the block. The block holds the rest
+  (`hx-target` and `hx-select` its model field, `_models_model`, `hx-include`
+  the form, one `hx-sync` replacing a request still in flight); the provider
+  takes the whole block instead, its address cleared by `hx-vals` so the
+  provider's own fills it in. A control being typed in is never swapped. The host holds the commands:
   its primary first, then `List models` (`.btn`, `formnovalidate`), the
   no-script path, which writes nothing.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
