@@ -9,7 +9,7 @@
   <summary>Upstream authentication (optional)</summary>
   <div class="field">
     <label for="{{.ID}}-auth-scheme">Scheme</label>
-    <select id="{{.ID}}-auth-scheme" name="auth_scheme">
+    <select id="{{.ID}}-auth-scheme" name="auth_scheme" data-reveal="auth-scheme">
       <option value="">none</option>
       {{range .Schemes}}<option value="{{.}}"{{if eq . $.Scheme}} selected{{end}}>{{.}}</option>{{end}}
     </select>
@@ -62,7 +62,7 @@
       </div>
       <div class="field">
         <label for="c-kind">Kind</label>
-        <select id="c-kind" name="kind">
+        <select id="c-kind" name="kind" data-reveal="kind">
           <option value="http">http</option>
           <option value="wasm"{{if eq $c.Kind "wasm"}} selected{{end}}>wasm</option>
         </select>
@@ -249,4 +249,47 @@
     </form>
   </div>
 </dialog>
+{{end}}
+
+{{/* _models_form — the kernel's language models (requirements.md §1, §6.6):
+     one block per kind of model the kernel uses, the chat model behind chat,
+     JSON and decide, and the search model. Each block is a provider, its
+     address (Other alone), its key and the model, the provider's own models
+     offered as suggestions. The installer's Models step and the Models page
+     render it alike; the host holds the form and its commands. A key is never
+     rendered back: a held one says so in its placeholder. */}}
+{{define "_models_form"}}
+{{template "_models_block" .Chat}}
+{{template "_models_block" .Embed}}
+{{end}}
+
+{{define "_models_block"}}
+<div class="stack" data-group>
+  <h3 class="flush">{{if eq .Field "chat"}}Chat, JSON and decide{{else}}Search{{end}}</h3>
+  {{with .Href}}<p class="small flush"><a class="mono" href="{{.}}">{{$.Action}}</a></p>{{end}}
+  {{with .Problem}}{{template "_error" .}}{{end}}
+  <div class="field">
+    <label for="m-{{.Field}}-provider">Provider</label>
+    <select id="m-{{.Field}}-provider" name="{{.Field}}_provider" data-reveal="provider">
+      {{range .Options}}<option value="{{.ID}}"{{if eq .ID $.Provider}} selected{{end}}>{{.Name}}{{with .Note}} · {{.}}{{end}}</option>{{end}}
+    </select>
+  </div>
+  <div class="field" data-provider="{{.ForURL}}"{{if not (.Shown .ForURL)}} hidden{{end}}>
+    <label for="m-{{.Field}}-url">Address</label>
+    <input id="m-{{.Field}}-url" name="{{.Field}}_url" type="url" class="mono" placeholder="http://localhost:8000/v1" value="{{.URL}}" autocomplete="off"{{if not (.Shown .ForURL)}} disabled{{end}}>
+  </div>
+  <div class="field" data-provider="{{.ForKey}}"{{if not (.Shown .ForKey)}} hidden{{end}}>
+    <label for="m-{{.Field}}-key">Key</label>
+    <input id="m-{{.Field}}-key" name="{{.Field}}_key" type="password" autocomplete="off"{{if .Held}} placeholder="configured ✓ (replace)"{{end}}{{if not (.Shown .ForKey)}} disabled{{end}}>
+  </div>
+  <div class="field" data-provider="{{.ForModel}}"{{if not (.Shown .ForModel)}} hidden{{end}}>
+    <label for="m-{{.Field}}-model">Model</label>
+    <input id="m-{{.Field}}-model" name="{{.Field}}_model" type="text" class="mono" value="{{.ID}}" list="m-{{.Field}}-models" autocomplete="off"{{if not (.Shown .ForModel)}} disabled{{end}}>
+    <datalist id="m-{{.Field}}-models">{{range .Suggestions}}<option value="{{.}}"></option>{{end}}</datalist>
+  </div>
+  {{if .Priced}}<div class="field" data-provider="{{.ForModel}}"{{if not (.Shown .ForModel)}} hidden{{end}}>
+    <label for="m-{{.Field}}-price">Price</label>
+    <input id="m-{{.Field}}-price" name="{{.Field}}_price" type="number" min="0" step="{{amountStep}}" value="{{amountInput .Price}}" class="input-sm"{{if not (.Shown .ForModel)}} disabled{{end}}>
+  </div>{{end}}
+</div>
 {{end}}

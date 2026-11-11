@@ -110,7 +110,10 @@ document.addEventListener('mousedown', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
 
-// Confirmation modal — forms with data-confirm="message" show a styled dialog.
+// Confirmation modal — a form with data-confirm="message", or the submit
+// button carrying it, shows a styled dialog; the form is then submitted by the
+// same button, so its name and value go with it. A button carries the confirm
+// when only it does what needs one (Save beside List models).
 (function() {
   const backdrop = document.getElementById('modal-backdrop');
   if (!backdrop) return;
@@ -131,20 +134,21 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMe
 
   document.addEventListener('submit', (e) => {
     if (confirming) return;
+    const by = e.submitter && e.submitter.dataset.confirm ? e.submitter : null;
     const form = e.target.closest('form[data-confirm]');
-    if (!form) return;
+    if (!by && !form) return;
     e.preventDefault();
     e.stopPropagation(); // an htmx form sends on this event: nothing until confirmed
-    pending = form;
-    openModal(form.dataset.confirm);
+    pending = { form: e.target, submitter: e.submitter || null };
+    openModal(by ? by.dataset.confirm : form.dataset.confirm);
   }, true);
 
   btnConfirm.addEventListener('click', () => {
     if (!pending) return;
-    const form = pending;
+    const { form, submitter } = pending;
     closeModal();
     confirming = true;
-    form.requestSubmit();
+    form.requestSubmit(submitter);
     confirming = false;
   });
 
@@ -170,32 +174,19 @@ for (const form of document.querySelectorAll("form.sidebar-collapse")) {
   });
 }
 
-// Auth scheme: show only the credential fields for the selected scheme.
-// Inputs in hidden sections are disabled so they are not submitted. Scoped to the
-// enclosing form so it works inside a <details> panel or a <dialog> modal alike.
-for (const sel of document.querySelectorAll('select[name="auth_scheme"]')) {
-  const panel = sel.closest('form') || sel.closest('details');
+// Reveal: a select[data-reveal] shows only the sections that belong to the
+// value chosen. Each section names those values, space-separated, in the
+// attribute data-<reveal> (data-kind="http", data-auth-scheme="bearer",
+// data-provider="openai other"), so a further value needs markup and no
+// script. The sections are those of the select's group, its nearest
+// [data-group], else its form or details panel; a hidden section's controls
+// are disabled, so they are not submitted.
+for (const sel of document.querySelectorAll('select[data-reveal]')) {
+  const attr = 'data-' + sel.dataset.reveal;
+  const group = sel.closest('[data-group]') || sel.closest('form') || sel.closest('details');
   function update() {
-    for (const sec of panel.querySelectorAll('[data-auth-scheme]')) {
-      const match = sec.dataset.authScheme === sel.value;
-      sec.hidden = !match;
-      for (const inp of sec.querySelectorAll('input')) inp.disabled = !match;
-    }
-  }
-  sel.addEventListener('change', update);
-  update();
-}
-
-// Kind: reveal the fields that belong to the selected kind — method and params
-// for http, the compiled artifact for wasm. One attribute names the kind a
-// section belongs to, so a third kind needs markup and no script. Inputs in a
-// hidden section are disabled so they are not submitted and the param_name/
-// param_in rows stay index-aligned for server-side pairing.
-for (const sel of document.querySelectorAll('select[name="kind"]')) {
-  const form = sel.closest('form');
-  function update() {
-    for (const sec of form.querySelectorAll('[data-kind]')) {
-      const show = sec.dataset.kind === sel.value;
+    for (const sec of group.querySelectorAll('[' + attr + ']')) {
+      const show = sec.getAttribute(attr).split(' ').includes(sel.value);
       sec.hidden = !show;
       for (const el of sec.querySelectorAll('input, select, textarea')) el.disabled = !show;
     }

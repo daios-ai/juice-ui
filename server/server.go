@@ -17,6 +17,7 @@ import (
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/daios-ai/juice-ui/wallet"
 	"github.com/gorilla/csrf"
@@ -70,6 +71,7 @@ type Server struct {
 	identity   *KernelIdentity         // which kernel this UI is for, and its money unit
 	kernelName string                  // the kernel's name in the client records, for the chrome
 	config     Configuration           // this installation's kernel configuration; nil = none
+	modelsOK   func() bool             // its schema describes the Models page's entries (read once)
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
@@ -279,7 +281,11 @@ func New(o Options) (http.Handler, error) {
 		identity:   o.Identity,
 		kernelName: o.KernelName,
 		config:     o.Config,
-		watchers:   map[string]apps.Watcher{},
+		modelsOK: sync.OnceValue(func() bool {
+			_, schema, _, err := o.Config.Config()
+			return err == nil && models.Supported(schema)
+		}),
+		watchers: map[string]apps.Watcher{},
 	}
 	s.watch("inbox", s.watchInbox)
 	s.watch("balance", s.watchBalance)
@@ -418,6 +424,8 @@ func New(o Options) (http.Handler, error) {
 		mux.HandleFunc("POST /admin/config", s.requireSuperuser(s.postAdminConfig))
 		mux.HandleFunc("POST /admin/config/json", s.requireSuperuser(s.postAdminConfigJSON))
 		mux.HandleFunc("POST /admin/config/form", s.requireSuperuser(s.postAdminConfigForm))
+		mux.HandleFunc("GET /admin/models", s.requireSuperuser(s.getAdminModels))
+		mux.HandleFunc("POST /admin/models", s.requireSuperuser(s.postAdminModels))
 	}
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a

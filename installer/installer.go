@@ -38,15 +38,21 @@ type World struct{ Name, Description, Rail, Symbol, Error string }
 
 // Kernel is this machine's installation as the installer drives it.
 type Kernel interface {
-	Local() bool                                              // the configured kernel is this machine's
-	Serving(ctx context.Context) bool                         // a kernel answers at the configured address
-	Booted() (world string, booted bool, err error)           // the kernel home for that address, and whether a kernel lives in it
-	Due(answers bool) ([]Component, error)                    // what to install now
-	Install(ctx context.Context, c Component) error           // one component, verified
-	CanCreate() error                                         // the kernel binary can perform a first boot
-	Worlds() ([]World, error)                                 // the networks a new kernel may serve
-	Create(world, handle, password, recoveryKey string) error // the first boot
-	Start(ctx context.Context) error                          // the supervisor serves the kernel; returns once it answers
+	Local() bool                                                          // the configured kernel is this machine's
+	Serving(ctx context.Context) bool                                     // a kernel answers at the configured address
+	Booted() (world string, booted bool, err error)                       // the kernel home for that address, and whether a kernel lives in it
+	Due(answers bool) ([]Component, error)                                // what to install now
+	Install(ctx context.Context, c Component) error                       // one component, verified
+	CanCreate() error                                                     // the kernel binary can perform a first boot
+	Worlds() ([]World, error)                                             // the networks a new kernel may serve
+	Create(world, handle, password, recoveryKey string, models any) error // the first boot, with the models chosen
+	Start(ctx context.Context) error                                      // the supervisor serves the kernel; returns once it answers
+	// Models reads the models page: with form nil, held as it stands, or this
+	// machine's first choice when held is nil; with a form, the answers over
+	// held, and whether they may be kept (done) or what to say. The setup is
+	// opaque here, held from its page to the first boot and given to Create.
+	Models(ctx context.Context, form url.Values, held any) (setup any, msg string, done bool)
+	ModelsView(ctx context.Context, setup any) any // what the page and the summary render
 }
 
 // Chrome is the application's look, and the recovery phrase it makes as signup
@@ -75,9 +81,9 @@ type Step struct {
 	ID, Title string
 	Installer bool
 	Page      bool
-	Back      bool                         // a page that offers Back to the page before it
-	Submit    func(form url.Values) string // a page's answers stored, or what to say
-	Jobs      func() []Job                 // a job step's work
+	Back      bool                                          // a page that offers Back to the page before it
+	Submit    func(form url.Values) (next bool, msg string) // a page's answers stored; whether to go on, or what to say
+	Jobs      func() []Job                                  // a job step's work
 }
 
 // Job is one piece of a job step's work.
@@ -123,6 +129,7 @@ type Installer struct {
 	password string // held from its page to the first boot, never rendered
 	phrase,
 	pub string
+	models any // the models chosen, with their keys: held from their page to the first boot
 }
 
 // New builds the installer.
@@ -185,7 +192,7 @@ func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 			return nil, errors.New("couldn't set up account recovery; restart Juice to try again")
 		}
 		in.phrase, in.pub = phrase, pub
-		seq = append(seq, in.worldPage(), in.kernelPage(), in.phrasePage(), in.summaryPage(), in.install())
+		seq = append(seq, in.worldPage(), in.kernelPage(), in.modelsPage(), in.phrasePage(), in.summaryPage(), in.install())
 	}
 	return append(seq, in.launch(ours || creating)), nil
 }
@@ -220,7 +227,7 @@ func (in *Installer) download(followed, creating bool) (Step, bool) {
 }
 
 func (in *Installer) worldPage() Step {
-	return Step{ID: "world", Title: "World", Installer: true, Page: true, Submit: func(f url.Values) string {
+	return Step{ID: "world", Title: "World", Installer: true, Page: true, Submit: answer(func(f url.Values) string {
 		w := f.Get("world")
 		ws, err := in.o.Kernel.Worlds()
 		if err != nil {
@@ -233,11 +240,11 @@ func (in *Installer) worldPage() Step {
 			}
 		}
 		return "Choose a world."
-	}}
+	})}
 }
 
 func (in *Installer) kernelPage() Step {
-	return Step{ID: "kernel", Title: "Kernel", Installer: true, Page: true, Back: true, Submit: func(f url.Values) string {
+	return Step{ID: "kernel", Title: "Kernel", Installer: true, Page: true, Back: true, Submit: answer(func(f url.Values) string {
 		in.handle = strings.TrimSpace(f.Get("handle"))
 		pw, pw2 := f.Get("password"), f.Get("confirm_password")
 		switch {
@@ -250,20 +257,39 @@ func (in *Installer) kernelPage() Step {
 		}
 		in.password = pw
 		return ""
+	})}
+}
+
+// modelsPage chooses the kernel's language models. "List models" keeps the
+// page with what the chosen providers serve; Next goes on only with models
+// the kernel can use, or none.
+func (in *Installer) modelsPage() Step {
+	return Step{ID: "models", Title: "Models", Installer: true, Page: true, Back: true, Submit: func(f url.Values) (bool, string) {
+		setup, msg, done := in.o.Kernel.Models(in.ctx, f, in.models)
+		in.models = setup
+		return done, msg
 	}}
 }
 
 func (in *Installer) phrasePage() Step {
-	return Step{ID: "phrase", Title: "Recovery phrase", Installer: true, Page: true, Back: true, Submit: func(f url.Values) string {
+	return Step{ID: "phrase", Title: "Recovery phrase", Installer: true, Page: true, Back: true, Submit: answer(func(f url.Values) string {
 		if f.Get("understand") == "" {
 			return "Confirm that you have saved the phrase."
 		}
 		return ""
-	}}
+	})}
 }
 
 func (in *Installer) summaryPage() Step {
-	return Step{ID: "summary", Title: "Summary", Installer: true, Page: true, Back: true, Submit: func(url.Values) string { return "" }}
+	return Step{ID: "summary", Title: "Summary", Installer: true, Page: true, Back: true, Submit: answer(func(url.Values) string { return "" })}
+}
+
+// answer is a page that goes on unless it has something to say.
+func answer(f func(url.Values) string) func(url.Values) (bool, string) {
+	return func(v url.Values) (bool, string) {
+		msg := f(v)
+		return msg == "", msg
+	}
 }
 
 // install is the point of no return: the first boot. One that made no kernel
@@ -273,10 +299,10 @@ func (in *Installer) install() Step {
 	return Step{ID: "install", Title: "Install", Installer: true, Jobs: func() []Job {
 		return []Job{{Title: "Create the kernel", Return: "kernel", Run: func(context.Context) error {
 			in.mu.Lock()
-			world, handle, pw, pub := in.world, in.handle, in.password, in.pub
+			world, handle, pw, pub, models := in.world, in.handle, in.password, in.pub, in.models
 			in.password = ""
 			in.mu.Unlock()
-			return in.o.Kernel.Create(world, handle, pw, pub)
+			return in.o.Kernel.Create(world, handle, pw, pub, models)
 		}}}
 	}}
 }
@@ -310,7 +336,7 @@ func (in *Installer) launch(start bool) Step {
 func (in *Installer) enter(i int) {
 	in.at = i
 	if i >= len(in.seq) {
-		in.password, in.phrase, in.pub = "", "", ""
+		in.password, in.phrase, in.pub, in.models = "", "", "", nil
 		in.once.Do(func() { close(in.ready) })
 		in.o.Log.Info("installer", "step", "end")
 		return
@@ -319,6 +345,9 @@ func (in *Installer) enter(i int) {
 	in.o.Log.Info("installer", "step", st.ID)
 	if st.ID == "kernel" {
 		in.password = "" // typed again whenever the page is shown again
+	}
+	if st.ID == "models" && in.models == nil {
+		in.models, _, _ = in.o.Kernel.Models(in.ctx, nil, nil) // this machine's first choice
 	}
 	if st.Page {
 		return
@@ -438,6 +467,7 @@ type view struct {
 	Chosen, Handle, Home     string
 	Words                    []string
 	Phrase                   string
+	Models                   any // the models page, and the summary's rows
 }
 
 type stepView struct { // State: "done", "current", "todo"
@@ -499,6 +529,9 @@ func (in *Installer) view(r *http.Request) view {
 	case "phrase":
 		v.Words = strings.Fields(in.phrase)
 		v.Phrase = strings.Join(v.Words, " ")
+	}
+	if st.ID == "models" || st.ID == "summary" {
+		v.Models = in.o.Kernel.ModelsView(in.ctx, in.models)
 	}
 	return v
 }
@@ -605,10 +638,13 @@ func (in *Installer) next(r *http.Request, st Step) bool {
 	if !st.Page {
 		return false
 	}
-	if in.err = st.Submit(r.PostForm); in.err != "" {
+	next, msg := st.Submit(r.PostForm)
+	if in.err = msg; msg != "" {
 		return true
 	}
-	in.enter(in.at + 1)
+	if next {
+		in.enter(in.at + 1)
+	}
 	return false
 }
 

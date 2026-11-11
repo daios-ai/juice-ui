@@ -1,0 +1,31 @@
+{{define "content"}}
+{{$d := .Data}}
+{{/* The kernel's language models (§6.6): the one models form, filled from the
+     kernel's file. Save rewrites the file and restarts the kernel, the
+     configuration page's save; List models shows the form again with what the
+     providers serve and writes nothing, so the confirm is Save's alone. The
+     entries no binding names are the file's, kept by every save. */}}
+<nav class="crumb"><a href="/admin">← admin</a></nav>
+<h1>Models</h1>
+<form class="card stack" method="post" action="/admin/models">
+  {{.CSRFField}}
+  <input type="hidden" name="version" value="{{$d.Version}}">
+  {{with $d.Error}}{{template "_error" .}}{{end}}
+  {{template "_models_form" $d.Form}}
+  <div class="cluster">
+    <button class="btn-primary" type="submit" data-confirm="Restart the kernel to apply?">Save and restart</button>
+    <button class="btn" type="submit" name="list" value="1" formnovalidate>List models</button>
+  </div>
+</form>
+{{with $d.Others}}
+<h2>Other models</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Name</th><th>Model</th><th>Kind</th><th>Address</th></tr></thead>
+  <tbody>
+  {{range .}}<tr><td class="mono">{{.Name}}</td><td class="mono">{{.ID}}</td><td>{{.Kind}}</td><td class="mono">{{.URL}}</td></tr>{{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+{{end}}

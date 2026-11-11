@@ -39,16 +39,19 @@ import (
 // against. Each repository's releases ship one tarball per platform,
 // <name>_<os>_<arch>.tar.gz, and a checksums.txt, built by its release workflow.
 // Env names a variable that, when set, points at a binary of the operator's
-// choosing, which the gate then leaves alone.
+// choosing, which the gate then leaves alone. Setup is the component's setup
+// command, which writes its schemas and shipped defaults (ecosystem-standard
+// §3) and which the installer runs after placing the binary.
 type Component struct {
 	Repo, Name, Release, Env string
+	Setup                    []string
 }
 
 // Components are the programs this UI installs, in the order the gate installs
 // them: the kernel first, since nothing is created or served without it.
 var Components = []Component{
-	{Repo: "daios-ai/juice", Name: "juice", Release: "v0.18.1"},
-	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Release: "v0.10.0", Env: "JUICE_AGENT_BIN"},
+	{Repo: "daios-ai/juice", Name: "juice", Release: "v0.18.1", Setup: []string{"kernel", "setup"}},
+	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Release: "v0.10.0", Env: "JUICE_AGENT_BIN", Setup: []string{"setup"}},
 }
 
 // Release is the kernel's: the release a first boot needs, since an older
@@ -260,6 +263,8 @@ func (i *Installation) client() *http.Client {
 // release's checksums.txt are downloaded, the asset is refused unless its
 // SHA-256 matches, the binary is tried with --version, and only then renamed
 // over bin/<name>, so a failure leaves a working installation untouched.
+// Before that its setup writes its schemas, so that after an installation
+// schemas/ holds the installed binary's (ecosystem-standard §3).
 func (i *Installation) Install(ctx context.Context, c Component) error {
 	asset := fmt.Sprintf("%s_%s_%s.tar.gz", c.Name, runtime.GOOS, runtime.GOARCH)
 	base := i.Releases
@@ -305,6 +310,18 @@ func (i *Installation) Install(ctx context.Context, c Component) error {
 	} else if i.Log != nil {
 		i.Log.Info("component verified", "component", c.Name, "version", strings.TrimSpace(string(out)))
 	}
+	if len(c.Setup) > 0 {
+		cmd := exec.CommandContext(ctx, staged, c.Setup...)
+		cmd.Env = i.env()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			os.Remove(staged)
+			words := err.Error()
+			if lines := strings.Split(strings.TrimSpace(string(out)), "\n"); lines[len(lines)-1] != "" {
+				words = lines[len(lines)-1]
+			}
+			return fmt.Errorf("%s %s failed: %s", c.Name, strings.Join(c.Setup, " "), words)
+		}
+	}
 	return os.Rename(staged, filepath.Join(dir, c.Name))
 }
 
@@ -349,7 +366,9 @@ func untar(tgz []byte, name string) ([]byte, error) {
 // answers, or its database does, since the kernel creates that only with its
 // answers in hand, enrolling the recovery key. A boot that leaves no database
 // was declined, and its last words are the error. The caller holds the
-// recovery phrase. The child has ended when Create returns: the two secrets
+// recovery phrase. extra holds further keys of that file, the first boot's
+// other answers (the models, requirements.md §1); the three Create writes
+// itself are its own. The child has ended when Create returns: the two secrets
 // cannot be a program's file, so Start has the supervisor start
 // the kernel without them.
 //
@@ -358,7 +377,7 @@ func untar(tgz []byte, name string) ([]byte, error) {
 // directory holding juice.db, whatever its configuration says — is refused, as
 // is one a server holds. A home with no kernel, left by a boot the kernel
 // declined, is rewritten: that is how a refused answer is corrected.
-func (i *Installation) Create(world, handle, password, recoveryKey string) error {
+func (i *Installation) Create(world, handle, password, recoveryKey string, extra map[string]any) error {
 	unlock, err := firstBootLock(filepath.Join(i.Home, "ui", "first-boot.lock"))
 	if err != nil {
 		return err
@@ -387,11 +406,17 @@ func (i *Installation) Create(world, handle, password, recoveryKey string) error
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	cfg, _ := json.Marshal(map[string]string{
-		"kernel_handle": handle,
-		"listen_addr":   "127.0.0.1:" + i.URL.Port(),
-		"log_file":      filepath.Join(dir, "serve.log"),
-	})
+	keys := map[string]any{}
+	for k, v := range extra {
+		keys[k] = v
+	}
+	keys["kernel_handle"] = handle
+	keys["listen_addr"] = "127.0.0.1:" + i.URL.Port()
+	keys["log_file"] = filepath.Join(dir, "serve.log")
+	cfg, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
 	if err := writeConfig(dir, cfg); err != nil {
 		return err
 	}
@@ -491,8 +516,14 @@ func (i *Installation) Config() (config, schema []byte, version string, err erro
 	if err != nil {
 		return nil, nil, "", err
 	}
-	schema, _ = os.ReadFile(filepath.Join(i.Home, "schemas", "config.schema.json"))
-	return config, schema, fileVersion(config), nil
+	return config, i.Schema(), fileVersion(config), nil
+}
+
+// Schema is the kernel's JSON Schema of its configuration file, as its setup
+// wrote it into schemas/, or nil when none has been written.
+func (i *Installation) Schema() []byte {
+	b, _ := os.ReadFile(filepath.Join(i.Home, "schemas", "config.schema.json"))
+	return b
 }
 
 // booted is the world of this installation's kernel, or an error when no

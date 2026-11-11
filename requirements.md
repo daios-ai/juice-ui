@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.60.0
+Version: 0.61.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.61.0.** The kernel's language models are chosen in one
+> form: a provider, its key and a model, for the chat model behind chat, JSON
+> and decide, and for the search model. A new machine chooses them in the
+> installer's Models step, before the first boot; afterwards the operator's
+> Models page changes them, and the configuration page no longer shows them
+> (§1, §6.6). Installing a component runs its setup, so its schemas are
+> written (§1).
 
 > **What changed in 0.60.0.** A form's default action, the button Enter presses,
 > is solid ink, as in the established design systems: the submit of every form
@@ -991,8 +999,8 @@ is read once, at start:
 |---|---|
 | Nothing | none: the installer does not appear |
 | A component only | Download |
-| A kernel only | World → Kernel → Recovery phrase → Summary → Install |
-| Both | Download → World → Kernel → Recovery phrase → Summary → Install |
+| A kernel only | World → Kernel → Models → Recovery phrase → Summary → Install |
+| Both | Download → World → Kernel → Models → Recovery phrase → Summary → Install |
 
 A kernel is missing when the configured kernel is this machine's (a loopback
 URL), no kernel home `$JUICE_HOME/kernels/<world>/` for the URL's port holds one
@@ -1024,7 +1032,9 @@ words, polled until it answers. Nothing on that card names an installation.
   binary is not installed for a kernel that is followed. Each is installed by one
   routine, the contract of the family's own `install.sh`: the platform's asset and
   `checksums.txt` from that component's GitHub releases, refused without a
-  matching SHA-256, tried with `--version`, renamed atomically into `bin/`. A
+  matching SHA-256, tried with `--version`, its setup run (`juice kernel setup`,
+  `juice-agent setup`), which writes its schemas (ecosystem-standard §3), and
+  renamed atomically into `bin/`. A
   failed download is shown and tried again every 10 s. It comes first because the
   World page lists the worlds by running the kernel program. Before a first boot the
   step also checks the kernel binary: one older than its release, kept because
@@ -1036,14 +1046,23 @@ words, polled until it answers. Nothing on that card names an installation.
   its error; only a listed, servable world is accepted. **Kernel** takes the
   kernel's name and the superuser's password, twice, with `sys` read-only above
   it. The world and the kernel name each state their one consequence.
+* **Models** chooses the kernel's language models with the models form (§6.6):
+  the chat model, behind the kernel's chat, JSON and decide, and the search
+  model. It opens on the first provider on this machine that runs, with the
+  models the kernel's own schema states as its defaults where that provider
+  serves them, and otherwise on None. None leaves the roles unbound and writes
+  no model, so the kernel registers no model action that cannot answer. Next
+  goes on only with models their providers serve, or with None. The choice and
+  its keys are held in memory like the password, and the first boot is given
+  them in its `config.json`.
 * **Recovery phrase** comes before the work, so the person holds it before the
   key is enrolled: the UI generates it as at signup and the first boot passes
   only its public key. It is one phrase for the whole sequence, across Back and
   across a failed boot, shown on its page alone, acknowledged with its "I
   understand" box, held in memory and stored nowhere, and dropped when the
   sequence ends.
-* **Summary** names the world, the kernel name, the superuser and the kernel's
-  home, and is the point of no return: nothing before it writes anything. On a
+* **Summary** names the world, the kernel name, the superuser, the chat and
+  search models and the kernel's home, and is the point of no return: nothing before it writes anything. On a
   world whose rail is a chain (`evm`) it states, behind the alert icon, that the
   vault's keys live in that home and that losing it loses the money. Its button
   is **Install**.
@@ -1189,6 +1208,7 @@ them. A test holds this.
   services/chat/  the chat service, imported only by cmd/juice-chat, its program
   supervisor/     the process supervisor; standard library only, Juice unknown to it
   installer/      the first start's sequence, imported only by cmd/juice-ui
+  models/         the kernel's language-model setup; standard library only
   templates/      HTML templates (not Go; no test file required)
   static/         CSS and client scripts (not Go; no test file required)
   ```
@@ -2476,8 +2496,8 @@ editing the file and restarting the kernel (kernel manual). The UI, which
 supervises this installation's kernel (§1), does both for the operator, on a
 page reached from `admin` and from the `admin config` command, both of which
 exist only when the kernel is this installation's. The editor is one
-component, parameterised by the file's schema, its hidden keys and the
-kernel's secrets; an agent's `config.json` is its second instance (§6.1).
+component, parameterised by the file's schema, its hidden keys and the keys
+it withholds; an agent's `config.json` is its second instance (§6.1).
 
 * The form is the kernel's own JSON Schema of the file,
   `$JUICE_HOME/schemas/config.schema.json`, rendered by the run form's
@@ -2487,31 +2507,60 @@ kernel's secrets; an agent's `config.json` is its second instance (§6.1).
   would write, its secrets withheld; JSON → form holds the file's own empty
   values, which a save keeps, while a new optional empty value stays in JSON.
 * `kernel_handle`, decided at first boot, and `listen_addr`, the port this UI
-  finds its kernel by, are read-only. The file's secrets — the keys the kernel
-  gives no command-line flag: `credentials_key` and the `key` of each entry of
-  the `native.llm.models` list — are never shown. `credentials_key` is kept
-  as saved. A model's key is a write-only input in its own row, shown only
-  as "configured ✓ (replace)" where the file holds one; a row added by Add
-  claims none. A key is kept by the model's **name**, never its row: a typed
-  key replaces it, a blank one keeps the saved key of that name, a removed
-  model takes its key with it, and a renamed one has none until typed.
+  finds its kernel by, are read-only. `credentials_key`, the file's secret, and
+  `native.llm`, the language models, are in neither view and are kept as
+  saved: the models are the Models page's.
 * A field cleared is removed from the file, restoring the kernel's default; a
   blank field where the file holds an empty value is no change, since a blank
   input cannot tell the two apart. A form unchanged writes nothing.
-* **A file without `native.llm.models`** is served on the kernel's default
-  models (the kernel writes them only on a first boot), while the form, filled
-  from the file, shows an empty list. A list replaces its default whole
-  (kernel Config), so the first saved row replaces every default model, and
-  the operator enters each model to keep in the same form. A list lacking a
-  model that a binding names (`chat`, `json`, `decide`, `embed`) is refused at
-  boot and rolled back with the kernel's words. The defaults are not shown as
-  rows: they are not the file, and an unchanged save would write them.
 * A save is refused if the file changed since the page was read (its SHA-256).
   Otherwise the kernel is stopped by SIGTERM to the process id in its
   `serve.lock`, once the lock shows a server holds it and only for a positive
   id; the file is replaced atomically; and the kernel is served again. If it
   does not answer, the previous file is written back and served, and the
   kernel's last words are shown.
+
+**Models.** The kernel's language models are entries of `native.llm.models`
+and four bindings (kernel D17). The **models form** chooses them, one form
+with one block per kind the kernel uses: **Chat, JSON and decide**, the chat
+model, which the three chat roles share, and **Search**, the embedding model.
+The installer's Models step (§1) and the operator's **Models** page render it
+alike; the page is reached from `admin` and the registry, and exists only for
+this installation's kernel, when its schema describes the entries it writes,
+so an older kernel's file is never written there.
+
+* A block is a provider, its address (Other alone), its key and the model. The
+  providers are data in the UI, each only an address and a wire protocol: Ollama
+  and LM Studio on this machine, OpenAI, Anthropic, OpenRouter, Other (any
+  OpenAI-compatible address), and None; Search adds Same as chat. Search offers
+  no provider whose protocol serves no embedding model (Anthropic), and the
+  server refuses one whatever the form sent. A provider is not a kernel concept,
+  and the kernel is not changed.
+* The model is typed, with the models the provider lists (`GET <address>/models`,
+  asked as the kernel asks it) offered as suggestions. The providers on this
+  machine are asked whenever the form is shown, and say how many models they
+  serve or that they are not running. **List models** asks the chosen providers
+  and shows the form again; it writes nothing. A provider that lists no models
+  takes the model as typed.
+* A key is write-only: a key held for the provider's address says so in its
+  placeholder, `configured ✓ (replace)`, and a blank key keeps it. A key typed
+  and not yet saved is typed again.
+* The form's command (Next, or **Save and restart**) is refused, with what to do,
+  for a block left incomplete, a provider that does not answer, refuses its key
+  or does not serve the model, and search on a protocol without embedding models.
+* What it writes is the kernel's own shape. The roles a block names are bound to
+  its entry, and None leaves them unbound. An entry is reused only when it is the
+  same model on the same protocol and address, of the same kind: it keeps its
+  name, price and settings and is enabled. A new entry is named after its model,
+  in the kernel's alphabet (lowercase letters, digits, `.`, `_`, `-`, at most 32),
+  distinct from every entry the file will hold. An entry that was bound and is no
+  longer is removed; an entry no binding named is kept as it is, and the page
+  lists it under **Other models**.
+* On the page each block names the native it backs, linked to its action page,
+  where it is run like any action; that is the test. A price is set per block, in
+  the world's money. Save goes through the configuration's save: the file at the
+  page's version, the kernel restarted, the previous file restored if it does
+  not answer.
 
 **No value-transfer queue.** A transfer to another kernel settles in the
 sender's own call and is paid on the rail like a won ticket (kernel §D18, P11);
@@ -3048,7 +3097,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   the installation as it was; a relative `JUICE_HOME` is refused;
   `--no-modify-path` writes no profile; a VERSION names its release;
 * the components (§1): each installs by the one routine, refused on a wrong
-  checksum, a binary that does not run or an asset without it; a fresh
+  checksum, a binary that does not run, a setup that fails or an asset without
+  it, its setup having written its schema; a fresh
   installation installs what is missing and replaces what is older; one holding a
   kernel, declared or not, keeps an older kernel and an older agent and installs
   only what is missing; an override is respected; a followed kernel has no binary
@@ -3067,8 +3117,20 @@ Every production `.go` file has a `_test.go` file with independent tests.
   machine gives exactly the steps of §1's table, a complete one none; a page
   request during the launch is held and sent on to the application, and only a
   slow or failing start is said, with the kernel's words; nothing follows
-  Install; the package imports
+  Install; the Models step opens on this machine's first choice, keeps the page
+  for List models, holds a key typed and never shows it, refuses with what to
+  do, and gives the first boot the models chosen, gone when the sequence ends;
+  the package imports
   nothing of this repository and only the entrypoint imports it;
+* the models form (`models`): a provider's list asked as the kernel asks it, a
+  refusal in the provider's words, no redirect followed; the setup written in
+  the kernel's shape over an empty file, the kernel's defaults and an operator's
+  extra entry; an entry reused only when it is the same model and kind, enabled;
+  names distinct and within the kernel's rule; search refused on a protocol
+  without embedding models; no provider asked by a test; the Models page gated to
+  the superuser, this installation's kernel and a schema that describes the
+  entries, a key never rendered, List models writing nothing, a save at the
+  page's version; the configuration page showing no model;
 * the first boot: its child has ended when it returns and when the UI shuts down, one
   ignoring SIGTERM is killed, and a start during it neither declares the kernel
   nor returns;

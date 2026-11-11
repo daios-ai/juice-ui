@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/installer"
 	"github.com/daios-ai/juice-ui/kernel"
+	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/session"
 )
 
@@ -281,6 +283,47 @@ func TestInstallationAdaptsTheKernel(t *testing.T) {
 	}
 	if err := k.Install(context.Background(), installer.Component{Name: "nothing"}); err == nil {
 		t.Error("an unknown component is refused")
+	}
+}
+
+// The adapter reads the models page through package models and writes the
+// models chosen into the first boot's configuration.
+func TestInstallationAdaptsTheModels(t *testing.T) {
+	saved := models.Providers
+	t.Cleanup(func() { models.Providers = saved })
+	models.Providers = saved[2:] // nothing on this machine is asked
+	home := t.TempDir()
+	u, _ := url.Parse("http://127.0.0.1:1")
+	k := installation{&kernel.Installation{Home: home, URL: u}}
+	ctx := context.Background()
+	if s, msg, done := k.Models(ctx, nil, nil); s != (models.Setup{}) || msg != "" || done {
+		t.Errorf("first choice with nothing running: %+v %q %v", s, msg, done)
+	}
+	typed := url.Values{"chat_provider": {"openai"}, "chat_key": {"sk"}, "chat_model": {""}, "list": {"1"}}
+	s, msg, done := k.Models(ctx, typed, nil)
+	if s.(models.Setup).Chat.Key != "sk" || msg != "" || done {
+		t.Errorf("list: %+v %q %v", s, msg, done)
+	}
+	if _, msg, done := k.Models(ctx, url.Values{"chat_provider": {"openai"}}, s); done || msg != "Choose a chat model." {
+		t.Errorf("a refusal: %q %v", msg, done)
+	}
+	if _, msg, done := k.Models(ctx, url.Values{}, s); !done || msg != "" {
+		t.Errorf("none goes on: %q %v", msg, done)
+	}
+	if f, ok := k.ModelsView(ctx, s).(models.Form); !ok || f.Chat.Provider != "openai" || !f.Chat.Held {
+		t.Errorf("view %+v", f)
+	}
+	// Create writes them before it boots; with no kernel binary the boot fails,
+	// and the file it wrote stays.
+	setup := models.Setup{Chat: models.Choice{Provider: "openai", Key: "sk", ID: "gpt-5"}}
+	if err := k.Create("play", "alpha", "secret123", "KEY", setup); err == nil {
+		t.Fatal("no kernel binary: the boot fails")
+	}
+	b, _ := os.ReadFile(filepath.Join(home, "kernels", "play", "config.json"))
+	for _, want := range []string{`"chat":"gpt-5"`, `"embed":""`, `"url":"https://api.openai.com/v1"`, `"kernel_handle":"alpha"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("config.json lacks %s: %s", want, b)
+		}
 	}
 }
 

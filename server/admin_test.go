@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/daios-ai/juice-ui/models"
 )
 
 // loginClientAs logs in through the BFF with a chosen handle. The session handle
@@ -951,16 +953,14 @@ func configPost(t *testing.T, cl *http.Client, base string, form url.Values) str
 }
 
 // The page is the kernel's schema filled from the file: the first boot's name
-// and the listen address read-only, every secret withheld, a model's key
-// write-only in its own row, and the JSON editor holding the file itself.
+// and the listen address read-only, every secret withheld, the language models
+// left to the Models page, and the JSON editor holding the file itself.
 func TestAdminConfigPage(t *testing.T) {
 	_, srv, cl := configServer(t)
 	body := getBody(t, cl, srv.URL+"/admin/config")
 	for _, want := range []string{
 		`name="f_/fee_bps"`, `value="2000"`, `<div class="box">k</div>`, `name="version" value="v1"`,
-		`name="f_/native/llm/models/0/key" type="password" autocomplete="off" placeholder="configured ✓ (replace)"`,
-		`name="f_/native/llm/models/1/key" type="password"`, `name="f_/native/llm/models/2/key" type="password" autocomplete="off">`,
-		`fee_bps&#34;: 2000`,
+		`name="f_/native/time/price"`, `fee_bps&#34;: 2000`,
 		`data-to-json="/admin/config/json" data-to-form="/admin/config/form"`,
 		`<button class="btn-primary" type="submit">Save and restart</button>`,
 	} {
@@ -968,36 +968,25 @@ func TestAdminConfigPage(t *testing.T) {
 			t.Errorf("page lacks %q", want)
 		}
 	}
-	for _, not := range []string{"SECRET", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`} {
+	for _, not := range []string{"SECRET", "credentials_key", `f_/kernel_handle`, `f_/listen_addr`, `f_/$schema`, `f_/native/llm`, `&#34;llm&#34;`} {
 		if strings.Contains(body, not) {
 			t.Errorf("page has %q", not)
 		}
 	}
-	if b := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(b, `href="/admin/config"`) {
-		t.Error("admin links the configuration")
+	if b := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(b, `href="/admin/config"`) || !strings.Contains(b, `href="/admin/models"`) {
+		t.Error("admin links the configuration and the models")
 	}
 }
 
 // A save rewrites the file from the form. What the form cannot carry is kept:
-// the fixed keys, a model key not replaced — by the model's name, never its
-// row — and an empty value a blank input cannot tell from absent. Nothing
-// changed writes nothing; a refusal is shown as given.
+// the fixed keys, the secret and the language models, whatever the form or the
+// JSON says of them, and an empty value a blank input cannot tell from
+// absent. Nothing changed writes nothing; a refusal is shown as given.
 func TestAdminConfigSave(t *testing.T) {
 	fc, srv, cl := configServer(t)
 	fields := url.Values{"has_fields": {"1"},
 		"t_/fee_bps": {"integer"}, "f_/fee_bps": {"2000"}, "f_/auth_audience": {""}, "f_/credit_limit": {""},
-		"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"},
-		"t_/native/llm": {"object"}, "t_/native/llm/models": {"array"},
-		"t_/native/llm/models/0": {"object"}, "f_/native/llm/models/0/name": {"a"}, "f_/native/llm/models/0/key": {""},
-		"t_/native/llm/models/0/enabled": {"boolean"}, "f_/native/llm/models/0/enabled": {"true"},
-		"f_/native/llm/models/0/protocol": {"openai"}, "f_/native/llm/models/0/url": {"https://a"},
-		"f_/native/llm/models/0/id": {"m-1"}, "f_/native/llm/models/0/kind": {"chat"},
-		"t_/native/llm/models/0/max_tokens": {"integer"}, "f_/native/llm/models/0/max_tokens": {"1000"},
-		"t_/native/llm/models/0/price": {"integer"}, "f_/native/llm/models/0/price": {"5"},
-		"t_/native/llm/models/1": {"object"}, "f_/native/llm/models/1/name": {"b"}, "f_/native/llm/models/1/key": {""},
-		"f_/native/llm/models/1/kind": {""},
-		"t_/native/llm/models/2":      {"object"}, "f_/native/llm/models/2/name": {"c"}, "f_/native/llm/models/2/key": {""},
-		"t_/native/llm/models/2/enabled": {"boolean"}, "f_/native/llm/models/2/enabled": {"false"}}
+		"t_/native": {"object"}, "t_/native/time": {"object"}, "t_/native/time/price": {"integer"}, "f_/native/time/price": {"0"}}
 	wrote := func(want string) {
 		t.Helper()
 		var got, w any
@@ -1010,57 +999,31 @@ func TestAdminConfigSave(t *testing.T) {
 	}
 	const head = `"$schema":"s.json","kernel_handle":"k","listen_addr":"127.0.0.1:4040","auth_audience":"","credit_limit":null`
 	const fixed = head + `,"credentials_key":"SECRET-CREDENTIALS-KEY"`
+	const llm = `"llm":{"models":[{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5},{"name":"b","key":"SECRET-B"},{"name":"c","enabled":false}]}`
 
 	if f := configPost(t, cl, srv.URL, fields); f != "info|Nothing changed." || fc.wrote != "" {
 		t.Errorf("unchanged form flashed %q, wrote %q", f, fc.wrote)
 	}
-	send := func(models string) url.Values {
-		return url.Values{"raw_args": {`{` + head + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"models":` + models + `}}}`}}
-	}
-	shown := `[{"name":"a","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5},{"name":"b"},{"name":"c","enabled":false}]`
-	if f := configPost(t, cl, srv.URL, send(shown)); f != "info|Nothing changed." {
+	if f := configPost(t, cl, srv.URL, url.Values{"raw_args": {`{` + head + `,"fee_bps":2000,"native":{"time":{"price":0}}}`}}); f != "info|Nothing changed." {
 		t.Errorf("unchanged JSON flashed %q", f)
 	}
-
-	// A typed key replaces its model's; a blank one keeps it.
 	form := url.Values{}
 	for k, v := range fields {
 		form[k] = v
 	}
 	form.Set("f_/fee_bps", "")
 	form.Del("f_/native/time/price")
-	form.Set("f_/native/llm/models/1/key", "sk")
 	if f := configPost(t, cl, srv.URL, form); f != "success|Saved and restarted." {
 		t.Errorf("save flashed %q", f)
 	}
-	wrote(`{` + fixed + `,"native":{"llm":{"models":[
-		{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5},{"name":"b","key":"sk"},{"name":"c","enabled":false}]}}}`)
+	wrote(`{` + fixed + `,"native":{` + llm + `}}`)
 
-	// A key follows its model's name, not its row: reordered rows keep theirs,
-	// a removed model takes its key, a renamed one has none, and the JSON
-	// editor cannot rename the kernel.
-	for _, c := range []struct{ sent, want string }{
-		{`[{"name":"b"},{"name":"a","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]`,
-			`[{"name":"b","key":"SECRET-B"},{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5}]`},
-		{`[{"name":"b"}]`, `[{"name":"b","key":"SECRET-B"}]`},
-		{`[{"name":"a","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5},{"name":"d"}]`,
-			`[{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"https://a","id":"m-1","kind":"chat","max_tokens":1000,"price":5},{"name":"d"}]`},
-	} {
-		v := send(c.sent)
-		v.Set("raw_args", strings.Replace(v.Get("raw_args"), `"k"`, `"x"`, 1))
-		configPost(t, cl, srv.URL, v)
-		wrote(`{` + fixed + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"models":` + c.want + `}}}`)
-	}
+	// The JSON editor can neither rename the kernel nor touch the models.
+	sent := `{` + strings.Replace(head, `"k"`, `"x"`, 1) + `,"fee_bps":7,"native":{"time":{"price":0},"llm":{"models":[{"name":"z"}]}}}`
+	configPost(t, cl, srv.URL, url.Values{"raw_args": {sent}})
+	wrote(`{` + fixed + `,"fee_bps":7,"native":{"time":{"price":0},` + llm + `}}`)
 
-	// An entry without a string name claims no key and receives none.
-	fc.file = strings.Replace(testConfigFile, `{"name":"c",`, `{"key":"SECRET-N",`, 1)
-	configPost(t, cl, srv.URL, send(`[{"enabled":false}]`))
-	wrote(`{` + fixed + `,"fee_bps":2000,"native":{"time":{"price":0},"llm":{"models":[{"enabled":false}]}}}`)
-	fc.file = testConfigFile
-
-	stale := send(shown)
-	stale.Set("version", "v0")
-	stale.Set("raw_args", strings.Replace(stale.Get("raw_args"), "2000", "1", 1))
+	stale := url.Values{"raw_args": {`{` + head + `,"fee_bps":1,"native":{"time":{"price":0}}}`}, "version": {"v0"}}
 	if f := configPost(t, cl, srv.URL, stale); !strings.Contains(f, "changed since this page was loaded") {
 		t.Errorf("stale flashed %q", f)
 	}
@@ -1085,27 +1048,26 @@ func TestAdminConfigSwitch(t *testing.T) {
 		return resp.StatusCode, string(b)
 	}
 
-	// The form names b's key afresh and edits the fee; kernel_handle cannot move.
+	// The form edits the fee; kernel_handle cannot move, and the models are
+	// in no view.
 	code, body := post("/admin/config/json", url.Values{"has_fields": {"1"},
-		"f_/kernel_handle": {"x"}, "t_/fee_bps": {"integer"}, "f_/fee_bps": {"7"},
-		"t_/native": {"object"}, "t_/native/llm": {"object"}, "t_/native/llm/models": {"array"},
-		"t_/native/llm/models/0": {"object"}, "f_/native/llm/models/0/name": {"b"}, "f_/native/llm/models/0/key": {""}})
+		"f_/kernel_handle": {"x"}, "t_/fee_bps": {"integer"}, "f_/fee_bps": {"7"}})
 	var got map[string]any
 	if code != 200 || json.Unmarshal([]byte(body), &got) != nil {
 		t.Fatalf("form → JSON = %d %s", code, body)
 	}
-	want := `{"$schema":"s.json","auth_audience":"","credit_limit":null,"fee_bps":7,"kernel_handle":"k","listen_addr":"127.0.0.1:4040","native":{"llm":{"models":[{"name":"b"}]}}}`
+	want := `{"$schema":"s.json","auth_audience":"","credit_limit":null,"fee_bps":7,"kernel_handle":"k","listen_addr":"127.0.0.1:4040"}`
 	var w any
 	json.Unmarshal([]byte(want), &w)
 	if !reflect.DeepEqual(got, w) || strings.Contains(body, "SECRET") {
 		t.Errorf("form → JSON = %s\nwant %s", body, want)
 	}
 
-	// The file's own JSON view converts back, empties and all, its secrets as
-	// placeholders; a new optional empty value and an unknown key do not.
+	// The file's own JSON view converts back, empties and all, its secrets
+	// withheld; a new optional empty value and an unknown key do not.
 	shown := regexp.MustCompile(`(?s)<textarea name="raw_args"[^>]*>(.*?)</textarea>`).FindStringSubmatch(page)[1]
 	code, body = post("/admin/config/form", url.Values{"raw_args": {html.UnescapeString(shown)}})
-	if code != 200 || !strings.Contains(body, `placeholder="configured ✓ (replace)"`) || strings.Contains(body, "SECRET") || !strings.Contains(body, `<div class="box">k</div>`) {
+	if code != 200 || strings.Contains(body, "SECRET") || strings.Contains(body, "f_/native/llm") || !strings.Contains(body, `<div class="box">k</div>`) {
 		t.Errorf("JSON → form = %d %s", code, body)
 	}
 	code, body = post("/admin/config/form", url.Values{"raw_args": {`{"log_file":"","nope":1}`}})
@@ -1115,6 +1077,166 @@ func TestAdminConfigSwitch(t *testing.T) {
 	code, body = post("/admin/config/form", url.Values{"raw_args": {`{"native":{"time":{}}}`}})
 	if code != 422 || !strings.Contains(body, "/native/time: an empty object can only be written in JSON") {
 		t.Errorf("a new optional empty = %d %q", code, body)
+	}
+}
+
+// modelsServer is a Models page over a file whose chat model is served by a
+// fake provider; nothing on this machine is asked.
+func modelsServer(t *testing.T) (*fakeConfig, *httptest.Server, *http.Client, string) {
+	t.Helper()
+	saved := models.Providers
+	t.Cleanup(func() { models.Providers = saved })
+	models.Providers = saved[2:]
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer wrong" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":{"message":"Incorrect API key provided"}}`))
+			return
+		}
+		w.Write([]byte(`{"data":[{"id":"chat-1"},{"id":"chat-2"},{"id":"embed-1"}]}`))
+	}))
+	t.Cleanup(provider.Close)
+	addr := provider.URL + "/v1"
+	file := `{"kernel_handle":"k","credentials_key":"SECRET-CREDENTIALS-KEY","fee_bps":2000,"native":{"time":{"price":0},"llm":{
+	"chat":"a","json":"a","decide":"a","embed":"",
+	"models":[{"name":"a","key":"SECRET-A","enabled":true,"protocol":"openai","url":"` + addr + `","id":"chat-1","kind":"chat","price":5},
+	          {"name":"sold","enabled":true,"protocol":"openai","url":"https://x/v1","id":"big","kind":"chat","price":9}]}}}`
+	kernel := authKernel()
+	t.Cleanup(kernel.Close)
+	fc := &fakeConfig{file: file, schema: testConfigSchema}
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.config = fc }))
+	t.Cleanup(srv.Close)
+	return fc, srv, loginClientAs(t, srv.URL, "sys"), addr
+}
+
+// modelsPost posts the page's form and returns the response's status, body
+// and flash.
+func modelsPost(t *testing.T, cl *http.Client, base string, form url.Values) (int, string, string) {
+	t.Helper()
+	if form.Get("version") == "" {
+		form.Set("version", "v1")
+	}
+	resp := postTo(t, cl, base+"/admin/models", getBody(t, cl, base+"/admin/models"), form)
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	flash := ""
+	for _, c := range resp.Cookies() {
+		if c.Name == "flash" {
+			flash, _ = url.QueryUnescape(c.Value)
+		}
+	}
+	return resp.StatusCode, string(b), flash
+}
+
+// The Models page is the models form over the kernel's file: the bound models
+// as chosen, what their provider serves as suggestions, a held key said and
+// never shown, the prices in the world's money, and the models no binding
+// names listed as they are.
+func TestAdminModelsPage(t *testing.T) {
+	_, srv, cl, addr := modelsServer(t)
+	body := getBody(t, cl, srv.URL+"/admin/models")
+	for _, want := range []string{
+		`<h1>Models</h1>`, `name="version" value="v1"`,
+		`<option value="other" selected>Other (OpenAI-compatible)</option>`, `value="` + addr + `"`, `value="chat-1"`,
+		`<option value="chat-2"></option>`, `placeholder="configured ✓ (replace)"`, `name="chat_price"`, `value="5"`,
+		`<option value="" selected>None</option>`, `data-reveal="provider"`,
+		`<button class="btn-primary" type="submit" data-confirm="Restart the kernel to apply?">Save and restart</button>`,
+		`>List models</button>`, `<h2>Other models</h2>`, `<td class="mono">sold</td>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "SECRET") {
+		t.Error("a key is never rendered")
+	}
+}
+
+// List models writes nothing; a setup the kernel could not use is refused with
+// what to do and the form as typed, never a key; a save writes the setup in
+// the kernel's shape over the file at the page's version and restarts it.
+func TestAdminModelsSave(t *testing.T) {
+	fc, srv, cl, addr := modelsServer(t)
+	base := url.Values{"chat_provider": {"other"}, "chat_url": {addr}, "chat_model": {"chat-2"}, "chat_price": {"3"},
+		"embed_provider": {"same"}, "embed_model": {"embed-1"}, "embed_price": {"0"}}
+	with := func(kv ...string) url.Values {
+		v := url.Values{}
+		for k, x := range base {
+			v[k] = x
+		}
+		for i := 0; i < len(kv); i += 2 {
+			v.Set(kv[i], kv[i+1])
+		}
+		return v
+	}
+	if code, body, _ := modelsPost(t, cl, srv.URL, with("list", "1", "chat_key", "typed")); code != 200 || fc.wrote != "" ||
+		!strings.Contains(body, `<option value="embed-1"></option>`) || strings.Contains(body, "typed") {
+		t.Errorf("List models: %d, wrote %q", code, fc.wrote)
+	}
+	for kv, want := range map[[2]string]string{
+		{"chat_model", "nope"}:          "serves no model nope",
+		{"chat_key", "wrong"}:           "Incorrect API key provided.",
+		{"chat_price", "1.5"}:           "Price: amount must be a whole number here.",
+		{"embed_provider", "anthropic"}: "Anthropic serves no search models",
+	} {
+		code, body, _ := modelsPost(t, cl, srv.URL, with(kv[0], kv[1], "embed_key", "k"))
+		if code != http.StatusUnprocessableEntity || !strings.Contains(body, html.EscapeString(want)) || fc.wrote != "" ||
+			!strings.Contains(body, `value="chat-`) || strings.Contains(body, "SECRET") {
+			t.Errorf("%v: %d, lacks %q", kv, code, want)
+		}
+	}
+	if _, _, flash := modelsPost(t, cl, srv.URL, with()); flash != "success|Saved and restarted." {
+		t.Fatalf("save flashed %q", flash)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(fc.wrote), &got); err != nil {
+		t.Fatal(err)
+	}
+	llm := got["native"].(map[string]any)["llm"].(map[string]any)
+	ms := llm["models"].([]any)
+	if llm["chat"] != "chat-2" || llm["decide"] != "chat-2" || llm["embed"] != "embed-1" || len(ms) != 3 ||
+		ms[0].(map[string]any)["name"] != "sold" || ms[1].(map[string]any)["key"] != "SECRET-A" || ms[1].(map[string]any)["price"] != float64(3) {
+		t.Errorf("wrote %s", fc.wrote)
+	}
+	if got["credentials_key"] != "SECRET-CREDENTIALS-KEY" || got["fee_bps"] != float64(2000) {
+		t.Errorf("nothing else is touched: %s", fc.wrote)
+	}
+	// The setup the file holds, saved again, changes nothing; the kernel's
+	// refusal is said.
+	fc.wrote = ""
+	same := url.Values{"chat_provider": {"other"}, "chat_url": {addr}, "chat_model": {"chat-1"}, "chat_price": {"5"}}
+	if _, _, flash := modelsPost(t, cl, srv.URL, same); flash != "info|Nothing changed." || fc.wrote != "" {
+		t.Errorf("unchanged flashed %q", flash)
+	}
+	fc.err = errors.New("the kernel did not start with this configuration; the previous one is restored: bad")
+	if _, _, flash := modelsPost(t, cl, srv.URL, with()); !strings.Contains(flash, "previous one is restored") {
+		t.Errorf("refusal flashed %q", flash)
+	}
+}
+
+// The Models page exists for this installation's kernel alone, when its
+// schema describes the entries it writes, and for the superuser.
+func TestAdminModelsIsLocalSuperuserAndCurrent(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	for _, w := range []func(*testWiring){
+		func(*testWiring) {},
+		func(w *testWiring) { w.config = &fakeConfig{file: testConfigFile, schema: `{"type":"object"}`} },
+	} {
+		srv := httptest.NewServer(newTestHandler(t, kernel.URL, w))
+		cl := loginClientAs(t, srv.URL, "sys")
+		resp, _ := cl.Get(srv.URL + "/admin/models")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound || strings.Contains(getBody(t, cl, srv.URL+"/admin"), "/admin/models") {
+			t.Error("no Models page, link or command")
+		}
+		srv.Close()
+	}
+	_, srv, _, _ := modelsServer(t)
+	resp, _ := loginClientAs(t, srv.URL, "alice").Get(srv.URL + "/admin/models")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("non-superuser /admin/models = %d want 404", resp.StatusCode)
 	}
 }
 

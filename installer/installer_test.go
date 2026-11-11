@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/server"
 )
 
@@ -33,6 +34,8 @@ type fakeKernel struct {
 	makes     bool          // a failing Create still leaves a kernel
 	hold      chan struct{} // Create waits on it, when set
 	created   []string      // world handle password key, per Create
+	models    []any         // the models given to Create, per Create
+	initial   any           // the machine's first choice of models
 	dueAsked  []bool
 	started   int
 	holdStart chan struct{} // Start waits on it, when set
@@ -78,18 +81,44 @@ func (k *fakeKernel) Worlds() ([]World, error) {
 		{Name: "broken", Error: "parse world file"},
 	}, nil
 }
-func (k *fakeKernel) Create(world, handle, password, key string) error {
+func (k *fakeKernel) Create(world, handle, password, key string, m any) error {
 	if k.hold != nil {
 		<-k.hold
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.created = append(k.created, strings.Join([]string{world, handle, password, key}, " "))
+	k.models = append(k.models, m)
 	if k.createErr != nil && !k.makes {
 		return k.createErr
 	}
 	k.booted, k.answers = true, true
 	return nil
+}
+
+// Models reads the page as the entrypoint's adapter does, refusing a chat
+// provider with no model.
+func (k *fakeKernel) Models(_ context.Context, form url.Values, held any) (any, string, bool) {
+	h, _ := held.(models.Setup)
+	if form == nil {
+		if held == nil {
+			return k.initial, "", false
+		}
+		return h, "", false
+	}
+	s := models.Read(form)
+	s.Keep(h)
+	switch {
+	case form.Has("list"):
+		return s, "", false
+	case s.Chat.Provider != models.None && s.Chat.ID == "":
+		return s, "Choose a chat model.", false
+	}
+	return s, "", true
+}
+func (k *fakeKernel) ModelsView(ctx context.Context, setup any) any {
+	s, _ := setup.(models.Setup)
+	return models.View(ctx, s, s)
 }
 func (k *fakeKernel) Start(context.Context) error {
 	if k.holdStart != nil {
@@ -129,6 +158,14 @@ func (c chrome) NewPhrase() (string, string, error) {
 // test leaves running reads them while another test sets them.
 func TestMain(m *testing.M) {
 	retryPause, holdTimeout = 20*time.Millisecond, 300*time.Millisecond
+	// No provider on this machine is asked: what runs here is not the test's.
+	var away []models.Provider
+	for _, p := range models.Providers {
+		if !p.Local {
+			away = append(away, p)
+		}
+	}
+	models.Providers = away
 	os.Exit(m.Run())
 }
 
@@ -232,9 +269,9 @@ func TestTheMachineChoosesTheSteps(t *testing.T) {
 	}{
 		{&fakeKernel{booted: true}, "start"},
 		{&fakeKernel{booted: true, due: agent}, "download,start"},
-		{&fakeKernel{}, "world,kernel,phrase,summary,install,start"},
-		{&fakeKernel{due: both}, "download,world,kernel,phrase,summary,install,start"},
-		{&fakeKernel{canCreate: errors.New("older")}, "download,world,kernel,phrase,summary,install,start"},
+		{&fakeKernel{}, "world,kernel,models,phrase,summary,install,start"},
+		{&fakeKernel{due: both}, "download,world,kernel,models,phrase,summary,install,start"},
+		{&fakeKernel{canCreate: errors.New("older")}, "download,world,kernel,models,phrase,summary,install,start"},
 		{&fakeKernel{bootErr: errors.New("damaged")}, "start"},
 		{&fakeKernel{remote: true}, "wait"},
 		{&fakeKernel{answers: true}, "wait"},
@@ -323,7 +360,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	}
 	b := page(t, h)
 	for _, want := range []string{`aria-current="step"><span class="install-mark" aria-hidden="true">2</span><span>World</span>`,
-		"Step 2 of 6", `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
+		"Step 2 of 7", `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
 		`<option value="broken" disabled>broken</option>`, "<span>Download</span>", "<span>Install</span>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("world page lacks %q", want)
@@ -340,6 +377,8 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 		t.Error("the command precedes Back in the markup, so Enter submits it")
 	}
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	waitFor(t, in, "models")
+	next(t, h, "models", url.Values{"chat_provider": {"other"}, "chat_url": {"http://127.0.0.1:1/v1"}, "chat_key": {"sk-1"}, "chat_model": {"m1"}})
 	waitFor(t, in, "phrase")
 	if b := page(t, h); !strings.Contains(b, "<li>abandon</li>") || !strings.Contains(b, `name="understand"`) {
 		t.Error("the phrase page shows the words")
@@ -347,7 +386,8 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	waitFor(t, in, "summary")
 	b = page(t, h)
-	for _, want := range []string{"polygon", "alpha", "/home/x/.juice/kernels/polygon", "Losing that directory loses the money", ">Install</button>"} {
+	for _, want := range []string{"polygon", "alpha", "/home/x/.juice/kernels/polygon", "Losing that directory loses the money", ">Install</button>",
+		"<dt>Chat model</dt><dd>m1 · http://127.0.0.1:1/v1</dd>", "<dt>Search model</dt><dd>None</dd>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("summary lacks %q", want)
 		}
@@ -381,12 +421,15 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	if len(k.created) != 1 || k.created[0] != "polygon alpha secret123 PUBKEY" || k.started != 1 {
 		t.Errorf("created %v, started %d", k.created, k.started)
 	}
+	if m, _ := k.models[0].(models.Setup); m.Chat.ID != "m1" || m.Chat.Key != "sk-1" {
+		t.Errorf("the first boot gets the models chosen: %+v", k.models[0])
+	}
 	if rec := do(t, h, http.MethodGet, "/install/status?step=install", nil, nil); rec.Header().Get("HX-Redirect") != "/" {
 		t.Error("the status sends a page on once its step ends")
 	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	if in.phrase != "" || in.password != "" || in.pub != "" {
+	if in.phrase != "" || in.password != "" || in.pub != "" || in.models != nil {
 		t.Error("the secrets leave memory with the sequence")
 	}
 }
@@ -438,6 +481,8 @@ func TestAPageRefusesItsAnswers(t *testing.T) {
 		t.Error("a refusal stays on its page")
 	}
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	waitFor(t, in, "models")
+	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	if rec := next(t, h, "phrase", nil); rec.Code != http.StatusUnprocessableEntity {
 		t.Error("the phrase page needs its box")
@@ -454,8 +499,11 @@ func TestBackGoesToThePageBefore(t *testing.T) {
 	next(t, h, "world", url.Values{"world": {"play"}})
 	waitFor(t, in, "kernel")
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	do(t, h, http.MethodPost, "/install/back", url.Values{"step": {"phrase"}}, nil)
+	waitFor(t, in, "models")
+	do(t, h, http.MethodPost, "/install/back", url.Values{"step": {"models"}}, nil)
 	waitFor(t, in, "kernel")
 	if in.password != "" || !strings.Contains(page(t, h), `value="alpha"`) {
 		t.Error("the kernel page shown again keeps the name and drops the password")
@@ -469,6 +517,7 @@ func TestBackGoesToThePageBefore(t *testing.T) {
 
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "models", nil)
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
 	waitFor(t, in, "install")
@@ -490,6 +539,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	waitFor(t, in, "world")
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"Bad"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "models", nil)
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
 	waitFor(t, in, "kernel")
@@ -500,6 +550,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	k.createErr = nil
 	k.mu.Unlock()
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"another12"}, "confirm_password": {"another12"}})
+	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	if !strings.Contains(page(t, h), "<li>abandon</li>") {
 		t.Error("the same phrase")
@@ -516,9 +567,50 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	waitFor(t, in, "world")
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "models", nil)
 	next(t, h, "phrase", url.Values{"understand": {"on"}})
 	next(t, h, "summary", nil)
 	waitFor(t, in, "")
+}
+
+// The models page opens on this machine's first choice. List models keeps the
+// page with what was typed, a key held and never shown; a refusal says what to
+// do and keeps the page; None goes on with no model.
+func TestTheModelsStep(t *testing.T) {
+	k := &fakeKernel{initial: models.Setup{Chat: models.Choice{Provider: models.Other, URL: "http://127.0.0.1:1/v1", ID: "first"}}}
+	in, h := start(t, k)
+	next(t, h, "world", url.Values{"world": {"play"}})
+	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	waitFor(t, in, "models")
+	b := page(t, h)
+	for _, want := range []string{`name="chat_provider" data-reveal="provider"`, `<option value="other" selected>`, `value="first"`,
+		`>List models</button>`, `<h3 class="flush">Chat, JSON and decide</h3>`, `<h3 class="flush">Search</h3>`, "Step 3 of 6"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the models page lacks %q", want)
+		}
+	}
+	if strings.Index(b, `>Next</button>`) > strings.Index(b, `>List models</button>`) {
+		t.Error("Next precedes List models, so Enter submits it")
+	}
+	listed := url.Values{"list": {"1"}, "chat_provider": {"other"}, "chat_url": {"http://127.0.0.1:1/v1"}, "chat_key": {"sk-typed"}, "chat_model": {""}}
+	if rec := next(t, h, "models", listed); rec.Code != http.StatusSeeOther || current(in) != "models" {
+		t.Fatalf("List models keeps the page: %d %s", rec.Code, current(in))
+	}
+	if b = page(t, h); !strings.Contains(b, `placeholder="configured ✓ (replace)"`) || strings.Contains(b, "sk-typed") || !strings.Contains(b, "does not answer") {
+		t.Error("the key is held, never shown, and the provider's answer is said")
+	}
+	rec := next(t, h, "models", url.Values{"chat_provider": {"other"}, "chat_url": {"http://127.0.0.1:1/v1"}})
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "Choose a chat model.") || strings.Contains(rec.Body.String(), "sk-typed") {
+		t.Errorf("a refusal: %d", rec.Code)
+	}
+	in.mu.Lock()
+	held := in.models.(models.Setup).Chat.Key
+	in.mu.Unlock()
+	if held != "sk-typed" {
+		t.Error("a blank key keeps the one typed before")
+	}
+	next(t, h, "models", url.Values{"chat_provider": {""}, "embed_provider": {""}})
+	waitFor(t, in, "phrase")
 }
 
 // A failed download is shown and tried again; a failure that does not retry
@@ -580,6 +672,7 @@ func TestOnlyThisMachineInstalls(t *testing.T) {
 	}
 	next(t, h, "world", url.Values{"world": {"play"}})
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
+	next(t, h, "models", nil)
 	waitFor(t, in, "phrase")
 	if b := do(t, h, http.MethodGet, "/", nil, far).Body.String(); strings.Contains(b, "abandon") {
 		t.Error("the phrase is shown at this machine alone")

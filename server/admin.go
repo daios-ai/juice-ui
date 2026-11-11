@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
+	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/wallet"
 	"github.com/gorilla/csrf"
 )
@@ -45,6 +46,7 @@ type adminView struct {
 	Pager        Pager
 	OpenForm     string
 	Configurable bool // this installation's kernel: its configuration page exists
+	Models       bool // and its Models page
 }
 
 type adminUserView struct {
@@ -190,7 +192,7 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	// Back drives the shared deposit dialog's close/cancel links; empty would make
 	// them reload this URL with ?form= still set, reopening the dialog on the
 	// no-JS path.
-	view := adminView{OpenForm: openForm(r, "admin"), depositForm: depositForm{Back: "/admin"}, Configurable: s.config != nil}
+	view := adminView{OpenForm: openForm(r, "admin"), depositForm: depositForm{Back: "/admin"}, Configurable: s.config != nil, Models: s.modelsSupported()}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.AdminListUsers(ctx, tok)
 		if e != nil {
@@ -486,20 +488,18 @@ type configView struct {
 }
 
 // configEditor edits a JSON configuration file through the form of its JSON
-// Schema (§6.6): the kernel's config.json and an agent's. A hidden key is
-// never shown and kept as saved; a fixed key is shown read-only and kept as
-// saved. The hooks are the kernel's secrets: shown withholds them from what
-// the page shows and names what to mask, mask makes those inputs write-only,
-// keep puts back what the form could not carry. An app edits its file through
-// apps.ConfigEditor, which this satisfies.
+// Schema (§6.6): the kernel's config.json and an agent's. A hidden key is not
+// a field and is kept as saved, though the JSON view shows it; a fixed key is
+// shown read-only and kept as saved; a withheld key is in no view at all and
+// kept as saved — the kernel's secret, and the language models, which the
+// Models page owns (§6.6). Keys are dotted paths. An app edits its file
+// through apps.ConfigEditor, which this satisfies.
 type configEditor struct {
-	s      *Server
-	schema json.RawMessage
-	hidden []string
-	fixed  []string
-	shown  func(cfg map[string]any) map[string]bool
-	mask   func(f *Field, keyed map[string]bool)
-	keep   func(saved, to map[string]any)
+	s        *Server
+	schema   json.RawMessage
+	hidden   []string
+	fixed    []string
+	withheld []string
 }
 
 // editor is the editor of a file without secrets.
@@ -507,32 +507,15 @@ func (s *Server) editor(schema json.RawMessage, hidden ...string) configEditor {
 	return configEditor{s: s, schema: schema, hidden: hidden}
 }
 
-// kernelEditor edits the kernel's file: the schema pointer and credentials_key
-// hidden; kernel_handle, the first boot's name, and listen_addr, the port this
-// UI finds its kernel by (kernel.World), read-only; each model's key, which
-// the kernel gives no command-line flag, write-only and kept by its name.
+// kernelEditor edits the kernel's file: the schema pointer hidden;
+// kernel_handle, the first boot's name, and listen_addr, the port this UI finds
+// its kernel by (kernel.World), read-only; credentials_key and the language
+// models withheld.
 func (s *Server) kernelEditor(schema json.RawMessage) configEditor {
-	e := s.editor(schema, "$schema", "credentials_key")
+	e := s.editor(schema, "$schema")
 	e.fixed = []string{"kernel_handle", "listen_addr"}
-	e.shown, e.mask, e.keep = configShown, maskKeys, keepKeys
+	e.withheld = []string{"credentials_key", "native.llm"}
 	return e
-}
-
-// configured is the placeholder of a model key the file holds.
-const configured = "configured ✓ (replace)"
-
-// models are the file's language models, `native.llm.models`, each holding
-// its `name` and the key the kernel gives no command-line flag (kernel
-// requirements D17, Config).
-func models(cfg map[string]any) []map[string]any {
-	list, _ := getDotted(cfg, "native.llm.models").([]any)
-	out := make([]map[string]any, 0, len(list))
-	for _, e := range list {
-		if m, ok := e.(map[string]any); ok {
-			out = append(out, m)
-		}
-	}
-	return out
 }
 
 func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
@@ -547,57 +530,36 @@ func (s *Server) getAdminConfig(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "admin_config", "Configuration", configView{Form: form, Version: version})
 }
 
-// configShown withholds the file's secrets from what the page shows:
-// credentials_key, and each model's key, its row saying only that it holds
-// one. It returns the model names that held a key.
-func configShown(cfg map[string]any) map[string]bool {
-	delete(cfg, "credentials_key")
-	keyed := map[string]bool{}
-	for _, e := range models(cfg) {
-		if name, ok := e["name"].(string); ok {
-			keyed[name] = e["key"] != nil
+// withhold removes the withheld keys from cfg, so no view shows them, and an
+// object left empty by that, which the file did not hold empty.
+func (c configEditor) withhold(cfg map[string]any) {
+	for _, p := range c.withheld {
+		if getDotted(cfg, p) == nil {
+			continue
 		}
-		delete(e, "key")
-	}
-	return keyed
-}
-
-// maskKeys makes each model row's key write-only, its placeholder saying so
-// where the file holds one for that model's name.
-func maskKeys(f *Field, keyed map[string]bool) {
-	if f.Path == "/native/llm/models" {
-		for _, row := range f.Rows {
-			i := slices.IndexFunc(row.Fields, func(c Field) bool { return c.Name == "name" })
-			for j := range row.Fields {
-				if k := &row.Fields[j]; k.Name == "key" {
-					k.Secret, k.Default = true, ""
-					if i >= 0 && keyed[row.Fields[i].Value] {
-						k.Default = configured
-					}
-				}
+		deleteDotted(cfg, p)
+		for parent := p; strings.Contains(parent, "."); {
+			parent = parent[:strings.LastIndex(parent, ".")]
+			if m, ok := getDotted(cfg, parent).(map[string]any); !ok || len(m) > 0 {
+				break
 			}
+			deleteDotted(cfg, parent)
 		}
-	}
-	for i := range f.Fields {
-		maskKeys(&f.Fields[i], keyed)
 	}
 }
 
-// keepKeys keeps a model key not replaced — matched by the model's name,
-// never its row.
-func keepKeys(saved, to map[string]any) {
-	keys := map[string]any{}
-	for _, e := range models(saved) {
-		if name, ok := e["name"].(string); ok {
-			keys[name] = e["key"]
+// fields drops the fields of hidden and withheld keys, at any depth.
+func (c configEditor) fields(fs []Field) []Field {
+	out := fs[:0]
+	for _, f := range fs {
+		key := strings.ReplaceAll(strings.TrimPrefix(f.Path, "/"), "/", ".")
+		if slices.Contains(c.hidden, key) || slices.Contains(c.withheld, key) {
+			continue
 		}
+		f.Fields = c.fields(f.Fields)
+		out = append(out, f)
 	}
-	for _, e := range models(to) {
-		name, ok := e["name"].(string)
-		if _, typed := e["key"]; ok && !typed && keys[name] != nil {
-			e["key"] = keys[name]
-		}
-	}
+	return out
 }
 
 // decode reads the file as a JSON object, an empty file being {}.
@@ -628,15 +590,12 @@ func (c configEditor) page(file []byte) (FormModel, error) {
 	return form, nil
 }
 
-// form is the schema filled from what the page shows of saved: hidden keys and
-// secrets left out, fixed keys read-only, secret inputs write-only. The JSON
-// editor opens on the shown file itself, never a skeleton: what a save from it
-// omits is removed. It returns what Fill could not place exactly.
+// form is the schema filled from what the page shows of saved: hidden and
+// withheld keys left out, fixed keys read-only. The JSON editor opens on the
+// shown file itself, never a skeleton: what a save from it omits is removed.
+// It returns what Fill could not place exactly.
 func (c configEditor) form(saved map[string]any) (FormModel, []string) {
-	var keyed map[string]bool
-	if c.shown != nil {
-		keyed = c.shown(saved)
-	}
+	c.withhold(saved)
 	raw, _ := json.MarshalIndent(saved, "", "  ")
 	form := BuildForm(c.schema)
 	inexact := form.Fill(raw)
@@ -644,34 +603,23 @@ func (c configEditor) form(saved map[string]any) (FormModel, []string) {
 	if len(saved) > 0 {
 		form.Example = string(raw)
 	}
-	fields := form.Fields[:0]
-	for _, f := range form.Fields {
-		if slices.Contains(c.hidden, f.Name) {
-			continue
-		}
-		f.ReadOnly = slices.Contains(c.fixed, f.Name)
-		if c.mask != nil {
-			c.mask(&f, keyed)
-		}
-		fields = append(fields, f)
+	form.Fields = c.fields(form.Fields)
+	for i := range form.Fields {
+		form.Fields[i].ReadOnly = slices.Contains(c.fixed, form.Fields[i].Name)
 	}
-	form.Fields = fields
 	return form, inexact
 }
 
 // normal reads to as a save writes it over saved, keeping as saved what the
-// form cannot carry: the hidden and fixed keys, the keep hook's secrets, and
-// an empty value a blank input cannot tell from absent. A save and both
-// directions of the JSON switch share it.
+// form cannot carry: the hidden, fixed and withheld keys, and an empty value a
+// blank input cannot tell from absent. A save and both directions of the JSON
+// switch share it.
 func (c configEditor) normal(saved, to map[string]any) {
-	for _, p := range slices.Concat(c.hidden, c.fixed) {
+	for _, p := range slices.Concat(c.hidden, c.fixed, c.withheld) {
 		deleteDotted(to, p)
 		if v := getDotted(saved, p); v != nil {
 			setDotted(to, p, v)
 		}
-	}
-	if c.keep != nil {
-		c.keep(saved, to)
 	}
 	keepEmpty(saved, to)
 }
@@ -715,9 +663,7 @@ func (c configEditor) ToJSON(w http.ResponseWriter, r *http.Request, file []byte
 		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
 		return
 	}
-	if c.shown != nil {
-		c.shown(to)
-	}
+	c.withhold(to)
 	out, _ := json.Marshal(to)
 	writeJSONText(w, out)
 }
@@ -778,6 +724,130 @@ func (s *Server) postAdminConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.config.Reconfigure(r.PostFormValue("version"), append(out, '\n')); err != nil {
+		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
+		return
+	}
+	s.flashRedirect(w, r, back, "success", "Saved and restarted.")
+}
+
+// modelsView is the Models page (§6.6): the language models over the
+// kernel's file, the entries no binding names, and the file's version.
+type modelsView struct {
+	Form    models.Form
+	Others  []models.Entry
+	Version string
+	Error   string
+}
+
+// modelsSupported reports this installation's kernel, when its schema
+// describes the model entries the Models page writes; an older kernel's file
+// is never written there. Read once: the kernel's schema changes only with
+// its binary.
+func (s *Server) modelsSupported() bool {
+	if s.config == nil {
+		return false
+	}
+	return s.modelsOK()
+}
+
+// kernelConfig is the kernel's file, decoded, and its version.
+func (s *Server) kernelConfig() (map[string]any, string, error) {
+	raw, _, version, err := s.config.Config()
+	if err != nil {
+		return nil, "", err
+	}
+	var cfg map[string]any
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return map[string]any{}, version, nil
+	}
+	return cfg, version, decodeNumbers(raw, &cfg)
+}
+
+func (s *Server) getAdminModels(w http.ResponseWriter, r *http.Request) {
+	if !s.modelsSupported() {
+		http.NotFound(w, r)
+		return
+	}
+	cfg, version, err := s.kernelConfig()
+	if s.handleErr(w, r, err) {
+		return
+	}
+	held := models.From(cfg)
+	held.Priced = true
+	s.renderModels(w, r, http.StatusOK, cfg, version, held, held, "")
+}
+
+// renderModels renders the page for setup, the keys of held said to be held,
+// each block naming the native it backs.
+func (s *Server) renderModels(w http.ResponseWriter, r *http.Request, status int, cfg map[string]any, version string, setup, held models.Setup, msg string) {
+	ctx := r.Context()
+	form := models.View(ctx, setup, held)
+	for _, b := range []*models.Block{&form.Chat, &form.Embed} {
+		ref := s.native("llm/" + b.Field)
+		_ = s.sessions.Do(ctx, func(tok string) error {
+			a, ok, err := s.client.ResolveRef(ctx, tok, ref)
+			if err == nil && ok {
+				b.Action, b.Href = ref, "/actions/"+url.PathEscape(a.ID)
+			}
+			return err
+		})
+	}
+	s.renderPage(w, r, status, "admin_models", "Models", modelsView{Form: form, Others: models.Others(cfg), Version: version, Error: msg})
+}
+
+// postAdminModels writes the models chosen into the kernel's file and restarts
+// it, the configuration page's save; List models shows the form again with
+// what the providers serve, and a setup the kernel could not use is refused
+// with what to do. The version is the page's, so a file changed meanwhile is
+// refused.
+func (s *Server) postAdminModels(w http.ResponseWriter, r *http.Request) {
+	if !s.modelsSupported() {
+		http.NotFound(w, r)
+		return
+	}
+	const back = "/admin/models"
+	cfg, _, err := s.kernelConfig()
+	if err != nil {
+		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
+		return
+	}
+	version := r.PostFormValue("version")
+	held := models.From(cfg)
+	setup := models.Read(r.PostForm)
+	setup.Keep(held)
+	setup.Priced = true
+	msg := ""
+	for _, b := range []struct {
+		c     *models.Choice
+		field string
+	}{{&setup.Chat, "chat_price"}, {&setup.Embed, "embed_price"}} {
+		p, err := s.parseAmount(r.PostFormValue(b.field))
+		if err != nil && msg == "" {
+			msg = "Price: " + err.Error() + "."
+		}
+		b.c.Price = p
+	}
+	if r.PostFormValue("list") != "" {
+		s.renderModels(w, r, http.StatusOK, cfg, version, setup, held, "")
+		return
+	}
+	if msg == "" {
+		if err := models.Check(r.Context(), setup); err != nil {
+			msg = err.Error()
+		}
+	}
+	if msg != "" {
+		s.renderModels(w, r, http.StatusUnprocessableEntity, cfg, version, setup, held, msg)
+		return
+	}
+	before, _ := json.Marshal(cfg)
+	models.Apply(cfg, setup)
+	after, _ := json.MarshalIndent(cfg, "", "  ")
+	if c, _ := json.Marshal(cfg); bytes.Equal(before, c) {
+		s.flashRedirect(w, r, back, "info", "Nothing changed.")
+		return
+	}
+	if err := s.config.Reconfigure(version, append(after, '\n')); err != nil {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return
 	}

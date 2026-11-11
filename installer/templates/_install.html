@@ -34,6 +34,8 @@
     <div class="field"><label>Superuser name</label><div class="box mono">sys</div></div>
     <div class="field"><label for="i-pw">Superuser password</label><input id="i-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
     <div class="field"><label for="i-pw2">Confirm password</label><input id="i-pw2" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div>
+    {{else if eq .Step "models"}}
+    {{template "_models_form" .Models}}
     {{else if eq .Step "phrase"}}
     <p>Please save the following recovery phrase. It is the only way to recover the superuser's password. <strong>Never share it with anyone.</strong></p>
     {{template "_phrase_words" .}}
@@ -43,6 +45,8 @@
       <dt>World</dt><dd><span class="mono">{{.World.Name}}</span>{{with .World.Description}} — {{.}}{{end}}</dd>
       <dt>Kernel name</dt><dd class="mono">{{.Handle}}</dd>
       <dt>Superuser</dt><dd class="mono">sys</dd>
+      <dt>Chat model</dt><dd>{{.Models.Chat.Summary}}</dd>
+      <dt>Search model</dt><dd>{{.Models.Embed.Summary}}</dd>
       <dt>Kernel home</dt><dd class="mono">{{.Home}}</dd>
     </dl>
     {{if eq .World.Rail "evm"}}<p class="banner banner-error"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> <span>The keys of this kernel's vault are kept in <span class="mono">{{.Home}}</span>. Losing that directory loses the money the vault holds.</span></p>{{end}}
@@ -50,6 +54,7 @@
   </div>
   <div class="install-actions cluster">
     <button class="btn-primary" type="submit">{{if eq .Step "summary"}}Install{{else}}Next{{end}}</button>
+    {{if eq .Step "models"}}<button class="btn" type="submit" name="list" value="1" formnovalidate>List models</button>{{end}}
     {{if .Back}}<button class="btn" type="submit" formaction="/install/back" formnovalidate>Back</button>{{end}}
   </div>
 </form>

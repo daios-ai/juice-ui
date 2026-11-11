@@ -64,6 +64,9 @@ func (s *Server) commands(r *http.Request) []Command {
 		if s.config != nil {
 			cmds = append(cmds, Command{Name: "Configuration", Href: "/admin/config"})
 		}
+		if s.modelsSupported() {
+			cmds = append(cmds, Command{Name: "Models", Href: "/admin/models"})
+		}
 	}
 	if g := activeGroup(r.URL.Path); g != "" {
 		for i := range cmds {

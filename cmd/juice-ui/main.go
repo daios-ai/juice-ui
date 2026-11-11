@@ -30,6 +30,7 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/installer"
 	"github.com/daios-ai/juice-ui/kernel"
+	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/daios-ai/juice-ui/supervisor"
@@ -204,6 +205,44 @@ func (k installation) Worlds() ([]installer.World, error) {
 		out[n] = installer.World{Name: w.Name, Description: w.Description, Rail: w.Rail, Symbol: w.Symbol, Error: w.Error}
 	}
 	return out, err
+}
+
+// Create is the first boot, with the models chosen on their page written into
+// the kernel's first configuration.
+func (k installation) Create(world, handle, password, recoveryKey string, m any) error {
+	var extra map[string]any
+	if s, ok := m.(models.Setup); ok {
+		extra = map[string]any{}
+		models.Apply(extra, s)
+	}
+	return k.Installation.Create(world, handle, password, recoveryKey, extra)
+}
+
+// Models reads the installer's models page through package models: the
+// machine's first choice, a list asked for, or answers checked with the
+// providers.
+func (k installation) Models(ctx context.Context, form url.Values, held any) (any, string, bool) {
+	h, ok := held.(models.Setup)
+	switch {
+	case form == nil && !ok:
+		return models.Initial(ctx, k.Schema()), "", false
+	case form == nil:
+		return h, "", false
+	}
+	s := models.Read(form)
+	s.Keep(h)
+	if form.Has("list") {
+		return s, "", false
+	}
+	if err := models.Check(ctx, s); err != nil {
+		return s, err.Error(), false
+	}
+	return s, "", true
+}
+
+func (installation) ModelsView(ctx context.Context, setup any) any {
+	s, _ := setup.(models.Setup)
+	return models.View(ctx, s, s) // the installer holds what was typed
 }
 
 // chrome is the application's renderer as the installer uses it.

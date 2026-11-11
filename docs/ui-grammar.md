@@ -359,10 +359,20 @@ separates it from the content above, and nothing else does (§4).
   rows — Add clones the last row, or the kept template once every row is
   removed, clears it and, when the
   container names its array's path, renumbers the clone to one past the highest
-  index in every `name`, `id`, `for` and nested `data-rows`), scheme reveal
-  (`[data-auth-scheme]`), kind reveal (`[data-kind]`) — all disable hidden
-  inputs so they aren't submitted. Secrets are masked, write-only, never
-  pre-filled.
+  index in every `name`, `id`, `for` and nested `data-rows`), and **the
+  reveal**: a `select[data-reveal="X"]` shows only the sections whose `data-X`
+  lists the value chosen, space-separated, within its nearest `[data-group]`,
+  else its form (`data-kind`, `data-auth-scheme`, a models block's
+  `data-provider`); the server renders the same state, so a page without
+  script shows the sections of what is selected. Both disable hidden inputs so
+  they aren't submitted. Secrets are masked, write-only, never pre-filled; a
+  held one says so in its placeholder, `configured ✓ (replace)`.
+- **The models form** (`_models_form`, requirements.md §6.6) is one partial for
+  the installer's Models step and the Models page: two `[data-group]` blocks,
+  each an `h3.flush` and its `.field`s (provider, address, key, model with its
+  `datalist` of the provider's models, and on the page the price). The host
+  holds the commands: its primary first, then `List models` (`.btn`,
+  `formnovalidate`), which writes nothing.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
   (action run **and** task completion), always inline (never a modal): optional
   **locked block** (a task's pre-bound args as the view, `.view.locked`,
@@ -557,7 +567,9 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
   reaches a page: its input returns empty and `required`.
 - **A nullable schema field** renders its typed input and a `label.check`
   checkbox `null` beneath it. Blank omits the field; the box sends `null`.
-- **Destructive confirm:** `form[data-confirm="…"]` routes through the shared
+- **Destructive confirm:** `form[data-confirm="…"]`, or a submit button carrying
+  it where only that button needs one (Save and restart beside List models),
+  routes through the shared
   confirm modal — a native `dialog.modal-confirm` (`#modal-backdrop`) shown with
   `showModal()`, so it stacks in the top layer above an open `modal-form`. Its
   message is **one plain question** naming the act and its record ("Decline
@@ -774,7 +786,8 @@ content only: no step sets a size or a spacing of its own.
   text), and its commands (`.install-actions`, a `.cluster` over a hairline,
   held at the foot). The row follows the installers' convention, the one
   exception to §5.1's order: `Back` at the left edge and the step's command
-  (`Next`, `Install`, `Try again`) at the right. The command stays
+  (`Next`, `Install`, `Try again`) at the right, a second command between
+  them (the Models step's `List models`). The command stays
   first in the markup, so Enter in a field submits it and never goes back.
 - **A job step** uses the same three slots. Its jobs, `.install-jobs`, share the
   steps' marker slot: `.pending` muted, `.running` followed by the one

@@ -115,6 +115,7 @@ func TestHomeMatchesByPort(t *testing.T) {
 const fakeJuice = `#!/bin/sh
 case "$1 $2" in
 "--version "*) echo "juice version v9.9.9 (test)";;
+"kernel setup") mkdir -p "$JUICE_HOME/schemas"; echo '{}' > "$JUICE_HOME/schemas/config.schema.json";;
 "kernel worlds") echo '[{"world":"play","description":"no real money","file":""},{"world":"bad","error":"'"$JUICE_HOME"'","file":"x"}]';;
 kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRAP_RECOVERY_KEY:+key}" >&2
         mkdir -p "$JUICE_HOME/worlds"; echo '{"rail":"manual"}' > "$JUICE_HOME/worlds/$3.json"
@@ -122,8 +123,14 @@ kernel*) echo "boot $JUICE_HOME ${JUICE_BOOTSTRAP_PASSWORD:+pw} ${JUICE_BOOTSTRA
 esac
 `
 
-// fakeAgent is a fake juice-agent: it answers --version.
-const fakeAgent = "#!/bin/sh\necho 'juice-agent v9.9.9 (test)'\n"
+// fakeAgent is a fake juice-agent: it answers --version, and its setup writes
+// its schema.
+const fakeAgent = `#!/bin/sh
+case "$1" in
+setup) mkdir -p "$JUICE_HOME/schemas"; echo '{}' > "$JUICE_HOME/schemas/juice-agent.schema.json";;
+*) echo 'juice-agent v9.9.9 (test)';;
+esac
+`
 
 // fakes are the components' fake binaries, by name.
 var fakes = map[string]string{"juice": fakeJuice, "juice-agent": fakeAgent}
@@ -212,13 +219,18 @@ func TestInstallVerifiesAndRenamesAtomically(t *testing.T) {
 		if i.bin(c.Name) == "" || i.version(c.Name) != "v9.9.9" {
 			t.Fatalf("bin/%s must be installed, reporting v9.9.9: %q", c.Name, i.version(c.Name))
 		}
+		// Its setup ran, so schemas/ holds the installed binary's schema.
+		if schemas, _ := filepath.Glob(filepath.Join(i.Home, "schemas", "*.schema.json")); len(schemas) == 0 {
+			t.Errorf("%s: its setup wrote no schema", c.Name)
+		}
 		// A wrong checksum, a bad binary, an asset without it: refused, and the
 		// working binary stays.
 		before, _ := os.ReadFile(i.bin(c.Name))
 		for want, r := range map[string]release{
 			"checksum mismatch": {asset: tarball(t, c.Name, fakes[c.Name]), sum: strings.Repeat("0", 64)},
 			"does not run":      {asset: tarball(t, c.Name, "#!/bin/sh\nexit 3\n")},
-			"does not contain a " + c.Name + " binary": {asset: tarball(t, "other", fakes[c.Name])},
+			"does not contain a " + c.Name + " binary":      {asset: tarball(t, "other", fakes[c.Name])},
+			strings.Join(c.Setup, " ") + " failed: no room": {asset: tarball(t, c.Name, "#!/bin/sh\ncase \"$*\" in --version) echo v9.9.9;; *) echo no room >&2; exit 1;; esac\n")},
 		} {
 			i.Releases = releases(t, map[string]release{c.Name: r}, nil).URL
 			if err := i.Install(context.Background(), c); err == nil || !strings.Contains(err.Error(), want) {
@@ -260,14 +272,15 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 		go func() { time.Sleep(300 * time.Millisecond); up.Store(true) }()
 		return endsWith(ctx), nil
 	}
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+	extra := map[string]any{"native": map[string]any{"llm": map[string]any{"chat": "m"}}, "kernel_handle": "not-this"}
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", extra); err != nil {
 		t.Fatal(err)
 	}
 	if !up.Load() {
 		t.Error("Create returns only once the kernel answers")
 	}
 	cfg, _ := os.ReadFile(filepath.Join(i.Home, "kernels", "play", "config.json"))
-	for _, want := range []string{`"kernel_handle":"alpha"`, `"listen_addr":"127.0.0.1:` + i.URL.Port() + `"`, `"log_file":`} {
+	for _, want := range []string{`"kernel_handle":"alpha"`, `"listen_addr":"127.0.0.1:` + i.URL.Port() + `"`, `"log_file":`, `"native":{"llm":{"chat":"m"}}`} {
 		if !strings.Contains(string(cfg), want) {
 			t.Errorf("config.json lacks %s: %s", want, cfg)
 		}
@@ -288,7 +301,7 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 	bootLog := filepath.Join(i.Home, "ui", "kernel.log")
 	answerOnce(&up, bootLog, "boot ")
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, `echo "server.ready" >&2; exit 0`, `exec sleep 60`, 1)), 0o755)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
 		t.Fatal(err)
 	}
 	log, _ = os.ReadFile(filepath.Join(i.Home, "ui", "kernel.log"))
@@ -299,7 +312,7 @@ func TestCreateBootsWithTheKeyAndWaitsForHealth(t *testing.T) {
 		t.Error("the created home is this installation's kernel")
 	}
 	// An unfinished home on this port is finished or removed, not shadowed.
-	if err := i.Create("other", "alpha", "secret123", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "unfinished kernel home") {
+	if err := i.Create("other", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "unfinished kernel home") {
 		t.Errorf("a second home on the port is refused: %v", err)
 	}
 }
@@ -318,7 +331,7 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 		close(done)
 		return done, nil
 	}
-	if err := i.Create("play", "alpha", "short", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "at least 8 characters") {
+	if err := i.Create("play", "alpha", "short", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "at least 8 characters") {
 		t.Fatalf("err = %v", err)
 	}
 	if !exists(cfg) {
@@ -327,14 +340,14 @@ func TestCreateFailureDeletesNothing(t *testing.T) {
 	i.launch = func(ctx context.Context, _ string, _, _ []string, _ *os.File) (<-chan struct{}, error) {
 		return nil, fmt.Errorf("exec: not permitted")
 	}
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err == nil || !exists(cfg) {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !exists(cfg) {
 		t.Fatalf("a child that never starts is an error and deletes nothing: %v", err)
 	}
 	i.launch = func(ctx context.Context, bin string, args, env []string, stderr *os.File) (<-chan struct{}, error) {
 		up.Store(true)
 		return endsWith(ctx), nil
 	}
-	if err := i.Create("play", "beta", "secret123", "PUBKEY"); err != nil {
+	if err := i.Create("play", "beta", "secret123", "PUBKEY", nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), `"kernel_handle":"beta"`) {
@@ -356,7 +369,7 @@ func TestCreateSucceedsOnceTheKernelExists(t *testing.T) {
 		close(done)
 		return done, nil
 	}
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
 		t.Errorf("a kernel that exists is created: %v", err)
 	}
 	if w, b, _ := i.home(); w != "play" || !b {
@@ -388,7 +401,7 @@ func TestCreateNeverTouchesAKernel(t *testing.T) {
 	}
 	want, _ := os.ReadFile(cfg)
 	for _, w := range []string{"play", "other"} {
-		if err := i.Create(w, "alpha", "secret123", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "never created again") {
+		if err := i.Create(w, "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "never created again") {
 			t.Errorf("Create(%s) beside a kernel: %v", w, err)
 		}
 	}
@@ -396,12 +409,12 @@ func TestCreateNeverTouchesAKernel(t *testing.T) {
 	// The database decides, not the configuration: a kernel whose config.json
 	// listens elsewhere, or is unreadable, is still never created over.
 	os.WriteFile(cfg, []byte(`{"listen_addr":"127.0.0.1:1"}`), 0o600)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "never created again") {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "never created again") {
 		t.Errorf("a kernel listening elsewhere: %v", err)
 	}
 	same(`{"listen_addr":"127.0.0.1:1"}`)
 	os.WriteFile(cfg, []byte(`{not json`), 0o600)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "holds a kernel (juice.db)") {
 		t.Errorf("a kernel with an unreadable config.json: %v", err)
 	}
 	same(`{not json`)
@@ -415,7 +428,7 @@ func TestCreateNeverTouchesAKernel(t *testing.T) {
 	f, _ := os.Open(lock)
 	defer f.Close()
 	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-	if err := j.Create("play", "alpha", "secret123", "PUBKEY"); err == nil || !strings.Contains(err.Error(), "a kernel holds") {
+	if err := j.Create("play", "alpha", "secret123", "PUBKEY", nil); err == nil || !strings.Contains(err.Error(), "a kernel holds") {
 		t.Errorf("a held home: %v", err)
 	}
 	if launched {
@@ -439,13 +452,13 @@ func TestFirstBootLockSerializes(t *testing.T) {
 		return endsWith(ctx), nil
 	}
 	first := make(chan error)
-	go func() { first <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
+	go func() { first <- i.Create("play", "alpha", "secret123", "PUBKEY", nil) }()
 	<-started
 	cfg := filepath.Join(i.Home, "kernels", "play", "config.json")
 	before, _ := os.ReadFile(cfg)
 	other := &Installation{Home: i.Home, URL: i.URL, launch: i.launch}
 	for _, in := range []*Installation{i, other} {
-		if err := in.Create("play", "beta", "secret123", "PUBKEY"); err == nil || err.Error() != "a first boot is already running" {
+		if err := in.Create("play", "beta", "secret123", "PUBKEY", nil); err == nil || err.Error() != "a first boot is already running" {
 			t.Errorf("a concurrent first boot: %v", err)
 		}
 	}
@@ -705,7 +718,7 @@ func TestStartWaitsForAFirstBoot(t *testing.T) {
 		return done, nil
 	}
 	created := make(chan error, 1)
-	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
+	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY", nil) }()
 	<-inBoot
 	started := make(chan error, 1)
 	go func() { started <- i.Start(context.Background()) }()
@@ -749,7 +762,7 @@ func TestCreateEndsItsChild(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	answerOnce(&up, pidFile, "")
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\necho $$ > "+pidFile+"\nexec sleep 60\n"), 0o755)
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(pidFile)
@@ -770,7 +783,7 @@ func TestCreateKillsAChildThatDoesNotEnd(t *testing.T) {
 	answerOnce(&up, mark, "")
 	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\ntrap '' TERM\necho up > "+mark+"\nwhile :; do sleep 0.05; done\n"), 0o755)
 	began := time.Now()
-	if err := i.Create("play", "alpha", "secret123", "PUBKEY"); err != nil {
+	if err := i.Create("play", "alpha", "secret123", "PUBKEY", nil); err != nil {
 		t.Fatal(err)
 	}
 	if took := time.Since(began); took > 5*time.Second {
@@ -790,7 +803,7 @@ func TestShutdownEndsAFirstBoot(t *testing.T) {
 		return endsWith(ctx), nil
 	}
 	created := make(chan error, 1)
-	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY") }()
+	go func() { created <- i.Create("play", "alpha", "secret123", "PUBKEY", nil) }()
 	<-started
 	shutdown()
 	i.WaitBoot()
