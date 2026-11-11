@@ -35,7 +35,7 @@ type fakeKernel struct {
 	hold      chan struct{} // Create waits on it, when set
 	created   []string      // world handle password key, per Create
 	models    []any         // the models given to Create, per Create
-	initial   any           // the kernel's default models
+	initial   any           // the machine's first choice of models
 	dueAsked  []bool
 	started   int
 	holdStart chan struct{} // Start waits on it, when set
@@ -160,6 +160,14 @@ func (c chrome) NewPhrase() (string, string, error) {
 // test leaves running reads them while another test sets them.
 func TestMain(m *testing.M) {
 	retryPause, holdTimeout = 20*time.Millisecond, 300*time.Millisecond
+	// No provider on this machine is asked: what runs here is not the test's.
+	var away []models.Provider
+	for _, p := range models.Providers {
+		if !p.Local {
+			away = append(away, p)
+		}
+	}
+	models.Providers = away
 	os.Exit(m.Run())
 }
 
@@ -567,7 +575,7 @@ func TestAFailedFirstBootReturnsToTheKernelPage(t *testing.T) {
 	waitFor(t, in, "")
 }
 
-// The models page opens on the kernel's default models. List models keeps the
+// The models page opens on this machine's first choice. List models keeps the
 // page with what was typed, a key held and never shown; a refusal says what to
 // do and keeps the page; None goes on with no model.
 func TestTheModelsStep(t *testing.T) {
@@ -577,7 +585,7 @@ func TestTheModelsStep(t *testing.T) {
 	next(t, h, "kernel", url.Values{"handle": {"alpha"}, "password": {"secret123"}, "confirm_password": {"secret123"}})
 	waitFor(t, in, "models")
 	b := page(t, h)
-	for _, want := range []string{`name="chat_provider" hx-post="/install/models/model" hx-target="#m-chat"`, `<option value="other" selected>`, `value="first"`,
+	for _, want := range []string{`name="chat_provider" data-reveal="provider"`, `<option value="other" selected>`, `value="first"`,
 		`>List models</button>`, `<h3 class="flush">Chat model</h3>`, `<h3 class="flush">Embedding model</h3>`, `hx-post="/install/models/model"`, "Step 3 of 6"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("the models page lacks %q", want)

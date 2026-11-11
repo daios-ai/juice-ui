@@ -253,74 +253,66 @@
 
 {{/* _models_form — the kernel's language models (requirements.md §1, §6.6):
      one block per kind of model the kernel uses, the chat model behind chat,
-     JSON and decide, and the embedding model. Each block is the same for every
-     provider: its address, its key and the model, chosen among the models the
-     provider lists. A provider only fills in its address. The installer's
-     Models step and the Models page render it alike; the host holds the form
-     and its commands. A key is never rendered back: a held one says so in its
-     placeholder. */}}
+     JSON and decide, and the embedding model. Each block is a provider, its
+     address (a custom provider's alone), its key and the model, chosen among
+     the models the provider lists. The installer's Models step and the Models page
+     render it alike; the host holds the form and its commands. A key is never
+     rendered back: a held one says so in its placeholder. */}}
 {{define "_models_form"}}
 {{template "_models_block" .Chat}}
 {{template "_models_block" .Embed}}
 {{end}}
 
 {{define "_models_block"}}
-{{/* A change asks the host for the block again (Block.Refresh), the htmx
-     pattern of dependent selects. A change of provider takes the whole block,
-     its address cleared so the provider's own fills it in; a change of address
-     or key takes the model field alone, so the control being typed in is never
-     replaced. One sync for the block: a later change replaces a request still
-     in flight. */}}
-<div class="stack" id="m-{{.Field}}"{{with .Refresh}} hx-target="#m-{{$.Field}}-model-field" hx-select="#m-{{$.Field}}-model-field" hx-swap="outerHTML" hx-include="closest form" hx-vals='{"block": "{{$.Field}}", "list": "1"}' hx-sync="#m-{{$.Field}}:replace"{{end}}>
+{{/* A change of the block's provider, address or key asks the host for the
+     block's model field again (Block.Refresh), the htmx pattern of dependent
+     selects: the controls that change carry the request, and the block the
+     rest — the field it replaces, the form it sends, and one sync for the
+     block, so a later change replaces a request still in flight. The field is
+     only swapped, never a listener, so no change is lost while it is. */}}
+<div class="stack" data-group{{with .Refresh}} hx-target="#m-{{$.Field}}-model-field" hx-swap="outerHTML" hx-include="closest form" hx-vals='{"block": "{{$.Field}}", "list": "1"}' hx-sync="closest [data-group]:replace"{{end}}>
   <h3 class="flush">{{if eq .Field "chat"}}Chat model{{else}}Embedding model{{end}}</h3>
   {{with .Href}}<p class="small flush"><a class="mono" href="{{.}}">{{$.Action}}</a></p>{{end}}
+  {{with .Problem}}{{template "_error" .}}{{end}}
   <div class="field">
     <label for="m-{{.Field}}-provider">Provider</label>
-    <select id="m-{{.Field}}-provider" name="{{.Field}}_provider"{{with .Refresh}} hx-post="{{.}}" hx-target="#m-{{$.Field}}" hx-select="#m-{{$.Field}}" hx-vals='{"{{$.Field}}_url": ""}'{{end}}>
-      {{range .Options}}<option value="{{.ID}}"{{if eq .ID $.Provider}} selected{{end}}>{{.Name}}</option>{{end}}
-      <option value=""{{if not .Provider}} selected{{end}}>None</option>
+    <select id="m-{{.Field}}-provider" name="{{.Field}}_provider" data-reveal="provider"{{with .Refresh}} hx-post="{{.}}"{{end}}>
+      {{range .Options}}<option value="{{.ID}}"{{if eq .ID $.Provider}} selected{{end}}>{{.Name}}{{with .Note}} · {{.}}{{end}}</option>{{end}}
     </select>
   </div>
-  {{if .Provider}}
-  <div class="field">
+  <div class="field" data-provider="{{.ForURL}}"{{if not (.Shown .ForURL)}} hidden{{end}}>
     <label for="m-{{.Field}}-url">Address</label>
-    <input id="m-{{.Field}}-url" name="{{.Field}}_url" type="url" class="mono" value="{{.URL}}" autocomplete="off"{{with .Refresh}} hx-post="{{.}}"{{end}}>
+    <input id="m-{{.Field}}-url" name="{{.Field}}_url" type="url" class="mono" placeholder="http://localhost:8000/v1" value="{{.URL}}" autocomplete="off"{{with .Refresh}} hx-post="{{.}}"{{end}}{{if not (.Shown .ForURL)}} disabled{{end}}>
   </div>
-  <div class="field">
+  <div class="field" data-provider="{{.ForKey}}"{{if not (.Shown .ForKey)}} hidden{{end}}>
     <label for="m-{{.Field}}-key">Key</label>
-    <input id="m-{{.Field}}-key" name="{{.Field}}_key" type="password" autocomplete="off"{{if .Held}} placeholder="configured ✓ (replace)"{{end}}{{with .Refresh}} hx-post="{{.}}"{{end}}>
+    <input id="m-{{.Field}}-key" name="{{.Field}}_key" type="password" autocomplete="off"{{if .Held}} placeholder="configured ✓ (replace)"{{end}}{{with .Refresh}} hx-post="{{.}}"{{end}}{{if not (.Shown .ForKey)}} disabled{{end}}>
   </div>
   {{template "_models_model" .}}
-  {{if .Priced}}<div class="field">
+  {{if .Priced}}<div class="field" data-provider="{{.ForModel}}"{{if not (.Shown .ForModel)}} hidden{{end}}>
     <label for="m-{{.Field}}-price">Price</label>
-    <input id="m-{{.Field}}-price" name="{{.Field}}_price" type="number" min="0" step="{{amountStep}}" value="{{amountInput .Price}}" class="input-sm">
+    <input id="m-{{.Field}}-price" name="{{.Field}}_price" type="number" min="0" step="{{amountStep}}" value="{{amountInput .Price}}" class="input-sm"{{if not (.Shown .ForModel)}} disabled{{end}}>
   </div>{{end}}
+</div>
+{{end}}
+
+{{/* _models_model — a block's model field: a select of the models its
+     provider lists, the model chosen selected (and kept, as the first option,
+     when the provider no longer lists it); a text input only where the provider
+     lists none. Without script, List models answers it by a reload. */}}
+{{define "_models_model"}}
+<div class="field" id="m-{{.Field}}-model-field" data-provider="{{.ForModel}}"{{if not (.Shown .ForModel)}} hidden{{end}}>
+  <label for="m-{{.Field}}-model">Model</label>
+  {{if .Models}}
+  <select id="m-{{.Field}}-model" name="{{.Field}}_model" class="mono"{{if not (.Shown .ForModel)}} disabled{{end}}>
+    {{if .Unlisted}}<option value="{{.ID}}" selected>{{.ID}}</option>{{else if not .ID}}<option value="" selected></option>{{end}}
+    {{range .Models}}<option value="{{.}}"{{if eq . $.ID}} selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  {{else}}
+  <input id="m-{{.Field}}-model" name="{{.Field}}_model" type="text" class="mono" value="{{.ID}}" autocomplete="off"{{if not (.Shown .ForModel)}} disabled{{end}}>
   {{end}}
 </div>
 {{end}}
 
-{{/* _models_model — a block's model field, with why its provider could not
-     be asked: a select of the models the provider lists, the model chosen
-     selected (and kept, as the first option, when the provider no longer lists
-     it); a text input only where the provider lists none. Without script, List
-     models answers it by a reload. */}}
-{{define "_models_model"}}
-<div class="stack" id="m-{{.Field}}-model-field">
-  {{with .Problem}}{{template "_error" .}}{{end}}
-  <div class="field">
-    <label for="m-{{.Field}}-model">Model</label>
-    {{if .Models}}
-    <select id="m-{{.Field}}-model" name="{{.Field}}_model" class="mono">
-      {{if .Unlisted}}<option value="{{.ID}}" selected>{{.ID}}</option>{{else if not .ID}}<option value="" selected></option>{{end}}
-      {{range .Models}}<option value="{{.}}"{{if eq . $.ID}} selected{{end}}>{{.}}</option>{{end}}
-    </select>
-    {{else}}
-    <input id="m-{{.Field}}-model" name="{{.Field}}_model" type="text" class="mono" value="{{.ID}}" autocomplete="off">
-    {{end}}
-  </div>
-</div>
-{{end}}
-
-{{/* _models_refresh — the answer to a refresh: the block, of which the
-     request selects what it replaces. */}}
-{{define "_models_refresh"}}{{template "_models_block" (.Form.Block .Field)}}{{end}}
+{{/* _models_refresh — the answer to a block's refresh: its model field. */}}
+{{define "_models_refresh"}}{{template "_models_model" (.Form.Block .Field)}}{{end}}

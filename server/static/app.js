@@ -176,12 +176,14 @@ for (const form of document.querySelectorAll("form.sidebar-collapse")) {
 
 // Reveal: a select[data-reveal] shows only the sections that belong to the
 // value chosen. Each section names those values, space-separated, in the
-// attribute data-<reveal> (data-kind="http", data-auth-scheme="bearer"), so a further value needs markup and no
-// script. The sections are those of the select's form, else its details
-// panel; a hidden section's controls are disabled, so they are not submitted.
+// attribute data-<reveal> (data-kind="http", data-auth-scheme="bearer",
+// data-provider="openai other"), so a further value needs markup and no
+// script. The sections are those of the select's group, its nearest
+// [data-group], else its form or details panel; a hidden section's controls
+// are disabled, so they are not submitted.
 for (const sel of document.querySelectorAll('select[data-reveal]')) {
   const attr = 'data-' + sel.dataset.reveal;
-  const group = sel.closest('form') || sel.closest('details');
+  const group = sel.closest('[data-group]') || sel.closest('form') || sel.closest('details');
   function update() {
     for (const sec of group.querySelectorAll('[' + attr + ']')) {
       const show = sec.getAttribute(attr).split(' ').includes(sel.value);

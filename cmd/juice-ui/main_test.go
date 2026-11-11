@@ -289,12 +289,15 @@ func TestInstallationAdaptsTheKernel(t *testing.T) {
 // The adapter reads the models page through package models and writes the
 // models chosen into the first boot's configuration.
 func TestInstallationAdaptsTheModels(t *testing.T) {
+	saved := models.Providers
+	t.Cleanup(func() { models.Providers = saved })
+	models.Providers = saved[2:] // nothing on this machine is asked
 	home := t.TempDir()
 	u, _ := url.Parse("http://127.0.0.1:1")
 	k := installation{&kernel.Installation{Home: home, URL: u}}
 	ctx := context.Background()
 	if s, msg, done := k.Models(ctx, nil, nil); s != (models.Setup{}) || msg != "" || done {
-		t.Errorf("no kernel schema, no default model: %+v %q %v", s, msg, done)
+		t.Errorf("first choice with nothing running: %+v %q %v", s, msg, done)
 	}
 	typed := url.Values{"chat_provider": {"openai"}, "chat_key": {"sk"}, "chat_model": {""}, "list": {"1"}}
 	s, msg, done := k.Models(ctx, typed, nil)
