@@ -378,7 +378,6 @@ func New(o Options) (http.Handler, error) {
 
 	// Inbox — tasks addressed to you.
 	mux.HandleFunc("GET /inbox", s.requireAuth(s.getTasks))
-	mux.HandleFunc("GET /inbox/{id}", s.requireAuth(s.getTask))
 	mux.HandleFunc("POST /inbox/{id}/complete", s.requireAuth(s.postCompleteTask))
 	mux.HandleFunc("POST /inbox/{id}/cancel", s.requireAuth(s.postCancelTask))
 	mux.HandleFunc("POST /inbox/{id}/form", s.requireAuth(s.postTaskForm))
@@ -388,9 +387,6 @@ func New(o Options) (http.Handler, error) {
 	// Settings — account, preferences, connected accounts.
 	mux.HandleFunc("GET /settings", s.requireAuth(s.getSettings))
 	mux.HandleFunc("POST /settings", s.requireAuth(s.postSettings))
-
-	// Owner page — an address's public actions (like a channel).
-	mux.HandleFunc("GET /users/{address}", s.requireAuth(s.getOwner))
 
 	// Grants (connect an upstream account to an action): the oauth_delegated
 	// browser flow (start/callback) and the delegated_bearer static-token path.
@@ -402,7 +398,6 @@ func New(o Options) (http.Handler, error) {
 
 	// Admin — superuser-only supervision (money, access, federation trust).
 	mux.HandleFunc("GET /admin", s.requireSuperuser(s.getAdmin))
-	mux.HandleFunc("GET /admin/users/{address}", s.requireSuperuser(s.getAdminUser))
 	mux.HandleFunc("POST /admin/users/{address}/suspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{address}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{address}/rename", s.requireSuperuser(s.postAdminUserOp))

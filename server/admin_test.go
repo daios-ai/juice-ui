@@ -88,9 +88,12 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 	if !strings.Contains(body, "alice") {
 		t.Error("superuser /admin must list users from /control/users")
 	}
-	// The user handle is a doorway to that user's admin page.
-	if !strings.Contains(body, `href="/admin/users/alice@testnet"`) {
-		t.Error("/admin user handle must link to the user's detail page")
+	// A user has no page of its own: the row holds its verbs, Rename first.
+	if !strings.Contains(body, `<a class="btn" href="/admin?form=admin-rename&address=alice%40testnet">Rename</a>`) {
+		t.Error("/admin user row must carry its Rename opener")
+	}
+	if strings.Contains(body, `href="/admin/users/`) {
+		t.Error("/admin must not link to a user page")
 	}
 	// Admin and Network are separate destinations of the avatar menu.
 	if menu := menuOf(body); menu["Admin"] != "/admin" || menu["Network"] != "/admin/peers" {
@@ -295,7 +298,7 @@ func TestAdminInspectRenders(t *testing.T) {
 			t.Errorf("inspect page missing %q", want)
 		}
 	}
-	if strings.Contains(body, `href="/users/synth@kernelc"`) {
+	if strings.Contains(body, `owner=synth`) {
 		t.Error("another kernel's owner must not link to a local profile")
 	}
 	// online/source are top-level in the response; a reachable peer must show the
@@ -557,8 +560,8 @@ func postTo(t *testing.T, cl *http.Client, urlStr, page string, form url.Values)
 }
 
 // Rename is one modal on the user's own detail page: it frees the old address
-// and carries every reference to the new one, so success lands on the NEW
-// address's page and failure stays on the old one (requirements.md §6.6).
+// and carries every reference to the new one; the dialog opens from the
+// user's row on Admin, and both outcomes land back there (requirements.md §6.6).
 func TestAdminRenameUser(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -566,23 +569,30 @@ func TestAdminRenameUser(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	page := getBody(t, cl, srv.URL+"/admin/users/alice@testnet")
-	if !strings.Contains(page, `?form=admin-rename`) || !strings.Contains(page, `id="form-admin-rename"`) {
-		t.Error("the user page must carry the rename opener and its modal")
+	if page := getBody(t, cl, srv.URL+"/admin"); strings.Contains(page, `id="form-admin-rename"`) {
+		t.Error("no rename dialog until a row asks for one")
+	}
+	page := getBody(t, cl, srv.URL+"/admin?form=admin-rename&address=alice@testnet")
+	if !strings.Contains(page, `<dialog id="form-admin-rename" class="modal-form" open aria-label="Rename">`) ||
+		!strings.Contains(page, `<h2>Rename alice@testnet</h2>`) || !strings.Contains(page, `action="/admin/users/alice@testnet/rename"`) {
+		t.Error("the row's link must open the rename dialog for that address")
 	}
 
 	resp := postTo(t, cl, srv.URL+"/admin/users/alice@testnet/rename", page, url.Values{"new_name": {"alicia@testnet"}})
 	resp.Body.Close()
-	if got := resp.Header.Get("Location"); got != "/admin/users/alicia@testnet" {
-		t.Errorf("success must land on the new address's page, got %q", got)
+	if got := resp.Header.Get("Location"); got != "/admin" {
+		t.Errorf("success must land on Admin, got %q", got)
+	}
+	if got := flashOf(t, cl, srv.URL); got != "success|alice@testnet is now alicia@testnet." {
+		t.Errorf("flash = %q", got)
 	}
 	if lastRename != `alice@testnet {"new_name":"alicia@testnet"}` {
 		t.Errorf("kernel saw %q", lastRename)
 	}
 }
 
-// A rejected rename (the kernel refuses sys) stays on the handle that still
-// exists, with the kernel's own reason flashed.
+// A rejected rename (the kernel refuses sys) lands on Admin with the kernel's
+// own reason flashed.
 func TestAdminRenameFailureStaysOnOldHandle(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
@@ -590,11 +600,14 @@ func TestAdminRenameFailureStaysOnOldHandle(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	page := getBody(t, cl, srv.URL+"/admin/users/sys@testnet")
+	page := getBody(t, cl, srv.URL+"/admin?form=admin-rename&address=sys@testnet")
 	resp := postTo(t, cl, srv.URL+"/admin/users/sys@testnet/rename", page, url.Values{"new_name": {"sys"}})
 	resp.Body.Close()
-	if got := resp.Header.Get("Location"); got != "/admin/users/sys@testnet" {
-		t.Errorf("failure must stay on the old handle, got %q", got)
+	if got := resp.Header.Get("Location"); got != "/admin" {
+		t.Errorf("failure must land on Admin, got %q", got)
+	}
+	if got := flashOf(t, cl, srv.URL); !strings.HasPrefix(got, "error|") {
+		t.Errorf("a refusal is flashed as an error, got %q", got)
 	}
 
 	// An empty handle never reaches the kernel.
@@ -615,7 +628,7 @@ func TestAdminUnknownUserOpIs404(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
-	page := getBody(t, cl, srv.URL+"/admin/users/alice@testnet")
+	page := getBody(t, cl, srv.URL+"/admin")
 	// The route pattern only admits the three verbs; anything else never routes.
 	resp := postTo(t, cl, srv.URL+"/admin/users/alice@testnet/vaporize", page, url.Values{})
 	resp.Body.Close()

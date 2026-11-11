@@ -23,18 +23,19 @@
   <tbody>
   {{range $d.Users}}
   <tr>
-    <td class="mono"><a href="/admin/users/{{.Address}}">{{.Address}}</a></td>
+    <td class="mono">{{.Address}}</td>
     <td class="muted">{{.Description}}</td>
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
     <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>
-    <td>
+    <td><div class="cluster">
+      <a class="btn" href="/admin?form=admin-rename&address={{.Address}}">Rename</a>
       {{if .Suspended}}
       <form method="post" action="/admin/users/{{.Address}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
       {{else}}
       <form method="post" action="/admin/users/{{.Address}}/suspend" data-confirm="Suspend {{.Address}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
       {{end}}
-    </td>
+    </div></td>
   </tr>
   {{end}}
   </tbody>
@@ -44,4 +45,25 @@
 {{else}}<p class="muted">No users.</p>{{end}}
 
 {{template "_form_admin_deposit" .}}
+
+{{/* A user has no page of its own: Rename opens from the user's row, the
+     dialog rendered open for the address the link names (§6.6). */}}
+{{with $d.Rename}}
+<dialog id="form-admin-rename" class="modal-form" open aria-label="Rename">
+  <div class="modal-head"><h2>Rename {{.}}</h2><a class="modal-close" href="/admin" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    <form class="stack" method="post" action="/admin/users/{{.}}/rename">
+      {{$.CSRFField}}
+      <div class="field">
+        <label for="ar-name">New address<span class="req">*</span></label>
+        <input id="ar-name" name="new_name" type="text" class="mono" placeholder="handle@kernel" required>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Rename</button>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
 {{end}}

@@ -153,7 +153,7 @@ into `static/themes.css` from Ghostty 16-color palettes (`server/themes/`).
   headings (`<h2>`) and nav labels all start with a capital and continue as
   written. A page is named as the nav and the lists name it: `Inbox ·
   Workshop · Wallet · Settings · Network · Admin`, a detail page the singular
-  of its list (`Transaction`, `Session`, `Task`), and pages outside the nav
+  of its list (`Transaction`, `Session`), and pages outside the nav
   likewise (`Recovery phrase`, `Connect`, `Error`, `Juice installation` — the gate's
   screen, an `.auth-card` with the state line, the `.progress` bar or the
   first-boot form). A title rendered from data
@@ -544,10 +544,11 @@ An action address, `owner@kernel/name`, renders via the **one** `_ref`
 partial, built with the `ref` helper (`ref <address> <id>`; pass `""` for no
 link): `<span class="ref mono">` with the owner in `.owner` (weight-emphasized,
 confusable-distinct, **not** accent), split on the first `/`. Passing an action
-id makes the **name** the link to the action. The owner links to its profile
-(`/users/{address}`) only when the action is **local** — its kernel segment is
-this kernel's own name (requirements.md §4); another kernel's owner renders
-**unlinked**, since no local route exists behind it — don't invent one. A name
+id makes the **name** the link to the action. The owner links to its actions
+on Discover (`/browse?owner={address}`) only when the action is **local** — its
+kernel segment is this kernel's own name (requirements.md §4); another kernel's
+owner renders **unlinked**, since this kernel cannot list its actions — don't
+invent a route. A name
 is rendered as served: never stripped of its kernel, never decorated.
 
 When that kernel segment is a **raw public key** — an action discovered but not yet
@@ -721,9 +722,9 @@ one debt — the debtor, the ticket, what was owed, what the draw says must be
 paid — and one gesture: a `.btn-money` `Confirm (N)` behind `data-confirm`,
 posting the peer's key and the ticket id. Recording a payment moves real money.
 
-**Rename** is one modal per namespace. A user is renamed on the admin user
-detail (`/admin/users/{address}?form=admin-rename`): a `.btn` opener beside
-Suspend, one field taking the new address, a neutral `.btn` submit. A kernel is
+**Rename** is one modal per namespace. A user has no page of its own and is
+renamed from its row on Admin (`/admin?form=admin-rename&address={address}`): a
+`.btn` opener before Suspend, one field taking the new address. A kernel is
 named on its inspect page the same way, keyed on its public key. The two are
 separate because the kernel's two routes are.
 

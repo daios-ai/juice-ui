@@ -24,7 +24,11 @@
   {{if gt .Price 0}}<button class="btn-money" type="submit">Choose for me ({{moneyExact .Price}})</button>{{else}}<button class="btn" type="submit">Choose for me</button>{{end}}
 </form>
 {{end}}{{end}}
-{{else if .Data.Catalog}}
+{{else}}
+{{/* One owner's actions: an address has no page of its own, and its name on
+     an action row opens this (§6.2). */}}
+{{with .Data.Owner}}<div class="subhead"><h2 class="mono">{{.}}</h2><a class="btn" href="/browse">All actions</a></div>{{end}}
+{{if .Data.Catalog}}
 <nav class="tabs" aria-label="Sort">
   {{range .Data.Sorts}}{{template "_tab" (tab .Label .Href .Current)}}{{end}}
 </nav>
@@ -34,5 +38,6 @@
 {{template "_pager" .Data.Pager}}
 {{else}}
 <p class="muted">No actions here yet.</p>
+{{end}}
 {{end}}
 {{end}}

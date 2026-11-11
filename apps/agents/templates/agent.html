@@ -20,7 +20,7 @@
 {{if $d.Account}}
 <div class="card">
   <dl class="locked-args">
-    <dt>Address</dt><dd class="mono"><a href="/users/{{$d.Account.Address}}">{{$d.Account.Address}}</a></dd>
+    <dt>Address</dt><dd class="mono"><a href="/browse?owner={{$d.Account.Address}}">{{$d.Account.Address}}</a></dd>
     <dt>Available</dt><dd class="money">{{money $d.Account.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $d.Account.Locked}}</dd>
     <dt>State</dt><dd>{{if $d.Account.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>

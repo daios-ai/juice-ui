@@ -3,8 +3,7 @@
 {{$i := $d.Inspection}}
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
 {{/* The header is the row's anatomy (§5.11): name with its marks, key, about.
-     The polled card below states the facts with labels and holds the verbs,
-     as the user page does. */}}
+     The polled card below states the facts with labels and holds the verbs. */}}
 {{$n := nameOf $i.Petname $d.Key}}
 <div class="page-head">
   <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}

@@ -673,29 +673,37 @@ func TestRecoverResetsPassword(t *testing.T) {
 // may see across private/local/public — your own page includes your private and
 // inactive actions (all=1 in your own scope), anyone else's shows only the
 // caller-visible active set — and the page never labels the list a single level.
-func TestOwnerPageShowsVisibleSetAcrossLevels(t *testing.T) {
+func TestDiscoverNarrowsToAnOwner(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL) // signed in as alice
 
-	// Your own page: A3 is alice's inactive/private draft — it must appear (and
+	// Your own name: A3 is alice's inactive/private draft — it must appear (and
 	// self-labels via the card's inactive/lock chips).
-	own := getBody(t, cl, srv.URL+"/users/alice@testnet")
-	if !strings.Contains(own, "alice") || !strings.Contains(own, `class="action-row`) {
-		t.Error("owner page must show the handle and action rows")
+	own := getBody(t, cl, srv.URL+"/browse?owner=alice@testnet")
+	if !strings.Contains(own, `<div class="subhead"><h2 class="mono">alice@testnet</h2><a class="btn" href="/browse">All actions</a></div>`) {
+		t.Error("an owner's actions are headed by the address, with the way back to every owner")
 	}
-	if !strings.Contains(own, "draft") {
-		t.Error("your own owner page must include your private/inactive actions")
+	if !strings.Contains(own, `class="action-row`) || !strings.Contains(own, "draft") {
+		t.Error("your own name must list your private/inactive actions")
 	}
-	if strings.Contains(own, "Public actions") {
-		t.Error("owner page must not label the whole list 'Public actions'")
+	// The sort switch keeps the owner; the first page of a new order has no offset.
+	if !strings.Contains(own, `href="/browse?owner=alice%40testnet&amp;sort=rating"`) {
+		t.Error("sorting must keep the owner")
 	}
 
-	// Someone else's page: caller-visible active set only (all=0) — no private/inactive.
-	if strings.Contains(getBody(t, cl, srv.URL+"/users/bob@testnet"), "draft") {
-		t.Error("another owner's page must not surface inactive/private actions")
+	// Someone else's name: caller-visible active set only — no private/inactive.
+	if strings.Contains(getBody(t, cl, srv.URL+"/browse?owner=bob@testnet"), "draft") {
+		t.Error("another owner's actions must not surface inactive/private ones")
+	}
+	// Every owner: no heading.
+	if strings.Contains(getBody(t, cl, srv.URL+"/browse"), `<h2 class="mono">`) {
+		t.Error("the whole catalog names no owner")
+	}
+	if resp, err := cl.Get(srv.URL + "/users/alice@testnet"); err != nil || resp.StatusCode != http.StatusNotFound {
+		t.Error("an owner has no page of its own")
 	}
 }
 
@@ -786,8 +794,8 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 	if !strings.Contains(body, `href="/actions/owned"`) {
 		t.Error("action name must link to the action")
 	}
-	if !strings.Contains(body, `href="/users/alice@testnet"`) {
-		t.Error("action owner must link to its owner page")
+	if !strings.Contains(body, `href="/browse?owner=alice%40testnet"`) {
+		t.Error("action owner must link to its actions on Discover")
 	}
 	// The Amount column is right-aligned, so its header is too (class="money").
 	if !strings.Contains(body, `<th class="money">Amount</th>`) {
@@ -824,8 +832,8 @@ func TestTransactionDetailShowsActionAndParties(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/transactions/T1")
-	// Action ref: owner links to its owner page.
-	if !strings.Contains(body, `href="/users/alice@testnet"`) {
+	// Action ref: owner links to its actions on Discover.
+	if !strings.Contains(body, `href="/browse?owner=alice%40testnet"`) {
 		t.Error("transaction detail must show the action ref with a linked owner")
 	}
 	// Buyer: current user (alice) is the buyer party
@@ -1551,8 +1559,8 @@ func TestActionCardChips(t *testing.T) {
 	if !strings.Contains(browse, `href="/actions/A1"`) {
 		t.Error("browse card name must link to the action")
 	}
-	if !strings.Contains(browse, `href="/users/alice@testnet"`) {
-		t.Error("browse card owner must link to its owner page")
+	if !strings.Contains(browse, `href="/browse?owner=alice%40testnet"`) {
+		t.Error("browse card owner must link to its actions on Discover")
 	}
 	if strings.Contains(browse, `title="WebAssembly action">W`) {
 		t.Error("browse card must NOT show an always-on kind chip (exceptional-only)")
@@ -2869,8 +2877,8 @@ func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	if !strings.Contains(page, `<span class="mono">alice@testnet</span> · `) || !strings.Contains(page, `<span class="mono">dan@bravo</span> · `) {
 		t.Errorf("each card names its requester: %s", page)
 	}
-	if detail := getBody(t, cl, srv.URL+"/inbox/SO"); !strings.Contains(detail, `<span class="mono">alice@testnet</span> · `) {
-		t.Errorf("the task page names its requester: %s", detail)
+	if resp, err := cl.Get(srv.URL + "/inbox/SO"); err != nil || resp.StatusCode != http.StatusNotFound {
+		t.Errorf("a task has no page of its own: %v %v", resp.StatusCode, err)
 	}
 }
 
@@ -2985,9 +2993,9 @@ func TestInboxTaskHeldOnAnotherKernel(t *testing.T) {
 	}
 }
 
-// Decline is offered to the two parties the kernel accepts — the one asked and
-// the one who asked — on a waiting task, never in a list row, and posts to the
-// kernel's cancel route (§6.3).
+// Decline is offered to the two parties the kernel accepts on a waiting task —
+// the one asked on the card, the one who asked on the task's History row, since
+// a task has no page of its own — and posts to the kernel's cancel route (§6.3).
 func TestInboxDeclineOfferedToBothParties(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
@@ -3001,10 +3009,8 @@ func TestInboxDeclineOfferedToBothParties(t *testing.T) {
 			t.Errorf("the one asked may decline %s", id)
 		}
 	}
-	for _, id := range []string{"SX", "SD"} {
-		if strings.Contains(page, `action="/inbox/`+id+`/cancel"`) {
-			t.Errorf("no decline in a history row (%s)", id)
-		}
+	if strings.Contains(page, `action="/inbox/SD/cancel"`) {
+		t.Error("a task no longer waiting offers no decline")
 	}
 	if !strings.Contains(page, `data-confirm="Decline this task?"`) {
 		t.Error("decline must sit behind a plain confirm")
@@ -3015,21 +3021,19 @@ func TestInboxDeclineOfferedToBothParties(t *testing.T) {
 		t.Error("Decline must sit beside Complete in one row")
 	}
 
-	asked := getBody(t, cl, srv.URL+"/inbox/SX")
-	if !strings.Contains(asked, `action="/inbox/SX/cancel"`) {
-		t.Error("the one who asked may decline from the task's page")
+	// The one who asked declines from the task's History row, which names who
+	// asks as the card does; completing stays the one asked's.
+	if !regexp.MustCompile(`(?s)<tr>\s*<td class="id mono" title="SX">SX</td>\s*<td><span class="mono">bob@testnet</span> · .*?<td><form id="decline-SX" method="post" action="/inbox/SX/cancel" data-confirm="Decline this task\?">.*?</form><button class="btn-danger" type="submit" form="decline-SX">Decline</button></td>\s*</tr>`).MatchString(page) {
+		t.Errorf("the one who asked may decline from the task's row: %s", page)
 	}
-	if !strings.Contains(asked, `<div class="cluster"><button class="btn-danger" type="submit" form="decline-SX">Decline</button></div>`) {
-		t.Error("a decline without a completion form still stands in a command row")
-	}
-	if strings.Contains(asked, `action="/inbox/SX/complete"`) {
+	if strings.Contains(page, `action="/inbox/SX/complete"`) {
 		t.Error("only the required caller may complete")
 	}
-	if done := getBody(t, cl, srv.URL+"/inbox/SD"); strings.Contains(done, "/cancel") {
-		t.Error("a task no longer waiting offers no decline")
+	if resp, err := cl.Get(srv.URL + "/inbox/SX"); err != nil || resp.StatusCode != http.StatusNotFound {
+		t.Error("a task has no page of its own")
 	}
 
-	resp := postTo(t, cl, srv.URL+"/inbox/SX/cancel", asked, url.Values{})
+	resp := postTo(t, cl, srv.URL+"/inbox/SX/cancel", page, url.Values{})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/inbox" {
 		t.Errorf("decline = %d → %q, want a redirect to the inbox", resp.StatusCode, resp.Header.Get("Location"))

@@ -541,7 +541,7 @@ func TestKernelIdentityAddressAndLocal(t *testing.T) {
 func TestActiveGroup(t *testing.T) {
 	for path, want := range map[string]string{
 		"/browse": "browse", "/actions/A1": "", "/discovered": "",
-		"/inbox/T1": "inbox", "/transactions": "wallet", "/workshop": "workshop",
+		"/inbox": "inbox", "/transactions": "wallet", "/workshop": "workshop",
 	} {
 		if got := activeGroup(path); got != want {
 			t.Errorf("activeGroup(%q) = %q, want %q", path, got, want)

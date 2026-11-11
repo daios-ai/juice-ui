@@ -363,15 +363,9 @@
 </tr>
 {{end}}
 
-{{/* _ref renders owner/name with the owner segment weight-emphasized and
-     confusable-distinct (mono). A LOCAL owner links to its owner page (a
-     handle's public actions), like a channel; a REMOTE owner (owner@kernel —
-     the alias is presentation-only, requirements.md §4) renders the same but
-     UNLINKED, since no local profile exists behind it. The name is plain here.
-     Use _reflink where the name should also link to the action. */}}
 {{/* _ref — THE action reference (§5.7). One partial, one split: build it with
      the `ref` helper, passing the action id when the name should link. The owner
-     segment is emphasized; a LOCAL owner links to its profile, a REMOTE one never
+     segment is emphasized; a LOCAL owner links to its actions on Discover, a REMOTE one never
      does (the kernel half is presentation-only, requirements.md §4) and its key
      is truncated with the whole value in the title. */}}
 {{/* _price — THE price (§5.5). One partial for every surface: card, stat strip,
@@ -381,7 +375,7 @@
      `price` helper. */}}
 {{define "_price"}}{{if .Indicative}}<span class="price muted" title="Indicative — the binding price is confirmed when you run it">{{if gt .Price 0}}{{money .Price}}{{else}}free{{end}}</span>{{else if gt .Price 0}}<span class="price">{{money .Price}}</span>{{else}}<span class="price"><span class="free">free</span></span>{{end}}{{end}}
 
-{{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/users/{{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{if .Owner.IsKey}} {{template "_copy" (copyOf "address" (printf "%s/%s" .Owner.Title .Name))}}{{end}}{{end}}
+{{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/browse?owner={{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{if .Owner.IsKey}} {{template "_copy" (copyOf "address" (printf "%s/%s" .Owner.Title .Name))}}{{end}}{{end}}
 
 {{/* _copy — THE copy control: an icon-only quiet button carrying the whole
      value it copies, beside a key, a hash or an address that renders

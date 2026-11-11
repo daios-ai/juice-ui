@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.62.0
+Version: 0.63.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.63.0.** A task, a user and an owner have no page of their
+> own; each stands where it is listed. The one who asked for a task declines it
+> on its History row, which names who asks as the card does. A user is renamed
+> from its row on Admin, and the rename lands there. An owner's name opens
+> Discover narrowed to that owner's actions (§4, §6.2, §6.3, §6.6, §9).
 
 > **What changed in 0.62.0.** Home is gone: every figure and list it showed is
 > on the wallet or the inbox, and nothing was done on it. The root address
@@ -1350,9 +1356,9 @@ them. A test holds this.
   strips, decorates, or rewrites one — and its only readings of an address are
   two, each defined once: the owner is the segment before the first `/`
   (names may hold `/`, an owner never does), and an action is **local iff its
-  kernel segment is this kernel's name**. A local owner links to its owner page
-  (`/users/{address}`); another kernel's does not, since no local profile backs
-  it. The UI composes exactly one address shape, `handle@<this kernel>`, and
+  kernel segment is this kernel's name**. A local owner links to its actions on Discover
+  (`/browse?owner={address}`); another kernel's does not, since this kernel
+  cannot list them. The UI composes exactly one address shape, `handle@<this kernel>`, and
   only where it names this kernel's own principal from a handle: the entry
   screen (§5), the natives that power a surface (§6.2), the superuser `sys`,
   and an app's service account. In a URL path an address is written with its
@@ -1692,6 +1698,12 @@ both MUST keep planning apart from spending:
   tooltip: success · rating · latency), price-less since the price is on the
   title line. The title is the row's one pointer target. With no query the page
   is a **flat catalog capped at 20 per page** with a pager (§7 pagination).
+* **One owner's actions.** An address has no page of its own. With `?owner=`
+  and no query, Discover lists `GET /v1/actions?owner=` — on the viewer's own
+  address every action they own, private and inactive included; on anyone
+  else's the live ones they may call — headed by the address and an
+  **All actions** button back to every owner, the sort and the pager keeping
+  the owner. A search covers every owner, so a query leaves the owner.
 * **The catalog file.** The launcher's actions come from one file
   (`GET /search/catalog.json`: `actions`, every page of `GET /v1/actions` —
   the caller's own actions, the live ones it may call, and those discovered on
@@ -1816,10 +1828,10 @@ both MUST keep planning apart from spending:
 * Ratings MUST render as reviews (0/1 value, `note`, newest first, paginated),
   labeled as ratings from paid calls.
 * The owner of an action address MUST be visually emphasized and, when the
-  action is local (§4), link to the owner's profile at `/users/{address}`
-  (public actions, aggregate stats, account age). Another kernel's owner renders
-  in the same emphasized monospace but MUST NOT link anywhere: there is no local
-  profile behind it (§4; extends §8's inert counterparty rule). Card-art hue
+  action is local (§4), link to that owner's actions on Discover
+  (`/browse?owner={address}`). Another kernel's owner renders in the same
+  emphasized monospace but MUST NOT link anywhere: this kernel cannot list its
+  actions (§4; extends §8's inert counterparty rule). Card-art hue
   keys off the owner's address; 0.10.0 reshuffles it once, and no compatibility
   shim is permitted.
 
@@ -1982,7 +1994,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 * A waiting task whose `required_caller` is the signed-in user MUST render as a
   completable card; all other tasks MUST go to a history table, read with
   `?status=` from its tabs or `?all=1` (the kernel lists only open tasks
-  otherwise), to exhaustion. A single task is `GET /v1/tasks/{id}`.
+  otherwise), to exhaustion. A task has no page of its own: its card or its
+  History row is where it stands, and a History row names who asks as the card
+  does.
 * **Who asks** is what the row names. A row carries `requester`, the party the
   task acts for and as whom its completion runs (kernel D6), named first; then
   `created_by` (the creating action) and `action` (the completion target) when
@@ -2030,7 +2044,10 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   owner who asked). Declining cancels it and returns its reserved price to the
   payer; the control is the destructive `Decline`, standing in the task's command
   row beside `Complete`, behind the plain confirm "Decline this task?" (§7),
-  offered on the inbox card and on the task's own page, never in a list row. The kernel refuses anyone else and any task no longer waiting.
+  offered to the one asked on the inbox card and to the one who asked on the
+  task's History row, by the requesters' reasoning: a task has no page of its
+  own, so its row is where its decision stands. The kernel refuses anyone else
+  and any task no longer waiting.
 * Completed and cancelled tasks MUST appear in history.
 * `sys/message` tasks MUST render as a message (sender, text, acknowledge
   button).
@@ -2280,8 +2297,8 @@ separate routes and refuses a target of the other kind, so a petname that
 happens to equal a handle never decides which account is acted on. The UI MUST
 therefore know which namespace it is addressing before it dials: a user is
 reached under `/admin/users/{handle}`, a kernel under `/admin/peers/{key}`, and
-no page sends a public key to the user routes. This is why the two pages, the
-two rename forms and the two suspend verbs are separate here — not for
+no page sends a public key to the user routes. This is why the two rename forms
+and the two suspend verbs are separate here — not for
 symmetry, but because the kernel refuses anything else.
 
 **Peers.**
@@ -2455,20 +2472,22 @@ symmetry, but because the kernel refuses anything else.
 
 **Rename.**
 
-* One modal on the target's own detail page, in the namespace that target
-  belongs to: a user at `POST /v1/admin/users/{handle}/rename`, reached from
-  `admin`; a kernel at `POST /v1/admin/peers/{key}/rename`, reached from the
-  inspect page, from a counterparty's name and from **Name** on a discovered
-  kernel. The body field is `new_name` in both. There is no shared form, because
-  the kernel refuses a target of the other kind and a shared form would have to
-  guess what the kernel declines to guess. Each detail page therefore renders
-  one record shape, never one padded with the other's empty fields.
+* One modal per namespace. A user has no page of its own — its row on `admin`
+  shows everything the kernel serves of it — so its **Rename** stands on that
+  row beside Suspend, opening the dialog on `admin`
+  (`?form=admin-rename&address=…`) for `POST /v1/admin/users/{handle}/rename`.
+  A kernel is named on its inspect page, at
+  `POST /v1/admin/peers/{key}/rename`, reached from that page, from a
+  counterparty's name and from **Name** on a discovered kernel. The body field
+  is `new_name` in both. There is no shared form, because the kernel refuses a
+  target of the other kind and a shared form would have to guess what the
+  kernel declines to guess.
 * Its disclosure MUST state the consequence beside the field, and the two
   consequences differ: renaming a **user** frees the old address and carries
   every reference to the new one; naming a **kernel** binds a petname here,
-  exactly, and an occupied name is refused. Success MUST land on the page that
-  then exists — the new address for a user, the unchanged key for a kernel — and
-  a rejection MUST stay put. The new address is sent as typed (§4): the kernel
+  exactly, and an occupied name is refused. A user's rename MUST land on `admin`,
+  success and rejection alike, with the outcome flashed; a kernel's MUST land on
+  its page, the unchanged key. The new address is sent as typed (§4): the kernel
   refuses `sys`, a bare handle, and another kernel's name, and the UI shows
   that reason.
 
@@ -3199,8 +3218,9 @@ Every production `.go` file has a `_test.go` file with independent tests.
   render a task (§6.3); a card names its requester; requesters list pending
   first with the decisions that change each status, Block alone behind a
   confirm, and a pending requester counts in the badge (§6.1, §6.3);
-* decline: offered to the required caller and the owner of a waiting task and
-  to nobody else; a task held on another kernel names its holder and links no
+* decline: offered to the required caller on the card and to the owner of a
+  waiting task on its History row, and to nobody else; no task, user or owner
+  has a page of its own; a task held on another kernel names its holder and links no
   receipt after completion (§6.3);
 * list reads ask for what they show: inbox history and the sessions page send
   `?all=1` (or the tab's status) and page to exhaustion (§6.3, §6.5);
@@ -3220,7 +3240,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   its address on this kernel; every other name is sent and rendered as served,
   never rewritten (§4, §5);
 * locality: an action is local iff its kernel segment is this kernel's name,
-  and only a local owner links (§4);
+  and only a local owner links, to Discover narrowed to it, the sort keeping
+  the owner (§4, §6.2);
 * no surface decorates a name: no template puts an `@` before a name, and the
   only `@` a template may carry joins an address (§4), enforced by a drift
   guard over the core and app templates;

@@ -1596,11 +1596,11 @@ func TestRefRemoteUnlinked(t *testing.T) {
 	if !strings.Contains(body, "alice@B") || !strings.Contains(body, `class="owner"`) {
 		t.Errorf("remote owner segment must render emphasized: %s", body)
 	}
-	if strings.Contains(body, "/users/") || strings.Contains(body, "<a ") {
+	if strings.Contains(body, "owner=") || strings.Contains(body, "<a ") {
 		t.Errorf("remote owner must not link anywhere: %s", body)
 	}
-	if body := render("lena@testnet/greet", ""); !strings.Contains(body, `href="/users/lena@testnet"`) {
-		t.Errorf("local owner must link to its owner page: %s", body)
+	if body := render("lena@testnet/greet", ""); !strings.Contains(body, `href="/browse?owner=lena%40testnet"`) {
+		t.Errorf("local owner must link to its actions on Discover: %s", body)
 	}
 	// Passing an id makes the NAME the action link.
 	if body := render("lena@testnet/greet", "A1"); !strings.Contains(body, `href="/actions/A1"`) {
@@ -1677,8 +1677,8 @@ func TestActionRowDiscovered(t *testing.T) {
 		t.Errorf("a discovered card must carry no reputation strip: %s", body)
 	}
 	// The remote owner segment renders unlinked, like every remote ref.
-	if strings.Contains(body, `href="/users/tom@KERNELKEY"`) {
-		t.Errorf("a remote owner must not link to a local owner page: %s", body)
+	if strings.Contains(body, `owner=tom`) {
+		t.Errorf("a remote owner must not link to the owner filter: %s", body)
 	}
 	// A resolved proxy is the ordinary case and keeps price, strip, and link —
 	// the two states never coincide, because the kernel shadows the discovery row.

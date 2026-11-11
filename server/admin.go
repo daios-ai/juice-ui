@@ -45,13 +45,9 @@ type adminView struct {
 	Users        []client.AdminUser
 	Pager        Pager
 	OpenForm     string
-	Configurable bool // this installation's kernel: its configuration page exists
-	Models       bool // and its Models page
-}
-
-type adminUserView struct {
-	User     client.AdminUser
-	OpenForm string
+	Rename       string // the address whose rename dialog is open; "" when none
+	Configurable bool   // this installation's kernel: its configuration page exists
+	Models       bool   // and its Models page
 }
 
 // adminPeersView drives the network page: this kernel's money, the money
@@ -193,6 +189,9 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	// them reload this URL with ?form= still set, reopening the dialog on the
 	// no-JS path.
 	view := adminView{OpenForm: openForm(r, "admin"), depositForm: depositForm{Back: "/admin"}, Configurable: s.config != nil, Models: s.modelsSupported()}
+	if view.OpenForm == "admin-rename" {
+		view.Rename = strings.TrimSpace(r.URL.Query().Get("address"))
+	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		u, e := s.client.AdminListUsers(ctx, tok)
 		if e != nil {
@@ -215,25 +214,6 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 	})
 	view.Users, view.Pager = pageOf(r, view.Users)
 	s.renderPage(w, r, http.StatusOK, "admin", "Admin", view)
-}
-
-func (s *Server) getAdminUser(w http.ResponseWriter, r *http.Request) {
-	address := r.PathValue("address")
-	ctx := r.Context()
-	var view adminUserView
-	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.client.AdminGetUser(ctx, tok, address)
-		if e != nil {
-			return e
-		}
-		view.User = u
-		return nil
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	view.OpenForm = openForm(r, "admin-user")
-	s.renderPage(w, r, http.StatusOK, "admin_user", "User "+address, view)
 }
 
 // postAdminUserOp addresss the per-user operator verbs, dispatched on the path's
@@ -259,24 +239,24 @@ func (s *Server) postAdminUserOp(w http.ResponseWriter, r *http.Request) {
 // renameUser rebinds a local account's address, freeing the old one so every
 // reference follows the account. The new address is taken verbatim — one the
 // kernel will not accept is the kernel's to refuse, not ours to rewrite
-// (requirements.md §4). The redirect lands on the new address, which is the
-// page that then exists.
+// (requirements.md §4). Both outcomes land on Admin, whose users table is
+// where an account stands.
 //
 // A kernel is renamed on its own page by renamePeer: the two namespaces are
 // separate routes on the kernel now, and a route that guessed which one was
 // meant would be guessing what the kernel refuses to guess (§6.6).
 func (s *Server) renameUser(w http.ResponseWriter, r *http.Request, address string) {
-	ctx, back := r.Context(), "/admin/users/"+url.PathEscape(address)
+	ctx := r.Context()
 	newName := strings.TrimSpace(r.FormValue("new_name"))
 	if newName == "" {
-		s.flashRedirect(w, r, back, "error", "Enter a new address.")
+		s.flashRedirect(w, r, "/admin", "error", "Enter a new address.")
 		return
 	}
 	if err := s.sessions.Do(ctx, func(tok string) error { return s.client.AdminRenameUser(ctx, tok, address, newName) }); err != nil {
-		s.flashRedirect(w, r, back, "error", userMessage(err))
+		s.flashRedirect(w, r, "/admin", "error", userMessage(err))
 		return
 	}
-	s.flashRedirect(w, r, "/admin/users/"+url.PathEscape(newName), "success", address+" is now "+newName+".")
+	s.flashRedirect(w, r, "/admin", "success", address+" is now "+newName+".")
 }
 
 // postAdminPeerRename binds a kernel's petname, keyed on the public key — an

@@ -671,7 +671,7 @@ func nameOf(petname, key string) Name {
 // segment before the first slash — names may contain slashes (sys@k/llm/chat),
 // but an owner's address never does, so the first slash is unambiguous
 // (requirements.md §4). The owner is emphasized in the UI; a LOCAL owner links
-// to its owner page, a remote one renders unlinked.
+// to its actions on Discover, a remote one renders unlinked.
 func refOwner(ref string) string {
 	if i := strings.IndexByte(ref, '/'); i >= 0 {
 		return ref[:i]
@@ -686,8 +686,8 @@ func refOwner(ref string) string {
 // Owner is a Name because a remote owner's kernel segment may be a raw public
 // key (owner@<43 chars>) — unreadable as a card title, and truncated here
 // through the same primitive that renders a kernel card (§13 petname model).
-// Local reports that the owner has a profile page here: its kernel segment is
-// this kernel's own name (KernelIdentity.Local).
+// Local reports that the owner's actions can be listed here: its kernel segment
+// is this kernel's own name (KernelIdentity.Local).
 type RefView struct {
 	Owner Name
 	Name  string

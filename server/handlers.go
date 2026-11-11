@@ -99,6 +99,7 @@ func (c actionCardView) ObservedAgo() string { return relTime(c.ObservedAt) }
 
 type discoverView struct {
 	Query           string
+	Owner           string // the catalog narrowed to one owner's actions; "" for every owner
 	LookupAvailable bool
 	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []actionCardView
@@ -221,6 +222,13 @@ type taskEntry struct {
 	CanDecline  bool
 }
 
+// taskRow is one History row: the task, and whether the viewer may decline it
+// there — the one who asked, while it waits on someone else (§6.3).
+type taskRow struct {
+	client.Task
+	CanDecline bool
+}
+
 // taskGroup buckets waiting inbox tasks by their creating action (created_by).
 // CreatedBy "" holds the tasks whose row names no creator — those held on
 // another kernel, which name their holder instead.
@@ -233,7 +241,7 @@ type tasksView struct {
 	Pager       Pager
 	Me          string             // the viewer's address
 	InboxGroups []taskGroup        // waiting tasks that require this user, grouped by created_by
-	History     []client.Task      // every other task the viewer may see
+	History     []taskRow          // every other task the viewer may see
 	Requesters  []client.Requester // who has addressed tasks to the viewer, pending first
 	Filter      string             // status filter
 	Superuser   bool
@@ -403,44 +411,6 @@ func (s *Server) postRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.flashRedirect(w, r, "/login", "success", "Password reset — sign in with your new password.")
-}
-
-// ownerView is an address's action catalogue, shown as the same cards the
-// marketplace uses. Each card self-labels its visibility (private/local/public)
-// and inactive state via its chips, so the page asserts no single level. The
-// kernel has no public user-profile endpoint, so there is no bio — the address
-// and its catalogue are the page.
-type ownerView struct {
-	Pager   Pager
-	Address string
-	Cards   []actionCardView
-}
-
-func (s *Server) getOwner(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	address := r.PathValue("address")
-	// The catalog narrowed to one owner is exactly what the viewer may see of
-	// theirs: on your own page everything you own, private and inactive
-	// included; on anyone else's, their live actions you may call.
-	view := ownerView{Address: address}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		acts, e := s.client.ListActions(ctx, tok, address)
-		if e != nil {
-			return e
-		}
-		acts, view.Pager = pageOf(r, acts)
-		cards := make([]actionCardView, len(acts))
-		for i, a := range acts {
-			cards[i] = cardOf(a)
-		}
-		s.fetchEvidence(ctx, tok, cards)
-		view.Cards = cards
-		return nil
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "owner", address, view)
 }
 
 // recoverErrorMessage maps a recovery failure to actionable copy without leaking
@@ -744,8 +714,15 @@ func (s *Server) postSidebar(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	// An owner narrows the catalog to that owner's actions, the ones the viewer
+	// may see: on their own name every action they own, private and inactive
+	// included. A search is of the whole economy, so it leaves the owner.
+	owner := ""
+	if q == "" {
+		owner = strings.TrimSpace(r.URL.Query().Get("owner"))
+	}
 	order := sortOrder(r)
-	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, order)}
+	view := discoverView{Query: q, Owner: owner, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, owner, order)}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		granted := s.granted(r)
 		if q != "" {
@@ -761,7 +738,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		}
 		// Read the whole catalog — local actions and those discovered on peers
 		// — and slice one page here, because a sort orders the whole list.
-		cat, e := s.client.ListActions(ctx, tok, "")
+		cat, e := s.client.ListActions(ctx, tok, owner)
 		if e != nil {
 			return e
 		}
@@ -832,7 +809,7 @@ func (s *Server) granted(r *http.Request) map[string]bool {
 // under every order and arranged under the one asked for. The error is the
 // transport's; a lookup that ran and did not succeed is a state of the view.
 func (s *Server) discover(ctx context.Context, tok string, granted map[string]bool, q, order, quoteHash string) (discoverView, error) {
-	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, order)}
+	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, "", order)}
 	declined := ""
 	if quoteHash == "" {
 		declined = s.unpinnedRefusal(ctx, tok, s.native(lookupNative))
@@ -1020,7 +997,9 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 		})
 		mine := func(t client.Task) bool { return t.Waiting() && t.RequiredCaller == me.Address }
 		waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !mine(t) })
-		view.History = slices.DeleteFunc(history, mine) // above, in Waiting for you
+		for _, t := range slices.DeleteFunc(history, mine) { // the rest is above, in Waiting for you
+			view.History = append(view.History, taskRow{Task: t, CanDecline: canDecline(t, me.Address)})
+		}
 		var waitingMore, requestersMore bool
 		waiting, waitingMore = pageRows(r, waiting)
 		view.Requesters, requestersMore = pageRows(r, rq)
@@ -1044,28 +1023,6 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view)
 }
 
-func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	ctx := r.Context()
-	var view taskEntry
-	err := s.sessions.Do(ctx, func(tok string) error {
-		t, e := s.client.GetTask(ctx, tok, id)
-		if e != nil {
-			return e
-		}
-		me, e := s.me(r)
-		if e != nil {
-			return e
-		}
-		view = s.taskEntryOf(t, me.Address)
-		return nil
-	})
-	if s.handleErr(w, r, err) {
-		return
-	}
-	s.renderPage(w, r, http.StatusOK, "inbox_detail", "Task", view)
-}
-
 // taskEntryOf builds what the inbox shows for one task: the completion form
 // from the task's own allowed_input (never the target action, which may be
 // private), and the two gestures the viewer may make.
@@ -1074,8 +1031,14 @@ func (s *Server) taskEntryOf(t client.Task, me string) taskEntry {
 		Task:        t,
 		Form:        BuildTaskForm(t.AllowedInput, t.PartialArgs),
 		CanComplete: t.Waiting() && t.RequiredCaller == me,
-		CanDecline:  t.Waiting() && (t.RequiredCaller == me || t.Owner == me),
+		CanDecline:  canDecline(t, me),
 	}
+}
+
+// canDecline is the kernel's rule for who may decline a task: either party,
+// the one asked or the one who asked, while it waits.
+func canDecline(t client.Task, me string) bool {
+	return t.Waiting() && (t.RequiredCaller == me || t.Owner == me)
 }
 
 const (
@@ -2330,8 +2293,7 @@ var formWhitelist = map[string]map[string]bool{
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
 	"wallet":        {"fund": true, "withdraw": true, "address": true},
-	"admin":         {"admin-deposit": true, "admin-inspect": true},
-	"admin-user":    {"admin-rename": true},
+	"admin":         {"admin-deposit": true, "admin-inspect": true, "admin-rename": true},
 	"admin-peer":    {"admin-rename": true},
 }
 
@@ -3216,10 +3178,10 @@ func sortOrder(r *http.Request) string {
 	}
 }
 
-// sortTabs is the sort switch for a query: each order linking Discover with
-// the query and no offset, since a different order starts at its own first
-// page. The page and the panel link the same place.
-func sortTabs(q, current string) []SortTab {
+// sortTabs is the sort switch for a query or an owner: each order linking
+// Discover with them and no offset, since a different order starts at its own
+// first page. The page and the panel link the same place.
+func sortTabs(q, owner, current string) []SortTab {
 	var tabs []SortTab
 	for _, t := range []struct{ label, order string }{
 		{"relevance", sortRelevance}, {"rating", sortRating}, {"price", sortPrice},
@@ -3227,6 +3189,9 @@ func sortTabs(q, current string) []SortTab {
 		v := url.Values{}
 		if q != "" {
 			v.Set("q", q)
+		}
+		if owner != "" {
+			v.Set("owner", owner)
 		}
 		if t.order != sortRelevance {
 			v.Set("sort", t.order)
