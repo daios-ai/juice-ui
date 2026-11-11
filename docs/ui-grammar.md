@@ -307,7 +307,12 @@ hand-writes `class="tab{{if …`; a drift guard enforces it.
 | Use | Renderer | Active |
 |---|---|---|
 | **Entry toggle** | `paneltab` in `.auth-card .tabs` — Sign in / Create account (real `?tab=` links; JS swaps panels **and moves `aria-current`** so only one is lit) | requested tab |
-| **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive`, task `all/done/cancelled` (real query-string links, reload) | selected filter |
+| **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive` (real query-string links, reload) | selected filter |
+| **Places** | `icontab` in `.tabs` — the inbox's To do · Sent · Done: a sprite icon (`ico-inline`, `aria-hidden`) before the word, never instead of it | the place shown |
+
+**Icons mark places, never filters.** A tab that takes you somewhere (the
+inbox's views) carries its icon; a tab that narrows a list (`all/active`,
+`relevance/rating/price`) or toggles an entry is a word.
 
 **Distinct axes get distinct rows, never mixed.** The actions page's *ownership
 scope* (`yours | everyone`, `sys`) is its **own** switch on the heading, not a

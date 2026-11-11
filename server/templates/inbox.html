@@ -9,9 +9,9 @@
 {{/* Three views (requirements §6.3): what waits on you, what you asked of
      others, and what you have handled. The task badge is the one count. */}}
 <nav class="tabs" aria-label="Inbox">
-  {{template "_tab" (tab "To do" "/inbox" (eq $d.Tab ""))}}
-  {{template "_tab" (tab "Sent" "/inbox?tab=sent" (eq $d.Tab "sent"))}}
-  {{template "_tab" (tab "Done" "/inbox?tab=done" (eq $d.Tab "done"))}}
+  {{template "_tab" (icontab "To do" "/inbox" "inbox" (eq $d.Tab ""))}}
+  {{template "_tab" (icontab "Sent" "/inbox?tab=sent" "arrow-up" (eq $d.Tab "sent"))}}
+  {{template "_tab" (icontab "Done" "/inbox?tab=done" "check" (eq $d.Tab "done"))}}
 </nav>
 
 {{if eq $d.Tab ""}}
@@ -37,12 +37,15 @@
 
 <h2>Waiting for you</h2>
 {{if $d.InboxGroups}}
-<div class="card-list">
+{{/* Each task is drawn as an action run (§6.3): what runs, who asked, the
+     form card, and the result below the card. */}}
+<div class="stack">
 {{range $d.InboxGroups}}
   {{range .Tasks}}
   {{$t := .Task}}
-  <div class="task-card">
-    <div class="task-ask">{{template "_task_asker" $t}}{{if $t.WaitingOnPeer}} <span class="muted small">· waiting on a peer</span>{{end}}</div>
+  <div>
+    <h3 class="flush">{{template "_task_runs" $t}}</h3>
+    <p class="muted small flush">{{template "_task_from" $t}}</p>
     {{template "_call_form" (completeForm $.CSRFField $t.ID $t.Price .Form.Editable .Form.IsApproval $t.PartialArgs nil .CanDecline)}}
   </div>
   {{end}}
@@ -55,7 +58,7 @@
 {{else if $d.Rows}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>ID</th><th>{{if eq $d.Tab "sent"}}To{{else}}From{{end}}</th><th>Task</th><th>Status</th><th class="money">Price</th><th></th></tr></thead>
+  <thead><tr><th>ID</th><th>{{if eq $d.Tab "sent"}}To{{else}}From{{end}}</th><th>Runs</th><th>Status</th><th class="money">Price</th><th></th></tr></thead>
   <tbody>{{range $d.Rows}}{{template "_task_row" .}}{{end}}</tbody>
 </table>
 </div>

@@ -441,7 +441,7 @@
      aria-current from one bool, so they can never diverge. A non-empty .Data
      marks a JS panel toggle (login): it adds data-tab + role="tab". Build one
      via the `tab` / `paneltab` helpers. */}}
-{{define "_tab"}}<a class="tab{{if .Active}} active{{end}}" href="{{.Href}}"{{with .Data}} data-tab="{{.}}" role="tab"{{end}}{{if .Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+{{define "_tab"}}<a class="tab{{if .Active}} active{{end}}" href="{{.Href}}"{{with .Data}} data-tab="{{.}}" role="tab"{{end}}{{if .Active}} aria-current="page"{{end}}>{{with .Icon}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#{{.}}"/></svg> {{end}}{{.Label}}</a>{{end}}
 
 {{/* _pager — offset pagination for a list (§5). Quiet links, never accented: a
      boundary renders a dimmed non-link. Renders nothing on a single page. Build
@@ -460,23 +460,25 @@
 <div class="banner banner-error" role="alert">{{.}}</div>
 {{end}}
 
-{{/* _task_asker names who asks for a task, from what its row names: the
-     requester, whom the task acts for, then what the task is (_task_what).
-     _task_what is the creating action and its target when this kernel holds
-     the task, or the holding kernel's name when another kernel holds it (the
-     row then names no action). Input: client.Task. */}}
-{{define "_task_what"}}{{if .CreatedBy}}{{template "_ref" (ref .CreatedBy "")}} needs {{end}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
-{{define "_task_asker"}}<span class="mono">{{.Requester}}</span> · {{template "_task_what" .}}{{end}}
+{{/* A task is drawn as an action run (requirements §6.3): what runs, then who
+     asked, how it reached you and when. _task_runs is the completion target —
+     its address, since the kernel serves no title and the target may be an
+     action the completer cannot read — or, for a task another kernel holds,
+     that kernel's name. _task_from is the requester, whom the task acts for
+     and as whom it runs, the creating action when the row names it, the age,
+     and a peer still owed its answer. Input: client.Task. */}}
+{{define "_task_runs"}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
+{{define "_task_from"}}asked by <span class="mono">{{.Requester}}</span>{{with .CreatedBy}} · via {{template "_ref" (ref . "")}}{{end}}{{with relTime .CreatedAt}} · {{.}}{{end}}{{if .WaitingOnPeer}} · waiting on a peer{{end}}{{end}}
 
 {{/* _task_row — one row of Sent or Done (requirements §6.3): the ID, opening
      the answer where the viewer may read it (the task's owner), the other
-     party, what the task is, its status and price, and Cancel while a task the
+     party, what runs and via what, its status and price, and Cancel while a task the
      viewer sent still waits. Input: taskRow. */}}
 {{define "_task_row"}}{{$t := .}}
 <tr>
   <td class="id mono">{{if $t.Answer}}<a href="/transactions/{{$t.TxID}}" title="{{$t.ID}}">{{truncate 8 $t.ID}}</a>{{else}}<span title="{{$t.ID}}">{{truncate 8 $t.ID}}</span>{{end}}</td>
   <td class="mono">{{$t.Other}}</td>
-  <td>{{template "_task_what" $t.Task}}</td>
+  <td>{{template "_task_runs" $t.Task}}{{with $t.CreatedBy}}<div class="small muted">via {{template "_ref" (ref . "")}}</div>{{end}}</td>
   <td><span class="pill {{statusClass $t.Status}}">{{$t.Status}}</span></td>
   <td class="money">{{template "_price" (price $t.Price false)}}</td>
   <td>{{if $t.Cancel}}{{$c := declineForm .CSRFField $t.ID "Cancel"}}{{template "_task_decline" $c}}{{template "_decline_button" $c}}{{end}}</td>

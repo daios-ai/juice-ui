@@ -256,6 +256,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"txrow":          txRowOf,
 		"kindBadge":      kindBadge,
 		"tab":            tab,
+		"icontab":        icontab,
 		"paneltab":       paneltab,
 		"actionsHref":    actionsHref,
 		"runForm":        r.runForm,
@@ -742,6 +743,7 @@ func refFolder(ref string) string {
 // (login) — it adds data-tab + role="tab". Built via tab / paneltab.
 type Tab struct {
 	Label, Href, Data string
+	Icon              string // a sprite id drawn before the label, on a tab that is a place
 	Active            bool
 }
 
@@ -920,6 +922,12 @@ func statStrip(price int64, s *client.Stats, counts, withPrice bool) StatStrip {
 
 // tab builds a plain navigation tab (list filters, scope switch).
 func tab(label, href string, active bool) Tab { return Tab{Label: label, Href: href, Active: active} }
+
+// icontab builds a tab that is a place rather than a filter (the inbox's To do,
+// Sent and Done): the same tab, its icon before the word.
+func icontab(label, href, icon string, active bool) Tab {
+	return Tab{Label: label, Href: href, Icon: icon, Active: active}
+}
 
 // paneltab builds a login toggle tab: its href is /login?tab=<key> and its Data
 // (the panel key) makes _tab emit data-tab + role="tab" for the JS swap.

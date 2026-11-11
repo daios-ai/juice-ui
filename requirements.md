@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.64.0
+Version: 0.65.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.65.0.** A task is drawn as an action run, every task
+> alike: what runs, then who asked, via what and when, then the one form card,
+> its result below the card and never inside the request's frame. The
+> `sys/message` rule is gone. The inbox's tabs are places and carry an icon
+> beside the word (§6.3, §9).
 
 > **What changed in 0.64.0.** The inbox is three tabs: To do (requests and the
 > tasks waiting on you), Sent (what you asked of others, cancelled there while
@@ -2019,13 +2025,22 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   asked (kernel D6), so the kernel serves its transaction to its owner and
   refuses the one who answered (verified live). Every finished Sent row opens
   its answer, and a Done row only on a task the viewer sent itself.
-* **Who asks** is what the row names. A row carries `requester`, the party the
-  task acts for and as whom its completion runs (kernel D6), named first; then
-  `created_by` (the creating action) and `action` (the completion target) when
-  this kernel holds the task; a task held on another kernel is listed here
-  without them, its `owner` the holding kernel's name, rendered as every kernel
-  name is (§6.6: a petname whole, a key truncated). The card names what the row
-  names and nothing else.
+* **A task is drawn as an action run**, every task alike, since completing one
+  is a call someone else prepared (kernel: `CompleteTask = Call(action,
+  partial_args ⊕ input)`): a head, the one form card (`_call_form`), and the
+  result **below** that card, as on an action's page — never inside the
+  request's frame, and no frame wraps a task. The head is **what runs**, the
+  completion target `action`, by its address, since the kernel serves no title
+  for a task and the target may be an action the completer cannot read; then,
+  muted, **who asked** — `requester`, the party the task acts for and as whom it
+  runs (kernel D6) — `via` `created_by` (the creating action) when the row
+  names it, and the age. A task held on another kernel names no action and no
+  creator: its head is the holding kernel's name (`owner`), rendered as every
+  kernel name is (§6.6: a petname whole, a key truncated). The card names what
+  the row names and nothing else, and a Sent or Done row names the same: what
+  runs, `via` its creator.
+* **The tabs are places**, so each carries its icon before its word (the tray,
+  an arrow up, a check); the word stays, for a screen reader and a phone.
 * **Requests and contacts (kernel U52).** A task from a requester the user has
   not approved is withheld: it is not listed, read by id it is not found, and
   nothing the requester wrote is served (verified live). `GET
@@ -2081,8 +2096,6 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   **`Cancel`** for the one who asked, on the task's Sent row, behind "Cancel
   this task?". The kernel refuses anyone else and any task no longer waiting.
 * Completed and cancelled tasks MUST appear on Sent or Done.
-* `sys/message` tasks MUST render as a message (sender, text, acknowledge
-  button).
 * Task creation MUST NOT be a browser form. `POST /v1/tasks` binds a live
   funding trace, and a trace id is exactly the process bookkeeping this UI keeps
   hidden (§6.5) — a form demanding one is unusable by the person the inbox is
@@ -3144,7 +3157,7 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    owner distinguished, in a confusable-distinct monospace face, with the owner
    profile one click away for a local owner and no link for another kernel's;
    show a first-time-payee hint on the run form.
-4. Show, on a task card, the sealed `partial_args` and who asks (§6.3).
+4. Show, on a task card, what runs, who asks and the sealed `partial_args` (§6.3).
 5. Render receipt-verification failures with the failed check named, and MUST NOT
    display `valid` except from the kernel's own per-check response.
 6. Hold no durable state but sessions, compose only documented HTTP calls, never

@@ -532,10 +532,6 @@ form[aria-busy="true"] [inert] { opacity: .5; }
 }
 /* A hidden input occupies no slot in a stack. */
 .stack > input[type=hidden] + * { margin-top: 0; }
-/* Inbox task cards — calm: who asks + what, then the neutral Complete. */
-.task-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3) var(--space-4); }
-.task-ask { margin-bottom: var(--space-2); font-size: var(--font-size-md); }
-.task-card .card { border: none; padding: 0; background: none; }
 .field.inline { margin: 0; }
 .field.flush  { margin: 0; }
 .field .help { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 400; margin: 0 0 var(--space-1); overflow-wrap: anywhere; }

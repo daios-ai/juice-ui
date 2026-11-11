@@ -1838,7 +1838,10 @@ func TestInboxShowsWaitingTask(t *testing.T) {
 	}
 }
 
-func TestInboxGroupsByCreatingAction(t *testing.T) {
+// A task is drawn as an action run (§6.3): its head is what runs, then who
+// asked, via what and when; then the one form card, whose result follows it
+// below and outside any other frame.
+func TestInboxTaskIsAnActionRun(t *testing.T) {
 	kernel := authKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -1847,14 +1850,19 @@ func TestInboxGroupsByCreatingAction(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/inbox")
 
-	// Each task card names who asked (the creating action, sys/make) in its ask
-	// line — "sys/make needs …" — not just the completion target. The old separate
-	// group heading is gone (simplified inbox), but the attribution stays.
-	if !strings.Contains(body, "needs") {
-		t.Errorf("task card must name who asks (an ask line): %s", body)
+	head := regexp.MustCompile(`(?s)<h3 class="flush"><span class="ref mono"><span class="owner"><a href="/browse\?owner=alice%40testnet">alice@testnet</a></span>/hello</span></h3>\s*` +
+		`<p class="muted small flush">asked by <span class="mono">bob@testnet</span> · via <span class="ref mono"><span class="owner"><a href="/browse\?owner=sys%40testnet">sys@testnet</a></span>/make</span> · \d+ days? ago</p>\s*` +
+		`<form class="card stack" method="post" action="/inbox/S1/complete"`)
+	if !head.MatchString(body) {
+		t.Errorf("a task heads with what runs, then who asked, via what and when, then its form card: %s", body)
 	}
-	if !strings.Contains(body, "/make") {
-		t.Errorf("task card must name the creating action sys/make: %s", body)
+	if strings.Contains(body, "task-card") || strings.Contains(body, " needs ") {
+		t.Error("no frame wraps a task, and no sentence of addresses heads it")
+	}
+	// The result follows the form card directly (after the decline form), as on
+	// an action page: never inside the task's frame.
+	if !regexp.MustCompile(`(?s)</form>\s*<form id="decline-S1"[^>]*>.*?</form>\s*<div id="[^"]+"></div>\s*</div>`).MatchString(body) {
+		t.Error("the result sits below the form card")
 	}
 	// Both completion forms are present, one per task.
 	if !strings.Contains(body, `action="/inbox/S1/complete"`) || !strings.Contains(body, `action="/inbox/S2/complete"`) {
@@ -2879,8 +2887,12 @@ func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	if len(taskActionReads) != 0 {
 		t.Errorf("the inbox reads no action: %v", taskActionReads)
 	}
-	if !strings.Contains(page, `<span class="mono">alice@testnet</span> · `) || !strings.Contains(page, `<span class="mono">dan@bravo</span> · `) {
+	if !strings.Contains(page, `asked by <span class="mono">alice@testnet</span> · via`) || !strings.Contains(page, `asked by <span class="mono">dan@bravo</span> · `) {
 		t.Errorf("each card names its requester: %s", page)
+	}
+	// A task another kernel holds names no action: its head is that kernel.
+	if !regexp.MustCompile(`<h3 class="flush"><span class="mono" title="[^"]+">`).MatchString(page) {
+		t.Errorf("a held task heads with the holding kernel's name: %s", page)
 	}
 	if resp, err := cl.Get(srv.URL + "/inbox/SO"); err != nil || resp.StatusCode != http.StatusNotFound {
 		t.Errorf("a task has no page of its own: %v %v", resp.StatusCode, err)
@@ -3052,9 +3064,20 @@ func TestInboxTabs(t *testing.T) {
 	if got := ids(todo); !slices.Equal(got, []string{"SP", "SO", "SH", "SR"}) {
 		t.Errorf("To do holds %v, want the four waiting on bob", got)
 	}
-	if !strings.Contains(todo, `<a class="tab active" href="/inbox" aria-current="page">To do</a>`) ||
-		!strings.Contains(todo, `<a class="tab" href="/inbox?tab=sent">Sent</a>`) || !strings.Contains(todo, `<a class="tab" href="/inbox?tab=done">Done</a>`) {
-		t.Error("the inbox has three tabs, To do current by default")
+	icon := func(id string) string {
+		return `<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#` + id + `"/></svg> `
+	}
+	if !strings.Contains(todo, `<a class="tab active" href="/inbox" aria-current="page">`+icon("inbox")+`To do</a>`) ||
+		!strings.Contains(todo, `<a class="tab" href="/inbox?tab=sent">`+icon("arrow-up")+`Sent</a>`) ||
+		!strings.Contains(todo, `<a class="tab" href="/inbox?tab=done">`+icon("check")+`Done</a>`) {
+		t.Error("the inbox has three tabs, each a place with its icon and its word, To do current by default")
+	}
+	if !strings.Contains(getBody(t, cl, srv.URL+"/inbox?tab=sent"), "<th>Runs</th>") {
+		t.Error("a Sent row names what runs")
+	}
+	// A filter tab is a word: icons mark places only.
+	if regexp.MustCompile(`class="tab[^"]*"[^>]*><svg`).MatchString(getBody(t, cl, srv.URL+"/workshop")) {
+		t.Error("a filter tab carries no icon")
 	}
 	// Decline stands in the card's command row, beside Complete, behind its
 	// plain confirm, submitting its own form through the form attribute.
