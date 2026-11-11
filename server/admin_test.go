@@ -1138,7 +1138,12 @@ func TestAdminModelsPage(t *testing.T) {
 	for _, want := range []string{
 		`<h1>Models</h1>`, `name="version" value="v1"`,
 		`<option value="other" selected>Other (OpenAI-compatible)</option>`, `value="` + addr + `"`, `value="chat-1"`,
-		`<option value="chat-2"></option>`, `placeholder="configured ✓ (replace)"`, `name="chat_price"`, `value="5"`,
+		`<select id="m-chat-model" name="chat_model" class="mono">`, `<option value="chat-1" selected>chat-1</option>`, `<option value="chat-2">chat-2</option>`,
+		`hx-target="#m-chat-model-field"`, `hx-sync="closest [data-group]:replace"`,
+		`<select id="m-chat-provider" name="chat_provider" data-reveal="provider" hx-post="/admin/models/model">`,
+		`name="chat_url" type="url" class="mono" placeholder="http://localhost:8000/v1" value="` + addr + `" autocomplete="off" hx-post="/admin/models/model">`,
+		`<h3 class="flush">Chat model</h3>`, `<h3 class="flush">Embedding model</h3>`,
+		`placeholder="configured ✓ (replace)"`, `name="chat_price"`, `value="5"`,
 		`<option value="" selected>None</option>`, `data-reveal="provider"`,
 		`<button class="btn-primary" type="submit" data-confirm="Restart the kernel to apply?">Save and restart</button>`,
 		`>List models</button>`, `<h2>Other models</h2>`, `<td class="mono">sold</td>`,
@@ -1158,7 +1163,7 @@ func TestAdminModelsPage(t *testing.T) {
 func TestAdminModelsSave(t *testing.T) {
 	fc, srv, cl, addr := modelsServer(t)
 	base := url.Values{"chat_provider": {"other"}, "chat_url": {addr}, "chat_model": {"chat-2"}, "chat_price": {"3"},
-		"embed_provider": {"same"}, "embed_model": {"embed-1"}, "embed_price": {"0"}}
+		"embed_provider": {"other"}, "embed_url": {addr}, "embed_model": {"embed-1"}, "embed_price": {"0"}}
 	with := func(kv ...string) url.Values {
 		v := url.Values{}
 		for k, x := range base {
@@ -1170,15 +1175,15 @@ func TestAdminModelsSave(t *testing.T) {
 		return v
 	}
 	if code, body, _ := modelsPost(t, cl, srv.URL, with("list", "1", "chat_key", "typed")); code != 200 || fc.wrote != "" ||
-		!strings.Contains(body, `<option value="embed-1"></option>`) || strings.Contains(body, "typed") {
+		!strings.Contains(body, `<option value="embed-1" selected>embed-1</option>`) || strings.Contains(body, "typed") {
 		t.Errorf("List models: %d, wrote %q", code, fc.wrote)
 	}
 	for kv, want := range map[[2]string]string{
 		{"chat_model", "nope"}:          "serves no model nope",
 		{"chat_key", "wrong"}:           "Incorrect API key provided.",
 		{"chat_price", "1.5"}:           "Price: amount must be a whole number here.",
-		{"embed_provider", "anthropic"}: "Anthropic serves no search models",
-		{"chat_provider", "same"}:       "Choose a provider for chat.",
+		{"embed_provider", "anthropic"}: "Anthropic serves no embedding models",
+		{"chat_provider", "same"}:       "Choose a provider for the chat model.",
 	} {
 		code, body, _ := modelsPost(t, cl, srv.URL, with(kv[0], kv[1], "embed_key", "k"))
 		if code != http.StatusUnprocessableEntity || !strings.Contains(body, html.EscapeString(want)) || fc.wrote != "" ||
@@ -1212,6 +1217,53 @@ func TestAdminModelsSave(t *testing.T) {
 	fc.err = errors.New("the kernel did not start with this configuration; the previous one is restored: bad")
 	if _, _, flash := modelsPost(t, cl, srv.URL, with()); !strings.Contains(flash, "previous one is restored") {
 		t.Errorf("refusal flashed %q", flash)
+	}
+}
+
+// A block's model field is asked for again as the form stands: a select of
+// the models the provider lists, the model chosen kept, and a text input where
+// it lists none. It writes nothing.
+func TestAdminModelsField(t *testing.T) {
+	fc, srv, cl, addr := modelsServer(t)
+	page := getBody(t, cl, srv.URL+"/admin/models")
+	// As htmx sends it: the token in the header, the form in the body.
+	field := func(v url.Values) (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/admin/models/model", strings.NewReader(v.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("X-CSRF-Token", csrfTokenFrom(t, page))
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	code, body := field(url.Values{"block": {"embed"}, "list": {"1"}, "embed_provider": {"other"}, "embed_url": {addr}})
+	for _, want := range []string{`id="m-embed-model-field"`, `<select id="m-embed-model" name="embed_model" class="mono">`,
+		`<option value="" selected></option>`, `<option value="embed-1">embed-1</option>`} {
+		if code != 200 || !strings.Contains(body, want) {
+			t.Errorf("field %d lacks %q: %s", code, want, body)
+		}
+	}
+	if strings.Contains(body, "m-chat-model") || fc.wrote != "" {
+		t.Error("the answer is the one block's field, and nothing is written")
+	}
+	notFound := httptest.NewServer(http.NotFoundHandler())
+	defer notFound.Close()
+	_, body = field(url.Values{"block": {"chat"}, "chat_provider": {"other"}, "chat_url": {notFound.URL}, "chat_model": {"typed-1"}})
+	if !strings.Contains(body, `<input id="m-chat-model" name="chat_model" type="text" class="mono" value="typed-1"`) {
+		t.Errorf("a provider that lists none takes a typed model: %s", body)
+	}
+	_, body = field(url.Values{"block": {"chat"}, "chat_provider": {"other"}, "chat_url": {addr}, "chat_model": {"retired"}})
+	if !strings.Contains(body, `<option value="retired" selected>retired</option>`) {
+		t.Error("a model the provider no longer lists stays chosen")
+	}
+	resp := postTo(t, loginClientAs(t, srv.URL, "alice"), srv.URL+"/admin/models/model", page, url.Values{"block": {"chat"}})
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Error("the superuser's alone")
 	}
 }
 

@@ -94,6 +94,10 @@ type Job struct {
 	Return string // a page a failure returns to, with its words
 }
 
+// ModelsRefresh is where the models page asks for a block's model field
+// again, when its provider, address or key changes.
+const ModelsRefresh = "/install/models/model"
+
 // retryPause is how long a failed job that retries waits before its next
 // attempt. A variable so tests shorten it.
 var retryPause = 10 * time.Second
@@ -436,8 +440,34 @@ func (in *Installer) Handler() http.Handler {
 	mux.HandleFunc("POST /install/next", in.post(in.next))
 	mux.HandleFunc("POST /install/back", in.post(in.back))
 	mux.HandleFunc("POST /install/retry", in.post(in.retry))
+	mux.HandleFunc("POST "+ModelsRefresh, in.postModel)
 	mux.HandleFunc("/", in.getStep)
 	return mux
+}
+
+// postModel answers one block's model field of the models page, for the
+// answers as posted, with the models the chosen provider lists; the answers
+// are held, as List models holds them. Only the person at this machine asks,
+// and only while the models page is current.
+func (in *Installer) postModel(w http.ResponseWriter, r *http.Request) {
+	if !in.local(r) || !sameOrigin(r) {
+		http.Error(w, "Juice is installed at this machine", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	in.mu.Lock()
+	if in.seq == nil || in.at >= len(in.seq) || in.seq[in.at].ID != "models" {
+		in.mu.Unlock()
+		http.Error(w, "the models page is not current", http.StatusConflict)
+		return
+	}
+	in.models, _, _ = in.o.Kernel.Models(in.ctx, r.PostForm, in.models)
+	view := in.o.Kernel.ModelsView(in.ctx, in.models)
+	in.mu.Unlock()
+	_ = in.o.Chrome.Fragment(w, http.StatusOK, "_models_refresh", struct {
+		Form  any
+		Field string
+	}{view, r.PostFormValue("block")})
 }
 
 // Behind is the listener's handler once the application serves: the job

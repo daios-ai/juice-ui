@@ -426,6 +426,7 @@ func New(o Options) (http.Handler, error) {
 		mux.HandleFunc("POST /admin/config/form", s.requireSuperuser(s.postAdminConfigForm))
 		mux.HandleFunc("GET /admin/models", s.requireSuperuser(s.getAdminModels))
 		mux.HandleFunc("POST /admin/models", s.requireSuperuser(s.postAdminModels))
+		mux.HandleFunc("POST /admin/models/model", s.requireSuperuser(s.postAdminModelsModel))
 	}
 	mux.HandleFunc("GET /admin/peers", s.requireSuperuser(s.getAdminPeers))
 	// The literal /inspect pattern is more specific than /{key}, so it wins; a

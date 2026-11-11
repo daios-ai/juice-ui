@@ -118,7 +118,9 @@ func (k *fakeKernel) Models(_ context.Context, form url.Values, held any) (any, 
 }
 func (k *fakeKernel) ModelsView(ctx context.Context, setup any) any {
 	s, _ := setup.(models.Setup)
-	return models.View(ctx, s, s)
+	f := models.View(ctx, s, s)
+	f.Refresh(ModelsRefresh)
+	return f
 }
 func (k *fakeKernel) Start(context.Context) error {
 	if k.holdStart != nil {
@@ -387,7 +389,7 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	waitFor(t, in, "summary")
 	b = page(t, h)
 	for _, want := range []string{"polygon", "alpha", "/home/x/.juice/kernels/polygon", "Losing that directory loses the money", ">Install</button>",
-		"<dt>Chat model</dt><dd>m1 · http://127.0.0.1:1/v1</dd>", "<dt>Search model</dt><dd>None</dd>"} {
+		"<dt>Chat model</dt><dd>m1 · http://127.0.0.1:1/v1</dd>", "<dt>Embedding model</dt><dd>None</dd>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("summary lacks %q", want)
 		}
@@ -584,7 +586,7 @@ func TestTheModelsStep(t *testing.T) {
 	waitFor(t, in, "models")
 	b := page(t, h)
 	for _, want := range []string{`name="chat_provider" data-reveal="provider"`, `<option value="other" selected>`, `value="first"`,
-		`>List models</button>`, `<h3 class="flush">Chat, JSON and decide</h3>`, `<h3 class="flush">Search</h3>`, "Step 3 of 6"} {
+		`>List models</button>`, `<h3 class="flush">Chat model</h3>`, `<h3 class="flush">Embedding model</h3>`, `hx-post="/install/models/model"`, "Step 3 of 6"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("the models page lacks %q", want)
 		}
@@ -609,8 +611,31 @@ func TestTheModelsStep(t *testing.T) {
 	if held != "sk-typed" {
 		t.Error("a blank key keeps the one typed before")
 	}
+	// A block's model field is answered as the form stands, and the answers are
+	// held; only from this machine, and only while the page is current.
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"data":[{"id":"m-1"},{"id":"m-2"}]}`)
+	}))
+	defer provider.Close()
+	asked := url.Values{"block": {"chat"}, "list": {"1"}, "step": {"models"}, "chat_provider": {"other"}, "chat_url": {provider.URL}, "chat_model": {"m-2"}}
+	rec = do(t, h, http.MethodPost, ModelsRefresh, asked, nil)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `<option value="m-2" selected>m-2</option>`) || strings.Contains(rec.Body.String(), "<form") {
+		t.Errorf("the field: %d %s", rec.Code, rec.Body.String())
+	}
+	in.mu.Lock()
+	chosen := in.models.(models.Setup).Chat.ID
+	in.mu.Unlock()
+	if chosen != "m-2" {
+		t.Error("the answers are held")
+	}
+	if rec := do(t, h, http.MethodPost, ModelsRefresh, asked, map[string]string{"X-Forwarded-For": "203.0.113.9"}); rec.Code != http.StatusForbidden {
+		t.Errorf("from elsewhere: %d", rec.Code)
+	}
 	next(t, h, "models", url.Values{"chat_provider": {""}, "embed_provider": {""}})
 	waitFor(t, in, "phrase")
+	if rec := do(t, h, http.MethodPost, ModelsRefresh, asked, nil); rec.Code != http.StatusConflict {
+		t.Errorf("past the page: %d", rec.Code)
+	}
 }
 
 // A failed download is shown and tried again; a failure that does not retry

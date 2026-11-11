@@ -1,11 +1,19 @@
 # Juice Web UI Requirements
 
-Version: 0.61.0
+Version: 0.61.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.61.1.** The models form's model is a select of the models
+> the provider lists, refreshed in place when the provider, its address or its
+> key changes; a text input remains only where a provider lists none. The two
+> blocks are the **Chat model** and the **Embedding model**, the kernel's two
+> kinds, each with its own provider: "Same as chat" is gone, since an embedding
+> model is never the chat model. A key typed once for an address serves both
+> blocks there (§6.6).
 
 > **What changed in 0.61.0.** The kernel's language models are chosen in one
 > form: a provider, its key and a model, for the chat model behind chat, JSON
-> and decide, and for the search model. A new machine chooses them in the
+> and decide, and for the embedding model. A new machine chooses them in the
 > installer's Models step, before the first boot; afterwards the operator's
 > Models page changes them, and the configuration page no longer shows them
 > (§1, §6.6). Installing a component runs its setup, so its schemas are
@@ -1047,7 +1055,7 @@ words, polled until it answers. Nothing on that card names an installation.
   kernel's name and the superuser's password, twice, with `sys` read-only above
   it. The world and the kernel name each state their one consequence.
 * **Models** chooses the kernel's language models with the models form (§6.6):
-  the chat model, behind the kernel's chat, JSON and decide, and the search
+  the chat model, behind the kernel's chat, JSON and decide, and the embedding
   model. It opens on the first provider on this machine that runs, with the
   models the kernel's own schema states as its defaults where that provider
   serves them, and otherwise on None. None leaves the roles unbound and writes
@@ -1062,7 +1070,7 @@ words, polled until it answers. Nothing on that card names an installation.
   understand" box, held in memory and stored nowhere, and dropped when the
   sequence ends.
 * **Summary** names the world, the kernel name, the superuser, the chat and
-  search models and the kernel's home, and is the point of no return: nothing before it writes anything. On a
+  embedding models and the kernel's home, and is the point of no return: nothing before it writes anything. On a
   world whose rail is a chain (`evm`) it states, behind the alert icon, that the
   vault's keys live in that home and that losing it loses the money. Its button
   is **Install**.
@@ -2522,36 +2530,44 @@ it withholds; an agent's `config.json` is its second instance (§6.1).
 
 **Models.** The kernel's language models are entries of `native.llm.models`
 and four bindings (kernel D17). The **models form** chooses them, one form
-with one block per kind the kernel uses: **Chat, JSON and decide**, the chat
-model, which the three chat roles share, and **Search**, the embedding model.
+with one block per kind of model the kernel has (`kind`): the **Chat model**,
+which the three chat roles share, and the **Embedding model**. Each block has
+its own provider: an embedding model is never the chat model.
 The installer's Models step (§1) and the operator's **Models** page render it
 alike; the page is reached from `admin` and the registry, and exists only for
 this installation's kernel, when its schema describes the entries it writes,
 so an older kernel's file is never written there.
 
-* A block is a provider, its address (Other alone), its key and the model. The
-  providers are data in the UI, each only an address and a wire protocol: Ollama
-  and LM Studio on this machine, OpenAI, Anthropic, OpenRouter, Other
-  (OpenAI-compatible) and Other (Anthropic-compatible), each of the two taking any
-  address, and None; Search adds Same as chat. An address the list does not hold
-  is shown and kept under the Other of its protocol, so a gateway or a proxy is
-  never moved to a public address. Search offers no provider whose protocol
-  serves no embedding model (Anthropic), and the server refuses one whatever the
-  form sent. A provider is not a kernel concept,
-  and the kernel is not changed.
-* The model is typed, with the models the provider lists (`GET <address>/models`,
-  asked as the kernel asks it) offered as suggestions. The providers on this
-  machine are asked whenever the form is shown, and say how many models they
-  serve or that they are not running. **List models** asks the chosen providers
-  and shows the form again; it writes nothing. A provider that lists no models
-  takes the model as typed.
+* A block is a provider, its address (a custom provider's alone), its key and
+  the model. The providers are data in the UI, each only an address and one of
+  the kernel's two wire protocols, `openai` and `anthropic`: Ollama and LM Studio
+  on this machine, OpenAI, Anthropic, OpenRouter, Other (OpenAI-compatible) and
+  Other (Anthropic-compatible), the last two taking any address, and None. An
+  address the list does not hold is shown and kept under the custom provider of
+  its protocol, so a gateway or a proxy is never moved to a public address. The
+  Embedding model offers only providers on the `openai` protocol, since the
+  kernel's `anthropic` adaptor serves no embedding model and refuses such an
+  entry, and the server refuses one whatever the form sent. A provider is not a
+  kernel concept, and the kernel is not changed.
+* The model is a select of the models the provider lists (`GET <address>/models`,
+  asked as the kernel asks it), the model chosen selected; a model the provider
+  no longer lists stays chosen as the first option, and the save then refuses
+  it. A provider that lists none, or that could not be asked yet (a key not yet
+  given), takes the model typed in a text input. A change of the block's
+  provider, address or key asks for the block's model field again and swaps it
+  in place (`POST /admin/models/model`, `/install/models/model`), a later change
+  replacing a request still in flight, so the key typed stays as typed; without script, **List models** asks the chosen
+  providers and shows the form again. Neither writes anything. The providers on
+  this machine are asked whenever the form is shown, and say how many models they
+  serve or that they are not running.
 * A key is write-only: a key held for the provider's address says so in its
   placeholder, `configured ✓ (replace)`, and a blank key keeps it — the block's
-  own key first, so two blocks at one address keep their own. A key typed
-  and not yet saved is typed again.
+  own key first, so two blocks at one address keep their own, and a key typed in
+  one block serves the other at the same address. On the page a key typed and
+  not yet saved is typed again after List models.
 * The form's command (Next, or **Save and restart**) is refused, with what to do,
   for a block left incomplete, a provider that does not answer, refuses its key
-  or does not serve the model, and search on a protocol without embedding models.
+  or does not serve the model, and an embedding model on the `anthropic` protocol.
 * What it writes is the kernel's own shape. The roles a block names are bound to
   its entry, and None leaves them unbound. An entry is reused only when it is the
   same model on the same protocol and address, of the same kind: it keeps its
@@ -3130,8 +3146,10 @@ Every production `.go` file has a `_test.go` file with independent tests.
   refusal in the provider's words, no redirect followed; the setup written in
   the kernel's shape over an empty file, the kernel's defaults and an operator's
   extra entry; an entry reused only when it is the same model and kind, enabled;
-  names distinct and within the kernel's rule; search refused on a protocol
-  without embedding models; no provider asked by a test; the Models page gated to
+  names distinct and within the kernel's rule; an embedding model refused on a
+  protocol without them; a key typed once serving both blocks at its address; the
+  model field a select of the provider's models, refreshed by its endpoint, a
+  text input where the provider lists none; no provider asked by a test; the Models page gated to
   the superuser, this installation's kernel and a schema that describes the
   entries, a key never rendered, List models writing nothing, a save at the
   page's version; the configuration page showing no model;

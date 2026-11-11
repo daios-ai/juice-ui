@@ -136,7 +136,7 @@ func names(cfg map[string]any) []string {
 
 func TestApplyOnAnEmptyFile(t *testing.T) {
 	cfg := map[string]any{}
-	Apply(cfg, Setup{Chat: Choice{Provider: "openai", Key: "sk", ID: "gpt-5"}, Embed: Choice{Provider: Same, ID: "text-embedding-3-small"}})
+	Apply(cfg, Setup{Chat: Choice{Provider: "openai", Key: "sk", ID: "gpt-5"}, Embed: Choice{Provider: "openai", ID: "text-embedding-3-small"}})
 	l := llmOf(cfg)
 	if l["chat"] != "gpt-5" || l["json"] != "gpt-5" || l["decide"] != "gpt-5" || l["embed"] != "text-embedding-3-small" {
 		t.Fatalf("bindings %v", l)
@@ -188,9 +188,9 @@ func TestApplyReusesOnlyTheSameModel(t *testing.T) {
 		t.Errorf("key and price: %v", disabled)
 	}
 	// The same model of the other kind is another entry, left alone.
-	Apply(cfg, Setup{Chat: Choice{Provider: "openai", ID: "gpt-5"}, Embed: Choice{Provider: Same, ID: "gpt-5"}})
+	Apply(cfg, Setup{Chat: Choice{Provider: "openai", ID: "gpt-5"}, Embed: Choice{Provider: "openai", ID: "gpt-5"}})
 	if llmOf(cfg)["embed"] != "emb" {
-		t.Errorf("the embed entry of that model is reused for search: %v", llmOf(cfg))
+		t.Errorf("the embed entry of that model is reused for the embedding model: %v", llmOf(cfg))
 	}
 	// Once nothing binds them, the entries that were bound leave.
 	Apply(cfg, Setup{Chat: Choice{Provider: "openai", ID: "other-chat"}})
@@ -203,14 +203,14 @@ func TestApplyNamesAreDistinct(t *testing.T) {
 	taken := map[string]any{"name": "gemma4-26b", "enabled": true, "protocol": "openai", "url": "https://y/v1", "id": "z", "kind": "chat"}
 	cfg := file(t, taken)
 	long := strings.Repeat("x", 40)
-	Apply(cfg, Setup{Chat: Choice{Provider: Other, URL: "http://h/v1", ID: "gemma4:26b"}, Embed: Choice{Provider: Same, ID: "gemma4.26b"}})
+	Apply(cfg, Setup{Chat: Choice{Provider: Other, URL: "http://h/v1", ID: "gemma4:26b"}, Embed: Choice{Provider: Other, URL: "http://h/v1", ID: "gemma4.26b"}})
 	got := names(cfg)
 	if !slices.Equal(got, []string{"gemma4-26b", "gemma4-26b-2", "gemma4.26b"}) {
 		t.Errorf("names %v", got)
 	}
 	cfg = map[string]any{"native": map[string]any{"llm": map[string]any{"models": []any{
 		map[string]any{"name": long[:32], "protocol": "openai", "url": "https://y/v1", "id": "q", "kind": "chat"}}}}}
-	Apply(cfg, Setup{Chat: Choice{Provider: Other, URL: "http://h/v1", ID: long}, Embed: Choice{Provider: Same, ID: "Ünï/Code"}})
+	Apply(cfg, Setup{Chat: Choice{Provider: Other, URL: "http://h/v1", ID: long}, Embed: Choice{Provider: Other, URL: "http://h/v1", ID: "Ünï/Code"}})
 	got = names(cfg)
 	if got[1] != long[:30]+"-2" || got[2] != "n-code" {
 		t.Errorf("names %v", got)
@@ -225,7 +225,7 @@ func TestApplyNamesAreDistinct(t *testing.T) {
 func TestFromTheFile(t *testing.T) {
 	cfg := file(t)
 	s := From(cfg)
-	if s.Chat != (Choice{Provider: "ollama", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: Same, ID: "nomic-embed-text"}) {
+	if s.Chat != (Choice{Provider: "ollama", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: "ollama", ID: "nomic-embed-text"}) {
 		t.Errorf("from %+v", s)
 	}
 	Apply(cfg, Setup{Chat: Choice{Provider: "anthropic", Key: "ak", ID: "claude"}, Embed: Choice{Provider: Other, URL: "http://e/v1", ID: "e", Price: 4}, Priced: true})
@@ -248,17 +248,17 @@ func TestCheck(t *testing.T) {
 		want string
 	}{
 		{Setup{}, ""},
-		{Setup{Chat: other(srv.URL, "chat-1"), Embed: Choice{Provider: Same, ID: "embed-1"}}, ""},
+		{Setup{Chat: other(srv.URL, "chat-1"), Embed: other(srv.URL, "embed-1")}, ""},
 		{Setup{Chat: other(srv.URL, "nope")}, "serves no model nope"},
 		{Setup{Chat: other(srv.URL, "")}, "Choose a chat model."},
 		{Setup{Chat: other("localhost:9", "x")}, "starting with http"},
-		{Setup{Chat: Choice{Provider: "bogus"}}, "Choose a provider for chat."},
+		{Setup{Chat: Choice{Provider: "bogus"}}, "Choose a provider for the chat model."},
 		{Setup{Chat: Choice{Provider: "openai", ID: "gpt-5"}}, "OpenAI needs a key."},
 		{Setup{Chat: other(keyed.URL, "m")}, "Incorrect API key provided."},
 		{Setup{Chat: Choice{Provider: Other, URL: keyed.URL, Key: "sk", ID: "m"}}, ""},
-		{Setup{Embed: Choice{Provider: Same, ID: "e"}}, "Choose a provider for search."},
-		{Setup{Embed: Choice{Provider: "anthropic", Key: "k", ID: "e"}}, "Anthropic serves no search models"},
-		{Setup{Chat: Choice{Provider: "anthropic", Key: "k", ID: "c"}, Embed: Choice{Provider: Same, ID: "e"}}, "Anthropic serves no search models"},
+		{Setup{Embed: Choice{Provider: "same", ID: "e"}}, "Choose a provider for the embedding model."},
+		{Setup{Embed: Choice{Provider: "anthropic", Key: "k", ID: "e"}}, "Anthropic serves no embedding models"},
+		{Setup{Embed: Choice{Provider: "other-anthropic", URL: "https://g/v1", Key: "k", ID: "e"}}, "serves no embedding models"},
 	} {
 		err := Check(ctx, c.s)
 		if (c.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.want)) {
@@ -294,11 +294,11 @@ func TestView(t *testing.T) {
 	if note(f.Chat, "here") != "2 models" || note(f.Chat, "gone") != "not running" || note(f.Chat, "openai") != "" {
 		t.Errorf("notes %+v", f.Chat.Options)
 	}
-	if !slices.Equal(f.Chat.Suggestions, []string{"a", "b"}) || !f.Chat.Held || f.Chat.Summary != "a · Here" {
+	if !slices.Equal(f.Chat.Models, []string{"a", "b"}) || f.Chat.Unlisted || !f.Chat.Held || f.Chat.Summary != "a · Here" {
 		t.Errorf("chat block %+v", f.Chat)
 	}
-	if note(f.Embed, "anthropic") != "absent" || note(f.Embed, Same) != "" || note(f.Chat, Same) != "absent" {
-		t.Error("search offers no anthropic, and Same only there")
+	if note(f.Embed, "anthropic") != "absent" || note(f.Embed, "other-anthropic") != "absent" || note(f.Chat, "anthropic") != "" {
+		t.Error("the embedding block offers no anthropic-protocol provider, the chat block does")
 	}
 	if f.Embed.Problem == "" {
 		t.Error("a provider that could not be asked says why")
@@ -306,16 +306,23 @@ func TestView(t *testing.T) {
 	if !f.Chat.Shown(f.Chat.ForModel) || f.Chat.Shown(f.Chat.ForURL) || f.Chat.Shown(f.Chat.ForKey) || !f.Embed.Shown(f.Embed.ForKey) || !f.Embed.Shown(f.Embed.ForURL) {
 		t.Errorf("parts shown: %+v %+v", f.Chat, f.Embed)
 	}
-	// Search on the chat block's provider is not offered beside an anthropic
-	// chat, and a provider that needs a key is not asked without one.
+	// A model the provider no longer lists stays chosen, marked; the form
+	// answers a block's field where its host says.
+	f = View(context.Background(), Setup{Chat: Choice{Provider: "here", ID: "gone-model"}}, Setup{})
+	f.Refresh("/x")
+	if !f.Chat.Unlisted || f.Block("chat").Refresh != "/x" || f.Block("embed").Field != "embed" {
+		t.Errorf("unlisted %+v", f.Chat)
+	}
+
+	// A provider that needs a key is not asked without one.
 	f = View(context.Background(), Setup{Chat: Choice{Provider: "anthropic", ID: "c"}}, Setup{})
-	if note(f.Embed, Same) != "absent" || f.Chat.Problem != "" || f.Chat.Suggestions != nil {
+	if f.Chat.Problem != "" || f.Chat.Models != nil {
 		t.Errorf("anthropic without a key: %+v", f.Chat)
 	}
-	// A provider search cannot use is not asked for search.
+	// A provider the embedding block cannot use is not asked for it.
 	f = View(context.Background(), Setup{Embed: Choice{Provider: "anthropic", Key: "k", ID: "e"}}, Setup{})
-	if f.Embed.Problem != "" || f.Embed.Suggestions != nil {
-		t.Errorf("anthropic for search is not asked: %+v", f.Embed)
+	if f.Embed.Problem != "" || f.Embed.Models != nil {
+		t.Errorf("anthropic for embedding is not asked: %+v", f.Embed)
 	}
 }
 
@@ -328,7 +335,7 @@ func TestInitialAndSupported(t *testing.T) {
 	  "default":[{"url":"` + srv.URL + `/v1","id":"gemma4:26b","kind":"chat"},{"url":"` + srv.URL + `/v1","id":"nomic-embed-text","kind":"embed"}],
 	  "items":{"properties":{"name":{},"enabled":{},"protocol":{},"url":{},"key":{},"id":{},"kind":{},"price":{}}}}}}}}}}`)
 	s := Initial(context.Background(), schema)
-	if s.Chat != (Choice{Provider: "here", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: Same, ID: "nomic-embed-text"}) {
+	if s.Chat != (Choice{Provider: "here", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: "here", ID: "nomic-embed-text"}) {
 		t.Errorf("initial %+v", s)
 	}
 	if s := Initial(context.Background(), nil); s.Chat.Provider != "here" || s.Chat.ID != "" || s.Embed.Provider != None {
@@ -343,13 +350,13 @@ func TestInitialAndSupported(t *testing.T) {
 	}
 }
 
-// Three reviews' cases: Same posted for the chat block resolves to nothing and
-// is refused, never recursed into; two blocks at one address keep their own
-// keys; an address the list does not hold, of either protocol, is kept.
+// A provider the list does not hold is refused, not resolved; two blocks at
+// one address keep their own keys, and a key typed once serves both; an
+// address the list does not hold, of either protocol, is kept.
 func TestMalformedAndUnlistedSetups(t *testing.T) {
-	s := Read(url.Values{"chat_provider": {Same}, "chat_model": {"m"}, "embed_provider": {Same}, "embed_model": {"e"}})
-	if err := Check(context.Background(), s); err == nil || err.Error() != "Choose a provider for chat." {
-		t.Errorf("Same for chat is refused: %v", err)
+	s := Read(url.Values{"chat_provider": {"same"}, "chat_model": {"m"}, "embed_provider": {"same"}, "embed_model": {"e"}})
+	if err := Check(context.Background(), s); err == nil || err.Error() != "Choose a provider for the chat model." {
+		t.Errorf("an unknown provider is refused: %v", err)
 	}
 	if f := View(context.Background(), s, Setup{}); f.Chat.Summary == "" {
 		t.Error("and still renders")
@@ -361,6 +368,11 @@ func TestMalformedAndUnlistedSetups(t *testing.T) {
 	typed.Keep(held)
 	if typed.Chat.Key != "chat-key" || typed.Embed.Key != "embed-key" {
 		t.Errorf("each block keeps its own key: %+v", typed)
+	}
+	once := Setup{Chat: Choice{Provider: "openai", Key: "sk", ID: "c"}, Embed: Choice{Provider: "openai", ID: "e"}}
+	once.Keep(Setup{})
+	if once.Embed.Key != "sk" {
+		t.Errorf("a key typed once serves both blocks at its address: %+v", once)
 	}
 
 	proxy := map[string]any{"native": map[string]any{"llm": map[string]any{"chat": "c", "models": []any{
@@ -375,12 +387,12 @@ func TestMalformedAndUnlistedSetups(t *testing.T) {
 	}
 	srv, gotHdr := fakeProvider(t, []string{"claude"}, "k")
 	f := View(context.Background(), Setup{Chat: Choice{Provider: "other-anthropic", URL: srv.URL, Key: "k", ID: "claude"}}, Setup{})
-	if (*gotHdr).Get("x-api-key") != "k" || !slices.Contains(f.Chat.Suggestions, "claude") || !f.Chat.Shown(f.Chat.ForURL) || !f.Chat.Shown(f.Chat.ForKey) {
+	if (*gotHdr).Get("x-api-key") != "k" || !slices.Contains(f.Chat.Models, "claude") || !f.Chat.Shown(f.Chat.ForURL) || !f.Chat.Shown(f.Chat.ForKey) {
 		t.Errorf("asked at its own address: %+v", f.Chat)
 	}
 	for _, o := range f.Embed.Options {
 		if o.ID == "other-anthropic" {
-			t.Error("search offers no Anthropic-compatible address")
+			t.Error("the embedding block offers no Anthropic-compatible address")
 		}
 	}
 }

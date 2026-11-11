@@ -1,7 +1,6 @@
 // Package models is the language-model setup of this installation's kernel
-// (requirements.md §1, §6.6): which provider answers the kernel's chat,
-// JSON and decide natives, which one its search embeds with, and the keys
-// they take. The kernel holds the answer in config.json as `native.llm`, a
+// (requirements.md §1, §6.6): its chat model, which answers the kernel's chat,
+// JSON and decide natives, its embedding model, and the keys they take. The kernel holds the answer in config.json as `native.llm`, a
 // flat list of model entries and four bindings (kernel requirements D17);
 // this package reads that, asks a provider which models it serves, and
 // writes the setup back in the kernel's own shape. A provider is not a
@@ -39,7 +38,6 @@ type Provider struct {
 const (
 	None  = ""      // no model: the role is left unbound
 	Other = "other" // an OpenAI-compatible address the person types; "other-anthropic" is the Anthropic-compatible one
-	Same  = "same"  // the search block on the chat block's provider and key
 )
 
 // Providers are the providers offered, in the order offered. Each only fills
@@ -69,7 +67,7 @@ func embeds(protocol string) bool { return protocol != "anthropic" }
 
 // Choice is one block of the form: a provider and the model it serves.
 type Choice struct {
-	Provider string // a Providers ID, Same (search only), or None
+	Provider string // a Providers ID, or None
 	URL      string // the address typed, for a provider that has none
 	Key      string // the key; empty when the provider needs none or none is held
 	ID       string // the provider's name for the model
@@ -77,26 +75,14 @@ type Choice struct {
 }
 
 // Setup is the whole answer: the chat model, which backs chat, JSON and
-// decide, and the search model.
+// decide, and the embedding model.
 type Setup struct {
 	Chat, Embed Choice
 	Priced      bool // the prices were given, so they are written
 }
 
 // address is where a choice's model is served: its protocol, address and key.
-// Same is the chat block's; a key the search block types replaces the chat
-// block's for search alone.
 func (s Setup) address(c Choice) (protocol, addr, key string) {
-	if c.Provider == Same {
-		if s.Chat.Provider == Same { // the chat block has no Same: nothing is served
-			return "", "", c.Key
-		}
-		protocol, addr, key = s.address(s.Chat)
-		if c.Key != "" {
-			key = c.Key
-		}
-		return protocol, addr, key
-	}
 	p, ok := provider(c.Provider)
 	if !ok {
 		return "", "", c.Key
@@ -124,12 +110,16 @@ func Read(f url.Values) Setup {
 
 // Keep fills each block's empty key from held where both are served at the
 // same address, so a key is typed once: a key is never sent back to a page,
-// and a blank key input keeps the one already held.
+// and a blank key input keeps the one already held. A key typed in the other
+// block for the same address serves too: a provider's key is one key.
 func (s *Setup) Keep(held Setup) {
+	typed := *s
 	for i, c := range []*Choice{&s.Chat, &s.Embed} {
-		if c.Key == "" && c.Provider != Same {
+		if c.Key == "" {
 			p, a, _ := s.address(*c)
-			c.Key = held.keyAt(p, a, i)
+			if c.Key = held.keyAt(p, a, i); c.Key == "" {
+				c.Key = typed.keyAt(p, a, i)
+			}
 		}
 	}
 }
@@ -234,7 +224,7 @@ func refusal(status int, body []byte) string {
 }
 
 // Check refuses a setup the kernel could not use, with what to do: a block
-// left incomplete, search on a protocol without embedding models, or a
+// left incomplete, an embedding model on a protocol without them, or a
 // provider that does not answer, refuses its key or does not serve the model.
 // Both blocks are read before any provider is asked.
 func Check(ctx context.Context, s Setup) error {
@@ -254,17 +244,14 @@ func Check(ctx context.Context, s Setup) error {
 		}
 		role := "chat"
 		if b.embed {
-			role = "search"
-		}
-		if c.Provider == Same && b.embed && s.Chat.Provider == None {
-			return errors.New("Choose a provider for search.")
+			role = "embedding"
 		}
 		protocol, addr, key := s.address(c)
 		if protocol == "" {
-			return fmt.Errorf("Choose a provider for %s.", role)
+			return fmt.Errorf("Choose a provider for the %s model.", role)
 		}
 		if b.embed && !embeds(protocol) {
-			return fmt.Errorf("%s serves no search models; choose another provider for search.", s.name(c))
+			return fmt.Errorf("%s serves no embedding models; choose another provider for the embedding model.", s.name(c))
 		}
 		if u, err := url.Parse(addr); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return errors.New("Give the provider's address, starting with http:// or https://.")
@@ -292,9 +279,6 @@ func Check(ctx context.Context, s Setup) error {
 
 // name is how a choice's provider is called in a sentence.
 func (s Setup) name(c Choice) string {
-	if c.Provider == Same {
-		c = s.Chat
-	}
 	if p, ok := provider(c.Provider); ok && p.URL != "" {
 		return p.Name
 	}
@@ -306,20 +290,35 @@ func (s Setup) name(c Choice) string {
 // provider was found to serve.
 type Form struct{ Chat, Embed Block }
 
+// Block is the block a field prefix names: "embed" the embedding block, any
+// other the chat block.
+func (f Form) Block(field string) Block {
+	if field == "embed" {
+		return f.Embed
+	}
+	return f.Chat
+}
+
+// Refresh names the address a host answers a block's model field from, so a
+// change of provider, address or key lists that provider's models in place.
+func (f *Form) Refresh(addr string) { f.Chat.Refresh, f.Embed.Refresh = addr, addr }
+
 // Block is one block of the form.
 type Block struct {
-	Field       string // the inputs' prefix: chat_…, embed_…
-	Options     []Option
-	Provider    string // the chosen option
-	URL, ID     string
-	Price       int64
-	Priced      bool     // the price is asked (the Models page)
-	Held        bool     // a key is held for the chosen provider
-	Suggestions []string // the models the chosen provider serves
-	Problem     string   // why the chosen provider could not be asked
-	Summary     string   // the choice in a sentence: the model and its provider
-	Action      string   // the native the block backs, on the page: its address
-	Href        string   // and its page
+	Field    string // the inputs' prefix: chat_…, embed_…
+	Options  []Option
+	Provider string // the chosen option
+	URL, ID  string
+	Price    int64
+	Priced   bool     // the price is asked (the Models page)
+	Held     bool     // a key is held for the chosen provider
+	Models   []string // the models the chosen provider lists: the model is chosen among them; nil, it is typed
+	Unlisted bool     // the model chosen is not among them, as a provider may drop one; it stays chosen
+	Problem  string   // why the chosen provider could not be asked
+	Refresh  string   // where the host answers this block's model field
+	Summary  string   // the choice in a sentence: the model and its provider
+	Action   string   // the native the block backs, on the page: its address
+	Href     string   // and its page
 	// The options each part of the block belongs to, space-separated: the
 	// reveal shows a part only for those (grammar §5.4).
 	ForURL, ForKey, ForModel string
@@ -357,7 +356,7 @@ func View(ctx context.Context, s, held Setup) Form {
 	// A provider that needs a key is asked only once one is held: without it
 	// the answer is a refusal, already known.
 	for i, c := range []Choice{s.Chat, s.Embed} {
-		if p, a, k := s.address(c); p != "" && a != "" && (k != "" || !needsKey(s, c)) && (i == 0 || embeds(p)) {
+		if p, a, k := s.address(c); p != "" && a != "" && (k != "" || !needsKey(c)) && (i == 0 || embeds(p)) {
 			asks[ask{p, a, k}] = nil
 		}
 	}
@@ -375,10 +374,10 @@ func View(ctx context.Context, s, held Setup) Form {
 	}
 	wg.Wait()
 
-	options := func(search bool) []Option {
+	options := func(embedding bool) []Option {
 		var out []Option
 		for _, p := range Providers {
-			if search && !embeds(p.Protocol) {
+			if embedding && !embeds(p.Protocol) {
 				continue
 			}
 			o := Option{ID: p.ID, Name: p.Name}
@@ -392,24 +391,19 @@ func View(ctx context.Context, s, held Setup) Form {
 			}
 			out = append(out, o)
 		}
-		if p, _, _ := s.address(s.Chat); search && embeds(p) && p != "" {
-			out = append([]Option{{ID: Same, Name: "Same as chat"}}, out...)
-		}
 		return append(out, Option{ID: None, Name: "None"})
 	}
-	block := func(field string, c Choice, search bool) Block {
-		b := Block{Field: field, Options: options(search), Provider: c.Provider, URL: c.URL, ID: c.ID, Price: c.Price, Priced: s.Priced, Summary: s.Summary(c)}
-		if c.Provider != Same {
-			p, a, _ := s.address(c)
-			b.Held = held.keyAt(p, a, map[string]int{"chat": 0, "embed": 1}[field]) != ""
-		}
+	block := func(field string, c Choice, embedding bool) Block {
+		b := Block{Field: field, Options: options(embedding), Provider: c.Provider, URL: c.URL, ID: c.ID, Price: c.Price, Priced: s.Priced, Summary: s.Summary(c)}
+		p, a, _ := s.address(c)
+		b.Held = held.keyAt(p, a, map[string]int{"chat": 0, "embed": 1}[field]) != ""
 		var url, key, model []string
 		for _, o := range b.Options {
 			p, _ := provider(o.ID)
-			if p.URL == "" && o.ID != None && o.ID != Same {
+			if p.URL == "" && o.ID != None {
 				url = append(url, o.ID)
 			}
-			if p.Key || (p.URL == "" && o.ID != None && o.ID != Same) {
+			if p.Key || (p.URL == "" && o.ID != None) {
 				key = append(key, o.ID)
 			}
 			if o.ID != None {
@@ -420,9 +414,10 @@ func View(ctx context.Context, s, held Setup) Form {
 		if p, a, k := s.address(c); p != "" && a != "" {
 			if r := asks[ask{p, a, k}]; r != nil {
 				switch {
-				case r.err == nil:
-					b.Suggestions = r.ids
-				case c.Provider != Same && !errors.Is(r.err, ErrNoList):
+				case r.err == nil && len(r.ids) > 0:
+					b.Models = r.ids
+					b.Unlisted = c.ID != "" && !slices.Contains(r.ids, c.ID)
+				case !errors.Is(r.err, ErrNoList):
 					b.Problem = s.name(c) + ": " + strings.TrimSuffix(r.err.Error(), ".") + "."
 				}
 			}
@@ -433,10 +428,7 @@ func View(ctx context.Context, s, held Setup) Form {
 }
 
 // needsKey reports a choice whose provider asks for a key.
-func needsKey(s Setup, c Choice) bool {
-	if c.Provider == Same {
-		c = s.Chat
-	}
+func needsKey(c Choice) bool {
 	p, _ := provider(c.Provider)
 	return p.Key
 }
@@ -465,7 +457,7 @@ func Initial(ctx context.Context, schema []byte) Setup {
 			}
 			return ""
 		}
-		s := Setup{Chat: Choice{Provider: p.ID, ID: pick("chat")}, Embed: Choice{Provider: Same, ID: pick("embed")}}
+		s := Setup{Chat: Choice{Provider: p.ID, ID: pick("chat")}, Embed: Choice{Provider: p.ID, ID: pick("embed")}}
 		if s.Embed.ID == "" {
 			s.Embed = Choice{}
 		}
@@ -541,12 +533,11 @@ func Supported(schema []byte) bool {
 }
 
 // The four bindings: chat, json and decide name the chat model, embed the
-// search model.
+// embedding model.
 var chatRoles = []string{"chat", "json", "decide"}
 
 // From is the setup the file holds: the entries its chat and embed bindings
-// name. A search model served where the chat model is, with the same key, is
-// Same.
+// name.
 func From(cfg map[string]any) Setup {
 	llm := object(object(cfg, "native"), "llm")
 	list := entries(llm)
@@ -563,12 +554,8 @@ func From(cfg map[string]any) Setup {
 		}
 		return c, e
 	}
-	chat, ce := choice("chat")
-	embed, ee := choice("embed")
-	if ce != nil && ee != nil && str(ce, "protocol") == str(ee, "protocol") &&
-		strings.TrimRight(str(ce, "url"), "/") == strings.TrimRight(str(ee, "url"), "/") && str(ce, "key") == str(ee, "key") {
-		embed.Provider, embed.URL, embed.Key = Same, "", ""
-	}
+	chat, _ := choice("chat")
+	embed, _ := choice("embed")
 	return Setup{Chat: chat, Embed: embed}
 }
 
@@ -615,6 +602,7 @@ func Others(cfg map[string]any) []Entry {
 // enabled. A new entry is named after its model, distinct from every other
 // entry the file will hold. None leaves its roles unbound.
 func Apply(cfg map[string]any, s Setup) {
+	s.Keep(Setup{}) // a key typed in one block serves the other at its address
 	native := object(cfg, "native")
 	if native == nil {
 		native = map[string]any{}

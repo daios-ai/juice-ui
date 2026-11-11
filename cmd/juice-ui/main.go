@@ -242,7 +242,9 @@ func (k installation) Models(ctx context.Context, form url.Values, held any) (an
 
 func (installation) ModelsView(ctx context.Context, setup any) any {
 	s, _ := setup.(models.Setup)
-	return models.View(ctx, s, s) // the installer holds what was typed
+	f := models.View(ctx, s, s) // the installer holds what was typed
+	f.Refresh(installer.ModelsRefresh)
+	return f
 }
 
 // chrome is the application's renderer as the installer uses it.

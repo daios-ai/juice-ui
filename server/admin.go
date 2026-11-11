@@ -782,6 +782,7 @@ func (s *Server) getAdminModels(w http.ResponseWriter, r *http.Request) {
 func (s *Server) renderModels(w http.ResponseWriter, r *http.Request, status int, cfg map[string]any, version string, setup, held models.Setup, msg string) {
 	ctx := r.Context()
 	form := models.View(ctx, setup, held)
+	form.Refresh(modelsRefresh)
 	for _, b := range []*models.Block{&form.Chat, &form.Embed} {
 		ref := s.native("llm/" + b.Field)
 		_ = s.sessions.Do(ctx, func(tok string) error {
@@ -793,6 +794,41 @@ func (s *Server) renderModels(w http.ResponseWriter, r *http.Request, status int
 		})
 	}
 	s.renderPage(w, r, status, "admin_models", "Models", modelsView{Form: form, Others: models.Others(cfg), Version: version, Error: msg})
+}
+
+// modelsRefresh is where the page asks for a block's model field again.
+const modelsRefresh = "/admin/models/model"
+
+// modelsField is a refresh's answer: the form as posted, and the block asked.
+type modelsField struct {
+	Form  models.Form
+	Field string
+}
+
+// postAdminModelsModel answers a block's model field for the form as posted —
+// the provider, address and key typed — with the models that provider lists.
+// It writes nothing.
+func (s *Server) postAdminModelsModel(w http.ResponseWriter, r *http.Request) {
+	if !s.modelsSupported() {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "The form could not be read.", http.StatusBadRequest)
+		return
+	}
+	cfg, _, err := s.kernelConfig()
+	if err != nil {
+		http.Error(w, capitalize(err.Error())+".", http.StatusUnprocessableEntity)
+		return
+	}
+	held := models.From(cfg)
+	setup := models.Read(r.PostForm)
+	setup.Keep(held)
+	setup.Priced = true
+	form := models.View(r.Context(), setup, held)
+	form.Refresh(modelsRefresh)
+	_ = s.render.Fragment(w, http.StatusOK, "_models_refresh", modelsField{Form: form, Field: r.PostFormValue("block")})
 }
 
 // postAdminModels writes the models chosen into the kernel's file and restarts
@@ -807,6 +843,9 @@ func (s *Server) postAdminModels(w http.ResponseWriter, r *http.Request) {
 	}
 	const back = "/admin/models"
 	cfg, _, err := s.kernelConfig()
+	if err == nil {
+		err = r.ParseForm()
+	}
 	if err != nil {
 		s.flashRedirect(w, r, back, "error", capitalize(err.Error())+".")
 		return

@@ -369,10 +369,17 @@ separates it from the content above, and nothing else does (§4).
   held one says so in its placeholder, `configured ✓ (replace)`.
 - **The models form** (`_models_form`, requirements.md §6.6) is one partial for
   the installer's Models step and the Models page: two `[data-group]` blocks,
-  each an `h3.flush` and its `.field`s (provider, address, key, model with its
-  `datalist` of the provider's models, and on the page the price). The host
-  holds the commands: its primary first, then `List models` (`.btn`,
-  `formnovalidate`), which writes nothing.
+  Chat model and Embedding model, each an `h3.flush` and its `.field`s
+  (provider, address, key, model, and on the page the price). The model is a
+  `select` of the provider's models, a text input only where it lists none.
+  The htmx pattern of dependent selects refreshes it: the block's provider,
+  address and key each carry `hx-post` to the host's refresh address, and the
+  block holds the rest (`hx-target` its model field, `_models_model`,
+  `hx-include` the form, one `hx-sync` replacing a request still in flight).
+  The field is only swapped and carries no listener, so no change is lost
+  while it is, and nothing typed elsewhere moves. The host holds the commands:
+  its primary first, then `List models` (`.btn`, `formnovalidate`), the
+  no-script path, which writes nothing.
 - **Call form** (`_call_form`) — **one** component for *every* action execution
   (action run **and** task completion), always inline (never a modal): optional
   **locked block** (a task's pre-bound args as the view, `.view.locked`,

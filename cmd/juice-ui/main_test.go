@@ -310,7 +310,7 @@ func TestInstallationAdaptsTheModels(t *testing.T) {
 	if _, msg, done := k.Models(ctx, url.Values{}, s); !done || msg != "" {
 		t.Errorf("none goes on: %q %v", msg, done)
 	}
-	if f, ok := k.ModelsView(ctx, s).(models.Form); !ok || f.Chat.Provider != "openai" || !f.Chat.Held {
+	if f, ok := k.ModelsView(ctx, s).(models.Form); !ok || f.Chat.Provider != "openai" || !f.Chat.Held || f.Chat.Refresh != installer.ModelsRefresh {
 		t.Errorf("view %+v", f)
 	}
 	// Create writes them before it boots; with no kernel binary the boot fails,
