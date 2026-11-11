@@ -1178,6 +1178,7 @@ func TestAdminModelsSave(t *testing.T) {
 		{"chat_key", "wrong"}:           "Incorrect API key provided.",
 		{"chat_price", "1.5"}:           "Price: amount must be a whole number here.",
 		{"embed_provider", "anthropic"}: "Anthropic serves no search models",
+		{"chat_provider", "same"}:       "Choose a provider for chat.",
 	} {
 		code, body, _ := modelsPost(t, cl, srv.URL, with(kv[0], kv[1], "embed_key", "k"))
 		if code != http.StatusUnprocessableEntity || !strings.Contains(body, html.EscapeString(want)) || fc.wrote != "" ||

@@ -2531,10 +2531,13 @@ so an older kernel's file is never written there.
 
 * A block is a provider, its address (Other alone), its key and the model. The
   providers are data in the UI, each only an address and a wire protocol: Ollama
-  and LM Studio on this machine, OpenAI, Anthropic, OpenRouter, Other (any
-  OpenAI-compatible address), and None; Search adds Same as chat. Search offers
-  no provider whose protocol serves no embedding model (Anthropic), and the
-  server refuses one whatever the form sent. A provider is not a kernel concept,
+  and LM Studio on this machine, OpenAI, Anthropic, OpenRouter, Other
+  (OpenAI-compatible) and Other (Anthropic-compatible), each of the two taking any
+  address, and None; Search adds Same as chat. An address the list does not hold
+  is shown and kept under the Other of its protocol, so a gateway or a proxy is
+  never moved to a public address. Search offers no provider whose protocol
+  serves no embedding model (Anthropic), and the server refuses one whatever the
+  form sent. A provider is not a kernel concept,
   and the kernel is not changed.
 * The model is typed, with the models the provider lists (`GET <address>/models`,
   asked as the kernel asks it) offered as suggestions. The providers on this
@@ -2543,7 +2546,8 @@ so an older kernel's file is never written there.
   and shows the form again; it writes nothing. A provider that lists no models
   takes the model as typed.
 * A key is write-only: a key held for the provider's address says so in its
-  placeholder, `configured ✓ (replace)`, and a blank key keeps it. A key typed
+  placeholder, `configured ✓ (replace)`, and a blank key keeps it — the block's
+  own key first, so two blocks at one address keep their own. A key typed
   and not yet saved is typed again.
 * The form's command (Next, or **Save and restart**) is refused, with what to do,
   for a block left incomplete, a provider that does not answer, refuses its key

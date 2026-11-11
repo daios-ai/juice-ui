@@ -38,12 +38,13 @@ type Provider struct {
 // The choices that are not a listed provider.
 const (
 	None  = ""      // no model: the role is left unbound
-	Other = "other" // an OpenAI-compatible address the person types
+	Other = "other" // an OpenAI-compatible address the person types; "other-anthropic" is the Anthropic-compatible one
 	Same  = "same"  // the search block on the chat block's provider and key
 )
 
 // Providers are the providers offered, in the order offered. Each only fills
-// in an address and a protocol; Other takes any address.
+// in an address and a protocol; one with no address takes any, typed (an
+// OpenAI- or Anthropic-compatible gateway or proxy).
 var Providers = []Provider{
 	{ID: "ollama", Name: "Ollama on this machine", Protocol: "openai", URL: "http://localhost:11434/v1", Local: true},
 	{ID: "lmstudio", Name: "LM Studio on this machine", Protocol: "openai", URL: "http://localhost:1234/v1", Local: true},
@@ -51,6 +52,7 @@ var Providers = []Provider{
 	{ID: "anthropic", Name: "Anthropic", Protocol: "anthropic", URL: "https://api.anthropic.com/v1", Key: true},
 	{ID: "openrouter", Name: "OpenRouter", Protocol: "openai", URL: "https://openrouter.ai/api/v1", Key: true},
 	{ID: Other, Name: "Other (OpenAI-compatible)", Protocol: "openai"},
+	{ID: "other-anthropic", Name: "Other (Anthropic-compatible)", Protocol: "anthropic", Key: true},
 }
 
 func provider(id string) (Provider, bool) {
@@ -68,7 +70,7 @@ func embeds(protocol string) bool { return protocol != "anthropic" }
 // Choice is one block of the form: a provider and the model it serves.
 type Choice struct {
 	Provider string // a Providers ID, Same (search only), or None
-	URL      string // Other's address
+	URL      string // the address typed, for a provider that has none
 	Key      string // the key; empty when the provider needs none or none is held
 	ID       string // the provider's name for the model
 	Price    int64  // what a call costs its caller, in base units
@@ -86,6 +88,9 @@ type Setup struct {
 // block's for search alone.
 func (s Setup) address(c Choice) (protocol, addr, key string) {
 	if c.Provider == Same {
+		if s.Chat.Provider == Same { // the chat block has no Same: nothing is served
+			return "", "", c.Key
+		}
 		protocol, addr, key = s.address(s.Chat)
 		if c.Key != "" {
 			key = c.Key
@@ -97,7 +102,7 @@ func (s Setup) address(c Choice) (protocol, addr, key string) {
 		return "", "", c.Key
 	}
 	addr = p.URL
-	if p.ID == Other {
+	if addr == "" {
 		addr = c.URL
 	}
 	return p.Protocol, strings.TrimRight(addr, "/"), c.Key
@@ -121,17 +126,22 @@ func Read(f url.Values) Setup {
 // same address, so a key is typed once: a key is never sent back to a page,
 // and a blank key input keeps the one already held.
 func (s *Setup) Keep(held Setup) {
-	for _, c := range []*Choice{&s.Chat, &s.Embed} {
+	for i, c := range []*Choice{&s.Chat, &s.Embed} {
 		if c.Key == "" && c.Provider != Same {
 			p, a, _ := s.address(*c)
-			c.Key = held.keyAt(p, a)
+			c.Key = held.keyAt(p, a, i)
 		}
 	}
 }
 
-// keyAt is the key held for an address, or "".
-func (s Setup) keyAt(protocol, addr string) string {
-	for _, c := range []Choice{s.Chat, s.Embed} {
+// keyAt is the key held for an address, or "": the given block's own first,
+// so two blocks served at one address with different keys keep theirs.
+func (s Setup) keyAt(protocol, addr string, block int) string {
+	cs := []Choice{s.Chat, s.Embed}
+	if block == 1 {
+		cs[0], cs[1] = cs[1], cs[0]
+	}
+	for _, c := range cs {
 		if p, a, k := s.address(c); k != "" && p == protocol && a == addr {
 			return k
 		}
@@ -246,7 +256,7 @@ func Check(ctx context.Context, s Setup) error {
 		if b.embed {
 			role = "search"
 		}
-		if c.Provider == Same && (!b.embed || s.Chat.Provider == None) {
+		if c.Provider == Same && b.embed && s.Chat.Provider == None {
 			return errors.New("Choose a provider for search.")
 		}
 		protocol, addr, key := s.address(c)
@@ -285,7 +295,7 @@ func (s Setup) name(c Choice) string {
 	if c.Provider == Same {
 		c = s.Chat
 	}
-	if p, ok := provider(c.Provider); ok && p.ID != Other {
+	if p, ok := provider(c.Provider); ok && p.URL != "" {
 		return p.Name
 	}
 	_, addr, _ := s.address(c)
@@ -391,15 +401,15 @@ func View(ctx context.Context, s, held Setup) Form {
 		b := Block{Field: field, Options: options(search), Provider: c.Provider, URL: c.URL, ID: c.ID, Price: c.Price, Priced: s.Priced, Summary: s.Summary(c)}
 		if c.Provider != Same {
 			p, a, _ := s.address(c)
-			b.Held = held.keyAt(p, a) != ""
+			b.Held = held.keyAt(p, a, map[string]int{"chat": 0, "embed": 1}[field]) != ""
 		}
 		var url, key, model []string
 		for _, o := range b.Options {
 			p, _ := provider(o.ID)
-			if o.ID == Other {
+			if p.URL == "" && o.ID != None && o.ID != Same {
 				url = append(url, o.ID)
 			}
-			if p.Key || o.ID == Other {
+			if p.Key || (p.URL == "" && o.ID != None && o.ID != Same) {
 				key = append(key, o.ID)
 			}
 			if o.ID != None {
@@ -548,7 +558,7 @@ func From(cfg map[string]any) Setup {
 		}
 		e := list[i]
 		c := Choice{Provider: providerOf(str(e, "protocol"), str(e, "url")), Key: str(e, "key"), ID: str(e, "id"), Price: number(e["price"])}
-		if c.Provider == Other {
+		if p, _ := provider(c.Provider); p.URL == "" {
 			c.URL = str(e, "url")
 		}
 		return c, e
@@ -562,16 +572,20 @@ func From(cfg map[string]any) Setup {
 	return Setup{Chat: chat, Embed: embed}
 }
 
-// providerOf is the listed provider at an address, else Other.
+// providerOf is the listed provider at an address, else the one of that
+// protocol that takes any address, so an address the list does not hold — a
+// gateway, a proxy — is kept as it is.
 func providerOf(protocol, addr string) string {
 	addr = strings.TrimRight(addr, "/")
 	for _, p := range Providers {
-		if p.ID != Other && p.Protocol == protocol && p.URL == addr {
+		if p.URL != "" && p.Protocol == protocol && p.URL == addr {
 			return p.ID
 		}
 	}
-	if protocol == "anthropic" {
-		return "anthropic"
+	for _, p := range Providers {
+		if p.URL == "" && p.Protocol == protocol {
+			return p.ID
+		}
 	}
 	return Other
 }

@@ -342,3 +342,45 @@ func TestInitialAndSupported(t *testing.T) {
 		t.Error("supported")
 	}
 }
+
+// Three reviews' cases: Same posted for the chat block resolves to nothing and
+// is refused, never recursed into; two blocks at one address keep their own
+// keys; an address the list does not hold, of either protocol, is kept.
+func TestMalformedAndUnlistedSetups(t *testing.T) {
+	s := Read(url.Values{"chat_provider": {Same}, "chat_model": {"m"}, "embed_provider": {Same}, "embed_model": {"e"}})
+	if err := Check(context.Background(), s); err == nil || err.Error() != "Choose a provider for chat." {
+		t.Errorf("Same for chat is refused: %v", err)
+	}
+	if f := View(context.Background(), s, Setup{}); f.Chat.Summary == "" {
+		t.Error("and still renders")
+	}
+
+	held := Setup{Chat: Choice{Provider: Other, URL: "http://h/v1", Key: "chat-key", ID: "c"},
+		Embed: Choice{Provider: Other, URL: "http://h/v1", Key: "embed-key", ID: "e"}}
+	typed := Setup{Chat: Choice{Provider: Other, URL: "http://h/v1", ID: "c"}, Embed: Choice{Provider: Other, URL: "http://h/v1", ID: "e"}}
+	typed.Keep(held)
+	if typed.Chat.Key != "chat-key" || typed.Embed.Key != "embed-key" {
+		t.Errorf("each block keeps its own key: %+v", typed)
+	}
+
+	proxy := map[string]any{"native": map[string]any{"llm": map[string]any{"chat": "c", "models": []any{
+		map[string]any{"name": "c", "protocol": "anthropic", "url": "https://gateway.example/anthropic/v1", "key": "k", "id": "claude", "kind": "chat"}}}}}
+	got := From(proxy)
+	if got.Chat.Provider != "other-anthropic" || got.Chat.URL != "https://gateway.example/anthropic/v1" {
+		t.Fatalf("the proxy is kept: %+v", got.Chat)
+	}
+	Apply(proxy, got)
+	if e := entries(llmOf(proxy))[0]; e["url"] != "https://gateway.example/anthropic/v1" || e["protocol"] != "anthropic" || e["key"] != "k" || llmOf(proxy)["chat"] != "c" {
+		t.Errorf("saved again, it is unchanged: %v", e)
+	}
+	srv, gotHdr := fakeProvider(t, []string{"claude"}, "k")
+	f := View(context.Background(), Setup{Chat: Choice{Provider: "other-anthropic", URL: srv.URL, Key: "k", ID: "claude"}}, Setup{})
+	if (*gotHdr).Get("x-api-key") != "k" || !slices.Contains(f.Chat.Suggestions, "claude") || !f.Chat.Shown(f.Chat.ForURL) || !f.Chat.Shown(f.Chat.ForKey) {
+		t.Errorf("asked at its own address: %+v", f.Chat)
+	}
+	for _, o := range f.Embed.Options {
+		if o.ID == "other-anthropic" {
+			t.Error("search offers no Anthropic-compatible address")
+		}
+	}
+}
