@@ -92,5 +92,34 @@
 </div>
 {{else}}<p class="muted">No connected accounts yet.</p>{{end}}
 
+{{/* Contacts: the people whose tasks you approved or blocked (kernel U52).
+     Remove and Unblock return one to your requests in the inbox, where the
+     ones still waiting on you are. */}}
+<h2>Contacts</h2>
+{{if $d.Contacts}}
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Address</th><th>Status</th><th>Since</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Contacts}}
+  <tr>
+    <td class="mono">{{.Requester}}</td>
+    <td><span class="pill">{{.Status}}</span></td>
+    <td class="muted">{{shortDate .Since}}</td>
+    <td><div class="cluster">
+      {{if eq .Status "approved"}}
+      <form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn" type="submit">Remove</button></form>
+      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester}}?">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn-danger" type="submit">Block</button></form>
+      {{else}}
+      <form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn" type="submit">Unblock</button></form>
+      {{end}}
+    </div></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="muted">No contacts yet.</p>{{end}}
+
 {{template "_form_user_update" .}}
 {{end}}

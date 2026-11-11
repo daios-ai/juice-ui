@@ -428,12 +428,12 @@
          price. */}}
     {{$spend := and (gt .Price 0) (not .OneShot)}}
     <button class="{{if $spend}}btn-money{{else}}btn-primary{{end}}" type="submit">{{.Verb}}{{if $spend}} ({{moneyExact .Price}}){{end}}</button>
-    {{if .DeclineID}}{{template "_decline_button" .DeclineID}}{{end}}
+    {{if .DeclineID}}{{template "_decline_button" (declineForm .CSRFField .DeclineID "Decline")}}{{end}}
     {{template "_progress" (progress (printf "%s-progress" .ResultID) "Running…")}}
   </div>
   {{if .FirstPayee}}<p class="help muted flush">First payment to <span class="mono">{{.PayeeOwner}}</span>.</p>{{end}}
 </form>
-{{if .DeclineID}}{{template "_task_decline" (declineForm .CSRFField .DeclineID)}}{{end}}
+{{if .DeclineID}}{{template "_task_decline" (declineForm .CSRFField .DeclineID "Decline")}}{{end}}
 <div id="{{.ResultID}}">{{if .Outcome}}{{template "_call_outcome" .Outcome}}{{end}}</div>
 {{end}}
 
@@ -461,23 +461,41 @@
 {{end}}
 
 {{/* _task_asker names who asks for a task, from what its row names: the
-     requester, whom the task acts for, then the creating action and its target
-     when this kernel holds the task, or the holding kernel's name when another
-     kernel holds it (the row then names no action). Input: client.Task. */}}
-{{define "_task_asker"}}<span class="mono">{{.Requester}}</span> · {{if .CreatedBy}}{{template "_ref" (ref .CreatedBy "")}} needs {{end}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
+     requester, whom the task acts for, then what the task is (_task_what).
+     _task_what is the creating action and its target when this kernel holds
+     the task, or the holding kernel's name when another kernel holds it (the
+     row then names no action). Input: client.Task. */}}
+{{define "_task_what"}}{{if .CreatedBy}}{{template "_ref" (ref .CreatedBy "")}} needs {{end}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
+{{define "_task_asker"}}<span class="mono">{{.Requester}}</span> · {{template "_task_what" .}}{{end}}
+
+{{/* _task_row — one row of Sent or Done (requirements §6.3): the ID, opening
+     the answer where the viewer may read it (the task's owner), the other
+     party, what the task is, its status and price, and Cancel while a task the
+     viewer sent still waits. Input: taskRow. */}}
+{{define "_task_row"}}{{$t := .}}
+<tr>
+  <td class="id mono">{{if $t.Answer}}<a href="/transactions/{{$t.TxID}}" title="{{$t.ID}}">{{truncate 8 $t.ID}}</a>{{else}}<span title="{{$t.ID}}">{{truncate 8 $t.ID}}</span>{{end}}</td>
+  <td class="mono">{{$t.Other}}</td>
+  <td>{{template "_task_what" $t.Task}}</td>
+  <td><span class="pill {{statusClass $t.Status}}">{{$t.Status}}</span></td>
+  <td class="money">{{template "_price" (price $t.Price false)}}</td>
+  <td>{{if $t.Cancel}}{{$c := declineForm .CSRFField $t.ID "Cancel"}}{{template "_task_decline" $c}}{{template "_decline_button" $c}}{{end}}</td>
+</tr>
+{{end}}
 
 {{/* _kernel_name renders a kernel as this kernel names it: a petname whole, a
      key truncated with the whole key in the title. Input: string. */}}
 {{define "_kernel_name"}}{{$n := kernelName .}}<span class="mono"{{if $n.IsKey}} title="{{$n.Title}}"{{end}}>{{$n.Text}}</span>{{if $n.IsKey}} {{template "_copy" (copyOf "key" $n.Title)}}{{end}}{{end}}
 
-{{/* _task_decline is the one Decline form, and _decline_button its button.
-     The form is empty and sits outside any other form; the button sits in the
-     task's command row and submits it through the form attribute, so Decline
-     stands beside Complete (ui-grammar §5.1). The kernel decides who may
-     decline; the page offers it only to the two parties it accepts.
-     _task_decline takes a taskDecline, _decline_button the task id. */}}
-{{define "_task_decline"}}<form id="decline-{{.ID}}" method="post" action="/inbox/{{.ID}}/cancel" data-confirm="Decline this task?">{{.CSRFField}}</form>{{end}}
-{{define "_decline_button"}}<button class="btn-danger" type="submit" form="decline-{{.}}">Decline</button>{{end}}
+{{/* _task_decline is the one form that cancels a task, and _decline_button
+     its button. The form is empty and sits outside any other form; the button
+     sits in the task's command row and submits it through the form attribute,
+     so Decline stands beside Complete (ui-grammar §5.1). The kernel decides who
+     may cancel and the page offers it only to the two parties it accepts, each
+     under its own name: Decline for the one asked, Cancel for the one who
+     asked. Both take a taskDecline (declineForm). */}}
+{{define "_task_decline"}}<form id="decline-{{.ID}}" method="post" action="/inbox/{{.ID}}/cancel" data-confirm="{{.Verb}} this task?">{{.CSRFField}}<input type="hidden" name="verb" value="{{.Verb}}"></form>{{end}}
+{{define "_decline_button"}}<button class="btn-danger" type="submit" form="decline-{{.ID}}">{{.Verb}}</button>{{end}}
 
 {{/* _evidence — retained evidence, on an action's page and panel and on a
      peer's inspection: one row per report, in the stats line's own cells, the

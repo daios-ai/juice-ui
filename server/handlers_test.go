@@ -2046,8 +2046,7 @@ func TestListPagesReadOnePage(t *testing.T) {
 	for _, c := range []struct{ page, list, query, row string }{
 		{"/transactions", "/v1/transactions", "limit=21", "T0"},
 		{"/processes/P1", "/v1/transactions", "limit=21&process_id=P1", "T0"},
-		{"/inbox", "/v1/tasks", "all=1&limit=21", "K0"},
-		{"/inbox?status=done", "/v1/tasks", "limit=21&status=done", "K0"},
+		{"/inbox?tab=sent", "/v1/tasks", "all=1&limit=21", "K0"},
 		{"/processes", "/v1/processes", "all=1&limit=21", "P0"},
 		{"/wallet", "/v1/withdrawals", "limit=21", "W0"},
 	} {
@@ -2777,9 +2776,15 @@ var taskRows = map[string]string{
 	"SX": `{"id":"SX","required_caller":"carol@testnet","owner":"bob@testnet","requester":"bob@testnet","action":"carol@testnet/review",
 	  "price":7,"status":"waiting","created_by":"bob@testnet/ask","created_at":"2026-08-05T00:00:00Z",
 	  "partial_args":{},"allowed_input":{"type":"object"}}`,
-	// Done: history, no gesture.
+	// Done, asked by alice: bob answered it, and only alice may read the answer.
 	"SD": `{"id":"SD","required_caller":"bob@testnet","owner":"alice@testnet","requester":"alice@testnet","action":"alice@testnet/hello",
 	  "price":0,"status":"done","tx_id":"TD","created_at":"2026-07-01T00:00:00Z","partial_args":{}}`,
+	// Done, asked by bob of carol: its answer is bob's to read.
+	"SA": `{"id":"SA","required_caller":"carol@testnet","owner":"bob@testnet","requester":"bob@testnet","action":"carol@testnet/review",
+	  "price":0,"status":"done","tx_id":"TA","created_by":"bob@testnet/ask","created_at":"2026-07-02T00:00:00Z","partial_args":{}}`,
+	// Done, sent by bob to himself: a Done row, whose answer he may read.
+	"SS": `{"id":"SS","required_caller":"bob@testnet","owner":"bob@testnet","requester":"chat@testnet","action":"chat@testnet/validate",
+	  "price":0,"status":"done","tx_id":"TS","created_by":"chat@testnet/register","created_at":"2026-07-03T00:00:00Z","partial_args":{}}`,
 }
 
 // taskActionReads, taskCancels and taskDecisions record what the BFF asked of
@@ -2802,7 +2807,7 @@ func taskKernel() *httptest.Server {
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		rows := []string{}
-		for _, id := range []string{"SP", "SO", "SH", "SR", "SX", "SD"} {
+		for _, id := range []string{"SP", "SO", "SH", "SR", "SX", "SD", "SA", "SS"} {
 			rows = append(rows, taskRows[id])
 		}
 		w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
@@ -2882,57 +2887,86 @@ func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	}
 }
 
-// The inbox lists requesters, pending first, each offering the decisions that
-// change its status; Block alone sits behind a confirm, an unknown verb is no
-// command, and a decision reaches the kernel by the requester's address.
-func TestInboxRequesters(t *testing.T) {
+// Who may send you tasks (kernel U52) stands in two places, each status once:
+// the pending ones as requests above your tasks, with Approve and Block; the
+// approved and blocked ones as contacts in Settings, with Remove and Block,
+// or Unblock. Block alone sits behind a confirm, an unknown verb is no
+// command, and a decision returns to the page it was made on.
+func TestRequestsAndContacts(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	page := getBody(t, cl, srv.URL+"/inbox")
-	cell := func(addr string) int { return strings.Index(page, `<td class="mono">`+addr+`</td>`) }
-	m, a, e := cell("mallory@bravo"), cell("alice@testnet"), cell("eve@testnet")
-	if m < 0 || a < m || e < a {
-		t.Errorf("requesters must list pending, approved, blocked: %d %d %d", m, a, e)
-	}
-	row := func(addr string) string {
-		i := cell(addr)
-		return page[i : i+strings.Index(page[i:], "</tr>")]
-	}
-	for addr, want := range map[string][]string{
-		"mallory@bravo": {"approve", "block"},
-		"alice@testnet": {"revoke", "block"},
-		"eve@testnet":   {"approve", "revoke"},
-	} {
-		r := row(addr)
-		for _, verb := range []string{"approve", "revoke", "block"} {
-			has := strings.Contains(r, `action="/inbox/requesters/`+addr+`/`+verb+`"`)
-			if has != slices.Contains(want, verb) {
-				t.Errorf("%s: %s offered = %v, want %v", addr, verb, has, !has)
+	verbs := func(page, addr string) []string {
+		var got []string
+		for _, v := range []string{"approve", "revoke", "block"} {
+			if strings.Contains(page, `action="/inbox/requesters/`+addr+`/`+v+`"`) {
+				got = append(got, v)
 			}
 		}
+		return got
 	}
-	if !strings.Contains(row("mallory@bravo"), `data-confirm="Block mallory@bravo?"`) || strings.Contains(row("eve@testnet"), "data-confirm") {
-		t.Error("only Block asks for a confirm")
+	inbox := getBody(t, cl, srv.URL+"/inbox")
+	if !strings.Contains(inbox, "<h2>Requests</h2>") || !strings.Contains(inbox, `<span class="mono">mallory@bravo</span>`) || !strings.Contains(inbox, "since 2026-08-06") {
+		t.Error("a pending requester is a request, named with its date")
 	}
-	if !strings.Contains(row("mallory@bravo"), `<span class="pill">pending</span>`) || !strings.Contains(row("mallory@bravo"), "2026-08-06") {
-		t.Error("a requester row names its status and since")
+	if got := verbs(inbox, "mallory@bravo"); !slices.Equal(got, []string{"approve", "block"}) {
+		t.Errorf("a request offers %v, want approve and block", got)
+	}
+	if !strings.Contains(inbox, `<button class="btn" type="submit">Approve</button>`) || !strings.Contains(inbox, `data-confirm="Block mallory@bravo?"`) {
+		t.Error("Approve is neutral; Block asks for a confirm")
+	}
+	for _, addr := range []string{"alice@testnet", "eve@testnet"} {
+		if len(verbs(inbox, addr)) != 0 {
+			t.Errorf("%s is a contact, not a request", addr)
+		}
 	}
 
-	resp := postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/approve", page, url.Values{})
+	settings := getBody(t, cl, srv.URL+"/settings")
+	a, e := strings.Index(settings, `<td class="mono">alice@testnet</td>`), strings.Index(settings, `<td class="mono">eve@testnet</td>`)
+	if !strings.Contains(settings, "<h2>Contacts</h2>") || a < 0 || e < a {
+		t.Errorf("contacts list approved before blocked: %d %d", a, e)
+	}
+	if len(verbs(settings, "mallory@bravo")) != 0 {
+		t.Error("a pending requester is not a contact")
+	}
+	row := func(i int) string { return settings[i : i+strings.Index(settings[i:], "</tr>")] }
+	if r := row(a); !slices.Equal(verbs(r, "alice@testnet"), []string{"revoke", "block"}) || !strings.Contains(r, ">Remove</button>") || !strings.Contains(r, `data-confirm="Block alice@testnet?"`) {
+		t.Errorf("an approved contact offers Remove and Block: %s", r)
+	}
+	if r := row(e); !slices.Equal(verbs(r, "eve@testnet"), []string{"revoke"}) || !strings.Contains(r, ">Unblock</button>") || strings.Contains(r, "data-confirm") {
+		t.Errorf("a blocked contact offers Unblock alone: %s", r)
+	}
+	if n := strings.Count(settings, `<input type="hidden" name="back" value="/settings">`); n != 3 {
+		t.Errorf("each contact's decision returns to Settings: %d forms say so", n)
+	}
+
+	resp := postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/approve", inbox, url.Values{})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/inbox" {
 		t.Errorf("approve = %d → %q, want a redirect to the inbox", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	resp = postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/delete", page, url.Values{})
+	if f := flashOf(t, cl, srv.URL); f != "success|Approved." {
+		t.Errorf("flash = %q", f)
+	}
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/eve@testnet/revoke", settings, url.Values{"back": {"/settings"}})
+	resp.Body.Close()
+	if resp.Header.Get("Location") != "/settings" {
+		t.Errorf("unblock lands on %q, want Settings", resp.Header.Get("Location"))
+	}
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/eve@testnet/revoke", settings, url.Values{"back": {"https://evil.example"}})
+	resp.Body.Close()
+	if resp.Header.Get("Location") != "/inbox" {
+		t.Errorf("an unknown back lands on %q, want the inbox", resp.Header.Get("Location"))
+	}
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/delete", inbox, url.Values{})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("an unknown verb = %d, want 404", resp.StatusCode)
 	}
-	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve" {
+	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve,eve@testnet revoke,eve@testnet revoke" {
 		t.Errorf("decisions = %q", got)
 	}
 }
@@ -2993,50 +3027,89 @@ func TestInboxTaskHeldOnAnotherKernel(t *testing.T) {
 	}
 }
 
-// Decline is offered to the two parties the kernel accepts on a waiting task —
-// the one asked on the card, the one who asked on the task's History row, since
-// a task has no page of its own — and posts to the kernel's cancel route (§6.3).
-func TestInboxDeclineOfferedToBothParties(t *testing.T) {
+// The inbox's three tabs hold each task once (§6.3): To do the cards waiting
+// on the viewer, with Decline; Sent what the viewer asked of others, Cancel
+// while it waits; Done what was addressed to the viewer and no longer waits.
+// A row opens its answer only where the viewer owns the task, since only the
+// owner may read the completion's transaction.
+func TestInboxTabs(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
 	defer srv.Close()
-	cl := loginClient(t, srv.URL)
+	cl := loginClient(t, srv.URL) // bob@testnet
 
-	page := getBody(t, cl, srv.URL+"/inbox")
-	for _, id := range []string{"SP", "SO", "SH", "SR"} {
-		if !strings.Contains(page, `action="/inbox/`+id+`/cancel"`) {
-			t.Errorf("the one asked may decline %s", id)
+	ids := func(page string) []string {
+		var got []string
+		for _, id := range []string{"SP", "SO", "SH", "SR", "SX", "SD", "SA", "SS"} {
+			if strings.Contains(page, `title="`+id+`"`) || strings.Contains(page, `action="/inbox/`+id+`/complete"`) {
+				got = append(got, id)
+			}
+		}
+		return got
+	}
+	todo := getBody(t, cl, srv.URL+"/inbox")
+	if got := ids(todo); !slices.Equal(got, []string{"SP", "SO", "SH", "SR"}) {
+		t.Errorf("To do holds %v, want the four waiting on bob", got)
+	}
+	if !strings.Contains(todo, `<a class="tab active" href="/inbox" aria-current="page">To do</a>`) ||
+		!strings.Contains(todo, `<a class="tab" href="/inbox?tab=sent">Sent</a>`) || !strings.Contains(todo, `<a class="tab" href="/inbox?tab=done">Done</a>`) {
+		t.Error("the inbox has three tabs, To do current by default")
+	}
+	// Decline stands in the card's command row, beside Complete, behind its
+	// plain confirm, submitting its own form through the form attribute.
+	if !regexp.MustCompile(`(?s)<div class="cluster">\s*<button class="btn[^"]*" type="submit">Complete[^<]*</button>\s*<button class="btn-danger" type="submit" form="decline-SP">Decline</button>`).MatchString(todo) ||
+		!strings.Contains(todo, `<form id="decline-SP" method="post" action="/inbox/SP/cancel" data-confirm="Decline this task?">`) {
+		t.Error("Decline must sit beside Complete in one row, behind a confirm")
+	}
+
+	sent := getBody(t, cl, srv.URL+"/inbox?tab=sent")
+	if got := ids(sent); !slices.Equal(got, []string{"SX", "SA"}) {
+		t.Errorf("Sent holds %v, want what bob asked of others", got)
+	}
+	if !strings.Contains(sent, "<th>To</th>") || !strings.Contains(sent, `<td class="mono">carol@testnet</td>`) {
+		t.Error("a Sent row names the one asked")
+	}
+	if !strings.Contains(sent, `<form id="decline-SX" method="post" action="/inbox/SX/cancel" data-confirm="Cancel this task?">`) ||
+		!strings.Contains(sent, `<button class="btn-danger" type="submit" form="decline-SX">Cancel</button>`) {
+		t.Error("a waiting Sent row is cancelled by the one who asked, behind a confirm")
+	}
+	if strings.Contains(sent, `/inbox/SA/cancel`) || strings.Contains(sent, `/inbox/SX/complete`) {
+		t.Error("a finished task offers no Cancel, and only the one asked may complete")
+	}
+	if !strings.Contains(sent, `<a href="/transactions/TA" title="SA">SA</a>`) || strings.Contains(sent, `href="/transactions/TX`) {
+		t.Error("a done Sent row opens its answer; a waiting one has none")
+	}
+
+	done := getBody(t, cl, srv.URL+"/inbox?tab=done")
+	if got := ids(done); !slices.Equal(got, []string{"SD", "SS"}) {
+		t.Errorf("Done holds %v, want what was addressed to bob and finished", got)
+	}
+	if !strings.Contains(done, "<th>From</th>") || !strings.Contains(done, `<td class="mono">alice@testnet</td>`) {
+		t.Error("a Done row names the one who asked")
+	}
+	if strings.Contains(done, `href="/transactions/TD"`) || !strings.Contains(done, `<span title="SD">SD</span>`) {
+		t.Error("a task alice asked opens no answer: bob cannot read its transaction")
+	}
+	if !strings.Contains(done, `<a href="/transactions/TS" title="SS">SS</a>`) || strings.Contains(done, "/cancel") {
+		t.Error("a task bob sent himself opens its answer, once, on Done")
+	}
+	for _, p := range []string{"/inbox/SX", "/inbox/SD"} {
+		if resp, err := cl.Get(srv.URL + p); err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: a task has no page of its own", p)
 		}
 	}
-	if strings.Contains(page, `action="/inbox/SD/cancel"`) {
-		t.Error("a task no longer waiting offers no decline")
-	}
-	if !strings.Contains(page, `data-confirm="Decline this task?"`) {
-		t.Error("decline must sit behind a plain confirm")
-	}
-	// Decline stands in the task's command row, beside Complete, submitting
-	// its own form through the form attribute.
-	if !regexp.MustCompile(`(?s)<div class="cluster">\s*<button class="btn[^"]*" type="submit">Complete[^<]*</button>\s*<button class="btn-danger" type="submit" form="decline-SP">Decline</button>`).MatchString(page) {
-		t.Error("Decline must sit beside Complete in one row")
-	}
 
-	// The one who asked declines from the task's History row, which names who
-	// asks as the card does; completing stays the one asked's.
-	if !regexp.MustCompile(`(?s)<tr>\s*<td class="id mono" title="SX">SX</td>\s*<td><span class="mono">bob@testnet</span> · .*?<td><form id="decline-SX" method="post" action="/inbox/SX/cancel" data-confirm="Decline this task\?">.*?</form><button class="btn-danger" type="submit" form="decline-SX">Decline</button></td>\s*</tr>`).MatchString(page) {
-		t.Errorf("the one who asked may decline from the task's row: %s", page)
+	if !strings.Contains(sent, `<input type="hidden" name="verb" value="Cancel">`) {
+		t.Error("the cancel form names its verb, for the flash")
 	}
-	if strings.Contains(page, `action="/inbox/SX/complete"`) {
-		t.Error("only the required caller may complete")
-	}
-	if resp, err := cl.Get(srv.URL + "/inbox/SX"); err != nil || resp.StatusCode != http.StatusNotFound {
-		t.Error("a task has no page of its own")
-	}
-
-	resp := postTo(t, cl, srv.URL+"/inbox/SX/cancel", page, url.Values{})
+	resp := postTo(t, cl, srv.URL+"/inbox/SX/cancel", sent, url.Values{"verb": {"Cancel"}})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/inbox" {
-		t.Errorf("decline = %d → %q, want a redirect to the inbox", resp.StatusCode, resp.Header.Get("Location"))
+		t.Errorf("cancel = %d → %q, want a redirect to the inbox", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if f := flashOf(t, cl, srv.URL); f != "success|Task cancelled." {
+		t.Errorf("flash = %q, want the sender's word", f)
 	}
 	if strings.Join(taskCancels, ",") != "SX" {
 		t.Errorf("kernel cancels = %v", taskCancels)

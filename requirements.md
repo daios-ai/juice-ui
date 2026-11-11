@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.63.0
+Version: 0.64.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.64.0.** The inbox is three tabs: To do (requests and the
+> tasks waiting on you), Sent (what you asked of others, cancelled there while
+> it waits) and Done (what was addressed to you and finished). A task's ID
+> opens its answer wherever you own it, since only its owner may read the
+> completion. The people you approved or blocked are Contacts, in Settings;
+> the superuser's view of every account's tasks is gone (§1, §6.3, §7, §9).
 
 > **What changed in 0.63.0.** A task, a user and an owner have no page of their
 > own; each stands where it is listed. The one who asked for a task declines it
@@ -1148,8 +1155,8 @@ Discover and the composer's launcher; `inbox` is `task` — work addressed to th
 user, carrying the sole attention badge, which counts the waiting tasks
 addressed to the user and the requesters awaiting the user's decision (§6.3);
 `workshop` is the provider surface (`action` management + creation); `wallet` is money evidence (`user` balances + `process` lifetimes +
-the `tx` ledger + receipts); `settings` is account, preferences, and connected
-accounts; `network` is federation (peers), and `admin` is operator
+the `tx` ledger + receipts); `settings` is account, preferences, connected
+accounts and contacts; `network` is federation (peers), and `admin` is operator
 supervision. Moving a page out of the sidebar grants and removes no authority —
 the underlying routes and superuser gating are unchanged. The kernel still
 creates and closes processes automatically; the UI MUST NOT ask the user to
@@ -1991,12 +1998,27 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 ### 6.3 task — the inbox of work addressed to you
 
-* A waiting task whose `required_caller` is the signed-in user MUST render as a
-  completable card; all other tasks MUST go to a history table, read with
-  `?status=` from its tabs or `?all=1` (the kernel lists only open tasks
-  otherwise), to exhaustion. A task has no page of its own: its card or its
-  History row is where it stands, and a History row names who asks as the card
-  does.
+* **Three tabs, each task on one.** The inbox answers three questions, as mail
+  and issue trackers do (Inbox · Sent · Done): **To do** (`/inbox`, the
+  default) holds the requests (below) and, as completable cards, the waiting
+  tasks whose `required_caller` is the viewer; **Sent** (`?tab=sent`) the tasks
+  the viewer owns and addressed to someone else, waiting or finished; **Done**
+  (`?tab=done`) the tasks addressed to the viewer that no longer wait. A task
+  the viewer sends itself is a card while it waits and a Done row after, so no
+  task shows twice. Sent and Done read one kernel page of `?all=1` (the kernel
+  lists only open tasks otherwise) and keep their own rows of it. The tabs are
+  the viewer's own, a superuser's included: every account's work is read on
+  the transactions page. No tab carries a count, since the task badge is the
+  one attention signal (§6.1). A task has no page of its own: its card or its
+  row is where it stands.
+* **A row** names the ID, the other party (**To**, the one asked, on Sent;
+  **From**, the one who asked, on Done), what the task is, its status and its
+  price. **The ID opens the answer** — the completion's transaction, which
+  holds what was entered and what came back — exactly when the viewer is the
+  task's `owner` and it names a `tx_id`: the completion runs as the one who
+  asked (kernel D6), so the kernel serves its transaction to its owner and
+  refuses the one who answered (verified live). Every finished Sent row opens
+  its answer, and a Done row only on a task the viewer sent itself.
 * **Who asks** is what the row names. A row carries `requester`, the party the
   task acts for and as whom its completion runs (kernel D6), named first; then
   `created_by` (the creating action) and `action` (the completion target) when
@@ -2004,17 +2026,28 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   without them, its `owner` the holding kernel's name, rendered as every kernel
   name is (§6.6: a petname whole, a key truncated). The card names what the row
   names and nothing else.
-* **Requesters (kernel U52).** A task from a requester the user has not
-  approved is withheld: it is not listed, and read by id it is not found. The
-  inbox MUST list `GET /v1/me/requesters` to exhaustion under "Requesters",
-  pending first, then approved, then blocked, each row naming the address, the
-  status and the date since, with the decisions that change its status
-  (`POST /v1/me/requesters/{address}/{approve|revoke|block}`): `Approve`
-  (primary), `Revoke` (secondary; back to pending, its tasks withheld again)
-  and `Block` (destructive, behind the plain confirm "Block {address}?", since
-  it declines the requester's waiting tasks and refuses new ones). A requester
-  has no content to show and no page of its own, so its row is where its
-  decisions stand. The status pill is neutral: it is no money state.
+* **Requests and contacts (kernel U52).** A task from a requester the user has
+  not approved is withheld: it is not listed, read by id it is not found, and
+  nothing the requester wrote is served (verified live). `GET
+  /v1/me/requesters` is read whole and shown by status, each status in one
+  place, as messaging apps hold message requests above the conversations and
+  the blocked list in Settings:
+  * **pending** — under **Requests**, at the head of To do and only while one
+    waits: the address and the date since, `Approve` (`.btn`: it fills
+    nothing) and `Block`;
+  * **approved** and **blocked** — under **Contacts** in Settings, a table of
+    address, status and date since: an approved contact offers `Remove` and
+    `Block`, a blocked one `Unblock`. Remove and Unblock are the kernel's
+    `revoke`: back to pending, its tasks withheld again, and the requester
+    back under Requests.
+
+  Decisions post `POST /v1/me/requesters/{address}/{approve|revoke|block}`;
+  `Block` is destructive, behind the plain confirm "Block {address}?", since it
+  declines the requester's waiting tasks and refuses new ones. A decision
+  returns to the page it was made on (a form names `back=/settings`; anything
+  else is the inbox), with its flash. A requester has no content to show and
+  no page of its own, so its row is where its decisions stand. The status pill
+  is neutral: it is no money state.
 * The completion form MUST be built from the task's own `allowed_input` (the
   kernel-derived completion schema on a waiting task), never by reading the
   target action: a task may be parked on a `private`/`local` action the
@@ -2039,16 +2072,15 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   empty `receipt_id` and that kernel's `tx_id`, which this kernel does not
   serve. Completion MUST be offered only to the `required_caller`; duplicate and
   non-caller attempts MUST map to typed-error messages.
-* **A waiting task can be declined** (`POST /v1/tasks/{id}/cancel`) by either
+* **A waiting task can be cancelled** (`POST /v1/tasks/{id}/cancel`) by either
   party the kernel accepts: its `required_caller`, or its `owner` (the process
-  owner who asked). Declining cancels it and returns its reserved price to the
-  payer; the control is the destructive `Decline`, standing in the task's command
-  row beside `Complete`, behind the plain confirm "Decline this task?" (§7),
-  offered to the one asked on the inbox card and to the one who asked on the
-  task's History row, by the requesters' reasoning: a task has no page of its
-  own, so its row is where its decision stands. The kernel refuses anyone else
-  and any task no longer waiting.
-* Completed and cancelled tasks MUST appear in history.
+  owner who asked). It cancels the task and returns its reserved price to the
+  payer. One destructive control, under each party's name, as a calendar's
+  invitee declines and its organizer cancels: **`Decline`** for the one asked,
+  standing on the card beside `Complete`, behind "Decline this task?" (§7);
+  **`Cancel`** for the one who asked, on the task's Sent row, behind "Cancel
+  this task?". The kernel refuses anyone else and any task no longer waiting.
+* Completed and cancelled tasks MUST appear on Sent or Done.
 * `sys/message` tasks MUST render as a message (sender, text, acknowledge
   button).
 * Task creation MUST NOT be a browser form. `POST /v1/tasks` binds a live
@@ -2986,10 +3018,11 @@ imports its live rooms, members and messages once and never writes that file.
   glyphs, not fills.
 * **Pagination.** No list renders unbounded, and no page reads more than it shows when
   the kernel can page the list. The ledger of transactions, a session's transactions,
-  task history, sessions, withdrawals and ratings MUST each be read one page at a time,
+  the inbox's Sent and Done, sessions, withdrawals and ratings MUST each be read one page at a time,
   through the kernel's `limit` and `offset`, one row beyond the page saying whether
   another follows, since the kernel answers no total. A page is full until the list
-  ends, since the kernel pages after visibility, and a contract test holds this. Read
+  ends, since the kernel pages after visibility, and a contract test holds this — except
+  Sent and Done, which keep their own rows of the kernel's page, so one may hold fewer. Read
   whole and cut here, each for its reason: Discover (a sort orders the whole catalog),
   the workshop table (its state tabs filter what the kernel does not), a user's actions
   (a page of actions is not promised full), the admin roster (sorted here), Network's
@@ -3215,15 +3248,21 @@ Every production `.go` file has a `_test.go` file with independent tests.
   form fills exactly or names each value it cannot hold; the configuration's
   switch reads through the save's normalization, secrets withheld (§6.2, §6.6);
 * completion is neutral, a transfer task included, and no action is read to
-  render a task (§6.3); a card names its requester; requesters list pending
-  first with the decisions that change each status, Block alone behind a
-  confirm, and a pending requester counts in the badge (§6.1, §6.3);
-* decline: offered to the required caller on the card and to the owner of a
-  waiting task on its History row, and to nobody else; no task, user or owner
-  has a page of its own; a task held on another kernel names its holder and links no
+  render a task (§6.3); a card names its requester; a pending requester is a
+  request on To do and an approved or blocked one a contact in Settings, each
+  with the decisions that change its status, Block alone behind a confirm, a
+  decision returning to its page, and a pending requester counts in the badge
+  (§6.1, §6.3);
+* the inbox's tabs: To do holds the waiting tasks on the viewer, Sent what the
+  viewer asked of others, Done what was addressed to the viewer and finished,
+  each task on one tab, a self-sent one included; a row's ID opens its
+  transaction exactly when the viewer owns the task (§6.3);
+* cancel: Decline offered to the required caller on the card and Cancel to the
+  owner of a waiting task on its Sent row, and to nobody else; no task, user
+  or owner has a page of its own; a task held on another kernel names its holder and links no
   receipt after completion (§6.3);
-* list reads ask for what they show: inbox history and the sessions page send
-  `?all=1` (or the tab's status) and page to exhaustion (§6.3, §6.5);
+* list reads ask for what they show: the inbox's Sent and Done and the sessions
+  page send `?all=1` and page to exhaustion (§6.3, §6.5);
 * the payout address form sends the password, and a wrong one keeps the session
   (§6.5); the registration message is the kernel's four lines; the chain is
   accepted only on an exact fingerprint match; the transfer is ERC-20

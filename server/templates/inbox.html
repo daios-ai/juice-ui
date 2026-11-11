@@ -2,10 +2,38 @@
 {{$d := .Data}}
 <div class="page-head">
   <h1>Inbox</h1>
-  {{if $d.Superuser}}<p class="subtitle"><span class="scope-note">superuser scope: all tasks</span></p>{{end}}
 </div>
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
+
+{{/* Three views (requirements §6.3): what waits on you, what you asked of
+     others, and what you have handled. The task badge is the one count. */}}
+<nav class="tabs" aria-label="Inbox">
+  {{template "_tab" (tab "To do" "/inbox" (eq $d.Tab ""))}}
+  {{template "_tab" (tab "Sent" "/inbox?tab=sent" (eq $d.Tab "sent"))}}
+  {{template "_tab" (tab "Done" "/inbox?tab=done" (eq $d.Tab "done"))}}
+</nav>
+
+{{if eq $d.Tab ""}}
+{{/* Requests: who waits on your approval. The kernel shows nothing they wrote
+     until you approve them (kernel U52), so a request is its address. */}}
+{{if $d.Requests}}
+<h2>Requests</h2>
+<div class="card-list">
+  {{range $d.Requests}}
+  <div class="card row">
+    <div class="stretch">
+      <span class="mono">{{.Requester}}</span>
+      <div class="small muted">since {{shortDate .Since}}</div>
+    </div>
+    <div class="cluster">
+      <form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>
+      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
 
 <h2>Waiting for you</h2>
 {{if $d.InboxGroups}}
@@ -24,55 +52,15 @@
 <p class="muted">Nothing waiting for you.</p>
 {{end}}
 
-{{if $d.Requesters}}
-<h2>Requesters</h2>
+{{else if $d.Rows}}
 <div class="table-scroll">
 <table>
-  <thead><tr><th>Requester</th><th>Status</th><th>Since</th><th></th></tr></thead>
-  <tbody>
-  {{range $d.Requesters}}
-  <tr>
-    <td class="mono">{{.Requester}}</td>
-    <td><span class="pill">{{.Status}}</span></td>
-    <td class="muted">{{shortDate .Since}}</td>
-    <td><div class="cluster">
-      {{if ne .Status "approved"}}<form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>{{end}}
-      {{if ne .Status "pending"}}<form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<button class="btn" type="submit">Revoke</button></form>{{end}}
-      {{if ne .Status "blocked"}}<form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>{{end}}
-    </div></td>
-  </tr>
-  {{end}}
-  </tbody>
+  <thead><tr><th>ID</th><th>{{if eq $d.Tab "sent"}}To{{else}}From{{end}}</th><th>Task</th><th>Status</th><th class="money">Price</th><th></th></tr></thead>
+  <tbody>{{range $d.Rows}}{{template "_task_row" .}}{{end}}</tbody>
 </table>
 </div>
+{{else}}
+<p class="muted">{{if eq $d.Tab "sent"}}No tasks sent.{{else}}Nothing done yet.{{end}}</p>
 {{end}}
-
-<h2>History</h2>
-<nav class="tabs control-tabs" aria-label="Task history">
-  {{template "_tab" (tab "all" "/inbox" (eq $d.Filter ""))}}
-  {{template "_tab" (tab "done" "/inbox?status=done" (eq $d.Filter "done"))}}
-  {{template "_tab" (tab "cancelled" "/inbox?status=cancelled" (eq $d.Filter "cancelled"))}}
-</nav>
-{{if $d.History}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>ID</th><th>Task</th><th>Status</th><th class="money">Price</th><th>Caller</th><th></th></tr></thead>
-  <tbody>
-  {{/* A task has no page of its own: its row is where it stands, and the one
-       who asked declines it here while it waits (requirements §6.3). */}}
-  {{range $d.History}}
-  <tr>
-    <td class="id mono" title="{{.ID}}">{{truncate 8 .ID}}</td>
-    <td>{{template "_task_asker" .Task}}</td>
-    <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
-    <td class="money">{{template "_price" (price .Price false)}}</td>
-    <td class="mono muted">{{.RequiredCaller}}</td>
-    <td>{{if .CanDecline}}{{template "_task_decline" (declineForm $.CSRFField .ID)}}{{template "_decline_button" .ID}}{{end}}</td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
-{{else}}<p class="muted">No task history yet.</p>{{end}}
 {{template "_pager" $d.Pager}}
 {{end}}

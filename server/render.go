@@ -652,12 +652,13 @@ func obligation(o client.Obligation, petnames map[string]string, csrfField templ
 // _task_decline renders from one value wherever a task is shown.
 type taskDecline struct {
 	ID        string
+	Verb      string // Decline for the one asked, Cancel for the one who asked
 	CSRFField template.HTML
 }
 
 // declineForm builds that pairing (template helper).
-func declineForm(csrf template.HTML, id string) taskDecline {
-	return taskDecline{ID: id, CSRFField: csrf}
+func declineForm(csrf template.HTML, id, verb string) taskDecline {
+	return taskDecline{ID: id, Verb: verb, CSRFField: csrf}
 }
 
 func nameOf(petname, key string) Name {

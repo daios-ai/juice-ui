@@ -59,6 +59,7 @@ func loginTab(r *http.Request) string {
 // userView is the account room: identity and connected accounts.
 type userView struct {
 	User     client.User
+	Contacts []client.Requester // the requesters the viewer approved or blocked; pending ones wait in the inbox
 	OpenForm string
 	Error    string
 }
@@ -222,11 +223,16 @@ type taskEntry struct {
 	CanDecline  bool
 }
 
-// taskRow is one History row: the task, and whether the viewer may decline it
-// there — the one who asked, while it waits on someone else (§6.3).
+// taskRow is one row of Sent or Done (§6.3): the task, the other party — the
+// one asked on Sent, the one who asked on Done — whether the viewer may cancel
+// it, and whether its ID opens the answer: the completion's transaction, which
+// only the task's owner may read.
 type taskRow struct {
 	client.Task
-	CanDecline bool
+	Other     string
+	Cancel    bool
+	Answer    bool
+	CSRFField template.HTML // Cancel's form
 }
 
 // taskGroup buckets waiting inbox tasks by their creating action (created_by).
@@ -238,13 +244,12 @@ type taskGroup struct {
 }
 
 type tasksView struct {
+	Tab         string             // "" (to do) | "sent" | "done"
+	Requests    []client.Requester // to do: who waits on the viewer's approval
+	InboxGroups []taskGroup        // to do: the waiting tasks that require the viewer, grouped by created_by
+	Rows        []taskRow          // sent or done
 	Pager       Pager
-	Me          string             // the viewer's address
-	InboxGroups []taskGroup        // waiting tasks that require this user, grouped by created_by
-	History     []taskRow          // every other task the viewer may see
-	Requesters  []client.Requester // who has addressed tasks to the viewer, pending first
-	Filter      string             // status filter
-	Superuser   bool
+	Me          string // the viewer's address
 	Error       string
 }
 
@@ -901,6 +906,14 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.User = u
+		rq, e := s.client.ListRequesters(ctx, tok)
+		if e != nil {
+			return e
+		}
+		view.Contacts = slices.DeleteFunc(rq, func(c client.Requester) bool { return c.Status == "pending" })
+		sort.SliceStable(view.Contacts, func(i, j int) bool {
+			return requesterRank[view.Contacts[i].Status] < requesterRank[view.Contacts[j].Status]
+		})
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -967,60 +980,82 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	filter := r.URL.Query().Get("status")
-	view := tasksView{Filter: filter, Superuser: s.isSuperuser(r)}
+	// Three views: what waits on the viewer (To do, the default), what the
+	// viewer asked of others (Sent), and what the viewer has handled (Done).
+	view := tasksView{Tab: r.URL.Query().Get("tab")}
+	if view.Tab != "sent" && view.Tab != "done" {
+		view.Tab = ""
+	}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		me, e := s.me(r)
 		if e != nil {
 			return e
 		}
 		view.Me = me.Address
-		tasks, e := s.client.WaitingTasks(ctx, tok)
-		if e != nil {
-			return e
+		if view.Tab == "" {
+			return s.todo(ctx, tok, r, me.Address, &view)
 		}
-		history, historyMore, e := fetchRows(r, func(limit, offset int) ([]client.Task, error) {
-			return s.client.TasksPage(ctx, tok, filter, limit, offset)
+		// One kernel page, of which the tab keeps its own (a superuser is
+		// served every account's): Sent is what the viewer asked of others,
+		// Done what was addressed to the viewer and no longer waits. Neither
+		// takes a waiting task of the viewer's, which is a card on To do, so no
+		// task shows twice.
+		page, more, e := fetchRows(r, func(limit, offset int) ([]client.Task, error) {
+			return s.client.TasksPage(ctx, tok, "", limit, offset)
 		})
 		if e != nil {
 			return e
 		}
-		if view.Requesters, e = s.client.ListRequesters(ctx, tok); e != nil {
-			return e
-		}
-		rq := view.Requesters
-		sort.SliceStable(rq, func(i, j int) bool {
-			if ri, rj := requesterRank[rq[i].Status], requesterRank[rq[j].Status]; ri != rj {
-				return ri < rj
+		for _, t := range page {
+			row := taskRow{Task: t, Answer: t.Owner == me.Address && t.TxID != "", CSRFField: csrf.TemplateField(r)}
+			switch {
+			case view.Tab == "sent" && t.Owner == me.Address && t.RequiredCaller != me.Address:
+				row.Other, row.Cancel = t.RequiredCaller, canDecline(t, me.Address)
+			case view.Tab == "done" && t.RequiredCaller == me.Address && !t.Waiting():
+				row.Other = t.Requester
+			default:
+				continue
 			}
-			return rq[i].Since < rq[j].Since
-		})
-		mine := func(t client.Task) bool { return t.Waiting() && t.RequiredCaller == me.Address }
-		waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !mine(t) })
-		for _, t := range slices.DeleteFunc(history, mine) { // the rest is above, in Waiting for you
-			view.History = append(view.History, taskRow{Task: t, CanDecline: canDecline(t, me.Address)})
+			view.Rows = append(view.Rows, row)
 		}
-		var waitingMore, requestersMore bool
-		waiting, waitingMore = pageRows(r, waiting)
-		view.Requesters, requestersMore = pageRows(r, rq)
-		view.Pager = pageNav(r, queryOffset(r), pageSize, waitingMore || requestersMore || historyMore)
-		groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
-		for _, t := range waiting {
-			entry := s.taskEntryOf(t, me.Address)
-			i, ok := groupIdx[t.CreatedBy]
-			if !ok {
-				i = len(view.InboxGroups)
-				groupIdx[t.CreatedBy] = i
-				view.InboxGroups = append(view.InboxGroups, taskGroup{CreatedBy: t.CreatedBy})
-			}
-			view.InboxGroups[i].Tasks = append(view.InboxGroups[i].Tasks, entry)
-		}
+		view.Pager = pageNav(r, queryOffset(r), pageSize, more)
 		return nil
 	})
 	if s.handleErr(w, r, err) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view)
+}
+
+// todo fills To do: the requesters waiting on the viewer's approval, and the
+// waiting tasks that require the viewer, as cards grouped by their creator.
+func (s *Server) todo(ctx context.Context, tok string, r *http.Request, me string, view *tasksView) error {
+	tasks, err := s.client.WaitingTasks(ctx, tok)
+	if err != nil {
+		return err
+	}
+	requesters, err := s.client.ListRequesters(ctx, tok)
+	if err != nil {
+		return err
+	}
+	for _, rq := range requesters {
+		if rq.Status == "pending" {
+			view.Requests = append(view.Requests, rq)
+		}
+	}
+	waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !t.Waiting() || t.RequiredCaller != me })
+	waiting, view.Pager = pageOf(r, waiting)
+	groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
+	for _, t := range waiting {
+		i, ok := groupIdx[t.CreatedBy]
+		if !ok {
+			i = len(view.InboxGroups)
+			groupIdx[t.CreatedBy] = i
+			view.InboxGroups = append(view.InboxGroups, taskGroup{CreatedBy: t.CreatedBy})
+		}
+		view.InboxGroups[i].Tasks = append(view.InboxGroups[i].Tasks, s.taskEntryOf(t, me))
+	}
+	return nil
 }
 
 // taskEntryOf builds what the inbox shows for one task: the completion form
@@ -2251,28 +2286,38 @@ func (s *Server) postCompleteTask(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/inbox", "success", "Task completed.")
 }
 
-// requesterRank orders the requesters list: who awaits a decision first.
+// requesterRank orders the contacts: approved before blocked.
 var requesterRank = map[string]int{"pending": 0, "approved": 1, "blocked": 2}
+
+// requesterDone is each decision's flash. Revoke is Remove on an approved
+// contact and Unblock on a blocked one; both return the requester to pending.
+var requesterDone = map[string]string{"approve": "Approved.", "revoke": "Back in your requests.", "block": "Blocked."}
 
 // postRequester approves, revokes or blocks a requester (kernel U52); the
 // kernel refuses a requester it does not list, and the outcome comes back as
-// the flash on the inbox (post/redirect/get).
+// the flash on the page the form came from — the inbox's requests or the
+// contacts in Settings (post/redirect/get).
 func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 	verb := r.PathValue("verb")
-	if verb != "approve" && verb != "revoke" && verb != "block" {
+	if requesterDone[verb] == "" {
 		http.NotFound(w, r)
 		return
+	}
+	back := "/inbox"
+	if r.FormValue("back") == "/settings" {
+		back = "/settings"
 	}
 	ctx := r.Context()
 	err := s.sessions.Do(ctx, func(tok string) error {
 		return s.client.DecideRequester(ctx, tok, r.PathValue("address"), verb)
 	})
-	s.flashResult(w, r, err, "/inbox", "Done.")
+	s.flashResult(w, r, err, back, requesterDone[verb])
 }
 
-// postCancelTask declines a waiting task. The kernel decides who may (the one
-// asked, or the one who asked) and refuses a task no longer waiting; the
-// outcome comes back as the flash on the inbox (post/redirect/get).
+// postCancelTask cancels a waiting task. The kernel decides who may (the one
+// asked, who declines it, or the one who asked, who cancels it) and refuses a
+// task no longer waiting; the outcome comes back as the flash on the inbox,
+// in the words of the button pressed (post/redirect/get).
 func (s *Server) postCancelTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
@@ -2280,7 +2325,11 @@ func (s *Server) postCancelTask(w http.ResponseWriter, r *http.Request) {
 		_, e := s.client.CancelTask(ctx, tok, id)
 		return e
 	})
-	s.flashResult(w, r, err, "/inbox", "Task declined.")
+	done := "Task declined."
+	if r.FormValue("verb") == "Cancel" {
+		done = "Task cancelled."
+	}
+	s.flashResult(w, r, err, "/inbox", done)
 }
 
 // ---- helpers ----
