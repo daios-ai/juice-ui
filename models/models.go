@@ -31,7 +31,6 @@ import (
 type Provider struct {
 	ID, Name, Protocol, URL string
 	Key                     bool // asks for a key
-	Local                   bool // runs on this machine: asked for its models whenever the form is shown
 }
 
 // The choices that are not a listed provider.
@@ -44,8 +43,8 @@ const (
 // in an address and a protocol; one with no address takes any, typed (an
 // OpenAI- or Anthropic-compatible gateway or proxy).
 var Providers = []Provider{
-	{ID: "ollama", Name: "Ollama on this machine", Protocol: "openai", URL: "http://localhost:11434/v1", Local: true},
-	{ID: "lmstudio", Name: "LM Studio on this machine", Protocol: "openai", URL: "http://localhost:1234/v1", Local: true},
+	{ID: "ollama", Name: "Ollama (local)", Protocol: "openai", URL: "http://localhost:11434/v1"},
+	{ID: "lmstudio", Name: "LM Studio (local)", Protocol: "openai", URL: "http://localhost:1234/v1"},
 	{ID: "openai", Name: "OpenAI", Protocol: "openai", URL: "https://api.openai.com/v1", Key: true},
 	{ID: "anthropic", Name: "Anthropic", Protocol: "anthropic", URL: "https://api.anthropic.com/v1", Key: true},
 	{ID: "openrouter", Name: "OpenRouter", Protocol: "openai", URL: "https://openrouter.ai/api/v1", Key: true},
@@ -326,7 +325,7 @@ type Block struct {
 
 // Option is one provider in a block's list.
 type Option struct {
-	ID, Name, Note string // Note: what a provider on this machine serves, or that it is not running
+	ID, Name string
 }
 
 // Shown reports a part of the block shown for the chosen option.
@@ -335,9 +334,8 @@ func (b Block) Shown(forList string) bool {
 }
 
 // View is the form for s: each block's options, and the models its chosen
-// provider serves, asked of it now with the key typed or held; the providers
-// on this machine are asked too, so their options say whether they run. A
-// block says a key is held only where held, what the server keeps between
+// provider serves, asked of it now with the key typed or held; no other
+// provider is asked. A block says a key is held only where held, what the server keeps between
 // requests, has one for its address: a key typed and not kept is typed again.
 func View(ctx context.Context, s, held Setup) Form {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -348,11 +346,6 @@ func View(ctx context.Context, s, held Setup) Form {
 		err error
 	}
 	asks := map[ask]*answer{}
-	for _, p := range Providers {
-		if p.Local {
-			asks[ask{p.Protocol, p.URL, ""}] = nil
-		}
-	}
 	// A provider that needs a key is asked only once one is held: without it
 	// the answer is a refusal, already known.
 	for i, c := range []Choice{s.Chat, s.Embed} {
@@ -380,16 +373,7 @@ func View(ctx context.Context, s, held Setup) Form {
 			if embedding && !embeds(p.Protocol) {
 				continue
 			}
-			o := Option{ID: p.ID, Name: p.Name}
-			if p.Local {
-				switch a := asks[ask{p.Protocol, p.URL, ""}]; {
-				case a.err == nil:
-					o.Note = strconv.Itoa(len(a.ids)) + " models"
-				case !errors.Is(a.err, ErrNoList):
-					o.Note = "not running"
-				}
-			}
-			out = append(out, o)
+			out = append(out, Option{ID: p.ID, Name: p.Name})
 		}
 		return append(out, Option{ID: None, Name: "None"})
 	}
@@ -417,7 +401,7 @@ func View(ctx context.Context, s, held Setup) Form {
 				case r.err == nil && len(r.ids) > 0:
 					b.Models = r.ids
 					b.Unlisted = c.ID != "" && !slices.Contains(r.ids, c.ID)
-				case !errors.Is(r.err, ErrNoList):
+				case r.err != nil && !errors.Is(r.err, ErrNoList):
 					b.Problem = s.name(c) + ": " + strings.TrimSuffix(r.err.Error(), ".") + "."
 				}
 			}
@@ -431,72 +415,6 @@ func View(ctx context.Context, s, held Setup) Form {
 func needsKey(c Choice) bool {
 	p, _ := provider(c.Provider)
 	return p.Key
-}
-
-// Initial is a new machine's first choice: the first provider on this machine
-// that runs, with the models the kernel would use by default where it serves
-// them, read from the kernel's own schema of its configuration; otherwise no
-// model. Nothing else is guessed.
-func Initial(ctx context.Context, schema []byte) Setup {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	defaults := defaultIDs(schema)
-	for _, p := range Providers {
-		if !p.Local {
-			continue
-		}
-		ids, err := List(ctx, p.Protocol, p.URL, "")
-		if err != nil {
-			continue
-		}
-		pick := func(kind string) string {
-			for _, d := range defaults {
-				if d.kind == kind && strings.TrimRight(d.url, "/") == p.URL && slices.Contains(ids, d.id) {
-					return d.id
-				}
-			}
-			return ""
-		}
-		s := Setup{Chat: Choice{Provider: p.ID, ID: pick("chat")}, Embed: Choice{Provider: p.ID, ID: pick("embed")}}
-		if s.Embed.ID == "" {
-			s.Embed = Choice{}
-		}
-		return s
-	}
-	return Setup{}
-}
-
-type defaultModel struct{ url, id, kind string }
-
-// defaultIDs are the models the kernel's schema states as its default list.
-func defaultIDs(schema []byte) []defaultModel {
-	var s struct {
-		Properties struct {
-			Native struct {
-				Properties struct {
-					LLM struct {
-						Properties struct {
-							Models struct {
-								Default []struct {
-									URL  string `json:"url"`
-									ID   string `json:"id"`
-									Kind string `json:"kind"`
-								} `json:"default"`
-							} `json:"models"`
-						} `json:"properties"`
-					} `json:"llm"`
-				} `json:"properties"`
-			} `json:"native"`
-		} `json:"properties"`
-	}
-	if json.Unmarshal(schema, &s) != nil {
-		return nil
-	}
-	var out []defaultModel
-	for _, m := range s.Properties.Native.Properties.LLM.Properties.Models.Default {
-		out = append(out, defaultModel{m.URL, m.ID, m.Kind})
-	}
-	return out
 }
 
 // Supported reports a kernel whose schema of its configuration describes the

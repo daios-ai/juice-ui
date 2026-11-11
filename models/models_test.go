@@ -274,30 +274,31 @@ func TestCheck(t *testing.T) {
 
 func TestView(t *testing.T) {
 	srv, _ := fakeProvider(t, []string{"a", "b"}, "")
+	idle, asked := fakeProvider(t, []string{"x"}, "")
+	empty, _ := fakeProvider(t, nil, "")
 	saved := Providers
 	t.Cleanup(func() { Providers = saved })
-	Providers = append([]Provider{{ID: "here", Name: "Here", Protocol: "openai", URL: srv.URL, Local: true},
-		{ID: "gone", Name: "Gone", Protocol: "openai", URL: "http://127.0.0.1:1", Local: true}}, saved[2:]...)
+	Providers = append([]Provider{{ID: "here", Name: "Here", Protocol: "openai", URL: srv.URL},
+		{ID: "idle", Name: "Idle", Protocol: "openai", URL: idle.URL},
+		{ID: "empty", Name: "Empty", Protocol: "openai", URL: empty.URL}}, saved...)
 	typed := Setup{Chat: Choice{Provider: "here", ID: "a", Key: "k"}, Embed: Choice{Provider: Other, URL: "http://127.0.0.1:1", ID: "e"}}
 	if f := View(context.Background(), typed, Setup{}); f.Chat.Held {
 		t.Error("a key typed and not held is not said to be held")
 	}
 	f := View(context.Background(), typed, typed)
-	note := func(b Block, id string) string {
-		for _, o := range b.Options {
-			if o.ID == id {
-				return o.Note
-			}
-		}
-		return "absent"
+	offers := func(b Block, id string) bool {
+		return slices.ContainsFunc(b.Options, func(o Option) bool { return o.ID == id })
 	}
-	if note(f.Chat, "here") != "2 models" || note(f.Chat, "gone") != "not running" || note(f.Chat, "openai") != "" {
-		t.Errorf("notes %+v", f.Chat.Options)
+	if *asked != nil {
+		t.Error("a provider that is not chosen is not asked")
+	}
+	if i := slices.IndexFunc(f.Chat.Options, func(o Option) bool { return o.ID == "ollama" }); i < 0 || f.Chat.Options[i].Name != "Ollama (local)" {
+		t.Errorf("options %+v", f.Chat.Options)
 	}
 	if !slices.Equal(f.Chat.Models, []string{"a", "b"}) || f.Chat.Unlisted || !f.Chat.Held || f.Chat.Summary != "a · Here" {
 		t.Errorf("chat block %+v", f.Chat)
 	}
-	if note(f.Embed, "anthropic") != "absent" || note(f.Embed, "other-anthropic") != "absent" || note(f.Chat, "anthropic") != "" {
+	if offers(f.Embed, "anthropic") || offers(f.Embed, "other-anthropic") || !offers(f.Chat, "anthropic") {
 		t.Error("the embedding block offers no anthropic-protocol provider, the chat block does")
 	}
 	if f.Embed.Problem == "" {
@@ -314,6 +315,12 @@ func TestView(t *testing.T) {
 		t.Errorf("unlisted %+v", f.Chat)
 	}
 
+	// A provider that lists no model takes it typed, with nothing to say.
+	f = View(context.Background(), Setup{Chat: Choice{Provider: "empty", ID: "m"}}, Setup{})
+	if f.Chat.Problem != "" || f.Chat.Models != nil {
+		t.Errorf("an empty list: %+v", f.Chat)
+	}
+
 	// A provider that needs a key is not asked without one.
 	f = View(context.Background(), Setup{Chat: Choice{Provider: "anthropic", ID: "c"}}, Setup{})
 	if f.Chat.Problem != "" || f.Chat.Models != nil {
@@ -326,25 +333,9 @@ func TestView(t *testing.T) {
 	}
 }
 
-func TestInitialAndSupported(t *testing.T) {
-	srv, _ := fakeProvider(t, []string{"gemma4:26b", "nomic-embed-text"}, "")
-	saved := Providers
-	t.Cleanup(func() { Providers = saved })
-	Providers = append([]Provider{{ID: "here", Name: "Here", Protocol: "openai", URL: srv.URL + "/v1", Local: true}}, saved[2:]...)
+func TestSupported(t *testing.T) {
 	schema := []byte(`{"properties":{"native":{"properties":{"llm":{"properties":{"models":{
-	  "default":[{"url":"` + srv.URL + `/v1","id":"gemma4:26b","kind":"chat"},{"url":"` + srv.URL + `/v1","id":"nomic-embed-text","kind":"embed"}],
 	  "items":{"properties":{"name":{},"enabled":{},"protocol":{},"url":{},"key":{},"id":{},"kind":{},"price":{}}}}}}}}}}`)
-	s := Initial(context.Background(), schema)
-	if s.Chat != (Choice{Provider: "here", ID: "gemma4:26b"}) || s.Embed != (Choice{Provider: "here", ID: "nomic-embed-text"}) {
-		t.Errorf("initial %+v", s)
-	}
-	if s := Initial(context.Background(), nil); s.Chat.Provider != "here" || s.Chat.ID != "" || s.Embed.Provider != None {
-		t.Errorf("no schema guesses no model: %+v", s)
-	}
-	Providers = saved[2:]
-	if s := Initial(context.Background(), schema); s != (Setup{}) {
-		t.Errorf("nothing running is no model: %+v", s)
-	}
 	if !Supported(schema) || Supported([]byte(`{"properties":{"native":{"properties":{"llm":{"properties":{"models":{"items":{"properties":{"name":{}}}}}}}}}}`)) || Supported(nil) {
 		t.Error("supported")
 	}

@@ -218,16 +218,13 @@ func (k installation) Create(world, handle, password, recoveryKey string, m any)
 	return k.Installation.Create(world, handle, password, recoveryKey, extra)
 }
 
-// Models reads the installer's models page through package models: the
-// machine's first choice, a list asked for, or answers checked with the
+// Models reads the installer's models page through package models: None
+// before anything is chosen, a list asked for, or answers checked with the
 // providers.
 func (k installation) Models(ctx context.Context, form url.Values, held any) (any, string, bool) {
-	h, ok := held.(models.Setup)
-	switch {
-	case form == nil && !ok:
-		return models.Initial(ctx, k.Schema()), "", false
-	case form == nil:
-		return h, "", false
+	h, _ := held.(models.Setup)
+	if form == nil {
+		return h, "", false // nothing held yet is None: no provider is asked
 	}
 	s := models.Read(form)
 	s.Keep(h)

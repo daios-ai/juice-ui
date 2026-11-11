@@ -277,7 +277,7 @@
   <div class="field">
     <label for="m-{{.Field}}-provider">Provider</label>
     <select id="m-{{.Field}}-provider" name="{{.Field}}_provider" data-reveal="provider"{{with .Refresh}} hx-post="{{.}}"{{end}}>
-      {{range .Options}}<option value="{{.ID}}"{{if eq .ID $.Provider}} selected{{end}}>{{.Name}}{{with .Note}} · {{.}}{{end}}</option>{{end}}
+      {{range .Options}}<option value="{{.ID}}"{{if eq .ID $.Provider}} selected{{end}}>{{.Name}}</option>{{end}}
     </select>
   </div>
   <div class="field" data-provider="{{.ForURL}}"{{if not (.Shown .ForURL)}} hidden{{end}}>

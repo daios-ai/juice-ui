@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.61.1
+Version: 0.61.3
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.61.3.** The local providers are named Ollama (local) and
+> LM Studio (local) and carry no count of models. A provider is asked for its
+> models only when chosen, and the installer's Models step opens on None. A
+> provider that lists no model no longer breaks the form. 0.61.2 is withdrawn:
+> its form was reverted (§1, §6.6).
 
 > **What changed in 0.61.1.** The models form's model is a select of the models
 > the provider lists, refreshed in place when the provider, its address or its
@@ -1056,10 +1062,9 @@ words, polled until it answers. Nothing on that card names an installation.
   it. The world and the kernel name each state their one consequence.
 * **Models** chooses the kernel's language models with the models form (§6.6):
   the chat model, behind the kernel's chat, JSON and decide, and the embedding
-  model. It opens on the first provider on this machine that runs, with the
-  models the kernel's own schema states as its defaults where that provider
-  serves them, and otherwise on None. None leaves the roles unbound and writes
-  no model, so the kernel registers no model action that cannot answer. Next
+  model. It opens on None, so no provider is asked until one is chosen. None
+  leaves the roles unbound and writes no model, so the kernel registers no
+  model action that cannot answer. Next
   goes on only with models their providers serve, or with None. The choice and
   its keys are held in memory like the password, and the first boot is given
   them in its `config.json`.
@@ -2540,8 +2545,8 @@ so an older kernel's file is never written there.
 
 * A block is a provider, its address (a custom provider's alone), its key and
   the model. The providers are data in the UI, each only an address and one of
-  the kernel's two wire protocols, `openai` and `anthropic`: Ollama and LM Studio
-  on this machine, OpenAI, Anthropic, OpenRouter, Other (OpenAI-compatible) and
+  the kernel's two wire protocols, `openai` and `anthropic`: Ollama (local), LM
+  Studio (local), OpenAI, Anthropic, OpenRouter, Other (OpenAI-compatible) and
   Other (Anthropic-compatible), the last two taking any address, and None. An
   address the list does not hold is shown and kept under the custom provider of
   its protocol, so a gateway or a proxy is never moved to a public address. The
@@ -2557,9 +2562,8 @@ so an older kernel's file is never written there.
   provider, address or key asks for the block's model field again and swaps it
   in place (`POST /admin/models/model`, `/install/models/model`), a later change
   replacing a request still in flight, so the key typed stays as typed; without script, **List models** asks the chosen
-  providers and shows the form again. Neither writes anything. The providers on
-  this machine are asked whenever the form is shown, and say how many models they
-  serve or that they are not running.
+  providers and shows the form again. Neither writes anything. Only the
+  providers chosen are asked; a provider's option is its name alone.
 * A key is write-only: a key held for the provider's address says so in its
   placeholder, `configured ✓ (replace)`, and a blank key keeps it — the block's
   own key first, so two blocks at one address keep their own, and a key typed in
@@ -3137,7 +3141,7 @@ Every production `.go` file has a `_test.go` file with independent tests.
   machine gives exactly the steps of §1's table, a complete one none; a page
   request during the launch is held and sent on to the application, and only a
   slow or failing start is said, with the kernel's words; nothing follows
-  Install; the Models step opens on this machine's first choice, keeps the page
+  Install; the Models step opens on None and asks no provider, keeps the page
   for List models, holds a key typed and never shows it, refuses with what to
   do, and gives the first boot the models chosen, gone when the sequence ends;
   the package imports

@@ -14,8 +14,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/daios-ai/juice-ui/models"
 )
 
 // loginClientAs logs in through the BFF with a chosen handle. The session handle
@@ -1081,12 +1079,9 @@ func TestAdminConfigSwitch(t *testing.T) {
 }
 
 // modelsServer is a Models page over a file whose chat model is served by a
-// fake provider; nothing on this machine is asked.
+// fake provider.
 func modelsServer(t *testing.T) (*fakeConfig, *httptest.Server, *http.Client, string) {
 	t.Helper()
-	saved := models.Providers
-	t.Cleanup(func() { models.Providers = saved })
-	models.Providers = saved[2:]
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "Bearer wrong" {
 			w.WriteHeader(http.StatusUnauthorized)

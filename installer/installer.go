@@ -47,10 +47,10 @@ type Kernel interface {
 	Worlds() ([]World, error)                                             // the networks a new kernel may serve
 	Create(world, handle, password, recoveryKey string, models any) error // the first boot, with the models chosen
 	Start(ctx context.Context) error                                      // the supervisor serves the kernel; returns once it answers
-	// Models reads the models page: with form nil, held as it stands, or this
-	// machine's first choice when held is nil; with a form, the answers over
-	// held, and whether they may be kept (done) or what to say. The setup is
-	// opaque here, held from its page to the first boot and given to Create.
+	// Models reads the models page: with form nil, held as it stands, None
+	// when held is nil; with a form, the answers over held, and whether they
+	// may be kept (done) or what to say. The setup is opaque here, held from
+	// its page to the first boot and given to Create.
 	Models(ctx context.Context, form url.Values, held any) (setup any, msg string, done bool)
 	ModelsView(ctx context.Context, setup any) any // what the page and the summary render
 }
@@ -351,7 +351,7 @@ func (in *Installer) enter(i int) {
 		in.password = "" // typed again whenever the page is shown again
 	}
 	if st.ID == "models" && in.models == nil {
-		in.models, _, _ = in.o.Kernel.Models(in.ctx, nil, nil) // this machine's first choice
+		in.models, _, _ = in.o.Kernel.Models(in.ctx, nil, nil) // None: nothing chosen, nothing asked
 	}
 	if st.Page {
 		return
