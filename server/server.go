@@ -328,20 +328,8 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("POST /theme", s.postTheme)
 	mux.HandleFunc("POST /sidebar", s.postSidebar)
 
-	// Home + legacy redirects (bookmarks / old links). The nav is relabelled as a
-	// marketplace (browse/inbox/workshop/wallet/settings), so the old CLI-noun URLs
-	// 301 to their new homes.
+	// Home.
 	mux.HandleFunc("GET /{$}", s.requireAuth(s.getHome))
-	for from, to := range map[string]string{
-		"/run": "/browse", "/discover": "/browse", "/actions": "/browse",
-		"/steps": "/inbox", "/studio": "/workshop",
-		"/user": "/settings", "/you": "/settings",
-	} {
-		dest := to
-		mux.HandleFunc("GET "+from, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, dest, http.StatusMovedPermanently)
-		})
-	}
 
 	// Browse — discovery, catalog, and execution.
 	mux.HandleFunc("GET /browse", s.requireAuth(s.getBrowse))

@@ -1043,15 +1043,15 @@ func TestUserShowsConnectors(t *testing.T) {
 	// Connected accounts renders the grant tree: a folder per directory, its
 	// account provider in the summary, expandable to the contained grants.
 	if !strings.Contains(body, ">Connected accounts</h2>") || !strings.Contains(body, "<details") || !strings.Contains(body, "gmail.com") {
-		t.Error("/you must render the grant tree (folders per directory)")
+		t.Error("/settings must render the grant tree (folders per directory)")
 	}
 	// The folder summary offers account-level disconnect (account=provider_key)…
 	if !strings.Contains(body, `action="/grants/disconnect"`) || !strings.Contains(body, `value="oauth:G"`) {
-		t.Error("/you must offer an account-level disconnect (account=provider_key)")
+		t.Error("/settings must offer an account-level disconnect (account=provider_key)")
 	}
 	// …and each contained grant offers a per-action disconnect (action=selector).
 	if !strings.Contains(body, `name="action" value="sys@testnet/gmail-send"`) {
-		t.Error("/you grant tree must offer per-action disconnect")
+		t.Error("/settings grant tree must offer per-action disconnect")
 	}
 }
 
