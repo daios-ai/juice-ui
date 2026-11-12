@@ -60,7 +60,7 @@ func TestThemeContrast(t *testing.T) {
 			}
 		}
 		// status + accent: large/affordance text, 3.0:1
-		for _, k := range []string{"--credited", "--refunded", "--escrow", "--danger", "--accent"} {
+		for _, k := range []string{"--credited", "--refunded", "--escrow", "--danger", "--accent", "--range-good", "--range-bad"} {
 			if r := contrast(bg, tk[k]); r < 3.0 {
 				t.Errorf("%s: %s contrast %.2f < 3.0", p.Slug, k, r)
 			}

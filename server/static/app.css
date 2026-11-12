@@ -151,14 +151,15 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .stat-cell.muted .stat-value { color: var(--text-muted); }
 .stat-count { line-height: 1.2; }
 .stat-price .price { font-size: var(--font-size-sm); }
-/* A share as a bar (_range): the track is 0–100%, the band where the share
-   probably lies, the tick its likeliest value. One width down a list and one
-   neutral ink everywhere, so a bar reads the same on every row and every
-   page; colour would claim a verdict the kernel does not make. */
-.range { width: 3.5rem; height: .625rem; flex: 0 0 auto; overflow: visible; }
-.range-track { fill: var(--border); }
-.range-band { fill: var(--text-muted); }
-.range-mid { stroke: var(--text); stroke-width: 2px; }
+/* A share as a bar (_range): green what is confirmed good, red what is
+   confirmed bad, the open track between them what the record has not settled.
+   The same width down a list, so the segments compare row to row. Its two
+   hues are its own tokens (--range-good, --range-bad): a confirmed share, not
+   money credited nor a destructive act. */
+.range { width: 3.5rem; height: .5rem; flex: 0 0 auto; border-radius: var(--radius-s); overflow: hidden; }
+.range-good { fill: var(--range-good); }
+.range-open { fill: var(--border); }
+.range-bad { fill: var(--range-bad); }
 
 /* Money columns are right-aligned — header included, so the title sits over its
    values. Any money <th> carries class="money". */

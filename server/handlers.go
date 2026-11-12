@@ -3218,22 +3218,28 @@ const (
 )
 
 // sortCards arranges served rows by a signal the kernel publishes. Under
-// `rating` the rows are ordered by the low end of their rating range (the bar
-// the row draws, StatStrip.Rating): the share of good ratings an action
-// probably has at least. One rule orders every row, rated or not, so the order
-// is the one a person reads off the bars — a single good rating does not
-// outrank twenty, and an unrated action (a new one, or a discovered hit, whose
-// record this kernel does not hold) stands where its unknown range puts it,
-// above an action known to be poor and below one known to be good. Under
-// relevance the rows are where the kernel put them, which is how a new action
-// is still found.
+// `rating` the rows are ordered by the share of good ratings each row's bar
+// confirms (StatStrip.Rating's low end, the Wilson lower bound), so the order
+// is the one a person reads off the green: a single good rating does not
+// outrank nineteen of twenty. Among rows with nothing confirmed good, the one
+// least confirmed bad comes first, so an unrated action (a new one, or a
+// discovered hit, whose record this kernel does not hold) follows every
+// action with anything confirmed good and precedes the ones confirmed poor.
+// Under relevance the rows are where the kernel put them, which is how a new
+// action is still found.
 func sortCards(cards []actionCardView, order string) {
 	switch order {
 	case sortRating:
-		low := func(c actionCardView) float64 {
-			return statStrip(PriceView{}, c.Action.Experience()).Rating().Lo
+		rating := func(c actionCardView) Range {
+			return statStrip(PriceView{}, c.Action.Experience()).Rating()
 		}
-		sort.SliceStable(cards, func(i, j int) bool { return low(cards[i]) > low(cards[j]) })
+		sort.SliceStable(cards, func(i, j int) bool {
+			a, b := rating(cards[i]), rating(cards[j])
+			if a.Lo != b.Lo {
+				return a.Lo > b.Lo
+			}
+			return a.Hi > b.Hi
+		})
 	case sortPrice:
 		sort.SliceStable(cards, func(i, j int) bool {
 			return cards[i].Action.Price < cards[j].Action.Price

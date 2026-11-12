@@ -766,25 +766,44 @@ func (s StatStrip) Rating() Range {
 	return rangeOf(int64(math.Round(s.S.RatingEstimate*float64(s.S.RatingCount))), s.S.RatingCount)
 }
 
-// Range is a share drawn as a bar (_range): K good outcomes of N, and where the
-// true share probably lies, in percent — Laplace's rule of succession for the
-// mean, (K+1)/(N+2), and one standard deviation of that Beta(K+1, N−K+1)
-// posterior either side. The interval never leaves 0–100, and it narrows as N
-// grows, so the bar says both how good an action is and how far to trust it;
-// an action never run is the widest bar, centred.
+// Range is a share drawn as a bar (_range): K good outcomes of N, and the
+// share that is confirmed either way, in percent. Lo and Hi are the ends of the
+// Wilson score interval at 95% confidence, the standard interval for a share
+// from few trials: closed in form, inside 0–100 for every record, and the
+// whole of 0–100 for none. Below Lo the share is confirmed good, above Hi
+// confirmed bad, and between them it is still open — so the bar shows what
+// the record has settled, and an action never run is all open.
 type Range struct {
-	K, N        int64
-	Lo, Mid, Hi float64
+	K, N   int64
+	Lo, Hi float64
 }
+
+// z is the standard normal's 97.5th percentile: a two-sided 95% interval.
+const z = 1.959963984540054
 
 func rangeOf(k, n int64) Range {
-	m := float64(k+1) / float64(n+2)
-	d := math.Sqrt(m * (1 - m) / float64(n+3))
-	return Range{K: k, N: n, Lo: 100 * (m - d), Mid: 100 * m, Hi: 100 * (m + d)}
+	if n == 0 {
+		return Range{Hi: 100}
+	}
+	nf, p, z2 := float64(n), float64(k)/float64(n), z*z
+	d := 1 + z2/nf
+	c := (p + z2/(2*nf)) / d
+	h := z / d * math.Sqrt(p*(1-p)/nf+z2/(4*nf*nf))
+	lo, hi := c-h, c+h
+	// The interval reaches 0 exactly when nothing was good and 1 when all was,
+	// which floating point misses by a hair; those ends are set as they are.
+	if k == 0 {
+		lo = 0
+	}
+	if k == n {
+		hi = 1
+	}
+	return Range{K: k, N: n, Lo: 100 * lo, Hi: 100 * hi}
 }
 
-// Width is the band's extent, in percent of the track.
-func (r Range) Width() float64 { return r.Hi - r.Lo }
+// Open is the width still undecided; Bad the width confirmed bad.
+func (r Range) Open() float64 { return r.Hi - r.Lo }
+func (r Range) Bad() float64  { return 100 - r.Hi }
 
 // Count states N in words: "no runs", "1 run", "89 runs".
 func (r Range) Count(noun string) string {
@@ -797,13 +816,15 @@ func (r Range) Count(noun string) string {
 	return fmt.Sprintf("%d %ss", r.N, noun)
 }
 
-// Says is the range as a sentence, the cell's title and what a screen reader
-// hears: "85 of 89 runs succeeded, likely 92–97%", or "No runs yet".
-func (r Range) Says(noun, outcome string) string {
+// Says is the record in words, the cell's title and what a screen reader
+// hears: the share, then the count — "96% success · 89 runs", "90% positive ·
+// 10 ratings" — as stores and status pages state a rating; "No runs yet" for
+// none. The bar shows what is confirmed; the words say what happened.
+func (r Range) Says(noun, label string) string {
 	if r.N == 0 {
 		return "No " + noun + "s yet"
 	}
-	return fmt.Sprintf("%d of %s %s, likely %.0f–%.0f%%", r.K, r.Count(noun), outcome, r.Lo, r.Hi)
+	return fmt.Sprintf("%.0f%% %s · %s", 100*float64(r.K)/float64(r.N), label, r.Count(noun))
 }
 
 // evidenceTable is what _evidence renders: one row per report — one issuer's

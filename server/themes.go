@@ -303,8 +303,12 @@ func (p ANSIPalette) tokens() map[string]RGB {
 		// Readable text/icon color on a filled danger button (solid destructive
 		// buttons need a contrast pair just like the accent does).
 		"--danger-contrast": pickContrast(danger, RGB{0, 0, 0}, RGB{255, 255, 255}, bg),
-		"--sel-bg":          p.SelBG,
-		"--sel-fg":          p.SelFG,
+		// The range bar's confirmed shares (_range): the palette's own green and
+		// red, as visible against the page as a status glyph.
+		"--range-good": statusColor(p, 2, 3.0),
+		"--range-bad":  danger,
+		"--sel-bg":     p.SelBG,
+		"--sel-fg":     p.SelFG,
 	}
 	for k, v := range p.Overrides {
 		tk[k] = v
@@ -317,7 +321,8 @@ var tokenOrder = []string{
 	"--bg", "--surface", "--surface-2", "--text", "--text-muted",
 	"--border", "--border-strong", "--accent", "--accent-hover",
 	"--accent-contrast", "--focus", "--credited", "--refunded",
-	"--escrow", "--danger", "--danger-contrast", "--sel-bg", "--sel-fg",
+	"--escrow", "--danger", "--danger-contrast", "--range-good", "--range-bad",
+	"--sel-bg", "--sel-fg",
 }
 
 func (p ANSIPalette) block() string {

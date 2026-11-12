@@ -3825,12 +3825,14 @@ func TestPricedFillIsAMoneyButton(t *testing.T) {
 // Feedback the UI collects has to come back out somewhere, or it is a number on
 // a card and nothing more. The signals the kernel already publishes — the
 // ratings and the price — order the list, so a buyer can choose by them. The
-// rating order is the bars' own: by the low end of each rating range (§6.2).
+// rating order is the bars' own: by the share of good ratings each confirms
+// (§6.2).
 func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	rows := map[string]string{
 		"CHEAP": `{"id":"CHEAP","action":"alice@testnet/cheap","name":"cheap","kind":"wasm","active":true,"price":1}`,
 		"LOVED": `{"id":"LOVED","action":"alice@testnet/loved","name":"loved","kind":"wasm","active":true,"price":50}`,
 		"MEH":   `{"id":"MEH","action":"alice@testnet/meh","name":"meh","kind":"wasm","active":true,"price":10}`,
+		"BAD":   `{"id":"BAD","action":"alice@testnet/bad","name":"bad","kind":"wasm","active":true,"price":20}`,
 	}
 	mux := http.NewServeMux()
 	fakeHealth(mux)
@@ -3852,7 +3854,7 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 			w.Write([]byte(`[]`))
 			return
 		}
-		w.Write([]byte("[" + rows["CHEAP"] + "," + rows["LOVED"] + "," + rows["MEH"] + "]"))
+		w.Write([]byte("[" + rows["CHEAP"] + "," + rows["LOVED"] + "," + rows["MEH"] + "," + rows["BAD"] + "]"))
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -3861,6 +3863,8 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 			w.Write([]byte(withEvidence(rows[id], `{"uses":9,"successes":9,"rating_count":9,"rating_estimate":0.95}`)))
 		case "MEH":
 			w.Write([]byte(withEvidence(rows[id], `{"uses":9,"successes":4,"rating_count":9,"rating_estimate":0.2}`)))
+		case "BAD":
+			w.Write([]byte(withEvidence(rows[id], `{"uses":3,"successes":0,"rating_count":3,"rating_estimate":0}`)))
 		default: // CHEAP has said nothing
 			w.Write([]byte(withEvidence(rows[id], `{}`)))
 		}
@@ -3880,21 +3884,21 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	}
 	// A row is found by its link; the order of the links is the order shown.
 	order := func(body string) []string {
-		out := []string{"/actions/CHEAP", "/actions/LOVED", "/actions/MEH"}
+		out := []string{"/actions/CHEAP", "/actions/LOVED", "/actions/MEH", "/actions/BAD"}
 		sort.Slice(out, func(i, j int) bool { return strings.Index(body, out[i]) < strings.Index(body, out[j]) })
 		return out
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "/actions/CHEAP" || got[2] != "/actions/LOVED" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "/actions/CHEAP" || got[3] != "/actions/LOVED" {
 		t.Errorf("price order = %v", got)
 	}
 	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "/actions/LOVED" {
 		t.Errorf("rating order must put the best-rated first: %v", got)
 	}
-	// A row nobody has rated is neither a bad one nor a good one: its range is
-	// the unknown one, below an action known to be good and above one known to
-	// be poor.
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[1] != "/actions/CHEAP" || got[2] != "/actions/MEH" {
-		t.Errorf("an unrated action stands between the known good and the known poor: %v", got)
+	// A row nobody has rated has nothing confirmed good, so it follows every
+	// row with anything confirmed; among rows with nothing confirmed good, it
+	// precedes the one confirmed poor.
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[1] != "/actions/MEH" || got[2] != "/actions/CHEAP" || got[3] != "/actions/BAD" {
+		t.Errorf("rating order must be what each bar confirms: %v", got)
 	}
 	// An unknown sort shows the list, not an error.
 	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "/actions/CHEAP") {

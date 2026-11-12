@@ -324,8 +324,8 @@ func TestAdminInspectRenders(t *testing.T) {
 	table = table[:strings.Index(table, "</table>")]
 	for _, want := range []string{
 		`<span class="mono" title="a2">synth@kernelc/make</span>`,
-		`title="6 of 6 runs succeeded, likely 76–99%"`, `title="2 of 2 ratings good, likely 56–94%; 1 more unverified"`, "0.7s", `title="KEYC">provider</span>`,
-		`title="0 of 1 run succeeded, likely 10–57%; 1 confirmed by the provider"`, `title="KEYB">KEYB</span>`,
+		`title="100% success · 6 runs"`, `title="100% positive · 2 ratings · 1 more unverified"`, "0.7s", `title="KEYC">provider</span>`,
+		`title="0% success · 1 run · 1 confirmed by the provider"`, `title="KEYB">KEYB</span>`,
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("evidence table missing %q:\n%s", want, table)

@@ -185,15 +185,14 @@
   <span class="stat-cell stat-price"><span class="stat-value">{{template "_price" .Price}}</span></span>
 </div>
 {{end}}
-{{define "_stat_success"}}{{$r := .Success}}<span class="stat-cell" title="{{$r.Says "run" "succeeded"}}{{with .Corroborated}}; {{.}} confirmed by the provider{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "run"}}</span><span class="sr-only">Success: {{$r.Says "run" "succeeded"}}</span></span>{{end}}
-{{define "_stat_rating"}}{{$r := .Rating}}<span class="stat-cell" title="{{$r.Says "rating" "good"}}{{with .Unverified}}; {{.}} more unverified{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "rating"}}</span><span class="sr-only">Rating: {{$r.Says "rating" "good"}}</span></span>{{end}}
-{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell stat-time" title="Mean time of a run"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span></span>{{else}}<span class="stat-cell stat-time muted" title="No runs yet"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> —</span></span>{{end}}{{end}}
+{{define "_stat_success"}}{{$r := .Success}}<span class="stat-cell" title="{{$r.Says "run" "success"}}{{with .Corroborated}} · {{.}} confirmed by the provider{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "run"}}</span><span class="sr-only">{{$r.Says "run" "success"}}</span></span>{{end}}
+{{define "_stat_rating"}}{{$r := .Rating}}<span class="stat-cell" title="{{$r.Says "rating" "positive"}}{{with .Unverified}} · {{.}} more unverified{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "rating"}}</span><span class="sr-only">{{$r.Says "rating" "positive"}}</span></span>{{end}}
+{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell stat-time" title="{{printf "%.1f" .S.LatencyEstimate}} s average"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span></span>{{else}}<span class="stat-cell stat-time muted" title="No runs yet"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> —</span></span>{{end}}{{end}}
 
-{{/* _range — a share as a bar (Range): the track is 0–100%, the same in every
-     row and on every page; the band is where the share probably lies, the
-     tick its likeliest value. Geometry is the data's, in the SVG's own
-     attributes; its look is the stylesheet's. */}}
-{{define "_range"}}<svg class="range" aria-hidden="true" focusable="false"><rect class="range-track" y="30%" width="100%" height="40%" rx="2"/><rect class="range-band" x="{{printf "%.2f" .Lo}}%" y="30%" width="{{printf "%.2f" .Width}}%" height="40%" rx="2"/><line class="range-mid" x1="{{printf "%.2f" .Mid}}%" x2="{{printf "%.2f" .Mid}}%" y1="0" y2="100%"/></svg>{{end}}
+{{/* _range — a share as a bar (Range), three segments across a fixed 0–100%
+     track: confirmed good, still open, confirmed bad. Geometry is the data's,
+     in the SVG's own attributes; its look is the stylesheet's. */}}
+{{define "_range"}}<svg class="range" aria-hidden="true" focusable="false"><rect class="range-good" width="{{printf "%.2f" .Lo}}%" height="100%"/><rect class="range-open" x="{{printf "%.2f" .Lo}}%" width="{{printf "%.2f" .Open}}%" height="100%"/><rect class="range-bad" x="{{printf "%.2f" .Hi}}%" width="{{printf "%.2f" .Bad}}%" height="100%"/></svg>{{end}}
 
 {{/* _progress — THE in-flight bar: Run's, below its form, and a form tool's,
      in the form's top row. Takes progress id label; the id is what an

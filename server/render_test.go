@@ -807,14 +807,14 @@ func TestCallFormApproval(t *testing.T) {
 	}
 }
 
-// TestRangeOf: a share is drawn as Laplace's mean and one standard deviation
-// either side (requirements §6.2). The table is the plan's own; the range never
-// leaves 0–100 and holds its mean, whatever the record.
+// TestRangeOf: a share is drawn as the Wilson score interval at 95% confidence
+// (requirements §6.2): confirmed good below it, confirmed bad above it. It
+// never leaves 0–100, and a record of nothing is all open.
 func TestRangeOf(t *testing.T) {
 	for _, c := range []struct {
 		k, n   int64
 		lo, hi string
-	}{{0, 0, "21", "79"}, {1, 1, "43", "90"}, {7, 7, "79", "99"}, {19, 20, "85", "97"}, {85, 89, "92", "97"}, {950, 1000, "94", "96"}} {
+	}{{0, 0, "0", "100"}, {1, 1, "21", "100"}, {7, 7, "65", "100"}, {19, 20, "76", "99"}, {85, 89, "89", "98"}, {950, 1000, "93", "96"}} {
 		g := rangeOf(c.k, c.n)
 		if lo, hi := fmt.Sprintf("%.0f", g.Lo), fmt.Sprintf("%.0f", g.Hi); lo != c.lo || hi != c.hi {
 			t.Errorf("rangeOf(%d, %d) = %s–%s, want %s–%s", c.k, c.n, lo, hi, c.lo, c.hi)
@@ -823,8 +823,8 @@ func TestRangeOf(t *testing.T) {
 	for n := int64(0); n <= 200; n++ {
 		for k := int64(0); k <= n; k++ {
 			g := rangeOf(k, n)
-			if !(0 <= g.Lo && g.Lo <= g.Mid && g.Mid <= g.Hi && g.Hi <= 100) {
-				t.Fatalf("rangeOf(%d, %d) = %+v leaves 0–100 or misses its mean", k, n, g)
+			if p := 100 * float64(k) / float64(max(n, 1)); !(0 <= g.Lo && g.Lo <= g.Hi && g.Hi <= 100) || (n > 0 && (p < g.Lo || p > g.Hi)) {
+				t.Fatalf("rangeOf(%d, %d) = %+v leaves 0–100 or misses the observed share", k, n, g)
 			}
 		}
 	}
@@ -833,8 +833,9 @@ func TestRangeOf(t *testing.T) {
 	}
 }
 
-// TestStatsOfAnUnusedAction: an action never run has the widest bars and says
-// so in words — no runs, no ratings — never a fake figure.
+// TestStatsOfAnUnusedAction: an action never run has bars all open, nothing
+// confirmed either way, and says so in words — no runs, no ratings — never a
+// fake figure.
 func TestStatsOfAnUnusedAction(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -845,7 +846,7 @@ func TestStatsOfAnUnusedAction(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`<div class="action-stats">`, ">no runs<", ">no ratings<", `title="No runs yet"`, `title="No ratings yet"`, `class="range-band" x="21.13%"`, "12 credits"} {
+	for _, want := range []string{`<div class="action-stats">`, ">no runs<", ">no ratings<", `title="No runs yet"`, `title="No ratings yet"`, `<rect class="range-good" width="0.00%" height="100%"/><rect class="range-open" x="0.00%" width="100.00%" height="100%"/>`, "12 credits"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("an unused action's figures miss %q: %s", want, body)
 		}
@@ -868,7 +869,7 @@ func TestStatsStateTheirCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{">10 runs<", ">4 ratings<", `title="9 of 10 runs succeeded, likely 73–94%"`, `title="3 of 4 ratings good, likely 49–84%"`, "0.4s", "#check", "#thumb-up", "#clock", `<span class="sr-only">Success: 9 of 10 runs`} {
+	for _, want := range []string{">10 runs<", ">4 ratings<", `title="90% success · 10 runs"`, `title="75% positive · 4 ratings"`, `title="0.4 s average"`, "0.4s", "#check", "#thumb-up", "#clock", `<span class="sr-only">90% success · 10 runs</span>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the figures miss %q: %s", want, body)
 		}
@@ -2169,8 +2170,8 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	ev := body[strings.Index(body, "<h2>Evidence</h2>"):]
 	ev = ev[:strings.Index(ev, "</table>")]
 	for _, want := range []string{
-		"#check", ">4 runs<", `title="1 of 4 runs succeeded, likely 16–51%"`, "0.7s", `title="PROVIDERKEY0000">provider</span>`,
-		`title="3 of 3 runs succeeded, likely 64–96%; 2 confirmed by the provider"`, `title="1 of 1 rating good, likely 43–90%; 2 more unverified"`,
+		"#check", ">4 runs<", `title="25% success · 4 runs"`, "0.7s", `title="PROVIDERKEY0000">provider</span>`,
+		`title="100% success · 3 runs · 2 confirmed by the provider"`, `title="100% positive · 1 rating · 2 more unverified"`,
 		`class="mono" title="` + other + `">OOOOOOOO…</span>`, `data-copy="` + other + `"`,
 		`title="1 trades reported two ways — they count for nothing"`,
 	} {
@@ -2194,7 +2195,7 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	if err := r.Fragment(rec, 200, "_action_panel", actionView{Action: a}); err != nil {
 		t.Fatal(err)
 	}
-	if p := rec.Body.String(); !strings.Contains(p, `<details class="fold"><summary>Evidence</summary>`) || !strings.Contains(p, `title="1 of 4 runs succeeded, likely 16–51%"`) {
+	if p := rec.Body.String(); !strings.Contains(p, `<details class="fold"><summary>Evidence</summary>`) || !strings.Contains(p, `title="25% success · 4 runs"`) {
 		t.Errorf("the panel folds the evidence: %s", p)
 	}
 	// An action no one else has reported on has no section at all.

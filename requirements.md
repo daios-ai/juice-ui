@@ -1,7 +1,18 @@
 # Juice Web UI Requirements
 
-Version: 0.67.0
+Version: 0.68.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.68.0.** A range bar shows what its record has settled:
+> green the share confirmed good, red the share confirmed bad, the open track
+> between them what is not yet known — the ends of the Wilson score interval at
+> 95% confidence, so an action never run is all open and green grows only as
+> runs confirm it. The tick is gone. The bar's two hues are tokens of their own
+> in every theme. The rating sort orders by the green, the share of good
+> ratings confirmed: an unrated action follows every action with anything
+> confirmed good and precedes the ones confirmed poor. A figure's tooltip
+> states the record in words, the share then the count — `96% success · 89
+> runs` (§6.2).
 
 > **What changed in 0.67.0.** One action row on every list — Discover, a search
 > on the page and in the panel, the Workshop, a peer's actions — drawn by one
@@ -1665,13 +1676,15 @@ back only as a number to look at:
   where a query was made, the catalog's order otherwise. It is the only order
   the kernel itself asserts, and it is how a new action is still found.
 * Rating and price **arrange served rows**. Under `rating` the rows are ordered
-  by the **low end of the rating range** each row draws (below): the share of
-  good ratings an action probably has at least. The order is the one a person
-  reads off the bars, so one good rating does not outrank nineteen of twenty.
+  by the **share of good ratings each row's bar confirms** (below): the low end
+  of its rating interval, the Wilson lower bound. The order is the one a person
+  reads off the green, so one good rating does not outrank nineteen of twenty.
+  Among rows with nothing confirmed good, the one least confirmed bad comes
+  first.
 * An **unrated** row — new, or discovered, since the discovery cache stores no
-  stats — stands where its unknown range puts it under the same rule: above an
-  action known to be poor, below one known to be good. It MUST NOT be scored as
-  zero, nor set apart: "no ratings" is neither a low rating nor a high one.
+  stats — has nothing confirmed either way, so under the same rule it follows
+  every row with anything confirmed good and precedes the ones confirmed poor.
+  It is not set apart: one rule orders every row.
 * An unknown sort value renders the list under relevance. A mistyped view is a
   view, not an error.
 
@@ -1740,12 +1753,15 @@ both MUST keep planning apart from spending:
   `active`, and the lookup ranks active actions only (verified live), so a
   lookup hit is active until its detail read says otherwise. The **figures**
   are success and rating as **range bars**, each over its count (`89 runs`,
-  `10 ratings`, `no runs`), then the mean time and the price: a bar is the
-  share's likeliest value, Laplace's mean (k+1)/(n+2), as a tick, and one
-  standard deviation of that posterior either side as a band, on a fixed
-  0–100% track the same down a list, in one neutral ink; the cell's title and
-  its screen-reader text state it in words ("85 of 89 runs succeeded, likely
-  92–97%"). The list is a container: where it is wide the figures stand at the
+  `10 ratings`, `no runs`), then the mean time and the price. A bar is **three
+  segments** across a fixed 0–100% track, the same width down a list: green
+  from 0 to the low end of the share's **Wilson score interval at 95%
+  confidence** — the share confirmed good —, red from its high end to 100 —
+  the share confirmed bad —, and the open track between them, what the record
+  has not settled. An action never run is all open. The cell's title and its
+  screen-reader text state the record as stores and status pages do, the share
+  then the count: `96% success · 89 runs`, `90% positive · 10 ratings`,
+  `0.4 s average`, `No runs yet`. The list is a container: where it is wide the figures stand at the
   right of the text, a fixed column each, aligned down the list, the price at
   the right edge; where it is narrow they follow the text in its column. The
   title is the row's one pointer target. With no query the page

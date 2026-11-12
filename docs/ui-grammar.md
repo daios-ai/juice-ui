@@ -447,18 +447,23 @@ separates it from the content above, and nothing else does (§4).
     action's page and its panel: success, rating, mean time, price. A figure is
     a `.stat-cell`: its value (`.stat-value`: an icon and a bar, or a number)
     over its count (`.stat-count`: `89 runs`, `10 ratings`, `no runs`), its
-    sentence in `title` and in `.sr-only` text ("85 of 89 runs succeeded,
-    likely 92–97%"). Success is `#check`, rating `#thumb-up`, time `#clock`.
+    record in words in `title` and in `.sr-only` text, the share then the
+    count, as stores and status pages state it: `96% success · 89 runs`,
+    `90% positive · 10 ratings`, `0.4 s average`, `No runs yet`. Success is `#check`, rating `#thumb-up`, time `#clock`.
     The time cell (`.stat-time`) keeps a minimum width so its column aligns;
     an action never run shows a muted `—`, never `0.0s`.
-  - **The range bar** (`_range`, `.range`) draws a share: the track is 0–100%,
-    fixed, the same width down a list; the band (`.range-band`) is one standard
-    deviation either side of Laplace's mean; the tick (`.range-mid`) is the
-    mean, so the bar survives a band a hair wide. Its geometry is the data's, in
-    the SVG's own attributes; its look is the stylesheet's, **one neutral ink**
-    — the track `--border`, the band `--text-muted`, the tick `--text`. A bar
-    carries no good/bad colour: the kernel states no threshold. An action never
-    run is the widest bar, centred, and needs no "none" state.
+  - **The range bar** (`_range`, `.range`) shows what a record has settled, in
+    three segments across a fixed 0–100% track, the same width down a list:
+    **green** (`.range-good`) the share confirmed good, up to the low end of the
+    Wilson score interval at 95% confidence; **red** (`.range-bad`) the share
+    confirmed bad, from its high end; the open track between (`.range-open`,
+    `--border`) what is not yet known. An action never run is all open and
+    needs no "none" state; green grows only as runs confirm it. Its geometry is
+    the data's, in the SVG's own attributes; its look is the stylesheet's. Its
+    hues are **its own tokens**, `--range-good` and `--range-bad` (generated
+    per theme from the palette's green and red, at 3:1 against the page): the
+    one place a hue states a confirmed share, never money credited nor a
+    destructive act.
   - **Marks** (`_action_marks`, the same beside the title on the row, the page
     and the panel) state the *exception* only:
     - **Remote** → `R` (`_kind_chip`, `kindBadge`), filled: a proxy of another
