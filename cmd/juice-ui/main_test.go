@@ -533,6 +533,21 @@ func updateRelease(t *testing.T, tag string, programs map[string]string) string 
 	return srv.URL
 }
 
+// The server is handed the installation's kernel and agent by their titles and
+// the releases their binaries report.
+func TestPartsAreTheInstalledComponents(t *testing.T) {
+	t.Setenv("JUICE_AGENT_BIN", "")
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "bin"), 0o700)
+	os.WriteFile(filepath.Join(home, "bin", "juice"), []byte("#!/bin/sh\necho juice version v0.18.1 \\(x\\)\n"), 0o755)
+	os.WriteFile(filepath.Join(home, "bin", "juice-agent"), []byte("#!/bin/sh\necho juice-agent v0.10.0\n"), 0o755)
+	u, _ := url.Parse("http://127.0.0.1:4040")
+	got := parts(&kernel.Installation{Home: home, URL: u})
+	if fmt.Sprint(got) != "[{kernel v0.18.1} {agent v0.10.0}]" {
+		t.Errorf("parts: %v", got)
+	}
+}
+
 // An update installs the newest release and only then asks for the restart,
 // naming the installed juice-ui; one runs at a time; a failure leaves Juice as
 // it was, with its words, and asks for nothing.

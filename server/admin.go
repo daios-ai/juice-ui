@@ -986,11 +986,19 @@ type UpdateState struct {
 	Failed string // why the last update stopped; "" when none did
 }
 
+// Part is one component this installation holds, as Admin's version row names
+// it: its title and the release its binary reports, v0.18.1.
+type Part struct{ Title, Version string }
+
+// Release is the part's release as the page names it, 0.18.1.
+func (p Part) Release() string { return strings.TrimPrefix(p.Version, "v") }
+
 // updateView is the sidebar's notice and Admin's version row: one state, this
-// UI's release, and whether this build can update itself.
+// UI's release and the parts beside it, and whether this build can update itself.
 type updateView struct {
 	UpdateState
 	Version   string
+	Parts     []Part
 	Can       bool
 	CSRFField template.HTML
 	OOB       bool // an answer of the heartbeat, swapped in place
@@ -1023,7 +1031,7 @@ func (s *Server) updateView(r *http.Request) *updateView {
 	if !s.isSuperuser(r) {
 		return nil
 	}
-	v := &updateView{Version: s.version, Can: s.updates != nil, CSRFField: csrf.TemplateField(r)}
+	v := &updateView{Version: s.version, Parts: s.parts, Can: s.updates != nil, CSRFField: csrf.TemplateField(r)}
 	if s.updates != nil {
 		v.UpdateState = s.updates.State()
 	}

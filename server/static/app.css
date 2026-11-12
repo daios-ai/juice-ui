@@ -729,14 +729,18 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .you-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .you-row label, .you-row .detail form { margin: 0; }
 .you-row {
-  display: flex; align-items: center; gap: var(--space-3); width: 100%; text-align: left;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); width: 100%; text-align: left;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: var(--space-3) var(--space-4); font-size: var(--font-size-md);
   color: var(--text); font-family: inherit;
 }
-.you-row > .progress { flex: none; }
+/* The command keeps its one line; when the row is too narrow for it, it goes
+   under the value, to the right. */
+.you-row > .progress, .you-row > form { flex: none; margin-left: auto; }
+.you-row .btn { white-space: nowrap; }
 .you-row .detail a { color: var(--text); } /* a link among the muted figures reads as one */
-.you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); color: var(--text-muted); }
+.you-row .detail { flex: 1 1 auto; margin-left: auto; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); color: var(--text-muted); }
+.you-row .detail > span { white-space: nowrap; } /* a figure and its name break as one */
 
 
 /* A room (grammar §5.5): the conversation in the page's column and, beside

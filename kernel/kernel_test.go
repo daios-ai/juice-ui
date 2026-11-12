@@ -540,6 +540,33 @@ func TestDueFollowsOneRule(t *testing.T) {
 	}
 }
 
+// Installed names each component in bin/ by its title and the release it
+// reports; a missing binary, an overridden one and a kernel elsewhere name none.
+func TestInstalledNamesTheComponentsInBin(t *testing.T) {
+	i := inst(t, "http://127.0.0.1:4040")
+	if got := i.Installed(); len(got) != 0 {
+		t.Errorf("an empty installation: %v", got)
+	}
+	installFake(t, i)
+	if got := fmt.Sprint(i.Installed()); got != "[{kernel v9.9.9} {agent v9.9.9}]" {
+		t.Errorf("both components: %s", got)
+	}
+	t.Setenv("JUICE_AGENT_BIN", "/elsewhere/juice-agent")
+	if got := fmt.Sprint(i.Installed()); got != "[{kernel v9.9.9}]" {
+		t.Errorf("an overridden agent is not named: %s", got)
+	}
+	os.Remove(filepath.Join(i.Home, "bin", "juice"))
+	if got := i.Installed(); len(got) != 0 {
+		t.Errorf("a missing kernel is not named: %v", got)
+	}
+	installFake(t, i)
+	elsewhere := inst(t, "http://10.0.0.9:4040")
+	elsewhere.Home = i.Home
+	if got := elsewhere.Installed(); len(got) != 0 {
+		t.Errorf("a kernel elsewhere names nothing, whatever bin/ holds: %v", got)
+	}
+}
+
 // Before a kernel binary replaces another, what the old one served is copied to
 // ui/backup/: every kernel home, the binary and the UI release that last served
 // them. A home that cannot be copied, or one a kernel still serves, stops the

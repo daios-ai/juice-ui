@@ -77,6 +77,9 @@ type wiring struct {
 	programs apps.Programs
 	// updates is Juice updating itself; nil when this build cannot.
 	updates server.Updates
+	// parts are the kernel and agent this installation holds, read once the
+	// installer is done, since only its Download step replaces them.
+	parts []server.Part
 }
 
 // wire constructs the client, the identity (pinned to the recorded key when
@@ -181,7 +184,18 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 		Config:         w.config,
 		Version:        version,
 		Updates:        w.updates,
+		Parts:          w.parts,
 	})
+}
+
+// parts are the installation's components as Admin names them; each package
+// keeps its own types.
+func parts(inst *kernel.Installation) []server.Part {
+	var out []server.Part
+	for _, p := range inst.Installed() {
+		out = append(out, server.Part{Title: p.Title, Version: p.Version})
+	}
+	return out
 }
 
 // installation adapts the kernel package to the installer's Kernel; each
@@ -462,6 +476,7 @@ func run() (code int, next string) {
 	if inst.Local() {
 		w.config = inst
 	}
+	w.parts = parts(inst)
 	handler, err := build(w, cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)

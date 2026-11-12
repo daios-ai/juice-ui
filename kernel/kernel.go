@@ -44,19 +44,19 @@ import (
 // operator's choosing, which the gate then leaves alone. Setup is the setup
 // command, a program of the asset and its arguments, which writes the schemas
 // and shipped defaults (ecosystem-standard §3) and which the installer runs
-// before placing the programs.
+// before placing the programs. Title is the word a page names it by.
 type Component struct {
-	Repo, Name, Release, Env string
-	Programs                 []string
-	Setup                    []string
+	Repo, Name, Title, Release, Env string
+	Programs                        []string
+	Setup                           []string
 }
 
 // Components are the programs this UI installs, each at the release it was
 // verified against, in the order the gate installs them: the kernel first,
 // since nothing is created or served without it.
 var Components = []Component{
-	{Repo: "daios-ai/juice", Name: "juice", Release: "v0.18.1", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
-	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Release: "v0.10.0", Env: "JUICE_AGENT_BIN", Programs: []string{"juice-agent"}, Setup: []string{"juice-agent", "setup"}},
+	{Repo: "daios-ai/juice", Name: "juice", Title: "kernel", Release: "v0.18.1", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
+	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Title: "agent", Release: "v0.10.0", Env: "JUICE_AGENT_BIN", Programs: []string{"juice-agent"}, Setup: []string{"juice-agent", "setup"}},
 }
 
 // UI is this repository's own asset, the three programs install.sh puts in
@@ -118,6 +118,30 @@ func isLoopback(host string) bool {
 
 // Version is the release the installed kernel reports, or "".
 func (i *Installation) Version() string { return i.version("juice") }
+
+// Part is one installed component as a page names it: its title and the
+// release its binary reports.
+type Part struct{ Title, Version string }
+
+// Installed are the components in bin/, in the order of Components, each with
+// the release its binary reports: none that reports nothing, none whose
+// override names another binary (Due leaves it alone too), and none at all
+// when the kernel is not this installation's.
+func (i *Installation) Installed() []Part {
+	if !i.Local() {
+		return nil
+	}
+	var parts []Part
+	for _, c := range Components {
+		if c.Env != "" && os.Getenv(c.Env) != "" {
+			continue
+		}
+		if v := i.version(c.Name); v != "" {
+			parts = append(parts, Part{c.Title, v})
+		}
+	}
+	return parts
+}
 
 // version is the release the installed binary name reports: the first word of
 // its --version that is a semantic version (`juice version v0.18.1 (…)`,

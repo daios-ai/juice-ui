@@ -1,7 +1,11 @@
 # Juice Web UI Requirements
 
-Version: 0.69.0
+Version: 0.69.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.69.1.** Admin's version row names the kernel and the
+> agent this installation holds, after Juice's own release (§6.6). A setting
+> row too narrow for its command puts the command under its value.
 
 > **What changed in 0.69.0.** Juice updates itself. The UI asks twice a day
 > which release is the newest; while one is out, the superuser sees a notice
@@ -2692,7 +2696,13 @@ banner ("Juice is up to date.", "Juice 0.69.0 is available.", or why it could
 not ask). While an update runs, the command gives way to the in-flight bar,
 `Downloading…` then `Restarting…`; one that stopped puts its words in an error
 banner above the row and offers Update again. A build that cannot update itself
-shows its release alone. The routes exist for the superuser only.
+shows its release alone. After the release, and its notes when a newer one is
+out, the row names the kernel and the agent this installation holds by the
+releases their binaries report, `· kernel 0.18.1 · agent 0.10.0`, read when Juice
+starts, since only the start replaces them: none when the kernel is not this
+installation's, and no agent while `JUICE_AGENT_BIN` names another binary. They
+take no command: they follow Juice's release. The routes exist for the
+superuser only.
 
 **Configuration.** The kernel's settings are its `config.json`, applied by
 editing the file and restarting the kernel (kernel manual). The UI, which

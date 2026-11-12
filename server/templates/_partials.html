@@ -696,14 +696,14 @@
 {{define "_update_notice"}}<div class="update-notice" id="update-notice"{{if .OOB}} hx-swap-oob="true"{{end}}>{{if and .Available (not .Phase)}}<a class="btn" href="/admin" aria-label="Update to {{.Next}}" title="Update to {{.Next}}"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#arrow-up"/></svg><span>Update to {{.Next}}</span></a>{{end}}<input type="hidden" name="slow" value="update:notice:{{.Shown}}"></div>{{end}}
 
 {{/* _update_row — Admin's version row (§6.6): this release, the newer one and
-     its notes when there is one, and the one command: Update, or Check for
+     its notes when there is one, the kernel's and agent's releases, and the one command: Update, or Check for
      updates; while an update runs, its step under the progress bar. A build
      that cannot update itself shows its version alone. Kept by the heartbeat.
      Input: updateView. */}}
 {{define "_update_row"}}<div class="stack" id="update-row"{{if .OOB}} hx-swap-oob="true"{{end}}>
   {{with .Failed}}{{template "_error" (printf "The update stopped: %s" .)}}{{end}}
   <div class="you-row"><span>version</span>
-    <span class="detail">{{.Current}}{{if .Available}} → {{.Next}} · <a href="{{.Notes}}" target="_blank" rel="noopener">release notes</a>{{end}}</span>
+    <span class="detail">{{.Current}}{{if .Available}} → {{.Next}} · <a href="{{.Notes}}" target="_blank" rel="noopener">release notes</a>{{end}}{{range .Parts}} <span>· {{.Title}} {{.Release}}</span>{{end}}</span>
     {{if .Phase}}<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>{{.Doing}}</span></div>
     {{else if .Available}}<form method="post" action="/admin/update" data-confirm="Update Juice to {{.Next}} and restart it for everyone?">{{.CSRFField}}<button class="btn" type="submit">Update</button></form>
     {{else if .Can}}<form method="post" action="/admin/update/check">{{.CSRFField}}<button class="btn" type="submit">Check for updates</button></form>{{end}}

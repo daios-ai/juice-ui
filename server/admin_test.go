@@ -1457,6 +1457,36 @@ func updatesServer(t *testing.T, up *fakeUpdates) string {
 	return srv.URL
 }
 
+// The version row names the kernel and agent this installation holds after
+// Juice's own release, whether or not a newer one is out, and whether or not
+// this build can update itself.
+func TestTheVersionRowNamesTheKernelAndAgent(t *testing.T) {
+	parts := []Part{{"kernel", "v0.18.1"}, {"agent", "v0.10.0"}}
+	for _, up := range []*fakeUpdates{{}, nil} {
+		kernel := authKernel()
+		t.Cleanup(kernel.Close)
+		var u Updates
+		if up != nil {
+			u = up
+		}
+		srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) {
+			w.version, w.updates, w.parts = "v0.68.1", u, parts
+		}))
+		t.Cleanup(srv.Close)
+		cl := loginClientAs(t, srv.URL, "sys")
+		if body := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(body, `<span class="detail">0.68.1 <span>· kernel 0.18.1</span> <span>· agent 0.10.0</span></span>`) {
+			t.Errorf("can update %v: the parts after the release: %s", up != nil, body)
+		}
+		if up == nil {
+			continue
+		}
+		up.set(UpdateState{Latest: "v0.69.0", Notes: "https://example.test/notes"})
+		if body := getBody(t, cl, srv.URL+"/admin"); !strings.Contains(body, `0.68.1 → 0.69.0 · <a href="https://example.test/notes" target="_blank" rel="noopener">release notes</a> <span>· kernel 0.18.1</span> <span>· agent 0.10.0</span></span>`) {
+			t.Errorf("a newer release: the parts after its notes: %s", body)
+		}
+	}
+}
+
 // The version row on Admin states the release and offers the one command the
 // state calls for; the notice above the avatar shows while a newer release is
 // out and no update runs, on every page; both are the superuser's alone.

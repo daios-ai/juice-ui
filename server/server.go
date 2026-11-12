@@ -51,9 +51,11 @@ type Options struct {
 	// kernel the interface is on (ecosystem-standard §6); "" when a bare URL.
 	KernelName string
 	// Version is this UI's release, shown on Admin; Updates is Juice updating
-	// itself, nil for a build that cannot (admin.go).
+	// itself, nil for a build that cannot (admin.go); Parts are the kernel and
+	// agent this installation holds, named on the same row.
 	Version string
 	Updates Updates
+	Parts   []Part
 }
 
 // Server holds dependencies and serves the BFF.
@@ -78,6 +80,7 @@ type Server struct {
 	modelsOK   func() bool             // its schema describes the Models page's entries (read once)
 	version    string                  // this UI's release
 	updates    Updates                 // Juice updating itself; nil = this build cannot
+	parts      []Part                  // the installed kernel and agent, read at start
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
@@ -288,6 +291,7 @@ func New(o Options) (http.Handler, error) {
 		kernelName: o.KernelName,
 		version:    o.Version,
 		updates:    o.Updates,
+		parts:      o.Parts,
 		config:     o.Config,
 		modelsOK: sync.OnceValue(func() bool {
 			_, schema, _, err := o.Config.Config()
