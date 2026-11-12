@@ -139,17 +139,14 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .stat-strip { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 
 /* An action's figures (_stats, grammar §5.5) — on its row, its page and its
-   panel: a cell each, its value (an icon and a bar, or a number) over its
-   count, the sentence in its title. A cell keeps one width, so down a list
-   the figures stand in columns. The evidence table renders the same cells. */
-.action-stats { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-1) var(--space-2); font-size: var(--font-size-xs); color: var(--text-muted); }
-.stat-cell { display: inline-flex; flex-direction: column; white-space: nowrap; }
+   panel: one line, a cell each — an icon and a bar, or a number — the record
+   in words in its title. A cell keeps one width, so down a list the figures
+   stand in columns. The evidence table renders the same cells. */
+.action-stats { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); font-size: var(--font-size-xs); color: var(--text-muted); }
+.stat-cell { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 1.5rem; white-space: nowrap; color: var(--text); font-variant-numeric: tabular-nums; }
+.stat-cell .ico { color: var(--text-muted); pointer-events: none; }
+.stat-cell.muted { color: var(--text-muted); }
 .stat-time { min-width: 3rem; }
-.stat-cell svg { pointer-events: none; }
-.stat-value { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 1.5rem; color: var(--text); font-variant-numeric: tabular-nums; }
-.stat-value .ico { color: var(--text-muted); }
-.stat-cell.muted .stat-value { color: var(--text-muted); }
-.stat-count { line-height: 1.2; }
 .stat-price .price { font-size: var(--font-size-sm); }
 /* A share as a bar (_range): green what is confirmed good, red what is
    confirmed bad, the open track between them what the record has not settled.
@@ -416,7 +413,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
   .action-row { grid-template-columns: auto minmax(0, 1fr) 25rem; column-gap: var(--space-5); }
   .action-row > .action-stats { grid-column: 3; grid-row: 1; flex-wrap: nowrap; margin-top: 0; }
   .action-row .range { width: 4.5rem; }
-  .action-row .stat-price { margin-left: auto; align-items: flex-end; }
+  .action-row .stat-price { margin-left: auto; }
 }
 .action-name { margin: 0; }
 .action-name .chips { margin-left: var(--space-2); }

@@ -1,7 +1,11 @@
 # Juice Web UI Requirements
 
-Version: 0.68.0
+Version: 0.68.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.68.1.** A figure is one line: its icon beside its bar,
+> nothing under it. The bar's open share already says how much is known, and
+> the tooltip says the record in words (§6.2).
 
 > **What changed in 0.68.0.** A range bar shows what its record has settled:
 > green the share confirmed good, red the share confirmed bad, the open track
@@ -1752,8 +1756,8 @@ both MUST keep planning apart from spending:
   row states no state: nothing local was read. A lookup row carries no
   `active`, and the lookup ranks active actions only (verified live), so a
   lookup hit is active until its detail read says otherwise. The **figures**
-  are success and rating as **range bars**, each over its count (`89 runs`,
-  `10 ratings`, `no runs`), then the mean time and the price. A bar is **three
+  are success and rating as **range bars**, each an icon beside its bar and
+  nothing under it, then the mean time and the price, all on one line. A bar is **three
   segments** across a fixed 0–100% track, the same width down a list: green
   from 0 to the low end of the share's **Wilson score interval at 95%
   confidence** — the share confirmed good —, red from its high end to 100 —
@@ -1875,7 +1879,7 @@ both MUST keep planning apart from spending:
   for a viewer who may manage the action, **Manage first** (§6.4), then the run
   form, the ratings and the evidence.
 * The figures are the row's (§6.2 discovery): success and rating as range bars
-  over their counts, the mean time, the price, each cell with an icon and a
+  beside their icons, the mean time, the price, each cell with an icon and a
   title that states it in words. They are this kernel's own record, the detail
   read's `evidence.local_experience`; the kernel serves no separate stats
   route, and a list row carries no evidence, so a card reads its action's
@@ -1885,7 +1889,7 @@ both MUST keep planning apart from spending:
   absent when the provider is this kernel) and `observed_by_others`. The page
   MUST render them as one table through the one evidence partial the peer
   inspection uses (§6.6): one report per row, in the figures' own cells —
-  success and rating as range bars over their counts, latency from
+  success and rating as range bars, latency from
   `avg_latency_ms` — and the source last, `provider` for the provider's own
   report (first) and an issuer's key otherwise. The kernel's further counts
   ride in the cells' titles: on success, the uses the provider's receipts

@@ -1835,7 +1835,7 @@ func TestWorkshopOrdersInactiveThenRuns(t *testing.T) {
 	if d < 0 || m < d || f < m {
 		t.Errorf("order must be inactive, then most run: draft %d, many %d, few %d", d, m, f)
 	}
-	if !strings.Contains(body, ">20 runs<") || !strings.Contains(body, `<span class="pill status-credited">local</span>`) {
+	if !strings.Contains(body, `title="100% success · 20 runs"`) || !strings.Contains(body, `<span class="pill status-credited">local</span>`) {
 		t.Errorf("a row shows its counts and who may call it: %s", body)
 	}
 }

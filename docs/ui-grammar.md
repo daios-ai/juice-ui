@@ -444,9 +444,9 @@ separates it from the content above, and nothing else does (§4).
     they must. A page, the panel and a phone take the same rules: none has a
     rule of its own.
   - **The figures** (`_stats`, `.action-stats`) are the same on the row, the
-    action's page and its panel: success, rating, mean time, price. A figure is
-    a `.stat-cell`: its value (`.stat-value`: an icon and a bar, or a number)
-    over its count (`.stat-count`: `89 runs`, `10 ratings`, `no runs`), its
+    action's page and its panel: success, rating, mean time, price, on one
+    line. A figure is a `.stat-cell`: an icon and a bar, or a number, and
+    nothing under it — the bar's open share says how much is known — its
     record in words in `title` and in `.sr-only` text, the share then the
     count, as stores and status pages state it: `96% success · 89 runs`,
     `90% positive · 10 ratings`, `0.4 s average`, `No runs yet`. Success is `#check`, rating `#thumb-up`, time `#clock`.

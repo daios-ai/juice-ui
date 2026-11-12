@@ -846,7 +846,7 @@ func TestStatsOfAnUnusedAction(t *testing.T) {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`<div class="action-stats">`, ">no runs<", ">no ratings<", `title="No runs yet"`, `title="No ratings yet"`, `<rect class="range-good" width="0.00%" height="100%"/><rect class="range-open" x="0.00%" width="100.00%" height="100%"/>`, "12 credits"} {
+	for _, want := range []string{`<div class="action-stats">`, `title="No runs yet"`, `title="No ratings yet"`, `<rect class="range-good" width="0.00%" height="100%"/><rect class="range-open" x="0.00%" width="100.00%" height="100%"/>`, "12 credits"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("an unused action's figures miss %q: %s", want, body)
 		}
@@ -869,7 +869,7 @@ func TestStatsStateTheirCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{">10 runs<", ">4 ratings<", `title="90% success · 10 runs"`, `title="75% positive · 4 ratings"`, `title="0.4 s average"`, "0.4s", "#check", "#thumb-up", "#clock", `<span class="sr-only">90% success · 10 runs</span>`} {
+	for _, want := range []string{`title="90% success · 10 runs"`, `title="75% positive · 4 ratings"`, `title="0.4 s average"`, "0.4s", "#check", "#thumb-up", "#clock", `<span class="sr-only">90% success · 10 runs</span>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the figures miss %q: %s", want, body)
 		}
@@ -1672,7 +1672,7 @@ func TestActionRowDiscovered(t *testing.T) {
 	if !strings.Contains(body, `class="price muted"`) || !strings.Contains(body, "title=\"Indicative") {
 		t.Errorf("an indicative price must be muted AND labelled: %s", body)
 	}
-	if !strings.Contains(body, ">no runs<") || strings.Contains(body, ">inactive<") {
+	if !strings.Contains(body, `title="No runs yet"`) || strings.Contains(body, ">inactive<") {
 		t.Errorf("a discovered card has the figures of an action never run, and no state: %s", body)
 	}
 	// The remote owner segment renders unlinked, like every remote ref.
@@ -2170,7 +2170,7 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	ev := body[strings.Index(body, "<h2>Evidence</h2>"):]
 	ev = ev[:strings.Index(ev, "</table>")]
 	for _, want := range []string{
-		"#check", ">4 runs<", `title="25% success · 4 runs"`, "0.7s", `title="PROVIDERKEY0000">provider</span>`,
+		"#check", `title="25% success · 4 runs"`, "0.7s", `title="PROVIDERKEY0000">provider</span>`,
 		`title="100% success · 3 runs · 2 confirmed by the provider"`, `title="100% positive · 1 rating · 2 more unverified"`,
 		`class="mono" title="` + other + `">OOOOOOOO…</span>`, `data-copy="` + other + `"`,
 		`title="1 trades reported two ways — they count for nothing"`,

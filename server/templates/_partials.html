@@ -174,20 +174,20 @@
 
 {{/* _stats — THE figures of an action, on its row, its page and its panel:
      success and rating as ranges, latency, the price. Takes a StatStrip
-     (statStrip). Each figure is a cell — its value, an icon and a bar or a
-     number, over its count — whose title says it in words; the evidence table
+     (statStrip). Each figure is one cell on one line — an icon and a bar, or
+     a number — whose title says the record in words; the evidence table
      renders the same cells, so a report reads as the record does. */}}
 {{define "_stats"}}
 <div class="action-stats">
   {{template "_stat_success" .}}
   {{template "_stat_rating" .}}
   {{template "_stat_latency" .}}
-  <span class="stat-cell stat-price"><span class="stat-value">{{template "_price" .Price}}</span></span>
+  <span class="stat-cell stat-price">{{template "_price" .Price}}</span>
 </div>
 {{end}}
-{{define "_stat_success"}}{{$r := .Success}}<span class="stat-cell" title="{{$r.Says "run" "success"}}{{with .Corroborated}} · {{.}} confirmed by the provider{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "run"}}</span><span class="sr-only">{{$r.Says "run" "success"}}</span></span>{{end}}
-{{define "_stat_rating"}}{{$r := .Rating}}<span class="stat-cell" title="{{$r.Says "rating" "positive"}}{{with .Unverified}} · {{.}} more unverified{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "rating"}}</span><span class="sr-only">{{$r.Says "rating" "positive"}}</span></span>{{end}}
-{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell stat-time" title="{{printf "%.1f" .S.LatencyEstimate}} s average"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span></span>{{else}}<span class="stat-cell stat-time muted" title="No runs yet"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> —</span></span>{{end}}{{end}}
+{{define "_stat_success"}}{{$r := .Success}}<span class="stat-cell" title="{{$r.Says "run" "success"}}{{with .Corroborated}} · {{.}} confirmed by the provider{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{template "_range" $r}}<span class="sr-only">{{$r.Says "run" "success"}}</span></span>{{end}}
+{{define "_stat_rating"}}{{$r := .Rating}}<span class="stat-cell" title="{{$r.Says "rating" "positive"}}{{with .Unverified}} · {{.}} more unverified{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg>{{template "_range" $r}}<span class="sr-only">{{$r.Says "rating" "positive"}}</span></span>{{end}}
+{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell stat-time" title="{{printf "%.1f" .S.LatencyEstimate}} s average"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="stat-cell stat-time muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> —</span>{{end}}{{end}}
 
 {{/* _range — a share as a bar (Range), three segments across a fixed 0–100%
      track: confirmed good, still open, confirmed bad. Geometry is the data's,
@@ -515,7 +515,7 @@
   <td>{{template "_stat_success" .Strip}}</td>
   <td>{{template "_stat_rating" .Strip}}</td>
   <td>{{template "_stat_latency" .Strip}}</td>
-  <td><span{{if .Source.IsKey}} class="mono"{{end}} title="{{.Source.Title}}">{{.Source.Text}}</span>{{if .Source.IsKey}} {{template "_copy" (copyOf "key" .Source.Title)}}{{end}}{{if .Contradictions}} <span class="stat-cell" title="{{.Contradictions}} trades reported two ways — they count for nothing"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Contradictions}}</span></span>{{end}}</td>
+  <td><span{{if .Source.IsKey}} class="mono"{{end}} title="{{.Source.Title}}">{{.Source.Text}}</span>{{if .Source.IsKey}} {{template "_copy" (copyOf "key" .Source.Title)}}{{end}}{{if .Contradictions}} <span class="stat-cell" title="{{.Contradictions}} trades reported two ways — they count for nothing"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Contradictions}}</span>{{end}}</td>
 </tr>{{end}}
 </tbody></table></div>
 {{end}}
