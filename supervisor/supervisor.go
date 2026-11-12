@@ -141,8 +141,9 @@ func WriteSchema(root string) error {
 	return os.WriteFile(filepath.Join(dir, schemaFile), []byte(schema), 0o600)
 }
 
-// Open takes the installation's lock, refusing when a supervisor holds it, stops
-// what a killed supervisor left behind, and starts every program not disabled.
+// Open takes the installation's lock, refusing when a supervisor holds it, and
+// stops what a killed supervisor left behind. It starts nothing: Run does, so
+// the programs' binaries can be replaced first, while none of them runs.
 func Open(root string) (*Supervisor, error) {
 	s := &Supervisor{root: root, dir: filepath.Join(root, "supervisor"), units: map[string]*unit{}}
 	s.idle = sync.NewCond(&s.mu)
@@ -171,16 +172,14 @@ func Open(root string) (*Supervisor, error) {
 	_ = f.Truncate(0)
 	_, _ = f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0)
 
-	progs, bad := s.read()
+	progs, _ := s.read()
 	s.sweep(progs)
-	for name, p := range progs {
-		s.apply(name, p, "")
-	}
-	for name, why := range bad {
-		s.apply(name, Program{}, why)
-	}
 	return s, nil
 }
+
+// Run starts every program not disabled: the files are read and matched, as
+// Reload does, the first time with nothing running.
+func (s *Supervisor) Run() { s.Reload() }
 
 // sweep stops what a supervisor that was killed left behind: first each process
 // a record names, when it is still the same process, then each process holding

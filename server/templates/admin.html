@@ -4,6 +4,11 @@
   <h1>Admin</h1>
 </div>
 
+{{with .Update}}
+<h2>Juice</h2>
+{{template "_update_row" .}}
+{{end}}
+
 {{if $d.Configurable}}
 <h2>Kernel</h2>
 <div class="row control-row">

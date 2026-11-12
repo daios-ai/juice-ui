@@ -58,6 +58,7 @@ type Page struct {
 	BadgeSecs    int           // the heartbeat's slow lane, in seconds (badges, receipts, peers)
 	Path         string        // current path, for links that must return to it
 	DrawerOpen   bool          // ?drawer=open: the narrow screen's drawer, open (no-JS path)
+	Update       *updateView   // the superuser's update notice; nil for anyone else
 	Data         any           // page-specific view model
 }
 

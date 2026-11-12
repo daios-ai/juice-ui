@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"html"
@@ -13,7 +14,10 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/daios-ai/juice-ui/apps"
 )
 
 // loginClientAs logs in through the BFF with a chosen handle. The session handle
@@ -1405,5 +1409,202 @@ func TestDepsConfigEditor(t *testing.T) {
 	e.ToJSON(w, post(url.Values{"raw_args": {`{"$schema":"other","max_turns":8}`}}), file)
 	if w.Code != 200 || w.Body.String() != "{\n  \"$schema\": \"../../schemas/juice-agent.schema.json\",\n  \"max_turns\": 8\n}" {
 		t.Errorf("ToJSON = %d %q", w.Code, w.Body.String())
+	}
+}
+
+// fakeUpdates is Juice updating itself as a test arranges it.
+type fakeUpdates struct {
+	mu       sync.Mutex
+	state    UpdateState
+	checkErr error
+	found    string // what a check finds
+	startErr error
+	started  int
+}
+
+func (f *fakeUpdates) State() UpdateState { f.mu.Lock(); defer f.mu.Unlock(); return f.state }
+func (f *fakeUpdates) Check(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.checkErr == nil {
+		f.state.Latest, f.state.Notes = f.found, "https://example.test/releases/tag/"+f.found
+	}
+	return f.checkErr
+}
+func (f *fakeUpdates) Start() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.startErr == nil {
+		f.started++
+		f.state.Phase = "downloading"
+	}
+	return f.startErr
+}
+func (f *fakeUpdates) set(st UpdateState) { f.mu.Lock(); f.state = st; f.mu.Unlock() }
+
+func updatesServer(t *testing.T, up *fakeUpdates) string {
+	t.Helper()
+	kernel := authKernel()
+	t.Cleanup(kernel.Close)
+	var u Updates
+	if up != nil {
+		u = up
+	}
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) {
+		w.version, w.updates, w.apps = "v0.68.1", u, []apps.App{launchApp{}} // launchApp: a page with the launcher
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// The version row on Admin states the release and offers the one command the
+// state calls for; the notice above the avatar shows while a newer release is
+// out and no update runs, on every page; both are the superuser's alone.
+func TestTheUpdateRowAndNoticeFollowTheState(t *testing.T) {
+	up := &fakeUpdates{}
+	base := updatesServer(t, up)
+	cl := loginClientAs(t, base, "sys")
+	notice := `<a class="btn" href="/admin" aria-label="Update to 0.69.0"`
+
+	body := getBody(t, cl, base+"/admin")
+	if !strings.Contains(body, "<h2>Juice</h2>") || !strings.Contains(body, `<span class="detail">0.68.1</span>`) ||
+		!strings.Contains(body, `action="/admin/update/check"`) || strings.Contains(body, `action="/admin/update"`) {
+		t.Errorf("up to date: the release and Check for updates: %s", body)
+	}
+	if strings.Contains(body, notice) {
+		t.Error("no notice while up to date")
+	}
+
+	up.set(UpdateState{Latest: "v0.69.0", Notes: "https://example.test/notes"})
+	body = getBody(t, cl, base+"/admin")
+	for _, want := range []string{
+		`0.68.1 → 0.69.0 · <a href="https://example.test/notes" target="_blank" rel="noopener">release notes</a>`,
+		`<form method="post" action="/admin/update" data-confirm="Update Juice to 0.69.0 and restart it for everyone?">`,
+		notice,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a newer release: want %q", want)
+		}
+	}
+	if b := getBody(t, cl, base+"/inbox"); !strings.Contains(b, notice) {
+		t.Error("the notice is on every page")
+	}
+	if reg := registryOf(t, getBody(t, cl, base+"/launch")); reg["Update to 0.69.0"] != "/admin" {
+		t.Errorf("the launcher finds the update: %v", reg)
+	}
+
+	up.set(UpdateState{Latest: "v0.69.0", Phase: "downloading"})
+	body = getBody(t, cl, base+"/admin")
+	if !strings.Contains(body, `<div class="progress htmx-request" role="status" aria-live="polite"><span class="bar" aria-hidden="true"></span><span>Downloading…</span></div>`) ||
+		strings.Contains(body, `action="/admin/update"`) || strings.Contains(body, notice) {
+		t.Errorf("under way: the progress alone, no command, no notice: %s", body)
+	}
+	up.set(UpdateState{Latest: "v0.69.0", Phase: "restarting"})
+	if body = getBody(t, cl, base+"/admin"); !strings.Contains(body, "<span>Restarting…</span>") {
+		t.Error("restarting")
+	}
+
+	up.set(UpdateState{Latest: "v0.69.0", Failed: "checksum mismatch for juice-ui_linux_amd64.tar.gz"})
+	body = getBody(t, cl, base+"/admin")
+	if !strings.Contains(body, `<div class="banner banner-error" role="alert">The update stopped: checksum mismatch for juice-ui_linux_amd64.tar.gz</div>`) ||
+		!strings.Contains(body, `action="/admin/update"`) {
+		t.Errorf("a failed update: its words and Update again: %s", body)
+	}
+
+	alice := loginClientAs(t, base, "alice")
+	if b := getBody(t, alice, base+"/inbox"); strings.Contains(b, "update-notice") || strings.Contains(b, "Update to") {
+		t.Error("the notice is the superuser's alone")
+	}
+	if b := getBody(t, alice, base+"/tick?slow=update:notice:x&watch=update:row:x"); strings.Contains(b, "update") {
+		t.Errorf("the watcher answers nobody else: %s", b)
+	}
+	page := getBody(t, alice, base+"/inbox")
+	for _, path := range []string{"/admin/update", "/admin/update/check"} {
+		resp := postTo(t, alice, base+path, page, url.Values{})
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s for another user: %d, want 404", path, resp.StatusCode)
+		}
+	}
+}
+
+// The heartbeat answers the notice and the row only when what the page shows is
+// out of date, each replacing itself with its watch.
+func TestTheUpdateWatcherAnswersOnlyAChange(t *testing.T) {
+	up := &fakeUpdates{}
+	base := updatesServer(t, up)
+	cl := loginClientAs(t, base, "sys")
+	watch := regexp.MustCompile(`name="slow" value="update:notice:([^"]*)"`)
+	m := watch.FindStringSubmatch(getBody(t, cl, base+"/inbox"))
+	if m == nil {
+		t.Fatal("the page carries the notice's watch")
+	}
+	if b := getBody(t, cl, base+"/tick?slow=update:notice:"+m[1]); b != "" {
+		t.Errorf("unchanged: nothing, got %s", b)
+	}
+	up.set(UpdateState{Latest: "v0.69.0"})
+	b := getBody(t, cl, base+"/tick?slow=update:notice:"+m[1])
+	if !strings.Contains(b, `<div class="update-notice" id="update-notice" hx-swap-oob="true"><a class="btn" href="/admin"`) || !strings.Contains(b, "Update to 0.69.0") {
+		t.Errorf("a release found: the notice in place, got %s", b)
+	}
+	row := getBody(t, cl, base+"/tick?watch=update:row:"+m[1])
+	if !strings.Contains(row, `<div class="stack" id="update-row" hx-swap-oob="true">`) || !strings.Contains(row, `name="watch" value="update:row:`) {
+		t.Errorf("the row in place with its watch, got %s", row)
+	}
+}
+
+// Check for updates says what it found; Update starts the update and returns to
+// the row, or says why it could not.
+func TestTheUpdateCommands(t *testing.T) {
+	up := &fakeUpdates{found: "v0.68.1"}
+	base := updatesServer(t, up)
+	cl := loginClientAs(t, base, "sys")
+	flash := func(resp *http.Response) string {
+		t.Helper()
+		resp.Body.Close()
+		for _, c := range resp.Cookies() {
+			if c.Name == "flash" {
+				v, _ := url.QueryUnescape(c.Value)
+				return v
+			}
+		}
+		return ""
+	}
+	page := getBody(t, cl, base+"/admin")
+	if got := flash(postTo(t, cl, base+"/admin/update/check", page, url.Values{})); got != "success|Juice is up to date." {
+		t.Errorf("up to date: %q", got)
+	}
+	up.found = "v0.69.0"
+	if got := flash(postTo(t, cl, base+"/admin/update/check", page, url.Values{})); got != "info|Juice 0.69.0 is available." {
+		t.Errorf("available: %q", got)
+	}
+	up.checkErr = errors.New("could not ask for the latest release: 503 Service Unavailable")
+	if got := flash(postTo(t, cl, base+"/admin/update/check", page, url.Values{})); got != "error|could not ask for the latest release: 503 Service Unavailable" {
+		t.Errorf("a failed check: %q", got)
+	}
+	resp := postTo(t, cl, base+"/admin/update", page, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin" || up.started != 1 {
+		t.Errorf("update: %d %q started %d", resp.StatusCode, resp.Header.Get("Location"), up.started)
+	}
+	up.startErr = errors.New("an update is already under way")
+	if got := flash(postTo(t, cl, base+"/admin/update", page, url.Values{})); got != "error|an update is already under way" {
+		t.Errorf("a refused start: %q", got)
+	}
+}
+
+// A build that cannot update itself shows its release and no command, and its
+// routes do not exist.
+func TestABuildThatCannotUpdateShowsItsVersionAlone(t *testing.T) {
+	base := updatesServer(t, nil)
+	cl := loginClientAs(t, base, "sys")
+	body := getBody(t, cl, base+"/admin")
+	if !strings.Contains(body, `<span class="detail">0.68.1</span>`) || strings.Contains(body, "/admin/update") || strings.Contains(body, "Update to") {
+		t.Errorf("version alone: %s", body)
+	}
+	resp := postTo(t, cl, base+"/admin/update", body, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("no update route: %d", resp.StatusCode)
 	}
 }

@@ -40,6 +40,8 @@ type fakeKernel struct {
 	started   int
 	holdStart chan struct{} // Start waits on it, when set
 	startErr  error         // Start fails with it, when set
+	ran       []string      // the programs started (Options.Run): what was installed by then, per call
+	startedAt []int         // how many times the programs had been started, per Start
 }
 
 func (k *fakeKernel) Local() bool { return !k.remote }
@@ -53,11 +55,11 @@ func (k *fakeKernel) Booted() (string, bool, error) {
 	defer k.mu.Unlock()
 	return "play", k.booted, k.bootErr
 }
-func (k *fakeKernel) Due(answers bool) ([]Component, error) {
+func (k *fakeKernel) Due(answers bool) []Component {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.dueAsked = append(k.dueAsked, answers)
-	return k.due, nil
+	return k.due
 }
 func (k *fakeKernel) Install(_ context.Context, c Component) error {
 	k.mu.Lock()
@@ -128,6 +130,7 @@ func (k *fakeKernel) Start(context.Context) error {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	k.startedAt = append(k.startedAt, len(k.ran))
 	if k.startErr != nil {
 		return k.startErr
 	}
@@ -177,8 +180,13 @@ func startWith(t *testing.T, k *fakeKernel, broken bool) (*Installer, http.Handl
 	if err != nil {
 		t.Fatal(err)
 	}
+	run := func() {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		k.ran = append(k.ran, strings.Join(k.installed, ","))
+	}
 	in := New(Options{Kernel: k, Chrome: chrome{r: r, phrase: phrase, broken: broken}, URL: "http://127.0.0.1:4040",
-		Listen: "127.0.0.1:8080", Home: "/home/x/.juice", Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		Listen: "127.0.0.1:8080", Home: "/home/x/.juice", Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Run: run})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	in.Run(ctx)
@@ -732,5 +740,40 @@ func TestTheInstallerStandsApart(t *testing.T) {
 		if strings.Contains(string(b), `"github.com/daios-ai/juice-ui/installer"`) {
 			t.Errorf("%s imports the installer", f)
 		}
+	}
+}
+
+// The programs start once, after Download has replaced their binaries and
+// before the kernel is awaited, whether this installation's kernel is started
+// or one elsewhere is waited for.
+func TestTheProgramsStartAfterDownload(t *testing.T) {
+	k := &fakeKernel{booted: true, failFirst: 1, due: []Component{{Name: "juice", Release: "v1"}, {Name: "juice-agent", Release: "v2"}}}
+	in, _ := start(t, k)
+	select {
+	case <-in.Ready():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the launch did not end")
+	}
+	k.mu.Lock()
+	ran, at := append([]string(nil), k.ran...), append([]int(nil), k.startedAt...)
+	k.mu.Unlock()
+	if len(ran) != 1 || ran[0] != "juice,juice-agent" {
+		t.Errorf("the programs start once, after both installs: %q", ran)
+	}
+	if len(at) == 0 || at[0] != 1 {
+		t.Errorf("the kernel is started after the programs: %v", at)
+	}
+
+	far := &fakeKernel{remote: true, answers: true}
+	in, _ = start(t, far)
+	select {
+	case <-in.Ready():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not end")
+	}
+	far.mu.Lock()
+	defer far.mu.Unlock()
+	if len(far.ran) != 1 {
+		t.Errorf("waiting for a kernel elsewhere starts the programs once: %q", far.ran)
 	}
 }

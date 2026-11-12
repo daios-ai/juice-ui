@@ -16,9 +16,11 @@ import (
 func TestMain(m *testing.M) {
 	// A child of the test binary: a supervisor that the test can kill (below).
 	if root := os.Getenv("SUPERVISOR_TEST_ROOT"); root != "" {
-		if _, err := Open(root); err != nil {
+		s, err := Open(root)
+		if err != nil {
 			os.Exit(3)
 		}
+		s.Run()
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	}
@@ -33,6 +35,7 @@ func open(t *testing.T) (*Supervisor, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	t.Cleanup(s.Close)
 	return s, root
 }
@@ -206,6 +209,7 @@ func TestStartAfterAFileIsCorrected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	defer s.Close()
 	for _, name := range []string{"fixed", "off", "bad name"} {
 		writeProgram(t, root, name, sh(`exec sleep 60`))
@@ -267,6 +271,7 @@ func TestCloseAndRestartWaitForASubprocess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	p, sub := subprocess(t)
 	s.Set("a", p)
 	s.pid(t, "a")
@@ -377,6 +382,7 @@ func TestDisabledIsNotStartedAtOpenAndClosingStopsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	on := s.pidOf(t, "on", sh(`exec sleep 60`))
 	off := sh(`exec sleep 60`)
 	off.Disabled = true
@@ -404,6 +410,7 @@ func TestDisabledIsNotStartedAtOpenAndClosingStopsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Close frees the lock: %v", err)
 	}
+	again.Run()
 	defer again.Close()
 	again.pid(t, "on")
 	time.Sleep(50 * time.Millisecond)
@@ -491,6 +498,7 @@ func TestLeftoversOfAKilledSupervisorAreStopped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	defer s.Close()
 	if alive(on) || alive(off) || alive(del) {
 		t.Fatalf("left running: on %v off %v deleted %v", alive(on), alive(off), alive(del))
@@ -533,6 +541,7 @@ func TestARecordOfAnotherProcessSignalsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	defer s.Close()
 	if !alive(other.Process.Pid) {
 		t.Fatal("another process was signalled")
@@ -560,6 +569,7 @@ func TestNoPsSignalsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	defer s.Close()
 	if syscall.Kill(other.Process.Pid, 0) != nil {
 		t.Fatal("signalled without knowing who it is")
@@ -612,6 +622,7 @@ func TestAProgramsOwnLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	again.Run()
 	defer again.Close()
 	if h, _ := Held(lock); h {
 		t.Fatal("open stops a copy of a disabled program")
@@ -654,6 +665,7 @@ func TestARefusedFileIsReportedAndTheOthersRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Run()
 	defer s.Close()
 	s.pid(t, "good")
 	for name, want := range map[string]string{"typo": "restrat", "broken": "broken.json", "empty": "command is required"} {
@@ -805,3 +817,34 @@ func TestProcessControlIsOnlyHere(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Open starts nothing, so a program's binary can be replaced while none runs;
+// Run then starts every program not disabled.
+func TestOpenStartsNothingAndRunStartsThePrograms(t *testing.T) {
+	root := t.TempDir()
+	marks := filepath.Join(t.TempDir(), "marks")
+	writeProgram(t, root, "on", sh(`echo x >> `+marks+`; exec sleep 60`))
+	off := sh(`exec sleep 60`)
+	off.Disabled = true
+	writeProgram(t, root, "off", off)
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	time.Sleep(100 * time.Millisecond)
+	if _, ok := s.Status("on"); ok || exists(marks) {
+		t.Fatal("Open started a program")
+	}
+	s.Run()
+	s.pid(t, "on")
+	time.Sleep(50 * time.Millisecond)
+	if s.running("off") {
+		t.Fatal("Run started a disabled program")
+	}
+	if got := strings.Count(read(t, marks), "\n"); got != 1 {
+		t.Fatalf("started %d times, want once", got)
+	}
+}
+
+func exists(path string) bool { _, err := os.Stat(path); return err == nil }

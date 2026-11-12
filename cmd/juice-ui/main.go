@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -19,6 +20,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -34,6 +37,7 @@ import (
 	"github.com/daios-ai/juice-ui/server"
 	"github.com/daios-ai/juice-ui/session"
 	"github.com/daios-ai/juice-ui/supervisor"
+	"golang.org/x/mod/semver"
 )
 
 // Build metadata, injected at link time via -ldflags "-X main.version=... -X main.commit=...".
@@ -71,6 +75,8 @@ type wiring struct {
 	config server.Configuration
 	// programs is the process supervisor, handed to the installation and the apps.
 	programs apps.Programs
+	// updates is Juice updating itself; nil when this build cannot.
+	updates server.Updates
 }
 
 // wire constructs the client, the identity (pinned to the recorded key when
@@ -173,6 +179,8 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 		Identity:       w.identity,
 		KernelName:     cfg.Kernel,
 		Config:         w.config,
+		Version:        version,
+		Updates:        w.updates,
 	})
 }
 
@@ -180,13 +188,13 @@ func build(w *wiring, cfg Config, log *slog.Logger) (http.Handler, error) {
 // package keeps its own types.
 type installation struct{ *kernel.Installation }
 
-func (k installation) Due(answers bool) ([]installer.Component, error) {
-	due, err := k.Installation.Due(answers)
+func (k installation) Due(answers bool) []installer.Component {
+	due := k.Installation.Due(answers)
 	out := make([]installer.Component, len(due))
 	for n, c := range due {
 		out[n] = installer.Component{Name: c.Name, Release: c.Release}
 	}
-	return out, err
+	return out
 }
 
 func (k installation) Install(ctx context.Context, c installer.Component) error {
@@ -267,20 +275,139 @@ func (s *switcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	(*s.h.Load()).ServeHTTP(w, r)
 }
 
-func main() { os.Exit(run()) }
+// updater is Juice updating itself (requirements.md §1, "Updating"): it asks
+// which release is the newest, at start and every checkEvery, and on Start
+// installs it, by the routine that installs the kernel, and asks for the
+// restart. The new programs then start in this process's place.
+type updater struct {
+	inst *kernel.Installation
+	log  *slog.Logger
+	ctx  context.Context // run's: ends at shutdown
+	stop func()          // ends run, after which main starts the new juice-ui
+
+	mu      sync.Mutex
+	state   server.UpdateState
+	restart bool // the new release is in bin/: main starts it once run returns
+}
+
+// next is the program main starts once run returns: the installed juice-ui
+// after an update, "" otherwise. It is named by its path, since this process's
+// own executable is the file the update replaced.
+func (u *updater) next() string {
+	if u == nil {
+		return ""
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.restart {
+		return ""
+	}
+	return filepath.Join(u.inst.Home, "bin", "juice-ui")
+}
+
+// checkEvery is how often the newest release is asked for (Syncthing's interval).
+const checkEvery = 12 * time.Hour
+
+func (u *updater) State() server.UpdateState {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.state
+}
+
+func (u *updater) Check(ctx context.Context) error {
+	v, err := u.inst.Latest(ctx)
+	if err != nil {
+		return err
+	}
+	u.mu.Lock()
+	u.state.Latest, u.state.Notes = v, u.inst.Notes(v)
+	u.mu.Unlock()
+	return nil
+}
+
+// watch checks now and every checkEvery until run ends; a failed check is
+// logged and asked again at the next.
+func (u *updater) watch() {
+	for {
+		if err := u.Check(u.ctx); err != nil && u.ctx.Err() == nil {
+			u.log.Warn("update check", "err", err)
+		}
+		select {
+		case <-u.ctx.Done():
+			return
+		case <-time.After(checkEvery):
+		}
+	}
+}
+
+// Start installs the newest release in the background, one update at a time.
+// A failure leaves Juice running as it was, with the reason in the state.
+func (u *updater) Start() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	switch {
+	case u.state.Phase != "":
+		return errors.New("an update is already under way")
+	case semver.Compare(u.state.Latest, version) <= 0:
+		return errors.New("Juice is up to date")
+	}
+	c := kernel.UI
+	c.Release = u.state.Latest
+	u.state.Phase, u.state.Failed = "downloading", ""
+	go func() {
+		err := u.inst.Install(u.ctx, c)
+		u.mu.Lock()
+		if err != nil {
+			u.state.Phase, u.state.Failed = "", err.Error()
+			u.mu.Unlock()
+			u.log.Warn("update", "release", c.Release, "err", err)
+			return
+		}
+		u.state.Phase, u.restart = "restarting", true
+		u.mu.Unlock()
+		u.log.Info("update installed; restarting", "release", c.Release)
+		u.stop()
+	}()
+	return nil
+}
+
+// updatable reports a build that can update itself: a release, run from the
+// installation's own bin/, where an update puts the next one.
+func updatable(root string) bool {
+	exe, err := os.Executable()
+	if err != nil || !kernel.IsRelease(version) {
+		return false
+	}
+	exe, err1 := filepath.EvalSymlinks(exe)
+	own, err2 := filepath.EvalSymlinks(filepath.Join(root, "bin", "juice-ui"))
+	return err1 == nil && err2 == nil && exe == own
+}
+
+func main() {
+	code, next := run()
+	if next != "" {
+		// Every program has stopped and the supervisor's lock is free: the new
+		// juice-ui takes this process's place, with its terminal and environment.
+		err := syscall.Exec(next, append([]string{next}, os.Args[1:]...), os.Environ())
+		fmt.Fprintln(os.Stderr, "juice-ui: could not start the new release:", err)
+		os.Exit(1)
+	}
+	os.Exit(code)
+}
 
 // run is the program, returning its exit code, so that every way out closes the
-// supervisor: stopping the UI stops the programs it runs.
-func run() int {
+// supervisor: stopping the UI stops the programs it runs. next is the program
+// to start in its place: the release an update installed.
+func run() (code int, next string) {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version" || os.Args[1] == "version") {
 		fmt.Printf("juice-ui %s (%s)\n", version, commit)
-		return 0
+		return 0, ""
 	}
 	log := slog.New(newLogHandler(os.Stderr))
 	cfg, err := LoadConfig(os.Getenv, os.ReadFile)
 	if err != nil {
 		log.Error("invalid configuration", "err", err)
-		return 1
+		return 1, ""
 	}
 	log.Info("config resolved", "home", cfg.Home, "state", cfg.StatePath, "badge_interval", cfg.BadgeInterval)
 	for _, n := range cfg.Notices {
@@ -292,20 +419,25 @@ func run() int {
 	sup, err := supervisor.Open(cfg.Root)
 	if err != nil {
 		log.Error("startup failed", "err", err)
-		return 1
+		return 1, ""
 	}
 	defer sup.Close()
 	w, err := wire(cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
-		return 1
+		return 1, ""
 	}
 	w.programs = sup
 	kernelURL, _ := url.Parse(cfg.KernelBaseURL) // validated by LoadConfig
 	inst := &kernel.Installation{Home: cfg.Root, URL: kernelURL, Log: log, Programs: sup, Ctx: ctx}
 	defer inst.WaitBoot() // ctx has ended: a first boot in flight is ending
 	in := installer.New(installer.Options{Kernel: installation{inst}, Chrome: chrome{w.renderer},
-		URL: cfg.KernelBaseURL, Listen: cfg.ListenAddr, Home: cfg.Root, Log: log})
+		URL: cfg.KernelBaseURL, Listen: cfg.ListenAddr, Home: cfg.Root, Log: log, Run: sup.Run})
+	var up *updater
+	if inst.Local() && updatable(cfg.Root) {
+		up = &updater{inst: inst, log: log, ctx: ctx, stop: stop}
+		w.updates = up
+	}
 
 	var sw switcher
 	sw.Store(server.Shell(in.Handler()))
@@ -320,10 +452,10 @@ func run() int {
 	case err := <-served:
 		log.Error("server stopped", "err", err)
 		stop()
-		return 1
+		return 1, ""
 	case <-ctx.Done():
 		shutdown(srv, w.apps, log)
-		return 0
+		return 0, ""
 	}
 	// Only this installation's kernel is configured here: a kernel elsewhere
 	// is its operator's, edited and restarted where it runs.
@@ -334,21 +466,29 @@ func run() int {
 	if err != nil {
 		log.Error("startup failed", "err", err)
 		stop()
-		return 1
+		return 1, ""
 	}
 	sw.Store(in.Behind(handler))
 	in.Served() // a request held for the launch is sent on to the application
 	log.Info("juice-ui serving", "kernel", cfg.KernelBaseURL)
+	if inst.Local() {
+		if err := inst.RecordRelease(version); err != nil {
+			log.Warn("record the release", "err", err)
+		}
+	}
+	if up != nil {
+		go up.watch()
+	}
 	select {
 	case err := <-served:
 		log.Error("server stopped", "err", err)
 		stop()
 		shutdown(srv, w.apps, log)
-		return 1
+		return 1, ""
 	case <-ctx.Done():
 	}
 	shutdown(srv, w.apps, log)
-	return 0
+	return 0, up.next()
 }
 
 // shutdown drains the listener, then stops every app, all within one deadline. The

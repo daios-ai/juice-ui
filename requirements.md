@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.68.1
+Version: 0.69.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.69.0.** Juice updates itself. The UI asks twice a day
+> which release is the newest; while one is out, the superuser sees a notice
+> above the avatar, and Admin's new version row offers Update, which installs
+> the release while Juice serves and restarts Juice in place. The kernel and
+> the agent now follow the release the UI pins at every start, not only in a
+> fresh installation, and a kernel binary that replaces another is preceded by
+> a backup of the homes it served, its binary and the UI release that ran them,
+> in `ui/backup/`. No program runs while they are replaced: the supervisor
+> starts the programs at the launch, after Download (§1, §6.1, §6.6).
 
 > **What changed in 0.68.1.** A figure is one line: its icon beside its bar,
 > nothing under it. The bar's open share already says how much is known, and
@@ -1095,26 +1105,32 @@ words, polled until it answers. Nothing on that card names an installation.
 
 * **Download** installs what is due, one job each, from one list: the kernel
   (`juice`) then the agent (`juice-agent`), each at the release this UI was
-  verified against. A component **missing** from `$JUICE_HOME/bin` is due; one
-  **older than its release is due only in a fresh installation**, one whose
-  `kernels/` holds no `juice.db` at all, read to the end: a directory that cannot
-  be read is an error, never an absence. Otherwise nothing present is replaced: a
-  kernel that exists was last served by the binaries beside it, and a newer one
-  may refuse its home (kernel v0.18.1 refuses v0.16.0's configuration, which
-  stopped a polygon kernel on 2026-11-10). Upgrading under an existing kernel is
-  the operator's act, with that component's own installer. A component whose
-  override variable is set (`JUICE_AGENT_BIN`) is the operator's, and the kernel
-  binary is not installed for a kernel that is followed. Each is installed by one
-  routine, the contract of the family's own `install.sh`: the platform's asset and
+  verified against. A component **missing** from `$JUICE_HOME/bin`, or **older
+  than that release**, is due, whether or not a kernel lives here, so the whole
+  installation moves with the UI's release (Updating, below). A newer kernel may
+  refuse a home an older one made (kernel v0.18.1 refused v0.16.0's
+  configuration, which stopped a polygon kernel on 2026-11-10), so before a
+  kernel binary replaces another, what the old one served is copied to
+  `$JUICE_HOME/ui/backup/`: every kernel home (a directory under `kernels/`
+  holding `juice.db`), the old `bin/juice`, and `ui/release`, the UI release that
+  last served them. A kernel that still serves a home there, one started by
+  hand, or a home that cannot be copied or read, stops the job with the reason
+  and Try again, and the binary is not replaced; the previous backup is replaced
+  only by a complete one. No program of the installation runs while this step
+  works: the supervisor stops what a killed one left behind when it opens, and
+  starts the programs only at the launch. A component whose override variable
+  is set (`JUICE_AGENT_BIN`) is the operator's, and the kernel binary is not
+  installed for a kernel that is followed. Each is installed by one routine, the
+  contract of the family's own `install.sh`: the platform's asset and
   `checksums.txt` from that component's GitHub releases, refused without a
-  matching SHA-256, tried with `--version`, its setup run (`juice kernel setup`,
-  `juice-agent setup`), which writes its schemas (ecosystem-standard §3), and
-  renamed atomically into `bin/`. A
-  failed download is shown and tried again every 10 s. It comes first because the
-  World page lists the worlds by running the kernel program. Before a first boot the
-  step also checks the kernel binary: one older than its release, kept because
-  another kernel of this installation runs on it, would ignore the recovery key,
-  so the step stops there, naming both versions, until Try again.
+  matching SHA-256, every program in it tried with `--version`, its setup run
+  (`juice kernel setup`, `juice-agent setup`), which writes its schemas
+  (ecosystem-standard §3), and only then the programs renamed into `bin/`, one
+  after another. A failed download is shown and tried again every 10 s. It comes
+  first because the World page lists the worlds by running the kernel program.
+  Before a first boot the step also checks the kernel binary: one older than its
+  release would ignore the recovery key, so the step stops there, naming both
+  versions, until Try again.
 * **World** is one of those `juice kernel worlds` lists (the world files and the
   shipped worlds not yet written), each with its symbol and the kernel's own
   description, `play` preselected, one the kernel would refuse shown disabled with
@@ -1152,7 +1168,8 @@ words, polled until it answers. Nothing on that card names an installation.
   is typed again; one that made a kernel goes on to the launch, which starts it,
   and the UI opens with no further page. The password is
   held in memory from its page to the boot and dropped when the boot returns.
-* **Starting the kernel**, at every launch, declares it to the process supervisor once, as the program
+* **Starting the kernel**, at every launch, first starts the installation's
+  programs (the supervisor's program files), then declares the kernel to the process supervisor once, as the program
   `kernel-<world>`, which runs `juice kernel serve <world>`, whatever the version
   of the binary beside it. The first boot's kernel carries two secrets, so it is
   not a program: it ends before the first boot returns, within the same 30
@@ -1163,6 +1180,31 @@ words, polled until it answers. Nothing on that card names an installation.
   binary here that answers is followed and not declared. A kernel that does not
   start is shown with its own words and tried again, and a directory holding
   `juice.db` whose `config.json` is missing or unreadable is reported as such.
+
+**Updating.** To the person who installed it, Juice is one app with one
+version: this UI's release, which names the kernel and agent releases it was
+verified against. The UI asks which release is the newest at start and every 12
+hours: where `github.com/daios-ai/juice-ui/releases/latest`, the release
+`install.sh` installs, sends a browser. A failed question is logged and asked
+again at the next. While a newer release is out, the superuser sees the notice
+above the avatar (§6.1) and Admin's version row offers **Update** (§6.6), after
+a confirm. The update installs the UI's own asset by the routine above (its
+three programs, `juice-ui`, `juice-chat` and `juice-supervisor`), in the
+background while Juice serves; a failed download, checksum or program changes
+nothing and is said on the row. Once the programs are in place, Juice stops as
+on any shutdown and starts the installed `juice-ui` in its own process (the same
+terminal and environment), whose installer brings the kernel and the agent to
+the releases it pins, with the backup above, and starts everything. Every open
+page is then sent to sign-in by the heartbeat, as after any restart. Only a
+release build run from `$JUICE_HOME/bin` updates itself; any other build shows
+its version and nothing else. The UI records the release it runs in
+`ui/release` each time the application takes the listener, never before, so
+while a newer UI installs its kernel the file still names the release before
+it, after the button and after a hand-run `install.sh` alike; a build that is
+not a release removes it. Going back is the operator's (docs/installation.md):
+stop Juice, `install.sh` the release the backup names, then put the backup's
+homes and binary back. The checksum comes from the same release as the asset,
+which detects a damaged download and not a forged release, as for `install.sh`.
 
 Every step of the installer renders in one frame headed Juice installation (grammar §5.14): the
 installer's numbered steps on the side, done ones ticked and the current one
@@ -2641,6 +2683,17 @@ bilateral settlement to initiate, no settle route, and nothing here to press.
   name — and the account is named in the route, not the body. It offers no peer
   field: a peer is not a user, and the kernel refuses one here.
 
+**Juice's version.** Admin opens with one setting row, `version`, kept current
+by the heartbeat (§1, Updating): this UI's release; while a newer one is out,
+`0.68.1 → 0.69.0 · release notes` (the release's page) and **Update**, a
+neutral button whose confirm asks "Update Juice to 0.69.0 and restart it for
+everyone?"; otherwise **Check for updates**, which answers with the one-shot
+banner ("Juice is up to date.", "Juice 0.69.0 is available.", or why it could
+not ask). While an update runs, the command gives way to the in-flight bar,
+`Downloading…` then `Restarting…`; one that stopped puts its words in an error
+banner above the row and offers Update again. A build that cannot update itself
+shows its release alone. The routes exist for the superuser only.
+
 **Configuration.** The kernel's settings are its `config.json`, applied by
 editing the file and restarting the kernel (kernel manual). The UI, which
 supervises this installation's kernel (§1), does both for the operator, on a
@@ -3445,6 +3498,17 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * an app that acts on the UI host is reachable by the operator alone: every
   route gated, and no destination offered to anyone else (§5, apps);
 * the single `aria-live` feedback region and the absence of any notification feed;
+* updating (§1, §6.6): the newest release is where `/releases/latest` sends,
+  anything but a plain release refused; Due installs what is missing or older
+  than its pin, beside an existing kernel too; a kernel binary that replaces
+  another is preceded by a complete backup of the homes, the old binary and
+  `ui/release`, and is not placed when a home is held or unreadable; an asset's
+  programs are placed only when every one runs; the supervisor starts nothing
+  until the launch, which starts the programs once, after Download; the release
+  is recorded only once the application serves, and only a plain release; the
+  update restarts only after its install succeeded, one at a time, a failure
+  leaving its words; the notice and the row for the superuser alone, each
+  answered by the heartbeat only when it changed, and the routes 404 for others;
 * the workspace frame (§6.1, §6.7): one sidebar — the rail and the avatar
   menu, the menu listing the registry's destinations with the current one
   marked and the operator's for the operator alone — the task badge on the

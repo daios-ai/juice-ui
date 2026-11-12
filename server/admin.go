@@ -2,23 +2,27 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"html/template"
 	"net/http"
 	"net/url"
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/models"
 	"github.com/daios-ai/juice-ui/wallet"
 	"github.com/gorilla/csrf"
+	"golang.org/x/mod/semver"
 )
 
 // Admin (superuser) handlers. Every route reaches here only through
@@ -962,4 +966,114 @@ func deleteDotted(m map[string]any, path string) {
 		m, _ = m[k].(map[string]any)
 	}
 	delete(m, segs[len(segs)-1])
+}
+
+// ---- Juice updating itself (requirements.md §1 "Updating", §6.6) ----
+
+// Updates is Juice updating itself: what the last check found, a check now,
+// and the update, which installs the newest release and restarts Juice.
+type Updates interface {
+	State() UpdateState
+	Check(ctx context.Context) error
+	Start() error
+}
+
+// UpdateState is what every surface of the update is drawn from.
+type UpdateState struct {
+	Latest string // the newest release; "" until a check has answered
+	Notes  string // the newest release's page
+	Phase  string // "", "downloading" or "restarting"
+	Failed string // why the last update stopped; "" when none did
+}
+
+// updateView is the sidebar's notice and Admin's version row: one state, this
+// UI's release, and whether this build can update itself.
+type updateView struct {
+	UpdateState
+	Version   string
+	Can       bool
+	CSRFField template.HTML
+	OOB       bool // an answer of the heartbeat, swapped in place
+}
+
+// Available reports a newer release that this build can install.
+func (v updateView) Available() bool { return v.Can && semver.Compare(v.Latest, v.Version) > 0 }
+
+// Current and Next are the two releases as the page names them, 0.69.0.
+func (v updateView) Current() string { return strings.TrimPrefix(v.Version, "v") }
+func (v updateView) Next() string    { return strings.TrimPrefix(v.Latest, "v") }
+
+// Doing is the update's step in words, under its progress bar.
+func (v updateView) Doing() string {
+	if v.Phase == "restarting" {
+		return "Restarting…"
+	}
+	return "Downloading…"
+}
+
+// Shown is the heartbeat's token for what a widget drawn from this view shows.
+func (v updateView) Shown() string {
+	h := fnv.New32a()
+	fmt.Fprint(h, v.Available(), "|", v.Latest, "|", v.Phase, "|", v.Failed)
+	return strconv.FormatUint(uint64(h.Sum32()), 36)
+}
+
+// updateView is the view for the request: the superuser's, nil for anyone else.
+func (s *Server) updateView(r *http.Request) *updateView {
+	if !s.isSuperuser(r) {
+		return nil
+	}
+	v := &updateView{Version: s.version, Can: s.updates != nil, CSRFField: csrf.TemplateField(r)}
+	if s.updates != nil {
+		v.UpdateState = s.updates.State()
+	}
+	return v
+}
+
+// watchUpdate keeps the notice (key notice, on every page) and the version row
+// (key row, on Admin) current, so a release found by the check, an update under
+// way and a failed one show with no reload.
+func (s *Server) watchUpdate(r *http.Request, key, shown string) (template.HTML, error) {
+	v := s.updateView(r)
+	if v == nil || v.Shown() == shown {
+		return "", nil
+	}
+	v.OOB = true
+	switch key {
+	case "notice":
+		return s.render.HTML("_update_notice", *v)
+	case "row":
+		return s.render.HTML("_update_row", *v)
+	}
+	return "", nil
+}
+
+// postUpdate starts the update; the row shows its progress.
+func (s *Server) postUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.updates.Start(); err != nil {
+		s.flashRedirect(w, r, "/admin", "error", err.Error())
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
+// postUpdateCheck asks for the newest release now and says what it found.
+func (s *Server) postUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.updates.Check(r.Context()); err != nil {
+		s.flashRedirect(w, r, "/admin", "error", err.Error())
+		return
+	}
+	if v := s.updateView(r); v.Available() {
+		s.flashRedirect(w, r, "/admin", "info", "Juice "+v.Next()+" is available.")
+		return
+	}
+	s.flashRedirect(w, r, "/admin", "success", "Juice is up to date.")
 }

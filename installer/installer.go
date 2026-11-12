@@ -41,7 +41,7 @@ type Kernel interface {
 	Local() bool                                                          // the configured kernel is this machine's
 	Serving(ctx context.Context) bool                                     // a kernel answers at the configured address
 	Booted() (world string, booted bool, err error)                       // the kernel home for that address, and whether a kernel lives in it
-	Due(answers bool) ([]Component, error)                                // what to install now
+	Due(answers bool) []Component                                         // what to install now
 	Install(ctx context.Context, c Component) error                       // one component, verified
 	CanCreate() error                                                     // the kernel binary can perform a first boot
 	Worlds() ([]World, error)                                             // the networks a new kernel may serve
@@ -67,6 +67,9 @@ type Chrome interface {
 type Options struct {
 	Kernel Kernel
 	Chrome Chrome
+	// Run starts the installation's programs. The launch calls it first, so
+	// nothing runs while Download replaces their binaries.
+	Run    func()
 	URL    string // the kernel's address
 	Listen string // the UI's own address
 	Home   string // $JUICE_HOME
@@ -202,25 +205,11 @@ func (in *Installer) choose(ctx context.Context) ([]Step, error) {
 }
 
 // download installs the components due, and before a first boot checks that the
-// kernel program can perform one; ok is false when there is nothing to do. An
-// installation that cannot be read is one job that reads it again, and installs
-// what is due, when it is tried again.
+// kernel program can perform one; ok is false when there is nothing to do.
 func (in *Installer) download(followed, creating bool) (Step, bool) {
 	k := in.o.Kernel
 	var jobs []Job
-	due, err := k.Due(followed)
-	if err != nil {
-		jobs = append(jobs, Job{Title: "Read the installation", Run: func(ctx context.Context) error {
-			due, err := k.Due(followed)
-			for _, c := range due {
-				if err == nil {
-					err = k.Install(ctx, c)
-				}
-			}
-			return err
-		}})
-	}
-	for _, c := range due {
+	for _, c := range k.Due(followed) {
 		jobs = append(jobs, Job{Title: "Install " + c.Name + " " + c.Release, Retry: true,
 			Run: func(ctx context.Context) error { return k.Install(ctx, c) }})
 	}
@@ -311,18 +300,28 @@ func (in *Installer) install() Step {
 	}}
 }
 
-// launch ends every sequence: it starts this installation's kernel, or waits
-// for one that is not this machine's to start, and then the application takes
-// the listener. It is the same on every launch, after the installer or without
-// it.
+// launch ends every sequence: it starts the installation's programs, then
+// starts this installation's kernel, or waits for one that is not this machine's
+// to start, and then the application takes the listener. It is the same on
+// every launch, after the installer or without it.
 func (in *Installer) launch(start bool) Step {
+	var once sync.Once
+	run := func() {
+		if in.o.Run != nil {
+			once.Do(in.o.Run)
+		}
+	}
 	if start {
 		return Step{ID: "start", Title: "Start", Jobs: func() []Job {
-			return []Job{{Title: "Start the kernel", Retry: true, Run: in.o.Kernel.Start}}
+			return []Job{{Title: "Start the kernel", Retry: true, Run: func(ctx context.Context) error {
+				run()
+				return in.o.Kernel.Start(ctx)
+			}}}
 		}}
 	}
 	return Step{ID: "wait", Title: "Wait", Jobs: func() []Job {
 		return []Job{{Title: "Wait for " + in.o.URL, Run: func(ctx context.Context) error {
+			run()
 			for !in.o.Kernel.Serving(ctx) {
 				select {
 				case <-ctx.Done():

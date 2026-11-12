@@ -32,6 +32,8 @@ type testWiring struct {
 	config      Configuration
 	apps        []apps.App
 	now         func() time.Time // the clock sessions age by; nil is the wall clock
+	version     string
+	updates     Updates
 }
 
 // newTestHandler builds the BFF against a fake kernel, wired exactly as
@@ -69,6 +71,8 @@ func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) h
 		Identity:      identity,
 		BadgeInterval: w.badge,
 		Config:        w.config,
+		Version:       w.version,
+		Updates:       w.updates,
 	})
 	if err != nil {
 		t.Fatal(err)

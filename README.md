@@ -63,6 +63,10 @@ The first start installs the rest of Juice into `~/.juice/bin`, the
 verified against, and asks you to create your kernel in the browser
 (`requirements.md` §1). `JUICE_HOME` moves the whole installation.
 
+When a newer release is out, Juice says so above your avatar, and Admin's
+**Update** installs it and restarts Juice; the kernel and the agent follow
+([docs/installation.md](docs/installation.md#updating)).
+
 ## Build from source
 
 Building needs **Go 1.22+**. SQLite is provided by `modernc.org/sqlite` (pure Go,

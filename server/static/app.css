@@ -94,6 +94,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .profile-trigger:hover { background: var(--surface-2); }
 .profile-trigger .handle { overflow: hidden; text-overflow: ellipsis; }
 .menu-item .badge { position: static; margin-left: auto; }
+
+/* The update notice (requirements §6.1): the superuser's one standing notice,
+   above the avatar while a newer release is out. Its wrapper only holds the
+   heartbeat's input, so it draws no box and adds no gap when empty. */
+.update-notice { display: contents; }
+.update-notice > .btn { flex: none; }
 .menu-item[aria-current="page"] { color: var(--text); font-weight: 600; }
 
 /* Wide screens, collapsed: the strip — the same sidebar with its labels gone,
@@ -101,9 +107,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    icon form, so the rail's rows go with them. */
 @media (min-width: 721px) {
   html[data-sidebar="collapsed"] .sidebar { width: auto; flex-basis: auto; align-items: center; }
-  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail > .btn > span, .handle) { display: none; }
+  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail > .btn > span, .update-notice > .btn > span, .handle) { display: none; }
   html[data-sidebar="collapsed"] .sidebar-top { padding: 0 0 var(--space-1); }
-  html[data-sidebar="collapsed"] .rail > .btn { width: var(--control-h); padding: 0; }
+  html[data-sidebar="collapsed"] :is(.rail, .update-notice) > .btn { width: var(--control-h); padding: 0; }
   html[data-sidebar="collapsed"] .profile-trigger { justify-content: center; padding-inline: 0; }
 }
 
@@ -728,6 +734,8 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
   border-radius: var(--radius); padding: var(--space-3) var(--space-4); font-size: var(--font-size-md);
   color: var(--text); font-family: inherit;
 }
+.you-row > .progress { flex: none; }
+.you-row .detail a { color: var(--text); } /* a link among the muted figures reads as one */
 .you-row .detail { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); color: var(--text-muted); }
 
 

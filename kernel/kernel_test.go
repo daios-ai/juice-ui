@@ -489,21 +489,15 @@ func TestWorldsAreWhatTheKernelLists(t *testing.T) {
 	}
 }
 
-// The components follow one rule. A fresh installation installs what is
-// missing and replaces what is older; an installation holding a kernel, declared
-// or not, keeps an older kernel and an older agent (a newer kernel may refuse
-// the home they last served, as on TitanPlus on 2026-11-10) and installs only
-// what is missing; an override leaves its component to the operator; a kernel
-// that is followed has no binary installed; a kernel elsewhere installs nothing.
+// The components follow one rule: what is missing, or older than the release
+// this UI pins, is installed, whether or not a kernel lives here; an override
+// leaves its component to the operator; a kernel that is followed has no binary
+// installed; a kernel elsewhere installs nothing.
 func TestDueFollowsOneRule(t *testing.T) {
 	names := func(i *Installation, answers bool) string {
 		t.Helper()
-		due, err := i.Due(answers)
-		if err != nil {
-			t.Fatal(err)
-		}
 		var out []string
-		for _, c := range due {
+		for _, c := range i.Due(answers) {
 			out = append(out, c.Name)
 		}
 		return strings.Join(out, ",")
@@ -520,30 +514,25 @@ func TestDueFollowsOneRule(t *testing.T) {
 	if got := names(i, false); got != "" {
 		t.Errorf("a current installation: %q", got)
 	}
+	writeHome(t, i, "polygon", "127.0.0.1:4999")
+	booted(t, i, "polygon")
+	if got := names(i, false); got != "" {
+		t.Errorf("a current installation holding a kernel: %q", got)
+	}
 	older(i, "juice")
 	older(i, "juice-agent")
 	if got := names(i, false); got != "juice,juice-agent" {
-		t.Errorf("a fresh installation replaces what is older: %q", got)
+		t.Errorf("what is older than its pin is replaced, beside a kernel too: %q", got)
 	}
 	if got := names(i, true); got != "juice-agent" {
 		t.Errorf("a followed kernel has no binary installed: %q", got)
 	}
-
-	// A kernel of another world, never declared: nothing present is replaced.
-	writeHome(t, i, "polygon", "127.0.0.1:4999")
-	booted(t, i, "polygon")
-	if fresh, _ := i.Fresh(); fresh {
-		t.Error("an installation holding a kernel is not fresh")
-	}
-	if got := names(i, false); got != "" {
-		t.Errorf("an existing kernel keeps the older binaries: %q", got)
-	}
-	os.Remove(filepath.Join(i.Home, "bin", "juice-agent"))
-	if got := names(i, false); got != "juice-agent" {
-		t.Errorf("a missing agent beside an existing kernel: %q", got)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	if got := names(i, false); got != "juice,juice-agent" {
+		t.Errorf("a binary that reports no version is replaced: %q", got)
 	}
 	t.Setenv("JUICE_AGENT_BIN", "/elsewhere/juice-agent")
-	if got := names(i, false); got != "" {
+	if got := names(i, false); got != "juice" {
 		t.Errorf("an override: %q", got)
 	}
 	if got := names(inst(t, "http://10.0.0.9:4040"), false); got != "" {
@@ -551,34 +540,236 @@ func TestDueFollowsOneRule(t *testing.T) {
 	}
 }
 
+// Before a kernel binary replaces another, what the old one served is copied to
+// ui/backup/: every kernel home, the binary and the UI release that last served
+// them. A home that cannot be copied, or one a kernel still serves, stops the
+// install with the old binary in place.
+func TestAKernelIsBackedUpBeforeItIsReplaced(t *testing.T) {
+	i := inst(t, "http://127.0.0.1:4040")
+	i.Releases = releases(t, nil, nil).URL
+	juice := Components[0]
+	if err := i.Install(context.Background(), juice); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(i.Home, "ui", "backup")) {
+		t.Fatal("a first installation replaces nothing and backs nothing up")
+	}
+
+	old := strings.Replace(fakeJuice, "v9.9.9", "v0.1.0", 1)
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(old), 0o755)
+	writeHome(t, i, "play", "127.0.0.1:4040")
+	booted(t, i, "play")
+	os.MkdirAll(filepath.Join(i.Home, "kernels", "play", "cache"), 0o700)
+	os.WriteFile(filepath.Join(i.Home, "kernels", "play", "cache", "c"), []byte("cached"), 0o600)
+	os.Symlink("juice.db", filepath.Join(i.Home, "kernels", "play", "link"))
+	writeHome(t, i, "empty", "127.0.0.1:4999") // no juice.db: nothing to keep
+	if err := i.RecordRelease("v0.68.1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Install(context.Background(), juice); err != nil {
+		t.Fatal(err)
+	}
+	b := filepath.Join(i.Home, "ui", "backup")
+	for p, want := range map[string]string{
+		"kernels/play/juice.db":    "db",
+		"kernels/play/config.json": `{"kernel_handle":"x","listen_addr":"127.0.0.1:4040"}`,
+		"kernels/play/cache/c":     "cached",
+		"bin/juice":                old,
+		"release":                  "v0.68.1\n",
+	} {
+		if got, err := os.ReadFile(filepath.Join(b, p)); err != nil || string(got) != want {
+			t.Errorf("%s: %q, %v", p, got, err)
+		}
+	}
+	if st, err := os.Stat(filepath.Join(b, "bin", "juice")); err != nil || st.Mode().Perm() != 0o755 {
+		t.Errorf("the binary keeps its mode: %v", st)
+	}
+	if target, err := os.Readlink(filepath.Join(b, "kernels", "play", "link")); err != nil || target != "juice.db" {
+		t.Errorf("a link stays a link: %q %v", target, err)
+	}
+	if exists(filepath.Join(b, "kernels", "empty")) {
+		t.Error("a home with no kernel is not backed up")
+	}
+	if i.version("juice") != "v9.9.9" {
+		t.Errorf("the kernel is replaced after its backup: %q", i.version("juice"))
+	}
+
+	// A kernel still serving a home: refused, the old binary and the last
+	// backup stay.
+	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(old), 0o755)
+	os.WriteFile(filepath.Join(i.Home, "kernels", "play", "juice.db"), []byte("db2"), 0o644)
+	f, _ := os.OpenFile(filepath.Join(i.Home, "kernels", "play", "serve.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	if err := i.Install(context.Background(), juice); err == nil || !strings.Contains(err.Error(), "a kernel is running in") {
+		t.Errorf("a held home: %v", err)
+	}
+	f.Close()
+	if i.version("juice") != "v0.1.0" {
+		t.Error("a failed backup leaves the old binary")
+	}
+	if got, _ := os.ReadFile(filepath.Join(b, "kernels", "play", "juice.db")); string(got) != "db" {
+		t.Errorf("a failed backup keeps the last one: %q", got)
+	}
+	if left, _ := filepath.Glob(filepath.Join(i.Home, "bin", "*.new.*")); len(left) != 0 {
+		t.Errorf("staged files left behind: %v", left)
+	}
+
+	// An unreadable home is an error, never an absence.
+	if os.Geteuid() != 0 {
+		os.Chmod(filepath.Join(i.Home, "kernels"), 0)
+		if err := i.Install(context.Background(), juice); err == nil {
+			t.Error("an unreadable kernels/ backs up nothing and replaces nothing")
+		}
+		os.Chmod(filepath.Join(i.Home, "kernels"), 0o700)
+		if i.version("juice") != "v0.1.0" {
+			t.Error("the old binary stays")
+		}
+	}
+}
+
+// ui/release names the UI release that last served; a build that is not a
+// release names none, so a backup never points back at a build.
+func TestRecordReleaseNamesOnlyAPlainRelease(t *testing.T) {
+	i := inst(t, "http://127.0.0.1:4040")
+	p := filepath.Join(i.Home, "ui", "release")
+	i.RecordRelease("v0.69.0")
+	if b, _ := os.ReadFile(p); string(b) != "v0.69.0\n" {
+		t.Errorf("a release: %q", b)
+	}
+	for _, v := range []string{"dev", "v0.69.0-3-gabc", "v0.69.0-dirty", "v0.69"} {
+		i.RecordRelease("v0.69.0")
+		if err := i.RecordRelease(v); err != nil || exists(p) {
+			t.Errorf("%s: %v, file left %v", v, err, exists(p))
+		}
+	}
+	if err := i.RecordRelease("dev"); err != nil {
+		t.Errorf("no file to remove: %v", err)
+	}
+}
+
+// The UI's own asset holds three programs. All are placed only when every one
+// of them runs; a refusal leaves all three untouched.
+func TestTheUIsThreeProgramsArePlacedOnlyWhenAllRun(t *testing.T) {
+	ok := map[string]string{}
+	for _, p := range UI.Programs {
+		ok[p] = "#!/bin/sh\necho " + p + " v0.69.0\n"
+	}
+	serve := func(progs map[string]string) string {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		for _, p := range UI.Programs {
+			if s, in := progs[p]; in {
+				tw.WriteHeader(&tar.Header{Name: p, Mode: 0o755, Size: int64(len(s)), Typeflag: tar.TypeReg})
+				tw.Write([]byte(s))
+			}
+		}
+		tw.Close()
+		gz.Close()
+		asset, name := buf.Bytes(), fmt.Sprintf("juice-ui_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+		sum := sha256.Sum256(asset)
+		dir := "/daios-ai/juice-ui/releases/download/v0.69.0/"
+		mux := http.NewServeMux()
+		mux.HandleFunc(dir+"checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+		})
+		mux.HandleFunc(dir+name, func(w http.ResponseWriter, r *http.Request) { w.Write(asset) })
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	i := inst(t, "http://127.0.0.1:4040")
+	os.MkdirAll(filepath.Join(i.Home, "bin"), 0o700)
+	for _, p := range UI.Programs {
+		os.WriteFile(filepath.Join(i.Home, "bin", p), []byte("#!/bin/sh\necho old\n"), 0o755)
+	}
+	c := UI
+	c.Release = "v0.69.0"
+	broken := map[string]string{}
+	for k, v := range ok {
+		broken[k] = v
+	}
+	broken["juice-supervisor"] = "#!/bin/sh\nexit 3\n"
+	missing := map[string]string{"juice-ui": ok["juice-ui"], "juice-chat": ok["juice-chat"]}
+	for want, progs := range map[string]map[string]string{"juice-supervisor does not run": broken, "does not contain a juice-supervisor": missing} {
+		i.Releases = serve(progs)
+		if err := i.Install(context.Background(), c); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+		for _, p := range UI.Programs {
+			if b, _ := os.ReadFile(filepath.Join(i.Home, "bin", p)); !strings.Contains(string(b), "old") {
+				t.Errorf("%s: %s replaced by a refused install", want, p)
+			}
+		}
+	}
+	i.Releases = serve(ok)
+	if err := i.Install(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range UI.Programs {
+		if b, _ := os.ReadFile(filepath.Join(i.Home, "bin", p)); string(b) != ok[p] {
+			t.Errorf("%s not placed: %q", p, b)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(i.Home, "bin", "*.new.*")); len(left) != 0 {
+		t.Errorf("staged files left behind: %v", left)
+	}
+}
+
+// The latest release is where /releases/latest sends a browser; anything but a
+// plain release, or no redirect, is refused.
+func TestLatestIsWhereTheReleasesPageSends(t *testing.T) {
+	to := "/daios-ai/juice-ui/releases/tag/v0.69.0"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/daios-ai/juice-ui/releases/latest" {
+			http.NotFound(w, r)
+			return
+		}
+		if to == "" {
+			w.Write([]byte("no redirect"))
+			return
+		}
+		http.Redirect(w, r, to, http.StatusFound)
+	}))
+	defer srv.Close()
+	i := inst(t, "http://127.0.0.1:4040")
+	i.Releases = srv.URL
+	if v, err := i.Latest(context.Background()); err != nil || v != "v0.69.0" {
+		t.Errorf("latest: %q %v", v, err)
+	}
+	if got := i.Notes("v0.69.0"); got != srv.URL+"/daios-ai/juice-ui/releases/tag/v0.69.0" {
+		t.Errorf("notes: %q", got)
+	}
+	for _, bad := range []string{"/daios-ai/juice-ui/releases/tag/nightly", "/daios-ai/juice-ui/releases/tag/v0.69.0-rc1", ""} {
+		to = bad
+		if v, err := i.Latest(context.Background()); err == nil {
+			t.Errorf("%q: %q accepted", bad, v)
+		}
+	}
+}
+
 // What cannot be read is never taken for an absence: with a kernel beneath an
 // unreadable kernels/, or a kernel home whose juice.db cannot be looked for, the
-// installation is not fresh, nothing older is replaced, and the home lookup is
-// an error.
-func TestAnUnreadableInstallationIsNotFresh(t *testing.T) {
+// home lookup is an error.
+func TestAnUnreadableInstallationIsAnError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every directory")
 	}
 	i := inst(t, "http://127.0.0.1:4040")
-	installFake(t, i)
-	os.WriteFile(filepath.Join(i.Home, "bin", "juice"), []byte(strings.Replace(fakeJuice, "v9.9.9", "v0.1.0", 1)), 0o755)
 	writeHome(t, i, "polygon", "127.0.0.1:4040")
 	booted(t, i, "polygon")
 	for _, dir := range []string{filepath.Join(i.Home, "kernels"), filepath.Join(i.Home, "kernels", "polygon")} {
 		os.Chmod(dir, 0)
-		if fresh, err := i.Fresh(); fresh || err == nil {
-			t.Errorf("%s unreadable: fresh %v, %v", dir, fresh, err)
-		}
-		if due, err := i.Due(false); len(due) != 0 || err == nil {
-			t.Errorf("%s unreadable: due %v, %v", dir, due, err)
-		}
 		if _, _, err := i.Booted(); err == nil {
 			t.Errorf("%s unreadable: the home lookup is an error", dir)
 		}
+		if err := i.Backup(); err == nil {
+			t.Errorf("%s unreadable: nothing is backed up", dir)
+		}
 		os.Chmod(dir, 0o700)
 	}
-	if fresh, err := i.Fresh(); fresh || err != nil {
-		t.Errorf("readable again: %v %v", fresh, err)
+	if _, booted, err := i.Booted(); !booted || err != nil {
+		t.Errorf("readable again: %v %v", booted, err)
 	}
 }
 

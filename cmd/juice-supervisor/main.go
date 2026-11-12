@@ -34,6 +34,7 @@ func run(ctx context.Context, root string, hup <-chan os.Signal, args []string) 
 		return err
 	}
 	defer s.Close()
+	s.Run()
 	for {
 		select {
 		case <-ctx.Done():

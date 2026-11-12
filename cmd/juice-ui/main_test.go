@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daios-ai/juice-ui/apps"
 	"github.com/daios-ai/juice-ui/installer"
@@ -502,5 +503,99 @@ func TestInstallScript(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(release + ".log"); !strings.Contains(string(b), "/releases/download/v1.2.3/"+asset) {
 		t.Errorf("a VERSION names its release: %s", b)
+	}
+}
+
+// updateRelease serves this repository's releases as GitHub does: latest sends
+// to its tag, and the release holds the UI's asset of the given programs.
+func updateRelease(t *testing.T, tag string, programs map[string]string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, body := range programs {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(body))
+	}
+	tw.Close()
+	gz.Close()
+	asset, name := buf.Bytes(), fmt.Sprintf("juice-ui_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	sum := sha256.Sum256(asset)
+	base := "/daios-ai/juice-ui/releases/"
+	mux := http.NewServeMux()
+	mux.HandleFunc(base+"latest", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, base+"tag/"+tag, http.StatusFound) })
+	mux.HandleFunc(base+"download/"+tag+"/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+	})
+	mux.HandleFunc(base+"download/"+tag+"/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(asset) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// An update installs the newest release and only then asks for the restart,
+// naming the installed juice-ui; one runs at a time; a failure leaves Juice as
+// it was, with its words, and asks for nothing.
+func TestTheUpdaterInstallsThenAsksForTheRestart(t *testing.T) {
+	version = "v0.68.1"
+	t.Cleanup(func() { version = "dev" })
+	newer := map[string]string{}
+	for _, p := range kernel.UI.Programs {
+		newer[p] = "#!/bin/sh\necho " + p + " v0.69.0\n"
+	}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "bin"), 0o700)
+	for _, p := range kernel.UI.Programs {
+		os.WriteFile(filepath.Join(home, "bin", p), []byte("#!/bin/sh\necho old\n"), 0o755)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopped := make(chan struct{})
+	up := &updater{inst: &kernel.Installation{Home: home, Releases: updateRelease(t, "v0.69.0", newer)},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)), ctx: ctx, stop: func() { close(stopped) }}
+
+	if err := up.Start(); err == nil {
+		t.Error("nothing to update before a check found a release")
+	}
+	if err := up.Check(ctx); err != nil || up.State().Latest != "v0.69.0" || !strings.HasSuffix(up.State().Notes, "/releases/tag/v0.69.0") {
+		t.Fatalf("check: %v %+v", err, up.State())
+	}
+	if err := up.Start(); err != nil || up.State().Phase != "downloading" {
+		t.Fatalf("start: %v %+v", err, up.State())
+	}
+	if err := up.Start(); err == nil {
+		t.Error("a second update while one runs")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restart was not asked for")
+	}
+	if up.State().Phase != "restarting" || up.next() != filepath.Join(home, "bin", "juice-ui") {
+		t.Errorf("after the install: %+v, next %q", up.State(), up.next())
+	}
+	for _, p := range kernel.UI.Programs {
+		if b, _ := os.ReadFile(filepath.Join(home, "bin", p)); string(b) != newer[p] {
+			t.Errorf("%s not installed: %q", p, b)
+		}
+	}
+
+	broken := map[string]string{"juice-ui": newer["juice-ui"], "juice-chat": newer["juice-chat"]} // no juice-supervisor
+	failing := &updater{inst: &kernel.Installation{Home: t.TempDir(), Releases: updateRelease(t, "v0.69.1", broken)},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)), ctx: ctx, stop: func() { t.Error("a failed update asks for a restart") }}
+	failing.Check(ctx)
+	if err := failing.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for failing.State().Phase != "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if st := failing.State(); st.Phase != "" || !strings.Contains(st.Failed, "does not contain a juice-supervisor") || failing.next() != "" {
+		t.Errorf("a failed update: %+v, next %q", st, failing.next())
+	}
+	var none *updater
+	if none.next() != "" {
+		t.Error("no updater, nothing to start")
 	}
 }

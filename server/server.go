@@ -50,6 +50,10 @@ type Options struct {
 	// KernelName is the name this kernel is recorded under, shown so a person can see which
 	// kernel the interface is on (ecosystem-standard §6); "" when a bare URL.
 	KernelName string
+	// Version is this UI's release, shown on Admin; Updates is Juice updating
+	// itself, nil for a build that cannot (admin.go).
+	Version string
+	Updates Updates
 }
 
 // Server holds dependencies and serves the BFF.
@@ -72,6 +76,8 @@ type Server struct {
 	kernelName string                  // the kernel's name in the client records, for the chrome
 	config     Configuration           // this installation's kernel configuration; nil = none
 	modelsOK   func() bool             // its schema describes the Models page's entries (read once)
+	version    string                  // this UI's release
+	updates    Updates                 // Juice updating itself; nil = this build cannot
 }
 
 // KernelIdentity is the kernel this UI is for: the /health banner, cached for a
@@ -280,6 +286,8 @@ func New(o Options) (http.Handler, error) {
 		badgeTTL:   badgeTTL,
 		identity:   o.Identity,
 		kernelName: o.KernelName,
+		version:    o.Version,
+		updates:    o.Updates,
 		config:     o.Config,
 		modelsOK: sync.OnceValue(func() bool {
 			_, schema, _, err := o.Config.Config()
@@ -292,6 +300,7 @@ func New(o Options) (http.Handler, error) {
 	s.watch("process", s.watchProcess)
 	s.watch("peer", s.watchPeer)
 	s.watch("session", s.watchSession)
+	s.watch("update", s.watchUpdate)
 	as, err := newAppStore(o.StatePath, o.Identity.recorded)
 	if err != nil {
 		return nil, fmt.Errorf("load app state %q: %w", o.StatePath, err)
@@ -398,6 +407,8 @@ func New(o Options) (http.Handler, error) {
 
 	// Admin — superuser-only supervision (money, access, federation trust).
 	mux.HandleFunc("GET /admin", s.requireSuperuser(s.getAdmin))
+	mux.HandleFunc("POST /admin/update", s.requireSuperuser(s.postUpdate))
+	mux.HandleFunc("POST /admin/update/check", s.requireSuperuser(s.postUpdateCheck))
 	mux.HandleFunc("POST /admin/users/{address}/suspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{address}/unsuspend", s.requireSuperuser(s.postAdminUserOp))
 	mux.HandleFunc("POST /admin/users/{address}/rename", s.requireSuperuser(s.postAdminUserOp))
@@ -814,6 +825,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Flash:        flash,
 		FlashKind:    flashKind,
 		BadgeSecs:    int(s.badgeTTL / time.Second),
+		Update:       s.updateView(r),
 		Data:         data,
 	}
 }
