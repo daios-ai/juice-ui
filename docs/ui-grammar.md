@@ -37,7 +37,7 @@ Three laws underpin everything:
 | **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rooms newest activity first, each a `.rail-row` of its link and its menu (§5.12), the room in view `aria-current`, an unread one weighted (`.unread`) |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper; `suggestions` in app.js) | **the** list of suggestions beside a text input, the best match nearest it; ↑/↓ walk the rows, Escape empties, Enter on a row follows it. Over the composer, its `/` — the query is the composer's own text after it: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; Enter submits the search (§5.9); and its addresses. Under Discover's `.search` box: the catalog's actions alone. Rows `.menu-item`, matched in the browser |
-| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, chips, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
+| **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, marks, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
 | **you-row** | `.you-row` | a setting row on Settings |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
@@ -424,46 +424,65 @@ separates it from the content above, and nothing else does (§4).
   `.action-list` for a collection of things, one **ranked column** of
   `.action-row`s. There is no grid: a rank is a sequence, and rows align the
   facts a person compares. Like every component it fills the container (§1).
-- **Action row:** a **square tile** (`.media.tile`, §5.13) on the left, then
-  the action's **title** as the link to the action (`.action-title`) — never
-  the bare name or the raw kind string — with its chips beside it and the price
-  right-aligned on that line (`.action-line`), the **ref** on its own line
-  beneath (`.action-ref`, `_ref`, owner emphasized), the description (at most two
-  lines, `.action-desc`), and **the same `_stat_strip`** the action page uses
-  (its `.stat-cell`s, icon + tooltip: success · rating · latency, which the
-  evidence table renders too), rendered **price-less** on the row
-  (`statStrip … withPrice=false`) since price is already on the title line. The
-  title is the row's one pointer target; the row is `.rowable` for `j`/`k`/`Enter`
-  and carries no click handler. The peer roster and the agents page use the same
-  row. The strip sits outside the tile (kernel chrome never overlaps counterparty
-  pixels). One strip, one grammar, both surfaces. **Attribute chips** (`.chip`)
-  mark the *exception* only:
+- **Action row:** **one row, `_action_row`, on every list** — Discover, a search
+  on the page and in the panel, the Workshop, a peer's actions — a discovered
+  action included (its link, `_action_href`, resolves it; its price is
+  indicative). A **square tile** (`.media.tile`, §5.13); then the text
+  (`.action-body`): the action's **title** as the link (`.action-title`) —
+  never the bare name or the raw kind string, wrapping and **never cut** — with
+  its marks following it in the flow (`.action-name`, `.chips`), the **ref** on
+  its own line beneath (`.action-ref`, `_ref`, owner emphasized), and **one
+  line** of description (`.action-desc`); then **the figures** (`_stats`). The
+  title is the row's one pointer target; the row is `.rowable` for
+  `j`/`k`/`Enter` and carries no click handler. The figures sit outside the
+  tile (kernel chrome never overlaps counterparty pixels).
+  - **The row arranges itself by its list's width**: `.action-list` is a named
+    container (`action-list`). Where it is wide (52rem and over) the figures
+    are a fixed third column at the right of the text, each figure a fixed
+    cell, so they align down the list, and the price stands at the right edge;
+    where it is narrow the figures follow the text in its column and wrap when
+    they must. A page, the panel and a phone take the same rules: none has a
+    rule of its own.
+  - **The figures** (`_stats`, `.action-stats`) are the same on the row, the
+    action's page and its panel: success, rating, mean time, price. A figure is
+    a `.stat-cell`: its value (`.stat-value`: an icon and a bar, or a number)
+    over its count (`.stat-count`: `89 runs`, `10 ratings`, `no runs`), its
+    sentence in `title` and in `.sr-only` text ("85 of 89 runs succeeded,
+    likely 92–97%"). Success is `#check`, rating `#thumb-up`, time `#clock`.
+    The time cell (`.stat-time`) keeps a minimum width so its column aligns;
+    an action never run shows a muted `—`, never `0.0s`.
+  - **The range bar** (`_range`, `.range`) draws a share: the track is 0–100%,
+    fixed, the same width down a list; the band (`.range-band`) is one standard
+    deviation either side of Laplace's mean; the tick (`.range-mid`) is the
+    mean, so the bar survives a band a hair wide. Its geometry is the data's, in
+    the SVG's own attributes; its look is the stylesheet's, **one neutral ink**
+    — the track `--border`, the band `--text-muted`, the tick `--text`. A bar
+    carries no good/bad colour: the kernel states no threshold. An action never
+    run is the widest bar, centred, and needs no "none" state.
+  - **Marks** (`_action_marks`, the same beside the title on the row, the page
+    and the panel) state the *exception* only:
+    - **Remote** → `R` (`_kind_chip`, `kindBadge`), filled: a proxy of another
+      kernel's action. **Discovered** → an unfilled `R`: that action before
+      resolution, the same letter without the weight. The two never appear
+      together.
+    - **Needs account** → a filled key-icon chip (`.chip.filled`, `#key`) only
+      when the action requires a per-caller grant the viewer hasn't connected.
+      On the action page the run form is replaced by the connect gesture
+      (banner + `Connect account`) — **a doomed run is never offered**, the
+      same rule as peer-blocked runs.
+    - **State** → one `.pill`: `inactive` (`.muted`) for every viewer, since an
+      action that is off cannot be run; otherwise, **only for a viewer who may
+      manage the action** (its owner, the superuser), who may call it —
+      `private`, `local`, `public` (`.status-credited`). A discovered row has
+      no state. A row is never faded: the word says it.
+    - The action's page adds the kind's letter (`W` wasm · `N` native · `H`
+      http, `_kind_chip`), which a list does not state.
   - **A chip is ONE letter or ONE icon. Never a word, never a phrase** — the
-    meaning lives in its `title`, which is also its accessible label. A chip is
-    a mark beside a title, not a caption.
-  - **Kind** (one chip): `W` wasm · `N` native · `H` http · `R` remote
-    (`kind == "remote_proxy"`, via the `kindBadge` helper). **`R` stands out by
-    weight** (`.chip.filled`), never by hue.
-  - **Visibility** → a chip only for the non-default narrowing: `private` (lock
-    icon) or `local` (`L`); `public` shows nothing.
-  - **Inactive** → the row is dimmed (`.action-row.inactive`) plus an ✗ icon
-    chip.
-  - **Needs account** → a filled key-icon chip (`.chip.filled`, `#key`) only
-    when the action requires a per-caller grant the viewer hasn't connected.
-    On the action page the run form is replaced by the connect gesture
-    (banner + `Connect account`) — **a doomed run is never offered**, the
-    same rule as peer-blocked runs.
-  - **Discovered** → an unfilled `R` on a lookup result this kernel has not
-    resolved — the same letter as a resolved remote, without the weight, because
-    it is that action before resolution: the ref is kernel-qualified and the
-    row carries no reputation strip, because nothing local backs it yet; its
-    link resolves it (requirements.md §6.2). It DOES carry a price — the kernel prices every
-    lookup row — rendered **indicative** (muted **plus** an accessible label,
-    never weight alone, which a screen reader cannot perceive). It is the
-    unresolved counterpart of `R`, so the two never appear together.
-  - Every chip carries a `title` tooltip. **Chips are colorless** — no theme hue
-    is spent on them (every hue is a reserved money/trust signal); emphasis is
-    by weight (`.chip.filled`), never by hue.
+    meaning lives in its `title`, which is also its accessible label. **Chips
+    are colorless** — no theme hue is spent on them (every hue is a reserved
+    money/trust signal); emphasis is by weight (`.chip.filled`), never by hue.
+  - The peer roster and the agents page use the same row, text only, their
+    title line a flex `.action-line`.
 - **Tables:** full width, hairline row borders, muted `th`. A navigable row is
   `.rowable` + `tabindex="-1"` + `data-href`: `j`/`k` move to it and `Enter`
   follows it. Its **link is the pointer target** — the row shows no pointer
@@ -561,9 +580,7 @@ segment in the `title`. A bound petname is not key-shaped and renders whole. A
 
 Wherever an action is presented as a thing — a card, the action page's `<h1>`,
 a workshop row, a peer's action list — its **title** leads and its ref follows
-beneath it. A Workshop row is the same `_action_row`, with one status `.pill`
-on the title line in place of the chips — `inactive`, else `private`, `local`
-or `public` (`.status-credited`) — unfaded, and its strip's counts shown. Where a row only names the action a record is about (a receipt, a
+beneath it. A Workshop row is the same `_action_row` as Discover's. Where a row only names the action a record is about (a receipt, a
 task, a ledger entry), the ref alone stands: the kernel serves no title there.
 
 ### 5.8 Modals & floating forms
@@ -666,7 +683,7 @@ ref line; a named row's `.action-ref` is that spelling. `truncate` never
 touches a key.
 
 **The kernel strip** (`_kernel_strip`, `KernelStrip`) ends every peer row, in
-the `_stat_strip` grammar: icon and value per slot, the meaning in `title`,
+the grammar of an icon and a value per slot, the meaning in `title`,
 `·` between slots, a muted `none` where a slot has nothing. This kernel's row
 carries none — the roster states nothing about it — and the kernel's page
 carries none: a strip is for comparing rows, and a page states its facts with
@@ -709,15 +726,15 @@ as the user page's card does; then the kernel's **public actions** as
 link resolving it), and **evidence** as **one table** (`_evidence`,
 `.stats-table`, no header): one report per row, its subject first — the
 address the inspection serves, else the id cut short with `_copy` — then the
-stats line's own cells (`_stat_success`, `_stat_rating`, `_stat_latency`:
-icon, value, the meaning in `title`) and the **source** last, `provider` for
+figures' own cells (`_stat_success`, `_stat_rating`, `_stat_latency`: the
+icon, the bar or number, the count, the sentence in `title`) and the **source** last, `provider` for
 the subject's own report (first) and the issuer's key otherwise. The
 corroborated and unverified counts ride in the success and rating titles; a
 contradiction marks the source with `alert` and its count. The **one
 `_evidence` partial** also renders what other kernels report on an **action's
 page**, below its ratings, and folded under **Evidence** in the panel, without
 the subject column. Evidence carries **no colour and no fill**: it is a trust
-fact, not a status, and never joins the first-party reputation strip, which
+fact, not a status, and never joins the action's own figures, which
 stays its own view, as does the inspection's pooled Self-reported line.
 
 **Obligations** sit between this kernel's figures and the list: every cross-kernel

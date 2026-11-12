@@ -6,57 +6,48 @@
      leads with. The SVG slices to any box, so one generator serves both. */}}
 {{define "_tile"}}<span class="media tile">{{cardArt .ID .Action .Kind}}</span>{{end}}
 
-{{/* _action_row — an action in a ranked list (§5.5): the tile, then the
-     title (the link) with its chips and the price right-aligned, the ref,
-     the description, and the stat strip. The title is the one pointer
-     target; rowable gives the row j/k/Enter only. On the Workshop (.Manage)
-     the row states its status in one pill — inactive, else who may call it —
-     in place of the chips, is not faded, and its strip shows the counts.
+{{/* _action_row — THE action row, on every list (§5.5): Discover, a search
+     on the page and in the panel, the Workshop, a peer's actions. The tile;
+     the text — the title (the link, never cut) with its marks, the ref, one
+     line of description; and the figures (_stats). It arranges itself by the
+     width of its list (a container): the figures stand at the right, a column
+     each, where the list is wide, and follow the text where it is narrow. The
+     title is the one pointer target; rowable gives the row j/k/Enter only.
 
-     A DISCOVERED row is the unresolved counterpart of an ordinary one: the
-     kernel has only heard of the action through gossip, so nothing local backs
-     it. It states what is known — the title, the kernel-qualified ref, the
-     description, and the catalog price, INDICATIVE until resolution re-quotes
-     it. No stat strip (the discovery cache stores no reputation); its link
-     resolves it, after which the kernel shadows this row with the cached
-     proxy. */}}
+     A DISCOVERED row is an action this kernel has only heard of through
+     gossip: its link resolves it, its price is INDICATIVE until resolution
+     re-quotes it, and since this kernel holds no record of it, its figures
+     are those of an action never run. */}}
 {{define "_action_row"}}
-{{if .Discovered}}
-<article class="action-row rowable" tabindex="-1" data-href="/discovered?ref={{.Action.Ref}}"{{template "_rank" .Rank}}>
+<article class="action-row rowable" tabindex="-1" data-href="{{template "_action_href" .}}"{{template "_rank" .Rank}}>
   {{template "_tile" .Action}}
   <div class="action-body">
-    <div class="action-line">
-      <a class="action-title" href="/discovered?ref={{.Action.Ref}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
-      <span class="chip" title="Discovered — known through the network, not resolved here">R</span>
-      {{template "_price" (price .Action.Price true)}}
-    </div>
+    <p class="action-name"><a class="action-title" href="{{template "_action_href" .}}">{{.Action.Title}}</a><span class="chips">{{template "_action_marks" .Marks}}</span></p>
     <p class="action-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
     <p class="action-desc">{{.Action.Description}}</p>
     {{if .Observed}}<p class="action-observed muted tiny">terms seen {{.ObservedAgo}}</p>{{end}}
   </div>
-</article>
-{{else}}
-<article class="action-row rowable{{if and (not .Action.Active) (not .Manage)}} inactive{{end}}" tabindex="-1" data-href="/actions/{{.Action.ID}}"{{template "_rank" .Rank}}>
-  {{template "_tile" .Action}}
-  <div class="action-body">
-    <div class="action-line">
-      <a class="action-title" href="/actions/{{.Action.ID}}" title="{{.Action.Title}}">{{.Action.Title}}</a>
-      {{- if eq .Action.Kind "remote_proxy"}} <span class="chip filled" title="Remote — imported from a peer kernel">R</span>{{end -}}
-      {{- if .Manage}} <span class="pill{{if .Action.Active}} status-credited{{end}}">{{.Status}}</span>
-      {{- else}}
-      {{- if .Action.IsPrivate}} <span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if .Action.IsLocal}} <span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end -}}
-      {{- end -}}
-      {{- if .NeedsConnect}} <span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end -}}
-      {{- if and (not .Action.Active) (not .Manage)}} <span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
-      {{template "_price" (price .Action.Price false)}}
-    </div>
-    <p class="action-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
-    <p class="action-desc">{{.Action.Description}}</p>
-    {{template "_stat_strip" (statStrip .Action.Price .Action.Experience .Manage false)}}
-  </div>
+  {{template "_stats" (statStrip (price .Action.Price .Discovered) .Action.Experience)}}
 </article>
 {{end}}
-{{end}}
+
+{{/* _action_href — where a row leads: a discovered action is resolved first. */}}
+{{define "_action_href"}}{{if .Discovered}}/discovered?ref={{.Action.Ref}}{{else}}/actions/{{.Action.ID}}{{end}}{{end}}
+
+{{/* _action_marks — what stands beside an action's title, on its row, its
+     page and its panel alike. Takes actionMarks: R for an action that is
+     another kernel's (discovered, or a proxy of one), the key for an account
+     the viewer has not connected, and the state — inactive for everyone,
+     else who may call it, for a viewer who may manage it. */}}
+{{define "_action_marks"}}
+{{- if .Discovered}}<span class="chip" title="Discovered — known through the network, not resolved here">R</span>
+{{- else if eq .Action.Kind "remote_proxy"}}{{template "_kind_chip" .Action.Kind}}{{end}}
+{{- if .NeedsConnect}}<span class="chip filled" title="Needs a connected account — connect it on the action page"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
+{{- with .State}}<span class="pill {{if eq . "inactive"}}muted{{else}}status-credited{{end}}">{{.}}</span>{{end}}
+{{- end}}
+
+{{/* _kind_chip — the letter of an action's kind (kindBadge). */}}
+{{define "_kind_chip"}}{{with kindBadge .}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}{{end}}
 
 {{/* _rank — a search row's place under each order, by which the panel
      rearranges the rows it holds without searching again (§6.2). */}}
@@ -85,9 +76,9 @@
 {{end}}
 {{if .Results}}
 {{/* The signals a buyer already has, made usable when choosing. Relevance is
-     the kernel's own order; rating and price arrange what it served, and
-     nothing here is computed (§6.2). An unrated row sorts into its own block
-     after the rated ones — "no ratings" is not a low rating. */}}
+     the kernel's own order; rating and price arrange what it served (§6.2):
+     rating by the low end of each row's rating bar, so the order is the one
+     the bars show. */}}
 <nav class="tabs" aria-label="Sort">
   {{range .Sorts}}{{template "_tab" (tab .Label .Href .Current)}}{{end}}
 </nav>
@@ -181,23 +172,28 @@
 {{else}}<p class="muted">No activity yet.</p>{{end}}
 {{end}}
 
-{{/* _stat_strip — THE action stats line (price · success · rating · latency),
-     shared by the list cards and the action detail page so they never drift.
-     Keyed per field, so an unused action reads honest empty states, not fake
-     "—% / 0.0s". Counts appends the (N) run/rater counts (detail only). Each
-     slot is a cell partial — icon, value, the meaning in its title — which the
-     evidence table renders too, so a report reads as the line does. */}}
-{{define "_stat_strip"}}
-<p class="stat-strip">
-  {{if .WithPrice}}{{template "_price" (price .Price false)}}
-  · {{end}}{{template "_stat_success" .}}
-  · {{template "_stat_rating" .}}
-  · {{template "_stat_latency" .}}
-</p>
+{{/* _stats — THE figures of an action, on its row, its page and its panel:
+     success and rating as ranges, latency, the price. Takes a StatStrip
+     (statStrip). Each figure is a cell — its value, an icon and a bar or a
+     number, over its count — whose title says it in words; the evidence table
+     renders the same cells, so a report reads as the record does. */}}
+{{define "_stats"}}
+<div class="action-stats">
+  {{template "_stat_success" .}}
+  {{template "_stat_rating" .}}
+  {{template "_stat_latency" .}}
+  <span class="stat-cell stat-price"><span class="stat-value">{{template "_price" .Price}}</span></span>
+</div>
 {{end}}
-{{define "_stat_success"}}{{if gt .S.Uses 0}}<span class="stat-cell" title="Success rate — {{.S.Uses}} runs{{with .Corroborated}}, {{.}} confirmed by the provider{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> {{pct .S.Successes .S.Uses}}%{{if .Counts}} ({{.S.Uses}}){{end}}</span>{{else}}<span class="stat-cell muted" title="No runs yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#milestone"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}{{end}}
-{{define "_stat_rating"}}{{if gt .S.RatingCount 0}}<span class="stat-cell" title="Rating — {{.S.RatingCount}} raters{{with .Unverified}}, {{.}} more unverified{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> {{ratingPct .S.RatingEstimate .S.RatingCount}}%{{if .Counts}} ({{.S.RatingCount}}){{end}}</span>{{else}}<span class="stat-cell muted" title="No ratings yet{{with .Unverified}} — {{.}} unverified{{end}}"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg> none{{if .Counts}} (0){{end}}</span>{{end}}{{end}}
-{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell" title="Mean latency"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span>{{else}}<span class="stat-cell muted" title="No latency yet"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> none</span>{{end}}{{end}}
+{{define "_stat_success"}}{{$r := .Success}}<span class="stat-cell" title="{{$r.Says "run" "succeeded"}}{{with .Corroborated}}; {{.}} confirmed by the provider{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#check"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "run"}}</span><span class="sr-only">Success: {{$r.Says "run" "succeeded"}}</span></span>{{end}}
+{{define "_stat_rating"}}{{$r := .Rating}}<span class="stat-cell" title="{{$r.Says "rating" "good"}}{{with .Unverified}}; {{.}} more unverified{{end}}"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#thumb-up"/></svg>{{template "_range" $r}}</span><span class="stat-count" aria-hidden="true">{{$r.Count "rating"}}</span><span class="sr-only">Rating: {{$r.Says "rating" "good"}}</span></span>{{end}}
+{{define "_stat_latency"}}{{if gt .S.Uses 0}}<span class="stat-cell stat-time" title="Mean time of a run"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> {{printf "%.1f" .S.LatencyEstimate}}s</span></span>{{else}}<span class="stat-cell stat-time muted" title="No runs yet"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#clock"/></svg> —</span></span>{{end}}{{end}}
+
+{{/* _range — a share as a bar (Range): the track is 0–100%, the same in every
+     row and on every page; the band is where the share probably lies, the
+     tick its likeliest value. Geometry is the data's, in the SVG's own
+     attributes; its look is the stylesheet's. */}}
+{{define "_range"}}<svg class="range" aria-hidden="true" focusable="false"><rect class="range-track" y="30%" width="100%" height="40%" rx="2"/><rect class="range-band" x="{{printf "%.2f" .Lo}}%" y="30%" width="{{printf "%.2f" .Width}}%" height="40%" rx="2"/><line class="range-mid" x1="{{printf "%.2f" .Mid}}%" x2="{{printf "%.2f" .Mid}}%" y1="0" y2="100%"/></svg>{{end}}
 
 {{/* _progress — THE in-flight bar: Run's, below its form, and a form tool's,
      in the form's top row. Takes progress id label; the id is what an
@@ -520,7 +516,7 @@
   <td>{{template "_stat_success" .Strip}}</td>
   <td>{{template "_stat_rating" .Strip}}</td>
   <td>{{template "_stat_latency" .Strip}}</td>
-  <td><span{{if .Source.IsKey}} class="mono"{{end}} title="{{.Source.Title}}">{{.Source.Text}}</span>{{if .Source.IsKey}} {{template "_copy" (copyOf "key" .Source.Title)}}{{end}}{{if .Contradictions}} <span class="stat-cell" title="{{.Contradictions}} trades reported two ways — they count for nothing"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Contradictions}}</span>{{end}}</td>
+  <td><span{{if .Source.IsKey}} class="mono"{{end}} title="{{.Source.Title}}">{{.Source.Text}}</span>{{if .Source.IsKey}} {{template "_copy" (copyOf "key" .Source.Title)}}{{end}}{{if .Contradictions}} <span class="stat-cell" title="{{.Contradictions}} trades reported two ways — they count for nothing"><span class="stat-value"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Contradictions}}</span></span>{{end}}</td>
 </tr>{{end}}
 </tbody></table></div>
 {{end}}
@@ -814,23 +810,22 @@
 </dl>
 {{end}}
 
-{{/* _action_chips — an action's marks on its page and its panel: its
-     visibility narrowing, its kind, a grant to connect, inactive. Takes an
-     actionView. */}}
+{{/* _action_chips — the marks beside an action's title on its page and its
+     panel: its row's marks (_action_marks), and the letter of its kind, which
+     a page states and a list does not. A proxy's kind is its R, among the
+     marks. Takes an actionView. */}}
 {{define "_action_chips"}}<span class="chips">
-  {{if .Action.IsPrivate}}<span class="chip" title="Private — only you can call it"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg></span>{{else if .Action.IsLocal}}<span class="chip" title="Local — callers on this kernel only, never peers">L</span>{{end}}
-  {{with kindBadge .Action.Kind}}<span class="chip{{if .Filled}} filled{{end}}" title="{{.Title}}">{{.Letter}}</span>{{end}}
-  {{if .NeedsConnect}}<span class="chip filled" title="Needs a connected account"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#key"/></svg></span>{{end}}
-  {{if not .Action.Active}}<span class="chip" title="Inactive — not callable"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#x-mark"/></svg></span>{{end}}
+  {{- if ne .Action.Kind "remote_proxy"}}{{template "_kind_chip" .Action.Kind}}{{end}}
+  {{- template "_action_marks" .Marks -}}
 </span>{{end}}
 
 {{/* _action_head — what an action is, under its title on its page and in
-     its panel: the ref, the description and this kernel's record with the
-     price. Takes an actionView. */}}
+     its panel: the ref, the description and its figures, as its row has
+     them. Takes an actionView. */}}
 {{define "_action_head"}}
 <p class="subtitle">{{template "_ref" (ref .Action.Ref "")}}</p>
 {{if .Action.Description}}<p>{{.Action.Description}}</p>{{end}}
-{{template "_stat_strip" (statStrip .Action.Price .Action.Experience true true)}}
+{{template "_stats" (statStrip (price .Action.Price false) .Action.Experience)}}
 {{end}}
 
 {{/* _action_panel — an action beside a conversation (requirements §6.7):

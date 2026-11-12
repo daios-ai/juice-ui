@@ -1,7 +1,20 @@
 # Juice Web UI Requirements
 
-Version: 0.66.0
+Version: 0.67.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.67.0.** One action row on every list — Discover, a search
+> on the page and in the panel, the Workshop, a peer's actions — drawn by one
+> template, discovered or not. Its title is never cut, and its marks follow it:
+> R for another kernel's action, the key for an account to connect, and the
+> state, `inactive` for everyone, else who may call it for whoever may manage
+> it. The figures stand at the right of the text where the list is wide and
+> under it where it is narrow: success and rating as range bars over their
+> counts (Laplace's mean and one standard deviation either side, on a fixed
+> 0–100% track), then the mean time and the price. The action's page and its
+> panel show the same figures and marks, the evidence table the same cells.
+> The rating sort orders by the low end of the rating bar, rated and unrated
+> alike. On the action's page, Manage comes first (§6.2, §6.4, §6.7, §9).
 
 > **What changed in 0.66.0.** The workshop shows what you offer, how it does,
 > and how to make more: your actions as the one action row, each with one status
@@ -1651,14 +1664,14 @@ back only as a number to look at:
 * **Relevance is the default and is the kernel's own order**: the lookup ranking
   where a query was made, the catalog's order otherwise. It is the only order
   the kernel itself asserts, and it is how a new action is still found.
-* Rating and price **arrange served rows**; nothing is computed. The rating
-  compared is the one the card shows, so the number a person sorts by is the
-  number they read.
+* Rating and price **arrange served rows**. Under `rating` the rows are ordered
+  by the **low end of the rating range** each row draws (below): the share of
+  good ratings an action probably has at least. The order is the one a person
+  reads off the bars, so one good rating does not outrank nineteen of twenty.
 * An **unrated** row — new, or discovered, since the discovery cache stores no
-  stats — sorts into a block **after** the rated ones under `rating`, keeping
-  its own order. It MUST NOT be scored as zero: "no ratings" is not a low
-  rating, and interleaving silence with measured opinion would state a judgement
-  the kernel has not made.
+  stats — stands where its unknown range puts it under the same rule: above an
+  action known to be poor, below one known to be good. It MUST NOT be scored as
+  zero, nor set apart: "no ratings" is neither a low rating nor a high one.
 * An unknown sort value renders the list under relevance. A mistyped view is a
   view, not an error.
 
@@ -1710,14 +1723,32 @@ both MUST keep planning apart from spending:
   action's page; Enter submits the search — and MUST issue `sys/lookup` (required
   `query`, optional `limit`) via `POST /v1/run`. Results
   MUST render as **rows in one ranked column** (the rank is a sequence, so it
-  is not spread over a grid), filling the container like every component. A
-  row leads with a
-  **square tile** (§6.2 media), then the action's **title** as the link with
-  its chips beside it and the **price right-aligned** on that line, the ref
-  (owner-emphasized) on its own line beneath, the description (at most two
-  lines), and the **same reputation strip the action page uses** (icon +
-  tooltip: success · rating · latency), price-less since the price is on the
-  title line. The title is the row's one pointer target. With no query the page
+  is not spread over a grid), filling the container like every component.
+  **The action row is one**, on every list — Discover, a search on the page
+  and in the panel, the Workshop, a peer's actions — and a discovered row is
+  the same row: its link resolves it, its price is indicative, and its figures
+  are those of an action this kernel never ran. A row leads with a **square
+  tile** (§6.2 media); then the text: the action's **title** as the link,
+  wrapping and never cut, with its **marks** following it, the ref
+  (owner-emphasized) on its own line beneath, and one line of description; then
+  its **figures**. The marks are R for another kernel's action (discovered, or
+  a proxy), the key for an account the viewer has not connected, and the
+  **state**: `inactive` (neutral) for every viewer, since an action that is off
+  cannot be run; otherwise, only for a viewer who may manage the action (§6.4),
+  who may call it — `private`, `local`, `public` (the live green). A discovered
+  row states no state: nothing local was read. A lookup row carries no
+  `active`, and the lookup ranks active actions only (verified live), so a
+  lookup hit is active until its detail read says otherwise. The **figures**
+  are success and rating as **range bars**, each over its count (`89 runs`,
+  `10 ratings`, `no runs`), then the mean time and the price: a bar is the
+  share's likeliest value, Laplace's mean (k+1)/(n+2), as a tick, and one
+  standard deviation of that posterior either side as a band, on a fixed
+  0–100% track the same down a list, in one neutral ink; the cell's title and
+  its screen-reader text state it in words ("85 of 89 runs succeeded, likely
+  92–97%"). The list is a container: where it is wide the figures stand at the
+  right of the text, a fixed column each, aligned down the list, the price at
+  the right edge; where it is narrow they follow the text in its column. The
+  title is the row's one pointer target. With no query the page
   is a **flat catalog capped at 20 per page** with a pager (§7 pagination).
 * **One owner's actions.** An address has no page of its own. With `?owner=`
   and no query, Discover lists `GET /v1/actions?owner=` — on the viewer's own
@@ -1823,21 +1854,22 @@ both MUST keep planning apart from spending:
 **Action page.**
 
 * MUST show a hero pairing the media slot (§6.2 media) with the title as the
-  heading, the ref (owner block) as its subtitle, the reputation strip, and price in large type, then description and two schema
-  panels rendered from `input_schema`/`output_schema` as field lists (name, type,
-  required, description), with raw JSON behind a toggle.
-* The reputation strip MUST show four metrics — runs, success rate, rating, mean
-  latency — each with an icon, value, and a tooltip that is also the icon's
-  `aria-label`. The rating MUST show mean and count. The strip is this kernel's
-  own record, the detail read's `evidence.local_experience`; the kernel serves
-  no separate stats route, and a list row carries no evidence, so a card reads
-  its action's detail.
+  heading and its row's marks beside it (and the kind's letter), the ref (owner
+  block) as its subtitle, the description and **the row's figures**, then,
+  for a viewer who may manage the action, **Manage first** (§6.4), then the run
+  form, the ratings and the evidence.
+* The figures are the row's (§6.2 discovery): success and rating as range bars
+  over their counts, the mean time, the price, each cell with an icon and a
+  title that states it in words. They are this kernel's own record, the detail
+  read's `evidence.local_experience`; the kernel serves no separate stats
+  route, and a list row carries no evidence, so a card reads its action's
+  detail.
 * **What other kernels report renders beside it, never inside it.** The same
   evidence block carries `provider_reported` (the provider's own account,
   absent when the provider is this kernel) and `observed_by_others`. The page
   MUST render them as one table through the one evidence partial the peer
-  inspection uses (§6.6): one report per row, in the strip's own cells —
-  success with its run count, rating with its rater count, latency from
+  inspection uses (§6.6): one report per row, in the figures' own cells —
+  success and rating as range bars over their counts, latency from
   `avg_latency_ms` — and the source last, `provider` for the provider's own
   report (first) and an issuer's key otherwise. The kernel's further counts
   ride in the cells' titles: on success, the uses the provider's receipts
@@ -2129,17 +2161,18 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   NOT reproduce kernel settlement.
 * The action list MUST use `GET /v1/actions?owner=<self>`, include inactive
   actions, and filter by state. Each action is **the one action row** (§6.2),
-  wearing **one status pill** in place of the catalog's chips — `inactive`
-  (neutral), else who may call it, `private`, `local` or `public` (the live
-  green) — unfaded, and its stats strip **with counts** (success and runs,
-  rating and raters). The list is ordered by what needs attention: the
-  inactive first, then the most run, which costs each row its detail read
-  (a list row carries no counts), as Discover's rating sort does.
+  drawn as it is on Discover: the viewer manages every action listed, so each
+  states its state — `inactive`, else who may call it. The list is ordered by
+  what needs attention: the inactive first, then the most run, which costs
+  each row its detail read (a list row carries no counts), as Discover's
+  rating sort does.
+* **Who may manage an action** is one rule for its page and every list: its
+  owner, or the superuser (verified live: the kernel accepts every lifecycle
+  verb from the superuser on another user's action).
 * **A row holds no controls.** An action is managed on its own page, whose
-  Manage section (enable/disable, visibility, edit, delete) is shown, whole, to
-  whoever the kernel lets manage it: its owner, or the superuser (verified live:
-  the kernel accepts every one of these verbs from the superuser on another
-  user's action). It is withheld on a remote proxy (§6.6).
+  Manage section (enable/disable, visibility, edit, delete) is shown, whole and
+  **first, under the header**, to whoever may manage it; it is withheld on a
+  remote proxy (§6.6).
 * **Visibility** MUST be set via `PUT /v1/actions` with
   `{target, visibility: "private" | "local" | "public"}` — the kernel's three-way
   caller-scope (`private` owner-only, `local` any local caller of this kernel but
@@ -2919,8 +2952,8 @@ the assistant, else the newest room, else an empty page beside the rail.
   top as the panel scrolls. An action (`GET /actions/{id}/panel`, or
   `GET /discovered/panel?ref=` for one known only from a peer, resolved first
   as its page is: a row's panel is its page's address with `/panel`) is the
-  action as its page states it — title, chips, address, description, this
-  kernel's record with the price, what other kernels report folded — and the
+  action as its page states it — title, marks, address, description, its
+  figures, what other kernels report folded — and the
   one run form (§6.2), with its outcome below. A search's results
   (`POST /browse/search`, §6.2) are headed `Search "…"`. A row opens its
   action over the results, which are held; its head is then `← Results`,
@@ -2945,7 +2978,7 @@ the assistant, else the newest room, else an empty page beside the rail.
   controls inert. The fields come back as the form's own; a refusal stands in
   the bar's place and the fields stay.
 * **The panel's sections.** The record — title, address, description, the
-  stats line and its folded evidence — keeps its paragraph rhythm; the run
+  figures and the folded evidence — keeps its paragraph rhythm; the run
   form begins a section, one spacing step (`--space-5`) below whatever
   precedes it, above the form's own field rhythm (`--space-4`).
 * **A success from a room is the draft.** A successful run from the panel
@@ -3376,9 +3409,15 @@ Every production `.go` file has a `_test.go` file with independent tests.
 * the workshop offers no synthesis affordance, `sys/make` being absent from the
   kernel;
 * access control of manage affordances: an action's Manage section shown to its
-  owner and the superuser, and to nobody else; the Workshop lists the viewer's
-  own actions, the superuser's too, inactive first and then by runs, each with
-  one status pill and its counts, and no row carries a control (§6.4);
+  owner and the superuser, and to nobody else, first under the header; the
+  Workshop lists the viewer's own actions, the superuser's too, inactive first
+  and then by runs, and no row carries a control (§6.4);
+* the one action row: one template for every list, discovered rows included;
+  the same action drawn the same on Discover and the Workshop; `inactive` for
+  every viewer, who may call it only for whoever may manage it, no state on a
+  discovered row and none inferred from a lookup row; the range bar's ends
+  for known records, and its bounds over every record;
+  the rating sort by the bar's low end (§6.2);
 * security invariants: counterparty content renders inert; trust affordances key
   on kernel fields, not payload shape; no spend reachable by GET — including
   that a search on a kernel which prices `sys/lookup` degrades instead of
@@ -3443,8 +3482,8 @@ Every production `.go` file has a `_test.go` file with independent tests.
   leaves an unstated argument blank, and states a refusal in its own words;
   the fill is a tool of the form's top row, beside the switch, its bar there,
   and Run alone at the foot;
-* evidence as the stats line reads: one table through one partial on the
-  action page, the panel and the inspection; the stats line's cells; the
+* evidence as the figures read: one table through one partial on the
+  action page, the panel and the inspection; the figures' cells; the
   provider's report first, the source last; corroborated and unverified counts
   in the cells' titles; a contradiction marking only its source; a peer's
   subjects named by address, else by id cut short; the old vocabulary gone

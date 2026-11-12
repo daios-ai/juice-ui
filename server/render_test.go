@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"math"
 	"net/http"
@@ -806,63 +807,74 @@ func TestCallFormApproval(t *testing.T) {
 	}
 }
 
-// TestStatStripHonestEmpty renders the shared stat strip for an unused action: it
-// must read honest empty states (none, with a (0) count when Counts) — never fake
-// "—%" or "0.0s" data.
-func TestStatStripHonestEmpty(t *testing.T) {
+// TestRangeOf: a share is drawn as Laplace's mean and one standard deviation
+// either side (requirements §6.2). The table is the plan's own; the range never
+// leaves 0–100 and holds its mean, whatever the record.
+func TestRangeOf(t *testing.T) {
+	for _, c := range []struct {
+		k, n   int64
+		lo, hi string
+	}{{0, 0, "21", "79"}, {1, 1, "43", "90"}, {7, 7, "79", "99"}, {19, 20, "85", "97"}, {85, 89, "92", "97"}, {950, 1000, "94", "96"}} {
+		g := rangeOf(c.k, c.n)
+		if lo, hi := fmt.Sprintf("%.0f", g.Lo), fmt.Sprintf("%.0f", g.Hi); lo != c.lo || hi != c.hi {
+			t.Errorf("rangeOf(%d, %d) = %s–%s, want %s–%s", c.k, c.n, lo, hi, c.lo, c.hi)
+		}
+	}
+	for n := int64(0); n <= 200; n++ {
+		for k := int64(0); k <= n; k++ {
+			g := rangeOf(k, n)
+			if !(0 <= g.Lo && g.Lo <= g.Mid && g.Mid <= g.Hi && g.Hi <= 100) {
+				t.Fatalf("rangeOf(%d, %d) = %+v leaves 0–100 or misses its mean", k, n, g)
+			}
+		}
+	}
+	if a, b := rangeOf(1, 1), rangeOf(19, 20); a.Lo >= b.Lo {
+		t.Error("one good outcome must not outrank nineteen of twenty")
+	}
+}
+
+// TestStatsOfAnUnusedAction: an action never run has the widest bars and says
+// so in words — no runs, no ratings — never a fake figure.
+func TestStatsOfAnUnusedAction(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(12, nil, true, true)); err != nil {
+	if err := r.Fragment(rec, 200, "_stats", statStrip(priceOf(12, false), nil)); err != nil {
 		t.Fatalf("Fragment: %v", err)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, "—%") || strings.Contains(body, "0.0s") {
-		t.Errorf("unused action must not render fake stat data: %s", body)
+	for _, want := range []string{`<div class="action-stats">`, ">no runs<", ">no ratings<", `title="No runs yet"`, `title="No ratings yet"`, `class="range-band" x="21.13%"`, "12 credits"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("an unused action's figures miss %q: %s", want, body)
+		}
 	}
-	if !strings.Contains(body, "none (0)") {
-		t.Errorf("unused action (with counts) must read honest 'none (0)': %s", body)
-	}
-	if !strings.Contains(body, "12") {
-		t.Errorf("stat strip must show the price: %s", body)
+	if strings.Contains(body, "0.0s") || strings.Contains(body, "%)") || strings.Contains(body, "style=") {
+		t.Errorf("an unused action shows no figure it does not have, and no inline style: %s", body)
 	}
 }
 
-// TestStatStripCounts contrasts the detail (with counts) and card (no counts)
-// renderings of the same stats — the only difference is the (N) run/rater counts.
-func TestStatStripCounts(t *testing.T) {
+// TestStatsStateTheirCounts: a used action's figures carry their counts, and
+// each cell's title the sentence behind its bar.
+func TestStatsStateTheirCounts(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := client.Stats{Uses: 10, Successes: 9, RatingCount: 4, RatingEstimate: 0.75, LatencyEstimate: 0.4}
-
 	rec := httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, true, true)); err != nil {
+	if err := r.Fragment(rec, 200, "_stats", statStrip(priceOf(5, false), &s)); err != nil {
 		t.Fatal(err)
 	}
-	detail := rec.Body.String()
-	if !strings.Contains(detail, "90%") || !strings.Contains(detail, "(10)") || !strings.Contains(detail, "(4)") {
-		t.Errorf("detail strip must show success%% with run/rater counts: %s", detail)
+	body := rec.Body.String()
+	for _, want := range []string{">10 runs<", ">4 ratings<", `title="9 of 10 runs succeeded, likely 73–94%"`, `title="3 of 4 ratings good, likely 49–84%"`, "0.4s", "#check", "#thumb-up", "#clock", `<span class="sr-only">Success: 9 of 10 runs`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the figures miss %q: %s", want, body)
+		}
 	}
-
-	// The card strip drops both the (N) counts and the leading price (the card
-	// shows price top-right), but keeps the iconned success/rating/latency line.
-	rec = httptest.NewRecorder()
-	if err := r.Fragment(rec, 200, "_stat_strip", statStrip(5, &s, false, false)); err != nil {
-		t.Fatal(err)
-	}
-	card := rec.Body.String()
-	if !strings.Contains(card, "90%") {
-		t.Errorf("card strip must still show success%%: %s", card)
-	}
-	if strings.Contains(card, "(10)") || strings.Contains(card, "(4)") {
-		t.Errorf("card strip must NOT show counts: %s", card)
-	}
-	if strings.Contains(card, "#gem") {
-		t.Errorf("card strip must NOT lead with the price gem: %s", card)
+	if strings.Index(body, "#clock") > strings.Index(body, "5 credits") {
+		t.Error("the price is the last of the figures")
 	}
 }
 
@@ -1617,10 +1629,10 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 	}
 }
 
-// A DISCOVERED lookup hit is rendered from the lookup row alone: nothing local
-// backs it, so the card states the kernel-qualified ref and the description and
-// stops there — no price, no reputation strip, no link to a local action page,
-// and no run affordance (the local price does not exist until resolution).
+// A DISCOVERED lookup hit is rendered from the lookup row alone, by the same
+// row as any other: nothing local backs it, so it states the kernel-qualified
+// ref, the description, the indicative price and the figures of an action this
+// kernel never ran — no state, and no link to a local action page.
 func TestActionRowDiscovered(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
@@ -1659,8 +1671,8 @@ func TestActionRowDiscovered(t *testing.T) {
 	if !strings.Contains(body, `class="price muted"`) || !strings.Contains(body, "title=\"Indicative") {
 		t.Errorf("an indicative price must be muted AND labelled: %s", body)
 	}
-	if strings.Contains(body, "stat-strip") {
-		t.Errorf("a discovered card must carry no reputation strip: %s", body)
+	if !strings.Contains(body, ">no runs<") || strings.Contains(body, ">inactive<") {
+		t.Errorf("a discovered card has the figures of an action never run, and no state: %s", body)
 	}
 	// The remote owner segment renders unlinked, like every remote ref.
 	if strings.Contains(body, `owner=tom`) {
@@ -1671,7 +1683,7 @@ func TestActionRowDiscovered(t *testing.T) {
 	proxy := card(actionCardView{Action: client.Action{
 		ID: "LOCAL-ID", Action: "k-abc/tom/greet", Kind: "remote_proxy", Price: 14, Active: true,
 	}})
-	if !strings.Contains(proxy, "/actions/LOCAL-ID") || !strings.Contains(proxy, "stat-strip") {
+	if !strings.Contains(proxy, "/actions/LOCAL-ID") || !strings.Contains(proxy, "action-stats") {
 		t.Errorf("a resolved proxy card must stay an ordinary card: %s", proxy)
 	}
 	if strings.Contains(proxy, "known network") {
@@ -1680,7 +1692,7 @@ func TestActionRowDiscovered(t *testing.T) {
 }
 
 // An action row leads with the tile, then the action's title as its link with
-// the chips beside it, and the ref on its own line beneath (§5.5) — a
+// its marks beside it, and the ref on its own line beneath (§5.5) — a
 // discovered row too, whose title comes from the lookup row. The title is the
 // one pointer target; the row itself is keyboard-navigable only.
 func TestActionRowLeadsWithTitle(t *testing.T) {
@@ -1689,7 +1701,7 @@ func TestActionRowLeadsWithTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, v := range []actionCardView{
-		{Action: client.Action{ID: "A1", Action: "tom@play/greet", Title: "Greet a person", Active: true, Visibility: "private"}},
+		{CanManage: true, Action: client.Action{ID: "A1", Action: "tom@play/greet", Title: "Greet a person", Active: true, Visibility: "private"}},
 		{Discovered: true, Action: client.Action{ID: "R1", Action: "tom@KERNELKEY/greet", Title: "Greet a person"}},
 	} {
 		rec := httptest.NewRecorder()
@@ -1697,7 +1709,7 @@ func TestActionRowLeadsWithTitle(t *testing.T) {
 			t.Fatal(err)
 		}
 		body := rec.Body.String()
-		if !regexp.MustCompile(`<a class="action-title" href="[^"]+" title="Greet a person">Greet a person</a>`).MatchString(body) {
+		if !regexp.MustCompile(`<a class="action-title" href="[^"]+">Greet a person</a>`).MatchString(body) {
 			t.Errorf("the row title must be the action's title, linked: %s", body)
 		}
 		if !strings.Contains(body, `<p class="action-ref"><span class="ref mono">`) {
@@ -1706,11 +1718,15 @@ func TestActionRowLeadsWithTitle(t *testing.T) {
 		if !regexp.MustCompile(`(?s)<span class="media tile">.*class="action-title"`).MatchString(body) {
 			t.Errorf("the row must lead with the square tile: %s", body)
 		}
-		if !regexp.MustCompile(`(?s)class="action-title"[^>]*>[^<]*</a>\s*<span class="chip".*class="action-ref"`).MatchString(body) {
+		if !regexp.MustCompile(`(?s)class="action-title"[^>]*>[^<]*</a><span class="chips"><span class="(chip|pill)[ "].*class="action-ref"`).MatchString(body) {
 			t.Errorf("the chips must sit beside the title, above the ref: %s", body)
 		}
 		if !strings.Contains(body, `class="action-row rowable`) || strings.Contains(body, "onclick") {
 			t.Errorf("the row must be keyboard-navigable with no click handler: %s", body)
+		}
+		// One row: the figures close it, discovered or not.
+		if strings.Count(body, "<article") != 1 || !regexp.MustCompile(`(?s)</div>\s*<div class="action-stats">.*</div>\s*</article>`).MatchString(body) {
+			t.Errorf("the row closes with its figures: %s", body)
 		}
 	}
 }
@@ -1732,7 +1748,7 @@ func TestInspectListsActionsAsDiscoveredRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`<div class="action-list">`, `<a class="action-title" href="/discovered?ref=seller%40bee%2fgreet" title="Greet a person">Greet a person</a>`, `title="Discovered — known through the network, not resolved here">R</span>`, `<span class="owner">seller@bee</span>/greet`, `<p class="action-desc">says hi</p>`} {
+	for _, want := range []string{`<div class="action-list">`, `<a class="action-title" href="/discovered?ref=seller%40bee%2fgreet">Greet a person</a>`, `title="Discovered — known through the network, not resolved here">R</span>`, `<span class="owner">seller@bee</span>/greet`, `<p class="action-desc">says hi</p>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inspect actions missing %q: %s", want, body)
 		}
@@ -1861,7 +1877,7 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: actionsView{
-		Mine: []actionCardView{{Action: proxy, Manage: true}, {Action: own, Manage: true}},
+		Mine: []actionCardView{{Action: proxy, CanManage: true}, {Action: own, CanManage: true}},
 	}}
 	if err := r.Render(rec, 200, "workshop", p); err != nil {
 		t.Fatalf("render workshop: %v", err)
@@ -2153,8 +2169,8 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	ev := body[strings.Index(body, "<h2>Evidence</h2>"):]
 	ev = ev[:strings.Index(ev, "</table>")]
 	for _, want := range []string{
-		"#milestone", "25% (4)", "0.7s", `title="PROVIDERKEY0000">provider</span>`,
-		`title="Success rate — 3 runs, 2 confirmed by the provider"`, `title="Rating — 1 raters, 2 more unverified"`,
+		"#check", ">4 runs<", `title="1 of 4 runs succeeded, likely 16–51%"`, "0.7s", `title="PROVIDERKEY0000">provider</span>`,
+		`title="3 of 3 runs succeeded, likely 64–96%; 2 confirmed by the provider"`, `title="1 of 1 rating good, likely 43–90%; 2 more unverified"`,
 		`class="mono" title="` + other + `">OOOOOOOO…</span>`, `data-copy="` + other + `"`,
 		`title="1 trades reported two ways — they count for nothing"`,
 	} {
@@ -2178,7 +2194,7 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	if err := r.Fragment(rec, 200, "_action_panel", actionView{Action: a}); err != nil {
 		t.Fatal(err)
 	}
-	if p := rec.Body.String(); !strings.Contains(p, `<details class="fold"><summary>Evidence</summary>`) || !strings.Contains(p, "25% (4)") {
+	if p := rec.Body.String(); !strings.Contains(p, `<details class="fold"><summary>Evidence</summary>`) || !strings.Contains(p, `title="1 of 4 runs succeeded, likely 16–51%"`) {
 		t.Errorf("the panel folds the evidence: %s", p)
 	}
 	// An action no one else has reported on has no section at all.

@@ -80,17 +80,39 @@ type actionCardView struct {
 	// Rank is a search row's place under each order, so the panel rearranges
 	// the rows it holds without searching again; nil on a catalog row.
 	Rank *cardRank
-	// Manage marks a Workshop row (§6.4): it states its status in one word and
-	// shows its counts, where a catalog row wears chips.
-	Manage bool
+	// CanManage: the viewer may manage this action (manages), so its row
+	// states who may call it.
+	CanManage bool
 }
 
-// Status is the one word a Workshop row wears: inactive, else who may call it.
-func (c actionCardView) Status() string {
-	if !c.Action.Active {
+// Marks is what the row states beside its title.
+func (c actionCardView) Marks() actionMarks {
+	return actionMarks{Action: c.Action, Discovered: c.Discovered, NeedsConnect: c.NeedsConnect, CanManage: c.CanManage}
+}
+
+// actionMarks is what _action_marks states beside an action's title, the same
+// on every list, the action's page and its panel: that it is remote, that it
+// wants an account the viewer has not connected, and its state.
+type actionMarks struct {
+	Action                              client.Action
+	Discovered, NeedsConnect, CanManage bool
+}
+
+// State is the one word beside the title: inactive for every viewer, since an
+// action that is off cannot be run; else, for a viewer who may manage it, who
+// may call it (private, local, public), which only changes what that viewer
+// can do. A discovered action has none: nothing local was read, so nothing is
+// known of it.
+func (m actionMarks) State() string {
+	switch {
+	case m.Discovered:
+		return ""
+	case !m.Action.Active:
 		return "inactive"
+	case m.CanManage:
+		return m.Action.Vis()
 	}
-	return c.Action.Vis()
+	return ""
 }
 
 // Observed reports whether this row's terms were last verified against a remote
@@ -176,9 +198,13 @@ type actionView struct {
 	Back bool
 }
 
-// actionsView is the action room: manage your own actions. Discovery/browse lives
-// in /run; Scope="all" for a superuser widens Mine to
-// every owner's actions.
+// Marks is what the page and the panel state beside the title, as its row does.
+func (v actionView) Marks() actionMarks {
+	return actionMarks{Action: v.Action, NeedsConnect: v.NeedsConnect, CanManage: v.CanManage}
+}
+
+// actionsView is the Workshop: the viewer's own actions and the way to make
+// another (requirements §6.4).
 type actionsView struct {
 	Mine     []actionCardView // the viewer's own actions, what needs attention first
 	Filter   string           // "active" | "inactive" | "" (all)
@@ -736,11 +762,10 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 	order := sortOrder(r)
 	view := discoverView{Query: q, Owner: owner, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, owner, order)}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		granted := s.granted(r)
 		if q != "" {
 			// A page load spends nothing (§8.2): no pin, so a priced lookup is
 			// not run and the search falls back.
-			v, e := s.discover(ctx, tok, granted, q, order, "")
+			v, e := s.discover(r, tok, q, order, "")
 			if e != nil {
 				return e
 			}
@@ -757,7 +782,6 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		cards := make([]actionCardView, len(cat))
 		for i, a := range cat {
 			cards[i] = cardOf(a)
-			cards[i].NeedsConnect = !a.Discovered && needsConnect(a, granted)
 		}
 		// A sort orders the WHOLE catalog, then the page is cut from it.
 		// Ordering only the page would answer a different question than the
@@ -771,6 +795,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		sortCards(cards, order)
 		cards, view.Pager = pageOf(r, cards)
 		s.fetchEvidence(ctx, tok, cards)
+		s.finishCards(r, cards)
 		view.Catalog = cards
 		return nil
 	})
@@ -791,7 +816,7 @@ func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
 		if q == "" {
 			return errors.New("type what to search for")
 		}
-		view, e = s.discover(ctx, tok, s.granted(r), q, sortRelevance, r.FormValue("lookup_quote_hash"))
+		view, e = s.discover(r, tok, q, sortRelevance, r.FormValue("lookup_quote_hash"))
 		return e
 	})
 	if err != nil {
@@ -803,13 +828,25 @@ func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
 	_ = s.render.Fragment(w, http.StatusOK, "_search_panel", view)
 }
 
-// granted is the viewer's connected grants, best-effort: a page must not fail
-// for a chip.
-func (s *Server) granted(r *http.Request) map[string]bool {
-	if me, e := s.me(r); e == nil {
-		return grantedRefs(me)
+// manages reports whether the viewer may manage the action: its owner, or the
+// superuser, whom the kernel lets enable, publish, edit and delete any action
+// (verified live, UI 0.66.0). The one rule for the action's page and every list.
+func (s *Server) manages(r *http.Request, me client.User, a client.Action) bool {
+	return (me.Address != "" && refOwner(a.Action) == me.Address) || s.isSuperuser(r)
+}
+
+// finishCards states on every card of a list what depends on the viewer:
+// whether the action wants an account they have not connected, and whether
+// they may manage it. Best-effort, as granted is: a list must not fail for a
+// mark. A discovered card has neither, since nothing local backs it.
+func (s *Server) finishCards(r *http.Request, cards []actionCardView) {
+	me, _ := s.me(r)
+	granted := grantedRefs(me)
+	for i := range cards {
+		c := &cards[i]
+		c.NeedsConnect = !c.Discovered && needsConnect(c.Action, granted)
+		c.CanManage = !c.Discovered && s.manages(r, me, c.Action)
 	}
-	return nil
 }
 
 // discover is the search Discover and the panel share: sys/lookup for the
@@ -820,7 +857,8 @@ func (s *Server) granted(r *http.Request) map[string]bool {
 // is read to decide whether it is discovered (§6.2), and the rows are ranked
 // under every order and arranged under the one asked for. The error is the
 // transport's; a lookup that ran and did not succeed is a state of the view.
-func (s *Server) discover(ctx context.Context, tok string, granted map[string]bool, q, order, quoteHash string) (discoverView, error) {
+func (s *Server) discover(r *http.Request, tok, q, order, quoteHash string) (discoverView, error) {
+	ctx := r.Context()
 	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, "", order)}
 	declined := ""
 	if quoteHash == "" {
@@ -887,14 +925,9 @@ func (s *Server) discover(ctx context.Context, tok string, granted map[string]bo
 		}(i, view.Results[i].Action.ID)
 	}
 	wg.Wait()
-	// Flag after the fetches: a partial lookup entry only carries
-	// requires_grant once its full record is in. A discovered hit has no local
-	// record and no local grant to want.
-	for i := range view.Results {
-		if !view.Results[i].Discovered {
-			view.Results[i].NeedsConnect = needsConnect(view.Results[i].Action, granted)
-		}
-	}
+	// After the reads: a partial lookup entry only carries requires_grant once
+	// its full record is in.
+	s.finishCards(r, view.Results)
 	// Search results are one ranked page: ranked under every order, so a list
 	// on screen is rearranged without searching again, and sorted whole.
 	rankCards(view.Results)
@@ -1172,7 +1205,7 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 	view := actionView{
 		Action:       a,
 		Form:         BuildForm(a.InputSchema),
-		CanManage:    refOwner(a.Action) == me.Address || s.isSuperuser(r),
+		CanManage:    s.manages(r, me, a),
 		IsPaid:       a.Price > 0,
 		NeedsConnect: needsConnect(a, grantedRefs(me)),
 		CSRFField:    csrf.TemplateField(r),
@@ -1414,11 +1447,12 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 			if a[i].Discovered || (filter == "active" && !a[i].Active) || (filter == "inactive" && a[i].Active) {
 				continue
 			}
-			mine = append(mine, actionCardView{Action: a[i], Manage: true})
+			mine = append(mine, cardOf(a[i]))
 		}
 		// A list row carries no counts, so the order costs every row its
 		// detail read, as Discover's rating sort does.
 		s.fetchEvidence(ctx, tok, mine)
+		s.finishCards(r, mine)
 		sort.SliceStable(mine, func(i, j int) bool {
 			a, b := mine[i].Action, mine[j].Action
 			if a.Active != b.Active {
@@ -2671,7 +2705,9 @@ func coerce(typ, val string) (json.RawMessage, error) {
 // (a gossip observation or a proxy's reconcile; absent on a local action, so it
 // is the served fact that marks a row as remote-backed, requirements.md §6.2).
 // Whether a row is DISCOVERED — nothing local backs it — is settled by the
-// local read in getBrowse, never by the row's shape.
+// local read in getBrowse, never by the row's shape. A lookup row carries no
+// `active`: the lookup ranks active actions only, so every row it serves is
+// one, until a detail read says otherwise.
 func parseLookup(result json.RawMessage) []actionCardView {
 	var lr struct {
 		Results []struct {
@@ -2684,7 +2720,7 @@ func parseLookup(result json.RawMessage) []actionCardView {
 	out := make([]actionCardView, 0, len(lr.Results))
 	for _, r := range lr.Results {
 		a := r.Action
-		a.ID = r.ActionID
+		a.ID, a.Active = r.ActionID, true
 		out = append(out, actionCardView{Action: a, ObservedAt: r.ObservedAt})
 	}
 	return out
@@ -3181,54 +3217,28 @@ const (
 	sortPrice     = "price"
 )
 
-// sortCards arranges served rows by a signal the kernel already publishes. It
-// is an arrangement, never a computation: every number compared here came off
-// the wire, and nothing is inferred about a row that carries none.
-//
-// Under `rating` an UNRATED row — a new action, or a discovered hit, whose
-// stats the discovery cache does not store — sorts into a block after the rated
-// ones, keeping its own relative order. It is not scored as zero: "no ratings"
-// is not a low rating, and interleaving silence with measured opinion would
-// invent a judgement the kernel has not made. Grouping says the true thing —
-// these have not been rated — while still answering the question asked, which
-// was to see the best-rated first. Under relevance they are wherever the kernel
-// put them, which is how a new action is still found.
+// sortCards arranges served rows by a signal the kernel publishes. Under
+// `rating` the rows are ordered by the low end of their rating range (the bar
+// the row draws, StatStrip.Rating): the share of good ratings an action
+// probably has at least. One rule orders every row, rated or not, so the order
+// is the one a person reads off the bars — a single good rating does not
+// outrank twenty, and an unrated action (a new one, or a discovered hit, whose
+// record this kernel does not hold) stands where its unknown range puts it,
+// above an action known to be poor and below one known to be good. Under
+// relevance the rows are where the kernel put them, which is how a new action
+// is still found.
 func sortCards(cards []actionCardView, order string) {
 	switch order {
 	case sortRating:
-		rated := func(c actionCardView) bool {
-			st := c.Action.Experience()
-			return st != nil && st.RatingCount > 0
+		low := func(c actionCardView) float64 {
+			return statStrip(PriceView{}, c.Action.Experience()).Rating().Lo
 		}
-		sort.SliceStable(cards, func(i, j int) bool {
-			a, b := cards[i], cards[j]
-			if rated(a) != rated(b) {
-				return rated(a)
-			}
-			if !rated(a) {
-				return false // both unrated: leave them as served
-			}
-			sa, sb := a.Action.Experience(), b.Action.Experience()
-			if ra, rb := ratingShare(*sa), ratingShare(*sb); ra != rb {
-				return ra > rb
-			}
-			return sa.RatingCount > sb.RatingCount
-		})
+		sort.SliceStable(cards, func(i, j int) bool { return low(cards[i]) > low(cards[j]) })
 	case sortPrice:
 		sort.SliceStable(cards, func(i, j int) bool {
 			return cards[i].Action.Price < cards[j].Action.Price
 		})
 	}
-}
-
-// ratingShare is the share of ratings that were positive, as the stat strip
-// already renders it. One definition, so the number a person sorts by is the
-// number they read.
-func ratingShare(s client.Stats) float64 {
-	if s.RatingCount == 0 {
-		return 0
-	}
-	return s.RatingEstimate
 }
 
 // sortOrder reads the requested order, defaulting to relevance. An unknown

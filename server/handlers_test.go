@@ -1569,19 +1569,31 @@ func TestActionCardChips(t *testing.T) {
 		t.Error("browse row must lead with a tile")
 	}
 
-	// The Workshop draws the same row with one status pill in place of the
-	// chips: the inactive draft says so, unfaded; the live action names who
-	// may call it (the fixture serves no visibility: private, the kernel's
-	// default), in the live green. Discover keeps its chips.
+	// One row everywhere: the inactive draft says so to every viewer, unfaded;
+	// a live action names who may call it only to a viewer who may manage it
+	// (the fixture serves no visibility: private, the kernel's default), in
+	// the live green. alice's own row reads the same on her Workshop and on
+	// Discover; sys's actions on Discover carry no state for her.
 	body := getBody(t, cl, srv.URL+"/workshop")
-	if !strings.Contains(body, `<span class="pill">inactive</span>`) || !strings.Contains(body, `<span class="pill status-credited">private</span>`) {
-		t.Errorf("a Workshop row states its status in one pill: %s", body)
+	own := getBody(t, cl, srv.URL+"/browse?owner=alice@testnet")
+	for page, b := range map[string]string{"workshop": body, "discover": own} {
+		if !strings.Contains(b, `<span class="pill muted">inactive</span>`) || !strings.Contains(b, `<span class="pill status-credited">private</span>`) {
+			t.Errorf("%s: an owner's row states its state in one pill: %s", page, b)
+		}
+		for _, gone := range []string{`/static/icons.svg#lock`, `title="Inactive — not callable"`, `title="Local — `, `action-row rowable inactive`} {
+			if strings.Contains(b, gone) {
+				t.Errorf("%s: a row wears no %q and is not faded", page, gone)
+			}
+		}
 	}
-	if strings.Contains(body, `/static/icons.svg#lock`) || strings.Contains(body, `title="Inactive — not callable"`) || strings.Contains(body, `action-row rowable inactive`) {
-		t.Error("a Workshop row wears no chips and is not faded")
+	if row := func(b, id string) string {
+		i := strings.Index(b, `data-href="/actions/`+id+`"`)
+		return b[i : i+strings.Index(b[i:], "</article>")]
+	}; row(body, "A1") != row(own, "A1") {
+		t.Errorf("the same action is drawn the same on the Workshop and Discover:\n%s\n%s", row(body, "A1"), row(own, "A1"))
 	}
-	if !strings.Contains(getBody(t, cl, srv.URL+"/browse?owner=alice@testnet"), `title="Inactive — not callable"`) {
-		t.Error("Discover's row keeps its chips")
+	if strings.Contains(getBody(t, cl, srv.URL+"/browse?owner=sys@testnet"), "status-credited") {
+		t.Error("another owner's live action carries no state for this viewer")
 	}
 	// The old cluttered card markup is gone.
 	for _, gone := range []string{"action-card-name", "action-card-meta"} {
@@ -1766,6 +1778,15 @@ func TestOneWorkshopTheSuperuserManagesOnThePage(t *testing.T) {
 			t.Errorf("sys on another user's action lacks %q", want)
 		}
 	}
+	// Manage stands first, under the header: what its owner came for is not
+	// below the run form, the ratings and the evidence. The page states who
+	// may call it beside the title, as the action's row does for this viewer.
+	if m, r := strings.Index(page, "<h2>Manage</h2>"), strings.Index(page, "<h2>Run</h2>"); m < 0 || r < m {
+		t.Errorf("Manage must precede Run: manage %d, run %d", m, r)
+	}
+	if !strings.Contains(page, `<span class="pill status-credited">private</span>`) {
+		t.Errorf("the page states who may call the action to whoever may manage it: %s", page)
+	}
 	resp := postTo(t, sys, srv.URL+"/actions/disable", page, url.Values{"target": {"AG"}})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/actions/AG" {
@@ -1810,11 +1831,11 @@ func TestWorkshopOrdersInactiveThenRuns(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	body := getBody(t, loginClient(t, srv.URL), srv.URL+"/workshop")
-	d, m, f := strings.Index(body, `title="Draft"`), strings.Index(body, `title="Many"`), strings.Index(body, `title="Few"`)
+	d, m, f := strings.Index(body, `data-href="/actions/draft"`), strings.Index(body, `data-href="/actions/many"`), strings.Index(body, `data-href="/actions/few"`)
 	if d < 0 || m < d || f < m {
 		t.Errorf("order must be inactive, then most run: draft %d, many %d, few %d", d, m, f)
 	}
-	if !strings.Contains(body, "100% (20)") || !strings.Contains(body, `<span class="pill status-credited">local</span>`) {
+	if !strings.Contains(body, ">20 runs<") || !strings.Contains(body, `<span class="pill status-credited">local</span>`) {
 		t.Errorf("a row shows its counts and who may call it: %s", body)
 	}
 }
@@ -3332,11 +3353,13 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	})
 	// sys/lookup: one unresolved discovery hit and one RESOLVED proxy. Both
 	// carry a kernel-qualified ref and an observed_at; only the second has a
-	// local row.
+	// local row. A third is local and fails its read. A lookup row carries no
+	// `active`, as the kernel serves it.
 	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"result":{"results":[
 			{"action_id":"remote-unresolved","action":"vendor@bravo/fresh","description":"never called","price":111,"observed_at":"2026-08-18T17:00:10Z"},
-			{"action_id":"proxy-local","action":"vendor@bravo/bought","description":"already resolved","price":111,"observed_at":"2026-08-18T17:00:10Z"}
+			{"action_id":"proxy-local","action":"vendor@bravo/bought","description":"already resolved","price":111,"observed_at":"2026-08-18T17:00:10Z"},
+			{"action_id":"gone","action":"alice@testnet/gone","title":"Gone","description":"vendor of nothing","price":0}
 		]},"tx_id":"TX1","trace_id":"TR1"}`))
 	})
 	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -3370,6 +3393,11 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	// Both rows are remote-backed, so both state the kernel's freshness stamp.
 	if !strings.Contains(body, "terms seen") {
 		t.Error("a remote-backed row must state its observed_at freshness")
+	}
+	// The lookup ranks active actions only, so a hit whose read failed — remote
+	// or local — is not stated inactive: nothing said it is.
+	if !strings.Contains(body, `href="/actions/gone"`) || strings.Contains(body, ">inactive<") {
+		t.Errorf("a lookup hit is never stated inactive for want of a read: %s", body)
 	}
 }
 
@@ -3796,8 +3824,8 @@ func TestPricedFillIsAMoneyButton(t *testing.T) {
 
 // Feedback the UI collects has to come back out somewhere, or it is a number on
 // a card and nothing more. The signals the kernel already publishes — the
-// rating share and the price — order the list, so a buyer can choose by them.
-// This is an arrangement of served rows, never a computation (§6.2).
+// ratings and the price — order the list, so a buyer can choose by them. The
+// rating order is the bars' own: by the low end of each rating range (§6.2).
 func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	rows := map[string]string{
 		"CHEAP": `{"id":"CHEAP","action":"alice@testnet/cheap","name":"cheap","kind":"wasm","active":true,"price":1}`,
@@ -3862,12 +3890,11 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "/actions/LOVED" {
 		t.Errorf("rating order must put the best-rated first: %v", got)
 	}
-	// A row nobody has rated is not SCORED as a bad one. It sorts into the
-	// unrated block after the rated rows, which says the true thing — it has not
-	// been rated — rather than interleaving silence with measured opinion.
-	rated := getBody(t, cl, srv.URL+"/browse?sort=rating")
-	if strings.Index(rated, "/actions/CHEAP") < strings.Index(rated, "/actions/MEH") {
-		t.Error("an unrated action belongs after the rated ones, not among them")
+	// A row nobody has rated is neither a bad one nor a good one: its range is
+	// the unknown one, below an action known to be good and above one known to
+	// be poor.
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[1] != "/actions/CHEAP" || got[2] != "/actions/MEH" {
+		t.Errorf("an unrated action stands between the known good and the known poor: %v", got)
 	}
 	// An unknown sort shows the list, not an error.
 	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "/actions/CHEAP") {

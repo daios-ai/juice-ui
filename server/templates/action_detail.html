@@ -24,37 +24,12 @@
 {{if $d.ProposedMessage}}<p class="muted">{{$d.ProposedMessage}}</p>{{end}}
 {{end}}
 
-<h2>Run</h2>
-{{template "_action_run" $d}}
-
-{{if $d.Ratings}}
-<h2>Ratings</h2>
-<div class="card-list">
-{{range $d.Ratings}}
-<div class="card">
-  <p class="row compact flush">
-    <span class="pill {{if eq .Value 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Value 1}}good{{else}}poor{{end}}</span>
-    <span class="muted small">{{shortTime .CreatedAt}}</span>
-  </p>
-  {{if .Note}}<p class="card-note">{{.Note}}</p>{{end}}
-</div>
-{{end}}
-</div>
-{{template "_pager" $d.RatingsPager}}
-{{end}}
-
-{{/* What other kernels report about this action, one row per report and the
-     provider's own first. Labelled by provenance, never summed into
-     the strip above, which is this kernel's own record (kernel §D16). */}}
-{{with actionEvidence $d.Action}}
-<h2>Evidence</h2>
-{{template "_evidence" .}}
-{{end}}
-
-{{/* A cached remote proxy is kernel-managed state, not an action one owns here:
-     the kernel refuses enable/disable on it and the peer-level lever is suspend,
-     on network. So Manage is withheld for a proxy even from a viewer the
-     ownership check would otherwise admit. */}}
+{{/* Manage stands first, under the header: the controls are why its owner
+     opens the page, and only whoever may manage it sees them, so no other
+     reader's page changes. A cached remote proxy is kernel-managed state, not
+     an action one owns here: the kernel refuses enable/disable on it and the
+     peer-level lever is suspend, on network. So Manage is withheld for a proxy
+     even from a viewer the ownership check would otherwise admit. */}}
 {{if and $d.CanManage (ne $d.Action.Kind "remote_proxy")}}
 <h2>Manage</h2>
 <div class="card stack">
@@ -119,5 +94,32 @@
     </form>
   </div>
 </dialog>
+{{end}}
+
+<h2>Run</h2>
+{{template "_action_run" $d}}
+
+{{if $d.Ratings}}
+<h2>Ratings</h2>
+<div class="card-list">
+{{range $d.Ratings}}
+<div class="card">
+  <p class="row compact flush">
+    <span class="pill {{if eq .Value 1}}status-credited{{else}}status-refunded{{end}}">{{if eq .Value 1}}good{{else}}poor{{end}}</span>
+    <span class="muted small">{{shortTime .CreatedAt}}</span>
+  </p>
+  {{if .Note}}<p class="card-note">{{.Note}}</p>{{end}}
+</div>
+{{end}}
+</div>
+{{template "_pager" $d.RatingsPager}}
+{{end}}
+
+{{/* What other kernels report about this action, one row per report and the
+     provider's own first. Labelled by provenance, never summed into
+     the figures above, which are this kernel's own record (kernel §D16). */}}
+{{with actionEvidence $d.Action}}
+<h2>Evidence</h2>
+{{template "_evidence" .}}
 {{end}}
 {{end}}

@@ -744,18 +744,66 @@ type Tab struct {
 	Active            bool
 }
 
-// StatStrip feeds the _stat_strip partial and its cells (_stat_success,
-// _stat_rating, _stat_latency), which the evidence table shares. Counts
-// toggles the (N) run/rater counts — shown on the action detail page, omitted
-// on the list cards.
+// StatStrip is an action's record as its figures show it (_stats): success and
+// rating as ranges, latency, and the price. Its cells (_stat_success,
+// _stat_rating, _stat_latency) are the evidence table's too, so a report reads
+// as the record does. One rendering on every list, the action's page and its
+// panel.
 type StatStrip struct {
-	Price     int64
-	S         client.Stats
-	Counts    bool
-	WithPrice bool // detail page leads with price; cards omit it (shown top-right)
+	Price PriceView
+	S     client.Stats
 	// Set on a row of evidence (evidenceOf): the uses the provider's receipts
 	// confirm, and the ratings no trade backs, stated in the cells' titles.
 	Corroborated, Unverified int64
+}
+
+// Success is the share of runs that succeeded, as a range.
+func (s StatStrip) Success() Range { return rangeOf(s.S.Successes, s.S.Uses) }
+
+// Rating is the share of ratings that were good, as a range. A rating is 0 or
+// 1 and the kernel serves their mean, so the good ones are mean × count.
+func (s StatStrip) Rating() Range {
+	return rangeOf(int64(math.Round(s.S.RatingEstimate*float64(s.S.RatingCount))), s.S.RatingCount)
+}
+
+// Range is a share drawn as a bar (_range): K good outcomes of N, and where the
+// true share probably lies, in percent — Laplace's rule of succession for the
+// mean, (K+1)/(N+2), and one standard deviation of that Beta(K+1, N−K+1)
+// posterior either side. The interval never leaves 0–100, and it narrows as N
+// grows, so the bar says both how good an action is and how far to trust it;
+// an action never run is the widest bar, centred.
+type Range struct {
+	K, N        int64
+	Lo, Mid, Hi float64
+}
+
+func rangeOf(k, n int64) Range {
+	m := float64(k+1) / float64(n+2)
+	d := math.Sqrt(m * (1 - m) / float64(n+3))
+	return Range{K: k, N: n, Lo: 100 * (m - d), Mid: 100 * m, Hi: 100 * (m + d)}
+}
+
+// Width is the band's extent, in percent of the track.
+func (r Range) Width() float64 { return r.Hi - r.Lo }
+
+// Count states N in words: "no runs", "1 run", "89 runs".
+func (r Range) Count(noun string) string {
+	switch r.N {
+	case 0:
+		return "no " + noun + "s"
+	case 1:
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", r.N, noun)
+}
+
+// Says is the range as a sentence, the cell's title and what a screen reader
+// hears: "85 of 89 runs succeeded, likely 92–97%", or "No runs yet".
+func (r Range) Says(noun, outcome string) string {
+	if r.N == 0 {
+		return "No " + noun + "s yet"
+	}
+	return fmt.Sprintf("%d of %s %s, likely %.0f–%.0f%%", r.K, r.Count(noun), outcome, r.Lo, r.Hi)
 }
 
 // evidenceTable is what _evidence renders: one row per report — one issuer's
@@ -802,7 +850,7 @@ func evidenceOf(rows []client.Evidence, provider string, names map[string]string
 					RatingCount: e.RatingCount, RatingEstimate: e.RatingMean,
 					LatencyEstimate: e.AvgLatencyMs / 1000,
 				},
-				Counts: true, Corroborated: e.CorroboratedUses, Unverified: e.UnverifiedRating,
+				Corroborated: e.CorroboratedUses, Unverified: e.UnverifiedRating,
 			},
 			Source:         source,
 			Contradictions: e.Contradictions,
@@ -898,14 +946,15 @@ func lockedFigure(amount int64, operator bool) Figure {
 // figures collects Figures for the _figures partial (template helper).
 func figures(f ...Figure) []Figure { return f }
 
-// statStrip builds a StatStrip. It is nil-safe (a card's *client.Stats is nil
-// until the action has usage), so an unused action renders honest empty states.
-func statStrip(price int64, s *client.Stats, counts, withPrice bool) StatStrip {
+// statStrip builds a StatStrip. It is nil-safe: an action this kernel holds no
+// record of (a list row before its detail read, a discovered one) is an action
+// never run, which its ranges state as the widest bars.
+func statStrip(price PriceView, s *client.Stats) StatStrip {
 	var v client.Stats
 	if s != nil {
 		v = *s
 	}
-	return StatStrip{Price: price, S: v, Counts: counts, WithPrice: withPrice}
+	return StatStrip{Price: price, S: v}
 }
 
 // tab builds a plain navigation tab (list filters, scope switch).

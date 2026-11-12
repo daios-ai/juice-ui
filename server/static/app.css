@@ -135,12 +135,30 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .price { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
 .price .free { color: var(--text-muted); font-weight: 500; }
 
-/* Stat strips — icon + number pairs in a horizontal row */
+/* The kernel strip (_kernel_strip) — icon + number pairs in a horizontal row */
 .stat-strip { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
-/* A stat cell (_stat_success, _stat_rating, _stat_latency): icon and value,
-   the meaning in its title — in the stats line and in the evidence table. */
-.stat-cell { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+
+/* An action's figures (_stats, grammar §5.5) — on its row, its page and its
+   panel: a cell each, its value (an icon and a bar, or a number) over its
+   count, the sentence in its title. A cell keeps one width, so down a list
+   the figures stand in columns. The evidence table renders the same cells. */
+.action-stats { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-1) var(--space-2); font-size: var(--font-size-xs); color: var(--text-muted); }
+.stat-cell { display: inline-flex; flex-direction: column; white-space: nowrap; }
+.stat-time { min-width: 3rem; }
 .stat-cell svg { pointer-events: none; }
+.stat-value { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 1.5rem; color: var(--text); font-variant-numeric: tabular-nums; }
+.stat-value .ico { color: var(--text-muted); }
+.stat-cell.muted .stat-value { color: var(--text-muted); }
+.stat-count { line-height: 1.2; }
+.stat-price .price { font-size: var(--font-size-sm); }
+/* A share as a bar (_range): the track is 0–100%, the band where the share
+   probably lies, the tick its likeliest value. One width down a list and one
+   neutral ink everywhere, so a bar reads the same on every row and every
+   page; colour would claim a verdict the kernel does not make. */
+.range { width: 3.5rem; height: .625rem; flex: 0 0 auto; overflow: visible; }
+.range-track { fill: var(--border); }
+.range-band { fill: var(--text-muted); }
+.range-mid { stroke: var(--text); stroke-width: 2px; }
 
 /* Money columns are right-aligned — header included, so the title sits over its
    values. Any money <th> carries class="money". */
@@ -379,28 +397,40 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
   border-radius: var(--radius); padding: var(--space-3) var(--space-4); box-shadow: none;
 }
 .card-sep { border: none; border-top: 1px solid var(--border); margin: var(--space-3) calc(-1 * var(--space-4)); }
-/* Action row (§5.5) — one ranked column, like a results page: the square
-   tile, then the title line (title link, chips, price right), the ref, the
-   description, and the stat strip. Like every component it fills the
-   container (grammar §1).
-   The peer roster and the agents page use the same row. */
-.action-list { display: flex; flex-direction: column; gap: var(--space-4); }
-.action-row { display: flex; align-items: flex-start; gap: var(--space-4); border-radius: var(--radius); }
+/* Action row (§5.5) — THE row of every action list, one ranked column like a
+   results page: the square tile; the text — the title, never cut, its marks
+   following it, the ref, one line of description; and the figures. A list
+   is a container and the row arranges itself by the list's width, so a page,
+   the panel and a phone take the same rules: narrow, the figures follow the
+   text in its column; wide, they stand at its right, one column each, aligned
+   down the list. Like every component it fills the container (grammar §1).
+   The peer roster and the agents page use the same row, text only. */
+.action-list { display: flex; flex-direction: column; gap: var(--space-4); container: action-list / inline-size; }
+.action-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; column-gap: var(--space-4); border-radius: var(--radius); }
 .action-row.inactive { opacity: .55; }
 .action-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
-.action-body { flex: 1 1 auto; min-width: 0; }
+.action-body { min-width: 0; }
+.action-row > .action-stats { grid-column: 2; margin-top: var(--space-2); }
+@container action-list (width >= 52rem) {
+  .action-row { grid-template-columns: auto minmax(0, 1fr) 25rem; column-gap: var(--space-5); }
+  .action-row > .action-stats { grid-column: 3; grid-row: 1; flex-wrap: nowrap; margin-top: 0; }
+  .action-row .range { width: 4.5rem; }
+  .action-row .stat-price { margin-left: auto; align-items: flex-end; }
+}
+.action-name { margin: 0; }
+.action-name .chips { margin-left: var(--space-2); }
 .action-line { display: flex; align-items: baseline; gap: var(--space-2); }
 .action-line .chip { flex: 0 0 auto; align-self: center; }
-.action-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); font-size: var(--font-size-lg); }
-.action-line .price { margin-left: auto; padding-left: var(--space-2); flex: 0 0 auto; font-size: var(--font-size-md); }
+.action-title { font-weight: 600; color: var(--text); font-size: var(--font-size-lg); overflow-wrap: anywhere; }
 .action-line .btn { margin-left: auto; flex: 0 0 auto; }
 .action-ref { margin: 0; font-size: var(--font-size-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.action-desc { margin: 0 0 0; font-size: var(--font-size-sm); color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.action-desc { margin: 0; font-size: var(--font-size-sm); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-desc:empty { display: none; }
 /* Freshness of a remote-backed row's terms (the kernel's observed_at). Quiet:
    it qualifies the price, it is not a status. */
 .action-observed { margin: var(--space-1) 0 0; }
 .chips { flex: 0 0 auto; display: inline-flex; vertical-align: middle; align-items: center; gap: var(--space-1); }
+.chips:empty { display: none; }
 /* Attribute chips — single letter (or lock/word), colorless. R stands out by
    weight (.filled), never by hue: every theme color is a money/trust signal. */
 .chip {
@@ -413,7 +443,6 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .chip.filled { background: var(--surface-2); color: var(--text); }
 .chip.tag { min-width: 0; padding: 0 var(--space-1); text-transform: lowercase; }
 .chip .ico { width: var(--icon-sm); height: var(--icon-sm); }
-.action-row .stat-strip { font-size: var(--font-size-xs); gap: var(--space-2); margin: var(--space-1) 0 0; justify-content: flex-start; }
 .stack > * + * { margin-top: var(--space-4); }
 .row { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; }
 .row.compact { gap: var(--space-2); }
@@ -444,8 +473,6 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 /* Action detail header: title on owner/name + card-consistent chips beside it. */
 .action-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin: 0 0 var(--space-4); }
 .action-head h1 { margin: 0; }
-/* The detail/hero stat strip is a facts line, left-aligned (cards center theirs). */
-.hero .stat-strip, .panel .stat-strip { justify-content: flex-start; }
 .hero h1 { font-size: var(--font-size-2xl); }
 
 /* owner/name — owner segment emphasized, confusable-distinct, never accent (R7) */
