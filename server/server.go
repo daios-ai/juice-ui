@@ -887,6 +887,9 @@ func (s *Server) handleErrFragment(w http.ResponseWriter, r *http.Request, err e
 	if err == nil {
 		return false
 	}
+	if moved(w, r, err) {
+		return true
+	}
 	if isAuthErr(err) {
 		s.endSession(r.Context())
 		if isHTMX(r) {
@@ -973,6 +976,17 @@ func hxRedirect(w http.ResponseWriter, r *http.Request, to string) {
 		return
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// moved sends the browser where an apps.Moved names, reporting whether err was
+// one.
+func moved(w http.ResponseWriter, r *http.Request, err error) bool {
+	var m apps.Moved
+	if !errors.As(err, &m) {
+		return false
+	}
+	hxRedirect(w, r, string(m))
+	return true
 }
 
 // flashResult renders the standard outcome of a write action: an auth error is a

@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.70.0
+Version: 0.70.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.70.1.** A chat elsewhere that the viewer removed or
+> blocked runs nothing: a page showing one of its rooms leaves for the landing,
+> and a command from it is refused, where before its rooms returned to the rail
+> and a join could approve it again. A room gone sends a watching page to the
+> landing, where before a delivery of it still open read it every 5 s (§6.7).
 
 > **What changed in 0.70.0.** A person is a member of rooms on other kernels.
 > Their chats are the chats they approved as requesters: approving a chat
@@ -2891,7 +2897,11 @@ kernel whose chat holds it, at home too: it is the room's URL, `/chat/room/<addr
 and its watch; a bare thread names no room. Every read and command runs the
 action of the room's chat, `chat@<kernel>/…`, by one path wherever it is held;
 a chat elsewhere is reached through the viewer's own kernel, which forwards the
-run (kernel v0.19, D10). A new conversation starts at home.
+run (kernel v0.19, D10). Nothing is run on a chat elsewhere that the viewer has
+not approved: its approval in the inbox is the consent, and removing or blocking
+it ends every read and command there; a command sent from a page still showing
+one of its rooms is refused with "chat@k is no longer one of your chats." A new
+conversation starts at home.
 
 **When a page runs a read.** A run writes a transaction, so a read is run on a
 gesture, or when the kernel shows that something changed for the viewer. The signal
@@ -2913,8 +2923,9 @@ page's read lists the other chats with it. A read that fails acknowledges nothin
 the watch keeps its signal and cursor, the page reads again after 5 s, then 10, 20,
 40, and every 60 s, and the first success shows the change. A chat that cannot be
 listed is named under the rooms, muted, with its reason, the other chats' rooms
-still shown, and is retried on the same back-off. A room gone answers the new signal
-once. The rail on a page load is what the session last read, with no run; a session
+still shown, and is retried on the same back-off. A room gone, or held by a chat
+no longer among the viewer's, sends the page to the landing (`HX-Redirect`), so a
+delivery of it still open does not read it again on every tick. The rail on a page load is what the session last read, with no run; a session
 holding nothing lists its chats once, and a session not yet joined shows no rooms.
 The rail and a room's header name the kernel of a room held elsewhere after its
 name, muted (`far · alpha`), as a kernel is named alone (§4).

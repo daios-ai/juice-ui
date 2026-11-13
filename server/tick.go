@@ -46,6 +46,7 @@ func (s *Server) getTick(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	q := r.URL.Query()
+	var out strings.Builder // written last, since a watcher may send the page on
 	for _, v := range append(q["watch"], q["slow"]...) {
 		kind, rest, _ := strings.Cut(v, ":")
 		key, shown, _ := strings.Cut(rest, ":")
@@ -54,12 +55,16 @@ func (s *Server) getTick(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		h, err := fn(r, key, shown)
+		if moved(w, r, err) {
+			return
+		}
 		if err != nil {
 			s.log.Warn("tick", "watch", v, "err", err)
 			continue
 		}
-		_, _ = io.WriteString(w, string(h))
+		out.WriteString(string(h))
 	}
+	_, _ = io.WriteString(w, out.String())
 }
 
 // watchSession is the idle warning: the dialog opens when the person's last

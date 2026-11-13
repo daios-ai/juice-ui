@@ -45,3 +45,26 @@ func TestTickAnswersEachWatchAndSkipsTheRest(t *testing.T) {
 		t.Fatalf("a page without watches: %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// A watcher saying what the page shows is gone sends the browser where it
+// names, with nothing else; an htmx handler saying so does the same.
+func TestAPageWhoseContentMovedIsSentOn(t *testing.T) {
+	k := authKernel()
+	defer k.Close()
+	cl := client.New(k.URL, nil)
+	s := &Server{client: cl, sessions: session.NewManager(scs.New(), cl),
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)), watchers: map[string]apps.Watcher{}}
+	s.watch("a", func(r *http.Request, key, shown string) (template.HTML, error) { return "<a></a>", nil })
+	s.watch("gone", func(*http.Request, string, string) (template.HTML, error) { return "", apps.Moved("/x") })
+	req := httptest.NewRequest(http.MethodGet, "/tick?watch=a:1&watch=gone:2", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	s.getTick(rec, req)
+	if rec.Header().Get("HX-Redirect") != "/x" || rec.Body.Len() != 0 {
+		t.Errorf("tick = %v %q", rec.Header(), rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	if !s.handleErrFragment(rec, req, apps.Moved("/x")) || rec.Header().Get("HX-Redirect") != "/x" || rec.Body.Len() != 0 {
+		t.Errorf("handler = %v %q", rec.Header(), rec.Body.String())
+	}
+}

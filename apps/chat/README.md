@@ -20,7 +20,9 @@ kernel's, which joining approves, and any chat on another kernel whose delivery 
 approved in the inbox, joined at its first read by the same four steps. A room is
 named by its address, `thread@kernel`, in its URL, its watch and the rail; every
 read and command runs the action of that room's chat, at home or elsewhere, by one
-path.
+path. Nothing is run on a chat elsewhere that the viewer has not approved: its
+approval in the inbox is the consent, and removing or blocking it ends every read
+and command there.
 
 ## When a page runs a read
 
@@ -29,6 +31,8 @@ changed. It compares the viewer's chats, their open deliveries and their open
 processes, kernel reads that write nothing, and runs `room/read` or `room/list`
 once when they moved. A read that fails
 acknowledges nothing and is retried after 5, 10, 20, 40 and then every 60 seconds.
+A room gone, or held by a chat no longer among the viewer's, sends the page to the
+landing.
 A room command sent from the page's menu or dialog is one run and then one such read,
 whatever the watch says is due, and the page answers in place.
 

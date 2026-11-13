@@ -496,8 +496,21 @@ func (c *Chat) call(r *http.Request, service, name string, args, out any) error 
 // chat whose contract moved since the kernel cached it is refused at no charge,
 // and the next call re-resolves it. A viewer the kernel holds no grant for, or
 // whose key chat does not know, is joined: approving a chat is the consent to
-// join it.
+// join it, and nothing runs on a chat elsewhere the viewer has not approved: at
+// home, opening a room joins.
 func (c *Chat) run(r *http.Request, service, name string, args, out any) error {
+	if service != c.self() {
+		var mine []string
+		if err := c.deps.Sessions.Do(r.Context(), func(tok string) (err error) {
+			mine, err = c.chats(r.Context(), tok)
+			return err
+		}); err != nil {
+			return err
+		}
+		if !slices.Contains(mine, service) {
+			return errNotTheirs
+		}
+	}
 	err := c.call(r, service, name, args, out)
 	for refreshed, joined := false, false; ; {
 		ke, ok := client.AsKernelError(err)
@@ -518,6 +531,10 @@ func (c *Chat) run(r *http.Request, service, name string, args, out any) error {
 		err = c.call(r, service, name, args, out)
 	}
 }
+
+// errNotTheirs is a run on a chat the viewer has not approved, or no longer
+// has: none of their rooms is there.
+var errNotTheirs = errors.New("not one of the viewer's chats")
 
 // readRoom is one room for the viewer: its latest entries, or with after those
 // newer than it; seen moves the viewer's read cursor over them.
@@ -620,19 +637,10 @@ func (c *Chat) pulse(r *http.Request) (pulse, error) {
 	var p pulse
 	err := c.deps.Sessions.Do(ctx, func(tok string) error {
 		p = pulse{}
-		reqs, err := c.deps.Client.ListRequesters(ctx, tok)
-		if err != nil {
+		var err error
+		if p.Services, err = c.chats(ctx, tok); err != nil {
 			return err
 		}
-		for _, q := range reqs {
-			if q.Status == "approved" && strings.HasPrefix(q.Requester, chatHandle+"@") {
-				p.Services = append(p.Services, q.Requester)
-			}
-		}
-		sort.Slice(p.Services, func(i, j int) bool {
-			a, b := p.Services[i], p.Services[j]
-			return a == c.self() || (b != c.self() && a < b)
-		})
 		tasks, err := c.deps.Client.OpenTasks(ctx, tok)
 		if err != nil {
 			return err
@@ -649,6 +657,23 @@ func (c *Chat) pulse(r *http.Request) (pulse, error) {
 		return err
 	})
 	return p, err
+}
+
+// chats is the viewer's chats: the requesters they approved whose handle is
+// chat, this kernel's first.
+func (c *Chat) chats(ctx context.Context, tok string) ([]string, error) {
+	reqs, err := c.deps.Client.ListRequesters(ctx, tok)
+	var out []string
+	for _, q := range reqs {
+		if q.Status == "approved" && strings.HasPrefix(q.Requester, chatHandle+"@") {
+			out = append(out, q.Requester)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		return a == c.self() || (b != c.self() && a < b)
+	})
+	return out, err
 }
 
 // threadOf is the room a delivery carries, "" for any other task of chat's.
@@ -788,6 +813,9 @@ type watchView struct {
 // action's schema refused is the kernel's own reason. A chat on another kernel
 // relays not even its status.
 func refusal(err error, service string) string {
+	if errors.Is(err, errNotTheirs) {
+		return service + " is no longer one of your chats."
+	}
 	ke, ok := client.AsKernelError(err)
 	if !ok {
 		return ""
@@ -827,11 +855,11 @@ func (c *Chat) why(err error, service string) string {
 	return err.Error()
 }
 
-// roomGone reports a refusal saying the viewer has no such room: it is gone, or
-// they are no longer in it.
+// roomGone reports a refusal saying the viewer has no such room: it is gone,
+// they are no longer in it, or its chat is no longer theirs.
 func roomGone(err error) bool {
 	ke, ok := client.AsKernelError(err)
-	return ok && (ke.UpstreamStatus() == http.StatusNotFound || ke.UpstreamStatus() == http.StatusForbidden)
+	return errors.Is(err, errNotTheirs) || ok && (ke.UpstreamStatus() == http.StatusNotFound || ke.UpstreamStatus() == http.StatusForbidden)
 }
 
 // gone reports that a read failed because the room is no longer the viewer's.
@@ -1215,9 +1243,9 @@ func (c *Chat) advanceRail(r *http.Request, st watchState, p pulse, signal strin
 // advance brings a room page to what its chat now holds: its new entries, the
 // posts they replaced, whom it waits on, the rail when it changed, and the watch.
 // A room seen has its deliveries settled. A read that leaves more keeps the old
-// signal, so the next tick reads on. A room gone answers the signal: there is
-// nothing more to show, and retrying would only write failures. note is the line
-// for beside the composer, "" for none.
+// signal, so the next tick reads on. A room gone sends the page to the landing:
+// there is nothing more to show, and a delivery of it still open would read it
+// again on every tick. note is the line for beside the composer, "" for none.
 func (c *Chat) advance(r *http.Request, room string, st watchState, p pulse, seen bool, note string) (template.HTML, error) {
 	me := c.deps.Me(r)
 	service, thread, _ := splitRoom(room)
@@ -1225,11 +1253,9 @@ func (c *Chat) advance(r *http.Request, room string, st watchState, p pulse, see
 	if err != nil {
 		c.log().Warn("chat: read room", "room", room, "err", err)
 		if c.gone(r, service, thread, err) {
-			st.Signal, st.Fails = c.signal(me, p), 0
-		} else {
-			st = st.failed()
+			return "", apps.Moved("/chat")
 		}
-		return c.deps.Fragment("_chat_watch", watchView{room, st})
+		return c.deps.Fragment("_chat_watch", watchView{room, st.failed()})
 	}
 	if seen {
 		p.Tasks = c.settle(r, service, thread, p.Tasks)

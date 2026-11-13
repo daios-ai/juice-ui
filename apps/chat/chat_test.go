@@ -645,14 +645,19 @@ func as(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, req *http.Request) 
 // dispatch posts to an action the way the kernel does, with the capability
 // naming the caller and, for a member action, the member's key.
 func (f *fakeKernel) dispatch(path, key string, body any) *httptest.ResponseRecorder {
+	return f.dispatchAt(f.svc, home, path, key, body)
+}
+
+// dispatchAt is dispatch to the chat s, at address service.
+func (f *fakeKernel) dispatchAt(s *svc.Service, service, path, key string, body any) *httptest.ResponseRecorder {
 	b, _ := json.Marshal(body)
-	member, _ := f.svc.Store.Member(key)
-	req := httptest.NewRequest(http.MethodPost, "/chat@testnet"+path, strings.NewReader(string(b)))
+	member, _ := s.Store.Member(key)
+	req := httptest.NewRequest(http.MethodPost, "/"+service+path, strings.NewReader(string(b)))
 	req.Header.Set(client.CallbackHeader, f.srv.URL)
-	req.Header.Set(client.CapabilityHeader, member+"#trace")
+	req.Header.Set(client.CapabilityHeader, member+"#"+service)
 	req.Header.Set(svc.CallerKey, key)
 	rec := httptest.NewRecorder()
-	f.svc.ServeHTTP(rec, req)
+	s.ServeHTTP(rec, req)
 	return rec
 }
 
@@ -698,11 +703,17 @@ func (f *fakeKernel) keyOf(token string) string {
 
 func (f *fakeKernel) joined(t *testing.T, member string) string {
 	t.Helper()
-	key, id, err := f.svc.Store.RegisterKey(member)
+	return joinedAt(t, f.svc, member)
+}
+
+// joinedAt is an active key of member at the chat s.
+func joinedAt(t *testing.T, s *svc.Service, member string) string {
+	t.Helper()
+	key, id, err := s.Store.RegisterKey(member)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.Store.ActivateKey(id); err != nil {
+	if err := s.Store.ActivateKey(id); err != nil {
 		t.Fatal(err)
 	}
 	return key
@@ -1186,14 +1197,94 @@ func TestAFailedReadIsRetriedUntilShown(t *testing.T) {
 			t.Errorf("after %d failures the delay is %d, want %d", fails, got, want)
 		}
 	}
-	// The room goes: the page stops asking.
+	// The room goes: the page leaves for the landing.
 	if err := f.svc.Store.DeleteRoom("bob@testnet", room.ID); err != nil {
 		t.Fatal(err)
 	}
-	h, err = tick(c, sm, room.ID, watchState{After: 1, Signal: "stale"})
-	gone := states[len(states)-1]
-	if err != nil || h != "_chat_watch" || gone.Fails != 0 || gone.Signal == "stale" {
-		t.Errorf("a room gone: %s %v %+v", h, err, gone)
+	if h, err = tick(c, sm, room.ID, watchState{After: 1, Signal: "stale"}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+		t.Errorf("a room gone: %s %v", h, err)
+	}
+}
+
+// A room the viewer was removed from, with their delivery still open, sends the
+// page to the landing at once, at home and elsewhere, so the open delivery does
+// not make every tick read it again.
+func TestAGoneRoomIsNotReadAgain(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters[home] = "approved"
+	f.requesters["chat@away"] = "approved"
+	cafe, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
+	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	for _, room := range []struct {
+		chat         *svc.Service
+		service, bob string
+		id, addr     string
+	}{{f.svc, home, "bob@testnet", cafe.ID, cafe.ID + "@testnet"}, {away, "chat@away", "bob@away", far.ID, far.ID + "@away"}} {
+		st := open(t, c, sm, room.addr)
+		f.dispatchAt(room.chat, room.service, "/msg/post", joinedAt(t, room.chat, room.bob), map[string]any{"thread_id": room.id, "message": "ann@testnet hello"})
+		if err := room.chat.Store.RemoveMember(room.bob, room.id, "ann@testnet"); err != nil {
+			t.Fatal(err)
+		}
+		if h, err := tick(c, sm, room.addr, st); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+			t.Errorf("%s gone with a delivery open: %q %v", room.addr, h, err)
+		}
+	}
+}
+
+// A chat the viewer removed or blocked runs nothing: an open tab leaves its
+// room, the room's page is not found, and a post from the tab is refused with
+// the reason. Nothing reaches that chat, and nothing approves it again.
+func TestARemovedChatRunsNothing(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters["chat@away"] = "approved"
+	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	room := far.ID + "@away"
+	st := open(t, c, sm, room)
+	delete(f.requesters, "chat@away") // ann removed the contact
+	f.mu.Lock()
+	runs, decided := len(f.runs), len(f.decided)
+	f.mu.Unlock()
+
+	if h, err := tick(c, sm, room, watchState{After: st.After, Signal: "stale"}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+		t.Errorf("the open tab leaves: %q %v", h, err)
+	}
+	var notFound bool
+	c.deps.HandleErr = func(w http.ResponseWriter, r *http.Request, err error) bool {
+		ke, ok := client.AsKernelError(err)
+		notFound = notFound || (ok && ke.Kind == client.KindNotFound)
+		return err != nil
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+room, nil)
+	req.SetPathValue("id", room)
+	if as(c, sm, c.getRoom, req); !notFound {
+		t.Error("its page is not found")
+	}
+	var note string
+	c.deps.RenderFragment = func(w http.ResponseWriter, status int, name string, data any) error {
+		if v, ok := data.(entriesView); ok {
+			note = v.Error
+		}
+		w.WriteHeader(status)
+		return nil
+	}
+	form := url.Values{"raw_args": {`{"message":"still here?"}`}, "after": {"0"}}
+	req = httptest.NewRequest(http.MethodPost, "/chat/room/"+room+"/message", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.SetPathValue("id", room)
+	if rec := as(c, sm, c.postMessage, req); rec.Code != http.StatusUnprocessableEntity || note != "chat@away is no longer one of your chats." {
+		t.Errorf("a post from the tab: %d %q", rec.Code, note)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.runs) != runs || len(f.decided) != decided || f.requesters["chat@away"] != "" {
+		t.Errorf("chat@away was run or approved again: %v %v", f.runs[runs:], f.decided[decided:])
 	}
 }
 
@@ -2307,8 +2398,8 @@ func TestAFailureElsewhereIsNotFinal(t *testing.T) {
 	if err := away.Store.RemoveMember("bob@away", far.ID, "ann@testnet"); err != nil {
 		t.Fatal(err)
 	}
-	if h, _ := tick(c, sm, far.ID+"@away", watchState{After: st.After, Signal: "stale", Fails: 1}); h != "_chat_watch" || next.Fails != 0 || next.Signal == "stale" {
-		t.Errorf("its list confirms the room gone: %s %+v", h, next)
+	if h, err := tick(c, sm, far.ID+"@away", watchState{After: st.After, Signal: "stale", Fails: 1}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+		t.Errorf("its list confirms the room gone: %s %v", h, err)
 	}
 }
 

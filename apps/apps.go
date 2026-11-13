@@ -124,6 +124,12 @@ type Conversations interface {
 // A watcher gates itself as its routes do.
 type Watcher func(r *http.Request, key, shown string) (template.HTML, error)
 
+// Moved is the error a watcher or an htmx handler returns when what the page
+// shows is gone: the browser is sent to the address it names.
+type Moved string
+
+func (m Moved) Error() string { return "moved to " + string(m) }
+
 // Badge is the out-of-band answer for a nav badge: every copy of the badge
 // (`.badge-<slug>`, the sidebar and the mobile trigger) and the watch input
 // that names the count now shown. Empty when zero, so `.badge:empty` hides it.
