@@ -1,7 +1,13 @@
 # Juice Web UI Requirements
 
-Version: 0.69.1
+Version: 0.69.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.69.2.** The kernel pin is v0.19.0, under which a grant is
+> honoured across kernels: a member on another kernel connects their chat key
+> through their own kernel and then reads, posts and runs room commands. Its
+> federation does not interoperate with v0.18, so every kernel of a network
+> moves together (§1, Updating).
 
 > **What changed in 0.69.1.** Admin's version row names the kernel and the
 > agent this installation holds, after Juice's own release (§6.6). A setting

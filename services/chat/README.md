@@ -92,9 +92,14 @@ juice task complete <task_id> '{}'
 juice user connect chat@<kernel> --token <api_key>
 ```
 
-A member on another kernel can approve, register, be addressed and answer,
-but cannot post or run a room command: a connected credential names only the
-caller's own kernel's actions.
+A member on another kernel runs the same four commands on their own kernel,
+which forwards the connect to this one (kernel v0.19.0 and later, on both
+sides); then they read, post and run room commands as a member here does. Two
+names must resolve first: their kernel calls this one `<kernel>` only once it
+has a petname for it, bound by the first call made with this kernel's key
+(`chat@<key>/index`), and this kernel must have a petname for theirs, bound by
+`juice admin peer rename <key> <name>`, or the verification task for
+`you@<their kernel>` cannot be created. A call coming in binds no petname.
 
 ## Upgrade
 
