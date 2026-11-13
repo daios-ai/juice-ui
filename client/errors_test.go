@@ -262,6 +262,19 @@ func TestUpstreamStatus(t *testing.T) {
 	}
 }
 
+// A failure on another kernel is known by the kernel's own words, as an
+// endpoint that cannot be reached is; it carries no upstream status.
+func TestRemoteFailed(t *testing.T) {
+	remote := &KernelError{Kind: KindExecutionFailed, KernelMessage: "remote call failed"}
+	if !remote.RemoteFailed() || remote.UpstreamStatus() != 0 || remote.UpstreamDown() {
+		t.Error("a failure on another kernel")
+	}
+	if (&KernelError{Kind: KindExecutionFailed, KernelMessage: "upstream returned status 404"}).RemoteFailed() ||
+		(&KernelError{Kind: KindPeerUnreachable, KernelMessage: "remote call failed"}).RemoteFailed() {
+		t.Error("anything else")
+	}
+}
+
 func TestUpstreamDown(t *testing.T) {
 	if !(&KernelError{Kind: KindExecutionFailed, KernelMessage: "upstream request failed"}).UpstreamDown() {
 		t.Error("an endpoint that cannot be reached")

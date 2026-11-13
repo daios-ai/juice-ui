@@ -78,11 +78,12 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .rail > .btn { flex: none; margin-bottom: var(--space-2); }
 .rail :focus-visible { outline-offset: -2px; } /* the scroller would clip a ring drawn outside */
 .rail-row { display: flex; align-items: center; flex: none; border-radius: var(--radius-s); }
-.rail-row:hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
-.rail-row > a { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-row:has(> a):hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
+.rail-row > :is(a, .rail-down) { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-row > a:hover { text-decoration: none; }
 .rail-row:hover > a, .rail-row > a[aria-current="page"], .rail-row > a.unread { color: var(--text); }
 .rail-row > a.unread { font-weight: 700; }
+.rail-row > a > .muted { font-weight: 400; } /* the kernel holding a room elsewhere: never weighted with its name */
 
 /* The avatar at the foot, and its menu: the account, every destination, the
    inbox count, Sign out. */

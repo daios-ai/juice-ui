@@ -20,13 +20,14 @@
 
 {{/* The composer's and the heartbeat's answer: new entries land inside the stack
      (an appended out-of-band element inserts its children), the posts an answer
-     replaced leave, the watch advances, a shown refusal clears. */}}
+     replaced leave, the watch advances, and the line beside the composer says
+     whom a post did not reach, or clears. */}}
 {{define "_chat_tick"}}
 <div hx-swap-oob="beforeend:#chat-messages">{{range .Entries}}{{template "_entry" .}}{{end}}</div>
 {{range .Removed}}<div id="e-{{.}}" hx-swap-oob="delete"></div>{{end}}
 <input type="hidden" id="chat-after" name="after" value="{{.Watch.State.After}}" hx-swap-oob="true">
 {{template "_chat_watch" .Watch}}
-<p class="error-text" id="chat-error" role="alert" hidden hx-swap-oob="true"></p>
+<p class="error-text" id="chat-error" role="alert"{{if not .Error}} hidden{{end}} hx-swap-oob="true">{{.Error}}</p>
 {{template "_working" .}}
 {{end}}
 

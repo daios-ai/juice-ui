@@ -683,18 +683,21 @@ func (c *Client) StartGrant(ctx context.Context, token, selector, provider, redi
 }
 
 // CompleteGrant exchanges the provider code for the group's grants. state must be
-// the value from StartGrant. Returns the actions that were granted.
+// the value from StartGrant, and selector the one it was started for, which
+// tells the kernel where a consent begun for another kernel is held. Returns
+// the actions that were granted.
 // It answers `{status:"granted", actions}` when the exchange completed, and
 // `{status:"pending"}` when it has not yet — the device flow polls, and a code
 // flow may also answer so. Pending is reported as such: treating it as granted
 // would tell a person an account is connected when the next call will still
 // answer grant_required.
-func (c *Client) CompleteGrant(ctx context.Context, token, state, code string) ([]string, bool, error) {
+func (c *Client) CompleteGrant(ctx context.Context, token, selector, state, code string) ([]string, bool, error) {
 	var resp struct {
 		Status  string   `json:"status"`
 		Actions []string `json:"actions"`
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/grants/complete", token, map[string]string{"state": state, "code": code}, &resp)
+	body := map[string]string{"selector": selector, "state": state, "code": code}
+	err := c.do(ctx, http.MethodPost, "/v1/grants/complete", token, body, &resp)
 	return resp.Actions, resp.Status == "pending", err
 }
 

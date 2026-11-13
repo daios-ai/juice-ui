@@ -231,18 +231,18 @@ func TestGrantMethods(t *testing.T) {
 	}
 
 	f.reply = `{"status":"granted","actions":["sys/gmail"]}`
-	acts, pending, err := f.client().CompleteGrant(context.Background(), "tok", "S1", "CODE")
+	acts, pending, err := f.client().CompleteGrant(context.Background(), "tok", "sys/gmail", "S1", "CODE")
 	if err != nil || len(acts) != 1 || acts[0] != "sys/gmail" || pending {
 		t.Fatalf("complete = %v pending=%v %v", acts, pending, err)
 	}
-	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) {
+	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) || !strings.Contains(string(f.lastBody), `"selector":"sys/gmail"`) {
 		t.Errorf("complete body = %s", f.lastBody)
 	}
 	// The exchange may not have completed. Reading that as granted would tell a
 	// person an account is connected while the next run still answers
 	// grant_required.
 	f.reply = `{"status":"pending"}`
-	if _, pending, err = f.client().CompleteGrant(context.Background(), "tok", "S1", ""); err != nil || !pending {
+	if _, pending, err = f.client().CompleteGrant(context.Background(), "tok", "sys/gmail", "S1", ""); err != nil || !pending {
 		t.Errorf("a pending exchange must be reported as pending: pending=%v err=%v", pending, err)
 	}
 

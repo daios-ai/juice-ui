@@ -321,8 +321,8 @@ func TestHandoffRules(t *testing.T) {
 			t.Fatalf("reply: %d %s", rec.Code, rec.Body)
 		}
 	}
-	if rec := post(ann, "debate, everyone"); !strings.Contains(rec.Body.String(), `"delivered":2`) {
-		t.Fatalf("the unknown member must be skipped: %s", rec.Body)
+	if rec := post(ann, "debate, everyone"); !strings.Contains(rec.Body.String(), `"delivered":2,"undelivered":["remy@nowhere"]`) {
+		t.Fatalf("the unknown member must be skipped and named: %s", rec.Body)
 	}
 	fromAnnToHelper, fromAnnToCritic := deliveryOf(f, "helper@testnet"), deliveryOf(f, "critic@testnet")
 	if rec := post(helper, "critic@testnet tea"); rec.Code != 200 { // depth 1

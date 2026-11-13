@@ -1063,6 +1063,46 @@ func TestUserShowsConnectors(t *testing.T) {
 	}
 }
 
+// Disconnecting a grant held on another kernel that does not answer removes it
+// here and says to disconnect again, rather than showing an error page.
+func TestGrantDisconnectElsewhereUnreachable(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	var mu sync.Mutex
+	var gotQuery string
+	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/grants" {
+			mu.Lock()
+			gotQuery = r.URL.RawQuery
+			mu.Unlock()
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`{"code":"peer_unreachable","error":"peer unreachable"}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer wrap.Close()
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/settings"))
+	resp, err := cl.PostForm(srv.URL+"/grants/disconnect", url.Values{"selector": {"chat@alpha/room"}, "gorilla.csrf.Token": {tok}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	mu.Lock()
+	q := gotQuery
+	mu.Unlock()
+	if q != "selector=chat%40alpha%2Froom" {
+		t.Errorf("disconnect by selector: %q", q)
+	}
+	if !strings.Contains(string(b), "Disconnected chat@alpha/room here. Its kernel did not answer; disconnect again once it does.") {
+		t.Errorf("the flash must say what happened: %s", b)
+	}
+}
+
 // TestGrantConnectPostsToken checks the delegated_bearer static-token path: the
 // handler forwards {action, token} to POST /v1/grants and returns the user to the
 // page they connected from (the Referer).

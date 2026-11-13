@@ -573,7 +573,7 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	var pending bool
 	err := s.sessions.Do(ctx, func(tok string) error {
-		_, p, e := s.client.CompleteGrant(ctx, tok, state, code)
+		_, p, e := s.client.CompleteGrant(ctx, tok, action, state, code)
 		pending = p
 		return e
 	})
@@ -632,6 +632,12 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 	err := s.sessions.Do(ctx, func(tok string) error {
 		return s.client.DeleteGrant(ctx, tok, selector)
 	})
+	// A grant held on another kernel is removed here at once; that kernel, when
+	// it cannot be reached, still holds the account until asked again.
+	if ke, ok := client.AsKernelError(err); ok && ke.Kind == client.KindPeerUnreachable {
+		s.flashRedirect(w, r, "/settings", "info", "Disconnected "+selector+" here. Its kernel did not answer; disconnect again once it does.")
+		return
+	}
 	if s.handleErr(w, r, err) {
 		return
 	}

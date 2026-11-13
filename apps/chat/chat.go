@@ -11,6 +11,11 @@
 // in, and every agent with a home under $JUICE_HOME/agents, with that agent's
 // own session. A session lands on its conversation with the assistant.
 //
+// A viewer's chats are the chats they approved as requesters: this kernel's,
+// which joining approves, and any chat on another kernel whose delivery they
+// approved in the inbox. A room is named by its address, thread@kernel, the
+// kernel whose chat holds it; every room, at home or elsewhere, takes one path.
+//
 // A run writes a transaction, so a read is run on a gesture, or when the kernel
 // shows that something changed for the viewer: the heartbeat compares the
 // viewer's open deliveries, a kernel read that writes nothing, and never runs an
@@ -244,18 +249,19 @@ func (c *Chat) runRegister(login string) error {
 
 // ---- joining ----
 
-// join makes member a chat member with its own session token, by the path any
-// member takes, through the kernel alone: approve chat as a requester (so the
-// kernel shows it chat's tasks, U52), run register, complete the verification
-// task it creates, and connect the key at chat's root, which covers every action
-// a member runs. A failure at any step leaves a key the member already connected
-// working: no key is ever retired.
-func (c *Chat) join(ctx context.Context, token, member string) error {
-	if err := c.deps.Client.DecideRequester(ctx, token, c.self(), "approve"); err != nil {
-		return fmt.Errorf("approve %s: %w", c.self(), err)
+// join makes member a member of the chat at service, with its own session
+// token, by the path any member takes, through the kernel alone: approve chat as
+// a requester (so the kernel shows it chat's tasks, U52), run register, complete
+// the verification task it creates, and connect the key at chat's root, which
+// covers every action a member runs. The same four steps join a chat on another
+// kernel, which the member's own kernel forwards. A failure at any step leaves a
+// key the member already connected working: no key is ever retired.
+func (c *Chat) join(ctx context.Context, token, service, member string) error {
+	if err := c.deps.Client.DecideRequester(ctx, token, service, "approve"); err != nil {
+		return fmt.Errorf("approve %s: %w", service, err)
 	}
 	args, _ := json.Marshal(map[string]string{"handle": member})
-	rep, err := c.deps.Client.Run(ctx, token, c.self()+"/"+registerName, args, "")
+	rep, err := c.deps.Client.Run(ctx, token, service+"/"+registerName, args, "")
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
@@ -269,17 +275,17 @@ func (c *Chat) join(ctx context.Context, token, member string) error {
 	if _, err := c.deps.Client.CompleteTask(ctx, token, reg.TaskID, nil); err != nil {
 		return fmt.Errorf("verify: %w", err)
 	}
-	if _, err := c.deps.Client.ConnectGrant(ctx, token, c.self(), "", reg.APIKey); err != nil {
-		return fmt.Errorf("connect %s: %w", c.self(), err)
+	if _, err := c.deps.Client.ConnectGrant(ctx, token, service, "", reg.APIKey); err != nil {
+		return fmt.Errorf("connect %s: %w", service, err)
 	}
 	return nil
 }
 
 // covered reports whether the session's user holds a grant on every action of
-// chat a member runs, as the kernel's own plan states it per action: an action
-// added since the member joined leaves the member uncovered.
-func (c *Chat) covered(ctx context.Context, token string) (bool, error) {
-	plan, err := c.deps.Client.PlanGrants(ctx, token, c.self())
+// the chat at service a member runs, as the kernel's own plan states it per
+// action: an action added since the member joined leaves the member uncovered.
+func (c *Chat) covered(ctx context.Context, token, service string) (bool, error) {
+	plan, err := c.deps.Client.PlanGrants(ctx, token, service)
 	if err != nil {
 		return false, err
 	}
@@ -293,29 +299,29 @@ func (c *Chat) covered(ctx context.Context, token string) (bool, error) {
 	return len(plan.Groups) > 0, nil
 }
 
-// joinViewer joins the signed-in person unless the kernel's plan shows them
-// covered.
+// joinViewer joins the signed-in person to this kernel's chat unless the
+// kernel's plan shows them covered.
 func (c *Chat) joinViewer(r *http.Request) error {
 	ctx := r.Context()
 	return c.deps.Sessions.Do(ctx, func(tok string) error {
-		if ok, err := c.covered(ctx, tok); err != nil || ok {
+		if ok, err := c.covered(ctx, tok, c.self()); err != nil || ok {
 			return err
 		}
-		return c.join(ctx, tok, c.deps.Me(r))
+		return c.join(ctx, tok, c.self(), c.deps.Me(r))
 	})
 }
 
-// joinAgent joins a local agent, when it is not covered, with the session in its
-// credential file.
+// joinAgent joins a local agent to this kernel's chat, when it is not covered,
+// with the session in its credential file.
 func (c *Chat) joinAgent(ctx context.Context, login string) error {
 	if !c.isLocalAgent(login) {
 		return fmt.Errorf("%s has no home here", login)
 	}
 	return c.deps.Client.WithLogin(ctx, filepath.Join(c.root(), "client"), login, func(tok string) error {
-		if ok, err := c.covered(ctx, tok); err != nil || ok {
+		if ok, err := c.covered(ctx, tok, c.self()); err != nil || ok {
 			return err
 		}
-		return c.join(ctx, tok, login)
+		return c.join(ctx, tok, c.self(), login)
 	})
 }
 
@@ -381,13 +387,74 @@ func joinFailed(member string, err error) string {
 
 // ---- chat, as the UI reaches it ----
 
-// roomRow and entryRow are chat's replies as the UI reads them.
+// roomRow and entryRow are chat's replies as the UI reads them. Service is the
+// chat that holds the room, chat@kernel, set by the UI from the chat it read the
+// room from; Elsewhere is that kernel when it is not this one, for the page to
+// name.
 type roomRow struct {
-	ID      string   `json:"thread_id"`
-	Name    string   `json:"name"`
-	Creator string   `json:"creator"`
-	Members []string `json:"members"`
-	Unread  bool     `json:"unread"`
+	ID        string   `json:"thread_id"`
+	Name      string   `json:"name"`
+	Creator   string   `json:"creator"`
+	Members   []string `json:"members"`
+	Unread    bool     `json:"unread"`
+	LastAt    string   `json:"last_at"`
+	Service   string   `json:"service"`
+	Elsewhere string   `json:"elsewhere,omitempty"`
+}
+
+// Addr is the room's address, thread@kernel: a room is named as everything in
+// Juice is, by the kernel whose chat holds it.
+func (r roomRow) Addr() string { return roomAddr(r.Service, r.ID) }
+
+// roomAddr is the address of the thread the chat at service holds.
+func roomAddr(service, thread string) string { return thread + "@" + kernelOf(service) }
+
+// kernelOf is an address's kernel, what follows its @.
+func kernelOf(addr string) string {
+	_, k, _ := strings.Cut(addr, "@")
+	return k
+}
+
+// splitRoom reads a room's address: the chat that holds it and its thread there.
+// A bare thread names no room.
+func splitRoom(addr string) (service, thread string, ok bool) {
+	thread, kernel, ok := strings.Cut(addr, "@")
+	if !ok || thread == "" || kernel == "" || strings.ContainsAny(kernel, "@/") {
+		return "", "", false
+	}
+	return chatHandle + "@" + kernel, thread, true
+}
+
+// chatOf is the chat holding the room a request's path names; this kernel's
+// for a request that names none.
+func (c *Chat) chatOf(r *http.Request) string {
+	if service, _, ok := splitRoom(r.PathValue("id")); ok {
+		return service
+	}
+	return c.self()
+}
+
+// tag marks rooms as held by the chat at service.
+func (c *Chat) tag(rooms []roomRow, service string) []roomRow {
+	elsewhere := ""
+	if service != c.self() {
+		elsewhere = kernelOf(service)
+	}
+	for i := range rooms {
+		rooms[i].Service, rooms[i].Elsewhere = service, elsewhere
+	}
+	return rooms
+}
+
+// byActivity orders rooms newest activity first, across chats; rooms of one
+// chat keep the order it gave them.
+func byActivity(rooms []roomRow) []roomRow {
+	at := func(r roomRow) time.Time {
+		t, _ := time.Parse(time.RFC3339Nano, r.LastAt)
+		return t
+	}
+	sort.SliceStable(rooms, func(i, j int) bool { return at(rooms[i]).After(at(rooms[j])) })
+	return rooms
 }
 
 type entryRow struct {
@@ -407,16 +474,16 @@ type roomRead struct {
 	Rooms   []roomRow  `json:"rooms"`
 }
 
-// call runs one of chat's actions as the viewer and decodes its result into out,
-// when there is an out.
-func (c *Chat) call(r *http.Request, name string, args, out any) error {
+// call runs one of the actions of the chat at service as the viewer and decodes
+// its result into out, when there is an out.
+func (c *Chat) call(r *http.Request, service, name string, args, out any) error {
 	body, err := json.Marshal(args)
 	if err != nil {
 		return err
 	}
 	var rep client.CallReply
 	if err := c.deps.Sessions.Do(r.Context(), func(tok string) (e error) {
-		rep, e = c.deps.Client.Run(r.Context(), tok, c.self()+"/"+name, body, "")
+		rep, e = c.deps.Client.Run(r.Context(), tok, service+"/"+name, body, "")
 		return e
 	}); err != nil || out == nil {
 		return err
@@ -424,54 +491,98 @@ func (c *Chat) call(r *http.Request, name string, args, out any) error {
 	return json.Unmarshal(rep.Result, out)
 }
 
-// run is call for what the viewer does. A viewer the kernel holds no grant for,
-// or whose key chat does not know, is joined, and it runs once more.
-func (c *Chat) run(r *http.Request, name string, args, out any) error {
-	err := c.call(r, name, args, out)
-	if ke, ok := client.AsKernelError(err); ok && (ke.Kind == client.KindGrantRequired || ke.UpstreamStatus() == http.StatusUnauthorized) {
-		if jerr := c.deps.Sessions.Do(r.Context(), func(tok string) error { return c.join(r.Context(), tok, c.deps.Me(r)) }); jerr != nil {
-			return jerr
+// run is call for what the viewer does, which recovers from the two refusals
+// that mean nothing ran, each once, in whichever order the kernel gives them. A
+// chat whose contract moved since the kernel cached it is refused at no charge,
+// and the next call re-resolves it. A viewer the kernel holds no grant for, or
+// whose key chat does not know, is joined: approving a chat is the consent to
+// join it.
+func (c *Chat) run(r *http.Request, service, name string, args, out any) error {
+	err := c.call(r, service, name, args, out)
+	for refreshed, joined := false, false; ; {
+		ke, ok := client.AsKernelError(err)
+		switch {
+		case ok && ke.IsRefreshable() && !refreshed:
+			refreshed = true
+		case ok && (ke.Kind == client.KindGrantRequired || ke.UpstreamStatus() == http.StatusUnauthorized) && !joined:
+			joined = true
+			if jerr := c.deps.Sessions.Do(r.Context(), func(tok string) error { return c.join(r.Context(), tok, service, c.deps.Me(r)) }); jerr != nil {
+				return jerr
+			}
+		default:
+			if err == nil && name != roomReadName && name != roomListName {
+				c.changed(c.deps.Me(r))
+			}
+			return err
 		}
-		err = c.call(r, name, args, out)
+		err = c.call(r, service, name, args, out)
 	}
-	if err == nil && name != roomReadName {
-		c.changed(c.deps.Me(r))
-	}
-	return err
 }
 
 // readRoom is one room for the viewer: its latest entries, or with after those
 // newer than it; seen moves the viewer's read cursor over them.
-func (c *Chat) readRoom(r *http.Request, roomID string, after int64, seen bool) (roomRead, error) {
-	args := map[string]any{"thread_id": roomID, "seen": seen}
+func (c *Chat) readRoom(r *http.Request, service, thread string, after int64, seen bool) (roomRead, error) {
+	args := map[string]any{"thread_id": thread, "seen": seen}
 	if after != latest {
 		args["after"] = after
 	}
 	var out roomRead
-	err := c.run(r, roomReadName, args, &out)
-	return out, err
+	if err := c.run(r, service, roomReadName, args, &out); err != nil {
+		return out, err
+	}
+	out.Room = c.tag([]roomRow{out.Room}, service)[0]
+	out.Rooms = c.tag(out.Rooms, service)
+	return out, nil
 }
 
 // latest asks readRoom for the room's latest entries.
 const latest = -1
 
-// listRooms is the viewer's rooms, as a run that never joins: the rail is not
-// what makes a viewer a member.
-func (c *Chat) listRooms(r *http.Request, signal string) ([]roomRow, error) {
-	var out struct {
-		Rooms []roomRow `json:"rooms"`
-	}
-	err := c.call(r, roomListName, struct{}{}, &out)
-	if err == nil {
-		c.remember(r, out.Rooms, signal)
-	}
-	return out.Rooms, err
+// downRow is a chat of the viewer's that could not be read, and why.
+type downRow struct {
+	Service string `json:"service"`
+	Reason  string `json:"reason"`
+	err     error
 }
 
-// railCache is what the session keeps for the rail: the rooms last read, and the
-// signal read before that run, so a change since is caught by the next tick.
+// rooms is the viewer's rooms in the chats named, newest activity first, and
+// the chats that could not be read, which hide no other chat's rooms.
+func (c *Chat) rooms(r *http.Request, services []string) ([]roomRow, []downRow) {
+	var rooms []roomRow
+	var down []downRow
+	for _, service := range services {
+		var out struct {
+			Rooms []roomRow `json:"rooms"`
+		}
+		if err := c.run(r, service, roomListName, struct{}{}, &out); err != nil {
+			c.log().Warn("chat: list rooms", "chat", service, "err", err)
+			down = append(down, downRow{service, c.why(err, service), err})
+			continue
+		}
+		rooms = append(rooms, c.tag(out.Rooms, service)...)
+	}
+	return byActivity(rooms), down
+}
+
+// railWith is the rail after a read of one chat's room: the rooms that read
+// returned, and every other chat's listed afresh.
+func (c *Chat) railWith(r *http.Request, service string, read []roomRow, services []string) ([]roomRow, []downRow) {
+	var others []string
+	for _, s := range services {
+		if s != service {
+			others = append(others, s)
+		}
+	}
+	rooms, down := c.rooms(r, others)
+	return byActivity(append(rooms, read...)), down
+}
+
+// railCache is what the session keeps for the rail: the rooms last read, the
+// chats that could not be, and the signal read before that run, so a change
+// since is caught by the next tick.
 type railCache struct {
 	Rooms  []roomRow `json:"rooms"`
+	Down   []downRow `json:"down"`
 	Signal string    `json:"signal"`
 }
 
@@ -484,30 +595,69 @@ func (c *Chat) cachedRail(r *http.Request) (railCache, bool) {
 	return cache, ok
 }
 
-func (c *Chat) remember(r *http.Request, rooms []roomRow, signal string) {
-	b, _ := json.Marshal(railCache{rooms, signal})
+func (c *Chat) remember(r *http.Request, rooms []roomRow, down []downRow, signal string) {
+	b, _ := json.Marshal(railCache{rooms, down, signal})
 	c.deps.Sessions.PutAppCache(r.Context(), c.Slug(), string(b))
 }
 
 // ---- what changed ----
 
-// deliveries is the viewer's open deliveries: those addressed to them, and those
-// they own, being the posts of theirs still unanswered. A kernel read; it writes
-// nothing.
-func (c *Chat) deliveries(r *http.Request) ([]client.Task, error) {
-	me := c.deps.Me(r)
-	var out []client.Task
-	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
-		tasks, e := c.deps.Client.OpenTasks(r.Context(), tok)
-		out = nil
-		for _, t := range tasks {
-			if t.Action == c.self()+"/"+replyName && (t.Owner == me || t.RequiredCaller == me) {
-				out = append(out, t)
+// pulse is what the kernel shows of the viewer's chats, read on every tick
+// without running an action, three reads that write nothing: the chats they
+// joined, being the requesters they approved whose handle is chat, this
+// kernel's first; their open deliveries from those chats, those addressed to
+// them and those they own, being their posts here still unanswered; and their
+// open processes, since a post in a room elsewhere holds its process open here
+// until the deliveries it made there are answered.
+type pulse struct {
+	Services []string
+	Tasks    []client.Task
+	Procs    []string
+}
+
+func (c *Chat) pulse(r *http.Request) (pulse, error) {
+	ctx, me := r.Context(), c.deps.Me(r)
+	var p pulse
+	err := c.deps.Sessions.Do(ctx, func(tok string) error {
+		p = pulse{}
+		reqs, err := c.deps.Client.ListRequesters(ctx, tok)
+		if err != nil {
+			return err
+		}
+		for _, q := range reqs {
+			if q.Status == "approved" && strings.HasPrefix(q.Requester, chatHandle+"@") {
+				p.Services = append(p.Services, q.Requester)
 			}
 		}
-		return e
+		sort.Slice(p.Services, func(i, j int) bool {
+			a, b := p.Services[i], p.Services[j]
+			return a == c.self() || (b != c.self() && a < b)
+		})
+		tasks, err := c.deps.Client.OpenTasks(ctx, tok)
+		if err != nil {
+			return err
+		}
+		for _, t := range tasks {
+			if (t.Owner == me || t.RequiredCaller == me) && threadOf(t) != "" && slices.Contains(p.Services, t.Requester) {
+				p.Tasks = append(p.Tasks, t)
+			}
+		}
+		procs, err := c.deps.Client.OpenProcesses(ctx, tok)
+		for _, pr := range procs {
+			p.Procs = append(p.Procs, pr.ID)
+		}
+		return err
 	})
-	return out, err
+	return p, err
+}
+
+// threadOf is the room a delivery carries, "" for any other task of chat's.
+func threadOf(t client.Task) string {
+	var pa struct {
+		Room string `json:"thread_id"`
+	}
+	_ = json.Unmarshal(t.PartialArgs, &pa)
+	return pa.Room
 }
 
 // changed counts a change this UI made for an address.
@@ -517,20 +667,23 @@ func (c *Chat) changed(me string) {
 	c.changes[me]++
 }
 
-// signal names what the viewer's chat stands at: their open deliveries, and the
-// changes this UI made for them. The deliveries alone can return to an earlier
-// set, when one arrives and another tab settles it between two ticks; a task
-// never reopens, so every other change moves them.
-func (c *Chat) signal(me string, tasks []client.Task) string {
-	ids := make([]string, len(tasks))
-	for i, t := range tasks {
+// signal names what the viewer's chats stand at: the chats, their open
+// deliveries and processes, and the changes this UI made for them. The
+// deliveries alone can return to an earlier set, when one arrives and another
+// tab settles it between two ticks; a task never reopens, so every other change
+// moves them. A chat approved, removed or blocked moves the chats.
+func (c *Chat) signal(me string, p pulse) string {
+	ids := make([]string, len(p.Tasks))
+	for i, t := range p.Tasks {
 		ids[i] = t.ID
 	}
 	sort.Strings(ids)
+	procs := slices.Clone(p.Procs)
+	sort.Strings(procs)
 	c.mu.Lock()
 	n := c.changes[me]
 	c.mu.Unlock()
-	return digest(fmt.Sprint(n, ids))
+	return digest(fmt.Sprint(n, ids, procs, p.Services))
 }
 
 func digest(s string) string {
@@ -539,23 +692,19 @@ func digest(s string) string {
 }
 
 // held reports a delivery the viewer can settle in a room.
-func held(t client.Task, me, roomID string) bool {
-	var pa struct {
-		Room string `json:"thread_id"`
-	}
-	_ = json.Unmarshal(t.PartialArgs, &pa)
-	return t.Waiting() && t.RequiredCaller == me && pa.Room == roomID
+func held(t client.Task, me, service, thread string) bool {
+	return t.Waiting() && t.RequiredCaller == me && t.Requester == service && threadOf(t) == thread
 }
 
 // settle completes the viewer's waiting deliveries for a room just read, with
 // nothing to say, since the room is what they carried, and answers the tasks left
 // open. It follows a read that succeeded: a completion chat cannot receive would
 // spend the task and leave the delivery held there.
-func (c *Chat) settle(r *http.Request, roomID string, tasks []client.Task) []client.Task {
+func (c *Chat) settle(r *http.Request, service, thread string, tasks []client.Task) []client.Task {
 	me := c.deps.Me(r)
 	open := tasks[:0:0]
 	for _, t := range tasks {
-		if !held(t, me, roomID) || c.deps.Sessions.Do(r.Context(), func(tok string) error {
+		if !held(t, me, service, thread) || c.deps.Sessions.Do(r.Context(), func(tok string) error {
 			_, e := c.deps.Client.CompleteTask(r.Context(), tok, t.ID, nil)
 			return e
 		}) != nil {
@@ -614,8 +763,20 @@ func (w watchState) failed() watchState {
 	return w
 }
 
+// settled is the watch after a read that drew the rail: acknowledged, or, while
+// a chat could not be read, still owed after the back-off from prev, so a chat
+// that answers again is shown without waiting for another change.
+func (w watchState) settled(prev watchState, down []downRow) watchState {
+	if len(down) == 0 {
+		return w
+	}
+	f := prev.failed()
+	w.Signal, w.Fails, w.Retry = prev.Signal, f.Fails, f.Retry
+	return w
+}
+
 // watchView is one watch input of a page: the rail's on a page that is not a
-// room, the room's on a room page.
+// room, the room's on a room page, keyed by the room's address.
 type watchView struct {
 	Key   string
 	State watchState
@@ -624,8 +785,9 @@ type watchView struct {
 // refusal is the sentence for a run the kernel or the service refused, "" for
 // anything else. The kernel relays no refusal's body, only the status the
 // service answered, so the sentence is the UI's, one per status; input the
-// action's schema refused is the kernel's own reason.
-func refusal(err error) string {
+// action's schema refused is the kernel's own reason. A chat on another kernel
+// relays not even its status.
+func refusal(err error, service string) string {
 	ke, ok := client.AsKernelError(err)
 	if !ok {
 		return ""
@@ -634,7 +796,10 @@ func refusal(err error) string {
 		return ke.KernelMessage
 	}
 	if ke.UpstreamDown() {
-		return "Chat is not answering. Try again shortly."
+		return service + " is not answering. Try again shortly."
+	}
+	if ke.RemoteFailed() {
+		return service + " refused or failed; a chat on another kernel gives no reason."
 	}
 	switch ke.UpstreamStatus() {
 	case http.StatusBadRequest:
@@ -649,6 +814,49 @@ func refusal(err error) string {
 		return "A post is already pending; answer the delivery first."
 	}
 	return ""
+}
+
+// why is a chat that could not be read, as a person reads it.
+func (c *Chat) why(err error, service string) string {
+	if reason := refusal(err, service); reason != "" {
+		return reason
+	}
+	if ke, ok := client.AsKernelError(err); ok {
+		return ke.UserMessage()
+	}
+	return err.Error()
+}
+
+// roomGone reports a refusal saying the viewer has no such room: it is gone, or
+// they are no longer in it.
+func roomGone(err error) bool {
+	ke, ok := client.AsKernelError(err)
+	return ok && (ke.UpstreamStatus() == http.StatusNotFound || ke.UpstreamStatus() == http.StatusForbidden)
+}
+
+// gone reports that a read failed because the room is no longer the viewer's.
+// The chat at home says so by its status. A chat elsewhere relays none, and a
+// refusal reads as a failure of that chat, so its list is asked once: a list
+// that answers without the room confirms it gone; one that fails too leaves it
+// open, and the page keeps retrying.
+func (c *Chat) gone(r *http.Request, service, thread string, err error) bool {
+	if roomGone(err) {
+		return true
+	}
+	ke, ok := client.AsKernelError(err)
+	if !ok || !ke.RemoteFailed() {
+		return false
+	}
+	rooms, down := c.rooms(r, []string{service})
+	if len(down) > 0 {
+		return false
+	}
+	for _, room := range rooms {
+		if room.ID == thread {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- the browser ----
@@ -671,10 +879,12 @@ type agentChoice struct {
 	Chosen  bool
 }
 
-// railView backs the rail: the viewer's rooms, the one in view, and the dialogs a
-// page that is not a room holds.
+// railView backs the rail: the viewer's rooms, the chats that could not be read,
+// the room in view by its address, and the dialogs a page that is not a room
+// holds.
 type railView struct {
 	Rooms     []roomRow
+	Down      []downRow
 	Me        string
 	New       newRoomView
 	Rename    renameView
@@ -720,7 +930,9 @@ type roomView struct {
 }
 
 // entriesView backs the room's entries and the fragments that append to
-// them; Removed are the posts an answer replaced, for the page to drop.
+// them; Removed are the posts an answer replaced, for the page to drop. Error
+// is the line beside the composer: why a post was refused, or whom one posted
+// did not reach.
 type entriesView struct {
 	RoomID  string
 	Entries []entryRow
@@ -734,14 +946,27 @@ type entriesView struct {
 // b", "Waiting on a, b and c"; "" when nobody. It states an open delivery,
 // never activity, which chat cannot observe.
 func (v entriesView) Waiting() string {
-	switch n := len(v.Working); n {
-	case 0:
+	if len(v.Working) == 0 {
 		return ""
-	case 1:
-		return "Waiting on " + v.Working[0]
-	default:
-		return "Waiting on " + strings.Join(v.Working[:n-1], ", ") + " and " + v.Working[n-1]
 	}
+	return "Waiting on " + andList(v.Working)
+}
+
+// andList joins names as a sentence does: "a", "a and b", "a, b and c".
+func andList(names []string) string {
+	if n := len(names); n > 1 {
+		return strings.Join(names[:n-1], ", ") + " and " + names[n-1]
+	}
+	return strings.Join(names, "")
+}
+
+// undelivered is the line saying whom a post did not reach, "" when it reached
+// everyone it was for.
+func undelivered(members []string) string {
+	if len(members) == 0 {
+		return ""
+	}
+	return "Not delivered to " + andList(members) + "."
 }
 
 // getLanding is where a session lands: the viewer's conversation with the
@@ -754,21 +979,24 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Conversations", landingView{Error: joinFailed(me, err)})
 		return
 	}
-	tasks, err := c.deliveries(r)
+	p, err := c.pulse(r)
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	rooms, err := c.listRooms(r, c.signal(me, tasks))
-	if c.deps.HandleErr(w, r, err) {
-		return
+	rooms, down := c.rooms(r, p.Services)
+	for _, d := range down {
+		if d.Service == c.self() && c.deps.HandleErr(w, r, d.err) { // its rooms unknown, the assistant's room cannot be found
+			return
+		}
 	}
+	c.remember(r, rooms, down, c.signal(me, p))
 	assistant := c.deps.Address(assistantHandle)
 	if me != assistant && c.isLocalAgent(assistant) {
-		id, err := c.assistantRoom(r, rooms, assistant)
+		room, err := c.assistantRoom(r, rooms, assistant)
 		if c.deps.HandleErr(w, r, err) {
 			return
 		}
-		to := "/chat/room/" + url.PathEscape(id)
+		to := "/chat/room/" + url.PathEscape(room)
 		if err := c.joinAgent(r.Context(), assistant); err != nil {
 			c.deps.FlashRedirect(w, r, to, "error", joinFailed(assistant, err))
 			return
@@ -777,25 +1005,25 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(rooms) > 0 {
-		http.Redirect(w, r, "/chat/room/"+url.PathEscape(rooms[0].ID), http.StatusSeeOther)
+		http.Redirect(w, r, "/chat/room/"+url.PathEscape(rooms[0].Addr()), http.StatusSeeOther)
 		return
 	}
 	c.deps.RenderPage(w, r, http.StatusOK, "landing", "Conversations", landingView{})
 }
 
-// assistantRoom is the room of exactly the viewer and the assistant, started when
-// there is none.
+// assistantRoom is the address of the room of exactly the viewer and the
+// assistant at home, started when there is none.
 func (c *Chat) assistantRoom(r *http.Request, rooms []roomRow, assistant string) (string, error) {
 	for _, room := range rooms {
-		if len(room.Members) == 2 && slices.Contains(room.Members, assistant) {
-			return room.ID, nil
+		if room.Service == c.self() && len(room.Members) == 2 && slices.Contains(room.Members, assistant) {
+			return room.Addr(), nil
 		}
 	}
 	var out struct {
 		Room roomRow `json:"room"`
 	}
-	err := c.run(r, roomCreateName, map[string]any{"members": []string{assistant}, "name": assistantHandle}, &out)
-	return out.Room.ID, err
+	err := c.run(r, c.self(), roomCreateName, map[string]any{"members": []string{assistant}, "name": assistantHandle}, &out)
+	return roomAddr(c.self(), out.Room.ID), err
 }
 
 // landingView backs the page a viewer with no conversation lands on.
@@ -808,46 +1036,46 @@ type landingView struct{ Error string }
 func (c *Chat) Rail(r *http.Request) (template.HTML, error) {
 	cache, ok := c.cachedRail(r)
 	if !ok {
-		tasks, err := c.deliveries(r)
+		p, err := c.pulse(r)
 		if err != nil {
 			return "", err
 		}
-		cache.Signal = c.signal(c.deps.Me(r), tasks)
-		cache.Rooms, err = c.listRooms(r, cache.Signal)
-		if ke, ok := client.AsKernelError(err); ok && (ke.Kind == client.KindGrantRequired || ke.UpstreamStatus() == http.StatusUnauthorized) {
-			err = nil
-		}
-		if err != nil {
-			return "", err
-		}
+		cache.Signal = c.signal(c.deps.Me(r), p)
+		cache.Rooms, cache.Down = c.rooms(r, p.Services)
+		c.remember(r, cache.Rooms, cache.Down, cache.Signal)
 	}
-	id, onRoom := strings.CutPrefix(r.URL.Path, "/chat/room/")
+	room, onRoom := strings.CutPrefix(r.URL.Path, "/chat/room/")
 	if onRoom {
-		id, _, _ = strings.Cut(id, "/")
-		return c.rail(r, cache.Rooms, id, nil, false)
+		room, _, _ = strings.Cut(room, "/")
+		return c.rail(r, cache.Rooms, cache.Down, room, nil, false)
 	}
-	return c.rail(r, cache.Rooms, "", &watchView{railKey, watchState{Signal: cache.Signal, Rail: railDigest(cache.Rooms)}}, false)
+	st := watchState{Signal: cache.Signal, Rail: railDigest(cache.Rooms, cache.Down)}.settled(watchState{Signal: cache.Signal}, cache.Down)
+	return c.rail(r, cache.Rooms, cache.Down, "", &watchView{railKey, st}, false)
 }
 
-// rail renders the rail, naming the room in view; oob renders it as the
-// heartbeat's answer, whose watch stands apart.
-func (c *Chat) rail(r *http.Request, rooms []roomRow, current string, watch *watchView, oob bool) (template.HTML, error) {
+// rail renders the rail, naming the room in view by its address; oob renders it
+// as the heartbeat's answer, whose watch stands apart.
+func (c *Chat) rail(r *http.Request, rooms []roomRow, down []downRow, current string, watch *watchView, oob bool) (template.HTML, error) {
 	path := r.URL.Path
 	if current != "" {
 		path = "/chat/room/" + current
 	}
 	csrf := c.deps.CSRFField(r)
-	return c.deps.Fragment("_rail", railView{Rooms: rooms, Me: c.deps.Me(r), Rename: renameView{CSRFField: csrf}, Watch: watch, Current: current,
+	return c.deps.Fragment("_rail", railView{Rooms: rooms, Down: down, Me: c.deps.Me(r), Rename: renameView{CSRFField: csrf}, Watch: watch, Current: current,
 		New: newRoomView{Open: r.URL.Query().Get("form") == "new", Agents: c.agentChoices(nil), Path: path, CSRFField: csrf}, Path: path, CSRFField: csrf, OOB: oob})
 }
 
 // Context is a room's recent conversation as the planner reads it: the
 // viewer's entries as the user's, every other member's as the assistant's,
 // named; a document as its JSON text.
-func (c *Chat) Context(r *http.Request, roomID string) ([]client.Message, error) {
+func (c *Chat) Context(r *http.Request, room string) ([]client.Message, error) {
 	me := c.deps.Me(r)
-	read, err := c.readRoom(r, roomID, latest, false)
-	if reason := refusal(err); reason != "" {
+	service, thread, ok := splitRoom(room)
+	if !ok {
+		return nil, errors.New("This room no longer exists.")
+	}
+	read, err := c.readRoom(r, service, thread, latest, false)
+	if reason := refusal(err, service); reason != "" {
 		return nil, errors.New(reason)
 	}
 	if err != nil {
@@ -877,26 +1105,33 @@ func (c *Chat) Context(r *http.Request, roomID string) ([]client.Message, error)
 const contextEntries = 20
 
 func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
-	me, id := c.deps.Me(r), r.PathValue("id")
-	tasks, err := c.deliveries(r)
+	me, room := c.deps.Me(r), r.PathValue("id")
+	service, thread, ok := splitRoom(room)
+	if !ok {
+		c.deps.HandleErr(w, r, &client.KernelError{Kind: client.KindNotFound})
+		return
+	}
+	p, err := c.pulse(r)
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	read, err := c.readRoom(r, id, latest, true)
+	read, err := c.readRoom(r, service, thread, latest, true)
 	if err != nil {
-		if roomGone(err) {
+		if c.gone(r, service, thread, err) {
 			err = &client.KernelError{Kind: client.KindNotFound}
 		}
 		c.deps.HandleErr(w, r, err)
 		return
 	}
-	signal := c.signal(me, c.settle(r, id, tasks))
-	c.remember(r, read.Rooms, signal)
-	post, err := c.postSchema(r)
+	p.Tasks = c.settle(r, service, thread, p.Tasks)
+	signal := c.signal(me, p)
+	rooms, down := c.railWith(r, service, read.Rooms, p.Services)
+	c.remember(r, rooms, down, signal)
+	post, err := c.postSchema(r, service)
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	locked, _ := json.Marshal(map[string]string{"thread_id": id})
+	locked, _ := json.Marshal(map[string]string{"thread_id": thread})
 	rename := renameView{CSRFField: c.deps.CSRFField(r)}
 	if r.URL.Query().Get("form") == "rename" && read.Room.Creator == me {
 		rename.Room = &read.Room
@@ -907,30 +1142,24 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 			others = append(others, m)
 		}
 	}
+	st := watchState{After: maxSeq(read.Entries), Signal: signal, Rail: railDigest(rooms, down)}.settled(watchState{After: maxSeq(read.Entries), Signal: signal}, down)
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
 		Room: read.Room, Me: me, Others: others, Rename: rename,
 		Members: membersView{Room: read.Room, Me: me, Open: r.URL.Query().Get("form") == "members", CSRFField: c.deps.CSRFField(r)},
-		Entries: entriesView{RoomID: id, Entries: read.Entries, Working: read.Waiting},
-		Watch:   watchView{id, watchState{After: maxSeq(read.Entries), Signal: signal, Rail: railDigest(read.Rooms)}},
+		Entries: entriesView{RoomID: room, Entries: read.Entries, Working: read.Waiting},
+		Watch:   watchView{room, st},
 		Post:    post, Locked: locked,
 	})
 }
 
-// roomGone reports a refusal saying the viewer has no such room: it is gone, or
-// they are no longer in it.
-func roomGone(err error) bool {
-	ke, ok := client.AsKernelError(err)
-	return ok && (ke.UpstreamStatus() == http.StatusNotFound || ke.UpstreamStatus() == http.StatusForbidden)
-}
-
 // postSchema is the post action's input schema, the composer's form, as the
-// kernel serves it.
-func (c *Chat) postSchema(r *http.Request) (json.RawMessage, error) {
+// kernel serves it for the chat at service.
+func (c *Chat) postSchema(r *http.Request, service string) (json.RawMessage, error) {
 	var a client.Action
 	err := c.deps.Sessions.Do(r.Context(), func(tok string) error {
 		var e error
 		var found bool
-		a, found, e = c.deps.Client.ResolveRef(r.Context(), tok, c.self()+"/"+postName)
+		a, found, e = c.deps.Client.ResolveRef(r.Context(), tok, service+"/"+postName)
 		if e == nil && !found {
 			e = &client.KernelError{Kind: client.KindNotFound}
 		}
@@ -940,131 +1169,158 @@ func (c *Chat) postSchema(r *http.Request) (json.RawMessage, error) {
 }
 
 // watch answers the heartbeat. It runs an action only when the kernel shows the
-// viewer's chat moved past what the page last read, or a visible room holds a
+// viewer's chats moved past what the page last read, or a visible room holds a
 // delivery for the viewer, which a tab read while hidden left open.
 func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) {
 	st := parseWatch(shown)
-	tasks, err := c.deliveries(r)
+	p, err := c.pulse(r)
 	if err != nil {
 		return "", err
 	}
 	me := c.deps.Me(r)
 	if key == railKey {
-		if signal := c.signal(me, tasks); st.due(signal) {
-			return c.advanceRail(r, st, signal)
+		if signal := c.signal(me, p); st.due(signal) {
+			return c.advanceRail(r, st, p, signal)
 		}
+		return "", nil
+	}
+	service, thread, ok := splitRoom(key)
+	if !ok {
 		return "", nil
 	}
 	visible := r.Header.Get("X-Visible") != "0"
 	pending := false
-	for _, t := range tasks {
-		pending = pending || (visible && st.Fails == 0 && held(t, me, key))
+	for _, t := range p.Tasks {
+		pending = pending || (visible && st.Fails == 0 && held(t, me, service, thread))
 	}
-	if !pending && !st.due(c.signal(me, tasks)) {
+	if !pending && !st.due(c.signal(me, p)) {
 		return "", nil
 	}
-	return c.advance(r, key, st, tasks, visible)
+	return c.advance(r, key, st, p, visible, "")
 }
 
-// advanceRail brings a page that is not a room to the rooms chat now holds.
-func (c *Chat) advanceRail(r *http.Request, st watchState, signal string) (template.HTML, error) {
-	rooms, err := c.listRooms(r, signal)
-	if err != nil {
-		c.log().Warn("chat: list rooms", "err", err)
-		return c.deps.Fragment("_chat_watch", watchView{railKey, st.failed()})
-	}
-	next := watchState{Signal: signal, Rail: railDigest(rooms)}
+// advanceRail brings a page that is not a room to the rooms its chats now hold.
+func (c *Chat) advanceRail(r *http.Request, st watchState, p pulse, signal string) (template.HTML, error) {
+	rooms, down := c.rooms(r, p.Services)
+	c.remember(r, rooms, down, signal)
+	next := watchState{Signal: signal, Rail: railDigest(rooms, down)}.settled(st, down)
 	out, err := c.deps.Fragment("_chat_watch", watchView{railKey, next})
 	if err != nil || next.Rail == st.Rail {
 		return out, err
 	}
-	rail, err := c.rail(r, rooms, "", nil, true)
+	rail, err := c.rail(r, rooms, down, "", nil, true)
 	return out + rail, err
 }
 
-// advance brings a room page to what chat now holds: its new entries, the posts
-// they replaced, whom it waits on, the rail when it changed, and the watch. A room
-// seen has its deliveries settled. A read that leaves more keeps the old signal,
-// so the next tick reads on. A room gone answers the signal: there is nothing more
-// to show, and retrying would only write failures.
-func (c *Chat) advance(r *http.Request, roomID string, st watchState, tasks []client.Task, seen bool) (template.HTML, error) {
+// advance brings a room page to what its chat now holds: its new entries, the
+// posts they replaced, whom it waits on, the rail when it changed, and the watch.
+// A room seen has its deliveries settled. A read that leaves more keeps the old
+// signal, so the next tick reads on. A room gone answers the signal: there is
+// nothing more to show, and retrying would only write failures. note is the line
+// for beside the composer, "" for none.
+func (c *Chat) advance(r *http.Request, room string, st watchState, p pulse, seen bool, note string) (template.HTML, error) {
 	me := c.deps.Me(r)
-	read, err := c.readRoom(r, roomID, st.After, seen)
+	service, thread, _ := splitRoom(room)
+	read, err := c.readRoom(r, service, thread, st.After, seen)
 	if err != nil {
-		c.log().Warn("chat: read room", "room", roomID, "err", err)
-		if roomGone(err) {
-			st.Signal, st.Fails = c.signal(me, tasks), 0
+		c.log().Warn("chat: read room", "room", room, "err", err)
+		if c.gone(r, service, thread, err) {
+			st.Signal, st.Fails = c.signal(me, p), 0
 		} else {
 			st = st.failed()
 		}
-		return c.deps.Fragment("_chat_watch", watchView{roomID, st})
+		return c.deps.Fragment("_chat_watch", watchView{room, st})
 	}
 	if seen {
-		tasks = c.settle(r, roomID, tasks)
+		p.Tasks = c.settle(r, service, thread, p.Tasks)
 	}
-	signal := c.signal(me, tasks)
-	c.remember(r, read.Rooms, signal)
-	next := watchState{After: max(st.After, maxSeq(read.Entries)), Signal: signal, Rail: railDigest(read.Rooms)}
+	signal := c.signal(me, p)
+	rooms, down := c.railWith(r, service, read.Rooms, p.Services)
+	c.remember(r, rooms, down, signal)
+	next := watchState{After: max(st.After, maxSeq(read.Entries)), Signal: signal, Rail: railDigest(rooms, down)}
 	if read.More {
 		next.Signal = st.Signal
 	}
-	out, err := c.deps.Fragment("_chat_tick", entriesView{RoomID: roomID, Entries: read.Entries, Removed: read.Removed,
-		Working: read.Waiting, Watch: watchView{roomID, next}})
+	next = next.settled(st, down)
+	out, err := c.deps.Fragment("_chat_tick", entriesView{RoomID: room, Entries: read.Entries, Removed: read.Removed,
+		Working: read.Waiting, Watch: watchView{room, next}, Error: note})
 	if err != nil || next.Rail == st.Rail {
 		return out, err
 	}
-	rail, err := c.rail(r, read.Rooms, roomID, nil, true)
+	rail, err := c.rail(r, rooms, down, room, nil, true)
 	return out + rail, err
 }
 
-// railKey is the rail's watch: a room id is three words, never this one.
+// railKey is the rail's watch: a room's key is its address, never this one.
 const railKey = "rail"
 
 // railDigest names the rail a page shows: its rooms, their names and which
-// are unread, so the heartbeat swaps the rail only when one of them changed.
-func railDigest(rooms []roomRow) string {
+// are unread, and the chats that could not be read, so the heartbeat swaps the
+// rail only when one of them changed.
+func railDigest(rooms []roomRow, down []downRow) string {
 	h := sha256.New()
 	for _, r := range rooms {
-		fmt.Fprintf(h, "%s\x00%s\x00%t\x00", r.ID, r.Name, r.Unread)
+		fmt.Fprintf(h, "%s\x00%s\x00%t\x00", r.Addr(), r.Name, r.Unread)
+	}
+	for _, d := range down {
+		fmt.Fprintf(h, "%s\x00%s\x01", d.Service, d.Reason)
 	}
 	return hex.EncodeToString(h.Sum(nil)[:6])
 }
 
-// postMessage runs chat's post action as the viewer with the composer's
-// fields: what the form carries, and the room from the path, which the form
-// shows sealed and never sends. The browser and an agent take one path.
+// postMessage runs the post action of the room's chat as the viewer with the
+// composer's fields: what the form carries, and the room from the path, which
+// the form shows sealed and never sends. The browser and an agent take one path.
+// A post that did not reach every member it was for says whom it missed.
 func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	room := r.PathValue("id")
+	service, thread, ok := splitRoom(room)
+	if !ok {
+		c.composeFailed(w, r, room, "This room no longer exists.")
+		return
+	}
 	args, err := c.deps.FormArgs(r)
 	if err != nil {
-		c.composeFailed(w, r, id, err.Error())
+		c.composeFailed(w, r, room, err.Error())
 		return
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(args, &fields) != nil || fields == nil {
-		c.composeFailed(w, r, id, "The JSON must be an object.")
+		c.composeFailed(w, r, room, "The JSON must be an object.")
 		return
 	}
-	fields["thread_id"], _ = json.Marshal(id)
-	if err := c.run(r, postName, fields, nil); err != nil {
-		if reason := refusal(err); reason != "" {
-			c.composeFailed(w, r, id, reason)
+	fields["thread_id"], _ = json.Marshal(thread)
+	var posted struct {
+		Undelivered []string `json:"undelivered"`
+	}
+	if err := c.run(r, service, postName, fields, &posted); err != nil {
+		if reason := refusal(err, service); reason != "" {
+			c.composeFailed(w, r, room, reason)
+			return
+		}
+		if ke, ok := client.AsKernelError(err); ok && c.deps.IsHTMX(r) && ke.Kind != client.KindUnauthenticated {
+			c.composeFailed(w, r, room, ke.UserMessage())
 			return
 		}
 		if c.deps.HandleErr(w, r, err) {
 			return
 		}
 	}
+	note := undelivered(posted.Undelivered)
 	if !c.deps.IsHTMX(r) {
-		http.Redirect(w, r, "/chat/room/"+url.PathEscape(id), http.StatusSeeOther)
+		if note != "" {
+			c.deps.FlashRedirect(w, r, "/chat/room/"+url.PathEscape(room), "error", note)
+			return
+		}
+		http.Redirect(w, r, "/chat/room/"+url.PathEscape(room), http.StatusSeeOther)
 		return
 	}
-	tasks, err := c.deliveries(r)
+	p, err := c.pulse(r)
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}
 	after, _ := strconv.ParseInt(r.FormValue("after"), 10, 64)
-	out, err := c.advance(r, id, watchState{After: after}, tasks, true)
+	out, err := c.advance(r, room, watchState{After: after}, p, true, note)
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}
@@ -1078,18 +1334,18 @@ func writeHTML(w http.ResponseWriter, h template.HTML) {
 
 // composeFailed shows why a post was refused, beside the composer. An htmx
 // refusal is 422, so the composer keeps the draft (it resets on success only).
-func (c *Chat) composeFailed(w http.ResponseWriter, r *http.Request, roomID, reason string) {
+func (c *Chat) composeFailed(w http.ResponseWriter, r *http.Request, room, reason string) {
 	if c.deps.IsHTMX(r) {
-		_ = c.deps.RenderFragment(w, http.StatusUnprocessableEntity, "_chat_refused", entriesView{RoomID: roomID, Error: reason})
+		_ = c.deps.RenderFragment(w, http.StatusUnprocessableEntity, "_chat_refused", entriesView{RoomID: room, Error: reason})
 		return
 	}
-	c.deps.FlashRedirect(w, r, "/chat/room/"+url.PathEscape(roomID), "error", reason)
+	c.deps.FlashRedirect(w, r, "/chat/room/"+url.PathEscape(room), "error", reason)
 }
 
 // postCreateRoom starts a conversation with the participants chosen: the
-// agents ticked and the addresses typed, the viewer included. A name left
-// blank is the participants' handles, which the service composes. The local
-// agents among them are joined.
+// agents ticked and the addresses typed, the viewer included, in this kernel's
+// chat. A name left blank is the participants' handles, which the service
+// composes. The local agents among them are joined.
 func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	members := append(r.Form["agent"], strings.Fields(strings.ReplaceAll(r.FormValue("members"), ",", " "))...)
@@ -1110,8 +1366,8 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 	var out struct {
 		Room roomRow `json:"room"`
 	}
-	err := c.run(r, roomCreateName, args, &out)
-	if reason := refusal(err); reason != "" {
+	err := c.run(r, c.self(), roomCreateName, args, &out)
+	if reason := refusal(err, c.self()); reason != "" {
 		c.newRoomRefused(w, r, reason)
 		return
 	}
@@ -1119,7 +1375,7 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 		c.then(w, r, err, "/chat")
 		return
 	}
-	c.joinMembers(w, r, members, "/chat/room/"+url.PathEscape(out.Room.ID))
+	c.joinMembers(w, r, members, "/chat/room/"+url.PathEscape(roomAddr(c.self(), out.Room.ID)))
 }
 
 // newRoomRefused says why a conversation could not start: in the dialog, with what
@@ -1155,16 +1411,17 @@ func (c *Chat) getRename(w http.ResponseWriter, r *http.Request) {
 }
 
 // shownRoom is the room of the request's path as the rail last read it, which
-// costs no run; the zero room but for its id when the rail does not hold it.
+// costs no run; the zero room but for its address when the rail does not hold it.
 func (c *Chat) shownRoom(r *http.Request) roomRow {
-	id := r.PathValue("id")
+	addr := r.PathValue("id")
 	cache, _ := c.cachedRail(r)
 	for _, room := range cache.Rooms {
-		if room.ID == id {
+		if room.Addr() == addr {
 			return room
 		}
 	}
-	return roomRow{ID: id}
+	service, thread, _ := splitRoom(addr)
+	return c.tag([]roomRow{{ID: thread}}, service)[0]
 }
 
 // pageWatch is the chat watch a command's form carried: the room in view's, or
@@ -1184,20 +1441,21 @@ func pageWatch(r *http.Request) (string, watchState) {
 // for its retry; and answers as a tick does. A read that fails answers the watch
 // failed, and the heartbeat retries.
 func (c *Chat) refresh(r *http.Request, key string, st watchState) (template.HTML, error) {
-	tasks, err := c.deliveries(r)
+	p, err := c.pulse(r)
 	if err != nil {
 		c.log().Warn("chat: open tasks", "err", err)
 		return c.deps.Fragment("_chat_watch", watchView{key, st.failed()})
 	}
 	if key == railKey {
-		return c.advanceRail(r, st, c.signal(c.deps.Me(r), tasks))
+		return c.advanceRail(r, st, p, c.signal(c.deps.Me(r), p))
 	}
-	return c.advance(r, key, st, tasks, true)
+	return c.advance(r, key, st, p, true, "")
 }
 
-// postRename runs chat's rename action as the viewer; the service holds that
-// only the room's creator may. With script the page answers in place: the dialog
-// closes, or comes back open with the reason, and the rail follows at once.
+// postRename runs the rename action of the room's chat as the viewer; the
+// service holds that only the room's creator may. With script the page answers
+// in place: the dialog closes, or comes back open with the reason, and the rail
+// follows at once.
 func (c *Chat) postRename(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	if c.deps.IsHTMX(r) {
@@ -1208,14 +1466,16 @@ func (c *Chat) postRename(w http.ResponseWriter, r *http.Request) {
 		c.deps.FlashRedirect(w, r, roomURL(r), "error", "A room needs a name.")
 		return
 	}
-	args := map[string]string{"thread_id": r.PathValue("id"), "name": name}
-	c.then(w, r, c.run(r, roomRenameName, args, nil), roomURL(r))
+	service, thread, _ := splitRoom(r.PathValue("id"))
+	c.then(w, r, c.run(r, service, roomRenameName, map[string]string{"thread_id": thread, "name": name}, nil), roomURL(r))
 }
 
 func (c *Chat) renameInPlace(w http.ResponseWriter, r *http.Request, name string) {
-	id := r.PathValue("id")
+	room := r.PathValue("id")
+	service, thread, _ := splitRoom(room)
 	refused := func(reason string) {
-		_ = c.deps.RenderFragment(w, http.StatusOK, "_rename", renameView{Room: &roomRow{ID: id, Name: name}, Error: reason, CSRFField: c.deps.CSRFField(r)})
+		shown := c.tag([]roomRow{{ID: thread, Name: name}}, service)[0]
+		_ = c.deps.RenderFragment(w, http.StatusOK, "_rename", renameView{Room: &shown, Error: reason, CSRFField: c.deps.CSRFField(r)})
 	}
 	if name == "" {
 		refused("A room needs a name.")
@@ -1224,8 +1484,8 @@ func (c *Chat) renameInPlace(w http.ResponseWriter, r *http.Request, name string
 	var out struct {
 		Room roomRow `json:"room"`
 	}
-	err := c.run(r, roomRenameName, map[string]string{"thread_id": id, "name": name}, &out)
-	if reason := refusal(err); reason != "" {
+	err := c.run(r, service, roomRenameName, map[string]string{"thread_id": thread, "name": name}, &out)
+	if reason := refusal(err, service); reason != "" {
 		refused(reason)
 		return
 	}
@@ -1238,8 +1498,8 @@ func (c *Chat) renameInPlace(w http.ResponseWriter, r *http.Request, name string
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}
-	if key == id {
-		h, err := c.deps.Fragment("_crumb", out.Room.Name)
+	if key == room {
+		h, err := c.deps.Fragment("_crumb", c.tag([]roomRow{out.Room}, service)[0])
 		if c.deps.HandleErrFragment(w, r, err) {
 			return
 		}
@@ -1260,14 +1520,15 @@ func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) { c.drop(w, r, 
 // the page shows the room, which is then gone from under it; a room already gone
 // is done.
 func (c *Chat) drop(w http.ResponseWriter, r *http.Request, action string) {
-	id := r.PathValue("id")
-	err := c.run(r, action, map[string]string{"thread_id": id}, nil)
-	if !c.deps.IsHTMX(r) || (err != nil && !roomGone(err)) {
+	room := r.PathValue("id")
+	service, thread, _ := splitRoom(room)
+	err := c.run(r, service, action, map[string]string{"thread_id": thread}, nil)
+	if !c.deps.IsHTMX(r) || (err != nil && !c.gone(r, service, thread, err)) {
 		c.then(w, r, err, "/chat")
 		return
 	}
 	key, st := pageWatch(r)
-	if key == id {
+	if key == room {
 		c.deps.Redirect(w, r, "/chat")
 		return
 	}
@@ -1278,17 +1539,19 @@ func (c *Chat) drop(w http.ResponseWriter, r *http.Request, action string) {
 	writeHTML(w, h)
 }
 
-// postAddMember and postRemoveMember run chat's actions as the viewer. Done, the
-// page reloads with the dialog open, since the composer names the members too;
-// refused, the dialog comes back open with the reason.
+// postAddMember and postRemoveMember run the actions of the room's chat as the
+// viewer. Done, the page reloads with the dialog open, since the composer names
+// the members too; refused, the dialog comes back open with the reason. A local
+// agent added to a room at home is joined to this kernel's chat.
 func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
+	service, thread, _ := splitRoom(r.PathValue("id"))
 	m := strings.TrimSpace(r.FormValue("member"))
 	if !strings.Contains(m, "@") {
 		c.membersRefused(w, r, "A member is an address, handle@kernel.", m)
 		return
 	}
-	err := c.run(r, roomAddName, map[string]string{"thread_id": r.PathValue("id"), "member": m}, nil)
-	if reason := refusal(err); reason != "" {
+	err := c.run(r, service, roomAddName, map[string]string{"thread_id": thread, "member": m}, nil)
+	if reason := refusal(err, service); reason != "" {
 		c.membersRefused(w, r, reason, m)
 		return
 	}
@@ -1296,7 +1559,7 @@ func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
 		c.then(w, r, err, roomURL(r))
 		return
 	}
-	if c.isLocalAgent(m) {
+	if service == c.self() && c.isLocalAgent(m) {
 		if err := c.joinAgent(r.Context(), m); err != nil {
 			c.deps.FlashRedirect(w, r, roomURL(r), "error", joinFailed(m, err))
 			return
@@ -1306,9 +1569,10 @@ func (c *Chat) postAddMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Chat) postRemoveMember(w http.ResponseWriter, r *http.Request) {
-	args := map[string]string{"thread_id": r.PathValue("id"), "member": strings.TrimSpace(r.FormValue("member"))}
-	err := c.run(r, roomRemoveName, args, nil)
-	if reason := refusal(err); reason != "" {
+	service, thread, _ := splitRoom(r.PathValue("id"))
+	args := map[string]string{"thread_id": thread, "member": strings.TrimSpace(r.FormValue("member"))}
+	err := c.run(r, service, roomRemoveName, args, nil)
+	if reason := refusal(err, service); reason != "" {
 		c.membersRefused(w, r, reason, "")
 		return
 	}
@@ -1356,7 +1620,7 @@ func (c *Chat) then(w http.ResponseWriter, r *http.Request, err error, to string
 		c.deps.HandleErr(w, r, &client.KernelError{Kind: client.KindNotFound})
 		return
 	}
-	if reason := refusal(err); reason != "" {
+	if reason := refusal(err, c.chatOf(r)); reason != "" {
 		c.deps.FlashRedirect(w, r, to, "error", reason)
 		return
 	}

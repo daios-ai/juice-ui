@@ -65,13 +65,15 @@ type carriedEntry struct {
 // id and what the room said since that member's previous delivery, this
 // post last. The task is created before the delivery is recorded, so a
 // record that fails only repeats a range next time; a recipient the kernel
-// refuses is skipped. It returns how many were created.
-func (s *Service) deliver(ctx context.Context, self, callback, capability, roomID string, upto, depth int64, to []string) int {
-	n := 0
+// refuses is skipped. It returns the recipients it could not deliver to, so the
+// poster learns of them: an address on a kernel this one cannot name is refused.
+func (s *Service) deliver(ctx context.Context, self, callback, capability, roomID string, upto, depth int64, to []string) []string {
+	missed := []string{}
 	for _, m := range to {
 		entries, err := s.Store.Range(m, roomID, upto, carried)
 		if err != nil {
 			s.log().Warn("chat: delivery range", "member", m, "err", err)
+			missed = append(missed, m)
 			continue
 		}
 		carry := make([]carriedEntry, 0, len(entries))
@@ -81,6 +83,7 @@ func (s *Service) deliver(ctx context.Context, self, callback, capability, roomI
 		id, err := s.Store.NextDelivery()
 		if err != nil {
 			s.log().Warn("chat: delivery id", "err", err)
+			missed = append(missed, m)
 			continue
 		}
 		partial, _ := json.Marshal(map[string]any{"thread_id": roomID, "member": m, "delivery": id, "message": carry})
@@ -88,13 +91,12 @@ func (s *Service) deliver(ctx context.Context, self, callback, capability, roomI
 			Action: self + "/" + replyName, RequiredCaller: m, PartialArgs: partial,
 		}); err != nil {
 			s.log().Warn("chat: deliver", "room", roomID, "member", m, "err", err)
+			missed = append(missed, m)
 			continue
 		}
 		if err := s.Store.Delivered(m, roomID, upto, id, depth); err != nil {
 			s.log().Warn("chat: record delivery", "member", m, "err", err)
-			continue
 		}
-		n++
 	}
-	return n
+	return missed
 }

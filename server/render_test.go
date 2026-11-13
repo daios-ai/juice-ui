@@ -540,6 +540,9 @@ func TestUserPageShowsConnections(t *testing.T) {
 				Directory:   "chat",
 				Connections: []client.Connection{{Provider: "127.0.0.1:8080", ProviderKey: "bearer:h"}},
 				Actions:     []client.Grant{{Action: "chat/pay", Scopes: []string{"pay.write"}, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"}},
+			}, {
+				Directory: "chat@alpha/room",
+				Actions:   []client.Grant{{Action: "chat@alpha/room/read", CreatedAt: "2026-07-12T00:00:00Z"}},
 			}},
 			Connections: []client.Connection{
 				{Provider: "127.0.0.1:8080", Actions: 8, Unused: false, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"},
@@ -561,6 +564,11 @@ func TestUserPageShowsConnections(t *testing.T) {
 	// …and each contained action has its own per-grant disconnect (by selector).
 	if !strings.Contains(body, `name="action" value="chat/pay"`) {
 		t.Errorf("per-action disconnect missing: %s", body)
+	}
+	// A folder held on another kernel has no account here: it disconnects by
+	// its selector.
+	if !strings.Contains(body, `name="selector" value="chat@alpha/room"`) {
+		t.Errorf("disconnect-all by selector for a folder held elsewhere missing: %s", body)
 	}
 	// The unused account folds in as its own folder with account-level disconnect.
 	if !strings.Contains(body, "api.acme.com") || !strings.Contains(body, "No actions use this account") {

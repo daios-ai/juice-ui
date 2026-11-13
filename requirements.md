@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.69.2
+Version: 0.70.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.70.0.** A person is a member of rooms on other kernels.
+> Their chats are the chats they approved as requesters: approving a chat
+> elsewhere in the inbox joins it at its first read, and its rooms join the
+> rail, named with their kernel. A room is named by its address,
+> `thread@kernel`. A post says whom it could not reach; a chat that cannot be
+> read is named under the rooms; a failure elsewhere, which carries no status,
+> ends a room only when that chat's list confirms it. Grants held on another
+> kernel disconnect from Settings by their folder (§6.7, §6.4).
 
 > **What changed in 0.69.2.** The kernel pin is v0.19.0, under which a grant is
 > honoured across kernels: a member on another kernel connects their chat key
@@ -2820,7 +2829,7 @@ schema canonical (§6.4) and every text naming this kernel, are:
 | `register` | public | `{handle}` → `{api_key, task_id}` | anyone; the key activates only when that address completes the task |
 | `validate` | private, chat's bearer | the verification task's onward | the kernel |
 | `reply` | private, chat's bearer | a delivery's onward: `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` | the kernel |
-| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered}` | a member |
+| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the members it could not reach by address | a member |
 | `room/create` | public, delegated | `{members, name?}` → `{room}` | anyone joined, who becomes the creator; a blank name is the members' handles |
 | `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
 | `room/add` | public, delegated | `{thread_id, member}` → `{room}` | the creator |
@@ -2874,23 +2883,41 @@ local agents. The binary is `JUICE_CHAT_BIN`, else `$JUICE_HOME/bin/juice-chat`,
 `PATH`. Everything else is a
 run of an action as the viewer: the UI dials no chat address and knows no store.
 
+**The viewer's chats.** A viewer's chats are the requesters they approved whose
+handle is `chat` (`GET /v1/me/requesters`): this kernel's, which joining approves,
+and a chat on another kernel whose delivery they approved in the inbox (U52). No
+list is kept by the UI. A room is named by its address, `thread@kernel`, the
+kernel whose chat holds it, at home too: it is the room's URL, `/chat/room/<address>`,
+and its watch; a bare thread names no room. Every read and command runs the
+action of the room's chat, `chat@<kernel>/…`, by one path wherever it is held;
+a chat elsewhere is reached through the viewer's own kernel, which forwards the
+run (kernel v0.19, D10). A new conversation starts at home.
+
 **When a page runs a read.** A run writes a transaction, so a read is run on a
 gesture, or when the kernel shows that something changed for the viewer. The signal
-is the viewer's open chat tasks (`GET /v1/tasks`, those on `reply` the viewer owns or
-is addressed by, a read that writes nothing) together with a count of the changes
-this UI made for that address, since a delivery settled by another tab between two
-ticks leaves the open set as it was. A page carries one chat watch holding the signal
+is read in three kernel reads that write nothing: the viewer's chats; their open
+deliveries (`GET /v1/tasks`: the tasks of those chats that carry a room, which the
+viewer owns or is addressed by); and their open processes (`GET /v1/processes`),
+since a post in a room elsewhere holds its process open here until the deliveries
+it made there are answered. To these is added a count of the changes this UI made
+for that address, since a delivery settled by another tab between two ticks leaves
+the open set as it was. A chat approved, removed or blocked moves the signal by
+itself. A page carries one chat watch holding the signal
 of its last successful read. On a room page, when the signal differs or a visible tab
 holds a delivery for the room, the tick runs `room/read` once, then settles the
 viewer's deliveries when the tab is visible, and answers the new entries, the rail
 when it changed, and the watch. A delivery is settled only after a read that
 succeeded, because a completion chat cannot receive spends the task. On any other
-page the slow tick runs `room/list` when the signal differs. A read that fails
-acknowledges nothing: the watch keeps its signal and cursor, the page reads again
-after 5 s, then 10, 20, 40, and every 60 s, and the first success shows the change. A
-room gone answers the new signal once. The rail on a page load is what the session
-last read, with no run; a session holding nothing runs `room/list` once, and a
-session not yet joined shows no rooms.
+page the slow tick runs `room/list` of each chat when the signal differs; a room
+page's read lists the other chats with it. A read that fails acknowledges nothing:
+the watch keeps its signal and cursor, the page reads again after 5 s, then 10, 20,
+40, and every 60 s, and the first success shows the change. A chat that cannot be
+listed is named under the rooms, muted, with its reason, the other chats' rooms
+still shown, and is retried on the same back-off. A room gone answers the new signal
+once. The rail on a page load is what the session last read, with no run; a session
+holding nothing lists its chats once, and a session not yet joined shows no rooms.
+The rail and a room's header name the kernel of a room held elsewhere after its
+name, muted (`far · alpha`), as a kernel is named alone (§4).
 
 **What reaches a page late.** A change that reaches the viewer through no task
 appears at the viewer's next read: a post addressed to another member and that
@@ -2905,7 +2932,17 @@ N`, never the body (kernel D4, verified on v0.17.1 and pinned by the contract
 test). The UI therefore chooses its sentence by the status, a room gone (404)
 being the not-found page, and records nothing as a success: a refusal is a failed
 transaction. An endpoint that cannot be reached is `upstream request failed`, also
-pinned, and the UI says chat is not answering.
+pinned, and the UI says chat is not answering. A chat on another kernel relays not
+even the status: every failure there is `remote call failed` (measured on v0.19.0,
+for a room gone and a command forbidden alike), so the UI says that chat refused or
+failed and gives no reason. Such a failure never ends a room by itself, since a
+chat failing for a moment reads the same: after a read fails so, that chat's
+`room/list` is run once, and the room is gone only when the list answers without
+it; otherwise the page keeps its back-off. A run the kernel refuses because the chat's contract
+moved since it cached it (`retry: refresh`, after any upgrade of chat; nothing ran
+and nothing was charged) runs once more; a run refused for want of a grant joins and
+runs once more; each at most once, in whichever order the kernel gives them. A post
+the kernel fails for any other reason says so beside the composer.
 
 The rules:
 
@@ -2921,7 +2958,8 @@ The rules:
    entries since that recipient's previous delivery, by others, this post
    last, at most fifty. The task is created before the delivery is recorded,
    so a record that fails repeats a range and never leaves a phantom. A
-   recipient the kernel refuses is skipped. The kernel shows the task to the
+   recipient the kernel refuses is skipped and named in the post's `undelivered`,
+   which the composer's line says ("Not delivered to remy@nowhere."). The kernel shows the task to the
    member once the member has approved chat (kernel U52).
 4. **Completing a delivery settles what the member said.** Of the member's
    posts since the delivery: when some address nobody, an answer is appended
@@ -2948,8 +2986,11 @@ The rules:
    joined when the kernel's grant plan shows every action under that selector
    granted; the UI holds no chat key. The person signed in is joined, with the
    session, by the landing when the plan does not show them joined, and by a run
-   the kernel refuses for want of a grant or chat refuses for an unknown key. The
-   rail never joins: a session not yet joined shows no rooms. An agent with a home under
+   the kernel refuses for want of a grant or chat refuses for an unknown key. A
+   chat on another kernel is joined by the same steps, at the first read the
+   rail makes after the person approved it: approving is the consent. The rail
+   joins no chat the person has not approved: a session not yet joined shows no
+   rooms. An agent with a home under
    `$JUICE_HOME/agents/` named by a login on this
    kernel is joined with its own session, read from
    `client/credentials/<login>.json` under that file's lock and refreshed there
@@ -2969,9 +3010,13 @@ The rules:
    id is three words, `adjective-animal-NN`, which a language model copies
    exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
    26).
-10. **A member on another kernel answers when addressed and cannot post**: a
-    connected credential names only the caller's own kernel's actions. It
-    joins through `register`.
+10. **A member on another kernel is a member like any other** (kernel v0.19):
+    it joins through `register` from its own kernel, which forwards the connect,
+    and then reads, posts and runs room commands. Its kernel must be named by
+    this one by the name it calls itself, since chat knows a member by address:
+    until then its verification task, and any delivery to it, cannot be
+    created. A local agent added to a room elsewhere is not joined there by
+    this UI.
 11. **The assistant exists.** The agents app makes `assistant@<kernel>` when it
     starts and has no home for it: the password it keeps in its app state, the
     account (one the kernel already holds is adopted only when that password
@@ -3628,6 +3673,14 @@ once its prerequisite is confirmed on the running kernel.
   `{status:"pending"}` rather than granted. The UI reports it as pending;
   reading it as granted would claim an account is connected while the next run
   still answers `grant_required`.
+* **Grants held on another kernel (§6.4).** Since kernel v0.19 a grant on an
+  action elsewhere is made through the user's own kernel, which forwards it.
+  `POST /v1/grants/complete` carries the selector the consent was started for,
+  which names the kernel holding it. `GET /v1/me` lists such a grant under its
+  folder with no connection and no `provider_key` (measured on v0.19.0), so
+  Settings disconnects that folder by its selector. A disconnect that kernel
+  cannot be asked to apply takes effect here at once and answers
+  `peer_unreachable`; the UI says so and asks to disconnect again.
 * **Trace tree (Wallet receipt page).** No trace-read HTTP route is confirmed.
   Until one is, the Engine-room trace tree stays conditional; receipt
   verification is confirmed and mandatory.

@@ -1,12 +1,12 @@
 {{define "content"}}
 {{$d := .Data}}
-{{$rid := $d.Room.ID}}
+{{$rid := $d.Room.Addr}}
 
 {{/* A room (requirements §6.7): the conversation, and beside it the action
      panel an action chosen from the composer opens into. */}}
 <div class="room">
 <div class="conversation">
-{{template "_crumb" $d.Room.Name}}
+{{template "_crumb" $d.Room}}
 
 <div class="msgs" id="chat-messages" data-autoscroll>
   {{range $d.Entries.Entries}}{{template "_entry" .}}{{end}}

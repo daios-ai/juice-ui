@@ -37,7 +37,7 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 | `index` | anyone | `{}` → `{usage}`: the paragraph a member learns chat from |
 | `register` | a member on another kernel | `{handle}` → `{api_key, task_id}`; creates the verification task only that address completes |
 | `validate` | the kernel, as the verification task's onward | `{key_id}` → `{ok}` |
-| `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered}` |
+| `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered, undelivered}`: how many it reached, and whom it could not, by address |
 | `reply` | the kernel, as a delivery's onward | `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` |
 | `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room}` |
 | `room/rename` | the creator | `{thread_id, name}` → `{room}` |

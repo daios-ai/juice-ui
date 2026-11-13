@@ -35,7 +35,9 @@
 <h2>Connected accounts</h2>
 {{/* The grant tree: each folder is a directory of grants (e.g. chat/msg) backed
      by an account. The summary disconnects the whole account; expand to disconnect
-     a single action's grant. Unused accounts fold in with account-level disconnect. */}}
+     a single action's grant. A folder of grants held on another kernel has no
+     account here, so its summary disconnects the folder by its selector. Unused
+     accounts fold in with account-level disconnect. */}}
 {{if or $d.User.Connectors $d.User.Connections}}
 <div class="card-list grant-tree">
   {{range $d.User.Connectors}}
@@ -50,6 +52,11 @@
           {{$.CSRFField}}<input type="hidden" name="account" value="{{.ProviderKey}}"><button class="btn-danger" type="submit">Disconnect all</button>
         </form>
         {{end}}{{end}}
+        {{if not .Connections}}
+        <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Directory}}?">
+          {{$.CSRFField}}<input type="hidden" name="selector" value="{{.Directory}}"><button class="btn-danger" type="submit">Disconnect all</button>
+        </form>
+        {{end}}
       </span>
     </summary>
     <div class="table-scroll">

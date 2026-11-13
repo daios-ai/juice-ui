@@ -137,7 +137,8 @@ func contracts(self, secret string) []contract {
 		{name: postName, title: "Post to a chat room", vis: "public", auth: delegated,
 			desc: "Speak in a chat room you are a member of, for instance to ask another member something: begin with that member's address, as in \"critic@KERNEL, which is best?\", and only that member receives it; text that begins otherwise reaches every other member. Use this, not a direct message, to reach a member of the room. A task from chat is answered by completing it, not by posting. See chat@KERNEL/index.",
 			in:   obj(`"thread_id":{"type":"string",`+descr+`"The room."},`+textMessage, "thread_id", "message"),
-			out:  obj(`"delivered":{"type":"integer",` + descr + `"How many members received it."}`)},
+			out: obj(`"delivered":{"type":"integer",` + descr + `"How many members received it."},` +
+				`"undelivered":{"type":"array",` + descr + `"The members it could not be delivered to, by address.","items":{"type":"string"}}`)},
 		{name: replyName, title: "Answer in a chat room", vis: "private", auth: bearer,
 			desc: "The onward of a delivery: completing the task settles the answer in the room.",
 			in: obj(`"thread_id":{"type":"string",`+descr+`"The room."},"member":{"type":"string",`+descr+`"The member answering."},"delivery":{"type":"integer",`+descr+`"Which delivery this answers."},`+
@@ -330,17 +331,19 @@ func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string)
 		refuseErr(w, err)
 		return
 	}
-	n := 0
+	n, undelivered := 0, []string{}
 	if depth <= handoffCap {
 		room, err := s.Store.withMembers(in.Room)
 		if err != nil {
 			refuseErr(w, err)
 			return
 		}
-		n = s.deliver(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader),
-			in.Room, e.Seq, depth, recipients(member, in.Message, room.Members))
+		to := recipients(member, in.Message, room.Members)
+		undelivered = s.deliver(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader),
+			in.Room, e.Seq, depth, to)
+		n = len(to) - len(undelivered)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"delivered": n})
+	writeJSON(w, http.StatusOK, map[string]any{"delivered": n, "undelivered": undelivered})
 }
 
 // serveReply is a delivery's completion: the answer is the string the

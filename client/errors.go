@@ -66,6 +66,13 @@ func (e *KernelError) UpstreamDown() bool {
 	return e.Kind == KindExecutionFailed && e.KernelMessage == "upstream request failed"
 }
 
+// RemoteFailed reports an action on another kernel that ran and failed. The
+// serving kernel relays no reason and no status across kernels, so a refusal
+// and a failure of that kernel's endpoint read the same.
+func (e *KernelError) RemoteFailed() bool {
+	return e.Kind == KindExecutionFailed && e.KernelMessage == "remote call failed"
+}
+
 // UpstreamStatus is the status an HTTP action's endpoint answered, for an
 // execution_failed the kernel reports as such, and 0 for anything else.
 func (e *KernelError) UpstreamStatus() int {

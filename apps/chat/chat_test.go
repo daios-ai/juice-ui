@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,15 @@ import (
 )
 
 func testAddress(h string) string { return h + "@testnet" }
+
+// addr is a room's address at home: a thread of chat@testnet. An address
+// already whole is kept.
+func addr(id string) string {
+	if strings.Contains(id, "@") {
+		return id
+	}
+	return id + "@testnet"
+}
 
 // fakeKernel answers what chat asks of a kernel: the account's sign-in, the
 // action catalog and its mutations, task creation through a capability,
@@ -57,6 +67,25 @@ type fakeKernel struct {
 	failGrant bool // POST /v1/grants refuses
 	failRuns  bool // POST /v1/run cannot reach chat
 	taskReads int
+	// away is a chat on another kernel, chat@away: its runs are forwarded, and
+	// it relays neither a refusal's status nor its reason.
+	away       *svc.Service
+	awayDown   bool              // chat@away fails every run
+	requesters map[string]string // requester -> pending|approved|blocked
+	procs      []string          // the viewer's open processes
+	stale      map[string]bool   // actions whose cached contract moved: refused once, for a refresh
+}
+
+// home is this kernel's chat.
+const home = "chat@testnet"
+
+// chatFor is the chat service an action address names, and whether it is held
+// on another kernel.
+func (f *fakeKernel) chatFor(action string) (*svc.Service, bool) {
+	if strings.HasPrefix(action, "chat@away/") {
+		return f.away, true
+	}
+	return f.svc, false
 }
 
 type fakeAction struct {
@@ -83,7 +112,8 @@ func (a *fakeAction) wire() string {
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string][]string{}, me: `{"address":"ann@testnet","connectors":[]}`,
-		mes: map[string]string{}, expired: map[string]bool{}, keys: map[string]string{}, granted: map[string]map[string]bool{}}
+		mes: map[string]string{}, expired: map[string]bool{}, keys: map[string]string{}, granted: map[string]map[string]bool{},
+		requesters: map[string]string{}}
 	for i := range seed {
 		a := seed[i]
 		f.acts[a.ID] = &a
@@ -128,7 +158,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			for _, a := range f.acts {
-				if "chat@testnet/"+a.Name == ref {
+				if "chat@testnet/"+a.Name == ref || "chat@away/"+a.Name == ref {
 					_, _ = w.Write([]byte("[" + a.wire() + "]"))
 					return
 				}
@@ -217,7 +247,12 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.seq++
 		in["id"] = "task" + strconv.Itoa(f.seq)
 		in["status"] = "waiting"
-		in["owner"], _, _ = strings.Cut(r.Header.Get(client.CapabilityHeader), "#") // the capability names the caller here
+		var by string // the capability names the caller and the chat creating the task
+		in["owner"], by, _ = strings.Cut(r.Header.Get(client.CapabilityHeader), "#")
+		in["requester"] = home
+		if strings.HasPrefix(by, "chat@") {
+			in["requester"] = by
+		}
 		f.tasks = append(f.tasks, in)
 		b, _ := json.Marshal(in)
 		w.WriteHeader(201)
@@ -256,8 +291,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Unlock()
 		b, _ := json.Marshal(args)
 		req := httptest.NewRequest(http.MethodPost, "/"+onward.(string), strings.NewReader(string(b)))
-		req.Header.Set("Authorization", "Bearer "+f.svc.Secret)
-		f.svc.ServeHTTP(httptest.NewRecorder(), req)
+		s, _ := f.chatFor(onward.(string))
+		req.Header.Set("Authorization", "Bearer "+s.Secret)
+		s.ServeHTTP(httptest.NewRecorder(), req)
 		_, _ = w.Write([]byte(`{"task_id":"` + r.PathValue("id") + `"}`))
 	})
 	mux.HandleFunc("GET /v1/grants/plan", func(w http.ResponseWriter, r *http.Request) {
@@ -297,10 +333,27 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			_, _ = w.Write([]byte(`{"code":"grant_required","error":"grant required","meta":{"action":"` + in.Action + `"}}`))
 			return
 		}
+		if f.stale[in.Action] {
+			delete(f.stale, in.Action)
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"code":"execution_failed","error":"the provider changed this action","meta":{"charge":"0","retry":"refresh"}}`))
+			return
+		}
 		f.runs = append(f.runs, string(b))
-		key := f.keys[tok]
+		key := f.keys[tok+" "+serviceOf(in.Action)]
 		failing := f.failRuns
+		chat, away := f.chatFor(in.Action)
+		awayDown := f.awayDown
 		f.mu.Unlock()
+		remoteFailed := func() {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"code":"execution_failed","error":"remote call failed","meta":{"charge":"0","tx_id":"tx"}}`))
+		}
+		if away && awayDown {
+			remoteFailed()
+			return
+		}
 		if failing {
 			http.Error(w, `{"code":"execution_failed","error":"upstream unreachable","meta":{"charge":"0","tx_id":"tx"}}`, http.StatusBadGateway)
 			return
@@ -313,15 +366,19 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			http.Error(w, `{"code":"execution_failed","error":"upstream returned status 409","meta":{"charge":"0","tx_id":"tx"}}`, http.StatusInternalServerError)
 			return
 		}
-		member, _ := f.svc.Store.Member(key)
+		member, _ := chat.Store.Member(key)
 		req := httptest.NewRequest(http.MethodPost, "/"+in.Action, strings.NewReader(string(in.Args)))
 		req.Header.Set(client.CallbackHeader, f.srv.URL)
-		req.Header.Set(client.CapabilityHeader, member+"#trace")
+		req.Header.Set(client.CapabilityHeader, member+"#"+serviceOf(in.Action))
 		if needs {
 			req.Header.Set(svc.CallerKey, key)
 		}
 		rec := httptest.NewRecorder()
-		f.svc.ServeHTTP(rec, req)
+		chat.ServeHTTP(rec, req)
+		if rec.Code/100 != 2 && away {
+			remoteFailed()
+			return
+		}
 		if rec.Code/100 != 2 {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"code":"execution_failed","error":"upstream returned status ` + strconv.Itoa(rec.Code) + `","meta":{"charge":"0","tx_id":"tx"}}`))
@@ -344,7 +401,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			return
 		}
 		f.grants = append(f.grants, tok+"|"+string(b))
-		f.keys[tok] = in.Token
+		f.keys[tok+" "+serviceOf(in.Selector)] = in.Token
 		if f.granted[tok] == nil {
 			f.granted[tok] = map[string]bool{}
 		}
@@ -358,8 +415,35 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	mux.HandleFunc("POST /v1/me/requesters/{address}/{verb}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.decided = append(f.decided, r.PathValue("address")+" "+r.PathValue("verb"))
+		if r.PathValue("verb") == "approve" {
+			f.requesters[r.PathValue("address")] = "approved"
+		}
 		f.mu.Unlock()
-		_, _ = w.Write([]byte(`{"requester":"chat@testnet","status":"approved"}`))
+		_, _ = w.Write([]byte(`{"requester":"` + r.PathValue("address") + `","status":"approved"}`))
+	})
+	mux.HandleFunc("GET /v1/me/requesters", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		out := []client.Requester{}
+		if r.URL.Query().Get("offset") == "" {
+			for q, st := range f.requesters {
+				out = append(out, client.Requester{Requester: q, Status: st})
+			}
+		}
+		b, _ := json.Marshal(out)
+		_, _ = w.Write(b)
+	})
+	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		out := []client.Process{}
+		if r.URL.Query().Get("offset") == "" {
+			for _, id := range f.procs {
+				out = append(out, client.Process{ID: id, Status: "open"})
+			}
+		}
+		b, _ := json.Marshal(out)
+		_, _ = w.Write(b)
 	})
 	f.srv = httptest.NewServer(mux)
 	return f
@@ -367,15 +451,25 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 
 func (f *fakeKernel) close() { f.srv.Close() }
 
-// delegated is every action a member runs with its key, by address.
+// delegated is every action a member runs with its key, by address: home's,
+// and chat@away's when there is one.
 func (f *fakeKernel) delegated() []string {
 	var out []string
 	for _, a := range f.acts {
 		if a.Scheme == "delegated_bearer" {
 			out = append(out, "chat@testnet/"+a.Name)
+			if f.away != nil {
+				out = append(out, "chat@away/"+a.Name)
+			}
 		}
 	}
 	return out
+}
+
+// serviceOf is the chat an action address or selector names.
+func serviceOf(ref string) string {
+	service, _, _ := strings.Cut(ref, "/")
+	return service
 }
 
 // ran is the arguments of every dispatched run of one of chat's actions.
@@ -746,7 +840,7 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 		t.Errorf("the first visit starts the room: %v", got)
 	}
 	rooms, _ := f.svc.Store.Rooms("ann@testnet")
-	if len(rooms) != 1 || rooms[0].Name != "assistant" || strings.Join(rooms[0].Members, ",") != "ann@testnet,assistant@testnet" || to != "/chat/room/"+rooms[0].ID {
+	if len(rooms) != 1 || rooms[0].Name != "assistant" || strings.Join(rooms[0].Members, ",") != "ann@testnet,assistant@testnet" || to != "/chat/room/"+addr(rooms[0].ID) {
 		t.Fatalf("rooms = %+v", rooms)
 	}
 	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 || len(f.ran(roomCreateName)) != 1 {
@@ -809,9 +903,9 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 	shown := "0"
 	send := func(raw string, htmx bool) *httptest.ResponseRecorder {
 		form := url.Values{"raw_args": {raw}, "after": {shown}}
-		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+r.ID+"/message", strings.NewReader(form.Encode()))
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(r.ID)+"/message", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetPathValue("id", r.ID)
+		req.SetPathValue("id", addr(r.ID))
 		if htmx {
 			req.Header.Set("HX-Request", "true")
 		}
@@ -842,7 +936,7 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 			t.Errorf("%s must be refused beside the composer: %d %s", refused, rec.Code, rec.Body)
 		}
 	}
-	if rec := send(`{"message":"bye"}`, false); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+r.ID {
+	if rec := send(`{"message":"bye"}`, false); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+addr(r.ID) {
 		t.Fatalf("no-JS: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 	args := f.ran(postName)
@@ -872,8 +966,8 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 		}
 	}
 	page := func(id string) string {
-		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id, nil)
-		req.SetPathValue("id", id)
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(id), nil)
+		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
 	pair, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
@@ -884,7 +978,7 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 	for _, want := range []string{`<form class="composer"`, `data-composer`, `<div class="composer-bar">`, `name="has_fields" value="1"`,
 		`name="t_/message" value="string"`, `name="f_/message"`, `<label class="sr-only" for="f_/message">message</label>`,
 		`data-launcher`, `#slash`, `class="btn-send" data-send aria-label="Send"`, `#arrow-up`, `id="balance"`, `name="watch" value="balance::0"`,
-		`id="launcher-data"`, `"room":"` + pair.ID + `"`, `"members":["bob@testnet"]`,
+		`id="launcher-data"`, `"room":"` + addr(pair.ID) + `"`, `"members":["bob@testnet"]`,
 		`class="view" data-json`, `<aside class="panel" id="panel"`, `id="chat-working"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("room page lacks %s", want)
@@ -905,6 +999,9 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 
 // tick is one heartbeat of a watch in ann's session, in a visible tab.
 func tick(c *Chat, sm *scs.SessionManager, key string, st watchState) (out template.HTML, err error) {
+	if key != railKey {
+		key = addr(key)
+	}
 	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.watch(r, key, st.String()) }, httptest.NewRequest(http.MethodGet, "/tick", nil))
 	return out, err
 }
@@ -918,8 +1015,8 @@ func open(t *testing.T, c *Chat, sm *scs.SessionManager, id string) watchState {
 		view = data.(roomView)
 	}
 	defer func() { c.deps.RenderPage = render }()
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id, nil)
-	req.SetPathValue("id", id)
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(id), nil)
+	req.SetPathValue("id", addr(id))
 	as(c, sm, c.getRoom, req)
 	return view.Watch.State
 }
@@ -940,6 +1037,7 @@ func TestTheHeartbeatRunsOnlyOnAChange(t *testing.T) {
 		}
 		return template.HTML(name), nil
 	}
+	f.requesters[home] = "approved" // ann joined chat, so the kernel shows her its deliveries
 	room, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
 	bob := f.joined(t, "bob@testnet")
 	f.dispatch("/msg/post", bob, map[string]any{"thread_id": room.ID, "message": "ann@testnet hello"})
@@ -1013,7 +1111,7 @@ func TestAHiddenTabSettlesOnceVisible(t *testing.T) {
 	}
 	hidden := httptest.NewRequest(http.MethodGet, "/tick", nil)
 	hidden.Header.Set("X-Visible", "0")
-	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { _, _ = c.watch(r, room.ID, st.String()) }, hidden)
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { _, _ = c.watch(r, addr(room.ID), st.String()) }, hidden)
 	if len(f.completes) != 0 || state.After != 1 {
 		t.Fatalf("hidden: %v %+v", f.completes, state)
 	}
@@ -1123,8 +1221,8 @@ func TestTheRailCostsNoRun(t *testing.T) {
 	if got := rail(); strings.Contains(got, "cafe") || len(f.grants) != 0 {
 		t.Fatalf("a session not joined shows no rooms and joins nobody: %s %v", got, f.grants)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+mine.ID, nil)
-	req.SetPathValue("id", mine.ID)
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(mine.ID), nil)
+	req.SetPathValue("id", addr(mine.ID))
 	as(c, sm, c.getRoom, req)
 	lists := len(f.ran(roomListName))
 	got := rail()
@@ -1147,7 +1245,7 @@ func TestTheRailCostsNoRun(t *testing.T) {
 		b, _ := c.deps.Sessions.AppCache(r.Context(), c.Slug())
 		_ = json.Unmarshal([]byte(b), &cache)
 	}, httptest.NewRequest(http.MethodGet, "/", nil))
-	quiet := watchState{Signal: cache.Signal, Rail: railDigest(cache.Rooms)}
+	quiet := watchState{Signal: cache.Signal, Rail: railDigest(cache.Rooms, cache.Down)}
 	if h, _ := tick(c, sm, railKey, quiet); h != "" || len(f.ran(roomListName)) != lists+1 {
 		t.Errorf("no change runs nothing: %s", h)
 	}
@@ -1207,9 +1305,9 @@ func TestRoomRoutes(t *testing.T) {
 	}
 	id := rooms[0].ID
 	do := func(h http.HandlerFunc, path, form string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+id+path, strings.NewReader(form))
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(id)+path, strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetPathValue("id", id)
+		req.SetPathValue("id", addr(id))
 		return as(c, sm, h, req)
 	}
 	if rec := do(c.postAddMember, "/add-member", "member=bare"); !strings.Contains(rec.Header().Get("X-Flash"), "address") {
@@ -1297,13 +1395,13 @@ func TestRail(t *testing.T) {
 	cafe, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
 	f.svc.Store.Post(cafe.ID, "ann@testnet", raw("y"))
 	f.svc.Store.MarkRead("ann@testnet", cafe.ID, 1)
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+cafe.ID+"?form=new", nil)
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(cafe.ID)+"?form=new", nil)
 	h, err := as2(c, sm, req, c.Rail)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(h)
-	for _, want := range []string{`<a href="/chat/room/` + cafe.ID + `" aria-current="page">cafe</a>`, `<a href="/chat/room/` + old.ID + `" class="unread">old</a>`,
+	for _, want := range []string{`<a href="/chat/room/` + addr(cafe.ID) + `" aria-current="page">cafe</a>`, `<a href="/chat/room/` + addr(old.ID) + `" class="unread">old</a>`,
 		`id="form-new" class="modal-form" open`,
 		`data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>`} {
 		if !strings.Contains(got, want) {
@@ -1368,7 +1466,7 @@ func TestContextIsTheRoomAsAModelReadsIt(t *testing.T) {
 	var msgs []client.Message
 	var err error
 	as2(c, sm, httptest.NewRequest(http.MethodGet, "/", nil), func(rq *http.Request) (template.HTML, error) {
-		msgs, err = c.Context(rq, r.ID)
+		msgs, err = c.Context(rq, addr(r.ID))
 		return "", err
 	})
 	if err != nil || len(msgs) != 2 || msgs[0].Role != "user" || msgs[0].Content != "find suppliers" ||
@@ -1450,7 +1548,7 @@ func TestARunJoinsWhenItMust(t *testing.T) {
 	c, sm := testChat(t, f)
 	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
 	read := func() (out roomRead, err error) {
-		as(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.readRoom(r, room.ID, latest, false) }, httptest.NewRequest(http.MethodGet, "/", nil))
+		as(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.readRoom(r, home, room.ID, latest, false) }, httptest.NewRequest(http.MethodGet, "/", nil))
 		return out, err
 	}
 	if out, err := read(); err != nil || out.Room.ID != room.ID || len(f.grants) != 1 {
@@ -1459,7 +1557,7 @@ func TestARunJoinsWhenItMust(t *testing.T) {
 	if _, err := read(); err != nil || len(f.grants) != 1 {
 		t.Errorf("joined, it joins nobody: %v %v", err, f.grants)
 	}
-	f.keys["t"] = "UNKNOWN"
+	f.keys["t "+home] = "UNKNOWN"
 	if _, err := read(); err != nil || len(f.grants) != 2 {
 		t.Errorf("an unknown key joins again: %v %v", err, f.grants)
 	}
@@ -1472,7 +1570,7 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 		"400": "not valid", "401": "not joined", "403": "may not", "404": "no longer exists", "409": "already pending",
 	} {
 		err := &client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream returned status " + status}
-		if got := refusal(err); !strings.Contains(got, want) {
+		if got := refusal(err, home); !strings.Contains(got, want) {
 			t.Errorf("%s = %q", status, got)
 		}
 	}
@@ -1482,14 +1580,17 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 		&client.KernelError{Kind: client.KindUnauthorized},
 		errors.New("transport"),
 	} {
-		if got := refusal(err); got != "" {
+		if got := refusal(err, home); got != "" {
 			t.Errorf("%v must be no refusal: %q", err, got)
 		}
 	}
-	if got := refusal(&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream request failed"}); !strings.Contains(got, "not answering") {
+	if got := refusal(&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream request failed"}, home); !strings.Contains(got, "not answering") {
 		t.Errorf("chat down: %q", got)
 	}
-	if got := refusal(&client.KernelError{Kind: client.KindInvalidInput, KernelMessage: "message: required field missing"}); got != "message: required field missing" {
+	if got := refusal(&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "remote call failed"}, "chat@away"); got != "chat@away refused or failed; a chat on another kernel gives no reason." {
+		t.Errorf("a chat elsewhere relays no reason: %q", got)
+	}
+	if got := refusal(&client.KernelError{Kind: client.KindInvalidInput, KernelMessage: "message: required field missing"}, home); got != "message: required field missing" {
 		t.Errorf("the kernel's reason for input: %q", got)
 	}
 
@@ -1504,9 +1605,9 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 	}
 	other, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
 	do := func(h http.HandlerFunc, id, form string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+id, strings.NewReader(form))
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(id), strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetPathValue("id", id)
+		req.SetPathValue("id", addr(id))
 		return as(c, sm, h, req)
 	}
 	if rec := do(c.postRename, other.ID, "name=mine"); !strings.Contains(rec.Header().Get("X-Flash"), "may not") {
@@ -1519,15 +1620,15 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 		t.Error("a room gone is the not-found page")
 	}
 	notFound = false
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+"no-such-1", nil)
-	req.SetPathValue("id", "no-such-1")
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr("no-such-1"), nil)
+	req.SetPathValue("id", addr("no-such-1"))
 	if as(c, sm, c.getRoom, req); !notFound {
 		t.Error("a room that is not there is the not-found page")
 	}
 	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "private", nil)
 	notFound = false
-	req = httptest.NewRequest(http.MethodGet, "/chat/room/"+theirs.ID, nil)
-	req.SetPathValue("id", theirs.ID)
+	req = httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(theirs.ID), nil)
+	req.SetPathValue("id", addr(theirs.ID))
 	if as(c, sm, c.getRoom, req); !notFound {
 		t.Error("a room the viewer is not in is the not-found page")
 	}
@@ -1550,22 +1651,22 @@ func TestRenameIsTheCreators(t *testing.T) {
 	}
 	page := func(path string, id string) string {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.SetPathValue("id", id)
+		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
 	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
-	got := page("/chat/room/"+mine.ID, mine.ID)
-	if !strings.Contains(got, `<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`) || strings.Contains(got, `action="/chat/room/`+mine.ID+`/rename"`) {
+	got := page("/chat/room/"+addr(mine.ID), mine.ID)
+	if !strings.Contains(got, `<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`) || strings.Contains(got, `action="/chat/room/`+addr(mine.ID)+`/rename"`) {
 		t.Error("a room page holds the dialog closed and empty")
 	}
-	got = page("/chat/room/"+mine.ID+"?form=rename", mine.ID)
-	for _, want := range []string{`hx-swap-oob="true" open>`, `action="/chat/room/` + mine.ID + `/rename"`, `name="name" value="ca&lt;fe" required`} {
+	got = page("/chat/room/"+addr(mine.ID)+"?form=rename", mine.ID)
+	for _, want := range []string{`hx-swap-oob="true" open>`, `action="/chat/room/` + addr(mine.ID) + `/rename"`, `name="name" value="ca&lt;fe" required`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("?form=rename opens the dialog without script: lacks %s", want)
 		}
 	}
 	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
-	got = page("/chat/room/"+theirs.ID+"?form=rename", theirs.ID)
+	got = page("/chat/room/"+addr(theirs.ID)+"?form=rename", theirs.ID)
 	if strings.Contains(got, `hx-swap-oob="true" open>`) {
 		t.Error("a member is offered no rename")
 	}
@@ -1587,8 +1688,8 @@ func TestRoomHeader(t *testing.T) {
 		}
 	}
 	page := func(id, query string) string {
-		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id+query, nil)
-		req.SetPathValue("id", id)
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(id)+query, nil)
+		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
 	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
@@ -1626,16 +1727,16 @@ func rigCommands(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 
 // command sends a room command as htmx does from a page, with its chat watch.
 func command(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, id, form string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+id+"/x", strings.NewReader(form))
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(id)+"/x", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
-	req.SetPathValue("id", id)
+	req.SetPathValue("id", addr(id))
 	return as(c, sm, h, req)
 }
 
 func railWatch(st watchState) string { return "slow=" + url.QueryEscape("chat:rail:"+st.String()) }
 func roomWatch(id string, st watchState) string {
-	return "watch=" + url.QueryEscape("chat:"+id+":"+st.String())
+	return "watch=" + url.QueryEscape("chat:"+addr(id)+":"+st.String())
 }
 
 // A room's menu offers its creator rename and delete, any other member leave,
@@ -1651,16 +1752,16 @@ func TestRailMenus(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(h)
-	for _, want := range []string{`id="menu-room-` + mine.ID + `"`, `data-menu="menu-room-` + mine.ID + `"`, `hx-get="/chat/room/` + mine.ID + `/rename"`,
-		`hx-post="/chat/room/` + mine.ID + `/delete"`, `data-confirm="Delete mi&lt;ne for everyone?"`,
-		`id="menu-room-` + theirs.ID + `"`, `hx-post="/chat/room/` + theirs.ID + `/leave"`, `data-confirm="Leave theirs?"`, `Leave…`,
-		`<button class="btn-icon inline" data-menu="menu-room-` + mine.ID + `"`, `icons.svg#ellipsis`,
+	for _, want := range []string{`id="menu-room-` + addr(mine.ID) + `"`, `data-menu="menu-room-` + addr(mine.ID) + `"`, `hx-get="/chat/room/` + addr(mine.ID) + `/rename"`,
+		`hx-post="/chat/room/` + addr(mine.ID) + `/delete"`, `data-confirm="Delete mi&lt;ne for everyone?"`,
+		`id="menu-room-` + addr(theirs.ID) + `"`, `hx-post="/chat/room/` + addr(theirs.ID) + `/leave"`, `data-confirm="Leave theirs?"`, `Leave…`,
+		`<button class="btn-icon inline" data-menu="menu-room-` + addr(mine.ID) + `"`, `icons.svg#ellipsis`,
 		`<dialog id="form-rename"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the rail lacks %s", want)
 		}
 	}
-	for _, not := range []string{`/chat/room/` + mine.ID + `/leave`, `/chat/room/` + theirs.ID + `/rename`, `/chat/room/` + theirs.ID + `/delete`} {
+	for _, not := range []string{`/chat/room/` + addr(mine.ID) + `/leave`, `/chat/room/` + addr(theirs.ID) + `/rename`, `/chat/room/` + addr(theirs.ID) + `/delete`} {
 		if strings.Contains(got, not) {
 			t.Errorf("the rail offers %s", not)
 		}
@@ -1670,14 +1771,14 @@ func TestRailMenus(t *testing.T) {
 	if strings.Count(got, ">Members…</a>") != 2 || strings.Contains(got, `data-modal="form-members"`) {
 		t.Errorf("no room is in view, so every Members… goes to its room: %s", got)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+mine.ID, nil)
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(mine.ID), nil)
 	h, err = as2(c, sm, req, c.Rail)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got = string(h)
-	if !strings.Contains(got, `href="/chat/room/`+mine.ID+`?form=members" data-modal="form-members">Members…</a>`) ||
-		!strings.Contains(got, `href="/chat/room/`+theirs.ID+`?form=members">Members…</a>`) {
+	if !strings.Contains(got, `href="/chat/room/`+addr(mine.ID)+`?form=members" data-modal="form-members">Members…</a>`) ||
+		!strings.Contains(got, `href="/chat/room/`+addr(theirs.ID)+`?form=members">Members…</a>`) {
 		t.Errorf("only the room in view opens the members in place: %s", got)
 	}
 }
@@ -1694,12 +1795,12 @@ func TestGetRename(t *testing.T) {
 	}
 	runs := len(f.runs)
 	get := func(id string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id+"/rename", nil)
-		req.SetPathValue("id", id)
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(id)+"/rename", nil)
+		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRename, req)
 	}
 	rec := get(mine.ID)
-	for _, want := range []string{`hx-swap-oob="true" open>`, `value="cafe"`, `hx-post="/chat/room/` + mine.ID + `/rename"`, "autofocus"} {
+	for _, want := range []string{`hx-swap-oob="true" open>`, `value="cafe"`, `hx-post="/chat/room/` + addr(mine.ID) + `/rename"`, "autofocus"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("the dialog lacks %s: %s", want, rec.Body)
 		}
@@ -1861,8 +1962,8 @@ func TestRoomPageIDsAreUnique(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+room.ID, nil)
-	req.SetPathValue("id", room.ID)
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(room.ID), nil)
+	req.SetPathValue("id", addr(room.ID))
 	got := as(c, sm, c.getRoom, req).Body.String()
 	seen := map[string]bool{}
 	for _, m := range regexp.MustCompile(`\sid="([^"]+)"`).FindAllStringSubmatch(got, -1) {
@@ -1871,7 +1972,7 @@ func TestRoomPageIDsAreUnique(t *testing.T) {
 		}
 		seen[m[1]] = true
 	}
-	for _, want := range []string{"chat-crumb", "form-rename", "form-members", "menu-room-" + room.ID} {
+	for _, want := range []string{"chat-crumb", "form-rename", "form-members", "menu-room-" + addr(room.ID)} {
 		if !seen[want] {
 			t.Errorf("no id %s: %s", want, got)
 		}
@@ -1912,7 +2013,7 @@ func TestMembersInPlace(t *testing.T) {
 	if !strings.Contains(got, " open>") || !strings.Contains(got, "You may not do that") {
 		t.Errorf("a refused removal: %s", got)
 	}
-	to := "/chat/room/" + mine.ID + "?form=members"
+	to := "/chat/room/" + addr(mine.ID) + "?form=members"
 	if rec := command(c, sm, c.postAddMember, mine.ID, "member=dave%40testnet"); rec.Header().Get("HX-Redirect") != to {
 		t.Errorf("an addition: %v", rec.Header())
 	}
@@ -1966,7 +2067,7 @@ func TestUnexplainedFailureIsSaid(t *testing.T) {
 	defer f.close()
 	c, sm := rigCommands(t, f)
 	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
-	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+room.ID+"/delete", nil)
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(room.ID)+"/delete", nil)
 	req.Header.Set("HX-Request", "true")
 	rec := as(c, sm, func(w http.ResponseWriter, r *http.Request) {
 		c.then(w, r, &client.KernelError{Kind: client.KindInsufficientFunds}, "/chat")
@@ -1987,9 +2088,9 @@ func TestRenameRouteIsMounted(t *testing.T) {
 	mux := http.NewServeMux()
 	c.Mount(mux, d)
 	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
-	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+room.ID+"/rename", strings.NewReader("name=tea"))
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(room.ID)+"/rename", strings.NewReader("name=tea"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if rec := inSession(c, sm, mux.ServeHTTP, req); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+room.ID {
+	if rec := inSession(c, sm, mux.ServeHTTP, req); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+addr(room.ID) {
 		t.Fatalf("rename: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 	rec := httptest.NewRecorder()
@@ -2022,4 +2123,257 @@ func TestTheUIReachesChatOnlyThroughTheKernel(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// withAway gives the fake kernel a chat on another kernel, chat@away, with a
+// store of its own.
+func withAway(t *testing.T, f *fakeKernel) *svc.Service {
+	t.Helper()
+	store, err := svc.Open("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	f.away = &svc.Service{Store: store, Secret: "S2", Kernel: f.svc.Kernel}
+	return f.away
+}
+
+// ranAt is the arguments of every run of an action of the chat at service.
+func (f *fakeKernel) ranAt(service, name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, run := range f.runs {
+		var in struct {
+			Action string          `json:"action"`
+			Args   json.RawMessage `json:"args"`
+		}
+		_ = json.Unmarshal([]byte(run), &in)
+		if in.Action == service+"/"+name {
+			out = append(out, string(in.Args))
+		}
+	}
+	return out
+}
+
+// The rail holds the rooms of every chat the viewer approved, newest activity
+// first, a room elsewhere named with its kernel; approving a chat elsewhere is
+// the consent to join it, which the first read does by the path home takes. A
+// chat that cannot be read is named under the rooms, the others still shown,
+// and the watch retries it; removing its approval removes its rooms.
+func TestTheRailHoldsEveryChat(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	f.requesters[home] = "approved"
+	cafe, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	f.svc.Store.Post(cafe.ID, "ann@testnet", raw("here"))
+	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	away.Store.Post(far.ID, "bob@away", raw("there"))
+	f.requesters["chat@away"] = "approved" // ann approved chat@away in her inbox
+
+	h, err := tick(c, sm, railKey, watchState{Signal: "old"})
+	got := string(h)
+	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@away" class="unread">far <span class="muted">· away</span></a>`) ||
+		!strings.Contains(got, `href="/chat/room/`+cafe.ID+`@testnet"`) || !strings.Contains(got, `>cafe</a>`) || strings.Index(got, ">far ") > strings.Index(got, ">cafe<") {
+		t.Fatalf("both chats' rooms, newest first: %s %v", got, err)
+	}
+	if reg := f.ranAt("chat@away", registerName); len(reg) != 1 || reg[0] != `{"handle":"ann@testnet"}` {
+		t.Errorf("ann is joined to chat@away by the path home takes: %v", reg)
+	}
+	if !slices.ContainsFunc(f.grants, func(g string) bool { return strings.Contains(g, `"selector":"chat@away"`) }) {
+		t.Errorf("the key is connected at chat@away's root: %v", f.grants)
+	}
+
+	f.awayDown = true
+	var st watchState
+	c.deps.Fragment = func(name string, data any) (template.HTML, error) {
+		if v, ok := data.(watchView); ok {
+			st = v.State
+		}
+		return rnd.HTML(name, data)
+	}
+	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	got = string(h)
+	if !strings.Contains(got, `>cafe</a>`) || strings.Contains(got, ">far ") ||
+		!strings.Contains(got, `<div class="rail-row" title="chat@away refused or failed; a chat on another kernel gives no reason."><span class="rail-down">`) ||
+		!strings.Contains(got, `#alert"/></svg> chat@away<span class="sr-only">`) || st.Fails != 1 {
+		t.Fatalf("a chat down is named and retried; the others stay: %s %+v", got, st)
+	}
+
+	f.awayDown = false
+	delete(f.requesters, "chat@away") // ann removed the contact
+	var signals []string
+	for range 2 {
+		inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+			p, _ := c.pulse(r)
+			signals = append(signals, c.signal("ann@testnet", p))
+		}, httptest.NewRequest(http.MethodGet, "/tick", nil))
+		f.requesters["chat@away"] = "approved"
+	}
+	if signals[0] == signals[1] {
+		t.Error("approving or removing a chat moves the signal")
+	}
+	delete(f.requesters, "chat@away")
+	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	if got = string(h); strings.Contains(got, "away") || !strings.Contains(got, ">cafe</a>") {
+		t.Errorf("a chat removed leaves the rail: %s", got)
+	}
+}
+
+// A room elsewhere takes every path a room at home takes, addressed to its
+// chat: the page, the post with the room from its address, the heartbeat. A
+// post that did not reach a member says so beside the composer. A bare room id
+// names no room.
+func TestARoomElsewhereTakesTheSamePath(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters["chat@away"] = "approved"
+	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet", "remy@nowhere"})
+	var view roomView
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
+		view, _ = data.(roomView)
+		w.WriteHeader(status)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+far.ID+"@away", nil)
+	req.SetPathValue("id", far.ID+"@away")
+	if rec := as(c, sm, c.getRoom, req); rec.Code != 200 || view.Room.Addr() != far.ID+"@away" || view.Room.Elsewhere != "away" || view.Watch.Key != far.ID+"@away" {
+		t.Fatalf("the page: %d %+v", rec.Code, view)
+	}
+	if got := f.ranAt("chat@away", roomReadName); len(got) != 1 || !strings.Contains(got[0], `"thread_id":"`+far.ID+`"`) {
+		t.Errorf("the read goes to chat@away with the thread: %v", got)
+	}
+	var note string
+	c.deps.Fragment = func(name string, data any) (template.HTML, error) {
+		if v, ok := data.(entriesView); ok {
+			note = v.Error
+		}
+		return template.HTML(name), nil
+	}
+	form := url.Values{"raw_args": {`{"message":"hello far"}`}, "after": {"0"}}
+	req = httptest.NewRequest(http.MethodPost, "/chat/room/"+far.ID+"@away/message", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.SetPathValue("id", far.ID+"@away")
+	if rec := as(c, sm, c.postMessage, req); rec.Code != 200 || note != "Not delivered to remy@nowhere." {
+		t.Fatalf("the post and whom it missed: %d %q", rec.Code, note)
+	}
+	if got := f.ranAt("chat@away", postName); len(got) != 1 || got[0] != `{"message":"hello far","thread_id":"`+far.ID+`"}` {
+		t.Errorf("the post goes to chat@away: %v", got)
+	}
+	if len(f.ranAt(home, postName)) != 0 {
+		t.Error("nothing is posted at home")
+	}
+	req = httptest.NewRequest(http.MethodPost, "/chat/room/"+far.ID+"/message", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.SetPathValue("id", far.ID)
+	if rec := as(c, sm, c.postMessage, req); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a bare id names no room: %d", rec.Code)
+	}
+}
+
+// A failure of a chat elsewhere relays no status, so it cannot say the room is
+// gone: the page backs off and retries. The room is gone only when that chat's
+// own list answers without it.
+func TestAFailureElsewhereIsNotFinal(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters["chat@away"] = "approved"
+	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	st := open(t, c, sm, far.ID+"@away")
+	var next watchState
+	c.deps.Fragment = func(name string, data any) (template.HTML, error) {
+		if v, ok := data.(watchView); ok {
+			next = v.State
+		}
+		return template.HTML(name), nil
+	}
+	f.awayDown = true
+	if h, _ := tick(c, sm, far.ID+"@away", watchState{After: st.After, Signal: "stale"}); h != "_chat_watch" || next.Fails != 1 {
+		t.Fatalf("a chat elsewhere failing backs off: %s %+v", h, next)
+	}
+	f.awayDown = false
+	if err := away.Store.RemoveMember("bob@away", far.ID, "ann@testnet"); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := tick(c, sm, far.ID+"@away", watchState{After: st.After, Signal: "stale", Fails: 1}); h != "_chat_watch" || next.Fails != 0 || next.Signal == "stale" {
+		t.Errorf("its list confirms the room gone: %s %+v", h, next)
+	}
+}
+
+// A post in a room elsewhere holds the poster's process open here until its
+// deliveries there are answered; the process closing is what the page sees.
+func TestAnOpenProcessMovesTheSignal(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	var signals []string
+	for _, procs := range [][]string{{"p1"}, nil} {
+		f.procs = procs
+		inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+			p, _ := c.pulse(r)
+			signals = append(signals, c.signal("ann@testnet", p))
+		}, httptest.NewRequest(http.MethodGet, "/tick", nil))
+	}
+	if signals[0] == signals[1] {
+		t.Error("a process that closes moves the signal")
+	}
+}
+
+// A room's address is its thread at the kernel whose chat holds it; anything
+// else names no room.
+func TestRoomAddresses(t *testing.T) {
+	if s, th, ok := splitRoom("far-owl-1@away"); !ok || s != "chat@away" || th != "far-owl-1" || roomAddr(s, th) != "far-owl-1@away" {
+		t.Errorf("an address: %q %q %v", s, th, ok)
+	}
+	for _, bad := range []string{"far-owl-1", "@away", "far@", "a@b@c", "a@b/c"} {
+		if _, _, ok := splitRoom(bad); ok {
+			t.Errorf("%q names no room", bad)
+		}
+	}
+}
+
+// A chat whose contract moved since the kernel cached it is refused once, before
+// anything runs, and the next call re-resolves it: the post runs again and lands.
+// A post the kernel fails for any other reason says so beside the composer.
+func TestAMovedContractRunsOnceMore(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	send := func() *httptest.ResponseRecorder {
+		form := url.Values{"raw_args": {`{"message":"hello"}`}, "after": {"0"}}
+		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(room.ID)+"/message", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		req.SetPathValue("id", addr(room.ID))
+		return as(c, sm, c.postMessage, req)
+	}
+	f.stale = map[string]bool{home + "/" + postName: true}
+	if rec := send(); rec.Code != 200 || len(f.ran(postName)) != 1 {
+		t.Fatalf("a moved contract runs once more: %d %v", rec.Code, f.ran(postName))
+	}
+	f.failRuns = true
+	var line string
+	c.deps.RenderFragment = func(w http.ResponseWriter, status int, name string, data any) error {
+		if v, ok := data.(entriesView); ok {
+			line = v.Error
+		}
+		w.WriteHeader(status)
+		return nil
+	}
+	if rec := send(); rec.Code != http.StatusUnprocessableEntity || line == "" {
+		t.Errorf("a failure is said beside the composer, never as a page in the room: %d %q", rec.Code, line)
+	}
 }

@@ -542,7 +542,7 @@ func TestKernelContract(t *testing.T) {
 		return st
 	}()
 	get(a, "oauth complete", func() ([]string, error) {
-		acts, pending, err := a.c.CompleteGrant(ctx, bob, state, "code")
+		acts, pending, err := a.c.CompleteGrant(ctx, bob, a.addr("alice")+"/oauth", state, "code")
 		if err == nil && pending {
 			err = fmt.Errorf("the grant is still pending")
 		}
