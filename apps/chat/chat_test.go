@@ -54,6 +54,8 @@ type fakeKernel struct {
 	deletes   []string
 	tasks     []map[string]any // POST /v1/tasks bodies, served back by GET /v1/tasks
 	completes []string
+	cancels   []string
+	ungrants  []string
 	runs      []string
 	grants    []string // the bearer, "|", the body
 	decided   []string
@@ -78,6 +80,9 @@ type fakeKernel struct {
 
 // home is this kernel's chat.
 const home = "chat@testnet"
+
+// awayKey is chat@away's kernel by its key, before this kernel names it.
+const awayKey = "AWAYAWAYAWAYAWAYAWAYAWAYAWAYAWAYAWAYAWAYAWA"
 
 // chatFor is the chat service an action address names, and whether it is held
 // on another kernel.
@@ -134,9 +139,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		case f.expired[tok]:
 			http.Error(w, `{"error":"token expired"}`, http.StatusUnauthorized)
 		case f.mes[tok] != "":
-			_, _ = w.Write([]byte(f.mes[tok]))
+			_, _ = w.Write([]byte(withGrants(f.mes[tok], f.granted[tok])))
 		default:
-			_, _ = w.Write([]byte(f.me))
+			_, _ = w.Write([]byte(withGrants(f.me, f.granted[tok])))
 		}
 	})
 	mux.HandleFunc("POST /v1/auth/refresh", func(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +162,16 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		if ref := r.URL.Query().Get("ref"); ref != "" {
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			// chat@away by its key: resolving makes the kernel known and binds
+			// its name, under which the kernel names the requester from then on.
+			if ref == "chat@"+awayKey+"/index" {
+				if st, ok := f.requesters["chat@"+awayKey]; ok {
+					delete(f.requesters, "chat@"+awayKey)
+					f.requesters["chat@away"] = st
+				}
+				_, _ = w.Write([]byte(`[{"id":"","name":"index","action":"chat@away/index"}]`))
+				return
+			}
 			for _, a := range f.acts {
 				if "chat@testnet/"+a.Name == ref || "chat@away/"+a.Name == ref {
 					_, _ = w.Write([]byte("[" + a.wire() + "]"))
@@ -285,16 +300,52 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 				onward, args = t["action"], t["partial_args"]
 			}
 		}
-		if onward != "chat@testnet/validate" {
+		if onward != "chat@testnet/validate" && !strings.HasSuffix(onward.(string), "/accept") {
 			f.completes = append(f.completes, r.PathValue("id"))
 		}
 		f.mu.Unlock()
 		b, _ := json.Marshal(args)
 		req := httptest.NewRequest(http.MethodPost, "/"+onward.(string), strings.NewReader(string(b)))
-		s, _ := f.chatFor(onward.(string))
+		s, away := f.chatFor(onward.(string))
 		req.Header.Set("Authorization", "Bearer "+s.Secret)
-		s.ServeHTTP(httptest.NewRecorder(), req)
-		_, _ = w.Write([]byte(`{"task_id":"` + r.PathValue("id") + `"}`))
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		switch {
+		case rec.Code/100 != 2 && away:
+			http.Error(w, `{"code":"execution_failed","error":"remote call failed","meta":{"charge":"0"}}`, http.StatusInternalServerError)
+		case rec.Code/100 != 2:
+			http.Error(w, `{"code":"execution_failed","error":"upstream returned status `+strconv.Itoa(rec.Code)+`","meta":{"charge":"0"}}`, http.StatusInternalServerError)
+		default:
+			_, _ = w.Write([]byte(`{"task_id":"` + r.PathValue("id") + `"}`))
+		}
+	})
+	mux.HandleFunc("POST /v1/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, t := range f.tasks {
+			if t["id"] == r.PathValue("id") && t["status"] == "waiting" {
+				t["status"] = "cancelled"
+				f.cancels = append(f.cancels, r.PathValue("id"))
+			}
+		}
+		_, _ = w.Write([]byte(`{"id":"` + r.PathValue("id") + `","status":"cancelled"}`))
+	})
+	mux.HandleFunc("DELETE /v1/grants", func(w http.ResponseWriter, r *http.Request) {
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		sel := r.URL.Query().Get("selector")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.ungrants = append(f.ungrants, sel)
+		for a := range f.granted[tok] {
+			if a == sel || strings.HasPrefix(a, sel+"/") {
+				delete(f.granted[tok], a)
+			}
+		}
+		if f.awayDown && sel == "chat@away" {
+			http.Error(w, `{"code":"peer_unreachable","error":"peer unreachable"}`, http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /v1/grants/plan", func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -415,9 +466,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	mux.HandleFunc("POST /v1/me/requesters/{address}/{verb}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.decided = append(f.decided, r.PathValue("address")+" "+r.PathValue("verb"))
-		if r.PathValue("verb") == "approve" {
-			f.requesters[r.PathValue("address")] = "approved"
-		}
+		f.requesters[r.PathValue("address")] = map[string]string{"approve": "approved", "revoke": "pending", "block": "blocked"}[r.PathValue("verb")]
 		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"requester":"` + r.PathValue("address") + `","status":"approved"}`))
 	})
@@ -450,6 +499,52 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 }
 
 func (f *fakeKernel) close() { f.srv.Close() }
+
+// withGrants is a GET /v1/me body with its connectors those of the grants a
+// token holds, one per action, as the kernel lists them.
+func withGrants(body string, granted map[string]bool) string {
+	var me map[string]any
+	_ = json.Unmarshal([]byte(body), &me)
+	var grants []map[string]any
+	for a, ok := range granted {
+		if ok {
+			grants = append(grants, map[string]any{"action": a})
+		}
+	}
+	if len(grants) > 0 {
+		me["connectors"] = []map[string]any{{"directory": "chat", "actions": grants}}
+	}
+	b, _ := json.Marshal(me)
+	return string(b)
+}
+
+// seated is a room whose members all accepted their invitations.
+func seated(s *svc.Store, creator, name string, members []string) (svc.Room, error) {
+	r, err := s.CreateRoom(creator, name, members)
+	if err != nil {
+		return r, err
+	}
+	for _, m := range r.Invited {
+		if err := s.Join(r.ID, m); err != nil {
+			return r, err
+		}
+	}
+	r.Members, r.Invited = append(r.Members, r.Invited...), nil
+	return r, nil
+}
+
+// connect is ann's Connect on a chat elsewhere, from the rail.
+func connect(t *testing.T, c *Chat, sm *scs.SessionManager, service string) *httptest.ResponseRecorder {
+	t.Helper()
+	return chatVerb(c, sm, service, "connect")
+}
+
+func chatVerb(c *Chat, sm *scs.SessionManager, service, verb string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/chat/chats/"+service+"/"+verb, nil)
+	req.SetPathValue("chat", service)
+	req.SetPathValue("verb", verb)
+	return as(c, sm, c.postChat, req)
+}
 
 // delegated is every action a member runs with its key, by address: home's,
 // and chat@away's when there is one.
@@ -858,7 +953,7 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 		t.Errorf("a second landing joins nobody and opens the same room: %s %v %v", rec.Header().Get("Location"), f.grants, f.ran(roomCreateName))
 	}
 	// A room with a third member is not the conversation with the assistant.
-	if _, err := f.svc.Store.CreateRoom("ann@testnet", "three", []string{"assistant@testnet", "bob@testnet"}); err != nil {
+	if _, err := seated(f.svc.Store, "ann@testnet", "three", []string{"assistant@testnet", "bob@testnet"}); err != nil {
 		t.Fatal(err)
 	}
 	if rec := land(); rec.Header().Get("Location") != to {
@@ -910,7 +1005,7 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	r, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	r, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	shown := "0"
 	send := func(raw string, htmx bool) *httptest.ResponseRecorder {
 		form := url.Values{"raw_args": {raw}, "after": {shown}}
@@ -981,7 +1076,7 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
-	pair, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	pair, _ := seated(f.svc.Store, "ann@testnet", "cafe", []string{"bob@testnet"})
 	if _, _, err := f.svc.Store.Post(pair.ID, "ann@testnet", json.RawMessage(`"hello"`)); err != nil {
 		t.Fatal(err)
 	}
@@ -1002,7 +1097,7 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 			t.Errorf("the bar carries %s", gone)
 		}
 	}
-	trio, _ := f.svc.Store.CreateRoom("ann@testnet", "trio", []string{"bob@testnet", "cy@testnet"})
+	trio, _ := seated(f.svc.Store, "ann@testnet", "trio", []string{"bob@testnet", "cy@testnet"})
 	if !strings.Contains(page(trio.ID), `data-address aria-label="Address a member"`) {
 		t.Error("a room of three offers [@]")
 	}
@@ -1049,7 +1144,7 @@ func TestTheHeartbeatRunsOnlyOnAChange(t *testing.T) {
 		return template.HTML(name), nil
 	}
 	f.requesters[home] = "approved" // ann joined chat, so the kernel shows her its deliveries
-	room, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
+	room, _ := seated(f.svc.Store, "bob@testnet", "cafe", []string{"ann@testnet"})
 	bob := f.joined(t, "bob@testnet")
 	f.dispatch("/msg/post", bob, map[string]any{"thread_id": room.ID, "message": "ann@testnet hello"})
 	st := open(t, c, sm, room.ID)
@@ -1109,7 +1204,7 @@ func TestAHiddenTabSettlesOnceVisible(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	room, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
+	room, _ := seated(f.svc.Store, "bob@testnet", "cafe", []string{"ann@testnet"})
 	bob := f.joined(t, "bob@testnet")
 	st := open(t, c, sm, room.ID)
 	f.dispatch("/msg/post", bob, map[string]any{"thread_id": room.ID, "message": "ann@testnet hello"})
@@ -1141,7 +1236,7 @@ func TestAChangeMadeByAnotherTabIsNotMissed(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	room, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
+	room, _ := seated(f.svc.Store, "bob@testnet", "cafe", []string{"ann@testnet"})
 	bob := f.joined(t, "bob@testnet")
 	st := open(t, c, sm, room.ID)
 	f.dispatch("/msg/post", bob, map[string]any{"thread_id": room.ID, "message": "ann@testnet hello"})
@@ -1165,7 +1260,7 @@ func TestAFailedReadIsRetriedUntilShown(t *testing.T) {
 		}
 		return template.HTML(name), nil
 	}
-	room, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
+	room, _ := seated(f.svc.Store, "bob@testnet", "cafe", []string{"ann@testnet"})
 	bob := f.joined(t, "bob@testnet")
 	st := open(t, c, sm, room.ID)
 	f.dispatch("/msg/post", bob, map[string]any{"thread_id": room.ID, "message": "ann@testnet hello"})
@@ -1215,9 +1310,10 @@ func TestAGoneRoomIsNotReadAgain(t *testing.T) {
 	c, sm := testChat(t, f)
 	away := withAway(t, f)
 	f.requesters[home] = "approved"
-	f.requesters["chat@away"] = "approved"
-	cafe, _ := f.svc.Store.CreateRoom("bob@testnet", "cafe", []string{"ann@testnet"})
-	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, "chat@away")
+	cafe, _ := seated(f.svc.Store, "bob@testnet", "cafe", []string{"ann@testnet"})
+	far, _ := seated(away.Store, "bob@away", "far", []string{"ann@testnet"})
 	for _, room := range []struct {
 		chat         *svc.Service
 		service, bob string
@@ -1242,8 +1338,9 @@ func TestARemovedChatRunsNothing(t *testing.T) {
 	defer f.close()
 	c, sm := testChat(t, f)
 	away := withAway(t, f)
-	f.requesters["chat@away"] = "approved"
-	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, "chat@away")
+	far, _ := seated(away.Store, "bob@away", "far", []string{"ann@testnet"})
 	room := far.ID + "@away"
 	st := open(t, c, sm, room)
 	delete(f.requesters, "chat@away") // ann removed the contact
@@ -1300,7 +1397,7 @@ func TestTheRailCostsNoRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.deps.Fragment = rnd.HTML
-	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	mine, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	rail := func() string {
 		var h template.HTML
 		as(c, sm, func(w http.ResponseWriter, r *http.Request) { h, err = c.Rail(r) }, httptest.NewRequest(http.MethodGet, "/settings", nil))
@@ -1336,7 +1433,7 @@ func TestTheRailCostsNoRun(t *testing.T) {
 		b, _ := c.deps.Sessions.AppCache(r.Context(), c.Slug())
 		_ = json.Unmarshal([]byte(b), &cache)
 	}, httptest.NewRequest(http.MethodGet, "/", nil))
-	quiet := watchState{Signal: cache.Signal, Rail: railDigest(cache.Rooms, cache.Down)}
+	quiet := watchState{Signal: cache.Signal, Rail: railDigest(cache)}
 	if h, _ := tick(c, sm, railKey, quiet); h != "" || len(f.ran(roomListName)) != lists+1 {
 		t.Errorf("no change runs nothing: %s", h)
 	}
@@ -1391,8 +1488,8 @@ func TestRoomRoutes(t *testing.T) {
 		t.Fatalf("create: %d %s %s", rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
 	}
 	rooms, _ := f.svc.Store.Rooms("ann@testnet")
-	if len(rooms) != 1 || len(rooms[0].Members) != 4 {
-		t.Fatalf("rooms = %+v", rooms)
+	if len(rooms) != 1 || len(rooms[0].Members) != 1 || len(rooms[0].Invited) != 3 {
+		t.Fatalf("the others are invited: %+v", rooms)
 	}
 	id := rooms[0].ID
 	do := func(h http.HandlerFunc, path, form string) *httptest.ResponseRecorder {
@@ -1410,8 +1507,8 @@ func TestRoomRoutes(t *testing.T) {
 		t.Errorf("creator leaving: %s", rec.Header().Get("X-Flash"))
 	}
 	room, _, _ := f.svc.Store.Room("ann@testnet", id)
-	if strings.Join(room.Members, ",") != "ann@testnet,bob@testnet,dave@testnet,helper@testnet" {
-		t.Errorf("members = %v", room.Members)
+	if strings.Join(room.Members, ",") != "ann@testnet" || strings.Join(room.Invited, ",") != "bob@testnet,dave@testnet,helper@testnet" {
+		t.Errorf("members = %v, invited = %v", room.Members, room.Invited)
 	}
 	if rec := do(c.postRename, "/rename", "name=+tea+room+"); rec.Code != 303 || rec.Header().Get("X-Flash") != "" {
 		t.Errorf("rename: %d %s", rec.Code, rec.Header().Get("X-Flash"))
@@ -1481,9 +1578,9 @@ func TestRail(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.deps.Fragment = rnd.HTML
-	old, _ := f.svc.Store.CreateRoom("bob@testnet", "old", []string{"ann@testnet"})
+	old, _ := seated(f.svc.Store, "bob@testnet", "old", []string{"ann@testnet"})
 	f.svc.Store.Post(old.ID, "bob@testnet", raw("x"))
-	cafe, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	cafe, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	f.svc.Store.Post(cafe.ID, "ann@testnet", raw("y"))
 	f.svc.Store.MarkRead("ann@testnet", cafe.ID, 1)
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(cafe.ID)+"?form=new", nil)
@@ -1513,7 +1610,7 @@ func TestWorkingNamesWhoTheRoomWaitsOn(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, _ := testChat(t, f)
-	r, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet", "cy@testnet"})
+	r, _ := seated(f.svc.Store, "ann@testnet", "cafe", []string{"bob@testnet", "cy@testnet"})
 	bob, cy := f.joined(t, "bob@testnet"), f.joined(t, "cy@testnet")
 	_, _ = bob, cy
 	ann := f.joined(t, "ann@testnet")
@@ -1551,7 +1648,7 @@ func TestContextIsTheRoomAsAModelReadsIt(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	r, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	r, _ := seated(f.svc.Store, "ann@testnet", "cafe", []string{"bob@testnet"})
 	f.svc.Store.Post(r.ID, "ann@testnet", raw("find suppliers"))
 	f.svc.Store.Post(r.ID, "bob@testnet", json.RawMessage(`{"found":3}`))
 	var msgs []client.Message
@@ -1564,7 +1661,7 @@ func TestContextIsTheRoomAsAModelReadsIt(t *testing.T) {
 		msgs[1].Role != "assistant" || msgs[1].Content != `bob@testnet: {"found":3}` {
 		t.Fatalf("context = %+v %v", msgs, err)
 	}
-	other, _ := f.svc.Store.CreateRoom("bob@testnet", "private", nil)
+	other, _ := seated(f.svc.Store, "bob@testnet", "private", nil)
 	as2(c, sm, httptest.NewRequest(http.MethodGet, "/", nil), func(rq *http.Request) (template.HTML, error) {
 		_, err = c.Context(rq, other.ID)
 		return "", nil
@@ -1637,7 +1734,7 @@ func TestARunJoinsWhenItMust(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	room, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	read := func() (out roomRead, err error) {
 		as(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.readRoom(r, home, room.ID, latest, false) }, httptest.NewRequest(http.MethodGet, "/", nil))
 		return out, err
@@ -1675,6 +1772,9 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 			t.Errorf("%v must be no refusal: %q", err, got)
 		}
 	}
+	if got := refusal(&client.KernelError{Kind: client.KindPeerUnreachable}, "chat@away"); got != "chat@away is not answering. Try again shortly." {
+		t.Errorf("a kernel unreachable: %q", got)
+	}
 	if got := refusal(&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream request failed"}, home); !strings.Contains(got, "not answering") {
 		t.Errorf("chat down: %q", got)
 	}
@@ -1694,7 +1794,7 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 		notFound = notFound || (ok && ke.Kind == client.KindNotFound)
 		return err != nil
 	}
-	other, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	other, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	do := func(h http.HandlerFunc, id, form string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(id), strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1716,7 +1816,7 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 	if as(c, sm, c.getRoom, req); !notFound {
 		t.Error("a room that is not there is the not-found page")
 	}
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "private", nil)
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "private", nil)
 	notFound = false
 	req = httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(theirs.ID), nil)
 	req.SetPathValue("id", addr(theirs.ID))
@@ -1745,7 +1845,7 @@ func TestRenameIsTheCreators(t *testing.T) {
 		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
-	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
+	mine, _ := seated(f.svc.Store, "ann@testnet", "ca<fe", []string{"bob@testnet"})
 	got := page("/chat/room/"+addr(mine.ID), mine.ID)
 	if !strings.Contains(got, `<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`) || strings.Contains(got, `action="/chat/room/`+addr(mine.ID)+`/rename"`) {
 		t.Error("a room page holds the dialog closed and empty")
@@ -1756,7 +1856,7 @@ func TestRenameIsTheCreators(t *testing.T) {
 			t.Errorf("?form=rename opens the dialog without script: lacks %s", want)
 		}
 	}
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	got = page("/chat/room/"+addr(theirs.ID)+"?form=rename", theirs.ID)
 	if strings.Contains(got, `hx-swap-oob="true" open>`) {
 		t.Error("a member is offered no rename")
@@ -1783,7 +1883,7 @@ func TestRoomHeader(t *testing.T) {
 		req.SetPathValue("id", addr(id))
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
-	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "ca<fe", []string{"bob@testnet"})
+	mine, _ := seated(f.svc.Store, "ann@testnet", "ca<fe", []string{"bob@testnet"})
 	got := page(mine.ID, "")
 	if want := `<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="ca&lt;fe">ca&lt;fe</b></nav>`; !strings.Contains(got, want) {
 		t.Errorf("the crumb is not the name alone: %s", got)
@@ -1796,7 +1896,7 @@ func TestRoomHeader(t *testing.T) {
 	if !strings.Contains(page(mine.ID, "?form=members"), `<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true" open>`) {
 		t.Error("?form=members opens the dialog")
 	}
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	got = page(theirs.ID, "")
 	if !strings.Contains(got, ">bob@testnet<") || strings.Contains(got, `/remove-member"`) || strings.Contains(got, `/add-member"`) {
 		t.Error("a member sees the list and cannot change it")
@@ -1836,8 +1936,8 @@ func TestRailMenus(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "mi<ne", nil)
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	mine, _ := seated(f.svc.Store, "ann@testnet", "mi<ne", nil)
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	h, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail)
 	if err != nil {
 		t.Fatal(err)
@@ -1879,8 +1979,8 @@ func TestGetRename(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	mine, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail); err != nil {
 		t.Fatal(err)
 	}
@@ -1910,8 +2010,8 @@ func TestRenameInPlace(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
-	other, _ := f.svc.Store.CreateRoom("ann@testnet", "other", nil)
+	room, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
+	other, _ := seated(f.svc.Store, "ann@testnet", "other", nil)
 
 	lists, renames := len(f.ran(roomListName)), len(f.ran(roomRenameName))
 	got := command(c, sm, c.postRename, room.ID, "name=tea&"+railWatch(watchState{Rail: "old"})).Body.String()
@@ -1959,7 +2059,7 @@ func TestRenameRefusedInPlace(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	for form, reason := range map[string]string{"name=mi%3Cne": "You may not do that in this room.", "name=+": "A room needs a name."} {
 		rec := command(c, sm, c.postRename, theirs.ID, form+"&"+railWatch(watchState{}))
 		got := rec.Body.String()
@@ -1986,9 +2086,9 @@ func TestDropInPlace(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	keep, _ := f.svc.Store.CreateRoom("ann@testnet", "keep", nil)
+	keep, _ := seated(f.svc.Store, "ann@testnet", "keep", nil)
 	mk := func(creator, name string) string {
-		r, _ := f.svc.Store.CreateRoom(creator, name, []string{"ann@testnet"})
+		r, _ := seated(f.svc.Store, creator, name, []string{"ann@testnet"})
 		return r.ID
 	}
 	gone := func(h http.HandlerFunc, id, watch, name string) {
@@ -2042,8 +2142,8 @@ func TestRoomPageIDsAreUnique(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
-	f.svc.Store.CreateRoom("bob@testnet", "other", []string{"ann@testnet"})
+	room, _ := seated(f.svc.Store, "ann@testnet", "cafe", []string{"bob@testnet"})
+	seated(f.svc.Store, "bob@testnet", "other", []string{"ann@testnet"})
 	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
 		rail, err := c.Rail(r)
 		if err != nil {
@@ -2076,8 +2176,8 @@ func TestMembersInPlace(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	mine, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
-	theirs, _ := f.svc.Store.CreateRoom("bob@testnet", "theirs", []string{"ann@testnet"})
+	mine, _ := seated(f.svc.Store, "ann@testnet", "cafe", []string{"bob@testnet"})
+	theirs, _ := seated(f.svc.Store, "bob@testnet", "theirs", []string{"ann@testnet"})
 	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail); err != nil {
 		t.Fatal(err)
 	}
@@ -2157,7 +2257,7 @@ func TestUnexplainedFailureIsSaid(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := rigCommands(t, f)
-	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	room, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(room.ID)+"/delete", nil)
 	req.Header.Set("HX-Request", "true")
 	rec := as(c, sm, func(w http.ResponseWriter, r *http.Request) {
@@ -2178,7 +2278,7 @@ func TestRenameRouteIsMounted(t *testing.T) {
 	d.Watch = func(string, apps.Watcher) {}
 	mux := http.NewServeMux()
 	c.Mount(mux, d)
-	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	room, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(room.ID)+"/rename", strings.NewReader("name=tea"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if rec := inSession(c, sm, mux.ServeHTTP, req); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+addr(room.ID) {
@@ -2247,11 +2347,12 @@ func (f *fakeKernel) ranAt(service, name string) []string {
 	return out
 }
 
-// The rail holds the rooms of every chat the viewer approved, newest activity
-// first, a room elsewhere named with its kernel; approving a chat elsewhere is
-// the consent to join it, which the first read does by the path home takes. A
-// chat that cannot be read is named under the rooms, the others still shown,
-// and the watch retries it; removing its approval removes its rooms.
+// The rail holds the rooms of every chat the viewer joined, newest activity
+// first, a room elsewhere named with its kernel. A chat elsewhere that has
+// addressed the viewer asks to be connected and runs nothing until Connect,
+// which joins by the path home takes. A chat that cannot be read is a card
+// with its reason and its menu, the others still shown, and the watch retries
+// it. Disconnect returns a chat to asking and hides its rooms; Block removes it.
 func TestTheRailHoldsEveryChat(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -2263,23 +2364,34 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	}
 	c.deps.Fragment = rnd.HTML
 	f.requesters[home] = "approved"
-	cafe, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	cafe, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	f.svc.Store.Post(cafe.ID, "ann@testnet", raw("here"))
-	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	far, _ := seated(away.Store, "bob@away", "far", []string{"ann@testnet"})
 	away.Store.Post(far.ID, "bob@away", raw("there"))
-	f.requesters["chat@away"] = "approved" // ann approved chat@away in her inbox
+	f.requesters["chat@away"] = "pending" // chat@away addressed ann
 
-	h, err := tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
-	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@away" class="unread">far <span class="muted">· away</span></a>`) ||
-		!strings.Contains(got, `href="/chat/room/`+cafe.ID+`@testnet"`) || !strings.Contains(got, `>cafe</a>`) || strings.Index(got, ">far ") > strings.Index(got, ">cafe<") {
-		t.Fatalf("both chats' rooms, newest first: %s %v", got, err)
+	if !strings.Contains(got, `<b class="mono">chat@away</b>`) || !strings.Contains(got, `action="/chat/chats/chat@away/connect"`) ||
+		!strings.Contains(got, `action="/chat/chats/chat@away/block"`) || strings.Contains(got, ">far ") || len(f.ranAt("chat@away", roomListName)) != 0 {
+		t.Fatalf("a chat asking is a card, and runs nothing: %s", got)
+	}
+
+	if rec := connect(t, c, sm, "chat@away"); rec.Code != 303 {
+		t.Fatalf("connect: %d %s", rec.Code, rec.Header().Get("X-Flash"))
 	}
 	if reg := f.ranAt("chat@away", registerName); len(reg) != 1 || reg[0] != `{"handle":"ann@testnet"}` {
 		t.Errorf("ann is joined to chat@away by the path home takes: %v", reg)
 	}
 	if !slices.ContainsFunc(f.grants, func(g string) bool { return strings.Contains(g, `"selector":"chat@away"`) }) {
 		t.Errorf("the key is connected at chat@away's root: %v", f.grants)
+	}
+	h, err = tick(c, sm, railKey, watchState{Signal: "old"})
+	got = string(h)
+	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@away" class="unread">far <span class="muted">· away</span></a>`) ||
+		!strings.Contains(got, `href="/chat/room/`+cafe.ID+`@testnet"`) || !strings.Contains(got, `>cafe</a>`) || strings.Index(got, ">far ") > strings.Index(got, ">cafe<") ||
+		strings.Contains(got, "/connect") || !strings.Contains(got, `Disconnect away…`) {
+		t.Fatalf("both chats' rooms, newest first, the one elsewhere disconnected from its menu: %s %v", got, err)
 	}
 
 	f.awayDown = true
@@ -2293,28 +2405,37 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
 	got = string(h)
 	if !strings.Contains(got, `>cafe</a>`) || strings.Contains(got, ">far ") ||
-		!strings.Contains(got, `<div class="rail-row" title="chat@away refused or failed; a chat on another kernel gives no reason."><span class="rail-down">`) ||
-		!strings.Contains(got, `#alert"/></svg> chat@away<span class="sr-only">`) || st.Fails != 1 {
-		t.Fatalf("a chat down is named and retried; the others stay: %s %+v", got, st)
+		!strings.Contains(got, `#alert"/></svg> chat@away</span>`) || !strings.Contains(got, `<span class="muted">chat@away refused or failed; a chat on another kernel gives no reason.</span>`) ||
+		!strings.Contains(got, `Disconnect chat@away…`) || st.Fails != 1 {
+		t.Fatalf("a chat down is a card with its reason and its menu, and retried; the others stay: %s %+v", got, st)
 	}
 
+	// Disconnected while its kernel does not answer: gone here at once, and said.
+	if rec := chatVerb(c, sm, "chat@away", "disconnect"); !strings.Contains(rec.Header().Get("X-Flash"), "did not answer") {
+		t.Errorf("a disconnect unanswered is said: %s", rec.Header().Get("X-Flash"))
+	}
 	f.awayDown = false
-	delete(f.requesters, "chat@away") // ann removed the contact
-	var signals []string
-	for range 2 {
-		inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
-			p, _ := c.pulse(r)
-			signals = append(signals, c.signal("ann@testnet", p))
-		}, httptest.NewRequest(http.MethodGet, "/tick", nil))
-		f.requesters["chat@away"] = "approved"
+	if f.requesters["chat@away"] != "pending" || !slices.Contains(f.ungrants, "chat@away") {
+		t.Errorf("disconnect revokes and ungrants: %v %v", f.requesters, f.ungrants)
 	}
-	if signals[0] == signals[1] {
-		t.Error("approving or removing a chat moves the signal")
+	lists := len(f.ranAt("chat@away", roomListName))
+	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	if got = string(h); strings.Contains(got, ">far ") || !strings.Contains(got, `/chat/chats/chat@away/connect`) || len(f.ranAt("chat@away", roomListName)) != lists {
+		t.Errorf("a chat disconnected asks again and runs nothing: %s", got)
 	}
-	delete(f.requesters, "chat@away")
+	if reg := f.ranAt("chat@away", registerName); len(reg) != 1 {
+		t.Errorf("nothing connects it again: %v", reg)
+	}
+
+	if rec := chatVerb(c, sm, "chat@away", "block"); rec.Code != 303 || f.requesters["chat@away"] != "blocked" {
+		t.Errorf("block: %d %v", rec.Code, f.requesters)
+	}
 	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
 	if got = string(h); strings.Contains(got, "away") || !strings.Contains(got, ">cafe</a>") {
-		t.Errorf("a chat removed leaves the rail: %s", got)
+		t.Errorf("a chat blocked leaves the rail: %s", got)
+	}
+	if rec := chatVerb(c, sm, home, "disconnect"); rec.Code == 303 || f.requesters[home] != "approved" {
+		t.Errorf("home is never disconnected: %d", rec.Code)
 	}
 }
 
@@ -2327,8 +2448,9 @@ func TestARoomElsewhereTakesTheSamePath(t *testing.T) {
 	defer f.close()
 	c, sm := testChat(t, f)
 	away := withAway(t, f)
-	f.requesters["chat@away"] = "approved"
-	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet", "remy@nowhere"})
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, "chat@away")
+	far, _ := seated(away.Store, "bob@away", "far", []string{"ann@testnet", "remy@nowhere"})
 	var view roomView
 	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
 		view, _ = data.(roomView)
@@ -2380,8 +2502,9 @@ func TestAFailureElsewhereIsNotFinal(t *testing.T) {
 	defer f.close()
 	c, sm := testChat(t, f)
 	away := withAway(t, f)
-	f.requesters["chat@away"] = "approved"
-	far, _ := away.Store.CreateRoom("bob@away", "far", []string{"ann@testnet"})
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, "chat@away")
+	far, _ := seated(away.Store, "bob@away", "far", []string{"ann@testnet"})
 	st := open(t, c, sm, far.ID+"@away")
 	var next watchState
 	c.deps.Fragment = func(name string, data any) (template.HTML, error) {
@@ -2442,7 +2565,7 @@ func TestAMovedContractRunsOnceMore(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	room, _ := f.svc.Store.CreateRoom("ann@testnet", "cafe", nil)
+	room, _ := seated(f.svc.Store, "ann@testnet", "cafe", nil)
 	send := func() *httptest.ResponseRecorder {
 		form := url.Values{"raw_args": {`{"message":"hello"}`}, "after": {"0"}}
 		req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(room.ID)+"/message", strings.NewReader(form.Encode()))
@@ -2466,5 +2589,118 @@ func TestAMovedContractRunsOnceMore(t *testing.T) {
 	}
 	if rec := send(); rec.Code != http.StatusUnprocessableEntity || line == "" {
 		t.Errorf("a failure is said beside the composer, never as a page in the room: %d %q", rec.Code, line)
+	}
+}
+
+// An invitation is a card on the rail with Accept and Decline. Accept completes
+// it, which joins the room, and opens the room; Decline leaves the room through
+// chat, so the inviter sees it declined, and declines the task. An invitation
+// chat withdrew since is declined when accepted, and said. A local agent added
+// to a room is joined to it in the same step.
+func TestInvitations(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	f.requesters[home] = "approved"
+	bob := joinedAt(t, f.svc, "bob@testnet")
+	invite := func(name string) string {
+		rec := f.dispatch("/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": name})
+		var out struct {
+			Room svc.Room `json:"room"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.Room.ID
+	}
+	taskOf := func(room string) string {
+		for _, tk := range f.taskBodies() {
+			if tk["action"] == home+"/accept" && tk["partial_args"].(map[string]any)["thread_id"] == room {
+				return tk["id"].(string)
+			}
+		}
+		return ""
+	}
+	answer := func(task, verb string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/chat/invites/"+task+"/"+verb, nil)
+		req.SetPathValue("task", task)
+		req.SetPathValue("verb", verb)
+		return as(c, sm, c.postInvite, req)
+	}
+	tea, cake, pie := invite("tea"), invite("cake"), invite("pie")
+
+	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
+	got := string(h)
+	if !strings.Contains(got, `<b>tea</b>`) || !strings.Contains(got, `<span class="muted mono">bob@testnet</span>`) ||
+		!strings.Contains(got, `action="/chat/invites/`+taskOf(tea)+`/accept"`) || !strings.Contains(got, `action="/chat/invites/`+taskOf(tea)+`/decline"`) {
+		t.Fatalf("an invitation is a card with Accept and Decline: %s", got)
+	}
+
+	if rec := answer(taskOf(tea), "accept"); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+tea+"@testnet" {
+		t.Fatalf("accept opens the room: %d %s %s", rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
+	}
+	if rooms, _ := f.svc.Store.Rooms("ann@testnet"); len(rooms) != 1 || rooms[0].ID != tea {
+		t.Errorf("accept joins that room alone: %+v", rooms)
+	}
+
+	if rec := answer(taskOf(cake), "decline"); rec.Code != 303 {
+		t.Fatalf("decline: %d %s", rec.Code, rec.Header().Get("X-Flash"))
+	}
+	if room, _, _ := f.svc.Store.Room("bob@testnet", cake); len(room.Invited) != 0 || len(room.Members) != 1 {
+		t.Errorf("the inviter sees it declined: %+v", room)
+	}
+	if !slices.Contains(f.cancels, taskOf(cake)) {
+		t.Errorf("the invitation is declined: %v", f.cancels)
+	}
+
+	if err := f.svc.Store.RemoveMember("bob@testnet", pie, "ann@testnet"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := answer(taskOf(pie), "accept"); !strings.Contains(rec.Header().Get("X-Flash"), "That invitation was withdrawn.") {
+		t.Errorf("a withdrawn invitation: %s", rec.Header().Get("X-Flash"))
+	}
+	if rooms, _ := f.svc.Store.Rooms("ann@testnet"); len(rooms) != 1 {
+		t.Errorf("a withdrawn invitation joins nothing: %+v", rooms)
+	}
+	if rec := answer(taskOf(tea), "accept"); rec.Code == 303 {
+		t.Error("an invitation answered is not answered again")
+	}
+
+	agentHome(t, c, "helper@testnet", "AH")
+	f.mes["AH"] = `{"address":"helper@testnet","connectors":[]}`
+	create := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name=help&agent=helper%40testnet"))
+	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if rec := as(c, sm, c.postCreateRoom, create); rec.Code != 303 || rec.Header().Get("X-Flash") != "" {
+		t.Fatalf("create with an agent: %d %s", rec.Code, rec.Header().Get("X-Flash"))
+	}
+	if rooms, _ := f.svc.Store.Rooms("helper@testnet"); len(rooms) != 1 || rooms[0].Name != "help" {
+		t.Errorf("the agent joined in the same step: %+v", rooms)
+	}
+}
+
+// A chat on a kernel this one has never called asks by its key. The rail reads
+// its index once, which binds the kernel's name, and the card names it and
+// connects it by that name, under which the kernel then lists the requester.
+func TestAChatAskingByKeyIsNamed(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	withAway(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	f.requesters[home] = "approved"
+	f.requesters["chat@"+awayKey] = "pending"
+	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
+	if got := string(h); !strings.Contains(got, `<b class="mono">chat@away</b>`) || !strings.Contains(got, `action="/chat/chats/chat@away/connect"`) || strings.Contains(got, awayKey) {
+		t.Fatalf("the card names the chat and connects it by that name: %s", got)
+	}
+	if rec := connect(t, c, sm, "chat@away"); rec.Code != 303 || f.requesters["chat@away"] != "approved" {
+		t.Errorf("connect by the name: %d %s %v", rec.Code, rec.Header().Get("X-Flash"), f.requesters)
 	}
 }

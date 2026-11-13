@@ -100,3 +100,33 @@ func (s *Service) deliver(ctx context.Context, self, callback, capability, roomI
 	}
 	return missed
 }
+
+// invite creates, during a room command's own dispatch, one invitation task per
+// member named: the member completes it to join, and chat's accept action is
+// its onward. Each carries the room id as thread_id, the member, the room's
+// name and who invited. A member the kernel refuses is not kept in the room,
+// since nobody could accept for it; those are returned, so the inviter learns
+// of them.
+func (s *Service) invite(ctx context.Context, self, callback, capability, roomID, from string, members []string) []string {
+	missed := []string{}
+	if len(members) == 0 {
+		return missed
+	}
+	room, err := s.Store.room(roomID)
+	if err != nil {
+		return append(missed, members...)
+	}
+	for _, m := range members {
+		partial, _ := json.Marshal(map[string]any{"thread_id": roomID, "member": m, "name": room.Name, "from": from})
+		if _, err := s.Kernel.CallbackCreateTask(ctx, callback, capability, client.CreateTaskInput{
+			Action: self + "/" + acceptName, RequiredCaller: m, PartialArgs: partial,
+		}); err != nil {
+			s.log().Warn("chat: invite", "room", roomID, "member", m, "err", err)
+			if err := s.Store.Uninvite(roomID, m); err != nil {
+				s.log().Warn("chat: withdraw invitation", "room", roomID, "member", m, "err", err)
+			}
+			missed = append(missed, m)
+		}
+	}
+	return missed
+}

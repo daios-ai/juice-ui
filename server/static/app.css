@@ -79,11 +79,18 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .rail :focus-visible { outline-offset: -2px; } /* the scroller would clip a ring drawn outside */
 .rail-row { display: flex; align-items: center; flex: none; border-radius: var(--radius-s); }
 .rail-row:has(> a):hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
-.rail-row > :is(a, .rail-down) { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-row > a { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-row > a:hover { text-decoration: none; }
 .rail-row:hover > a, .rail-row > a[aria-current="page"], .rail-row > a.unread { color: var(--text); }
 .rail-row > a.unread { font-weight: 700; }
-.rail-row > a > .muted { font-weight: 400; } /* the kernel holding a room elsewhere: never weighted with its name */
+.rail-row > a > .muted, .rail-card-head .muted { font-weight: 400; } /* the kernel holding a room elsewhere: never weighted with its name */
+/* A card above the rooms for what waits on the viewer: a chat asking to be
+   connected, an invitation, a chat that could not be read. Its name and menu,
+   a muted line, and its commands, on the sidebar's surface. */
+.rail-card { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin-bottom: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-s); font-size: var(--font-size-sm); }
+.rail-card-head { display: flex; align-items: center; gap: var(--space-1); align-self: stretch; min-width: 0; }
+.rail-card-head > :first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-card > .muted { overflow-wrap: anywhere; }
 
 /* The avatar at the foot, and its menu: the account, every destination, the
    inbox count, Sign out. */
@@ -108,7 +115,7 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
    icon form, so the rail's rows go with them. */
 @media (min-width: 721px) {
   html[data-sidebar="collapsed"] .sidebar { width: auto; flex-basis: auto; align-items: center; }
-  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail > .btn > span, .update-notice > .btn > span, .handle) { display: none; }
+  html[data-sidebar="collapsed"] .sidebar :is(.brand, .rail-row, .rail-card, .rail > .btn > span, .update-notice > .btn > span, .handle) { display: none; }
   html[data-sidebar="collapsed"] .sidebar-top { padding: 0 0 var(--space-1); }
   html[data-sidebar="collapsed"] :is(.rail, .update-notice) > .btn { width: var(--control-h); padding: 0; }
   html[data-sidebar="collapsed"] .profile-trigger { justify-content: center; padding-inline: 0; }

@@ -199,7 +199,7 @@ func TestContractsAreCanonical(t *testing.T) {
 			t.Errorf("a message is a string: %s", k.in)
 		}
 	}
-	if len(contracts(self, "S")) != 13 {
+	if len(contracts(self, "S")) != 14 {
 		t.Errorf("%d contracts", len(contracts(self, "S")))
 	}
 	for _, k := range contracts(self, "S") {
@@ -252,7 +252,7 @@ func TestRegisterThenValidate(t *testing.T) {
 // other member. The post's own entry is stored either way.
 func TestPostDeliversByAddress(t *testing.T) {
 	s, f := testService(t)
-	r, _ := s.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet", "helper@testnet", "critic@testnet"})
+	r, _ := seated(s.Store, "ann@testnet", "cafe", []string{"bob@testnet", "helper@testnet", "critic@testnet"})
 	ann := joined(t, s, "ann@testnet")
 	if rec := dispatch(s, "/msg/post", "nokey", "", map[string]any{"thread_id": r.ID, "message": "hi"}); rec.Code != 401 {
 		t.Fatalf("unknown key: %d", rec.Code)
@@ -307,7 +307,7 @@ func deliveryOf(f *fakeKernel, member string) float64 {
 // kernel cannot address is skipped, not fatal.
 func TestHandoffRules(t *testing.T) {
 	s, f := testService(t)
-	r, _ := s.Store.CreateRoom("ann@testnet", "loop", []string{"helper@testnet", "critic@testnet", "remy@nowhere"})
+	r, _ := seated(s.Store, "ann@testnet", "loop", []string{"helper@testnet", "critic@testnet", "remy@nowhere"})
 	ann, helper, critic := joined(t, s, "ann@testnet"), joined(t, s, "helper@testnet"), joined(t, s, "critic@testnet")
 	post := func(key, text string) *httptest.ResponseRecorder {
 		return dispatch(s, "/msg/post", key, "", map[string]any{"thread_id": r.ID, "message": text})
@@ -376,7 +376,7 @@ func TestIndexAnswersUsageForThisKernel(t *testing.T) {
 // deletes; a member leaves; a stranger does none of it. Each answers as its
 // output schema says.
 func TestRoomCommands(t *testing.T) {
-	s, _ := testService(t)
+	s, f := testService(t)
 	ann, bob, eve := joined(t, s, "ann@testnet"), joined(t, s, "bob@testnet"), joined(t, s, "eve@testnet")
 	cmd := func(path, key string, body any) (int, map[string]any) {
 		rec := dispatch(s, "/"+path, key, "", body)
@@ -386,15 +386,32 @@ func TestRoomCommands(t *testing.T) {
 		}
 		return rec.Code, out
 	}
-	// room/create: the caller is the creator; a blank name is the handles.
+	// room/create: the caller is the creator; a blank name is the handles; the
+	// others are invited, each by a task whose onward is accept.
 	code, out := cmd(roomCreateName, ann, map[string]any{"members": []string{"bob@testnet", "cy@testnet"}})
 	if code != 200 {
 		t.Fatalf("create: %d %v", code, out)
 	}
 	room := out["room"].(map[string]any)
 	id := room["thread_id"].(string)
-	if room["name"] != "bob, cy" || room["creator"] != "ann@testnet" || len(room["members"].([]any)) != 3 {
-		t.Errorf("room = %v", room)
+	if room["name"] != "bob, cy" || room["creator"] != "ann@testnet" || len(room["members"].([]any)) != 1 || len(room["invited"].([]any)) != 2 || len(out["uninvited"].([]any)) != 0 {
+		t.Errorf("room = %v", out)
+	}
+	tasks := f.taskBodies()
+	if len(tasks) != 2 || tasks[0]["action"] != "chat@testnet/accept" || tasks[0]["required_caller"] != "bob@testnet" {
+		t.Fatalf("invitations = %v", tasks)
+	}
+	if pa := tasks[0]["partial_args"].(map[string]any); pa["thread_id"] != id || pa["member"] != "bob@testnet" || pa["name"] != "bob, cy" || pa["from"] != "ann@testnet" {
+		t.Errorf("invitation = %v", pa)
+	}
+	accept := func(member, bearer string) int {
+		return dispatch(s, "/accept", "", bearer, map[string]any{"thread_id": id, "member": member, "name": "bob, cy", "from": "ann@testnet"}).Code
+	}
+	if code := accept("bob@testnet", "wrong"); code != 401 {
+		t.Errorf("accept with a wrong bearer: %d", code)
+	}
+	if code := accept("bob@testnet", "S"); code != 200 {
+		t.Fatalf("accept: %d", code)
 	}
 	if code, out := cmd(roomCreateName, ann, map[string]any{"members": []string{"bob@testnet"}, "name": " named "}); code != 200 || out["room"].(map[string]any)["name"] != "named" {
 		t.Errorf("a named room: %d %v", code, out)
@@ -417,9 +434,14 @@ func TestRoomCommands(t *testing.T) {
 	if code, out := cmd(roomRenameName, ann, map[string]any{"thread_id": "no-such-1", "name": "x"}); code != 404 || out["code"] != "not_found" {
 		t.Errorf("no such room: %d %v", code, out)
 	}
-	// room/add and room/remove: the creator alone.
-	if code, out := cmd(roomAddName, ann, map[string]any{"thread_id": id, "member": "eve@testnet"}); code != 200 || len(out["room"].(map[string]any)["members"].([]any)) != 4 {
+	// room/add invites, once; room/remove withdraws an invitation as it removes
+	// a member: the creator alone.
+	before := len(f.taskBodies())
+	if code, out := cmd(roomAddName, ann, map[string]any{"thread_id": id, "member": "eve@testnet"}); code != 200 || len(out["room"].(map[string]any)["invited"].([]any)) != 2 {
 		t.Errorf("add: %d %v", code, out)
+	}
+	if code, _ := cmd(roomAddName, ann, map[string]any{"thread_id": id, "member": "eve@testnet"}); code != 200 || len(f.taskBodies()) != before+1 {
+		t.Errorf("adding an invited member again invites again: %d, %d tasks", code, len(f.taskBodies())-before)
 	}
 	if code, _ := cmd(roomAddName, bob, map[string]any{"thread_id": id, "member": "dan@testnet"}); code != 403 {
 		t.Errorf("a member adds: %d", code)
@@ -427,7 +449,7 @@ func TestRoomCommands(t *testing.T) {
 	if code, _ := cmd(roomAddName, ann, map[string]any{"thread_id": id, "member": "bare"}); code != 400 {
 		t.Errorf("add a bare name: %d", code)
 	}
-	if code, out := cmd(roomRemoveName, ann, map[string]any{"thread_id": id, "member": "cy@testnet"}); code != 200 || len(out["room"].(map[string]any)["members"].([]any)) != 3 {
+	if code, out := cmd(roomRemoveName, ann, map[string]any{"thread_id": id, "member": "cy@testnet"}); code != 200 || len(out["room"].(map[string]any)["invited"].([]any)) != 1 {
 		t.Errorf("remove: %d %v", code, out)
 	}
 	if code, _ := cmd(roomRemoveName, bob, map[string]any{"thread_id": id, "member": "eve@testnet"}); code != 403 {
@@ -436,12 +458,19 @@ func TestRoomCommands(t *testing.T) {
 	if code, _ := cmd(roomRemoveName, ann, map[string]any{"thread_id": id, "member": "ann@testnet"}); code != 403 {
 		t.Errorf("the creator removes itself: %d", code)
 	}
-	// room/leave: a member, never the creator.
+	// room/leave: a member, never the creator. An invited member leaving
+	// declines, after which its invitation joins nobody.
 	if code, out := cmd(roomLeaveName, eve, map[string]any{"thread_id": id}); code != 200 || out["ok"] != true {
-		t.Errorf("leave: %d %v", code, out)
+		t.Errorf("decline: %d %v", code, out)
+	}
+	if code := accept("eve@testnet", "S"); code != 404 {
+		t.Errorf("accepting a declined invitation: %d", code)
 	}
 	if code, out := cmd(roomLeaveName, eve, map[string]any{"thread_id": id}); code != 403 || out["code"] != "not_member" {
 		t.Errorf("leave twice: %d %v", code, out)
+	}
+	if code, out := cmd(roomLeaveName, bob, map[string]any{"thread_id": id}); code != 200 || out["ok"] != true {
+		t.Errorf("leave: %d %v", code, out)
 	}
 	if code, _ := cmd(roomLeaveName, ann, map[string]any{"thread_id": id}); code != 403 {
 		t.Errorf("the creator leaves: %d", code)
@@ -480,7 +509,7 @@ func TestRoomReads(t *testing.T) {
 	if rec := dispatch(s, "/"+roomListName, eve, "", struct{}{}); rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"rooms":[]}` {
 		t.Errorf("no rooms is an empty list: %d %s", rec.Code, rec.Body)
 	}
-	r, _ := s.Store.CreateRoom("ann@testnet", "cafe", []string{"bob@testnet"})
+	r, _ := seated(s.Store, "ann@testnet", "cafe", []string{"bob@testnet"})
 	dispatch(s, "/"+postName, bob, "", map[string]any{"thread_id": r.ID, "message": "hello"})
 	dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": r.ID, "message": map[string]any{"n": 1}})
 
@@ -564,7 +593,7 @@ func TestRoomReads(t *testing.T) {
 func TestReadsAreBoundedInBytes(t *testing.T) {
 	s, _ := testService(t)
 	ann := joined(t, s, "ann@testnet")
-	r, _ := s.Store.CreateRoom("ann@testnet", "big", nil)
+	r, _ := seated(s.Store, "ann@testnet", "big", nil)
 	big := strings.Repeat("x", maxMessage)
 	const posts = 40 // 2.6 MB, over the budget and under the window
 	for range posts {
@@ -608,7 +637,7 @@ func TestReadsAreBoundedInBytes(t *testing.T) {
 		t.Errorf("the latest window is the newest that fit: %v, %d bytes", seqs, size)
 	}
 	// More than a window of small entries reads on too.
-	small, _ := s.Store.CreateRoom("ann@testnet", "small", nil)
+	small, _ := seated(s.Store, "ann@testnet", "small", nil)
 	for range window + 1 {
 		if _, _, err := s.Store.Post(small.ID, "ann@testnet", raw("y")); err != nil {
 			t.Fatal(err)
@@ -627,7 +656,7 @@ func TestReadsAreBoundedInBytes(t *testing.T) {
 // A post that long is the kernel's to refuse, by the schema.
 func TestAnAnswerOverTheLimitIsAFailure(t *testing.T) {
 	s, f := testService(t)
-	r, _ := s.Store.CreateRoom("ann@testnet", "cafe", []string{"bot@testnet"})
+	r, _ := seated(s.Store, "ann@testnet", "cafe", []string{"bot@testnet"})
 	ann := joined(t, s, "ann@testnet")
 	dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": r.ID, "message": "hi"})
 	rec := dispatch(s, "/"+replyName, "", "S", map[string]any{"thread_id": r.ID, "member": "bot@testnet", "delivery": deliveryOf(f, "bot@testnet"),
@@ -652,7 +681,7 @@ func TestAnAnswerOverTheLimitIsAFailure(t *testing.T) {
 // failure with nothing said is a failed entry.
 func TestReplySettles(t *testing.T) {
 	s, f := testService(t)
-	r, _ := s.Store.CreateRoom("ann@testnet", "cafe", []string{"assistant@testnet"})
+	r, _ := seated(s.Store, "ann@testnet", "cafe", []string{"assistant@testnet"})
 	ann, bot := joined(t, s, "ann@testnet"), joined(t, s, "assistant@testnet")
 	say := func(key, text string) {
 		if rec := dispatch(s, "/msg/post", key, "", map[string]any{"thread_id": r.ID, "message": text}); rec.Code != 200 {
@@ -731,7 +760,7 @@ func TestEveryOperationIsADelegatedAction(t *testing.T) {
 func TestOneServerServesEveryProvider(t *testing.T) {
 	s, f := testService(t)
 	key := joined(t, s, "ann@second")
-	r, _ := s.Store.CreateRoom("ann@second", "cafe", []string{"bob@second"})
+	r, _ := seated(s.Store, "ann@second", "cafe", []string{"bob@second"})
 	req := func(path, body string) *httptest.ResponseRecorder {
 		q := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 		q.Header.Set(client.CallbackHeader, s.Kernel.BaseURL())
@@ -773,5 +802,43 @@ func TestTheServiceImportsOnlyTheClient(t *testing.T) {
 				t.Errorf("%s imports %s", file, path)
 			}
 		}
+	}
+}
+
+// An invited member reads nothing, posts nothing and is delivered nothing until
+// it accepts; a member the kernel cannot address is not invited, and is named.
+func TestAnInvitedMemberIsNotYetInTheRoom(t *testing.T) {
+	s, f := testService(t)
+	ann, bob := joined(t, s, "ann@testnet"), joined(t, s, "bob@testnet")
+	rec := dispatch(s, "/"+roomCreateName, ann, "", map[string]any{"members": []string{"bob@testnet", "remy@nowhere"}})
+	var out struct {
+		Room      Room     `json:"room"`
+		Uninvited []string `json:"uninvited"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != 200 || len(out.Uninvited) != 1 || out.Uninvited[0] != "remy@nowhere" || len(out.Room.Invited) != 1 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	id := out.Room.ID
+	if rec := dispatch(s, "/"+roomReadName, bob, "", map[string]any{"thread_id": id}); rec.Code != 403 {
+		t.Errorf("an invited member reads: %d", rec.Code)
+	}
+	if rec := dispatch(s, "/"+postName, bob, "", map[string]any{"thread_id": id, "message": "hi"}); rec.Code != 403 {
+		t.Errorf("an invited member posts: %d", rec.Code)
+	}
+	if rec := dispatch(s, "/"+roomListName, bob, "", map[string]any{}); strings.Contains(rec.Body.String(), id) {
+		t.Errorf("an invited member lists the room: %s", rec.Body)
+	}
+	if rec := dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": id, "message": "hi"}); !strings.Contains(rec.Body.String(), `"delivered":0`) {
+		t.Errorf("a post reached the invited: %s", rec.Body)
+	}
+	if deliveryOf(f, "bob@testnet") != 0 {
+		t.Error("a delivery to the invited")
+	}
+	if rec := dispatch(s, "/accept", "", "S", map[string]any{"thread_id": id, "member": "bob@testnet"}); rec.Code != 200 {
+		t.Fatalf("accept: %d", rec.Code)
+	}
+	if rec := dispatch(s, "/"+roomReadName, bob, "", map[string]any{"thread_id": id}); rec.Code != 200 {
+		t.Errorf("a joined member reads: %d", rec.Code)
 	}
 }

@@ -22,7 +22,7 @@ func TestRegisterCreatesAndDeletesTheRest(t *testing.T) {
 	if err := st.Register(ctx, k, "t", self, "http://chat:8090"); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.creates) != 13 || len(f.deletes) != 1 || f.deletes[0] != "old" || len(f.enables) != 13 {
+	if len(f.creates) != 14 || len(f.deletes) != 1 || f.deletes[0] != "old" || len(f.enables) != 14 {
 		t.Fatalf("creates=%d deletes=%v enables=%d", len(f.creates), f.deletes, len(f.enables))
 	}
 	byName := map[string]client.CreateActionInput{}
@@ -43,7 +43,7 @@ func TestRegisterCreatesAndDeletesTheRest(t *testing.T) {
 	if err := st.Register(ctx, k, "t", self, "http://chat:8090"); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.creates) != 13 || len(f.updates) != before || len(f.enables) != 13 {
+	if len(f.creates) != 14 || len(f.updates) != before || len(f.enables) != 14 {
 		t.Errorf("second pass churned: creates=%d updates=%v enables=%d", len(f.creates), f.updates, len(f.enables))
 	}
 	if _, ok := st.AuthRev["chat2@testnet"]; ok {

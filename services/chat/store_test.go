@@ -28,19 +28,33 @@ func raw(v any) json.RawMessage {
 	return b
 }
 
+// seated is a room whose members all accepted their invitations.
+func seated(s *Store, creator, name string, members []string) (Room, error) {
+	r, err := s.CreateRoom(creator, name, members)
+	if err != nil {
+		return r, err
+	}
+	for _, m := range r.Invited {
+		if err := s.Join(r.ID, m); err != nil {
+			return r, err
+		}
+	}
+	return s.withMembers(r.ID)
+}
+
 func TestRoomsAndMembership(t *testing.T) {
 	s := mustStore(t)
-	r, err := s.CreateRoom("ann@k", "cafe", []string{"bob@k", "helper@k", ""})
+	r, err := seated(s, "ann@k", "cafe", []string{"bob@k", "helper@k", ""})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Members) != 3 {
 		t.Fatalf("members = %v", r.Members)
 	}
-	if err := s.AddMember("bob@k", r.ID, "critic@k"); !errors.Is(err, ErrForbidden) {
+	if _, err := s.AddMember("bob@k", r.ID, "critic@k"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("a member adding = %v, want forbidden", err)
 	}
-	if err := s.AddMember("ann@k", r.ID, "critic@k"); err != nil {
+	if _, err := s.AddMember("ann@k", r.ID, "critic@k"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RemoveMember("ann@k", r.ID, "ann@k"); !errors.Is(err, ErrForbidden) {
@@ -78,7 +92,7 @@ func TestRoomsAndMembership(t *testing.T) {
 // delivery held, and zero when none is held. A settlement releases both.
 func TestPostCountsPerDelivery(t *testing.T) {
 	s := mustStore(t)
-	r, _ := s.CreateRoom("ann@k", "cafe", []string{"helper@k", "critic@k"})
+	r, _ := seated(s, "ann@k", "cafe", []string{"helper@k", "critic@k"})
 	e, depth, err := s.Post(r.ID, "ann@k", raw("hi"))
 	if err != nil || depth != 0 || e.Seq != 1 {
 		t.Fatalf("first post: seq=%d depth=%d err=%v", e.Seq, depth, err)
@@ -140,7 +154,7 @@ func standing(t *testing.T, s *Store, room string) (string, []int64) {
 // nothing; a nil body adds nothing; posts before the delivery are untouched.
 func TestAnswerSettles(t *testing.T) {
 	s := mustStore(t)
-	r, _ := s.CreateRoom("ann@k", "cafe", []string{"bot@k", "critic@k"})
+	r, _ := seated(s, "ann@k", "cafe", []string{"bot@k", "critic@k"})
 	ask := func(text string, d int64) {
 		e, _, err := s.Post(r.ID, "ann@k", raw(text))
 		must(t, err)
@@ -201,7 +215,7 @@ func TestWordID(t *testing.T) {
 			t.Fatalf("id %q", id)
 		}
 	}
-	r, _ := mustStore(t).CreateRoom("ann@k", "cafe", nil)
+	r, _ := seated(mustStore(t), "ann@k", "cafe", nil)
 	if !re.MatchString(r.ID) {
 		t.Errorf("room id %q", r.ID)
 	}
@@ -223,8 +237,8 @@ INSERT INTO entries VALUES ('0a1b2c', 1, 'ann@k', '"hi"', '2026-10-23T22:01:00Z'
 INSERT INTO chain VALUES ('0a1b2c', 'bot@k', 5, 0, 0);`
 
 // A store made by 0.34.0 gains its columns in place, keeps its rows and its
-// hex room, and a delivery held across the upgrade settles nothing said
-// before it; opening again changes nothing.
+// hex room, its members joined, and a delivery held across the upgrade settles
+// nothing said before it; opening again changes nothing.
 func TestMigratesA034Store(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rooms.db")
 	old, err := sql.Open("sqlite", path)
@@ -245,6 +259,9 @@ func TestMigratesA034Store(t *testing.T) {
 		if n, _ := s.NextDelivery(); n <= 5 {
 			t.Errorf("delivery ids continue: %d", n)
 		}
+		if r, _ := s.withMembers("0a1b2c"); len(r.Members) != 2 || len(r.Invited) != 0 {
+			t.Errorf("a member from before invitations is joined: %+v", r)
+		}
 		s.Close()
 	}
 }
@@ -254,7 +271,7 @@ func TestMigratesA034Store(t *testing.T) {
 // newest.
 func TestRangeAndCursors(t *testing.T) {
 	s := mustStore(t)
-	r, _ := s.CreateRoom("ann@k", "cafe", []string{"bob@k", "helper@k"})
+	r, _ := seated(s, "ann@k", "cafe", []string{"bob@k", "helper@k"})
 	for i, who := range []string{"ann@k", "helper@k", "bob@k", "ann@k"} {
 		if _, _, err := s.Post(r.ID, who, raw(i)); err != nil {
 			t.Fatal(err)
@@ -287,8 +304,8 @@ func TestRangeAndCursors(t *testing.T) {
 // Rooms come newest activity first, an unread one marked where it stands.
 func TestRoomsUnreadOrdering(t *testing.T) {
 	s := mustStore(t)
-	quiet, _ := s.CreateRoom("ann@k", "quiet", nil)
-	busy, _ := s.CreateRoom("ann@k", "busy", []string{"bob@k"})
+	quiet, _ := seated(s, "ann@k", "quiet", nil)
+	busy, _ := seated(s, "ann@k", "busy", []string{"bob@k"})
 	s.Post(busy.ID, "bob@k", raw("hey"))
 	s.Post(quiet.ID, "ann@k", raw("me"))
 	s.MarkRead("ann@k", quiet.ID, 1)
@@ -390,7 +407,7 @@ func TestImportsTheLegacyDatabaseOnce(t *testing.T) {
 // and nobody once it is answered.
 func TestWorking(t *testing.T) {
 	s := mustStore(t)
-	r, _ := s.CreateRoom("ann@k", "cafe", []string{"bob@k", "cy@k"})
+	r, _ := seated(s, "ann@k", "cafe", []string{"bob@k", "cy@k"})
 	s.Delivered("cy@k", r.ID, 1, 7, 0)
 	s.Delivered("bob@k", r.ID, 1, 8, 0)
 	if ws, _ := s.Working(r.ID, "ann@k"); strings.Join(ws, ",") != "bob@k,cy@k" {
@@ -410,7 +427,7 @@ func TestWorking(t *testing.T) {
 // shows the new name.
 func TestRename(t *testing.T) {
 	s := mustStore(t)
-	r, err := s.CreateRoom("ann@k", "cafe", []string{"bob@k"})
+	r, err := seated(s, "ann@k", "cafe", []string{"bob@k"})
 	must(t, err)
 	must(t, s.Rename("ann@k", r.ID, "  tea room  "))
 	rooms, err := s.Rooms("bob@k")
@@ -462,7 +479,7 @@ func TestARegistrationRetiresNoKey(t *testing.T) {
 // A room reads as its action's output schema declares, members a list.
 func TestARoomsWireShape(t *testing.T) {
 	s := mustStore(t)
-	r, err := s.CreateRoom("ann@k", "cafe", nil)
+	r, err := seated(s, "ann@k", "cafe", nil)
 	must(t, err)
 	b, _ := json.Marshal(r)
 	for _, want := range []string{`"thread_id":"` + r.ID + `"`, `"name":"cafe"`, `"creator":"ann@k"`, `"members":["ann@k"]`, `"unread":false`, `"last_at":""`, `"created_at":"`} {
@@ -489,7 +506,7 @@ func TestMoveKeepsWhatTheLogHolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.CreateRoom("ann@k", "cafe", []string{"bob@k"})
+	r, err := seated(s, "ann@k", "cafe", []string{"bob@k"})
 	if err != nil {
 		t.Fatal(err)
 	}

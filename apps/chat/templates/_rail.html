@@ -1,17 +1,47 @@
 {{/* _rail — the sidebar's conversations (requirements §6.7): the opener of a
-     new one, then the viewer's rooms, newest activity first, an unread room
-     weighted and the one in view current, each with its menu; a room held on
-     another kernel names that kernel after its name, muted, as a kernel is
-     named alone (§4). Under them, each
-     chat that could not be read, muted, with its reason. Its dialog starts
-     a conversation with the participants chosen; the name is optional. A page
-     that is not a room holds the rename dialog here; a room page holds it in
-     the room, since the sidebar is not rendered on a narrow screen. Input:
-     railView. */}}
+     new one; then a card for each thing waiting on the viewer: a chat
+     elsewhere asking to be connected, an invitation to a room, a chat that
+     could not be read, with its reason; then the viewer's rooms, newest
+     activity first, an unread room weighted and the one in view current, each
+     with its menu; a room held on another kernel names that kernel after its
+     name, muted, as a kernel is named alone (§4), and its menu disconnects or
+     blocks that chat. Its dialog starts a conversation with the participants
+     chosen; the name is optional. A page that is not a room holds the rename
+     dialog here; a room page holds it in the room, since the sidebar is not
+     rendered on a narrow screen. Input: railView. */}}
 {{define "_rail"}}
 <nav class="rail" aria-label="Conversations"{{if .OOB}} hx-swap-oob="outerHTML:.rail"{{end}}>
   <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>
-  {{range .Rooms}}<div class="rail-row">
+  {{range .Asking}}<div class="rail-card">
+    <div class="rail-card-head"><b class="mono">chat@{{.Name}}</b>
+      <button class="btn-icon inline" data-menu="menu-chat-{{.Service}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
+      <div class="menu" id="menu-chat-{{.Service}}" role="menu" hidden>
+        {{template "_chat_verb" ($.ChatVerb .Service .Name "block")}}
+      </div>
+    </div>
+    <form method="post" action="/chat/chats/{{.Service}}/connect" hx-post="/chat/chats/{{.Service}}/connect" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="btn" type="submit">Connect</button></form>
+  </div>{{end}}
+  {{range .Invites}}<div class="rail-card">
+    <div class="rail-card-head"><b>{{.Name}}{{with .Elsewhere}} <span class="muted">· {{.}}</span>{{end}}</b></div>
+    <span class="muted mono">{{.From}}</span>
+    <div class="cluster">
+      <form method="post" action="/chat/invites/{{.Task}}/accept" hx-post="/chat/invites/{{.Task}}/accept" hx-swap="none">{{$.CSRFField}}<button class="btn" type="submit">Accept</button></form>
+      <form method="post" action="/chat/invites/{{.Task}}/decline" hx-post="/chat/invites/{{.Task}}/decline" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="btn-danger" type="submit">Decline</button></form>
+    </div>
+  </div>{{end}}
+  {{range .Down}}<div class="rail-card">
+    <div class="rail-card-head"><span><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Service}}</span>
+      {{if ne .Service $.Home}}
+      <button class="btn-icon inline" data-menu="menu-chat-{{.Service}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
+      <div class="menu" id="menu-chat-{{.Service}}" role="menu" hidden>
+        {{template "_chat_verb" ($.ChatVerb .Service .Service "disconnect")}}
+        {{template "_chat_verb" ($.ChatVerb .Service .Service "block")}}
+      </div>
+      {{end}}
+    </div>
+    <span class="muted">{{.Reason}}</span>
+  </div>{{end}}
+  {{range $room := .Rooms}}<div class="rail-row">
     <a href="/chat/room/{{.Addr}}"{{if .Unread}} class="unread"{{end}}{{if eq .Addr $.Current}} aria-current="page"{{end}}>{{.Name}}{{with .Elsewhere}} <span class="muted">· {{.}}</span>{{end}}</a>
     <button class="btn-icon inline" data-menu="menu-room-{{.Addr}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
     <div class="menu" id="menu-room-{{.Addr}}" role="menu" hidden>
@@ -24,13 +54,22 @@
       <div class="menu-divider"></div>
       <form method="post" action="/chat/room/{{.Addr}}/leave" data-confirm="Leave {{.Name}}?" hx-post="/chat/room/{{.Addr}}/leave" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{$.CSRFField}}<button class="menu-item" type="submit">Leave…</button></form>
       {{end}}
+      {{with .Elsewhere}}
+      <div class="menu-divider"></div>
+      {{template "_chat_verb" ($.ChatVerb $room.Service . "disconnect")}}
+      {{template "_chat_verb" ($.ChatVerb $room.Service . "block")}}
+      {{end}}
     </div>
   </div>{{end}}
-  {{range .Down}}<div class="rail-row" title="{{.Reason}}"><span class="rail-down"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Service}}<span class="sr-only">: {{.Reason}}</span></span></div>{{end}}
 </nav>
 {{with .Watch}}{{template "_chat_watch" .}}{{template "_rename" $.Rename}}{{end}}
 {{if not .OOB}}{{template "_new_room" .New}}{{end}}
 {{end}}
+
+{{/* _chat_verb — a menu's command on a chat elsewhere: Disconnect, which
+     returns it to asking, or Block, each confirmed and named by the chat's
+     kernel. Input: chatVerbView. */}}
+{{define "_chat_verb"}}<form method="post" action="/chat/chats/{{.Service}}/{{.Verb}}" data-confirm="{{.Label}} {{.Name}}?" hx-post="/chat/chats/{{.Service}}/{{.Verb}}" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{.CSRFField}}<button class="menu-item{{if eq .Label "Block"}} danger{{end}}" type="submit">{{.Label}} {{.Name}}…</button></form>{{end}}
 
 {{/* _new_room — the new-conversation dialog; the name is optional. Refused, it
      comes back open with the reason and what was chosen and typed. Input:
@@ -83,8 +122,9 @@
   {{end}}
 </dialog>{{end}}
 
-{{/* _members — the members dialog: the list for everyone, adding and removing for
-     the creator. A change refused comes back open with the reason and the address
+{{/* _members — the members dialog: the joined, then the invited, for everyone;
+     adding and removing, an invitation withdrawn as a member is, for the
+     creator. A change refused comes back open with the reason and the address
      typed. Input: membersView. */}}
 {{define "_members"}}{{$v := .}}<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true"{{if .Open}} open{{end}}>
   <div class="modal-head"><h2>Members</h2><a class="modal-close" href="/chat/room/{{.Room.Addr}}" data-modal-close aria-label="Close">×</a></div>
@@ -94,6 +134,11 @@
       {{range .Room.Members}}
       <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span>
         {{if and (eq $v.Room.Creator $v.Me) (ne . $v.Me)}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
+      </div>
+      {{end}}
+      {{range .Room.Invited}}
+      <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span> <span class="muted">invited</span>
+        {{if eq $v.Room.Creator $v.Me}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
       </div>
       {{end}}
     </div>

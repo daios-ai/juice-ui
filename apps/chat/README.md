@@ -15,14 +15,22 @@ its actions through the kernel as the viewer. The rules are `requirements.md` §
 
 ## The viewer's chats
 
-A viewer's chats are the requesters they approved whose handle is `chat`: this
-kernel's, which joining approves, and any chat on another kernel whose delivery they
-approved in the inbox, joined at its first read by the same four steps. A room is
-named by its address, `thread@kernel`, in its URL, its watch and the rail; every
-read and command runs the action of that room's chat, at home or elsewhere, by one
-path. Nothing is run on a chat elsewhere that the viewer has not approved: its
-approval in the inbox is the consent, and removing or blocking it ends every read
-and command there.
+A viewer's chats are read from the requesters whose handle is `chat` and the grants
+they hold. This kernel's chat is joined once approved, which joining does; a chat on
+another kernel is joined when it is approved and holds a grant of the viewer's, and
+asks to be connected when it has addressed the viewer and is neither joined nor
+blocked. Connect is the four steps of joining; Disconnect deletes the grant and
+returns the requester to pending; Block deletes the grant and blocks it. Nothing
+else connects a chat elsewhere. A room is named by its address, `thread@kernel`, in
+its URL, its watch and the rail; every read and command runs the action of that
+room's chat, at home or elsewhere, by one path. Nothing is run on a chat elsewhere
+that is not joined, and a run on one joined that the kernel refuses for want of a
+grant joins again, since an upgrade of chat revokes the grants on its contracts.
+
+A member added to a room is invited: the invitation is a task whose partial args
+carry `from`, shown as a card on the rail with Accept, which completes it and opens
+the room, and Decline, which leaves the room through chat and declines the task.
+The installation's own agents accept theirs when the UI joins them.
 
 ## When a page runs a read
 

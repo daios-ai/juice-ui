@@ -25,9 +25,9 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 
 | File | Role |
 |---|---|
-| `store.go` | SQLite: rooms, members, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one. No kernel knowledge; every rule one transaction. |
-| `deliver.go` | Routing by address (the first word of a post), and the delivery of a post as kernel tasks. |
-| `service.go` | The thirteen action contracts and their endpoints. |
+| `store.go` | SQLite: rooms, members invited or joined, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one. No kernel knowledge; every rule one transaction. |
+| `deliver.go` | Routing by address (the first word of a post), the delivery of a post and the invitation to a room as kernel tasks. |
+| `service.go` | The fourteen action contracts and their endpoints. |
 | `register.go` | The service's state, and reconciling the actions on a kernel. |
 
 ## The actions, under `chat@<kernel>/`
@@ -39,11 +39,12 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 | `validate` | the kernel, as the verification task's onward | `{key_id}` → `{ok}` |
 | `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered, undelivered}`: how many it reached, and whom it could not, by address |
 | `reply` | the kernel, as a delivery's onward | `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` |
-| `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room}` |
+| `accept` | the kernel, as an invitation's onward | `{thread_id, member, name?, from?}` → `{ok}`: the member joins |
+| `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room, uninvited}`: the others are invited |
 | `room/rename` | the creator | `{thread_id, name}` → `{room}` |
-| `room/add` | the creator | `{thread_id, member}` → `{room}` |
-| `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}` |
-| `room/leave` | a member other than the creator | `{thread_id}` → `{ok}` |
+| `room/add` | the creator | `{thread_id, member}` → `{room, uninvited}`: invites, once |
+| `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}`: removes a member or withdraws an invitation |
+| `room/leave` | a member other than the creator | `{thread_id}` → `{ok}`: an invited member declines |
 | `room/delete` | the creator | `{thread_id}` → `{ok}` |
 | `room/list` | anyone joined | `{}` → `{rooms}`: the caller's rooms, newest activity first |
 | `room/read` | a member | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms}` |
@@ -61,6 +62,18 @@ The kernel refuses a reply over 4 MiB. A post is at most 65,536 characters by it
 schema, and a longer answer is kept as a failure. `room/read` holds at most 200 entries
 and 1 MiB, says `more` when others remain past `after`, and holds the rooms of newest
 activity that fit 256 KiB.
+
+## Membership
+
+A member is invited until it accepts, then joined. The creator is joined;
+everyone `room/create` or `room/add` names is invited, by one task created during
+that command's dispatch, whose onward is `accept` and whose partial args carry the
+room, the member, the room's name and who invited. Completing it joins the member.
+Leaving declines, and an invitation declined or withdrawn has no member to join, so
+no task still open for it can accept. A member the kernel would not deliver an
+invitation to is not kept, and is named in `uninvited`. Only joined members read,
+post, list the room, are delivered to and are waited on. A store made before
+invitations has every member joined.
 
 ## How a post travels
 
@@ -82,8 +95,9 @@ activity that fit 256 KiB.
 The UI joins the principals of its installation itself, each with its own
 session: the person signed in, on any chat page, and every agent with a home
 under `$JUICE_HOME/agents/`, with the session in its credential file, when chat
-signs in and when the agent is added to a room. It takes the same path as a member
-elsewhere, through the kernel alone, and no key is ever retired:
+signs in and when the agent is added to a room, which also accepts the agent's
+invitations here. It takes the same path as a member elsewhere, through the
+kernel alone, and no key is ever retired:
 
 ```
 juice user approve chat@<kernel>

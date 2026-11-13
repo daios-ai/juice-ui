@@ -33,13 +33,16 @@ var (
 	ErrHeld      = errors.New("a post is already pending; answer the delivery first")
 )
 
-// Room is a conversation among its members. Unread and LastAt are filled by
-// Rooms, for the list.
+// Room is a conversation among its members. A member is invited until it
+// accepts, and only then joined: Members are the joined, who read, post and are
+// delivered to; Invited are those who have not answered yet. Unread and LastAt
+// are filled by Rooms, for the list.
 type Room struct {
 	ID        string   `json:"thread_id"`
 	Name      string   `json:"name"`
 	Creator   string   `json:"creator"`
 	Members   []string `json:"members"`
+	Invited   []string `json:"invited"`
 	CreatedAt string   `json:"created_at"`
 	Unread    bool     `json:"unread"`
 	LastAt    string   `json:"last_at"`
@@ -73,6 +76,7 @@ CREATE TABLE IF NOT EXISTS rooms (
 CREATE TABLE IF NOT EXISTS members (
   room_id TEXT NOT NULL,
   member  TEXT NOT NULL,
+  state   TEXT NOT NULL DEFAULT 'joined',
   PRIMARY KEY (room_id, member)
 );
 CREATE TABLE IF NOT EXISTS entries (
@@ -110,11 +114,12 @@ INSERT OR IGNORE INTO seqs(name, n) VALUES ('delivery', 0);`
 // columns are added to a store made by an earlier version, in place. A
 // delivery held before chain.upto existed covered the room as it stood then,
 // so its upto is the room's last seq: the member's earlier posts are never
-// settled by it.
+// settled by it. A member of a store made before invitations was joined.
 var columns = []struct{ table, def, backfill string }{
 	{"chain", "upto INTEGER NOT NULL DEFAULT 0", `UPDATE chain SET upto = COALESCE((SELECT MAX(seq) FROM entries e WHERE e.room_id = chain.room_id), 0)`},
 	{"entries", "kind INTEGER NOT NULL DEFAULT 0", ""},
 	{"entries", "replaced_by INTEGER NOT NULL DEFAULT 0", ""},
+	{"members", "state TEXT NOT NULL DEFAULT 'joined'", ""},
 }
 
 func migrate(db *sql.DB) error {
@@ -300,7 +305,14 @@ func (s *Store) CreateRoom(creator, name string, members []string) (Room, error)
 	return s.withMembers(id)
 }
 
-// insertRoom writes a room under a fresh word id, and its members.
+// The states of a member.
+const (
+	stateInvited = "invited"
+	stateJoined  = "joined"
+)
+
+// insertRoom writes a room under a fresh word id, its creator joined and the
+// other members invited.
 func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, error) {
 	var id string
 	for {
@@ -316,11 +328,14 @@ func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, err
 	if _, err := tx.Exec(`INSERT INTO rooms(id, name, creator, created_at) VALUES(?,?,?,?)`, id, name, creator, now()); err != nil {
 		return "", err
 	}
-	for _, m := range append([]string{creator}, members...) {
+	if _, err := tx.Exec(`INSERT INTO members(room_id, member, state) VALUES(?,?,?)`, id, creator, stateJoined); err != nil {
+		return "", err
+	}
+	for _, m := range members {
 		if m == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO members(room_id, member) VALUES(?,?)`, id, m); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, id, m, stateInvited); err != nil {
 			return "", err
 		}
 	}
@@ -332,7 +347,10 @@ func (s *Store) withMembers(id string) (Room, error) {
 	if err != nil {
 		return Room{}, err
 	}
-	r.Members, err = s.members(id)
+	if r.Members, err = s.members(id); err != nil {
+		return Room{}, err
+	}
+	r.Invited, err = s.invited(id)
 	return r, err
 }
 
@@ -349,19 +367,47 @@ func (s *Store) Rename(actor, roomID, name string) error {
 	return err
 }
 
-// AddMember adds member to the room; the creator only.
-func (s *Store) AddMember(actor, roomID, member string) error {
+// AddMember invites member to the room; the creator only. It reports whether
+// that is a new invitation: a member already invited or joined is left as it
+// is, so one invitation is ever outstanding.
+func (s *Store) AddMember(actor, roomID, member string) (bool, error) {
 	if member == "" {
-		return ErrBadInput
+		return false, ErrBadInput
 	}
 	if _, err := s.requireCreator(actor, roomID); err != nil {
+		return false, err
+	}
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, roomID, member, stateInvited)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// Join is an invitation accepted: the member becomes joined. A member joined
+// already stays so; one not in the room, never invited or since removed, or
+// having declined, is not found, so no invitation outlives its answer.
+func (s *Store) Join(roomID, member string) error {
+	res, err := s.db.Exec(`UPDATE members SET state = ? WHERE room_id = ? AND member = ?`, stateJoined, roomID, member)
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO members(room_id, member) VALUES(?,?)`, roomID, member)
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Uninvite withdraws an invitation the kernel would not deliver: nobody can
+// accept it, so the member is not kept.
+func (s *Store) Uninvite(roomID, member string) error {
+	_, err := s.db.Exec(`DELETE FROM members WHERE room_id = ? AND member = ? AND state = ?`, roomID, member, stateInvited)
 	return err
 }
 
-// RemoveMember removes member from the room; the creator only, never itself.
+// RemoveMember removes member from the room, invited or joined; the creator
+// only, never itself.
 func (s *Store) RemoveMember(actor, roomID, member string) error {
 	if _, err := s.requireCreator(actor, roomID); err != nil {
 		return err
@@ -372,11 +418,15 @@ func (s *Store) RemoveMember(actor, roomID, member string) error {
 	return s.drop(roomID, member)
 }
 
-// Leave removes actor from the room; a member that is not the creator.
+// Leave removes actor from the room; a member that is not the creator. An
+// invited member leaving is the invitation declined.
 func (s *Store) Leave(actor, roomID string) error {
-	r, err := s.requireMember(actor, roomID)
+	r, err := s.room(roomID)
 	if err != nil {
 		return err
+	}
+	if !s.inRoom(roomID, actor) {
+		return ErrNotMember
 	}
 	if r.Creator == actor {
 		return ErrForbidden
@@ -456,14 +506,26 @@ func (s *Store) requireMember(actor, roomID string) (Room, error) {
 	return r, nil
 }
 
+// isMember reports a joined member; inRoom one invited or joined.
 func (s *Store) isMember(roomID, member string) bool {
+	var n int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM members WHERE room_id = ? AND member = ? AND state = ?`, roomID, member, stateJoined).Scan(&n)
+	return n > 0
+}
+
+func (s *Store) inRoom(roomID, member string) bool {
 	var n int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM members WHERE room_id = ? AND member = ?`, roomID, member).Scan(&n)
 	return n > 0
 }
 
-func (s *Store) members(roomID string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT member FROM members WHERE room_id = ? ORDER BY member`, roomID)
+// members is the room's joined members, invited its invited ones.
+func (s *Store) members(roomID string) ([]string, error) { return s.inState(roomID, stateJoined) }
+
+func (s *Store) invited(roomID string) ([]string, error) { return s.inState(roomID, stateInvited) }
+
+func (s *Store) inState(roomID, state string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT member FROM members WHERE room_id = ? AND state = ? ORDER BY member`, roomID, state)
 	if err != nil {
 		return nil, err
 	}
@@ -487,8 +549,8 @@ func (s *Store) Rooms(viewer string) ([]Room, error) {
 		SELECT r.id, r.name, r.creator, r.created_at,
 		       COALESCE((SELECT MAX(seq) FROM entries e WHERE e.room_id = r.id), 0) > COALESCE((SELECT read FROM cursors c WHERE c.room_id = r.id AND c.member = ?), 0),
 		       COALESCE((SELECT MAX(at) FROM entries e WHERE e.room_id = r.id), r.created_at)
-		FROM rooms r JOIN members m ON m.room_id = r.id AND m.member = ?
-		ORDER BY 6 DESC, r.id`, viewer, viewer)
+		FROM rooms r JOIN members m ON m.room_id = r.id AND m.member = ? AND m.state = ?
+		ORDER BY 6 DESC, r.id`, viewer, viewer, stateJoined)
 	if err != nil {
 		return nil, err
 	}
@@ -508,6 +570,9 @@ func (s *Store) Rooms(viewer string) ([]Room, error) {
 		if out[i].Members, err = s.members(out[i].ID); err != nil {
 			return nil, err
 		}
+		if out[i].Invited, err = s.invited(out[i].ID); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -519,7 +584,7 @@ func (s *Store) Room(viewer, roomID string) (Room, []Entry, error) {
 	if err != nil {
 		return Room{}, nil, err
 	}
-	if r.Members, err = s.members(roomID); err != nil {
+	if r, err = s.withMembers(roomID); err != nil {
 		return Room{}, nil, err
 	}
 	es, err := s.entries(`room_id = ?`, roomID)
@@ -776,7 +841,7 @@ func (s *Store) Answer(member, roomID string, delivery int64, body json.RawMessa
 }
 
 func txMembers(tx *sql.Tx, roomID string) ([]string, error) {
-	rows, err := tx.Query(`SELECT member FROM members WHERE room_id = ? ORDER BY member`, roomID)
+	rows, err := tx.Query(`SELECT member FROM members WHERE room_id = ? AND state = ? ORDER BY member`, roomID, stateJoined)
 	if err != nil {
 		return nil, err
 	}
