@@ -27,6 +27,7 @@ const (
 	roomAddName    = "room/add"
 	roomRemoveName = "room/remove"
 	roomLeaveName  = "room/leave"
+	roomJoinName   = "room/join"
 	roomDeleteName = "room/delete"
 	roomListName   = "room/list"
 	roomReadName   = "room/read"
@@ -51,7 +52,7 @@ const usage = "Chat rooms for people and agents; every member is an address, han
 	"as in \"critic@KERNEL, which is best?\"; only that member receives it. A post that starts with no address reaches every other member. " +
 	"While you hold tasks you may post once per task; then complete them. " +
 	"Any member can start a room with chat@KERNEL/room/create, and leave one with chat@KERNEL/room/leave. " +
-	"A member added to a room is invited: it receives a task naming the room, completes it to join, and leaves the room to decline; until then it reads nothing there and receives nothing. " +
+	"A member added to a room is invited: it receives a task naming the room and finds the room among its invitations in chat@KERNEL/room/list; it joins by completing the task or running chat@KERNEL/room/join, and declines with chat@KERNEL/room/leave. Until it joins it reads nothing there and receives nothing. " +
 	"A member reads with chat@KERNEL/room/list and chat@KERNEL/room/read. " +
 	"The room's creator can rename it with chat@KERNEL/room/rename, change its members with chat@KERNEL/room/add and chat@KERNEL/room/remove, and delete it with chat@KERNEL/room/delete. " +
 	"Members of this installation are joined by its UI. A member elsewhere joins by approving chat@KERNEL as a requester, running chat@KERNEL/register with its own address, " +
@@ -105,8 +106,10 @@ const (
 		`"invited":{"type":"array",` + descr + `"The members invited who have not joined yet.","items":{"type":"string"}},` +
 		`"unread":{"type":"boolean",` + descr + `"Whether the room holds entries the caller has not read."},"last_at":{"type":"string",` + descr + `"When the room was last spoken in."}}}`
 	okProp        = `"ok":{"type":"boolean",` + descr + `"True when it was done."}`
-	uninvitedProp = `"uninvited":{"type":"array",` + descr + `"The members named who could not be invited, by address; they are not in the room.","items":{"type":"string"}}`
+	uninvitedProp = `"uninvited":{"type":"array",` + descr + `"The members whose invitation could not be delivered yet, by address; it is tried again at the room's next post.","items":{"type":"string"}}`
 	roomsProp     = `"rooms":{"type":"array",` + descr + `"The caller's rooms, newest activity first.","items":` + roomObj + `}`
+	invitesProp   = `"invitations":{"type":"array",` + descr + `"The rooms the caller is invited to and has not joined.","items":{"type":"object","additionalProperties":false,` + descr + `"An invitation.","properties":{` +
+		threadProp + `,"name":{"type":"string",` + descr + `"The room's name."},"from":{"type":"string",` + descr + `"The room's creator, who invited."}}}}`
 )
 
 // Contracts are chat's actions. Every schema is canonical: an object naming
@@ -173,12 +176,15 @@ func contracts(self, secret string) []contract {
 		{name: roomLeaveName, title: "Leave a chat room", vis: "public", auth: delegated,
 			desc: "Leave a room you are a member of, or decline an invitation to it. A room's creator cannot leave it, only delete it.",
 			in:   obj(threadProp, "thread_id"), out: okOut},
+		{name: roomJoinName, title: "Join a chat room", vis: "public", auth: delegated,
+			desc: "Accept an invitation to a room: you join it. See chat@KERNEL/room/list for your invitations.",
+			in:   obj(threadProp, "thread_id"), out: roomOut},
 		{name: roomDeleteName, title: "Delete a chat room", vis: "public", auth: delegated,
 			desc: "Delete a room and everything said in it, for every member. Only the room's creator can.",
 			in:   obj(threadProp, "thread_id"), out: okOut},
 		{name: roomListName, title: "List your chat rooms", vis: "public", auth: delegated,
-			desc: "The chat rooms you are a member of, newest activity first.",
-			in:   obj(""), out: obj(roomsProp)},
+			desc: "The chat rooms you are a member of, newest activity first, and the rooms you are invited to.",
+			in:   obj(""), out: obj(roomsProp + "," + invitesProp)},
 		{name: roomReadName, title: "Read a chat room", vis: "public", auth: delegated,
 			desc: "What a room you are a member of says: its latest entries, or with after those newer than it. Read on from the last entry while more is true.",
 			in: obj(threadProp+`,"after":{"type":"integer",`+descr+`"Read the entries newer than this seq."},"seen":{"type":"boolean",`+descr+`"Move your read cursor over the entries read."}`,
@@ -188,7 +194,7 @@ func contracts(self, secret string) []contract {
 				`"at":{"type":"string",` + descr + `"When it was said."},"kind":{"type":"integer",` + descr + `"0 a post, 1 an answer, 2 a failure."}}}},` +
 				`"removed":{"type":"array",` + descr + `"The seqs of posts an answer replaced since after.","items":{"type":"integer"}},` +
 				`"waiting":{"type":"array",` + descr + `"The other members holding an unanswered delivery here.","items":{"type":"string"}},` +
-				`"more":{"type":"boolean",` + descr + `"True when newer entries remain past these."},` + roomsProp)},
+				`"more":{"type":"boolean",` + descr + `"True when newer entries remain past these."},` + roomsProp + "," + invitesProp)},
 	}
 	// Every text names this provider and its kernel.
 	for i := range ks {
@@ -231,6 +237,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveRoomRemove(w, r)
 	case roomLeaveName:
 		s.serveRoomLeave(w, r)
+	case roomJoinName:
+		s.serveRoomJoin(w, r)
 	case roomDeleteName:
 		s.serveRoomDelete(w, r)
 	case roomListName:
@@ -328,7 +336,9 @@ func (s *Service) serveValidate(w http.ResponseWriter, r *http.Request) {
 
 // servePost is a member's post: identified by the key the kernel injected,
 // the entry is stored under the one-post rule, then delivered during this
-// call, unless the hand-off cap is exceeded.
+// call, unless the hand-off cap is exceeded; and the invitations the kernel
+// could not take before are sent again. Whom it could not reach, recipient or
+// invitee, it names.
 func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string) {
 	var in struct {
 		Room    string          `json:"thread_id"`
@@ -354,6 +364,11 @@ func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string)
 		undelivered = s.deliver(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader),
 			in.Room, e.Seq, depth, to)
 		n = len(to) - len(undelivered)
+	}
+	// An invitation the kernel could not take before is tried again with this
+	// post's capability, as a post tries each recipient.
+	if added, err := s.Store.Added(in.Room); err == nil {
+		undelivered = append(undelivered, s.invite(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader), in.Room, added)...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"delivered": n, "undelivered": undelivered})
 }
@@ -473,14 +488,14 @@ func (s *Service) serveRoomCreate(w http.ResponseWriter, r *http.Request, self s
 		refuseErr(w, err)
 		return
 	}
-	s.invitedReply(w, r, self, room.ID, member, room.Invited)
+	s.invitedReply(w, r, self, room.ID, room.Invited)
 }
 
 // invitedReply invites the members named, through the capability of this very
-// command, and answers with the room as it then stands and whom it could not
-// invite.
-func (s *Service) invitedReply(w http.ResponseWriter, r *http.Request, self, roomID, from string, members []string) {
-	uninvited := s.invite(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader), roomID, from, members)
+// command, and answers with the room as it then stands and whose invitation
+// could not be delivered yet.
+func (s *Service) invitedReply(w http.ResponseWriter, r *http.Request, self, roomID string, members []string) {
+	uninvited := s.invite(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader), roomID, members)
 	room, err := s.Store.withMembers(roomID)
 	if err != nil {
 		refuseErr(w, err)
@@ -514,16 +529,16 @@ func (s *Service) serveRoomAdd(w http.ResponseWriter, r *http.Request, self stri
 		refuseErr(w, fmt.Errorf("%w: %s is not an address, handle@kernel", ErrBadInput, in.Member))
 		return
 	}
-	fresh, err := s.Store.AddMember(member, in.Room, in.Member)
+	owed, err := s.Store.AddMember(member, in.Room, in.Member)
 	if err != nil {
 		refuseErr(w, err)
 		return
 	}
 	var invite []string
-	if fresh {
+	if owed {
 		invite = []string{in.Member}
 	}
-	s.invitedReply(w, r, self, in.Room, member, invite)
+	s.invitedReply(w, r, self, in.Room, invite)
 }
 
 func (s *Service) serveRoomRemove(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +566,26 @@ func (s *Service) serveRoomLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// serveRoomJoin is an invitation accepted by the member itself.
+func (s *Service) serveRoomJoin(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Room string `json:"thread_id"`
+	}
+	member, ok := s.memberCommand(w, r, &in)
+	if !ok {
+		return
+	}
+	if _, err := s.Store.room(in.Room); err != nil {
+		refuseErr(w, err)
+		return
+	}
+	err := s.Store.Join(in.Room, member)
+	if errors.Is(err, ErrNotFound) {
+		err = ErrNotMember
+	}
+	s.roomReply(w, in.Room, err)
 }
 
 func (s *Service) serveRoomDelete(w http.ResponseWriter, r *http.Request) {
@@ -597,11 +632,15 @@ func (s *Service) serveRoomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rooms, err := s.rooms(member)
+	var invites []Invitation
+	if err == nil {
+		invites, err = s.Store.Invitations(member)
+	}
 	if err != nil {
 		refuseErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms, "invitations": invites})
 }
 
 // serveRoomRead is a room for a member: its latest entries that fit, or with
@@ -654,12 +693,16 @@ func (s *Service) serveRoomRead(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		rooms, err = s.rooms(member)
 	}
+	var invites []Invitation
+	if err == nil {
+		invites, err = s.Store.Invitations(member)
+	}
 	if err != nil {
 		refuseErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"room": room, "entries": append([]Entry{}, es...), "removed": append([]int64{}, gone...),
-		"waiting": append([]string{}, waiting...), "more": more, "rooms": rooms})
+		"waiting": append([]string{}, waiting...), "more": more, "rooms": rooms, "invitations": invites})
 }
 
 // ---- refusals ----

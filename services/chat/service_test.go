@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/daios-ai/juice-ui/client"
 )
@@ -30,6 +32,9 @@ type fakeKernel struct {
 	enables []string
 	deletes []string
 	tasks   []map[string]any
+	offline map[string]bool           // kernels the kernel cannot reach: a task to them is refused
+	hanging map[string]bool           // kernels that never answer: a task to them waits for the caller to give up
+	created func(task map[string]any) // run, apart, once a task is created: a recipient acting on it
 }
 
 func newFakeKernel(t *testing.T) *fakeKernel {
@@ -48,9 +53,21 @@ func newFakeKernel(t *testing.T) *fakeKernel {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if _, k, _ := strings.Cut(in["required_caller"].(string), "@"); f.offline[k] {
+			http.Error(w, `{"code":"peer_unreachable","error":"peer is unreachable"}`, http.StatusBadGateway)
+			return
+		} else if f.hanging[k] {
+			f.mu.Unlock()
+			<-r.Context().Done() // a kernel that never answers: the caller gives up
+			f.mu.Lock()
+			return
+		}
 		f.seq++
 		in["id"] = "task" + strconv.Itoa(f.seq)
 		f.tasks = append(f.tasks, in)
+		if f.created != nil {
+			go f.created(in)
+		}
 		b, _ := json.Marshal(in)
 		w.WriteHeader(201)
 		_, _ = w.Write(b)
@@ -199,7 +216,7 @@ func TestContractsAreCanonical(t *testing.T) {
 			t.Errorf("a message is a string: %s", k.in)
 		}
 	}
-	if len(contracts(self, "S")) != 14 {
+	if len(contracts(self, "S")) != 15 {
 		t.Errorf("%d contracts", len(contracts(self, "S")))
 	}
 	for _, k := range contracts(self, "S") {
@@ -398,10 +415,11 @@ func TestRoomCommands(t *testing.T) {
 		t.Errorf("room = %v", out)
 	}
 	tasks := f.taskBodies()
-	if len(tasks) != 2 || tasks[0]["action"] != "chat@testnet/accept" || tasks[0]["required_caller"] != "bob@testnet" {
+	i := slices.IndexFunc(tasks, func(tk map[string]any) bool { return tk["required_caller"] == "bob@testnet" })
+	if len(tasks) != 2 || i < 0 || tasks[i]["action"] != "chat@testnet/accept" {
 		t.Fatalf("invitations = %v", tasks)
 	}
-	if pa := tasks[0]["partial_args"].(map[string]any); pa["thread_id"] != id || pa["member"] != "bob@testnet" || pa["name"] != "bob, cy" || pa["from"] != "ann@testnet" {
+	if pa := tasks[i]["partial_args"].(map[string]any); pa["thread_id"] != id || pa["member"] != "bob@testnet" || pa["name"] != "bob, cy" || pa["from"] != "ann@testnet" {
 		t.Errorf("invitation = %v", pa)
 	}
 	accept := func(member, bearer string) int {
@@ -506,7 +524,7 @@ func TestRoomCommands(t *testing.T) {
 func TestRoomReads(t *testing.T) {
 	s, _ := testService(t)
 	ann, bob, eve := joined(t, s, "ann@testnet"), joined(t, s, "bob@testnet"), joined(t, s, "eve@testnet")
-	if rec := dispatch(s, "/"+roomListName, eve, "", struct{}{}); rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"rooms":[]}` {
+	if rec := dispatch(s, "/"+roomListName, eve, "", struct{}{}); rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"invitations":[],"rooms":[]}` {
 		t.Errorf("no rooms is an empty list: %d %s", rec.Code, rec.Body)
 	}
 	r, _ := seated(s.Store, "ann@testnet", "cafe", []string{"bob@testnet"})
@@ -806,7 +824,8 @@ func TestTheServiceImportsOnlyTheClient(t *testing.T) {
 }
 
 // An invited member reads nothing, posts nothing and is delivered nothing until
-// it accepts; a member the kernel cannot address is not invited, and is named.
+// it accepts; a member the kernel cannot address stays in the room, named as not
+// invited yet.
 func TestAnInvitedMemberIsNotYetInTheRoom(t *testing.T) {
 	s, f := testService(t)
 	ann, bob := joined(t, s, "ann@testnet"), joined(t, s, "bob@testnet")
@@ -816,7 +835,7 @@ func TestAnInvitedMemberIsNotYetInTheRoom(t *testing.T) {
 		Uninvited []string `json:"uninvited"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if rec.Code != 200 || len(out.Uninvited) != 1 || out.Uninvited[0] != "remy@nowhere" || len(out.Room.Invited) != 1 {
+	if rec.Code != 200 || len(out.Uninvited) != 1 || out.Uninvited[0] != "remy@nowhere" || len(out.Room.Invited) != 2 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	id := out.Room.ID
@@ -826,7 +845,7 @@ func TestAnInvitedMemberIsNotYetInTheRoom(t *testing.T) {
 	if rec := dispatch(s, "/"+postName, bob, "", map[string]any{"thread_id": id, "message": "hi"}); rec.Code != 403 {
 		t.Errorf("an invited member posts: %d", rec.Code)
 	}
-	if rec := dispatch(s, "/"+roomListName, bob, "", map[string]any{}); strings.Contains(rec.Body.String(), id) {
+	if rec := dispatch(s, "/"+roomListName, bob, "", map[string]any{}); !strings.Contains(rec.Body.String(), `"rooms":[]`) {
 		t.Errorf("an invited member lists the room: %s", rec.Body)
 	}
 	if rec := dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": id, "message": "hi"}); !strings.Contains(rec.Body.String(), `"delivered":0`) {
@@ -840,5 +859,181 @@ func TestAnInvitedMemberIsNotYetInTheRoom(t *testing.T) {
 	}
 	if rec := dispatch(s, "/"+roomReadName, bob, "", map[string]any{"thread_id": id}); rec.Code != 200 {
 		t.Errorf("a joined member reads: %d", rec.Code)
+	}
+}
+
+// An invitation the kernel cannot take, its kernel offline, is kept: the member
+// stays added and is named; the room's next post sends it again, and once the
+// kernel takes it the member is invited and no post sends a second one. Adding
+// an added member again tries at once; adding an invited one sends nothing.
+func TestAnUndeliveredInvitationIsKept(t *testing.T) {
+	s, f := testService(t)
+	f.offline = map[string]bool{"far": true}
+	ann := joined(t, s, "ann@testnet")
+	invitations := func(member string) int {
+		n := 0
+		for _, tk := range f.taskBodies() {
+			if tk["action"] == "chat@testnet/accept" && tk["required_caller"] == member {
+				n++
+			}
+		}
+		return n
+	}
+	var out struct {
+		Room        Room     `json:"room"`
+		Uninvited   []string `json:"uninvited"`
+		Undelivered []string `json:"undelivered"`
+	}
+	rec := dispatch(s, "/"+roomCreateName, ann, "", map[string]any{"members": []string{"bob@far"}})
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	id := out.Room.ID
+	if rec.Code != 200 || len(out.Uninvited) != 1 || len(out.Room.Invited) != 1 || out.Room.Invited[0] != "bob@far" {
+		t.Fatalf("an offline invitee is kept and named: %d %s", rec.Code, rec.Body)
+	}
+	post := func() []string {
+		out.Undelivered = nil
+		_ = json.Unmarshal(dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": id, "message": "hi"}).Body.Bytes(), &out)
+		return out.Undelivered
+	}
+	if u := post(); len(u) != 1 || u[0] != "bob@far" || invitations("bob@far") != 0 {
+		t.Errorf("while offline a post names it: %v", u)
+	}
+	f.offline["far"] = false
+	if u := post(); len(u) != 0 || invitations("bob@far") != 1 {
+		t.Errorf("back online, the next post sends the invitation: %v, %d", u, invitations("bob@far"))
+	}
+	post()
+	if invitations("bob@far") != 1 {
+		t.Errorf("one invitation, one task: %d", invitations("bob@far"))
+	}
+	if added, _ := s.Store.Added(id); len(added) != 0 {
+		t.Errorf("invited, no longer added: %v", added)
+	}
+	dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": id, "member": "bob@far"})
+	if invitations("bob@far") != 1 {
+		t.Errorf("adding an invited member sends nothing: %d", invitations("bob@far"))
+	}
+	f.offline["far"] = true
+	dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": id, "member": "cy@far"})
+	f.offline["far"] = false
+	if rec := dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": id, "member": "cy@far"}); rec.Code != 200 || invitations("cy@far") != 1 {
+		t.Errorf("adding an added member again tries at once: %d %s", invitations("cy@far"), rec.Body)
+	}
+}
+
+// A member reads its invitations beside its rooms, and joins one itself with
+// room/join; one never invited, or whose invitation was declined or withdrawn,
+// is refused, and the room is no longer among its invitations.
+func TestRoomJoinAndInvitations(t *testing.T) {
+	s, _ := testService(t)
+	ann, bob, cy, eve := joined(t, s, "ann@testnet"), joined(t, s, "bob@testnet"), joined(t, s, "cy@testnet"), joined(t, s, "eve@testnet")
+	var created struct {
+		Room Room `json:"room"`
+	}
+	_ = json.Unmarshal(dispatch(s, "/"+roomCreateName, ann, "", map[string]any{"members": []string{"bob@testnet", "cy@testnet"}, "name": "tea"}).Body.Bytes(), &created)
+	id := created.Room.ID
+	type listing struct {
+		Rooms       []Room       `json:"rooms"`
+		Invitations []Invitation `json:"invitations"`
+	}
+	list := func(key string) (l listing) {
+		_ = json.Unmarshal(dispatch(s, "/"+roomListName, key, "", struct{}{}).Body.Bytes(), &l)
+		return l
+	}
+	if l := list(bob); len(l.Rooms) != 0 || len(l.Invitations) != 1 || l.Invitations[0] != (Invitation{id, "tea", "ann@testnet"}) {
+		t.Fatalf("an invitation is listed, not the room: %+v", l)
+	}
+	if rec := dispatch(s, "/"+roomJoinName, bob, "", map[string]any{"thread_id": id}); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"members":["ann@testnet","bob@testnet"]`) {
+		t.Fatalf("room/join: %d %s", rec.Code, rec.Body)
+	}
+	if l := list(bob); len(l.Rooms) != 1 || len(l.Invitations) != 0 {
+		t.Errorf("joined: the room is listed, the invitation gone: %+v", l)
+	}
+	if rec := dispatch(s, "/"+roomJoinName, bob, "", map[string]any{"thread_id": id}); rec.Code != 200 {
+		t.Errorf("joining again changes nothing: %d", rec.Code)
+	}
+	if rec := dispatch(s, "/"+roomJoinName, eve, "", map[string]any{"thread_id": id}); rec.Code != 403 {
+		t.Errorf("one never invited: %d", rec.Code)
+	}
+	if rec := dispatch(s, "/"+roomJoinName, eve, "", map[string]any{"thread_id": "no-such-1"}); rec.Code != 404 {
+		t.Errorf("no such room: %d", rec.Code)
+	}
+	dispatch(s, "/"+roomLeaveName, cy, "", map[string]any{"thread_id": id})
+	if l := list(cy); len(l.Invitations) != 0 {
+		t.Errorf("declined: no invitation: %+v", l)
+	}
+	if rec := dispatch(s, "/"+roomJoinName, cy, "", map[string]any{"thread_id": id}); rec.Code != 403 {
+		t.Errorf("a declined invitation joins nobody: %d", rec.Code)
+	}
+	var read struct {
+		Invitations []Invitation `json:"invitations"`
+	}
+	dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": id, "member": "eve@testnet"})
+	_ = json.Unmarshal(dispatch(s, "/"+roomReadName, bob, "", map[string]any{"thread_id": id}).Body.Bytes(), &read)
+	if len(read.Invitations) != 0 {
+		t.Errorf("room/read answers the reader's own invitations: %+v", read)
+	}
+	_ = json.Unmarshal(dispatch(s, "/"+roomListName, eve, "", struct{}{}).Body.Bytes(), &read)
+	if len(read.Invitations) != 1 {
+		t.Errorf("eve is invited: %+v", read)
+	}
+}
+
+// A recipient whose kernel never answers holds a post or a room command no
+// longer than one task's bound, however many such recipients there are, so the
+// kernel's own deadline never fails the command; each is named, and reached
+// later.
+func TestAKernelThatNeverAnswersHoldsNothing(t *testing.T) {
+	s, f := testService(t)
+	f.hanging = map[string]bool{"far": true, "farther": true}
+	defer func(d time.Duration) { taskTimeout = d }(taskTimeout)
+	taskTimeout = 200 * time.Millisecond
+	ann := joined(t, s, "ann@testnet")
+	t0 := time.Now()
+	rec := dispatch(s, "/"+roomCreateName, ann, "", map[string]any{"members": []string{"bob@far", "cy@farther", "dee@testnet"}})
+	if took := time.Since(t0); rec.Code != 200 || took > time.Second || !strings.Contains(rec.Body.String(), `"uninvited":["bob@far","cy@farther"]`) && !strings.Contains(rec.Body.String(), `"uninvited":["cy@farther","bob@far"]`) {
+		t.Fatalf("create: %d in %v: %s", rec.Code, took, rec.Body)
+	}
+	var out struct {
+		Room Room `json:"room"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	for _, m := range []string{"bob@far", "cy@farther", "dee@testnet"} {
+		_ = s.Store.Join(out.Room.ID, m)
+	}
+	t0 = time.Now()
+	rec = dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": out.Room.ID, "message": "hi"})
+	if took := time.Since(t0); rec.Code != 200 || took > time.Second || !strings.Contains(rec.Body.String(), `"delivered":1`) {
+		t.Errorf("post: %d in %v: %s", rec.Code, took, rec.Body)
+	}
+}
+
+// A recipient that answers while another's kernel still holds the post's
+// dispatch settles its delivery: each delivery is recorded as soon as its own
+// task is created, so the answer finds it, and nobody is left waited on.
+func TestAFastAnswerIsNotLostToASlowRecipient(t *testing.T) {
+	s, f := testService(t)
+	defer func(d time.Duration) { taskTimeout = d }(taskTimeout)
+	taskTimeout = 300 * time.Millisecond
+	f.hanging = map[string]bool{"far": true}
+	f.created = func(task map[string]any) {
+		if task["required_caller"] != "fast@testnet" || task["action"] != "chat@testnet/reply" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond) // well inside the slow recipient's wait
+		pa := task["partial_args"].(map[string]any)
+		dispatch(s, "/reply", "", "S", map[string]any{"thread_id": pa["thread_id"], "member": pa["member"], "delivery": pa["delivery"], "message": []any{}, "answer": "on it"})
+	}
+	ann := joined(t, s, "ann@testnet")
+	r, _ := seated(s.Store, "ann@testnet", "cafe", []string{"fast@testnet", "slow@far"})
+	if rec := dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": r.ID, "message": "hello"}); !strings.Contains(rec.Body.String(), `"undelivered":["slow@far"]`) {
+		t.Fatalf("post: %s", rec.Body)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if waiting, _ := s.Store.Working(r.ID, "ann@testnet"); len(waiting) != 0 {
+		t.Errorf("the room waits on nobody: %v", waiting)
+	}
+	if _, es, _ := s.Store.Room("ann@testnet", r.ID); len(es) != 2 || string(es[1].Body) != `"on it"` {
+		t.Errorf("the answer stands: %+v", es)
 	}
 }

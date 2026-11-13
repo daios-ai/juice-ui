@@ -27,7 +27,7 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 |---|---|
 | `store.go` | SQLite: rooms, members invited or joined, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one. No kernel knowledge; every rule one transaction. |
 | `deliver.go` | Routing by address (the first word of a post), the delivery of a post and the invitation to a room as kernel tasks. |
-| `service.go` | The fourteen action contracts and their endpoints. |
+| `service.go` | The fifteen action contracts and their endpoints. |
 | `register.go` | The service's state, and reconciling the actions on a kernel. |
 
 ## The actions, under `chat@<kernel>/`
@@ -40,14 +40,15 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 | `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered, undelivered}`: how many it reached, and whom it could not, by address |
 | `reply` | the kernel, as a delivery's onward | `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` |
 | `accept` | the kernel, as an invitation's onward | `{thread_id, member, name?, from?}` → `{ok}`: the member joins |
-| `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room, uninvited}`: the others are invited |
+| `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room, uninvited}`: the others are invited; `uninvited` names those not reached yet |
 | `room/rename` | the creator | `{thread_id, name}` → `{room}` |
-| `room/add` | the creator | `{thread_id, member}` → `{room, uninvited}`: invites, once |
+| `room/add` | the creator | `{thread_id, member}` → `{room, uninvited}`: invites, once; a member not reached yet is tried again |
 | `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}`: removes a member or withdraws an invitation |
 | `room/leave` | a member other than the creator | `{thread_id}` → `{ok}`: an invited member declines |
+| `room/join` | a member invited | `{thread_id}` → `{room}`: the caller accepts |
 | `room/delete` | the creator | `{thread_id}` → `{ok}` |
-| `room/list` | anyone joined | `{}` → `{rooms}`: the caller's rooms, newest activity first |
-| `room/read` | a member | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms}` |
+| `room/list` | anyone joined | `{}` → `{rooms, invitations}`: the caller's rooms, newest activity first, and the rooms it is invited to |
+| `room/read` | a member | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms, invitations}` |
 
 ## A refusal
 
@@ -65,15 +66,17 @@ activity that fit 256 KiB.
 
 ## Membership
 
-A member is invited until it accepts, then joined. The creator is joined;
-everyone `room/create` or `room/add` names is invited, by one task created during
-that command's dispatch, whose onward is `accept` and whose partial args carry the
-room, the member, the room's name and who invited. Completing it joins the member.
-Leaving declines, and an invitation declined or withdrawn has no member to join, so
-no task still open for it can accept. A member the kernel would not deliver an
-invitation to is not kept, and is named in `uninvited`. Only joined members read,
-post, list the room, are delivered to and are waited on. A store made before
-invitations has every member joined.
+A member is added, then invited once the kernel takes its invitation, then joined
+once it accepts. The creator is joined; everyone `room/create` or `room/add` names
+is invited by one task created during that command's dispatch, whose onward is
+`accept` and whose partial args carry the room, the member, the room's name and its
+creator. A member whose kernel cannot be reached stays added, is named in
+`uninvited`, and is tried again at each post in the room, with the post's
+capability, named in `undelivered` while it fails. Completing the task or running
+`room/join` joins the member; leaving declines, and an invitation declined or
+withdrawn has no member to join. `room/list` and `room/read` answer the caller's
+invitations. Only joined members read, post, list the room, are delivered to and
+are waited on. A store made before invitations has every member joined.
 
 ## How a post travels
 
@@ -83,7 +86,9 @@ invitations has every member joined.
    capability the kernel injected: the member whose address is the post's
    first word (`critic@k, which is best?`), or every other member. The task
    carries what the room said since that member's previous delivery, this post
-   last.
+   last. The tasks of one dispatch are created at once, each within 3 s, so a
+   member whose kernel does not answer never holds the post past the kernel's
+   deadline; that member is reached by a later post.
 3. The member completes the task. Its onward, `reply`, settles it: the answer
    replaces the member's own unaddressed posts since the delivery, adds nothing
    after a hand-off, and a failure shows only when the member said nothing. An

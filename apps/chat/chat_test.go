@@ -44,38 +44,43 @@ func addr(id string) string {
 // action catalog and its mutations, task creation through a capability,
 // the task list, completions, runs and grants. It records every write.
 type fakeKernel struct {
-	srv       *httptest.Server
-	mu        sync.Mutex
-	seq       int
-	acts      map[string]*fakeAction
-	creates   []client.CreateActionInput
-	updates   map[string][]string // id -> PUT bodies
-	enables   []string
-	deletes   []string
-	tasks     []map[string]any // POST /v1/tasks bodies, served back by GET /v1/tasks
-	completes []string
-	cancels   []string
-	ungrants  []string
-	runs      []string
-	grants    []string // the bearer, "|", the body
-	decided   []string
-	me        string            // GET /v1/me body for the browser session's token
-	mes       map[string]string // GET /v1/me body by any other token
-	expired   map[string]bool   // tokens the kernel refuses
-	refreshed []string          // refresh tokens rotated
-	svc       *svc.Service      // what a run dispatches to, as the kernel does
-	keys      map[string]string // the chat key connected, by session token
-	granted   map[string]map[string]bool
-	failGrant bool // POST /v1/grants refuses
-	failRuns  bool // POST /v1/run cannot reach chat
-	taskReads int
+	srv         *httptest.Server
+	mu          sync.Mutex
+	seq         int
+	acts        map[string]*fakeAction
+	creates     []client.CreateActionInput
+	updates     map[string][]string // id -> PUT bodies
+	enables     []string
+	deletes     []string
+	tasks       []map[string]any // POST /v1/tasks bodies, served back by GET /v1/tasks
+	completes   []string
+	cancels     []string
+	ungrants    []string
+	runs        []string
+	grants      []string // the bearer, "|", the body
+	decided     []string
+	me          string            // GET /v1/me body for the browser session's token
+	mes         map[string]string // GET /v1/me body by any other token
+	expired     map[string]bool   // tokens the kernel refuses
+	refreshed   []string          // refresh tokens rotated
+	svc         *svc.Service      // what a run dispatches to, as the kernel does
+	keys        map[string]string // the chat key connected, by session token
+	granted     map[string]map[string]bool
+	failGrant   bool // POST /v1/grants refuses
+	failRuns    bool // POST /v1/run cannot reach chat
+	taskReads   int
+	meReads     int      // GET /v1/me
+	taskReaders []string // the token of each GET /v1/tasks
+	refs        []string // references resolved, GET /v1/actions?ref=
 	// away is a chat on another kernel, chat@away: its runs are forwarded, and
 	// it relays neither a refusal's status nor its reason.
-	away       *svc.Service
-	awayDown   bool              // chat@away fails every run
-	requesters map[string]string // requester -> pending|approved|blocked
-	procs      []string          // the viewer's open processes
-	stale      map[string]bool   // actions whose cached contract moved: refused once, for a refresh
+	away         *svc.Service
+	awayDown     bool              // chat@away fails every run
+	failNext     map[string]int    // runs of an action of chat@away to fail, while the chat still answers others
+	revokedThere map[string]bool   // grants the kernel holding chat revoked, as a contract change does, which this kernel still lists
+	requesters   map[string]string // requester -> pending|approved|blocked
+	procs        []string          // the viewer's open processes
+	stale        map[string]bool   // actions whose cached contract moved: refused once, for a refresh
 }
 
 // home is this kernel's chat.
@@ -135,6 +140,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.meReads++
 		switch {
 		case f.expired[tok]:
 			http.Error(w, `{"error":"token expired"}`, http.StatusUnauthorized)
@@ -162,6 +168,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		if ref := r.URL.Query().Get("ref"); ref != "" {
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			f.refs = append(f.refs, ref)
 			// chat@away by its key: resolving makes the kernel known and binds
 			// its name, under which the kernel names the requester from then on.
 			if ref == "chat@"+awayKey+"/index" {
@@ -281,6 +288,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.taskReads++
+		f.taskReaders = append(f.taskReaders, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		open := []map[string]any{}
 		for _, t := range f.tasks {
 			if t["status"] == "waiting" {
@@ -378,7 +386,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		for _, a := range f.delegated() {
 			needs = needs || a == in.Action
 		}
-		if needs && !f.granted[tok][in.Action] {
+		if needs && (!f.granted[tok][in.Action] || f.revokedThere[in.Action]) {
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"code":"grant_required","error":"grant required","meta":{"action":"` + in.Action + `"}}`))
@@ -395,7 +403,10 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		key := f.keys[tok+" "+serviceOf(in.Action)]
 		failing := f.failRuns
 		chat, away := f.chatFor(in.Action)
-		awayDown := f.awayDown
+		awayDown := f.awayDown || f.failNext[in.Action] > 0
+		if f.failNext[in.Action] > 0 {
+			f.failNext[in.Action]--
+		}
 		f.mu.Unlock()
 		remoteFailed := func() {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -452,6 +463,11 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			return
 		}
 		f.grants = append(f.grants, tok+"|"+string(b))
+		for a := range f.revokedThere {
+			if strings.HasPrefix(a, in.Selector+"/") {
+				delete(f.revokedThere, a)
+			}
+		}
 		f.keys[tok+" "+serviceOf(in.Selector)] = in.Token
 		if f.granted[tok] == nil {
 			f.granted[tok] = map[string]bool{}
@@ -540,10 +556,80 @@ func connect(t *testing.T, c *Chat, sm *scs.SessionManager, service string) *htt
 }
 
 func chatVerb(c *Chat, sm *scs.SessionManager, service, verb string) *httptest.ResponseRecorder {
+	return chatVerbFrom(c, sm, service, verb, "")
+}
+
+// chatVerbFrom is a chat's command sent with script from the page at from.
+func chatVerbFrom(c *Chat, sm *scs.SessionManager, service, verb, from string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/chat/chats/"+service+"/"+verb, nil)
 	req.SetPathValue("chat", service)
 	req.SetPathValue("verb", verb)
+	if from != "" {
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("HX-Current-URL", "http://ui.test"+from)
+	}
 	return as(c, sm, c.postChat, req)
+}
+
+// invitation is ann's Accept or Decline of an invitation to room, sent with
+// script from the page at from when there is one.
+func invitation(c *Chat, sm *scs.SessionManager, room, verb, from string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/chat/invites/"+room+"/"+verb, nil)
+	req.SetPathValue("room", room)
+	req.SetPathValue("verb", verb)
+	if from != "" {
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("HX-Current-URL", "http://ui.test"+from)
+	}
+	return as(c, sm, c.postInvite, req)
+}
+
+// tasksReadBy is how many times a token listed its tasks.
+func (f *fakeKernel) tasksReadBy(tok string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, t := range f.taskReaders {
+		if t == tok {
+			n++
+		}
+	}
+	return n
+}
+
+// resolved is how many times a reference was resolved.
+func (f *fakeKernel) resolved(ref string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, r := range f.refs {
+		if r == ref {
+			n++
+		}
+	}
+	return n
+}
+
+// goesTo is where a reply sends the browser: HX-Redirect under htmx, else
+// Location.
+func goesTo(rec *httptest.ResponseRecorder) string {
+	if to := rec.Header().Get("HX-Redirect"); to != "" {
+		return to
+	}
+	return rec.Header().Get("Location")
+}
+
+// openTaskIDs is the ids of the tasks still waiting.
+func (f *fakeKernel) openTaskIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, t := range f.tasks {
+		if t["status"] == "waiting" {
+			out = append(out, t["id"].(string))
+		}
+	}
+	return out
 }
 
 // delegated is every action a member runs with its key, by address: home's,
@@ -619,13 +705,29 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	if err := st.Register(context.Background(), cl, "t", "chat@testnet", "http://chat.test"); err != nil {
 		t.Fatal(err)
 	}
+	viewers := struct {
+		sync.Mutex
+		m map[context.Context]client.User
+	}{m: map[context.Context]client.User{}}
 	c.deps = apps.Deps{
-		Address:           testAddress,
-		Client:            cl,
-		Sessions:          session.NewManager(sm, cl),
-		Home:              filepath.Join(root, "ui"),
-		Programs:          prog,
-		Me:                func(*http.Request) string { return "ann@testnet" },
+		Address:  testAddress,
+		Client:   cl,
+		Sessions: session.NewManager(sm, cl),
+		Home:     filepath.Join(root, "ui"),
+		Programs: prog,
+		Me:       func(*http.Request) string { return "ann@testnet" },
+		Viewer: func(r *http.Request) (u client.User, err error) { // read once per request, as the server's is
+			viewers.Lock()
+			defer viewers.Unlock()
+			if u, ok := viewers.m[r.Context()]; ok {
+				return u, nil
+			}
+			err = c.deps.Sessions.Do(r.Context(), func(tok string) (e error) { u, e = cl.Me(r.Context(), tok); return e })
+			if err == nil {
+				viewers.m[r.Context()] = u
+			}
+			return u, err
+		},
 		CSRFField:         func(*http.Request) template.HTML { return "" },
 		IsHTMX:            func(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" },
 		HandleErr:         func(http.ResponseWriter, *http.Request, error) bool { return false },
@@ -949,8 +1051,12 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	if len(rooms) != 1 || rooms[0].Name != "assistant" || strings.Join(rooms[0].Members, ",") != "ann@testnet,assistant@testnet" || to != "/chat/room/"+addr(rooms[0].ID) {
 		t.Fatalf("rooms = %+v", rooms)
 	}
+	agentReads := f.tasksReadBy("AT")
 	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 || len(f.ran(roomCreateName)) != 1 {
 		t.Errorf("a second landing joins nobody and opens the same room: %s %v %v", rec.Header().Get("Location"), f.grants, f.ran(roomCreateName))
+	}
+	if n := f.tasksReadBy("AT") - agentReads; n != 0 {
+		t.Errorf("a landing with the assistant joined reads none of its tasks: %d", n)
 	}
 	// A room with a third member is not the conversation with the assistant.
 	if _, err := seated(f.svc.Store, "ann@testnet", "three", []string{"assistant@testnet", "bob@testnet"}); err != nil {
@@ -1775,6 +1881,12 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 	if got := refusal(&client.KernelError{Kind: client.KindPeerUnreachable}, "chat@away"); got != "chat@away is not answering. Try again shortly." {
 		t.Errorf("a kernel unreachable: %q", got)
 	}
+	if got := refusal(&client.KernelError{Kind: client.KindTimeout}, "chat@away"); got != "chat@away has not answered yet. It is done once it does." {
+		t.Errorf("a call parked: %q", got)
+	}
+	if got := refusal(&client.KernelError{Kind: client.KindGrantRequired}, "chat@away"); got != "You disconnected this from chat@away in Settings." {
+		t.Errorf("a grant removed: %q", got)
+	}
 	if got := refusal(&client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream request failed"}, home); !strings.Contains(got, "not answering") {
 		t.Errorf("chat down: %q", got)
 	}
@@ -2348,11 +2460,14 @@ func (f *fakeKernel) ranAt(service, name string) []string {
 }
 
 // The rail holds the rooms of every chat the viewer joined, newest activity
-// first, a room elsewhere named with its kernel. A chat elsewhere that has
-// addressed the viewer asks to be connected and runs nothing until Connect,
-// which joins by the path home takes. A chat that cannot be read is a card
-// with its reason and its menu, the others still shown, and the watch retries
-// it. Disconnect returns a chat to asking and hides its rooms; Block removes it.
+// first, a room elsewhere named with its kernel. Every row is its name and its
+// menu, no card. A chat elsewhere that has addressed the viewer is a row asking
+// to be connected and runs nothing until Connect, which joins by the path home
+// takes. A chat that cannot be read is a row under the rooms, its reason its
+// title, its menu disconnecting or blocking it, the others still shown, and the
+// watch retries it. Disconnect returns a chat to asking and hides its rooms, as
+// a grant removed in Settings does, and nothing joins it again; Block removes
+// it. A tick reads the viewer once at most.
 func TestTheRailHoldsEveryChat(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -2372,9 +2487,11 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
-	if !strings.Contains(got, `<b class="mono">chat@away</b>`) || !strings.Contains(got, `action="/chat/chats/chat@away/connect"`) ||
-		!strings.Contains(got, `action="/chat/chats/chat@away/block"`) || strings.Contains(got, ">far ") || len(f.ranAt("chat@away", roomListName)) != 0 {
-		t.Fatalf("a chat asking is a card, and runs nothing: %s", got)
+	if !strings.Contains(got, `<div class="rail-row">
+  <button class="rail-item unread" data-menu="menu-ask-chat@away"`) || !strings.Contains(got, `<span>chat@away</span>`) ||
+		!strings.Contains(got, `action="/chat/chats/chat@away/connect"`) || !strings.Contains(got, `data-confirm="Block away?"`) ||
+		strings.Contains(got, "rail-card") || strings.Contains(got, ">far ") || len(f.ranAt("chat@away", roomListName)) != 0 {
+		t.Fatalf("a chat asking is a row whose menu connects or blocks it, and runs nothing: %s", got)
 	}
 
 	if rec := connect(t, c, sm, "chat@away"); rec.Code != 303 {
@@ -2386,7 +2503,11 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	if !slices.ContainsFunc(f.grants, func(g string) bool { return strings.Contains(g, `"selector":"chat@away"`) }) {
 		t.Errorf("the key is connected at chat@away's root: %v", f.grants)
 	}
+	reads := f.meReads
 	h, err = tick(c, sm, railKey, watchState{Signal: "old"})
+	if f.meReads-reads > 1 {
+		t.Errorf("a tick reads the viewer once at most: %d", f.meReads-reads)
+	}
 	got = string(h)
 	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@away" class="unread">far <span class="muted">· away</span></a>`) ||
 		!strings.Contains(got, `href="/chat/room/`+cafe.ID+`@testnet"`) || !strings.Contains(got, `>cafe</a>`) || strings.Index(got, ">far ") > strings.Index(got, ">cafe<") ||
@@ -2405,9 +2526,10 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
 	got = string(h)
 	if !strings.Contains(got, `>cafe</a>`) || strings.Contains(got, ">far ") ||
-		!strings.Contains(got, `#alert"/></svg> chat@away</span>`) || !strings.Contains(got, `<span class="muted">chat@away refused or failed; a chat on another kernel gives no reason.</span>`) ||
-		!strings.Contains(got, `Disconnect chat@away…`) || st.Fails != 1 {
-		t.Fatalf("a chat down is a card with its reason and its menu, and retried; the others stay: %s %+v", got, st)
+		!strings.Contains(got, `<button class="rail-item rail-down" data-menu="menu-down-chat@away" aria-haspopup="menu" aria-expanded="false" title="chat@away refused or failed; a chat on another kernel gives no reason.">`) ||
+		!strings.Contains(got, `#alert"/></svg> chat@away`) || strings.Index(got, "rail-down") < strings.Index(got, ">cafe<") ||
+		!strings.Contains(got, `Disconnect away…`) || !strings.Contains(got, `Block away…`) || st.Fails != 1 {
+		t.Fatalf("a chat down is a row under the rooms, its reason its title, with its menu, and retried; the others stay: %s %+v", got, st)
 	}
 
 	// Disconnected while its kernel does not answer: gone here at once, and said.
@@ -2425,6 +2547,32 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	}
 	if reg := f.ranAt("chat@away", registerName); len(reg) != 1 {
 		t.Errorf("nothing connects it again: %v", reg)
+	}
+
+	// A grant removed elsewhere, as Settings does, with the chat still approved:
+	// it asks again, and no read joins it.
+	connect(t, c, sm, "chat@away")
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		_ = c.deps.Sessions.Do(r.Context(), func(tok string) error { return c.deps.Client.DeleteGrant(r.Context(), tok, "chat@away") })
+	}, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	for range 3 {
+		h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	}
+	if got = string(h); strings.Contains(got, ">far ") || !strings.Contains(got, `/chat/chats/chat@away/connect`) || len(f.ranAt("chat@away", registerName)) != 2 {
+		t.Errorf("a grant removed in Settings leaves the chat asking, and nothing joins it: %s %v", got, f.ranAt("chat@away", registerName))
+	}
+	// Part of its grants removed, as Settings does folder by folder: a run of an
+	// action whose grant is gone is refused and joins nothing.
+	connect(t, c, sm, "chat@away")
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		_ = c.deps.Sessions.Do(r.Context(), func(tok string) error { return c.deps.Client.DeleteGrant(r.Context(), tok, "chat@away/msg") })
+	}, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	var postErr error
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		postErr = c.run(r, "chat@away", postName, map[string]any{"thread_id": far.ID, "message": "hi"}, nil)
+	}, httptest.NewRequest(http.MethodPost, "/", nil))
+	if refusal(postErr, "chat@away") != "You disconnected this from chat@away in Settings." || len(f.ranAt("chat@away", registerName)) != 3 {
+		t.Errorf("a part disconnected in Settings stays so: %v %v", postErr, f.ranAt("chat@away", registerName))
 	}
 
 	if rec := chatVerb(c, sm, "chat@away", "block"); rec.Code != 303 || f.requesters["chat@away"] != "blocked" {
@@ -2592,11 +2740,11 @@ func TestAMovedContractRunsOnceMore(t *testing.T) {
 	}
 }
 
-// An invitation is a card on the rail with Accept and Decline. Accept completes
-// it, which joins the room, and opens the room; Decline leaves the room through
-// chat, so the inviter sees it declined, and declines the task. An invitation
-// chat withdrew since is declined when accepted, and said. A local agent added
-// to a room is joined to it in the same step.
+// An invitation is a row on the rail, from chat's own list, whose menu accepts
+// or declines it. Accept runs room/join, clears the invitation's task and opens
+// the room; Decline runs room/leave, so the inviter sees it declined, and
+// declines the task. An invitation chat withdrew since is said withdrawn, its
+// task cleared. A local agent added to a room is seated in the same step.
 func TestInvitations(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -2624,49 +2772,50 @@ func TestInvitations(t *testing.T) {
 		}
 		return ""
 	}
-	answer := func(task, verb string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/chat/invites/"+task+"/"+verb, nil)
-		req.SetPathValue("task", task)
-		req.SetPathValue("verb", verb)
-		return as(c, sm, c.postInvite, req)
-	}
 	tea, cake, pie := invite("tea"), invite("cake"), invite("pie")
 
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
-	if !strings.Contains(got, `<b>tea</b>`) || !strings.Contains(got, `<span class="muted mono">bob@testnet</span>`) ||
-		!strings.Contains(got, `action="/chat/invites/`+taskOf(tea)+`/accept"`) || !strings.Contains(got, `action="/chat/invites/`+taskOf(tea)+`/decline"`) {
-		t.Fatalf("an invitation is a card with Accept and Decline: %s", got)
+	if !strings.Contains(got, `<button class="rail-item unread" data-menu="menu-invite-`+tea+`@testnet" aria-haspopup="menu" aria-expanded="false" title="bob@testnet">`) ||
+		!strings.Contains(got, `action="/chat/invites/`+tea+`@testnet/accept"`) || !strings.Contains(got, `data-confirm="Decline tea?"`) || strings.Contains(got, "rail-card") {
+		t.Fatalf("an invitation is a row whose menu accepts or declines it: %s", got)
 	}
 
-	if rec := answer(taskOf(tea), "accept"); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+tea+"@testnet" {
+	if rec := invitation(c, sm, tea+"@testnet", "accept", ""); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+tea+"@testnet" {
 		t.Fatalf("accept opens the room: %d %s %s", rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
 	}
 	if rooms, _ := f.svc.Store.Rooms("ann@testnet"); len(rooms) != 1 || rooms[0].ID != tea {
 		t.Errorf("accept joins that room alone: %+v", rooms)
 	}
+	if got := f.ran(roomJoinName); len(got) != 1 || !strings.Contains(got[0], tea) {
+		t.Errorf("accept is room/join, run as ann: %v", got)
+	}
+	if slices.Contains(f.openTaskIDs(), taskOf(tea)) {
+		t.Error("the accepted invitation's task is cleared")
+	}
 
-	if rec := answer(taskOf(cake), "decline"); rec.Code != 303 {
-		t.Fatalf("decline: %d %s", rec.Code, rec.Header().Get("X-Flash"))
+	if rec := invitation(c, sm, cake+"@testnet", "decline", "/chat/room/"+tea+"@testnet"); rec.Code != 200 || goesTo(rec) != "" {
+		t.Fatalf("decline answers in place: %d %s %s", rec.Code, goesTo(rec), rec.Header().Get("X-Flash"))
 	}
 	if room, _, _ := f.svc.Store.Room("bob@testnet", cake); len(room.Invited) != 0 || len(room.Members) != 1 {
 		t.Errorf("the inviter sees it declined: %+v", room)
 	}
 	if !slices.Contains(f.cancels, taskOf(cake)) {
-		t.Errorf("the invitation is declined: %v", f.cancels)
+		t.Errorf("the declined invitation's task is declined: %v", f.cancels)
 	}
 
 	if err := f.svc.Store.RemoveMember("bob@testnet", pie, "ann@testnet"); err != nil {
 		t.Fatal(err)
 	}
-	if rec := answer(taskOf(pie), "accept"); !strings.Contains(rec.Header().Get("X-Flash"), "That invitation was withdrawn.") {
-		t.Errorf("a withdrawn invitation: %s", rec.Header().Get("X-Flash"))
+	rec := invitation(c, sm, pie+"@testnet", "accept", "/chat/room/"+tea+"@testnet")
+	if !strings.Contains(rec.Header().Get("X-Flash"), "That invitation was withdrawn.") || rec.Header().Get("Location") != "/chat/room/"+tea+"@testnet" {
+		t.Errorf("a withdrawn invitation is said, on the page it was sent from: %s %s", rec.Header().Get("X-Flash"), rec.Header().Get("Location"))
+	}
+	if !slices.Contains(f.cancels, taskOf(pie)) {
+		t.Errorf("a withdrawn invitation's task is cleared: %v", f.cancels)
 	}
 	if rooms, _ := f.svc.Store.Rooms("ann@testnet"); len(rooms) != 1 {
 		t.Errorf("a withdrawn invitation joins nothing: %+v", rooms)
-	}
-	if rec := answer(taskOf(tea), "accept"); rec.Code == 303 {
-		t.Error("an invitation answered is not answered again")
 	}
 
 	agentHome(t, c, "helper@testnet", "AH")
@@ -2677,7 +2826,62 @@ func TestInvitations(t *testing.T) {
 		t.Fatalf("create with an agent: %d %s", rec.Code, rec.Header().Get("X-Flash"))
 	}
 	if rooms, _ := f.svc.Store.Rooms("helper@testnet"); len(rooms) != 1 || rooms[0].Name != "help" {
-		t.Errorf("the agent joined in the same step: %+v", rooms)
+		t.Errorf("the agent is seated in the same step: %+v", rooms)
+	}
+	for _, tk := range f.taskBodies() {
+		if tk["required_caller"] == "helper@testnet" && tk["status"] == "waiting" {
+			t.Errorf("the agent's invitation task is cleared, so its daemon is not handed it: %v", tk)
+		}
+	}
+}
+
+// A failure on a chat elsewhere destroys nothing: with that chat failing every
+// run, Accept and Decline say so on the page they were sent from, decline no
+// task and leave the member invited, and the same click works once it answers.
+// A withdrawal elsewhere is confirmed by that chat's list alone, which holds the
+// invitations: a room absent from the rooms proves nothing. A failed Connect
+// leaves a chat that was asking as it was.
+func TestAFailureElsewhereDestroysNothing(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters["chat@away"] = "pending"
+	f.awayDown = true
+	if rec := chatVerbFrom(c, sm, "chat@away", "connect", "/settings"); !strings.Contains(rec.Header().Get("X-Flash"), "chat@away refused or failed") || rec.Header().Get("Location") != "/settings" {
+		t.Errorf("a failed Connect is said on the page it was sent from: %d %s %s", rec.Code, rec.Header().Get("X-Flash"), rec.Header().Get("Location"))
+	}
+	if f.requesters["chat@away"] != "pending" {
+		t.Errorf("a failed Connect leaves the chat asking: %v", f.requesters)
+	}
+	f.awayDown = false
+	connect(t, c, sm, "chat@away")
+	bob := joinedAt(t, away, "bob@away")
+	var out struct {
+		Room svc.Room `json:"room"`
+	}
+	_ = json.Unmarshal(f.dispatchAt(away, "chat@away", "/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": "far"}).Body.Bytes(), &out)
+	far := out.Room.ID + "@away"
+	cancelled := len(f.cancels)
+
+	f.awayDown = true
+	for _, verb := range []string{"accept", "decline"} {
+		rec := invitation(c, sm, far, verb, "/chat")
+		if !strings.Contains(rec.Header().Get("X-Flash"), "chat@away refused or failed") || strings.Contains(rec.Header().Get("X-Flash"), "withdrawn") {
+			t.Errorf("%s with chat@away failing says so: %s", verb, rec.Header().Get("X-Flash"))
+		}
+	}
+	if room, _, _ := away.Store.Room("bob@away", out.Room.ID); len(room.Invited) != 1 || len(f.cancels) != cancelled {
+		t.Errorf("nothing is destroyed: %+v, %d declined", room, len(f.cancels)-cancelled)
+	}
+
+	f.awayDown = false
+	f.failNext = map[string]int{"chat@away/" + roomLeaveName: 1} // one leave fails, the chat still answering
+	if rec := invitation(c, sm, far, "decline", "/chat"); strings.Contains(rec.Header().Get("X-Flash"), "withdrawn") || len(f.cancels) != cancelled {
+		t.Errorf("a failed leave of a standing invitation is not taken for done: %s, %d declined", rec.Header().Get("X-Flash"), len(f.cancels)-cancelled)
+	}
+	if rec := invitation(c, sm, far, "accept", "/chat"); goesTo(rec) != "/chat/room/"+far {
+		t.Errorf("the same click works once the chat answers: %d %s %s", rec.Code, goesTo(rec), rec.Header().Get("X-Flash"))
 	}
 }
 
@@ -2697,10 +2901,89 @@ func TestAChatAskingByKeyIsNamed(t *testing.T) {
 	f.requesters[home] = "approved"
 	f.requesters["chat@"+awayKey] = "pending"
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
-	if got := string(h); !strings.Contains(got, `<b class="mono">chat@away</b>`) || !strings.Contains(got, `action="/chat/chats/chat@away/connect"`) || strings.Contains(got, awayKey) {
-		t.Fatalf("the card names the chat and connects it by that name: %s", got)
+	if got := string(h); !strings.Contains(got, `<span>chat@away</span>`) || !strings.Contains(got, `action="/chat/chats/chat@away/connect"`) || strings.Contains(got, awayKey) {
+		t.Fatalf("the row names the chat and connects it by that name: %s", got)
+	}
+	// A kernel that cannot be reached keeps its key, and is dialled once.
+	lost := strings.Repeat("L", 43)
+	f.requesters["chat@"+lost] = "pending"
+	for range 3 {
+		h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	}
+	if got := string(h); !strings.Contains(got, "chat@LLLLLLLL…") || !strings.Contains(got, `title="chat@`+lost+`"`) || f.resolved("chat@"+lost+"/index") != 1 {
+		t.Errorf("an unreachable kernel is shown by its key and dialled once: %d %s", f.resolved("chat@"+lost+"/index"), got)
 	}
 	if rec := connect(t, c, sm, "chat@away"); rec.Code != 303 || f.requesters["chat@away"] != "approved" {
 		t.Errorf("connect by the name: %d %s %v", rec.Code, rec.Header().Get("X-Flash"), f.requesters)
+	}
+}
+
+// An invitation the kernel could not deliver yet keeps its member, invited, and
+// the page says whom it did not reach yet, with the composer's sentence, where
+// 0.71.0 dropped the member.
+func TestAnInvitationNotDeliveredKeepsTheMember(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	create := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name=far&members=bob%40testnet+remy%40nowhere"))
+	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := as(c, sm, c.postCreateRoom, create)
+	if rec.Code != 303 || rec.Header().Get("X-Flash") != "info: Not delivered to remy@nowhere." || !strings.HasPrefix(rec.Header().Get("Location"), "/chat/room/") {
+		t.Fatalf("the room starts and says whom it did not reach: %d %s %s", rec.Code, rec.Header().Get("X-Flash"), rec.Header().Get("Location"))
+	}
+	rooms, _ := f.svc.Store.Rooms("ann@testnet")
+	if len(rooms) != 1 || strings.Join(rooms[0].Invited, ",") != "bob@testnet,remy@nowhere" {
+		t.Fatalf("both are kept, invited: %+v", rooms)
+	}
+	id := rooms[0].ID
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(id)+"/add-member", strings.NewReader("member=cy%40nowhere"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("id", addr(id))
+	if rec := as(c, sm, c.postAddMember, req); rec.Header().Get("X-Flash") != "info: Not delivered to cy@nowhere." || rec.Header().Get("Location") != "/chat/room/"+addr(id)+"?form=members" {
+		t.Errorf("adding says so too, the dialog open: %s %s", rec.Header().Get("X-Flash"), rec.Header().Get("Location"))
+	}
+}
+
+// An invitation task left open for a room the viewer is in, after a join whose
+// answer came late, is settled when the room is read, as a delivery is.
+func TestALingeringInvitationIsSettledByARead(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	f.requesters[home] = "approved"
+	bob := joinedAt(t, f.svc, "bob@testnet")
+	var out struct {
+		Room svc.Room `json:"room"`
+	}
+	_ = json.Unmarshal(f.dispatch("/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": "late"}).Body.Bytes(), &out)
+	if err := f.svc.Store.Join(out.Room.ID, "ann@testnet"); err != nil { // the join landed; its task stayed open
+		t.Fatal(err)
+	}
+	if len(f.openTaskIDs()) != 1 {
+		t.Fatalf("one invitation task open: %v", f.openTaskIDs())
+	}
+	open(t, c, sm, out.Room.ID)
+	if ids := f.openTaskIDs(); len(ids) != 0 {
+		t.Errorf("reading the room settles it: %v", ids)
+	}
+}
+
+// An upgrade of a chat elsewhere changes its contracts, and the kernel holding
+// it revokes the grants on them while the viewer's kernel still lists them: a
+// run refused so joins again, as 0.70.1 did.
+func TestAnUpgradeOfAChatElsewhereJoinsAgain(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, "chat@away")
+	far, _ := seated(away.Store, "bob@away", "far", []string{"ann@testnet"})
+	f.revokedThere = map[string]bool{"chat@away/" + roomReadName: true}
+	if st := open(t, c, sm, far.ID+"@away"); st.After == 0 && len(f.ranAt("chat@away", registerName)) != 2 {
+		t.Errorf("the run joins again and the room opens: %+v %v", st, f.ranAt("chat@away", registerName))
+	}
+	if len(f.ranAt("chat@away", registerName)) != 2 {
+		t.Errorf("joined again once: %v", f.ranAt("chat@away", registerName))
 	}
 }

@@ -194,6 +194,10 @@ type Deps struct {
 	// Me returns the signed-in user's address, handle@kernel.
 	Me func(r *http.Request) string
 
+	// Viewer is the signed-in user as the kernel shows them (GET /v1/me), read
+	// at most once per request: the page's balance and an app share the read.
+	Viewer func(r *http.Request) (client.User, error)
+
 	// Address composes this kernel's address for a handle, handle@kernel — the
 	// one composition site, so an app names its service account and its own
 	// actions exactly as the core names the natives. "" while the kernel's name

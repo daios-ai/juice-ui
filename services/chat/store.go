@@ -33,10 +33,11 @@ var (
 	ErrHeld      = errors.New("a post is already pending; answer the delivery first")
 )
 
-// Room is a conversation among its members. A member is invited until it
-// accepts, and only then joined: Members are the joined, who read, post and are
-// delivered to; Invited are those who have not answered yet. Unread and LastAt
-// are filled by Rooms, for the list.
+// Room is a conversation among its members. A member is added, then invited
+// once its invitation is delivered, and joined once it accepts: Members are the
+// joined, who read, post and are delivered to; Invited are those who have not
+// accepted yet, delivered or not. Unread and LastAt are filled by Rooms, for
+// the list.
 type Room struct {
 	ID        string   `json:"thread_id"`
 	Name      string   `json:"name"`
@@ -305,14 +306,16 @@ func (s *Store) CreateRoom(creator, name string, members []string) (Room, error)
 	return s.withMembers(id)
 }
 
-// The states of a member.
+// The states of a member: added until the kernel takes its invitation, then
+// invited until it accepts, then joined.
 const (
+	stateAdded   = "added"
 	stateInvited = "invited"
 	stateJoined  = "joined"
 )
 
 // insertRoom writes a room under a fresh word id, its creator joined and the
-// other members invited.
+// other members added.
 func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, error) {
 	var id string
 	for {
@@ -335,7 +338,7 @@ func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, err
 		if m == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, id, m, stateInvited); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, id, m, stateAdded); err != nil {
 			return "", err
 		}
 	}
@@ -367,9 +370,10 @@ func (s *Store) Rename(actor, roomID, name string) error {
 	return err
 }
 
-// AddMember invites member to the room; the creator only. It reports whether
-// that is a new invitation: a member already invited or joined is left as it
-// is, so one invitation is ever outstanding.
+// AddMember adds member to the room; the creator only. It reports whether the
+// member's invitation is still to be delivered: a member added now, or added
+// earlier and never reached. A member invited or joined is left as it is, so
+// one invitation is ever outstanding.
 func (s *Store) AddMember(actor, roomID, member string) (bool, error) {
 	if member == "" {
 		return false, ErrBadInput
@@ -377,17 +381,17 @@ func (s *Store) AddMember(actor, roomID, member string) (bool, error) {
 	if _, err := s.requireCreator(actor, roomID); err != nil {
 		return false, err
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, roomID, member, stateInvited)
-	if err != nil {
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, roomID, member, stateAdded); err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	var state string
+	err := s.db.QueryRow(`SELECT state FROM members WHERE room_id = ? AND member = ?`, roomID, member).Scan(&state)
+	return state == stateAdded, err
 }
 
-// Join is an invitation accepted: the member becomes joined. A member joined
-// already stays so; one not in the room, never invited or since removed, or
-// having declined, is not found, so no invitation outlives its answer.
+// Join is an invitation accepted: the member becomes joined, from any state. A
+// member not in the room, never added or since removed, or having declined, is
+// not found, so no invitation outlives its answer.
 func (s *Store) Join(roomID, member string) error {
 	res, err := s.db.Exec(`UPDATE members SET state = ? WHERE room_id = ? AND member = ?`, stateJoined, roomID, member)
 	if err != nil {
@@ -399,11 +403,40 @@ func (s *Store) Join(roomID, member string) error {
 	return nil
 }
 
-// Uninvite withdraws an invitation the kernel would not deliver: nobody can
-// accept it, so the member is not kept.
-func (s *Store) Uninvite(roomID, member string) error {
-	_, err := s.db.Exec(`DELETE FROM members WHERE room_id = ? AND member = ? AND state = ?`, roomID, member, stateInvited)
+// Invited records that the kernel took member's invitation.
+func (s *Store) Invited(roomID, member string) error {
+	_, err := s.db.Exec(`UPDATE members SET state = ? WHERE room_id = ? AND member = ? AND state = ?`, stateInvited, roomID, member, stateAdded)
 	return err
+}
+
+// Added is the room's members whose invitation the kernel has not taken yet.
+func (s *Store) Added(roomID string) ([]string, error) { return s.inState(roomID, stateAdded) }
+
+// Invitation is a room a member is invited to, as that member reads it: the
+// room, its name, and its creator, who invited.
+type Invitation struct {
+	ID   string `json:"thread_id"`
+	Name string `json:"name"`
+	From string `json:"from"`
+}
+
+// Invitations is the rooms member is added or invited to, oldest first.
+func (s *Store) Invitations(member string) ([]Invitation, error) {
+	rows, err := s.db.Query(`SELECT r.id, r.name, r.creator FROM rooms r JOIN members m ON m.room_id = r.id
+		WHERE m.member = ? AND m.state != ? ORDER BY r.created_at, r.id`, member, stateJoined)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Invitation{}
+	for rows.Next() {
+		var i Invitation
+		if err := rows.Scan(&i.ID, &i.Name, &i.From); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
 }
 
 // RemoveMember removes member from the room, invited or joined; the creator
@@ -519,13 +552,20 @@ func (s *Store) inRoom(roomID, member string) bool {
 	return n > 0
 }
 
-// members is the room's joined members, invited its invited ones.
+// members is the room's joined members, invited the others.
 func (s *Store) members(roomID string) ([]string, error) { return s.inState(roomID, stateJoined) }
 
-func (s *Store) invited(roomID string) ([]string, error) { return s.inState(roomID, stateInvited) }
+func (s *Store) invited(roomID string) ([]string, error) {
+	return s.listMembers(`SELECT member FROM members WHERE room_id = ? AND state != ? ORDER BY member`, roomID, stateJoined)
+}
 
 func (s *Store) inState(roomID, state string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT member FROM members WHERE room_id = ? AND state = ? ORDER BY member`, roomID, state)
+	return s.listMembers(`SELECT member FROM members WHERE room_id = ? AND state = ? ORDER BY member`, roomID, state)
+}
+
+// listMembers is the members a query of one room and one state names.
+func (s *Store) listMembers(q, roomID, state string) ([]string, error) {
+	rows, err := s.db.Query(q, roomID, state)
 	if err != nil {
 		return nil, err
 	}

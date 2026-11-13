@@ -1,7 +1,19 @@
 # Juice Web UI Requirements
 
-Version: 0.71.0
+Version: 0.71.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.71.1.** The rail is single rows again: a chat asking, an
+> invitation and a chat that could not be read are each one row whose menu
+> holds its commands, where 0.71.0 drew boxed cards. A member whose kernel is
+> offline is kept when added, and invited at the room's next post; 0.71.0
+> dropped them. An invitation is read from chat's own list and accepted with
+> `room/join`, so a chat that fails for a moment destroys no invitation. A
+> command that waits on another kernel dims its row, takes no second click, and
+> its failure is said on the page it was sent from, naming the chat; a room
+> page that opens with a notice is not scrolled away from it. A failed Connect
+> leaves the chat asking. The heartbeat and the landing read what they read in
+> 0.70.1 (§6.7).
 
 > **What changed in 0.71.0.** Adding a member to a room invites them: they
 > accept or decline that room alone, on a card above their rooms, and until
@@ -2835,7 +2847,7 @@ address, compared without case. There is no `@handle`: a member is named as
 everywhere in Juice.
 
 Chat is an HTTP server, the **chat service**, whose endpoints the kernel wraps
-as actions owned by the kernel user `chat@<kernel>`. Its fourteen actions, every
+as actions owned by the kernel user `chat@<kernel>`. Its fifteen actions, every
 schema canonical (§6.4) and every text naming this kernel, are:
 
 | Action | Visibility, auth | Input → output | Who may |
@@ -2845,15 +2857,16 @@ schema canonical (§6.4) and every text naming this kernel, are:
 | `validate` | private, chat's bearer | the verification task's onward | the kernel |
 | `reply` | private, chat's bearer | a delivery's onward: `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` | the kernel |
 | `accept` | private, chat's bearer | an invitation's onward: `{thread_id, member, name?, from?}` → `{ok}`; the member joins | the kernel |
-| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the members it could not reach by address | a member |
-| `room/create` | public, delegated | `{members, name?}` → `{room, uninvited}`, the members invited, and those the kernel would not deliver an invitation to | anyone joined, who becomes the creator; a blank name is the members' handles |
+| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the members it could not reach by address, recipients and invitees | a member |
+| `room/create` | public, delegated | `{members, name?}` → `{room, uninvited}`, the members whose invitation could not be delivered yet | anyone joined, who becomes the creator; a blank name is the members' handles |
 | `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
-| `room/add` | public, delegated | `{thread_id, member}` → `{room, uninvited}`; a member already invited or joined is left as it is | the creator |
+| `room/add` | public, delegated | `{thread_id, member}` → `{room, uninvited}`; a member not reached yet is tried again, one invited or joined is left as it is | the creator |
 | `room/remove` | public, delegated | `{thread_id, member}` → `{room}`, an invitation withdrawn as a member is removed | the creator, never itself |
 | `room/leave` | public, delegated | `{thread_id}` → `{ok}`; an invited member leaving declines | a member other than the creator, joined or invited |
+| `room/join` | public, delegated | `{thread_id}` → `{room}`; the caller accepts its invitation | a member invited |
 | `room/delete` | public, delegated | `{thread_id}` → `{ok}` | the creator; everything in the room goes |
-| `room/list` | public, delegated | `{}` → `{rooms}`, newest activity first | anyone joined |
-| `room/read` | public, delegated | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms}` | a member |
+| `room/list` | public, delegated | `{}` → `{rooms, invitations}`, the rooms newest activity first, and each room the caller is invited to as `{thread_id, name, from}` | anyone joined |
+| `room/read` | public, delegated | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms, invitations}` | a member |
 
 Delegated means `delegated_bearer` on the service's caller-key header,
 `X-Juice-Caller-Key`: the kernel injects the key the member connected, and the
@@ -2863,17 +2876,23 @@ run the action itself and speak as somebody else: the kernel checks an onward's
 visibility against the task's creator, chat. They are reconciled at every
 registration, and any other action the provider owns is deleted.
 
-**Membership.** A member is **invited** until it accepts, then **joined**. The
-creator is joined; everyone `room/create` or `room/add` names is invited, by one
-task each, created during the command's own dispatch: action `chat@<kernel>/accept`,
+**Membership.** A member is **added**, then **invited** once the kernel takes its
+invitation, then **joined** once it accepts. The creator is joined; everyone
+`room/create` or `room/add` names is added and invited at once, by one task each,
+created during the command's own dispatch: action `chat@<kernel>/accept`,
 `required_caller` the member, partial args `{thread_id, member, name, from}`, the
-room's name then and who invited. Completing it joins the member; an invitation
-declined or withdrawn since has no member to join, so no task still open for it
-can accept. A member the kernel would not deliver an invitation to is not kept,
-and is named in `uninvited`. Only joined members read, post, list the room, are
-delivered to and are waited on; the room object names the joined in `members`
-and the rest in `invited`. A store made before invitations has every member
-joined.
+room's name then and its creator, who invited. A member whose kernel the kernel
+cannot reach stays added and is named in `uninvited`; each post in the room tries
+its invitation again with the post's own capability, as a post tries each
+recipient, and names it in `undelivered` while it fails. Adding it again tries at
+once; a member invited or joined gets no second task. The member accepts by
+completing the task or by running `room/join` itself, and declines with
+`room/leave`; an invitation declined or withdrawn has no member to accept, so no
+task still open for it joins anyone. Only joined members read, post, list the
+room, are delivered to and are waited on; the room object names the joined in
+`members` and the rest in `invited`, and `room/list` and `room/read` answer the
+caller's own invitations. A store made before invitations has every member
+joined; one from 0.71.0 keeps its invited members.
 
 **`room/read`.** Without `after` it answers the room's latest entries; with it, the
 oldest entries newer than it and the posts an answer replaced. `waiting` names the
@@ -2913,7 +2932,8 @@ run of an action as the viewer, or a kernel call on the viewer's requesters,
 grants and tasks: the UI dials no chat address and knows no store.
 
 **The viewer's chats.** A viewer's chats are read from the requesters whose
-handle is `chat` (`GET /v1/me/requesters`) and the grants they hold (`GET /v1/me`).
+handle is `chat` (`GET /v1/me/requesters`) and the grants they hold, from the
+request's one read of the viewer (`GET /v1/me`), which the page's balance shares.
 A chat is **joined** when it is this kernel's and approved, which joining
 approves, or a chat elsewhere approved and holding a grant of the viewer's;
 **asking** when it is elsewhere, has addressed the viewer, and is neither joined
@@ -2923,10 +2943,14 @@ inbox lets its invitations reach the viewer and connects nothing, and a grant
 removed anywhere, as in Settings, leaves the chat asking again.
 
 * **Connect** (`POST /chat/chats/<chat>/connect`) is joining (rule 8): approve,
-  register, verify, connect. Nothing else connects a chat elsewhere. A run on a
-  joined chat refused for want of a grant joins again, since an upgrade of chat
-  changes its contracts and the kernel holding them revokes the grants
-  (measured on v0.19.0); a chat disconnected or blocked is not joined, so no run
+  register, verify, connect. One that fails leaves a chat that was asking asking:
+  its approval is revoked again. Nothing else connects a chat elsewhere. A run on a
+  joined chat refused for want of a grant joins again only while the viewer's own
+  kernel still lists that grant, which is an upgrade of chat changing its
+  contracts and the kernel holding them revoking the grants (measured on
+  v0.19.0). A grant the viewer removed, in Settings folder by folder or here,
+  is never restored: such a run says "You disconnected this from chat@k in
+  Settings.", and a chat disconnected or blocked is not joined, so no run
   reaches it.
 * **Disconnect** deletes the grant (`DELETE /v1/grants?selector=chat@k`) and
   returns the requester to pending (`revoke`): the chat's rooms leave the rail,
@@ -2937,7 +2961,13 @@ removed anywhere, as in Settings, leaves the chat asking again.
 * **Block** deletes the grant and blocks the requester, which declines its
   waiting tasks and refuses new ones; Settings' Contacts unblocks.
 
-Each takes only a chat that has addressed the viewer, never this kernel's. A
+Each takes only a chat that has addressed the viewer, never this kernel's, and a
+failure is said on the page it was sent from, naming the chat ("chat@k is not
+answering. Try again shortly."). A chat on a kernel this one has never called
+asks by its key: the rail reads that chat's index once, which binds the kernel's
+name, and addresses it by that name from then on; a kernel that cannot be
+reached is shown by its key, shortened, and not dialled again while the
+session's rail holds it. A
 room is named by its address, `thread@kernel`, the
 kernel whose chat holds it, at home too: it is the room's URL, `/chat/room/<address>`,
 and its watch; a bare thread names no room. Every read and command runs the
@@ -2947,17 +2977,30 @@ run (kernel v0.19, D10). Nothing is run on a chat elsewhere that is not joined;
 a command sent from a page still showing one of its rooms is refused with
 "chat@k is no longer one of your chats." A new conversation starts at home.
 
-**Invitations.** An invitation is a waiting task of a joined chat addressed to
-the viewer whose partial args carry `from`. It is answered on its card alone:
-**Accept** (`POST /chat/invites/<task>/accept`) completes it, which joins the
-room, and opens the room; **Decline** runs `room/leave`, so the inviter sees it
-declined, and then declines the viewer's invitations to that room. An invitation
-chat refuses on completion was withdrawn: it is declined and the page says
-"That invitation was withdrawn."; one that could not reach chat is left as it
-was. A delivery is never an invitation, and opening a room settles deliveries
-alone. The inbox lists invitations as it lists any task; declining one there
+**Invitations.** Chat's own list is the truth: the invitations are those
+`room/list` and `room/read` answer, read by the runs the rail already makes. The
+kernel task is the notice: it moves the signal, and it is what makes a chat
+elsewhere ask on first contact. An invitation is named by its room's address.
+
+* **Accept** (`POST /chat/invites/<thread@kernel>/accept`) runs `room/join` as
+  the viewer, completes their invitation tasks for the room, which only clears
+  them, and opens the room.
+* **Decline** runs `room/leave`, so the inviter sees it declined, then declines
+  the viewer's invitation tasks for the room.
+* **A failure destroys nothing.** The invitation counts as withdrawn only on its
+  chat's word: at home its status (not found, not a member), elsewhere, where no
+  status crosses, a list that answers without the invitation. Then its tasks are
+  cleared and the page says "That invitation was withdrawn." Anything else is
+  said on the page it was sent from, nothing is touched, and the same click works
+  later. A chat no longer the viewer's withdraws nothing.
+
+A delivery is never an invitation, and opening a room settles deliveries alone.
+The inbox lists an invitation's task as it lists any task; declining one there
 declines the task only, and the member stays invited until the creator removes
-them.
+them. An agent's daemon given an invitation task runs its model once and its
+completion is refused, since the task takes no answer (measured with juice-agent
+v0.10.0); it does not retry, and the task waits. The UI therefore accepts for an
+installation's agent where it adds it (rule 8).
 
 **When a page runs a read.** A run writes a transaction, so a read is run on a
 gesture, or when the kernel shows that something changed for the viewer. The signal
@@ -2979,8 +3022,8 @@ page the slow tick runs `room/list` of each chat when the signal differs; a room
 page's read lists the other chats with it. A read that fails acknowledges nothing:
 the watch keeps its signal and cursor, the page reads again after 5 s, then 10, 20,
 40, and every 60 s, and the first success shows the change. A chat that cannot be
-listed is a card above the rooms with its reason, the other chats' rooms still
-shown, and is retried on the same back-off. A room gone, or held by a chat
+listed is a row under the rooms, muted, its reason the row's title, the other
+chats' rooms still shown, and is retried on the same back-off. A room gone, or held by a chat
 no longer among the viewer's, sends the page to the landing (`HX-Redirect`), so a
 delivery of it still open does not read it again on every tick. The rail on a page load is what the session last read, with no run; a session
 holding nothing lists its chats once, and a session not yet joined shows no rooms.
@@ -3008,8 +3051,9 @@ chat failing for a moment reads the same: after a read fails so, that chat's
 `room/list` is run once, and the room is gone only when the list answers without
 it; otherwise the page keeps its back-off. A run the kernel refuses because the chat's contract
 moved since it cached it (`retry: refresh`, after any upgrade of chat; nothing ran
-and nothing was charged) runs once more; a run on a joined chat refused for want
-of a grant joins and runs once more; each at most once, in whichever order the kernel gives them. A post
+and nothing was charged) runs once more; a run refused for want of a grant joins
+and runs once more, at home always, elsewhere while the viewer's kernel still
+lists that grant; each at most once, in whichever order the kernel gives them. A post
 the kernel fails for any other reason says so beside the composer.
 
 The rules:
@@ -3025,8 +3069,13 @@ The rules:
    `{thread_id, member, delivery, message}` where `message` is the standing
    entries since that recipient's previous delivery, by others, this post
    last, at most fifty. The task is created before the delivery is recorded,
-   so a record that fails repeats a range and never leaves a phantom. A
-   recipient the kernel refuses is skipped and named in the post's `undelivered`,
+   so a record that fails repeats a range and never leaves a phantom. One
+   dispatch's tasks, deliveries and invitations, are created at once, each within
+   3 s: the kernel dials the recipient's kernel to create one, a dial to an
+   offline kernel took 8 s and the kernel's deadline for a dispatch is 10 s
+   (both measured), so recipients that do not answer would otherwise fail the
+   whole post. A recipient the kernel refuses, or does not take in time, is
+   skipped, reached by a later post, and named in the post's `undelivered`,
    which the composer's line says ("Not delivered to remy@nowhere."). The kernel shows the task to the
    member once the member has approved chat (kernel U52).
 4. **Completing a delivery settles what the member said.** Of the member's
@@ -3062,10 +3111,13 @@ The rules:
    kernel is joined with its own session, read from
    `client/credentials/<login>.json` under that file's lock and refreshed there
    when the kernel refuses it (ecosystem-standard §4): every time chat signs
-   in, when it is added to a room, and, for the assistant, at every landing.
-   Joining it also accepts the invitations to rooms here it holds: an agent has
-   nobody to press Accept, and its operator adding it is the consent, as it is
-   for joining. Chat has no rule for agents. A
+   in, when it is added to a room, and, for the assistant, at every landing,
+   which costs a grant-plan read and nothing more once it is joined. Where the
+   UI adds an agent to a room at home (a new conversation, Members, the
+   assistant's room) it seats it: joins it and runs `room/join` with its
+   session, then completes its invitation task so its daemon is not handed it:
+   an agent has nobody to accept, and its operator adding it is the consent, as
+   it is for joining. Chat has no rule for agents. A
    join that fails is said on the page that asked for it, and no key is ever
    retired: `register` is open and names any address, so retiring one would let
    anyone revoke a member's credential, and a failed connect leaves the earlier key
@@ -3107,12 +3159,15 @@ the assistant, else the newest room, else an empty page beside the rail.
 
 * **The rail** is the sidebar's list of the viewer's rooms, newest activity
   first, the room in view `aria-current`, a room with unread entries weighted;
-  a read that finds it changed replaces it. Above the rooms stands a card for
-  each thing waiting on the viewer: a chat asking, its address with **Connect**
-  and a menu holding **Block…**; an invitation, the room's name and its kernel
-  when elsewhere, who invited, **Accept** and **Decline**; a chat that could not
-  be read, `#alert` and its address, its reason, and for a chat elsewhere a menu
-  holding **Disconnect…** and **Block…**. Its first row,
+  a read that finds it changed replaces it. Every row is its name and its
+  menu. Above the rooms, weighted as new: a chat asking, `chat@alpha`, its menu
+  **Connect** and **Block alpha…**; an invitation, the room's name and its kernel
+  when elsewhere, who invited in its title, its menu **Accept** and
+  **Decline…**. Under the rooms, muted: a chat that could not be read, `#alert`
+  and its address, its reason in its title, and for a chat elsewhere its menu
+  **Disconnect alpha…** and **Block alpha…**. Such a row is one button opening
+  its menu. A command that may wait on another kernel dims its row and takes no
+  second click until it answers. Its first row,
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
@@ -3122,12 +3177,14 @@ the assistant, else the newest room, else an empty page beside the rail.
   naming the room; a room elsewhere adds **Disconnect alpha…** and **Block alpha…**,
   each asked as a question naming the kernel.
 * **A room** is crumb (name, truncating on one line) → entries → whom it
-  waits on → composer, the page the scroll container, the composer held at
+  waits on → composer, the page the scroll container, opened at its newest entry
+  unless a notice heads it, which is then read first, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
   chosen. **Members…** is a dialog (`?form=members`) listing the joined members, then
   the invited, tagged so, with adding and removing for the creator, removing an
-  invited member withdrawing the invitation; an address chat could not invite
-  comes back in it as "Could not invite remy@nowhere."; for the room in view it opens in place, for another it
+  invited member withdrawing the invitation; a member whose invitation could not
+  be delivered yet is kept, invited, and the page says "Not delivered to
+  remy@nowhere.", the composer's sentence; for the room in view it opens in place, for another it
   opens that room. Its creator alone is offered **Rename**: a dialog holding the name, answered open by the server, with no run
   (`?form=rename` without script), and held outside the sidebar on a room page,
   since a narrow screen does not render the sidebar. A room command sent with

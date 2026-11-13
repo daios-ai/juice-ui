@@ -543,3 +543,40 @@ func TestMoveKeepsWhatTheLogHolds(t *testing.T) {
 		t.Errorf("a store at both paths: %v", err)
 	}
 }
+
+// A member joins from any state: added, its invitation never delivered, as
+// well as invited. A store from 0.71.0 keeps its invited members, listed as
+// invitations.
+func TestJoinFromAnyStateAndA071Store(t *testing.T) {
+	s := mustStore(t)
+	r, _ := s.CreateRoom("ann@k", "cafe", []string{"bob@k", "cy@k"})
+	if err := s.Invited(r.ID, "cy@k"); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"bob@k", "cy@k"} {
+		if err := s.Join(r.ID, m); err != nil {
+			t.Errorf("join %s: %v", m, err)
+		}
+	}
+	if room, _ := s.withMembers(r.ID); len(room.Members) != 3 || len(room.Invited) != 0 {
+		t.Errorf("both joined: %+v", room)
+	}
+
+	path := filepath.Join(t.TempDir(), "rooms.db")
+	old, err := sql.Open("sqlite", path)
+	must(t, err)
+	_, err = old.Exec(v034 + `;
+ALTER TABLE members ADD COLUMN state TEXT NOT NULL DEFAULT 'joined';
+INSERT INTO members(room_id, member, state) VALUES ('0a1b2c', 'eve@k', 'invited');`)
+	must(t, err)
+	old.Close()
+	s2, err := Open(path, "")
+	must(t, err)
+	defer s2.Close()
+	if inv, _ := s2.Invitations("eve@k"); len(inv) != 1 || inv[0].ID != "0a1b2c" || inv[0].From != "ann@k" {
+		t.Errorf("a 0.71.0 invitation survives: %+v", inv)
+	}
+	if room, _ := s2.withMembers("0a1b2c"); len(room.Members) != 2 || len(room.Invited) != 1 {
+		t.Errorf("a 0.71.0 store: %+v", room)
+	}
+}

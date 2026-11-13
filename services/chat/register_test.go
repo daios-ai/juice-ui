@@ -10,7 +10,7 @@ import (
 	"github.com/daios-ai/juice-ui/client"
 )
 
-// A first registration creates the fourteen actions at their sources, each
+// A first registration creates the fifteen actions at their sources, each
 // enabled and given its visibility, and deletes what the provider owned before; a
 // second pass changes nothing; a provider's revision is its own.
 func TestRegisterCreatesAndDeletesTheRest(t *testing.T) {
@@ -22,7 +22,7 @@ func TestRegisterCreatesAndDeletesTheRest(t *testing.T) {
 	if err := st.Register(ctx, k, "t", self, "http://chat:8090"); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.creates) != 14 || len(f.deletes) != 1 || f.deletes[0] != "old" || len(f.enables) != 14 {
+	if len(f.creates) != 15 || len(f.deletes) != 1 || f.deletes[0] != "old" || len(f.enables) != 15 {
 		t.Fatalf("creates=%d deletes=%v enables=%d", len(f.creates), f.deletes, len(f.enables))
 	}
 	byName := map[string]client.CreateActionInput{}
@@ -43,7 +43,7 @@ func TestRegisterCreatesAndDeletesTheRest(t *testing.T) {
 	if err := st.Register(ctx, k, "t", self, "http://chat:8090"); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.creates) != 14 || len(f.updates) != before || len(f.enables) != 14 {
+	if len(f.creates) != 15 || len(f.updates) != before || len(f.enables) != 15 {
 		t.Errorf("second pass churned: creates=%d updates=%v enables=%d", len(f.creates), f.updates, len(f.enables))
 	}
 	if _, ok := st.AuthRev["chat2@testnet"]; ok {

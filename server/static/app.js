@@ -61,8 +61,9 @@ document.body.addEventListener("htmx:afterSwap", (e) => {
   if (box && stickBottom) pinBottom();
 });
 // On load, a page carrying a [data-autoscroll] log opens pinned to its end — a
-// room opens at the newest message with the composer in view.
-if (document.querySelector("[data-autoscroll]")) pinBottom();
+// room opens at the newest message with the composer in view — unless a notice
+// heads it: the last action's result is read first, where it stands.
+if (document.querySelector("[data-autoscroll]") && !document.querySelector("main > .banner")) pinBottom();
 
 // Theme picker: apply the chosen terminal theme instantly, then persist it via
 // the real form POST (which also works with JS off). An empty value clears the

@@ -762,6 +762,7 @@ func (s *Server) appDeps() apps.Deps {
 		CSRFField:         func(r *http.Request) template.HTML { return csrf.TemplateField(r) },
 		IsHTMX:            isHTMX,
 		Me:                func(r *http.Request) string { return s.sessions.Address(r.Context()) },
+		Viewer:            s.me,
 		Address:           s.identity.Address,
 		RequireAuth:       s.requireAuth,
 		RequireSuperuser:  s.requireSuperuser,

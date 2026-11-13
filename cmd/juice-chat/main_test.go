@@ -162,7 +162,7 @@ func TestRegisterUsesTheClientRecords(t *testing.T) {
 	if err := run(context.Background(), []string{"register", "chat@alpha"}, root); err != nil {
 		t.Fatal(err)
 	}
-	if len(created) != 14 || !strings.HasPrefix(created[0].Source, "http://127.0.0.1:8090/chat@alpha/") {
+	if len(created) != 15 || !strings.HasPrefix(created[0].Source, "http://127.0.0.1:8090/chat@alpha/") {
 		t.Fatalf("created %d: %+v", len(created), created[0].Source)
 	}
 	st, err := chat.LoadState(homeAt(root).path("state.json"))
