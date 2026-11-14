@@ -4,9 +4,9 @@
 <nav class="crumb"><a href="/admin/peers">← peers</a></nav>
 {{/* The header is the row's anatomy (§5.11): name with its marks, key, about.
      The polled card below states the facts with labels and holds the verbs. */}}
-{{$n := nameOf $i.Petname $d.Key}}
+{{$n := nameOf $i.Petname $i.Nickname $d.Key}}
 <div class="page-head">
-  <h1 title="{{$n.Title}}">{{$n.Text}}{{if and $i.Nickname (ne $i.Nickname $i.Petname)}} <span class="muted">({{$i.Nickname}})</span>{{end}}
+  <h1 title="{{$n.Title}}">{{$n.Text}}
     {{- if $d.Traded}} <span class="pill">party</span>{{end}}{{if $d.Record.Suspended}} <span class="pill status-danger">suspended</span>{{end}}</h1>
   <p class="subtitle mono hash">{{$d.Key}} {{template "_copy" (copyOf "key" $d.Key)}}</p>
   {{if $i.About}}<p>{{$i.About}}</p>{{end}}
@@ -26,7 +26,7 @@
       {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn" type="submit">Unsuspend</button>
     </form>
     {{else}}
-    <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}?">
+    <form method="post" action="/admin/peers/suspend" data-confirm="Suspend {{$n.Text}}{{with $n.Key}} {{.}}{{end}}?">
       {{$.CSRFField}}<input type="hidden" name="key" value="{{$d.Key}}"><button class="btn-danger" type="submit">Suspend</button>
     </form>
     {{end}}
@@ -52,7 +52,7 @@
      petname when bound, else the nickname or k-<key8>, suffixed past any
      name already held here. The kernel remains the validator. */}}
 <dialog id="form-admin-rename" class="modal-form"{{if eq $d.OpenForm "admin-rename"}} open{{end}} aria-label="Name this kernel">
-  <div class="modal-head"><h2>Name {{$n.Text}}</h2><a class="modal-close" href="/admin/peers/{{$d.Key}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Name {{$n.Text}}{{with $n.Key}} {{.}}{{end}}</h2><a class="modal-close" href="/admin/peers/{{$d.Key}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     <form class="stack" method="post" action="/admin/peers/rename">
       {{$.CSRFField}}

@@ -68,6 +68,71 @@ func TestHealthCarriesTheIdentityBanner(t *testing.T) {
 	}
 }
 
+// Keyed spells a party's kernel by the key its principal names, for a user, an
+// action and a kernel alike; a party with no principal is its address.
+func TestPartyKeyed(t *testing.T) {
+	k := strings.Repeat("k", KeyLen)
+	for _, c := range []struct {
+		p    Party
+		want string
+	}{
+		{Party{Address: "chat@beta", Principal: "U1@" + k}, "chat@" + k},
+		{Party{Address: "chat@beta/room/read", Principal: "U1@" + k + "/room/read"}, "chat@" + k + "/room/read"},
+		{Party{Address: "beta", Principal: k}, k},
+		{Party{Address: "bob@beta"}, "bob@beta"},
+	} {
+		if got := c.p.Keyed(); got != c.want {
+			t.Errorf("%+v.Keyed() = %q, want %q", c.p, got, c.want)
+		}
+	}
+}
+
+// An address names its kernel by key as ShortKey shows a key; an address by
+// name, and anything that is no address, pass unchanged.
+func TestShortAddress(t *testing.T) {
+	key := strings.Repeat("a", 39) + "WXYZ"
+	for in, want := range map[string]string{
+		"bob@" + key:       "bob@aaaaaaaaaa…WXYZ",
+		"bob@beta":         "bob@beta",
+		"bob":              "bob",
+		"bob@" + key + "x": "bob@" + key + "x",
+	} {
+		if got := ShortAddress(in); got != want {
+			t.Errorf("ShortAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A kernel named here is shown by its petname alone, one that calls itself
+// something by that name marked ~, one that does neither by its key; a
+// question adds the key a nickname stands in for.
+func TestPartyLabel(t *testing.T) {
+	key := strings.Repeat("a", 39) + "WXYZ"
+	short := "aaaaaaaaaa…WXYZ"
+	for _, c := range []struct {
+		p                   Party
+		label, shown, claim string
+	}{
+		{Party{Address: "bob@beta", Principal: "u1@" + key}, "bob@beta", "bob@beta", ""},
+		{Party{Address: "bob@beta", Principal: "u1@" + key, Nickname: "beta"}, "bob@beta", "bob@beta", ""},
+		{Party{Address: "bob@" + key, Principal: "u1@" + key, Nickname: "alpha"}, "bob@~alpha", "bob@~alpha " + short, key},
+		{Party{Address: "bob@" + key, Principal: "u1@" + key}, "bob@" + short, "bob@" + short, ""},
+		{Party{Address: "bob@" + key + "/sum", Principal: "u1@" + key + "/sum", Nickname: "alpha"}, "bob@~alpha/sum", "bob@~alpha/sum " + short, key},
+		{Party{Address: key, Principal: key, Nickname: "alpha"}, "~alpha", "~alpha " + short, key},
+		{Party{Address: key, Principal: key}, short, short, ""},
+	} {
+		if got := c.p.Label(); got != c.label {
+			t.Errorf("%+v.Label() = %q, want %q", c.p, got, c.label)
+		}
+		if got := c.p.Shown(); got != c.shown {
+			t.Errorf("%+v.Shown() = %q, want %q", c.p, got, c.shown)
+		}
+		if got := c.p.Claim(); got != c.claim {
+			t.Errorf("%+v.Claim() = %q, want %q", c.p, got, c.claim)
+		}
+	}
+}
+
 func TestAuthorizeParsesCode(t *testing.T) {
 	f := newFake()
 	defer f.close()
@@ -104,7 +169,7 @@ func TestAuthorizeFullURLRedirect(t *testing.T) {
 func TestBearerAndRequestID(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"u1","address":"alice@k"}`
+	f.reply = `{"id":"u1","address":{"address":"alice@k","principal":"alice@k"}}`
 	ctx := WithRequestID(context.Background(), "req-123")
 	if _, err := f.client().Me(ctx, "tok-abc"); err != nil {
 		t.Fatal(err)
@@ -153,7 +218,7 @@ func TestListActionsEncodesOwnerAndDecodesDiscovered(t *testing.T) {
 		if r.URL.Query().Get("offset") != "" {
 			return `[]`
 		}
-		return `[{"id":"","action":"tom@KEY/greet","title":"Greet","discovered":true,"remote_action_id":"R9"}]`
+		return `[{"id":"","action":{"address":"tom@KEY/greet","principal":"tom@KEY/greet"},"title":"Greet","discovered":true,"remote_action_id":"R9"}]`
 	}
 	acts, err := f.client().ListActions(context.Background(), "tok", "alice@testnet")
 	if err != nil {
@@ -175,20 +240,20 @@ func TestMeDecodesConnectors(t *testing.T) {
 	// New /v1/me: a directory-grouped `connectors` tree (each node carries backing
 	// connections + per-action grants with provider_key) plus a `connections`
 	// inventory that carries provider_key and surfaces unused accounts.
-	f.reply = `{"address":"alice@k",
-	 "connectors":[{"directory":"chat","connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}],
-	   "actions":[{"action":"chat/pay","scopes":["pay.write"],"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}]}],
+	f.reply = `{"address":{"address":"alice@k","principal":"alice@k"},
+	 "connectors":[{"directory":{"address":"chat","principal":"chat"},"connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}],
+	   "actions":[{"action":{"address":"chat/pay","principal":"chat/pay"},"scopes":["pay.write"],"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"}]}],
 	 "connections":[{"provider":"api.stripe.com","actions":1,"unused":false,"provider_key":"oauth:PK","created_at":"2026-07-07T00:00:00Z"},
 	   {"provider":"mail.host","actions":0,"unused":true,"provider_key":"bearer:mail.host","created_at":"2026-07-07T00:00:00Z"}]}`
 	u, err := f.client().Me(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(u.Connectors) != 1 || u.Connectors[0].Directory != "chat" {
+	if len(u.Connectors) != 1 || u.Connectors[0].Directory.Address != "chat" {
 		t.Fatalf("connectors = %+v", u.Connectors)
 	}
 	c := u.Connectors[0]
-	if len(c.Actions) != 1 || c.Actions[0].Action != "chat/pay" || c.Actions[0].ProviderKey != "oauth:PK" {
+	if len(c.Actions) != 1 || c.Actions[0].Action.Address != "chat/pay" || c.Actions[0].ProviderKey != "oauth:PK" {
 		t.Fatalf("connector actions = %+v", c.Actions)
 	}
 	if len(c.Connections) != 1 || c.Connections[0].Provider != "api.stripe.com" {
@@ -231,9 +296,9 @@ func TestGrantMethods(t *testing.T) {
 	}
 
 	f.reply = `{"status":"granted","actions":["sys/gmail"]}`
-	acts, pending, err := f.client().CompleteGrant(context.Background(), "tok", "sys/gmail", "S1", "CODE")
-	if err != nil || len(acts) != 1 || acts[0] != "sys/gmail" || pending {
-		t.Fatalf("complete = %v pending=%v %v", acts, pending, err)
+	pending, err := f.client().CompleteGrant(context.Background(), "tok", "sys/gmail", "S1", "CODE")
+	if err != nil || pending {
+		t.Fatalf("complete: pending=%v %v", pending, err)
 	}
 	if !strings.Contains(string(f.lastBody), `"state":"S1"`) || !strings.Contains(string(f.lastBody), `"code":"CODE"`) || !strings.Contains(string(f.lastBody), `"selector":"sys/gmail"`) {
 		t.Errorf("complete body = %s", f.lastBody)
@@ -242,7 +307,7 @@ func TestGrantMethods(t *testing.T) {
 	// person an account is connected while the next run still answers
 	// grant_required.
 	f.reply = `{"status":"pending"}`
-	if _, pending, err = f.client().CompleteGrant(context.Background(), "tok", "sys/gmail", "S1", ""); err != nil || !pending {
+	if pending, err = f.client().CompleteGrant(context.Background(), "tok", "sys/gmail", "S1", ""); err != nil || !pending {
 		t.Errorf("a pending exchange must be reported as pending: pending=%v err=%v", pending, err)
 	}
 
@@ -260,12 +325,10 @@ func TestGrantMethods(t *testing.T) {
 		t.Errorf("delete connection = %s %s", f.lastMethod, f.lastPath)
 	}
 
-	// ConnectGrant posts a static token for a selector's group and returns the
-	// actions granted.
-	f.reply = `{"status":"connected","actions":["chat/message","chat/inbox"]}`
-	acts, err = f.client().ConnectGrant(context.Background(), "tok", "chat", "", "KEY123")
-	if err != nil || len(acts) != 2 {
-		t.Fatalf("connect = %v %v", acts, err)
+	// ConnectGrant posts a static token for a selector's group.
+	f.reply = `{"status":"connected"}`
+	if err := f.client().ConnectGrant(context.Background(), "tok", "chat", "", "KEY123"); err != nil {
+		t.Fatal(err)
 	}
 	if f.lastMethod != "POST" || f.lastPath != "/v1/grants" {
 		t.Errorf("connect = %s %s", f.lastMethod, f.lastPath)
@@ -278,7 +341,7 @@ func TestGrantMethods(t *testing.T) {
 	}
 
 	// PlanGrants fetches the consent plan for a selector.
-	f.reply = `{"groups":[{"provider_key":"bearer:h","provider":"h","scheme":"delegated_bearer","actions":[{"action":"chat/message","granted":false}]}],"skipped_uncallable":1}`
+	f.reply = `{"groups":[{"provider_key":"bearer:h","provider":"h","scheme":"delegated_bearer","actions":[{"action":{"address":"chat/message","principal":"chat/message"},"granted":false}]}],"skipped_uncallable":1}`
 	plan, err := f.client().PlanGrants(context.Background(), "tok", "chat")
 	if err != nil || len(plan.Groups) != 1 || plan.Groups[0].ProviderKey != "bearer:h" || plan.SkippedUncallable != 1 {
 		t.Fatalf("plan = %+v %v", plan, err)
@@ -291,13 +354,13 @@ func TestGrantMethods(t *testing.T) {
 func TestTaskDecodesItsParties(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"S1","revision":1,"action":"a@k/target","created_by":"a@k/maker",
-	 "owner":"vendor@k","required_caller":"ana@k","status":"waiting"}`
+	f.reply = `{"id":"S1","revision":1,"action":{"address":"a@k/target","principal":"a@k/target"},"created_by":{"address":"a@k/maker","principal":"a@k/maker"},
+	 "owner":{"address":"vendor@k","principal":"vendor@k"},"required_caller":{"address":"ana@k","principal":"ana@k"},"status":"waiting"}`
 	st, err := f.client().GetTask(context.Background(), "tok", "S1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.CreatedBy != "a@k/maker" || st.Action != "a@k/target" || st.Owner != "vendor@k" || !st.Waiting() {
+	if st.CreatedBy.Address != "a@k/maker" || st.Action.Address != "a@k/target" || st.Owner.Address != "vendor@k" || !st.Waiting() {
 		t.Errorf("task = %+v", st)
 	}
 	if f.lastPath != "/v1/tasks/S1" {
@@ -387,7 +450,7 @@ func TestProcessesAskForClosedOnesByThePage(t *testing.T) {
 func TestRegisterAddressSendsThePassword(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"blockchain_address":"0xabc","attributed":[{"amount":3,"from":"sys@k","to":"a@k"},{"amount":4,"from":"sys@k","to":"a@k"}]}`
+	f.reply = `{"blockchain_address":"0xabc","attributed":[{"amount":3,"from":{"address":"sys@k"},"to":{"address":"a@k"}},{"amount":4,"from":{"address":"sys@k"},"to":{"address":"a@k"}}]}`
 	got, err := f.client().RegisterAddress(context.Background(), "tok", "0xABC", "sig", "pw")
 	if err != nil {
 		t.Fatal(err)
@@ -608,7 +671,7 @@ func TestActionMutationsNameATarget(t *testing.T) {
 func TestResolveRef(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `[{"id":"PX","action":"vendor@bravo/echo/index","kind":"remote_proxy","price":133}]`
+	f.reply = `[{"id":"PX","action":{"address":"vendor@bravo/echo/index","principal":"vendor@bravo/echo/index"},"kind":"remote_proxy","price":133}]`
 	a, ok, err := f.client().ResolveRef(context.Background(), "tok", "vendor@bravo/echo")
 	if err != nil || !ok {
 		t.Fatalf("resolve = %+v %v %v", a, ok, err)
@@ -644,7 +707,7 @@ func TestReceiptVerification(t *testing.T) {
 func TestUpdateMeSendsFields(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","address":"alice@k","description":"hi there"}`
+	f.reply = `{"id":"U1","address":{"address":"alice@k","principal":"alice@k"},"description":"hi there"}`
 	desc := "hi there"
 	inp := UpdateMeInput{Description: &desc}
 	u, err := f.client().UpdateMe(context.Background(), "tok", inp)
@@ -842,7 +905,7 @@ func TestCallbackCreateTask(t *testing.T) {
 func TestLedger(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	f.reply = `[{"id":"L1","amount":100,"to":"me","operator":"sys","created_at":"2024-01-01T00:00:00Z"}]`
+	f.reply = `[{"id":"L1","amount":100,"to":{"address":"me","principal":"me"},"operator":"sys","created_at":"2024-01-01T00:00:00Z"}]`
 	out, err := f.client().Ledger(context.Background(), "tok", 20, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -850,7 +913,7 @@ func TestLedger(t *testing.T) {
 	if f.lastMethod != "GET" || f.lastPath != "/v1/ledger?limit=20" {
 		t.Errorf("ledger hit %s %s", f.lastMethod, f.lastPath)
 	}
-	if len(out) != 1 || out[0].Amount != 100 || out[0].To != "me" {
+	if len(out) != 1 || out[0].Amount != 100 || out[0].To.Address != "me" {
 		t.Errorf("ledger = %+v", out)
 	}
 }
@@ -874,14 +937,14 @@ func TestAdminRenameUser(t *testing.T) {
 func TestTaskAllowedInputAndRequester(t *testing.T) {
 	f := newFake()
 	defer f.srv.Close()
-	f.reply = `{"id":"S1","action":"sys/transfer","status":"waiting","requester":"alice@k",
+	f.reply = `{"id":"S1","action":{"address":"sys/transfer","principal":"sys/transfer"},"status":"waiting","requester":{"address":"alice@k","principal":"alice@k"},
 	 "partial_args":{"target":"bob","amount":300},
 	 "allowed_input":{"type":"object","properties":{}}}`
 	st, err := f.client().GetTask(context.Background(), "tok", "S1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.AllowedInput) == 0 || st.Requester != "alice@k" {
+	if len(st.AllowedInput) == 0 || st.Requester.Address != "alice@k" {
 		t.Errorf("allowed_input or requester not decoded: %+v", st)
 	}
 }
@@ -895,10 +958,10 @@ func TestRequesters(t *testing.T) {
 		if r.URL.Query().Get("offset") != "" && r.URL.Query().Get("offset") != "0" {
 			return `[]`
 		}
-		return `[{"requester":"mallory@bravo","status":"pending","since":"2026-08-06T09:30:00Z"}]`
+		return `[{"requester":{"address":"mallory@bravo","principal":"mallory@bravo"},"status":"pending","since":"2026-08-06T09:30:00Z"}]`
 	}
 	rs, err := f.client().ListRequesters(context.Background(), "tok")
-	if err != nil || len(rs) != 1 || rs[0] != (Requester{"mallory@bravo", "pending", "2026-08-06T09:30:00Z"}) {
+	if err != nil || len(rs) != 1 || rs[0] != (Requester{Party{Address: "mallory@bravo", Principal: "mallory@bravo"}, "pending", "2026-08-06T09:30:00Z"}) {
 		t.Fatalf("ListRequesters = %+v, %v", rs, err)
 	}
 	f.replyFn = nil
@@ -915,7 +978,7 @@ func TestRequesters(t *testing.T) {
 // each kept apart.
 func TestActionEvidenceDecodes(t *testing.T) {
 	var a Action
-	body := `{"id":"P","action":"seller@k-4lnq/greet","evidence":{
+	body := `{"id":"P","action":{"address":"seller@k-4lnq/greet","principal":"seller@k-4lnq/greet"},"evidence":{
 	  "local_experience":{"action_id":"P","uses":2,"successes":1,"failures":1,"rating_count":1,"rating_estimate":1},
 	  "provider_reported":{"issuer_public_key":"PROV","subject_action_id":"R","uses":1,"successes":1,"avg_latency_ms":0.5,"contradictions":0},
 	  "observed_by_others":[{"issuer_public_key":"OTHER","subject_action_id":"R","uses":3,"corroborated_uses":2,"contradictions":1,"unverified_ratings":1}],

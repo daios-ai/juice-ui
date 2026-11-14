@@ -5,7 +5,7 @@
     <div class="auth-brand"><img class="brand-logo" src="/static/juice-logo.svg" alt="" width="30" height="33"> juice</div>
     {{if .KernelHandle}}
     <p class="auth-kernel">Sign in to <b class="mono">{{.KernelHandle}}</b>{{if .KernelNet}} on {{.KernelNet}}{{end}}{{if and .KernelName (ne .KernelName .KernelHandle)}} <span class="muted">· recorded as {{.KernelName}}</span>{{end}}</p>
-    {{if .KernelFP}}<p class="kernel-fp mono" title="Kernel public key — verify you reached the right kernel"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg> {{.KernelFP}}</p>{{end}}
+    {{with .KernelKey}}<p class="kernel-fp mono" title="Kernel public key — verify you reached the right kernel"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#lock"/></svg> {{(nameOf "" "" .).Text}} {{template "_copy" (copyOf "key" .)}}</p>{{end}}
     {{end}}
 
     {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}

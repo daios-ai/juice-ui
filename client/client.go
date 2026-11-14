@@ -52,6 +52,88 @@ func (c *Client) BaseURL() string { return c.baseURL }
 
 // ---- DTOs (snake_case wire tags; structured fields stay inline JSON, R4.1/R4.2) ----
 
+// Party is how a reply names a party or an action (kernel R3a): Address as this
+// kernel writes it, for a person to read and to type back; Principal,
+// user_id@kernel_key[/name] or a kernel's key, which names it on every kernel
+// and survives a rename, for a program to keep and compare; and Nickname, the
+// name a kernel this one has given no petname calls itself, a claim shown
+// marked ~ (Label). A request takes an address or a principal as a plain string.
+type Party struct {
+	Address   string `json:"address"`
+	Principal string `json:"principal"`
+	Nickname  string `json:"nickname,omitempty"`
+}
+
+// String is the party's address, so a page that prints a party prints it.
+func (p Party) String() string { return p.Address }
+
+// Keyed is the party's address with its kernel spelled by key, as its
+// principal names it: the spelling no petname changes, by which a program may
+// keep a party it addresses by handle. A kernel party is its key.
+func (p Party) Keyed() string {
+	handle, rest, ok := strings.Cut(p.Address, "@")
+	_, key, named := strings.Cut(p.Principal, "@")
+	switch {
+	case !named && p.Principal != "":
+		return p.Principal
+	case !named || !ok:
+		return p.Address
+	}
+	key, _, _ = strings.Cut(key, "/")
+	if _, path, ok := strings.Cut(rest, "/"); ok {
+		return handle + "@" + key + "/" + path
+	}
+	return handle + "@" + key
+}
+
+// Label is the party as a person reads it (ui-grammar "Naming"): its kernel by
+// the petname bound here, else by the name it calls itself, marked ~ as a
+// claim, else by its key shortened (ShortAddress). bob@beta, bob@~alpha,
+// bob@g0b6iv3OqL…WhD0.
+func (p Party) Label() string {
+	head, key, tail := p.split()
+	if !p.claimed(key) {
+		return ShortAddress(p.Address)
+	}
+	return head + "~" + p.Nickname + tail
+}
+
+// Shown is Label followed by the key a nickname stands in for, shortened: the
+// form a question or a sentence names a party by, since the claim alone
+// decides nothing. bob@~alpha g0b6iv3OqL…WhD0.
+func (p Party) Shown() string {
+	if key := p.Claim(); key != "" {
+		return p.Label() + " " + ShortKey(key)
+	}
+	return p.Label()
+}
+
+// Claim is the key of the kernel Label names by its nickname, "" when Label
+// names it otherwise.
+func (p Party) Claim() string {
+	if _, key, _ := p.split(); p.claimed(key) {
+		return key
+	}
+	return ""
+}
+
+// split cuts the address into "handle@", the kernel, and "/path"; a kernel
+// alone has neither.
+func (p Party) split() (head, kernel, tail string) {
+	kernel = p.Address
+	if h, rest, ok := strings.Cut(kernel, "@"); ok {
+		head, kernel = h+"@", rest
+	}
+	if k, path, ok := strings.Cut(kernel, "/"); ok {
+		kernel, tail = k, "/"+path
+	}
+	return head, kernel, tail
+}
+
+// claimed reports that the party's kernel is written by its key, so no petname
+// names it here, and that it calls itself something.
+func (p Party) claimed(kernel string) bool { return p.Nickname != "" && len(kernel) == KeyLen }
+
 // Tokens is an access/refresh token pair. Stored server-side only (R1.2).
 type Tokens struct {
 	AccessToken  string `json:"access_token"`
@@ -63,7 +145,7 @@ type Tokens struct {
 // "about" an account may set (empty until set).
 type User struct {
 	ID                string       `json:"id"`
-	Address           string       `json:"address"` // handle@kernel
+	Address           Party        `json:"address"`
 	Description       string       `json:"description"`
 	Available         int64        `json:"available"`
 	Locked            int64        `json:"locked"`
@@ -77,7 +159,7 @@ type User struct {
 // upstream account(s) that back it (usually one), and the per-action grants under
 // it. The directory is a display grouping only — it never gates a credential.
 type Connector struct {
-	Directory   string       `json:"directory"`
+	Directory   Party        `json:"directory"`
 	Connections []Connection `json:"connections"`
 	Actions     []Grant      `json:"actions"`
 }
@@ -86,7 +168,7 @@ type Connector struct {
 // a consent record only — never any token material. ProviderKey is the opaque key
 // of the backing Connection (omitted on an unbackfilled legacy grant).
 type Grant struct {
-	Action      string   `json:"action"` // the granted action's address
+	Action      Party    `json:"action"`
 	Scopes      []string `json:"scopes"`
 	ProviderKey string   `json:"provider_key,omitempty"`
 	CreatedAt   string   `json:"created_at"`
@@ -132,7 +214,7 @@ type HTTPSpec struct {
 // address's first segment; the kernel serves no separate owner field.
 type Action struct {
 	ID     string `json:"id"`
-	Action string `json:"action"`
+	Action Party  `json:"action"`
 	Name   string `json:"name"`
 	// Title is the one line a person reads in a list (kernel D4: required,
 	// trimmed, 1–80 characters). It is part of the quoted terms.
@@ -193,7 +275,7 @@ func (a Action) Experience() *Stats {
 }
 
 // Ref returns the action's address, owner@kernel/name, as the kernel serves it.
-func (a Action) Ref() string { return a.Action }
+func (a Action) Ref() string { return a.Action.Address }
 
 // Vis returns the normalized visibility ("private", "local", or "public"),
 // defaulting an empty value (legacy kernel) to "private" — the kernel default.
@@ -255,7 +337,7 @@ type UpdateActionInput struct {
 // remote receipt (funds locked on a possibly-offline peer) via AwaitingReceipt.
 type Process struct {
 	ID                   string `json:"id"`
-	Owner                string `json:"owner"`
+	Owner                Party  `json:"owner"`
 	Available            int64  `json:"available"`
 	Locked               int64  `json:"locked"`
 	Status               string `json:"status"`
@@ -306,11 +388,11 @@ type Transaction struct {
 	ID        string             `json:"id"`
 	ProcessID string             `json:"process_id"`
 	TraceID   string             `json:"trace_id"`
-	Owner     string             `json:"owner"`
-	Caller    string             `json:"caller"`
-	Target    string             `json:"target"`
+	Owner     Party              `json:"owner"`
+	Caller    Party              `json:"caller"`
+	Target    Party              `json:"target"`
 	ActionID  string             `json:"action_id"`
-	Action    string             `json:"action"`
+	Action    Party              `json:"action"`
 	Args      json.RawMessage    `json:"args"`
 	Result    json.RawMessage    `json:"result"`
 	Status    string             `json:"status"`
@@ -374,11 +456,11 @@ type Rating struct {
 // WaitingOnPeer flags a waiting task whose caller is on another kernel.
 type Task struct {
 	ID             string          `json:"id"`
-	RequiredCaller string          `json:"required_caller"` // the completer's address
-	Owner          string          `json:"owner"`           // the payer: the process owner, or the holding kernel
-	Requester      string          `json:"requester"`       // whom the task acts for; completion runs as it (kernel D6)
-	Action         string          `json:"action"`
-	CreatedBy      string          `json:"created_by"`
+	RequiredCaller Party           `json:"required_caller"` // the completer
+	Owner          Party           `json:"owner"`           // the payer: the process owner, or the holding kernel
+	Requester      Party           `json:"requester"`       // whom the task acts for; completion runs as it (kernel D6)
+	Action         Party           `json:"action"`
+	CreatedBy      Party           `json:"created_by"`
 	Price          int64           `json:"price"`
 	PartialArgs    json.RawMessage `json:"partial_args"`
 	Status         string          `json:"status"` // waiting|running|done|cancelled
@@ -461,12 +543,24 @@ const KeyLen = 43
 // ends carry distinguishing signal, and the result is still the value to
 // eyeball against the original (no hashing). This is the single definition, so
 // one kernel abbreviates identically everywhere it is named — an error
-// sentence, the header, a card.
+// sentence, the header, a card. Anything that is not key-shaped (KeyLen
+// characters) — a petname, a handle — passes unchanged, so any kernel name may
+// be given.
 func ShortKey(key string) string {
-	if len(key) <= 14 {
+	if len(key) != KeyLen {
 		return key
 	}
 	return key[:10] + "…" + key[len(key)-4:]
+}
+
+// ShortAddress is an address, handle@kernel or a kernel alone, with its kernel
+// shown as ShortKey shows it.
+func ShortAddress(a string) string {
+	handle, k, ok := strings.Cut(a, "@")
+	if !ok {
+		return ShortKey(a)
+	}
+	return handle + "@" + ShortKey(k)
 }
 
 // ---- core request helper ----
@@ -647,7 +741,7 @@ type GrantGroup struct {
 // GrantPlanAction is one action in a group, with whether it is already granted.
 type GrantPlanAction struct {
 	ActionID string `json:"action_id"`
-	Action   string `json:"action"`
+	Action   Party  `json:"action"`
 	Granted  bool   `json:"granted"`
 }
 
@@ -684,39 +778,32 @@ func (c *Client) StartGrant(ctx context.Context, token, selector, provider, redi
 
 // CompleteGrant exchanges the provider code for the group's grants. state must be
 // the value from StartGrant, and selector the one it was started for, which
-// tells the kernel where a consent begun for another kernel is held. Returns
-// the actions that were granted.
+// tells the kernel where a consent begun for another kernel is held.
 // It answers `{status:"granted", actions}` when the exchange completed, and
 // `{status:"pending"}` when it has not yet — the device flow polls, and a code
 // flow may also answer so. Pending is reported as such: treating it as granted
 // would tell a person an account is connected when the next call will still
 // answer grant_required.
-func (c *Client) CompleteGrant(ctx context.Context, token, selector, state, code string) ([]string, bool, error) {
+func (c *Client) CompleteGrant(ctx context.Context, token, selector, state, code string) (bool, error) {
 	var resp struct {
-		Status  string   `json:"status"`
-		Actions []string `json:"actions"`
+		Status string `json:"status"`
 	}
 	body := map[string]string{"selector": selector, "state": state, "code": code}
 	err := c.do(ctx, http.MethodPost, "/v1/grants/complete", token, body, &resp)
-	return resp.Actions, resp.Status == "pending", err
+	return resp.Status == "pending", err
 }
 
 // ConnectGrant attaches a static per-caller token to a delegated_bearer selector's
 // group (POST /v1/grants) — the non-OAuth twin of start/complete. One call mints a
 // grant per action in the group against one Connection; provider disambiguates
 // when the selector spans groups (may be empty for a single group). Authenticated
-// as the grantor. Idempotent: a re-connect overwrites in place. Returns the actions
-// that were granted.
-func (c *Client) ConnectGrant(ctx context.Context, token, selector, provider, staticToken string) ([]string, error) {
+// as the grantor. Idempotent: a re-connect overwrites in place.
+func (c *Client) ConnectGrant(ctx context.Context, token, selector, provider, staticToken string) error {
 	body := map[string]string{"selector": selector, "token": staticToken}
 	if provider != "" {
 		body["provider"] = provider
 	}
-	var resp struct {
-		Actions []string `json:"actions"`
-	}
-	err := c.do(ctx, http.MethodPost, "/v1/grants", token, body, &resp)
-	return resp.Actions, err
+	return c.do(ctx, http.MethodPost, "/v1/grants", token, body, nil)
 }
 
 // DeleteGrant revokes the caller's grants matching a selector (the grants only;
@@ -778,8 +865,8 @@ func (c *Client) UpdateMe(ctx context.Context, token string, in UpdateMeInput) (
 type LedgerEntry struct {
 	Amount    int64  `json:"amount"`
 	Reason    string `json:"reason,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
+	From      Party  `json:"from"`
+	To        Party  `json:"to"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -795,7 +882,6 @@ type Withdrawal struct {
 	TxHash    string `json:"tx_hash,omitempty"`
 	Reason    string `json:"reason,omitempty"` // the kernel's, why a payout is blocked; the person's own goes on the ledger entry
 	CreatedAt string `json:"created_at"`
-	Party     string `json:"party,omitempty"`
 }
 
 // Withdraw pays credits out to the address the caller registered. The id is the
@@ -1137,7 +1223,7 @@ func (c *Client) GetTask(ctx context.Context, token, id string) (Task, error) {
 // Requester is one party that has addressed tasks to the caller: its tasks are
 // withheld until the caller approves it (GET /v1/me/requesters, kernel U52).
 type Requester struct {
-	Requester string `json:"requester"`
+	Requester Party  `json:"requester"`
 	Status    string `json:"status"` // pending|approved|blocked
 	Since     string `json:"since"`
 }
@@ -1175,58 +1261,72 @@ func (c *Client) CreateTask(ctx context.Context, token string, in CreateTaskInpu
 	return t, err
 }
 
-// Capability-callback headers the kernel injects into every kind=http dispatch
-// (juicedocs §9 out-of-kernel composition): the executing action composes by calling
-// back with the capability.
+// The headers the kernel sets on every kind=http dispatch (kernel D8): the
+// callback base URL and the trace's capability, with which the executing action
+// composes, and who the run is for, as principals the kernel sets and a caller
+// cannot: the immediate caller, and the owner of the process the run began in.
 const (
-	CapabilityHeader = "X-Juice-Capability" // <trace_id>.<sig> — the trace to compose on
-	CallbackHeader   = "X-Juice-Callback"   // base URL to call the composition API back on
+	CapabilityHeader = "X-Juice-Capability" // <trace_id>.<sig>: the trace to compose on
+	CallbackHeader   = "X-Juice-Callback"   // the base URL to call the composition API back on
+	CallerHeader     = "X-Juice-Caller"
+	OwnerHeader      = "X-Juice-Owner"
 )
 
-// CallbackCreateTask creates a task via the trace-capability the kernel injected into
-// a kind=http dispatch, rather than via a session token. It POSTs to
-// {callbackBase}/v1/tasks carrying `capability` in the X-Juice-Capability header (NOT a
-// bearer) with NO trace_id — the capability IS the trace. Used by the chat/outbox
-// handler to create the sentinel task that holds the outbox seed open. Valid only while
-// the dispatch's trace is unsettled (call it during the dispatch, before returning).
+// CallbackCreateTask creates a task through the capability of a dispatch: the
+// capability names the trace, so the body carries none. Valid only while the
+// dispatch's trace is unsettled, so it is called during the dispatch.
 func (c *Client) CallbackCreateTask(ctx context.Context, callbackBase, capability string, in CreateTaskInput) (Task, error) {
 	if len(in.PartialArgs) == 0 {
 		in.PartialArgs = json.RawMessage(`{}`)
 	}
-	body, err := json.Marshal(map[string]any{
-		"action":          in.Action,
-		"required_caller": in.RequiredCaller,
-		"partial_args":    in.PartialArgs,
-	})
-	if err != nil {
-		return Task{}, fmt.Errorf("marshal request: %w", err)
+	var t Task
+	err := c.callback(ctx, callbackBase, capability, "/v1/tasks", map[string]any{
+		"action": in.Action, "required_caller": in.RequiredCaller, "partial_args": in.PartialArgs,
+	}, &t)
+	return t, err
+}
+
+// CallbackCall runs action with args as a subcall of a dispatch's trace (POST
+// /v1/call), and decodes its result into out.
+func (c *Client) CallbackCall(ctx context.Context, callbackBase, capability, action string, args, out any) error {
+	var rep CallReply
+	if err := c.callback(ctx, callbackBase, capability, "/v1/call", map[string]any{"action": action, "args": args}, &rep); err != nil {
+		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(callbackBase, "/")+"/v1/tasks", bytes.NewReader(body))
+	return json.Unmarshal(rep.Result, out)
+}
+
+// callback posts in to the kernel's composition API at path with the
+// capability in its header, never as a bearer, and decodes the reply into out.
+func (c *Client) callback(ctx context.Context, base, capability, path string, in, out any) error {
+	body, err := json.Marshal(in)
 	if err != nil {
-		return Task{}, fmt.Errorf("build request: %w", err)
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(CapabilityHeader, capability)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Task{}, &KernelError{Kind: KindUnavailable, KernelMessage: "callback: " + err.Error()}
+		return &KernelError{Kind: KindUnavailable, KernelMessage: "callback: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Task{}, fmt.Errorf("read response: %w", err)
+		return fmt.Errorf("read response: %w", err)
 	}
-	if cerr := classify(resp.StatusCode, raw); cerr != nil {
-		return Task{}, cerr
+	if err := classify(resp.StatusCode, raw); err != nil {
+		return err
 	}
-	var t Task
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return Task{}, fmt.Errorf("decode response: %w", err)
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
 		}
 	}
-	return t, nil
+	return nil
 }
 
 // CompleteTask completes a waiting task. args is always sent in the body (the

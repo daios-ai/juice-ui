@@ -9,17 +9,24 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/daios-ai/juice-ui/client"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registered as "sqlite"
 )
 
 // Store is chat's state: rooms and their members, the entries said in them,
-// the keys members post with, each member's cursors in a room, and the
-// deliveries a member holds. It knows nothing of the kernel: who may do what
-// is decided here by membership alone, and every state change that must hold
+// the keys members post with, each member's cursors in a room, the deliveries
+// a member holds, and how the kernel last named each member. Who may do what is
+// decided here by membership alone, and every state change that must hold
 // together is one transaction.
+//
+// A member is held by its principal, user_id@kernel_key, which the kernel
+// gives it and which names it on every kernel and through a rename. A store made
+// before 0.72.0 holds its members by address, handle@kernel, until each is bound
+// to its principal (Bind, Seat).
 type Store struct {
 	db *sql.DB
 }
@@ -110,7 +117,17 @@ CREATE TABLE IF NOT EXISTS chain (
   PRIMARY KEY (room_id, member, delivery)
 );
 CREATE TABLE IF NOT EXISTS seqs (name TEXT PRIMARY KEY, n INTEGER NOT NULL);
-INSERT OR IGNORE INTO seqs(name, n) VALUES ('delivery', 0);`
+INSERT OR IGNORE INTO seqs(name, n) VALUES ('delivery', 0);
+CREATE TABLE IF NOT EXISTS accounts (
+  id       TEXT PRIMARY KEY,
+  address  TEXT NOT NULL,
+  nickname TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS legacy (
+  address TEXT PRIMARY KEY,
+  id      TEXT NOT NULL
+);
+DELETE FROM keys WHERE active = 0;`
 
 // columns are added to a store made by an earlier version, in place. A
 // delivery held before chain.upto existed covered the room as it stood then,
@@ -552,15 +569,18 @@ func (s *Store) inRoom(roomID, member string) bool {
 	return n > 0
 }
 
-// members is the room's joined members, invited the others.
+// members is the room's joined members, invited the others, each in the
+// order of the address chat names it by.
 func (s *Store) members(roomID string) ([]string, error) { return s.inState(roomID, stateJoined) }
 
 func (s *Store) invited(roomID string) ([]string, error) {
-	return s.listMembers(`SELECT member FROM members WHERE room_id = ? AND state != ? ORDER BY member`, roomID, stateJoined)
+	return s.listMembers(`SELECT m.member FROM members m LEFT JOIN accounts a ON a.id = m.member
+		WHERE m.room_id = ? AND m.state != ? ORDER BY COALESCE(a.address, m.member)`, roomID, stateJoined)
 }
 
 func (s *Store) inState(roomID, state string) ([]string, error) {
-	return s.listMembers(`SELECT member FROM members WHERE room_id = ? AND state = ? ORDER BY member`, roomID, state)
+	return s.listMembers(`SELECT m.member FROM members m LEFT JOIN accounts a ON a.id = m.member
+		WHERE m.room_id = ? AND m.state = ? ORDER BY COALESCE(a.address, m.member)`, roomID, state)
 }
 
 // listMembers is the members a query of one room and one state names.
@@ -758,17 +778,18 @@ func (s *Store) Range(member, roomID string, upto int64, limit int) ([]Entry, er
 }
 
 // Working is who holds an unanswered delivery in the room, other than viewer:
-// the members the room is waiting on, in address order.
+// the members the room is waiting on, in the order of their addresses.
 func (s *Store) Working(roomID, viewer string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT member FROM chain WHERE room_id = ? AND member != ? ORDER BY member`, roomID, viewer)
+	rows, err := s.db.Query(`SELECT DISTINCT c.member, COALESCE(a.address, c.member) FROM chain c LEFT JOIN accounts a ON a.id = c.member
+		WHERE c.room_id = ? AND c.member != ? ORDER BY 2`, roomID, viewer)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []string
 	for rows.Next() {
-		var m string
-		if err := rows.Scan(&m); err != nil {
+		var m, address string
+		if err := rows.Scan(&m, &address); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -836,7 +857,7 @@ func (s *Store) Answer(member, roomID string, delivery int64, body json.RawMessa
 	if err != nil {
 		return err
 	}
-	if !contains(members, member) {
+	if !slices.ContainsFunc(members, func(m client.Party) bool { return ID(m) == member }) {
 		return tx.Commit()
 	}
 	var unaddressed []int64
@@ -880,63 +901,169 @@ func (s *Store) Answer(member, roomID string, delivery int64, body json.RawMessa
 	return tx.Commit()
 }
 
-func txMembers(tx *sql.Tx, roomID string) ([]string, error) {
-	rows, err := tx.Query(`SELECT member FROM members WHERE room_id = ? AND state = ? ORDER BY member`, roomID, stateJoined)
+// txMembers is the room's joined members, each with its address, which a
+// post may address.
+func txMembers(tx *sql.Tx, roomID string) ([]client.Party, error) {
+	rows, err := tx.Query(`SELECT m.member, COALESCE(a.address, m.member) FROM members m LEFT JOIN accounts a ON a.id = m.member
+		WHERE m.room_id = ? AND m.state = ? ORDER BY m.member`, roomID, stateJoined)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []client.Party
 	for rows.Next() {
-		var m string
-		if err := rows.Scan(&m); err != nil {
+		var p client.Party
+		if err := rows.Scan(&p.Principal, &p.Address); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		if !IsPrincipal(p.Principal) {
+			p.Principal = ""
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
-func contains(xs []string, x string) bool {
-	for _, y := range xs {
-		if y == x {
-			return true
-		}
-	}
-	return false
-}
-
 // ---- keys ----
 
-// RegisterKey mints a pending key for member and returns it with the id its
-// activation names. Only the key's hash is kept.
-func (s *Store) RegisterKey(member string) (raw, keyID string, err error) {
-	if member == "" {
-		return "", "", ErrBadInput
-	}
-	raw, keyID = newToken(), newToken()
-	_, err = s.db.Exec(`INSERT INTO keys(hash, member, active, key_id) VALUES(?,?,0,?)`, hashKey(raw), member, keyID)
-	return raw, keyID, err
+// IssueKey issues member a key. Only its hash is kept.
+func (s *Store) IssueKey(member string) (string, error) {
+	raw := newToken()
+	_, err := s.db.Exec(`INSERT INTO keys(hash, member, active, key_id) VALUES(?,?,1,?)`, hashKey(raw), member, newToken())
+	return raw, err
 }
 
-// ActivateKey activates the pending key registered under keyID.
-func (s *Store) ActivateKey(keyID string) error {
-	res, err := s.db.Exec(`UPDATE keys SET active = 1 WHERE key_id = ?`, keyID)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// Member resolves a raw key to the member it was activated for.
+// Member resolves a raw key to the member it was issued to.
 func (s *Store) Member(raw string) (string, bool) {
 	var member string
 	var active bool
 	err := s.db.QueryRow(`SELECT member, active FROM keys WHERE hash = ?`, hashKey(raw)).Scan(&member, &active)
 	return member, err == nil && active && member != ""
+}
+
+// ---- principals ----
+
+// IsPrincipal reports a principal, user_id@kernel_key: what the kernel names a
+// user by on every kernel.
+func IsPrincipal(m string) bool {
+	id, k, ok := strings.Cut(m, "@")
+	return ok && len(k) == client.KeyLen && len(id) == 36 && strings.Count(id, "-") == 4
+}
+
+// ID is what the store holds a member by: its principal, or the address a
+// member not bound yet is held by.
+func ID(p client.Party) string {
+	if p.Principal != "" {
+		return p.Principal
+	}
+	return p.Address
+}
+
+// execer is a database or a transaction.
+type execer interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+// Named records how the kernel names a principal, as it last said.
+func (s *Store) Named(p client.Party) error { return nameOf(s.db, p) }
+
+func nameOf(q execer, p client.Party) error {
+	_, err := q.Exec(`INSERT INTO accounts(id, address, nickname) VALUES(?,?,?)
+		ON CONFLICT(id) DO UPDATE SET address = excluded.address, nickname = excluded.nickname`, p.Principal, p.Address, p.Nickname)
+	return err
+}
+
+// Parties is each member as a reply names it, in order: a principal as the
+// kernel last named it, or by itself while the kernel has not; a member not
+// bound yet by its address alone.
+func (s *Store) Parties(ids []string) ([]client.Party, error) {
+	out := make([]client.Party, len(ids))
+	for i, id := range ids {
+		out[i] = client.Party{Address: id}
+		if !IsPrincipal(id) {
+			continue
+		}
+		out[i].Principal = id
+		err := s.db.QueryRow(`SELECT address, nickname FROM accounts WHERE id = ?`, id).Scan(&out[i].Address, &out[i].Nickname)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// Bind makes a member held by address, the key of which p presented, the
+// principal p: every row the address holds moves to the principal, merged with
+// what it holds already, and the address is kept as the principal's, so a task
+// sealed with the address before still finds its member.
+func (s *Store) Bind(address string, p client.Party) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := moveSeats(tx, address, p, ""); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`INSERT INTO cursors(room_id, member, delivered, read) SELECT room_id, ?, delivered, read FROM cursors WHERE member = ? AND true
+			ON CONFLICT(room_id, member) DO UPDATE SET delivered = MAX(delivered, excluded.delivered), read = MAX(read, excluded.read)`,
+		`DELETE FROM cursors WHERE member = ?2 AND ?1 != ?2`,
+		`UPDATE entries SET author = ? WHERE author = ?`,
+		`UPDATE chain SET member = ? WHERE member = ?`,
+		`UPDATE keys SET member = ? WHERE member = ?`,
+		`UPDATE rooms SET creator = ? WHERE creator = ?`,
+		`INSERT OR REPLACE INTO legacy(id, address) VALUES(?,?)`,
+	} {
+		if _, err := tx.Exec(q, p.Principal, address); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Seat makes the seat added in room under an address the principal p, to
+// which chat's kernel resolved that address, and reports whether the seat is
+// still to be invited: p may have been invited or joined there already.
+func (s *Store) Seat(roomID, address string, p client.Party) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := moveSeats(tx, address, p, roomID); err != nil {
+		return false, err
+	}
+	var state string
+	if err := tx.QueryRow(`SELECT state FROM members WHERE room_id = ? AND member = ?`, roomID, p.Principal).Scan(&state); err != nil {
+		return false, err
+	}
+	return state == stateAdded, tx.Commit()
+}
+
+// moveSeats moves address's seats, in room or in every room when room is "",
+// to the principal p, recorded as the kernel named it. Where p is seated
+// already, the seat keeps the further state of the two: joined, then invited,
+// then added.
+func moveSeats(tx *sql.Tx, address string, p client.Party, room string) error {
+	if err := nameOf(tx, p); err != nil {
+		return err
+	}
+	const rank = `CASE %s WHEN 'joined' THEN 2 WHEN 'invited' THEN 1 ELSE 0 END`
+	if _, err := tx.Exec(`INSERT INTO members(room_id, member, state) SELECT room_id, ?1, state FROM members WHERE member = ?2 AND (?3 = '' OR room_id = ?3)
+		ON CONFLICT(room_id, member) DO UPDATE SET state = CASE WHEN `+fmt.Sprintf(rank, "excluded.state")+` > `+fmt.Sprintf(rank, "members.state")+` THEN excluded.state ELSE members.state END`,
+		p.Principal, address, room); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM members WHERE member = ?2 AND (?3 = '' OR room_id = ?3) AND ?1 != ?2`, p.Principal, address, room)
+	return err
+}
+
+// Legacy is the principal a member held by address was bound to.
+func (s *Store) Legacy(address string) (string, bool) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM legacy WHERE address = ?`, address).Scan(&id)
+	return id, err == nil
 }
 
 // ---- helpers ----

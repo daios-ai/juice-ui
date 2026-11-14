@@ -1,10 +1,10 @@
 {{/* _media — the 16:9 image slot (§5.13). A kernel image later (ROADMAP);
      the deterministic cardArt fallback until then. Takes an Action. */}}
-{{define "_media"}}<span class="media">{{cardArt .ID .Action .Kind}}</span>{{end}}
+{{define "_media"}}<span class="media">{{cardArt .ID .Action.Address .Kind}}</span>{{end}}
 
 {{/* _tile — the square crop of the same art (§5.13), the icon a list row
      leads with. The SVG slices to any box, so one generator serves both. */}}
-{{define "_tile"}}<span class="media tile">{{cardArt .ID .Action .Kind}}</span>{{end}}
+{{define "_tile"}}<span class="media tile">{{cardArt .ID .Action.Address .Kind}}</span>{{end}}
 
 {{/* _action_row — THE action row, on every list (§5.5): Discover, a search
      on the page and in the panel, the Workshop, a peer's actions. The tile;
@@ -23,7 +23,7 @@
   {{template "_tile" .Action}}
   <div class="action-body">
     <p class="action-name"><a class="action-title" href="{{template "_action_href" .}}">{{.Action.Title}}</a><span class="chips">{{template "_action_marks" .Marks}}</span></p>
-    <p class="action-ref">{{template "_ref" (ref .Action.Ref "")}}</p>
+    <p class="action-ref">{{template "_ref" (ref .Action.Action "")}}</p>
     <p class="action-desc">{{.Action.Description}}</p>
     {{if .Observed}}<p class="action-observed muted tiny">terms seen {{.ObservedAgo}}</p>{{end}}
   </div>
@@ -340,7 +340,7 @@
 <tr class="rowable" tabindex="-1" data-href="/transactions/{{$tx.ID}}">
   <td class="id mono"><a href="/transactions/{{$tx.ID}}">{{truncate 8 $tx.ID}}</a></td>
   <td>{{template "_ref" (ref $tx.Action $tx.ActionID)}}</td>
-  <td class="muted small">{{if eq .Viewer $tx.Target}}seller{{else if eq .Viewer $tx.Owner}}buyer{{else if eq .Viewer $tx.Caller}}caller{{else}}—{{end}}</td>
+  <td class="muted small">{{if eq .Viewer $tx.Target.Address}}seller{{else if eq .Viewer $tx.Owner.Address}}buyer{{else if eq .Viewer $tx.Caller.Address}}caller{{else}}—{{end}}</td>
   <td class="money">{{txAmount $tx .Viewer}}</td>
   <td><span class="pill {{statusClass $tx.Status}}">{{$tx.Status}}</span></td>
   <td class="muted">{{shortTime $tx.StartedAt}}</td>
@@ -355,7 +355,7 @@
 {{define "_activity_entry"}}
 {{$e := .Entry}}
 <tr>
-  <td>{{if .Self}}{{.Counterpart}}{{else}}{{if .Credited}}from{{else}}to{{end}} {{if .Counterpart}}{{.Counterpart}}{{else}}outside Juice{{end}}{{end}}</td>
+  <td>{{if .Self}}{{template "_party" .Counterpart}}{{else}}{{if .Credited}}from{{else}}to{{end}} {{if .Counterpart.Address}}{{template "_party" .Counterpart}}{{else}}outside Juice{{end}}{{end}}</td>
   <td class="mono">{{if .TxID}}<a href="/transactions/{{.TxID}}">{{truncate 8 .TxID}}</a>{{else if .Note}}<span class="muted" title="{{.Note}}">{{.Note}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
   <td class="money">{{if .Self}}<span class="muted">{{money $e.Amount}}</span>{{else if .Credited}}<span class="sig-credited">+{{money $e.Amount}}</span>{{else}}−{{money $e.Amount}}{{end}}</td>
   <td class="muted">{{shortTime $e.CreatedAt}}</td>
@@ -374,7 +374,7 @@
      `price` helper. */}}
 {{define "_price"}}{{if .Indicative}}<span class="price muted" title="Indicative — the binding price is confirmed when you run it">{{if gt .Price 0}}{{money .Price}}{{else}}free{{end}}</span>{{else if gt .Price 0}}<span class="price">{{money .Price}}</span>{{else}}<span class="price"><span class="free">free</span></span>{{end}}{{end}}
 
-{{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/browse?owner={{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{if .Owner.IsKey}} {{template "_copy" (copyOf "address" (printf "%s/%s" .Owner.Title .Name))}}{{end}}{{end}}
+{{define "_ref"}}<span class="ref mono"><span class="owner"{{if .Owner.IsKey}} title="{{.Owner.Title}}"{{end}}>{{if .Local}}<a href="/browse?owner={{.Owner.Text}}">{{.Owner.Text}}</a>{{else}}{{.Owner.Text}}{{end}}</span>/{{if .ID}}<a href="/actions/{{.ID}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</span>{{with .Owner.Key}} <span class="muted mono">{{.}}</span>{{end}}{{if .Owner.IsKey}} {{template "_copy" (copyOf "address" (printf "%s/%s" .Owner.Title .Name))}}{{end}}{{end}}
 
 {{/* _copy — THE copy control: an icon-only quiet button carrying the whole
      value it copies, beside a key, a hash or an address that renders
@@ -466,8 +466,8 @@
      that kernel's name. _task_from is the requester, whom the task acts for
      and as whom it runs, the creating action when the row names it, the age,
      and a peer still owed its answer. Input: client.Task. */}}
-{{define "_task_runs"}}{{if .Action}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_kernel_name" .Owner}}{{end}}{{end}}
-{{define "_task_from"}}asked by <span class="mono">{{.Requester}}</span>{{with .CreatedBy}} · via {{template "_ref" (ref . "")}}{{end}}{{with relTime .CreatedAt}} · {{.}}{{end}}{{if .WaitingOnPeer}} · waiting on a peer{{end}}{{end}}
+{{define "_task_runs"}}{{if .Action.Address}}{{template "_ref" (ref .Action "")}}{{else}}{{template "_party" .Owner}}{{end}}{{end}}
+{{define "_task_from"}}asked by {{template "_party" .Requester}}{{if .CreatedBy.Address}} · via {{template "_ref" (ref .CreatedBy "")}}{{end}}{{with relTime .CreatedAt}} · {{.}}{{end}}{{if .WaitingOnPeer}} · waiting on a peer{{end}}{{end}}
 
 {{/* _task_row — one row of Sent or Done (requirements §6.3): the ID, opening
      the answer where the viewer may read it (the task's owner), the other
@@ -476,17 +476,22 @@
 {{define "_task_row"}}{{$t := .}}
 <tr>
   <td class="id mono">{{if $t.Answer}}<a href="/transactions/{{$t.TxID}}" title="{{$t.ID}}">{{truncate 8 $t.ID}}</a>{{else}}<span title="{{$t.ID}}">{{truncate 8 $t.ID}}</span>{{end}}</td>
-  <td class="mono">{{$t.Other}}</td>
-  <td>{{template "_task_runs" $t.Task}}{{with $t.CreatedBy}}<div class="small muted">via {{template "_ref" (ref . "")}}</div>{{end}}</td>
+  <td>{{template "_party" $t.Other}}</td>
+  <td>{{template "_task_runs" $t.Task}}{{if $t.CreatedBy.Address}}<div class="small muted">via {{template "_ref" (ref $t.CreatedBy "")}}</div>{{end}}</td>
   <td><span class="pill {{statusClass $t.Status}}">{{$t.Status}}</span></td>
   <td class="money">{{template "_price" (price $t.Price false)}}</td>
   <td>{{if $t.Cancel}}{{$c := declineForm .CSRFField $t.ID "Cancel"}}{{template "_task_decline" $c}}{{template "_decline_button" $c}}{{end}}</td>
 </tr>
 {{end}}
 
-{{/* _kernel_name renders a kernel as this kernel names it: a petname whole, a
-     key truncated with the whole key in the title. Input: string. */}}
-{{define "_kernel_name"}}{{$n := kernelName .}}<span class="mono"{{if $n.IsKey}} title="{{$n.Title}}"{{end}}>{{$n.Text}}</span>{{if $n.IsKey}} {{template "_copy" (copyOf "key" $n.Title)}}{{end}}{{end}}
+{{/* _party renders a party as a roomy place names it (ui-grammar "Naming"):
+     its label, the key its nickname stands in for muted, its address whole in
+     the title when the text differs from it, and a copy of it when no petname
+     names its kernel here. _party_brief is the compact form: the key only once
+     two keys claim the nickname. Input: client.Party. */}}
+{{define "_party"}}{{template "_name" (party .)}}{{end}}
+{{define "_party_brief"}}{{template "_name" (brief .)}}{{end}}
+{{define "_name"}}<span class="mono"{{if ne .Text .Title}} title="{{.Title}}"{{end}}>{{.Text}}{{with .Key}} <span class="muted">{{.}}</span>{{end}}</span>{{if .IsKey}} {{template "_copy" (copyOf "address" .Title)}}{{end}}{{end}}
 
 {{/* _task_decline is the one form that cancels a task, and _decline_button
      its button. The form is empty and sits outside any other form; the button
@@ -751,7 +756,7 @@
      drawn amount may exceed what the call owed, and both are shown. */}}
 {{define "_obligation_row"}}
 <tr>
-  <td><span class="mono" title="{{.Peer.Title}}">{{.Peer.Text}}</span>{{if .Peer.IsKey}} {{template "_copy" (copyOf "key" .Peer.Title)}}{{end}}</td>
+  <td>{{template "_party" .O.Peer}}</td>
   <td class="mono" title="{{.O.ID}}">{{truncate 8 .O.ID}} {{template "_copy" (copyOf "ticket" .O.ID)}}</td>
   <td class="money">{{money .O.Obligation}}</td>
   {{if .O.Answered}}
@@ -781,12 +786,12 @@
 {{/* _kernel_row — one kernel on the network list, in the action row's grammar
      (§5.5): tile, title line with its marks, key, about, strip. A peer row
      links to its own page, where it is named and suspended; this kernel's row
-     links nowhere, because it is this page. Its title is the name bound here
-     (or the truncated key), and this kernel's own handle; a peer's nickname is
-     its claim, so it trails in parentheses, inert (§6.6). The key renders in
-     one spelling: as the title when unbound, else on the ref line. A row whose
-     title is a key carries the one verb that fills that gap, Name — the same
-     button as on the kernel's page (§5.1). */}}
+     links nowhere, because it is this page. Its title is the peer's label
+     (ui-grammar "Naming"): the petname bound here, else its nickname marked ~,
+     else the shortened key; and this kernel's own handle. The key renders in
+     one spelling, with its copy: as the title when it is the label, else on
+     the ref line. A row no petname names carries the one verb that fills that
+     gap, Name — the same button as on the kernel's page (§5.1). */}}
 {{define "_kernel_row"}}
 {{$current := eq .Class "current"}}
 <article class="action-row{{if not $current}} rowable{{end}}{{if .Suspended}} inactive{{end}}"{{if not $current}} tabindex="-1" data-href="/admin/peers/{{.PublicKey}}"{{end}}>
@@ -795,13 +800,12 @@
     <div class="action-line">
       {{if $current}}<span class="action-title mono" title="{{.Name.Title}}">{{.Name.Text}}</span>
       {{- else}}<a class="action-title mono" href="/admin/peers/{{.PublicKey}}" title="{{.Name.Title}}">{{.Name.Text}}</a>{{end}}
-      {{- if .Name.IsKey}} {{template "_copy" (copyOf "key" .PublicKey)}}{{end}}
-      {{- if and .Nickname (ne .Nickname .Petname)}} <span class="muted">({{.Nickname}})</span>{{end}}
+      {{- if and .Name.IsKey (not .Name.Key)}} {{template "_copy" (copyOf "key" .PublicKey)}}{{end}}
       {{- if $current}} <span class="pill">this kernel</span>{{else if eq .Class "party"}} <span class="pill">party</span>{{end}}
       {{- if .Suspended}} <span class="pill status-danger">suspended</span>{{end}}
       {{- if and (not $current) .Name.IsKey}} <a class="btn" href="/admin/peers/{{.PublicKey}}?form=admin-rename">Name</a>{{end}}
     </div>
-    {{if not .Name.IsKey}}{{$k := nameOf "" .PublicKey}}<p class="action-ref fingerprint" title="{{$k.Title}}">{{$k.Text}} {{template "_copy" (copyOf "key" .PublicKey)}}</p>{{end}}
+    {{if or (not .Name.IsKey) .Name.Key}}{{$k := nameOf "" "" .PublicKey}}<p class="action-ref fingerprint" title="{{$k.Title}}">{{$k.Text}} {{template "_copy" (copyOf "key" .PublicKey)}}</p>{{end}}
     {{if .About}}<p class="action-desc">{{.About}}</p>{{end}}
     {{if .Strip}}{{template "_kernel_strip" .Strip}}{{end}}
   </div>
@@ -846,7 +850,7 @@
      its panel: the ref, the description and its figures, as its row has
      them. Takes an actionView. */}}
 {{define "_action_head"}}
-<p class="subtitle">{{template "_ref" (ref .Action.Ref "")}}</p>
+<p class="subtitle">{{template "_ref" (ref .Action.Action "")}}</p>
 {{if .Action.Description}}<p>{{.Action.Description}}</p>{{end}}
 {{template "_stats" (statStrip (price .Action.Price false) .Action.Experience)}}
 {{end}}

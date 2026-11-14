@@ -1,8 +1,10 @@
 # juice-chat
 
 Rooms of people and agents, as an ordinary HTTP server of the Juice family
-(ecosystem-standard §7) that a kernel wraps as actions. Every member is a kernel
-principal, `handle@kernel`; chat never distinguishes a person from an agent. Every
+(ecosystem-standard §7) that a kernel wraps as actions. A member is a kernel user,
+held by its principal, `user_id@kernel_key`, and named as the kernel names any
+party, `{address, principal, nickname?}`; chat never distinguishes a person from
+an agent, nor a member at home from one on another kernel. Every
 entry is a JSON value, a post being a string. The rules are `requirements.md` §6.7.
 
 It imports the kernel client (`client/`) and nothing else of this repository, so
@@ -25,9 +27,9 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 
 | File | Role |
 |---|---|
-| `store.go` | SQLite: rooms, members invited or joined, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one. No kernel knowledge; every rule one transaction. |
-| `deliver.go` | Routing by address (the first word of a post), the delivery of a post and the invitation to a room as kernel tasks. |
-| `service.go` | The fifteen action contracts and their endpoints. |
+| `store.go` | SQLite: rooms, members invited or joined, entries with their kind, keys, each member's cursors, the deliveries a member holds, the settlement of a completed one, how the kernel last named each member, and the binding of a store's members held by address. Every rule one transaction. |
+| `deliver.go` | Routing by address (the first word of a post), `sys/resolve` composed on a dispatch, the delivery of a post and the invitation to a room as kernel tasks. |
+| `service.go` | The fourteen action contracts and their endpoints. |
 | `register.go` | The service's state, and reconciling the actions on a kernel. |
 
 ## The actions, under `chat@<kernel>/`
@@ -35,15 +37,14 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 | Name | Who calls it | Contract |
 |---|---|---|
 | `index` | anyone | `{}` → `{usage}`: the paragraph a member learns chat from |
-| `register` | a member on another kernel | `{handle}` → `{api_key, task_id}`; creates the verification task only that address completes |
-| `validate` | the kernel, as the verification task's onward | `{key_id}` → `{ok}` |
-| `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered, undelivered}`: how many it reached, and whom it could not, by address |
+| `join` | anyone, through the kernel, with chat's bearer | `{}` → `{api_key}`: a key issued to the caller the kernel names in `X-Juice-Caller` |
+| `msg/post` | a member, with the key it connected | `{thread_id, message: string}` → `{delivered, undelivered}`: how many it reached, and whom it could not |
 | `reply` | the kernel, as a delivery's onward | `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` |
 | `accept` | the kernel, as an invitation's onward | `{thread_id, member, name?, from?}` → `{ok}`: the member joins |
 | `room/create` | anyone joined, who becomes the creator | `{members, name?}` → `{room, uninvited}`: the others are invited; `uninvited` names those not reached yet |
 | `room/rename` | the creator | `{thread_id, name}` → `{room}` |
 | `room/add` | the creator | `{thread_id, member}` → `{room, uninvited}`: invites, once; a member not reached yet is tried again |
-| `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}`: removes a member or withdraws an invitation |
+| `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}`: removes a member, by principal or by the address of a seat not bound yet, or withdraws an invitation |
 | `room/leave` | a member other than the creator | `{thread_id}` → `{ok}`: an invited member declines |
 | `room/join` | a member invited | `{thread_id}` → `{room}`: the caller accepts |
 | `room/delete` | the creator | `{thread_id}` → `{ok}` |
@@ -64,15 +65,33 @@ schema, and a longer answer is kept as a failure. `room/read` holds at most 200 
 and 1 MiB, says `more` when others remain past `after`, and holds the rooms of newest
 activity that fit 256 KiB.
 
+## Identity
+
+The kernel tells every action its immediate caller and the owner of the run's
+process, as principals it sets (`X-Juice-Caller`, `X-Juice-Owner`). `join`, which
+carries chat's own bearer and so is the kernel's, issues a key to the caller and
+records how chat's kernel names it, by `sys/resolve` composed on the dispatch;
+every other member action is the member's key. A member's address is what the
+kernel last called it: the reply to every task chat creates names the addressee.
+
+A store made before 0.72.0 holds its members by address. A key issued to one binds
+it, on its next call, to the run's owner, the user the kernel applied the key for:
+everything the address holds moves to the principal, merged with what the principal
+holds, and the address is kept so an old task sealed with it still completes. An
+address is never bound by resolving it, and a member still held by address is sent
+no delivery.
+
 ## Membership
 
 A member is added, then invited once the kernel takes its invitation, then joined
 once it accepts. The creator is joined; everyone `room/create` or `room/add` names
-is invited by one task created during that command's dispatch, whose onward is
-`accept` and whose partial args carry the room, the member, the room's name and its
-creator. A member whose kernel cannot be reached stays added, is named in
-`uninvited`, and is tried again at each post in the room, with the post's
-capability, named in `undelivered` while it fails. Completing the task or running
+is resolved by chat's kernel to a principal and invited by one task to it, created
+during that command's dispatch, whose onward is `accept` and whose partial args
+carry the room, the member's principal, the room's name and its creator's address.
+A member whose address does not resolve, or whose kernel cannot be reached, stays
+added under the address typed, is named in `uninvited`, and is tried again at each
+post in the room, with the post's capability, named in `undelivered` while it
+fails. Completing the task or running
 `room/join` joins the member; leaving declines, and an invitation declined or
 withdrawn has no member to join. `room/list` and `room/read` answer the caller's
 invitations. Only joined members read, post, list the room, are delivered to and

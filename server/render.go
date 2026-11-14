@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -44,7 +45,7 @@ type Page struct {
 	Rail         template.HTML // the conversations rail, the sidebar's content
 	Me           string        // signed-in address for the nav, or "" when anonymous
 	KernelHandle string        // this kernel's own name (from /health), or "" if unknown
-	KernelFP     string        // short key fingerprint for pre-auth verification (login only)
+	KernelKey    string        // this kernel's public key, shown shortened with its copy for pre-auth verification (login only)
 	KernelNet    string        // the network this kernel serves, named on the login page
 	KernelName   string        // the name this kernel is recorded under, when the UI names one
 	IsSuperuser  bool          // Me == sys@<kernel>: show the admin group and admin scope
@@ -68,6 +69,7 @@ type Renderer struct {
 	pages    map[string]*template.Template
 	partials *template.Template
 	identity *KernelIdentity // the kernel's money unit and name, given at construction
+	claims   claims          // the nicknames seen, and those two keys claim
 }
 
 // Unit is the money unit of the world this kernel serves: how many decimal
@@ -238,7 +240,8 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"ratingPct":      ratingPct,
 		"refFolder":      refFolder,
 		"nameOf":         nameOf,
-		"kernelName":     keyDisplay,
+		"party":          r.party,
+		"brief":          r.brief,
 		"copyOf":         copyOf,
 		"progress":       func(id, label string) progressView { return progressView{ID: id, Label: label} },
 		"idle":           func(csrf template.HTML) idleView { return idleView{CSRFField: csrf} },
@@ -523,11 +526,12 @@ func truncate(n int, s string) string {
 }
 
 // shortAddr abbreviates a chain address the way wallets do, 0x7099…79c8: enough
-// to match by eye, the whole value in its title and its copy control (_addr).
-// Anything that is not a 0x address passes unchanged.
+// to match by eye, the whole value in its title and its copy control (_addr). A
+// Juice address naming its kernel by key shows the key as client.ShortKey does;
+// anything else passes unchanged.
 func shortAddr(a string) string {
 	if len(a) != 42 || !strings.HasPrefix(a, "0x") {
-		return a
+		return client.ShortAddress(a)
 	}
 	return a[:6] + "…" + a[38:]
 }
@@ -569,39 +573,47 @@ func priceOf(price int64, indicative bool) PriceView {
 	return PriceView{Price: price, Indicative: indicative}
 }
 
-// Name is a kernel name rendered for a human: the text to show, the full value
-// behind it, and whether that text is a truncated key.
+// Name is a party or a kernel rendered for a human (ui-grammar "Naming"): the
+// label to show, the key its nickname stands in for, the whole value behind it,
+// and whether no petname names it here.
 //
 // It exists because the kernel's naming is Stiegler's petname system (§13) and
-// the three name classes are NOT interchangeable: a public key is global and
-// self-certifying but unreadable, a nickname is self-asserted by the remote and
-// never resolves, and a petname is bound here and does resolve. The UI shows a
-// petname whole and a key truncated, and it never shows a nickname where a name
-// that resolves is expected.
+// the three name classes are NOT interchangeable: a petname is bound here and
+// resolves, so it is shown alone; a nickname is the kernel's claim about
+// itself and never resolves, so it is shown marked ~ with its key beside it
+// where there is room; a key is self-certifying but unreadable, so it is shown
+// shortened, with the whole value in the title and on the copy control.
 type Name struct {
-	Text  string // what to render
-	Title string // the full value, for the title attribute
-	IsKey bool   // Text is a truncated key, not a bound name
+	Text  string // the label (client.Party.Label)
+	Key   string // the shortened key Text names by its nickname, "" otherwise
+	Title string // the whole value, for the title attribute and the copy control
+	IsKey bool   // no petname names it here: the page offers its whole value to copy
 }
 
-// keyLen is how much of a public key survives truncation — enough to
-// distinguish kernels by eye, short enough not to dominate a card title.
-const keyLen = 8
+// claims remembers, per nickname, the first key seen claiming it and whether a
+// second key has claimed it too. A compact label names the key only for a
+// nickname so claimed (Renderer.brief): a template sees one party at a time,
+// so the clash is remembered rather than found among a page's names.
+type claims struct {
+	mu    sync.Mutex
+	first map[string]string
+	clash map[string]bool
+}
 
-// looksLikeKey reports whether s has the shape of a base64url public key: the
-// kernel's keys are 43 characters and its bare names are validated to be
-// neither key- nor id-shaped (§13, §14), so length alone separates them without
-// a false positive on a long petname.
-func looksLikeKey(s string) bool { return len(s) >= 43 }
-
-// keyDisplay renders a raw value, truncating it when it is key-shaped. THE one
-// place truncation is decided: refs (via ref) and kernel cards both route here,
-// so a key never renders whole in one place and clipped in another.
-func keyDisplay(s string) Name {
-	if looksLikeKey(s) {
-		return Name{Text: s[:keyLen] + "…", Title: s, IsKey: true}
+// claim records that key calls itself nickname and reports whether another key
+// has claimed it.
+func (c *claims) claim(nickname, key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.first == nil {
+		c.first, c.clash = map[string]string{}, map[string]bool{}
 	}
-	return Name{Text: s, Title: s}
+	if k, ok := c.first[nickname]; !ok {
+		c.first[nickname] = key
+	} else if k != key {
+		c.clash[nickname] = true
+	}
+	return c.clash[nickname]
 }
 
 // copyView is what the _copy partial renders: the whole value a copy control
@@ -628,23 +640,16 @@ type endView struct {
 // endOf builds that pairing (template helper).
 func endOf(p client.Process, csrf template.HTML) endView { return endView{P: p, CSRF: csrf} }
 
-// nameOf picks the name to show for a kernel: its petname when one is bound,
-// else its truncated key. A nickname is never chosen — it does not resolve, so
-// showing it where a name is expected would invite typing something the
-// resolver rejects.
-// obligationRow pairs one debt with the debtor's name as this kernel knows it
-// and the CSRF field its confirm needs, so _obligation_row renders from one
-// value. The petname map is the roster's; an unbound kernel shows its truncated
-// key, which is what the form posts either way.
+// obligationRow pairs one debt with the CSRF field its confirm needs, so
+// _obligation_row renders from one value.
 type obligationRow struct {
 	O         client.Obligation
-	Peer      Name
 	CSRFField template.HTML
 }
 
 // obligation builds that pairing (template helper).
-func obligation(o client.Obligation, petnames map[string]string, csrfField template.HTML) obligationRow {
-	return obligationRow{O: o, Peer: nameOf(petnames[o.Peer], o.Peer), CSRFField: csrfField}
+func obligation(o client.Obligation, csrfField template.HTML) obligationRow {
+	return obligationRow{O: o, CSRFField: csrfField}
 }
 
 // taskDecline is what a Decline confirm posts: the task and the CSRF field, so
@@ -660,11 +665,50 @@ func declineForm(csrf template.HTML, id, verb string) taskDecline {
 	return taskDecline{ID: id, Verb: verb, CSRFField: csrf}
 }
 
-func nameOf(petname, key string) Name {
+// partyName is a party as a roomy place shows it: its label, the key its
+// nickname stands in for, and its address whole the title.
+func partyName(p client.Party) Name {
+	n := Name{Text: p.Label(), Title: p.Address, IsKey: client.ShortAddress(p.Address) != p.Address}
+	if key := p.Claim(); key != "" {
+		n.Key = client.ShortKey(key)
+	}
+	return n
+}
+
+// party is partyName, the nickname's claim recorded (template helper).
+func (r *Renderer) party(p client.Party) Name {
+	if key := p.Claim(); key != "" {
+		r.claims.claim(p.Nickname, key)
+	}
+	return partyName(p)
+}
+
+// brief is a party as a compact place shows it: the label alone, and the key
+// as well once two keys have claimed its nickname (template helper).
+func (r *Renderer) brief(p client.Party) Name {
+	n := partyName(p)
+	if key := p.Claim(); key == "" || !r.claims.claim(p.Nickname, key) {
+		n.Key = ""
+	}
+	return n
+}
+
+// Label is brief as one line of text, for an app that builds its labels in Go
+// (apps.Deps.Label).
+func (r *Renderer) Label(p client.Party) string {
+	if n := r.brief(p); n.Key != "" {
+		return n.Text + " " + n.Key
+	}
+	return p.Label()
+}
+
+// nameOf is a kernel as a page names it: by its petname when one is bound,
+// else as any party is (partyName).
+func nameOf(petname, nickname, key string) Name {
 	if petname != "" {
 		return Name{Text: petname, Title: key}
 	}
-	return keyDisplay(key)
+	return partyName(client.Party{Address: key, Principal: key, Nickname: nickname})
 }
 
 // refOwner returns the owner of an action address, owner@kernel/name: the
@@ -695,21 +739,13 @@ type RefView struct {
 	Local bool
 }
 
-// refOf splits an action address for rendering. Split on the FIRST slash:
-// names may contain slashes (sys@k/llm/chat) but an owner never does.
-func (r *Renderer) refOf(ref, id string) RefView {
-	owner := refOwner(ref)
-	v := RefView{Name: refName(ref), ID: id, Local: r.identity.Local(ref)}
-	at := strings.IndexByte(owner, '@')
-	if v.Local || at < 0 {
-		v.Owner = Name{Text: owner, Title: owner}
-		return v
-	}
-	// A remote kernel segment is truncated only when it is a raw key, so the
-	// owner stays readable and the whole segment survives in the title.
-	k := keyDisplay(owner[at+1:])
-	v.Owner = Name{Text: owner[:at+1] + k.Text, Title: owner, IsKey: k.IsKey}
-	return v
+// refOf splits an action's address for rendering. Split on the FIRST slash:
+// names may contain slashes (sys@k/llm/chat) but an owner never does. The
+// owner is shown as a compact place shows a party (brief).
+func (r *Renderer) refOf(a client.Party, id string) RefView {
+	owner := a
+	owner.Address = refOwner(a.Address)
+	return RefView{Owner: r.brief(owner), Name: refName(a.Address), ID: id, Local: r.identity.Local(a.Address)}
 }
 
 // refName returns the name segment of an action address (everything after the
@@ -854,15 +890,15 @@ func evidenceOf(rows []client.Evidence, provider string, names map[string]string
 	}
 	t := &evidenceTable{Subjects: names != nil}
 	for _, e := range rows {
-		source := keyDisplay(e.IssuerPublicKey)
+		source := nameOf("", "", e.IssuerPublicKey)
 		if e.IssuerPublicKey == provider {
 			source = Name{Text: "provider", Title: e.IssuerPublicKey}
 		}
 		subject := Name{Text: e.SubjectActionID, Title: e.SubjectActionID}
 		if name := names[e.SubjectActionID]; name != "" {
 			subject.Text = name
-		} else if len(e.SubjectActionID) > keyLen {
-			subject = Name{Text: e.SubjectActionID[:keyLen] + "…", Title: e.SubjectActionID, IsKey: true}
+		} else if len(e.SubjectActionID) > 8 {
+			subject = Name{Text: truncate(8, e.SubjectActionID), Title: e.SubjectActionID, IsKey: true}
 		}
 		t.Rows = append(t.Rows, evidenceRow{
 			Subject: subject,
@@ -915,7 +951,7 @@ func actionEvidence(a client.Action) *evidenceTable {
 func peerEvidence(i client.Inspection) *evidenceTable {
 	names := map[string]string{}
 	for _, a := range i.Actions {
-		names[a.ActionID] = a.Name
+		names[a.ActionID] = a.Name.Address
 	}
 	return evidenceOf(i.Evidence, i.PublicKey, names)
 }
@@ -1212,7 +1248,7 @@ type entryRow struct {
 	// account, so a deposit credited to sys, and the first leg of its own
 	// withdrawal (into transit), are sys → sys (§6.5).
 	Self        bool
-	Counterpart string // the other side's address; "" where the money crossed the rail
+	Counterpart client.Party // the other side; no address where the money crossed the rail
 	// TxID is the reason when it names a transaction of the viewer's, the link
 	// to its receipt; Note is any other reason (an obligation's ticket, the
 	// other kernel's transaction behind a transfer received), rendered as the
@@ -1232,8 +1268,8 @@ var transferReason = regexp.MustCompile(`^transfer ([0-9a-f]{8}-[0-9a-f]{4}-[0-9
 // entryRowOf reads the movement from the kernel's own from/to projection: the
 // viewer is on one side, and the counterpart is the other.
 func entryRowOf(e client.LedgerEntry, viewer string) entryRow {
-	r := entryRow{Entry: e, Self: e.From == viewer && e.To == viewer, Counterpart: e.To}
-	r.Credited = e.To == viewer && !r.Self
+	r := entryRow{Entry: e, Self: e.From.Address == viewer && e.To.Address == viewer, Counterpart: e.To}
+	r.Credited = e.To.Address == viewer && !r.Self
 	if r.Credited {
 		r.Counterpart = e.From
 	}
@@ -1261,21 +1297,21 @@ const amountDash = template.HTML(`<span class="muted">—</span>`)
 func (r *Renderer) txAmount(tx client.Transaction, viewer string) template.HTML {
 	switch tx.Status {
 	case "failure":
-		if viewer == tx.Owner {
+		if viewer == tx.Owner.Address {
 			return r.sigAmount("sig-refunded", "↩ ", tx.Gross)
 		}
 		return amountDash
 	case "open":
-		if viewer == tx.Owner {
+		if viewer == tx.Owner.Address {
 			return r.sigAmount("sig-escrow", "◷ ", tx.Gross)
 		}
 		return amountDash
 	default: // success / settled
 		var amt int64
-		if viewer == tx.Owner {
+		if viewer == tx.Owner.Address {
 			amt -= tx.Gross
 		}
-		if viewer == tx.Target {
+		if viewer == tx.Target.Address {
 			amt += tx.Net
 		}
 		if viewer == r.identity.Address(superuserHandle) {

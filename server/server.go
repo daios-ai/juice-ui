@@ -171,7 +171,7 @@ func (k *KernelIdentity) Get(ctx context.Context) (client.Health, bool) {
 		// not this kernel and nothing is trusted from it: no identity, no unit,
 		// no login. Logged, because it is the one thing an operator must know.
 		k.log.Warn("kernel identity mismatch: the server at this address is not the recorded kernel",
-			"recorded", keyFingerprint(k.recorded), "answered", keyFingerprint(hc.PublicKey))
+			"recorded", client.ShortKey(k.recorded), "answered", client.ShortKey(hc.PublicKey))
 		return client.Health{}, false
 	}
 	k.mu.Lock()
@@ -214,6 +214,18 @@ func (k *KernelIdentity) Address(handle string) string {
 	return ""
 }
 
+// KeyAddress is Address with this kernel named by its public key, handle@<key>.
+// "" while the key is unknown.
+func (k *KernelIdentity) KeyAddress(handle string) string {
+	k.mu.Lock()
+	key := k.id.PublicKey
+	k.mu.Unlock()
+	if key == "" {
+		return ""
+	}
+	return handle + "@" + key
+}
+
 // Local reports whether an action address (owner@kernel/name) names an action
 // of this kernel: its kernel segment is this kernel's own name. It is the UI's
 // one reading of an address; everything else passes names through verbatim.
@@ -254,11 +266,6 @@ func (s *Server) publicBaseURL(r *http.Request) string {
 	}
 	return scheme + "://" + r.Host
 }
-
-// keyFingerprint shortens a base64url public key for eyeball verification.
-// One definition serves the whole UI (client.ShortKey), so the same kernel
-// abbreviates identically in the header, on a card, and inside a sentence.
-func keyFingerprint(key string) string { return client.ShortKey(key) }
 
 // New builds the BFF HTTP handler: routes plus the middleware chain
 // (request-id, structured logging, session load/save, CSRF, R5.5/R8.4).
@@ -311,7 +318,7 @@ func New(o Options) (http.Handler, error) {
 	}
 	if as.Adopted {
 		s.log.Warn("app state predates kernel keying; its apps are adopted by the current kernel and the file is rewritten keyed",
-			"kernel", keyFingerprint(o.Identity.recorded))
+			"kernel", client.ShortKey(o.Identity.recorded))
 	}
 	s.appStore = as
 
@@ -764,6 +771,8 @@ func (s *Server) appDeps() apps.Deps {
 		Me:                func(r *http.Request) string { return s.sessions.Address(r.Context()) },
 		Viewer:            s.me,
 		Address:           s.identity.Address,
+		KeyAddress:        s.identity.KeyAddress,
+		Label:             s.render.Label,
 		RequireAuth:       s.requireAuth,
 		RequireSuperuser:  s.requireSuperuser,
 		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
@@ -819,7 +828,7 @@ func (s *Server) page(r *http.Request, title string, data any) Page {
 		Rail:         rail,
 		Me:           s.sessions.Address(r.Context()),
 		KernelHandle: kernelID.Handle,
-		KernelFP:     keyFingerprint(kernelID.PublicKey),
+		KernelKey:    kernelID.PublicKey,
 		KernelNet:    kernelID.Network,
 		KernelName:   s.kernelName,
 		IsSuperuser:  super,

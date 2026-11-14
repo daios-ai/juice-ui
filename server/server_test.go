@@ -521,9 +521,12 @@ func TestRecordedKeyRefusesAnotherKernel(t *testing.T) {
 // an action address: whether its kernel segment is this kernel's name. Both
 // fail closed while the kernel's name is unknown.
 func TestKernelIdentityAddressAndLocal(t *testing.T) {
-	k := &KernelIdentity{id: client.Health{Handle: "alpha"}, fetched: time.Now(), ttl: time.Hour}
+	k := &KernelIdentity{id: client.Health{Handle: "alpha", PublicKey: "PK"}, fetched: time.Now(), ttl: time.Hour}
 	if got := k.Address("ana"); got != "ana@alpha" {
 		t.Errorf("Address = %q", got)
+	}
+	if got := k.KeyAddress("ana"); got != "ana@PK" {
+		t.Errorf("KeyAddress = %q", got)
 	}
 	for ref, want := range map[string]bool{
 		"sys@alpha/llm/chat": true,
@@ -537,7 +540,7 @@ func TestKernelIdentityAddressAndLocal(t *testing.T) {
 		}
 	}
 	unknown := &KernelIdentity{}
-	if unknown.Address("ana") != "" || unknown.Local("ana@/x") {
+	if unknown.Address("ana") != "" || unknown.KeyAddress("ana") != "" || unknown.Local("ana@/x") {
 		t.Error("an unknown kernel composes nothing and owns nothing")
 	}
 }

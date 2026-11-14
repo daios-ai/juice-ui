@@ -26,7 +26,7 @@ import (
 // answers 404 "… is not a user here" for a peer key, so there is no second
 // record shape to discriminate.
 type AdminUser struct {
-	Address     string `json:"address"`
+	Address     Party  `json:"address"`
 	Description string `json:"description"`
 	Available   int64  `json:"available"`
 	Locked      int64  `json:"locked"`
@@ -87,7 +87,7 @@ func (p Peer) Suspended() bool { return p.SuspendedAt != "" }
 // and re-quoted authoritatively when the action resolves (kernel §D13).
 type PeerAction struct {
 	ActionID    string `json:"action_id"`
-	Name        string `json:"name"`
+	Name        Party  `json:"name"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Price       int64  `json:"price"`
@@ -265,7 +265,7 @@ type HeldDeposit struct {
 	Status    string `json:"status"`
 	TxHash    string `json:"tx_hash"`
 	CreatedAt string `json:"created_at"`
-	Party     string `json:"party"`
+	Party     Party  `json:"party"`
 }
 
 // Obligation is one cross-kernel debt owed TO this kernel: the ticket both
@@ -273,7 +273,7 @@ type HeldDeposit struct {
 // draw came out it also carries Status, the Amount drawn — a face value that
 // may exceed Obligation, since a small debt pays a larger amount with the
 // probability that makes the expected payment the debt (kernel §P10) — and the
-// TxHash named. Peer is the buyer's public key.
+// TxHash named. Peer is the buyer, a kernel.
 //
 // A buyer that has said nothing yet is listed with an EMPTY Status and a ZERO
 // Amount (verified live, docs/kernel-v0.15-verification.md §3). Those are absent
@@ -286,7 +286,7 @@ type Obligation struct {
 	TxHash     string `json:"tx_hash"`
 	Status     string `json:"status"`
 	CreatedAt  string `json:"created_at"`
-	Peer       string `json:"peer"`
+	Peer       Party  `json:"peer"`
 }
 
 // Answered reports that the buyer has said how the draw came out, which is what

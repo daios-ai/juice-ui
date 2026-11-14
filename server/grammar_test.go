@@ -704,8 +704,8 @@ func TestHeadingCase(t *testing.T) {
 	core, _ := fs.Glob(tmplFS, "templates/*.html")
 	apps, _ := outsideTemplates()
 	headRe := regexp.MustCompile(`(?s)<h[12][^>]*>(.*?)</h[12]>`)
-	// A chip is a one-letter mark beside a name (§5.5), not a word of it.
-	chipRe := regexp.MustCompile(`(?s)<span class="chip[^"]*"[^>]*>.*?</span>`)
+	// A chip or a pill is a mark beside a name (§5.5), not a word of it.
+	chipRe := regexp.MustCompile(`(?s)<span class="(?:chip|pill)[^"]*"[^>]*>.*?</span>`)
 	check := func(f, src string) {
 		for _, m := range headRe.FindAllStringSubmatch(src, -1) {
 			txt := visibleText(chipRe.ReplaceAllString(m[1], ""))

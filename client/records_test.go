@@ -21,7 +21,7 @@ func recordsKernel(t *testing.T, tokens map[string]string) *Client {
 			http.Error(w, `{"error":"token expired"}`, http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"address":"` + addr + `"}`))
+		_, _ = w.Write([]byte(`{"address":{"address":"` + addr + `"}}`))
 	})
 	mux.HandleFunc("POST /v1/auth/refresh", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"access_token":"new","refresh_token":"next"}`))

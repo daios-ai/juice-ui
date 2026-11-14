@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/daios-ai/juice-ui/client"
 )
 
 func mustStore(t *testing.T) *Store {
@@ -324,26 +329,143 @@ func TestRoomsUnreadOrdering(t *testing.T) {
 	}
 }
 
+// Every key issued works, a second never retiring the first; an unknown one
+// resolves nobody; and a key never activated, from before 0.72.0, is dropped
+// at open.
 func TestKeys(t *testing.T) {
-	s := mustStore(t)
-	key, id, err := s.RegisterKey("ann@k")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := s.Member(key); ok {
-		t.Error("a pending key must not resolve")
-	}
-	if err := s.ActivateKey("nope"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("unknown key id = %v", err)
-	}
-	if err := s.ActivateKey(id); err != nil {
-		t.Fatal(err)
-	}
-	if m, ok := s.Member(key); !ok || m != "ann@k" {
-		t.Errorf("Member = %q %v", m, ok)
+	path := filepath.Join(t.TempDir(), "chat.db")
+	s, err := Open(path, "")
+	must(t, err)
+	first, err := s.IssueKey("ann@k")
+	must(t, err)
+	second, err := s.IssueKey("ann@k")
+	must(t, err)
+	for _, k := range []string{first, second} {
+		if m, ok := s.Member(k); !ok || m != "ann@k" {
+			t.Errorf("Member = %q %v", m, ok)
+		}
 	}
 	if _, ok := s.Member("other"); ok {
 		t.Error("unknown key resolved")
+	}
+	_, err = s.db.Exec(`INSERT INTO keys(hash, member, active, key_id) VALUES('h', 'bob@k', 0, 'pending')`)
+	must(t, err)
+	must(t, s.Close())
+	s, err = Open(path, "")
+	must(t, err)
+	defer s.Close()
+	var n int
+	must(t, s.db.QueryRow(`SELECT COUNT(*) FROM keys WHERE active = 0`).Scan(&n))
+	if n != 0 {
+		t.Errorf("%d pending keys kept", n)
+	}
+}
+
+// pr is the principal of address in these tests: an id derived from the handle,
+// at a key derived from the kernel's name. The address is kept as what the test
+// kernel names the principal by.
+func pr(address string) string {
+	h, k, _ := strings.Cut(address, "@")
+	p := fmt.Sprintf("%08x-0000-4000-8000-000000000000", crc32.ChecksumIEEE([]byte(h))) + "@" + (k + strings.Repeat("K", client.KeyLen))[:client.KeyLen]
+	addresses.LoadOrStore(p, address)
+	return p
+}
+
+// addresses is each principal's address, as pr made it.
+var addresses sync.Map
+
+// A member is named as the kernel last named it; one never named, by its
+// principal; one held by address, by that address alone.
+func TestParties(t *testing.T) {
+	s := mustStore(t)
+	must(t, s.Named(client.Party{Address: "bob@beta", Principal: pr("bob@beta"), Nickname: "b"}))
+	must(t, s.Named(client.Party{Address: "rob@beta", Principal: pr("bob@beta")}))
+	got, err := s.Parties([]string{pr("bob@beta"), pr("cy@k"), "ann@k"})
+	must(t, err)
+	want := []client.Party{{Address: "rob@beta", Principal: pr("bob@beta")}, {Address: pr("cy@k"), Principal: pr("cy@k")}, {Address: "ann@k"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Parties = %+v", got)
+	}
+	if IsPrincipal("ann@k") || !IsPrincipal(pr("ann@k")) || IsPrincipal(pr("ann@k")+"x") {
+		t.Error("IsPrincipal")
+	}
+}
+
+// Bind moves everything a member held by address holds to its principal, and
+// keeps the address as the principal's. Where the principal holds a seat or a
+// cursor already, nothing is lost: a seat keeps the further state, a cursor the
+// further position.
+func TestBindMerges(t *testing.T) {
+	s := mustStore(t)
+	bob := client.Party{Address: "bob@k", Principal: pr("bob@k")}
+	r, _ := seated(s, "ann@k", "cafe", []string{"bob@k"})
+	r2, _ := s.CreateRoom("bob@k", "own", []string{"cy@k"})
+	key, _ := s.IssueKey("bob@k")
+	_, _, err := s.Post(r.ID, "bob@k", raw("hi"))
+	must(t, err)
+	must(t, s.MarkRead("bob@k", r.ID, 1))
+	must(t, s.Delivered("bob@k", r.ID, 1, 7, 0))
+	// The creator added bob again by his principal, which the kernel invited.
+	_, err = s.AddMember("ann@k", r.ID, bob.Principal)
+	must(t, err)
+	must(t, s.Invited(r.ID, bob.Principal))
+	must(t, s.MarkRead(bob.Principal, r.ID, 0))
+	must(t, s.Bind("bob@k", bob))
+	room, _ := s.withMembers(r.ID)
+	if !slices.Equal(room.Members, []string{bob.Principal, "ann@k"}) && !slices.Equal(room.Members, []string{"ann@k", bob.Principal}) || len(room.Invited) != 0 {
+		t.Errorf("bob stays joined, once: %+v", room)
+	}
+	if m, ok := s.Member(key); !ok || m != bob.Principal {
+		t.Errorf("his key is his principal's: %q", m)
+	}
+	if own, _ := s.room(r2.ID); own.Creator != bob.Principal {
+		t.Errorf("his room is his: %+v", own)
+	}
+	if _, es, _ := s.Room(bob.Principal, r.ID); len(es) != 1 || es[0].Author != bob.Principal {
+		t.Errorf("his entries are his: %+v", es)
+	}
+	if rooms, _ := s.Rooms(bob.Principal); len(rooms) != 2 || rooms[1].Unread {
+		t.Errorf("his read cursor kept its further position: %+v", rooms)
+	}
+	if w, _ := s.Working(r.ID, "ann@k"); !slices.Equal(w, []string{bob.Principal}) {
+		t.Errorf("his delivery is his: %v", w)
+	}
+	if id, ok := s.Legacy("bob@k"); !ok || id != bob.Principal {
+		t.Errorf("the address names him: %q", id)
+	}
+	if p, _ := s.Parties([]string{bob.Principal}); p[0] != bob {
+		t.Errorf("named by the address he had: %+v", p)
+	}
+}
+
+// Seat binds one added seat, in one room, to the principal its address
+// resolved to, merged with a seat the principal holds there; it touches no
+// other room, nor anything else held under that address.
+func TestSeatBindsOneSeat(t *testing.T) {
+	s := mustStore(t)
+	old, _ := seated(s, "ann@k", "old", []string{"bob@k"})
+	r, _ := s.CreateRoom("ann@k", "new", []string{"bob@k"})
+	bob := client.Party{Address: "bob@k", Principal: pr("bob@k")}
+	if owed, err := s.Seat(r.ID, "bob@k", bob); err != nil || !owed {
+		t.Fatalf("an added seat is still to be invited: %v %v", owed, err)
+	}
+	if room, _ := s.withMembers(r.ID); !slices.Equal(room.Invited, []string{bob.Principal}) {
+		t.Errorf("the seat is his: %+v", room)
+	}
+	if room, _ := s.withMembers(old.ID); !slices.Contains(room.Members, "bob@k") {
+		t.Errorf("another room's seat under the address is untouched: %+v", room)
+	}
+	if _, ok := s.Legacy("bob@k"); ok {
+		t.Error("a seat binds no address")
+	}
+	_, err := s.AddMember("ann@k", r.ID, "robert@k")
+	must(t, err)
+	must(t, s.Join(r.ID, bob.Principal))
+	if owed, err := s.Seat(r.ID, "robert@k", bob); err != nil || owed {
+		t.Fatalf("a joined member is not invited again: %v %v", owed, err)
+	}
+	if room, _ := s.withMembers(r.ID); len(room.Members) != 2 || len(room.Invited) != 0 {
+		t.Errorf("a second address of a joined member leaves him joined, once: %+v", room)
 	}
 }
 
@@ -450,29 +572,6 @@ func TestRename(t *testing.T) {
 	must(t, err)
 	if room.Name != "tea room" {
 		t.Errorf("a refusal changed the name: %q", room.Name)
-	}
-}
-
-// No key is ever retired: register is open and names any address, so a second
-// registration, pending or active, leaves a member's working key working.
-func TestARegistrationRetiresNoKey(t *testing.T) {
-	s := mustStore(t)
-	first, id, err := s.RegisterKey("ann@k")
-	must(t, err)
-	must(t, s.ActivateKey(id))
-	if _, _, err := s.RegisterKey("ann@k"); err != nil { // anyone's, never completed
-		t.Fatal(err)
-	}
-	if m, ok := s.Member(first); !ok || m != "ann@k" {
-		t.Errorf("a pending registration revoked the key: %q %v", m, ok)
-	}
-	second, id2, err := s.RegisterKey("ann@k")
-	must(t, err)
-	must(t, s.ActivateKey(id2))
-	for _, k := range []string{first, second} {
-		if m, ok := s.Member(k); !ok || m != "ann@k" {
-			t.Errorf("both keys work: %q %v", m, ok)
-		}
 	}
 }
 

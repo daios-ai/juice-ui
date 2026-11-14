@@ -155,7 +155,7 @@ func (c *Client) WithLogin(ctx context.Context, dir, login string, fn func(token
 	if err != nil {
 		return err
 	}
-	if me.Address != login {
+	if me.Address.Address != login {
 		return fmt.Errorf("the session in %s.json is %s", login, me.Address)
 	}
 	return fn(cred["token"])

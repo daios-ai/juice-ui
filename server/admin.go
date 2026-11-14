@@ -64,7 +64,6 @@ type adminPeersView struct {
 	Identity      client.Identity
 	Native        string // the fee coin of the proven chain the vault is on; "" if none is proven
 	Deposits      client.Deposits
-	Petnames      map[string]string // public key → bound petname, for naming a debtor
 	Kernels       []kernelRow
 	Pager         Pager
 	ShowSuspended bool // ?all=1 — the list includes suspended counterparties
@@ -80,8 +79,8 @@ const (
 )
 
 // kernelRow is one kernel on the network list. Name is what its title shows:
-// a peer's petname or truncated key (nameOf), and for this kernel its own
-// handle — never stored as a petname, which is a name bound here for another
+// a peer's label (nameOf: its petname, else ~nickname, else its key), and for
+// this kernel its own handle — never stored as a petname, which is a name bound here for another
 // kernel, nor as a nickname, which is a peer's unverified claim. Strip is the
 // peer's facts in the stat strip's grammar; this kernel's row has none, since
 // the roster states nothing about it.
@@ -142,8 +141,8 @@ func petnameSuggestion(petname, nickname, key string, taken func(string) bool) s
 		return petname
 	}
 	base := nickname
-	if base == "" || looksLikeKey(base) {
-		base = "k-" + key[:min(keyLen, len(key))]
+	if base == "" || len(base) == client.KeyLen {
+		base = "k-" + key[:min(8, len(key))]
 	}
 	if !taken(base) {
 		return base
@@ -214,7 +213,7 @@ func (s *Server) getAdmin(w http.ResponseWriter, r *http.Request) {
 		if a.Suspended() != b.Suspended() {
 			return !a.Suspended() // active (not suspended) sorts first
 		}
-		return strings.ToLower(a.Address) < strings.ToLower(b.Address)
+		return strings.ToLower(a.Address.Address) < strings.ToLower(b.Address.Address)
 	})
 	view.Users, view.Pager = pageOf(r, view.Users)
 	s.renderPage(w, r, http.StatusOK, "admin", "Admin", view)
@@ -346,7 +345,6 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 			Back:    "/admin/peers",
 		},
 	}
-	view.Petnames = map[string]string{}
 	if chain, ok := wallet.ChainOf(s.kernelIdentity(ctx)); ok {
 		view.Native = wallet.Native(chain)
 	}
@@ -367,11 +365,6 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Kernels = kernelRows(id, p)
-		for _, peer := range p {
-			if peer.Petname != "" {
-				view.Petnames[peer.PublicKey] = peer.Petname
-			}
-		}
 		return nil
 	})
 	if s.handleErr(w, r, err) {
@@ -396,7 +389,7 @@ func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 	for _, class := range []string{classParty, classKnown} {
 		for _, p := range peers {
 			if p.Traded == (class == classParty) {
-				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.PublicKey), Strip: kernelStrip(p)})
+				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.Nickname, p.PublicKey), Strip: kernelStrip(p)})
 			}
 		}
 	}

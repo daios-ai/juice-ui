@@ -11,7 +11,7 @@ import (
 func TestAdminListUsers(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `[{"id":"U1","address":"alice@k","available":230,"locked":0}]`
+	f.reply = `[{"id":"U1","address":{"address":"alice@k","principal":"alice@k"},"available":230,"locked":0}]`
 	users, err := f.client().AdminListUsers(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestAdminListUsers(t *testing.T) {
 	if f.lastAuth != "Bearer tok" {
 		t.Errorf("missing bearer, got %q", f.lastAuth)
 	}
-	if len(users) != 1 || users[0].Address != "alice@k" || users[0].Available != 230 {
+	if len(users) != 1 || users[0].Address.Address != "alice@k" || users[0].Available != 230 {
 		t.Errorf("decoded users wrong: %+v", users)
 	}
 }
@@ -30,7 +30,7 @@ func TestAdminListUsers(t *testing.T) {
 func TestAdminGetUserAndSuspended(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","address":"alice@k","suspended_at":"2026-07-05T00:00:00Z"}`
+	f.reply = `{"id":"U1","address":{"address":"alice@k","principal":"alice@k"},"suspended_at":"2026-07-05T00:00:00Z"}`
 	u, err := f.client().AdminGetUser(context.Background(), "tok", "alice")
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestAdminSuspendUnsuspend(t *testing.T) {
 func TestAdminDepositNamesThePayment(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"amount":100,"external_key":"attr:rail:ref:pay-1","operator":"sys","from":"sys","to":"alice"}`
+	f.reply = `{"amount":100,"external_key":"attr:rail:ref:pay-1","operator":"sys","from":{"address":"sys","principal":"sys"},"to":{"address":"alice","principal":"alice"}}`
 	e, err := f.client().AdminDeposit(context.Background(), "tok", "alice", 100, "pay-1", "grant")
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestAdminDepositNamesThePayment(t *testing.T) {
 			t.Errorf("deposit body missing %s: %s", want, body)
 		}
 	}
-	if e.Amount != 100 || e.To != "alice" {
+	if e.Amount != 100 || e.To.Address != "alice" {
 		t.Errorf("the deposit answers with the ledger entry it wrote: %+v", e)
 	}
 	// The amount-less form — attributing a payment already received whose sender
@@ -112,8 +112,8 @@ func TestAdminListDeposits(t *testing.T) {
 	f := newFake()
 	defer f.close()
 	f.reply = `{"deposits":[],"owed":[{"id":"TICKET1","obligation":8,"amount":10,"tx_hash":"manual:TICKET1",
-	 "status":"announced","created_at":"2026-09-09T09:30:24Z","peer":"KEYB"},
-	 {"id":"TICKET2","obligation":126,"amount":0,"tx_hash":"","status":"","created_at":"2026-09-14T01:13:39Z","peer":"KEYD"}]}`
+	 "status":"announced","created_at":"2026-09-09T09:30:24Z","peer":{"address":"KEYB","principal":"KEYB"}},
+	 {"id":"TICKET2","obligation":126,"amount":0,"tx_hash":"","status":"","created_at":"2026-09-14T01:13:39Z","peer":{"address":"KEYD","principal":"KEYD"}}]}`
 	d, err := f.client().AdminListDeposits(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestAdminListDeposits(t *testing.T) {
 	if f.lastPath != "/v1/admin/kernel/deposits" {
 		t.Errorf("deposits path = %q", f.lastPath)
 	}
-	if len(d.Owed) != 2 || d.Owed[0].ID != "TICKET1" || d.Owed[0].Peer != "KEYB" {
+	if len(d.Owed) != 2 || d.Owed[0].ID != "TICKET1" || d.Owed[0].Peer.Address != "KEYB" {
 		t.Errorf("obligation decode wrong: %+v", d.Owed)
 	}
 	// What was owed and what must be paid are different numbers: the draw pays a
@@ -283,7 +283,7 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	// action row is {name, description, price} only and the account arrives inline
 	// — shapes captured live 2026-08-06.
 	f.reply = `{"handle":"k","public_key":"PKEY","about":"a test kernel","online":true,"source":"live",
-	 "actions":[{"name":"seller@bee/greet","title":"Greet a person","price":12,"description":"Greets a person."}],
+	 "actions":[{"name":{"address":"seller@bee/greet"},"title":"Greet a person","price":12,"description":"Greets a person."}],
 	 "evidence":[{"issuer_public_key":"ISS1","subject_action_id":"A1","uses":2,"successes":0,"failures":2,
 	   "corroborated_uses":1,"avg_latency_ms":90760.5,"rating_count":0,"rating_mean":0,"unverified_ratings":0}],
 	 "reachability":{"path":"direct","rtt_millis":7,"protocols":["/juice/fed/gossip/1"],"version":"juice-kernel/dev","error":""}}`
@@ -300,7 +300,7 @@ func TestAdminInspectAndPeerSuspend(t *testing.T) {
 	if insp.Reachability.Path != "direct" || insp.Reachability.RTTMillis != 7 || insp.Reachability.Version != "juice-kernel/dev" {
 		t.Errorf("reachability diagnostics not decoded: %+v", insp.Reachability)
 	}
-	if len(insp.Actions) != 1 || insp.Actions[0].Name != "seller@bee/greet" || insp.Actions[0].Title != "Greet a person" || insp.Actions[0].Price != 12 {
+	if len(insp.Actions) != 1 || insp.Actions[0].Name.Address != "seller@bee/greet" || insp.Actions[0].Title != "Greet a person" || insp.Actions[0].Price != 12 {
 		t.Errorf("peer action not decoded: %+v", insp.Actions)
 	}
 	// avg_latency_ms is FRACTIONAL on the wire (690.5, 90760.5 — verified live).
@@ -389,7 +389,7 @@ func TestIdentityCarriesTheCreditAndRailPosition(t *testing.T) {
 func TestAddressIsSentVerbatim(t *testing.T) {
 	f := newFake()
 	defer f.close()
-	f.reply = `{"id":"U1","address":"alice@k"}`
+	f.reply = `{"id":"U1","address":{"address":"alice@k","principal":"alice@k"}}`
 	for _, name := range []string{"alice@k", "alice"} {
 		if _, err := f.client().AdminGetUser(context.Background(), "tok", name); err != nil {
 			t.Fatal(err)

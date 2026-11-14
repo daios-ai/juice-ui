@@ -201,7 +201,7 @@ func (r *Renderer) runForm(v actionView) CallForm {
 	return CallForm{
 		CSRFField: v.CSRFField, PostURL: "/actions/" + a.ID + "/run", FormURL: "/actions/" + a.ID + "/form", Verb: "Run",
 		QuoteHash: a.QuoteHash, Price: a.Price, Editable: v.Form, ResultID: "run-result", Outcome: v.Outcome,
-		FirstPayee: v.FirstPayee, PayeeOwner: r.refOf(a.Ref(), "").Owner.Text,
+		FirstPayee: v.FirstPayee, PayeeOwner: r.refOf(a.Action, "").Owner.Text,
 		Room: v.Room, Fill: v.Fill, FillURL: "/actions/" + a.ID + "/fill",
 	}
 }

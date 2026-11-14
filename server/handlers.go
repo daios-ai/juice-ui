@@ -262,7 +262,7 @@ type taskEntry struct {
 // only the task's owner may read.
 type taskRow struct {
 	client.Task
-	Other     string
+	Other     client.Party
 	Cancel    bool
 	Answer    bool
 	CSRFField template.HTML // Cancel's form
@@ -272,7 +272,7 @@ type taskRow struct {
 // CreatedBy "" holds the tasks whose row names no creator — those held on
 // another kernel, which name their holder instead.
 type taskGroup struct {
-	CreatedBy string
+	CreatedBy client.Party
 	Tasks     []taskEntry
 }
 
@@ -573,7 +573,7 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	var pending bool
 	err := s.sessions.Do(ctx, func(tok string) error {
-		_, p, e := s.client.CompleteGrant(ctx, tok, action, state, code)
+		p, e := s.client.CompleteGrant(ctx, tok, action, state, code)
 		pending = p
 		return e
 	})
@@ -604,7 +604,7 @@ func (s *Server) postGrantConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.ConnectGrant(ctx, tok, selector, provider, token)
+		e := s.client.ConnectGrant(ctx, tok, selector, provider, token)
 		return e
 	})
 	if s.handleErr(w, r, err) {
@@ -680,7 +680,7 @@ func grantedRefs(me client.User) map[string]bool {
 	g := map[string]bool{}
 	for _, c := range me.Connectors {
 		for _, a := range c.Actions {
-			g[a.Action] = true
+			g[a.Action.Address] = true
 		}
 	}
 	return g
@@ -838,7 +838,7 @@ func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
 // superuser, whom the kernel lets enable, publish, edit and delete any action
 // (verified live, UI 0.66.0). The one rule for the action's page and every list.
 func (s *Server) manages(r *http.Request, me client.User, a client.Action) bool {
-	return (me.Address != "" && refOwner(a.Action) == me.Address) || s.isSuperuser(r)
+	return (me.Address.Address != "" && refOwner(a.Action.Address) == me.Address.Address) || s.isSuperuser(r)
 }
 
 // finishCards states on every card of a list what depends on the viewer:
@@ -923,7 +923,7 @@ func (s *Server) discover(r *http.Request, tok, q, order, quoteHash string) (dis
 				// No local row. Another kernel's address means it is
 				// discovered; a local one that fails to read is a row that has
 				// since gone, and keeps the lookup row's own fields.
-				view.Results[i].Discovered = !s.identity.Local(view.Results[i].Action.Action)
+				view.Results[i].Discovered = !s.identity.Local(view.Results[i].Action.Action.Address)
 				return
 			}
 			view.Results[i].Discovered = false
@@ -1037,9 +1037,9 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return e
 		}
-		view.Me = me.Address
+		view.Me = me.Address.Address
 		if view.Tab == "" {
-			return s.todo(ctx, tok, r, me.Address, &view)
+			return s.todo(ctx, tok, r, view.Me, &view)
 		}
 		// One kernel page, of which the tab keeps its own (a superuser is
 		// served every account's): Sent is what the viewer asked of others,
@@ -1053,11 +1053,11 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		for _, t := range page {
-			row := taskRow{Task: t, Answer: t.Owner == me.Address && t.TxID != "", CSRFField: csrf.TemplateField(r)}
+			row := taskRow{Task: t, Answer: t.Owner.Address == view.Me && t.TxID != "", CSRFField: csrf.TemplateField(r)}
 			switch {
-			case view.Tab == "sent" && t.Owner == me.Address && t.RequiredCaller != me.Address:
-				row.Other, row.Cancel = t.RequiredCaller, canDecline(t, me.Address)
-			case view.Tab == "done" && t.RequiredCaller == me.Address && !t.Waiting():
+			case view.Tab == "sent" && t.Owner.Address == view.Me && t.RequiredCaller.Address != view.Me:
+				row.Other, row.Cancel = t.RequiredCaller, canDecline(t, view.Me)
+			case view.Tab == "done" && t.RequiredCaller.Address == view.Me && !t.Waiting():
 				row.Other = t.Requester
 			default:
 				continue
@@ -1089,14 +1089,14 @@ func (s *Server) todo(ctx context.Context, tok string, r *http.Request, me strin
 			view.Requests = append(view.Requests, rq)
 		}
 	}
-	waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !t.Waiting() || t.RequiredCaller != me })
+	waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !t.Waiting() || t.RequiredCaller.Address != me })
 	waiting, view.Pager = pageOf(r, waiting)
 	groupIdx := map[string]int{} // created_by → index in view.InboxGroups (first-seen order)
 	for _, t := range waiting {
-		i, ok := groupIdx[t.CreatedBy]
+		i, ok := groupIdx[t.CreatedBy.Address]
 		if !ok {
 			i = len(view.InboxGroups)
-			groupIdx[t.CreatedBy] = i
+			groupIdx[t.CreatedBy.Address] = i
 			view.InboxGroups = append(view.InboxGroups, taskGroup{CreatedBy: t.CreatedBy})
 		}
 		view.InboxGroups[i].Tasks = append(view.InboxGroups[i].Tasks, s.taskEntryOf(t, me))
@@ -1111,7 +1111,7 @@ func (s *Server) taskEntryOf(t client.Task, me string) taskEntry {
 	return taskEntry{
 		Task:        t,
 		Form:        BuildTaskForm(t.AllowedInput, t.PartialArgs),
-		CanComplete: t.Waiting() && t.RequiredCaller == me,
+		CanComplete: t.Waiting() && t.RequiredCaller.Address == me,
 		CanDecline:  canDecline(t, me),
 	}
 }
@@ -1119,7 +1119,7 @@ func (s *Server) taskEntryOf(t client.Task, me string) taskEntry {
 // canDecline is the kernel's rule for who may decline a task: either party,
 // the one asked or the one who asked, while it waits.
 func canDecline(t client.Task, me string) bool {
-	return t.Waiting() && (t.RequiredCaller == me || t.Owner == me)
+	return t.Waiting() && (t.RequiredCaller.Address == me || t.Owner.Address == me)
 }
 
 const (
@@ -1218,11 +1218,11 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 	}
 	// First-payee hint on the run form (§8.3): shown unless the viewer has
 	// already transacted with this action's owner. Bounded, best-effort.
-	if owner := refOwner(a.Action); a.Price > 0 && owner != me.Address {
+	if owner := refOwner(a.Action.Address); a.Price > 0 && owner != me.Address.Address {
 		view.FirstPayee = true
 		if txs, e := s.client.TransactionsPage(ctx, tok, "", 200, 0); e == nil {
 			for _, t := range txs {
-				if t.Target == owner {
+				if t.Target.Address == owner {
 					view.FirstPayee = false
 					break
 				}
@@ -1442,7 +1442,7 @@ func (s *Server) renderWorkshop(w http.ResponseWriter, r *http.Request, create *
 		if e != nil {
 			return e
 		}
-		a, e := s.client.ListActions(ctx, tok, u.Address)
+		a, e := s.client.ListActions(ctx, tok, u.Address.Address)
 		if e != nil {
 			return e
 		}
@@ -1935,7 +1935,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 			return e
 		}
 		if procs, e := s.client.OpenProcesses(ctx, tok); e == nil {
-			view.Open = ownSessions(procs, me.Address)
+			view.Open = ownSessions(procs, me.Address.Address)
 		}
 		// The ledger journals every movement between accounts — deposits,
 		// withdrawals, transfers, delivered value, and what each settlement paid
@@ -1944,7 +1944,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		entries, _ := s.client.Ledger(ctx, tok, 10, 0)
 		view.Activity = make([]entryRow, len(entries))
 		for i, e := range entries {
-			view.Activity[i] = entryRowOf(e, me.Address)
+			view.Activity[i] = entryRowOf(e, me.Address.Address)
 		}
 		return nil
 	})
@@ -1961,7 +1961,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 func ownSessions(procs []client.Process, me string) []client.Process {
 	var own []client.Process
 	for _, p := range procs {
-		if p.Owner == me {
+		if p.Owner.Address == me {
 			own = append(own, p)
 		}
 	}
@@ -2121,7 +2121,7 @@ func (s *Server) getProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 	// A superuser's page also holds other owners' open sessions.
 	for _, p := range filterStatus(page, "open", true) {
-		if p.Owner != me {
+		if p.Owner.Address != me {
 			open = append(open, p)
 		}
 	}
@@ -2187,7 +2187,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "transactions", "Transactions", transactionsView{
-		Transactions: txs, Me: me.Address, Superuser: s.isSuperuser(r),
+		Transactions: txs, Me: me.Address.Address, Superuser: s.isSuperuser(r),
 		Pager: pager,
 	})
 }

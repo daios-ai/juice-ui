@@ -330,7 +330,7 @@ func TestTxAmount(t *testing.T) {
 	// occupying several roles sees the sum. gross = net + fee, so the three
 	// viewpoints of a settled call sum to zero.
 	mk := func(status string, gross, net, fee int64) client.Transaction {
-		return client.Transaction{Owner: "buyer", Target: "seller", Status: status, Gross: gross, Net: net, Fee: fee}
+		return client.Transaction{Owner: client.Party{Address: "buyer"}, Target: client.Party{Address: "seller"}, Status: status, Gross: gross, Net: net, Fee: fee}
 	}
 	cases := []struct {
 		name, viewer string
@@ -356,12 +356,12 @@ func TestTxAmount(t *testing.T) {
 	}
 
 	// Self-call by a normal user (buyer == seller): nets to −fee.
-	self := client.Transaction{Owner: "a", Target: "a", Status: "success", Gross: 100, Net: 90, Fee: 10}
+	self := client.Transaction{Owner: client.Party{Address: "a"}, Target: client.Party{Address: "a"}, Status: "success", Gross: 100, Net: 90, Fee: 10}
 	if got := string(r.txAmount(self, "a")); !strings.Contains(got, "-10 credits") {
 		t.Errorf("self-call = %q, want -10 credits (the fee)", got)
 	}
 	// sys as the seller collects net + fee = gross.
-	sysSell := client.Transaction{Owner: "a", Target: "sys@testnet", Status: "success", Gross: 100, Net: 90, Fee: 10}
+	sysSell := client.Transaction{Owner: client.Party{Address: "a"}, Target: client.Party{Address: "sys@testnet"}, Status: "success", Gross: 100, Net: 90, Fee: 10}
 	if got := string(r.txAmount(sysSell, "sys@testnet")); !strings.Contains(got, "+100 credits") {
 		t.Errorf("sys-as-seller = %q, want +100 credits (net+fee)", got)
 	}
@@ -490,9 +490,9 @@ func TestGrantConnectPageShowsPlanDelta(t *testing.T) {
 	plan := client.GrantPlan{
 		Groups: []client.GrantGroup{
 			{ProviderKey: "bearer:api.acme.com", Provider: "api.acme.com", Scheme: "delegated_bearer",
-				Actions: []client.GrantPlanAction{{Action: "acme/send"}, {Action: "acme/read"}}},
+				Actions: []client.GrantPlanAction{{Action: client.Party{Address: "acme/send"}}, {Action: client.Party{Address: "acme/read"}}}},
 			{ProviderKey: "oauth:https://g/token|cid", Provider: "google", Scheme: "oauth_delegated", Scopes: []string{"mail.send"},
-				Actions: []client.GrantPlanAction{{Action: "g/mail"}}},
+				Actions: []client.GrantPlanAction{{Action: client.Party{Address: "g/mail"}}}},
 		},
 		SkippedUncallable: 2,
 	}
@@ -535,14 +535,14 @@ func TestUserPageShowsConnections(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: userView{
-		User: client.User{Address: "me@testnet",
+		User: client.User{Address: client.Party{Address: "me@testnet"},
 			Connectors: []client.Connector{{
-				Directory:   "chat",
+				Directory:   client.Party{Address: "chat"},
 				Connections: []client.Connection{{Provider: "127.0.0.1:8080", ProviderKey: "bearer:h"}},
-				Actions:     []client.Grant{{Action: "chat/pay", Scopes: []string{"pay.write"}, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"}},
+				Actions:     []client.Grant{{Action: client.Party{Address: "chat/pay"}, Scopes: []string{"pay.write"}, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"}},
 			}, {
-				Directory: "chat@alpha/room",
-				Actions:   []client.Grant{{Action: "chat@alpha/room/read", CreatedAt: "2026-07-12T00:00:00Z"}},
+				Directory: client.Party{Address: "chat@alpha/room"},
+				Actions:   []client.Grant{{Action: client.Party{Address: "chat@alpha/room/read"}, CreatedAt: "2026-07-12T00:00:00Z"}},
 			}},
 			Connections: []client.Connection{
 				{Provider: "127.0.0.1:8080", Actions: 8, Unused: false, ProviderKey: "bearer:h", CreatedAt: "2026-07-12T00:00:00Z"},
@@ -589,7 +589,7 @@ func TestAdminPageOffersUnsuspend(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminView{
-		Users: []client.AdminUser{{Address: "victim@testnet", SuspendedAt: "0001-01-01T00:00:00Z"}},
+		Users: []client.AdminUser{{Address: client.Party{Address: "victim@testnet"}, SuspendedAt: "0001-01-01T00:00:00Z"}},
 	}}
 	if err := r.Render(rec, 200, "admin", p); err != nil {
 		t.Fatalf("render: %v", err)
@@ -655,23 +655,25 @@ func TestCallOutcomeTermsChanged(t *testing.T) {
 	}
 }
 
-func TestKeyFingerprint(t *testing.T) {
-	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
-	if got, want := keyFingerprint(long), "ABCDEFGHIJ…abcd"; got != want {
-		t.Errorf("keyFingerprint(long) = %q want %q", got, want)
+func TestShortKey(t *testing.T) {
+	long := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg"
+	if got, want := client.ShortKey(long), "ABCDEFGHIJ…defg"; got != want {
+		t.Errorf("ShortKey(long) = %q want %q", got, want)
 	}
-	// Short keys are returned as-is (nothing to shorten).
-	if got := keyFingerprint("short"); got != "short" {
-		t.Errorf("keyFingerprint(short) = %q want %q", got, "short")
+	// A name that is not key-shaped passes whole, however long.
+	for _, name := range []string{"short", "a-rather-long-but-legitimate-petname"} {
+		if got := client.ShortKey(name); got != name {
+			t.Errorf("ShortKey(%q) = %q, want it whole", name, got)
+		}
 	}
 	// One kernel, one abbreviation, wherever it is named: the header's
 	// fingerprint and a peer named inside an error sentence must be the same
 	// string, or a reader cannot tell they are the same kernel.
 	key := "1MutJi6KXZIWlxJMiIKsu4gR6-R4ACoEJwP7sNT_mq4"
 	ke := &client.KernelError{Meta: map[string]json.RawMessage{"peer": json.RawMessage(`"` + key + `"`)}}
-	if keyFingerprint(key) != ke.PeerDisplay() {
+	if client.ShortKey(key) != ke.PeerDisplay() {
 		t.Errorf("the same key abbreviates two ways: header %q vs sentence %q",
-			keyFingerprint(key), ke.PeerDisplay())
+			client.ShortKey(key), ke.PeerDisplay())
 	}
 }
 
@@ -684,7 +686,7 @@ func TestCallFormRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "alice@testnet/x", Price: 12, QuoteHash: "QH"},
+	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: client.Party{Address: "alice@testnet/x"}, Price: 12, QuoteHash: "QH"},
 		Form: FormModel{UseRawFallback: true}, FirstPayee: true})
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatalf("Fragment: %v", err)
@@ -1015,7 +1017,7 @@ func TestActionDetailNeverGuessesAvailability(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	p := Page{Me: "me@testnet", CSRFField: template.HTML("<input>"), Data: actionView{
-		Action: client.Action{ID: "a1", Action: "peerx/greet", Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10},
+		Action: client.Action{ID: "a1", Action: client.Party{Address: "peerx/greet"}, Name: "greet", Kind: "remote_proxy", Active: true, Visibility: "public", Price: 10},
 		Form:   BuildForm(nil),
 	}}
 	if err := r.Render(rec, 200, "action_detail", p); err != nil {
@@ -1213,24 +1215,30 @@ func TestNamedRowsCarryNoVerbs(t *testing.T) {
 	}
 }
 
-// The key renders in one spelling (§6.6): keyDisplay as the title when unbound,
-// else on the ref line; never both, and never a second truncation.
+// The key renders in one spelling (§6.6): client.ShortKey as the title when it
+// is the label, else on the ref line; never both, and never a second
+// truncation. A nickname is the label marked ~, never in parentheses.
 func TestKeyRendersInOneSpelling(t *testing.T) {
 	const key = "lHynnkVtXrzrfAHCPgrjzctyjQqkehrUz0BZp7Pxnmw"
-	short := keyDisplay(key).Text
-	unbound := renderPeersPage(t, []client.Peer{{Nickname: "TitanPlus", PublicKey: key}}, false)
+	short := client.ShortKey(key)
+	unbound := renderPeersPage(t, []client.Peer{{PublicKey: key}}, false)
 	if n := strings.Count(unbound, short); n != 1 {
 		t.Errorf("an unbound row spells its key once, got %d: %s", n, unbound)
 	}
-	if strings.Contains(unbound, key[:16]+"<") || strings.Contains(unbound, `class="action-ref fingerprint" title="`+key+`"`) {
-		t.Errorf("an unbound row has no ref line: %s", unbound)
+	if strings.Contains(unbound, `class="action-ref fingerprint" title="`+key+`"`) {
+		t.Errorf("a row whose label is its key has no ref line: %s", unbound)
+	}
+	claimed := renderPeersPage(t, []client.Peer{{Nickname: "TitanPlus", PublicKey: key}}, false)
+	if !strings.Contains(claimed, `>~TitanPlus</a>`) || strings.Contains(claimed, "(TitanPlus)") ||
+		!strings.Contains(claimed, `<p class="action-ref fingerprint" title="`+key+`">`+short+` <button`) || strings.Count(claimed, short) != 1 {
+		t.Errorf("a row a nickname labels shows ~TitanPlus and its key once on the ref line: %s", claimed)
 	}
 	bound := renderPeersPage(t, []client.Peer{{Petname: "titan", PublicKey: key}}, false)
 	if !strings.Contains(bound, `<p class="action-ref fingerprint" title="`+key+`">`+short+` <button`) {
 		t.Errorf("a bound row's ref line is the one key spelling: %s", bound)
 	}
 	// The whole key is yielded by the copy control, in both forms of the row.
-	for _, body := range []string{unbound, bound} {
+	for _, body := range []string{unbound, claimed, bound} {
 		if strings.Count(body, `data-copy="`+key+`"`) != 1 {
 			t.Errorf("a row carries its whole key in one copy control: %s", body)
 		}
@@ -1573,13 +1581,13 @@ func TestRefSplitsAndDecidesLocality(t *testing.T) {
 		{"eve@testnet2/x", "eve@testnet2", "x", false}, // a suffix of another name is not ours
 	}
 	for _, c := range cases {
-		v := r.refOf(c.ref, "")
+		v := r.refOf(client.Party{Address: c.ref}, "")
 		if v.Owner.Text != c.owner || v.Name != c.name || v.Local != c.local {
 			t.Errorf("ref(%q) = %+v, want owner %q name %q local %v", c.ref, v, c.owner, c.name, c.local)
 		}
 	}
 	// An unknown kernel owns nothing: every address renders as someone else's.
-	if (&Renderer{identity: unknownKernel}).refOf("sys@testnet/time", "").Local {
+	if (&Renderer{identity: unknownKernel}).refOf(client.Party{Address: "sys@testnet/time"}, "").Local {
 		t.Error("with the kernel's name unknown, no address is local")
 	}
 }
@@ -1594,7 +1602,7 @@ func TestRefRemoteUnlinked(t *testing.T) {
 	}
 	render := func(ref, id string) string {
 		rec := httptest.NewRecorder()
-		if err := r.Fragment(rec, 200, "_ref", r.refOf(ref, id)); err != nil {
+		if err := r.Fragment(rec, 200, "_ref", r.refOf(client.Party{Address: ref}, id)); err != nil {
 			t.Fatal(err)
 		}
 		return rec.Body.String()
@@ -1622,8 +1630,8 @@ func TestRefRemoteUnlinked(t *testing.T) {
 func TestRefTruncatesRawKernelKeys(t *testing.T) {
 	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I"
 	r := &Renderer{identity: playKernel}
-	v := r.refOf("sys@"+key+"/llm/embed", "")
-	if v.Owner.Text != "sys@"+key[:keyLen]+"…" {
+	v := r.refOf(client.Party{Address: "sys@" + key + "/llm/embed"}, "")
+	if v.Owner.Text != "sys@"+client.ShortKey(key) || v.Owner.Text == "sys@"+key {
 		t.Errorf("owner segment = %q, want the key truncated", v.Owner.Text)
 	}
 	if v.Owner.Title != "sys@"+key {
@@ -1633,7 +1641,7 @@ func TestRefTruncatesRawKernelKeys(t *testing.T) {
 		t.Errorf("split wrong: %+v", v)
 	}
 	// A bound petname is not key-shaped and renders whole.
-	if b := r.refOf("sys@daios/llm/embed", ""); b.Owner.Text != "sys@daios" || b.Owner.IsKey {
+	if b := r.refOf(client.Party{Address: "sys@daios/llm/embed"}, ""); b.Owner.Text != "sys@daios" || b.Owner.IsKey {
 		t.Errorf("a petname-qualified ref must render whole: %+v", b)
 	}
 }
@@ -1657,7 +1665,7 @@ func TestActionRowDiscovered(t *testing.T) {
 	body := card(actionCardView{
 		Discovered: true,
 		Action: client.Action{
-			ID: "REMOTE-ID", Action: "tom@KERNELKEY/greet",
+			ID: "REMOTE-ID", Action: client.Party{Address: "tom@KERNELKEY/greet"},
 			Description: "Greets a person by name.", Price: 111,
 		},
 	})
@@ -1690,7 +1698,7 @@ func TestActionRowDiscovered(t *testing.T) {
 	// A resolved proxy is the ordinary case and keeps price, strip, and link —
 	// the two states never coincide, because the kernel shadows the discovery row.
 	proxy := card(actionCardView{Action: client.Action{
-		ID: "LOCAL-ID", Action: "k-abc/tom/greet", Kind: "remote_proxy", Price: 14, Active: true,
+		ID: "LOCAL-ID", Action: client.Party{Address: "k-abc/tom/greet"}, Kind: "remote_proxy", Price: 14, Active: true,
 	}})
 	if !strings.Contains(proxy, "/actions/LOCAL-ID") || !strings.Contains(proxy, "action-stats") {
 		t.Errorf("a resolved proxy card must stay an ordinary card: %s", proxy)
@@ -1710,8 +1718,8 @@ func TestActionRowLeadsWithTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, v := range []actionCardView{
-		{CanManage: true, Action: client.Action{ID: "A1", Action: "tom@play/greet", Title: "Greet a person", Active: true, Visibility: "private"}},
-		{Discovered: true, Action: client.Action{ID: "R1", Action: "tom@KERNELKEY/greet", Title: "Greet a person"}},
+		{CanManage: true, Action: client.Action{ID: "A1", Action: client.Party{Address: "tom@play/greet"}, Title: "Greet a person", Active: true, Visibility: "private"}},
+		{Discovered: true, Action: client.Action{ID: "R1", Action: client.Party{Address: "tom@KERNELKEY/greet"}, Title: "Greet a person"}},
 	} {
 		rec := httptest.NewRecorder()
 		if err := r.Fragment(rec, 200, "_action_row", v); err != nil {
@@ -1748,7 +1756,7 @@ func TestInspectListsActionsAsDiscoveredRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	i := client.Inspection{PublicKey: "KEYC", Actions: []client.PeerAction{{ActionID: "a2", Name: "seller@bee/greet", Title: "Greet a person", Description: "says hi", Price: 12, Indicative: true}}}
+	i := client.Inspection{PublicKey: "KEYC", Actions: []client.PeerAction{{ActionID: "a2", Name: client.Party{Address: "seller@bee/greet"}, Title: "Greet a person", Description: "says hi", Price: 12, Indicative: true}}}
 	rec := httptest.NewRecorder()
 	p := Page{Me: "sys@testnet", IsSuperuser: true, BadgeSecs: 15, CSRFField: template.HTML("<input>"), Data: adminInspectView{
 		Key: "KEYC", Inspection: i, Actions: peerActionRows(i),
@@ -1851,7 +1859,7 @@ func TestFormWireForTheSwitch(t *testing.T) {
 		"req":{"type":"array","items":{"type":"string"}},"opt":{"type":"array","items":{"type":"string"}},
 		"nul":{"type":["string","null"]}}}`))
 	fm.Fill(json.RawMessage(`{"nul":null}`))
-	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "alice@testnet/x"}, Form: fm})
+	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: client.Party{Address: "alice@testnet/x"}}, Form: fm})
 	rec := httptest.NewRecorder()
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
@@ -1881,8 +1889,8 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := client.Action{ID: "P1", Action: "k-abc/tom/greet", Kind: "remote_proxy", Active: true, Price: 14}
-	own := client.Action{ID: "A1", Action: "me/thing", Kind: "wasm", Active: true, Price: 3}
+	proxy := client.Action{ID: "P1", Action: client.Party{Address: "k-abc/tom/greet"}, Kind: "remote_proxy", Active: true, Price: 14}
+	own := client.Action{ID: "A1", Action: client.Party{Address: "me/thing"}, Kind: "wasm", Active: true, Price: 3}
 
 	rec := httptest.NewRecorder()
 	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: actionsView{
@@ -1908,27 +1916,31 @@ func TestProxyRowsOfferNoLifecycleVerbs(t *testing.T) {
 	}
 }
 
-// The naming primitive (§13 petname model). Three name classes, one rule each:
-// a key is global but unreadable, so it renders truncated with the whole value
-// recoverable; a petname is bound here and renders whole; a nickname is never
-// chosen, because it does not resolve and offering it would invite typing
-// something the resolver rejects.
+// The naming primitive (§13 petname model, ui-grammar "Naming"). Three name
+// classes, one rule each: a petname is bound here and renders alone; a
+// nickname is a claim and renders marked ~, its key beside it; a key is global
+// but unreadable, so it renders truncated with the whole value recoverable.
 func TestNameOfPrefersPetnameAndTruncatesKeys(t *testing.T) {
 	const key = "esKD_l0c_1xaJ9rP-C8woBZamNPvIYFE_FOMSCi4C3I" // 43 chars, as the kernel mints them
 	if len(key) != 43 {
 		t.Fatalf("fixture key is %d chars, kernel keys are 43", len(key))
 	}
 
-	bound := nameOf("daios", key)
-	if bound.Text != "daios" || bound.IsKey {
+	bound := nameOf("daios", "alpha", key)
+	if bound.Text != "daios" || bound.IsKey || bound.Key != "" {
 		t.Errorf("a bound petname must render whole: %+v", bound)
 	}
 	if bound.Title != key {
 		t.Errorf("the key must stay recoverable behind the name: %+v", bound)
 	}
 
-	unbound := nameOf("", key)
-	if !unbound.IsKey || unbound.Text != key[:keyLen]+"…" {
+	claimed := nameOf("", "alpha", key)
+	if claimed.Text != "~alpha" || claimed.Key != key[:10]+"…"+key[39:] || !claimed.IsKey || claimed.Title != key {
+		t.Errorf("an unbound kernel calling itself alpha must render ~alpha, its key beside it: %+v", claimed)
+	}
+
+	unbound := nameOf("", "", key)
+	if !unbound.IsKey || unbound.Key != "" || unbound.Text != key[:10]+"…"+key[39:] {
 		t.Errorf("an unbound kernel must render a truncated key: %+v", unbound)
 	}
 	if unbound.Title != key {
@@ -1940,9 +1952,97 @@ func TestNameOfPrefersPetnameAndTruncatesKeys(t *testing.T) {
 
 	// A long petname is not key-shaped and must survive whole: a false positive
 	// here would silently clip a name the operator chose.
-	long := keyDisplay("a-rather-long-but-legitimate-petname")
+	long := nameOf("", "", "a-rather-long-but-legitimate-petname")
 	if long.IsKey || long.Text != "a-rather-long-but-legitimate-petname" {
 		t.Errorf("a long bare name must not be mistaken for a key: %+v", long)
+	}
+}
+
+// A compact label names the key a nickname stands in for only once a second
+// key claims the same nickname; a roomy one always names it; a petname never
+// clashes.
+func TestBriefNamesTheKeyOnAClash(t *testing.T) {
+	k1, k2 := strings.Repeat("a", 39)+"AAAA", strings.Repeat("b", 39)+"BBBB"
+	r := &Renderer{identity: playKernel}
+	one := client.Party{Address: "bob@" + k1, Principal: "u1@" + k1, Nickname: "alpha"}
+	two := client.Party{Address: "ann@" + k2, Principal: "u2@" + k2, Nickname: "alpha"}
+	if n := r.brief(one); n.Text != "bob@~alpha" || n.Key != "" || !n.IsKey {
+		t.Errorf("one claimant: %+v", n)
+	}
+	if n := r.party(one); n.Key != "aaaaaaaaaa…AAAA" {
+		t.Errorf("a roomy label names the key: %+v", n)
+	}
+	if n := r.brief(two); n.Key != "bbbbbbbbbb…BBBB" {
+		t.Errorf("the second claimant must name its key: %+v", n)
+	}
+	if n := r.brief(one); n.Key != "aaaaaaaaaa…AAAA" {
+		t.Errorf("after a clash the first claimant names its key too: %+v", n)
+	}
+	if got := r.Label(one); got != "bob@~alpha aaaaaaaaaa…AAAA" {
+		t.Errorf("Label = %q", got)
+	}
+	named := client.Party{Address: "cy@alpha", Principal: "u3@" + k1}
+	if n := r.brief(named); n.Text != "cy@alpha" || n.Key != "" || n.IsKey {
+		t.Errorf("a petname stands alone: %+v", n)
+	}
+	ref := r.refOf(client.Party{Address: "bob@" + k2 + "/sum", Principal: "u2@" + k2 + "/sum", Nickname: "beta"}, "")
+	if ref.Owner.Text != "bob@~beta" || ref.Name != "sum" || ref.Owner.Key != "" || ref.Owner.Title != "bob@"+k2 {
+		t.Errorf("an action reference names its owner compactly: %+v", ref)
+	}
+}
+
+// A party no petname names is its label with the key beside it where there is
+// room, alone in a compact place, and always with its whole address to copy;
+// a named one stands alone with nothing to copy. A kernel's page heads with
+// ~alpha, never (alpha), and a decision on it names the key. The login page's
+// key carries its copy.
+func TestNicknameIsAClaim(t *testing.T) {
+	const key = "X7lFapV-gKReFfvyDdaHO0pZrfSyhb9aA-CS_DIWvp8"
+	short := client.ShortKey(key)
+	r, err := NewRenderer(playKernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frag := func(name string, data any) string {
+		rec := httptest.NewRecorder()
+		if err := r.Fragment(rec, 200, name, data); err != nil {
+			t.Fatal(err)
+		}
+		return rec.Body.String()
+	}
+	bob := client.Party{Address: "bob@" + key, Principal: "u1@" + key, Nickname: "alpha"}
+	if got := frag("_party", bob); !strings.Contains(got, `title="bob@`+key+`">bob@~alpha <span class="muted">`+short+`</span></span>`) || !strings.Contains(got, `data-copy="bob@`+key+`"`) {
+		t.Errorf("roomy: %s", got)
+	}
+	if got := frag("_party_brief", bob); !strings.Contains(got, `>bob@~alpha</span>`) || strings.Contains(got, short) || !strings.Contains(got, `data-copy="bob@`+key+`"`) {
+		t.Errorf("compact: %s", got)
+	}
+	if got := frag("_party", client.Party{Address: "bob@" + key, Principal: "u1@" + key}); !strings.Contains(got, `>bob@`+short+`</span>`) || !strings.Contains(got, `data-copy="bob@`+key+`"`) {
+		t.Errorf("a key alone carries its copy: %s", got)
+	}
+	if got := frag("_party", client.Party{Address: "bob@beta", Principal: "u1@" + key}); strings.Contains(got, "data-copy") || strings.Contains(got, "~") {
+		t.Errorf("a petname stands alone: %s", got)
+	}
+
+	rec := httptest.NewRecorder()
+	p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminInspectView{
+		Key: key, Inspection: client.Inspection{PublicKey: key, Nickname: "alpha"},
+	}}
+	if err := r.Render(rec, 200, "admin_inspect", p); err != nil {
+		t.Fatal(err)
+	}
+	page := rec.Body.String()
+	if !strings.Contains(page, `<h1 title="`+key+`">~alpha`) || strings.Contains(page, "(alpha)") ||
+		!strings.Contains(page, `data-confirm="Suspend ~alpha `+short+`?"`) || !strings.Contains(page, `<h2>Name ~alpha `+short+`</h2>`) {
+		t.Errorf("the kernel's page: %s", page)
+	}
+
+	rec = httptest.NewRecorder()
+	if err := r.Render(rec, 200, "login", Page{KernelHandle: "testnet", KernelKey: key, CSRFField: template.HTML("<input>"), Data: loginView{Tab: "signin"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, short+` <button`) || !strings.Contains(got, `data-copy="`+key+`"`) {
+		t.Errorf("the login page's key carries its copy: %s", got)
 	}
 }
 
@@ -1952,7 +2052,7 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "lena@testnet/x", Price: 12, QuoteHash: "QH1"}, Form: FormModel{UseRawFallback: true}})
+	cf := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: client.Party{Address: "lena@testnet/x"}, Price: 12, QuoteHash: "QH1"}, Form: FormModel{UseRawFallback: true}})
 	if err := r.Fragment(rec, 200, "_call_form", cf); err != nil {
 		t.Fatal(err)
 	}
@@ -1961,7 +2061,7 @@ func TestRunFormPinsItsQuote(t *testing.T) {
 	}
 	// No hash (an older kernel) carries no field, leaving behaviour unchanged.
 	rec2 := httptest.NewRecorder()
-	cf2 := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: "lena@testnet/x", Price: 12}, Form: FormModel{UseRawFallback: true}})
+	cf2 := r.runForm(actionView{CSRFField: template.HTML(`<input>`), Action: client.Action{ID: "A1", Action: client.Party{Address: "lena@testnet/x"}, Price: 12}, Form: FormModel{UseRawFallback: true}})
 	if err := r.Fragment(rec2, 200, "_call_form", cf2); err != nil {
 		t.Fatal(err)
 	}
@@ -2068,7 +2168,7 @@ func TestLockedFigureFollowsTheAccount(t *testing.T) {
 // viewer to the viewer — the operator's, sys being the clearing account —
 // moves nothing, so it takes no sign and no direction (§6.5).
 func TestActivityNamesTheCrossingAndSignsNoSelfEntry(t *testing.T) {
-	if row := entryRowOf(client.LedgerEntry{From: "sys@t", To: "sys@t", Amount: 1, Reason: "I want it back."}, "sys@t"); !row.Self || row.Credited || row.Note != "I want it back." {
+	if row := entryRowOf(client.LedgerEntry{From: client.Party{Address: "sys@t"}, To: client.Party{Address: "sys@t"}, Amount: 1, Reason: "I want it back."}, "sys@t"); !row.Self || row.Credited || row.Note != "I want it back." {
 		t.Errorf("a self-entry is neither credit nor debit: %+v", row)
 	}
 	r, err := NewRenderer(playKernel)
@@ -2077,16 +2177,16 @@ func TestActivityNamesTheCrossingAndSignsNoSelfEntry(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	rows := []entryRow{
-		entryRowOf(client.LedgerEntry{From: "sys@t", To: "sys@t", Amount: 1, Reason: "I want it back."}, "sys@t"),
-		entryRowOf(client.LedgerEntry{From: "sys@t", Amount: 2, Reason: "fuel"}, "sys@t"),
-		entryRowOf(client.LedgerEntry{To: "sys@t", Amount: 3}, "sys@t"),
+		entryRowOf(client.LedgerEntry{From: client.Party{Address: "sys@t"}, To: client.Party{Address: "sys@t"}, Amount: 1, Reason: "I want it back."}, "sys@t"),
+		entryRowOf(client.LedgerEntry{From: client.Party{Address: "sys@t"}, Amount: 2, Reason: "fuel"}, "sys@t"),
+		entryRowOf(client.LedgerEntry{To: client.Party{Address: "sys@t"}, Amount: 3}, "sys@t"),
 	}
 	if err := r.Fragment(rec, 200, "_activity", rows); err != nil {
 		t.Fatal(err)
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`<td>sys@t</td>`, `<span class="muted">1 credits</span>`,
+		`<td><span class="mono">sys@t</span></td>`, `<span class="muted">1 credits</span>`,
 		`<td>to outside Juice</td>`, `−2 credits`,
 		`<td>from outside Juice</td>`, `+3 credits`,
 	} {
@@ -2165,7 +2265,7 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := strings.Repeat("O", 43) // key-shaped
-	a := client.Action{ID: "P", Action: "seller@k-4lnq/greet", Kind: "remote_proxy", Active: true, Evidence: &client.ActionEvidence{
+	a := client.Action{ID: "P", Action: client.Party{Address: "seller@k-4lnq/greet"}, Kind: "remote_proxy", Active: true, Evidence: &client.ActionEvidence{
 		LocalExperience:  &client.Stats{Uses: 2, Successes: 1},
 		ProviderReported: &client.Evidence{IssuerPublicKey: "PROVIDERKEY0000", SubjectActionID: "R1", Uses: 4, Successes: 1, AvgLatencyMs: 690.5},
 		ObservedByOthers: []client.Evidence{{IssuerPublicKey: other, SubjectActionID: "R1", Uses: 3, Successes: 3, CorroboratedUses: 2, Contradictions: 1, RatingCount: 1, RatingMean: 1, UnverifiedRating: 2}},
@@ -2180,14 +2280,14 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 	for _, want := range []string{
 		"#check", `title="25% success · 4 runs"`, "0.7s", `title="PROVIDERKEY0000">provider</span>`,
 		`title="100% success · 3 runs · 2 confirmed by the provider"`, `title="100% positive · 1 rating · 2 more unverified"`,
-		`class="mono" title="` + other + `">OOOOOOOO…</span>`, `data-copy="` + other + `"`,
+		`class="mono" title="` + other + `">OOOOOOOOOO…OOOO</span>`, `data-copy="` + other + `"`,
 		`title="1 trades reported two ways — they count for nothing"`,
 	} {
 		if !strings.Contains(ev, want) {
 			t.Errorf("evidence missing %q:\n%s", want, ev)
 		}
 	}
-	if strings.Index(ev, ">provider<") > strings.Index(ev, ">OOOOOOOO…<") {
+	if strings.Index(ev, ">provider<") > strings.Index(ev, ">OOOOOOOOOO…OOOO<") {
 		t.Error("the provider's own report comes first")
 	}
 	if strings.Count(ev, "#alert") != 1 || strings.Count(ev, "confirmed by the provider") != 1 {
@@ -2222,7 +2322,7 @@ func TestEvidenceReadsAsTheStatsLine(t *testing.T) {
 // behind a copy control; rows sort by subject, the provider's first.
 func TestPeerEvidenceNamesItsSubjects(t *testing.T) {
 	id := "9f2c4e1a-0000-4000-8000-000000000001"
-	i := client.Inspection{PublicKey: "PEER", Actions: []client.PeerAction{{ActionID: "A", Name: "z@peer/zed"}}, Evidence: []client.Evidence{
+	i := client.Inspection{PublicKey: "PEER", Actions: []client.PeerAction{{ActionID: "A", Name: client.Party{Address: "z@peer/zed"}}}, Evidence: []client.Evidence{
 		{IssuerPublicKey: "OTHER", SubjectActionID: "A"},
 		{IssuerPublicKey: "PEER", SubjectActionID: "A"},
 		{IssuerPublicKey: "PEER", SubjectActionID: id},
@@ -2428,9 +2528,12 @@ func TestResultDownload(t *testing.T) {
 	}
 }
 
-func TestShortAddrAbbreviatesAChainAddressOnly(t *testing.T) {
+func TestShortAddrAbbreviatesAChainAddressAndAKey(t *testing.T) {
 	if got := shortAddr("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"); got != "0x7099…79C8" {
 		t.Errorf("shortAddr = %q", got)
+	}
+	if got := shortAddr("bob@" + strings.Repeat("k", 39) + "WXYZ"); got != "bob@kkkkkkkkkk…WXYZ" {
+		t.Errorf("shortAddr of a key address = %q", got)
 	}
 	for _, s := range []string{"0xvault", "alice@k", ""} {
 		if got := shortAddr(s); got != s {

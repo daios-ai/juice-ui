@@ -224,6 +224,34 @@ UI plugin imports `apps`, `client`, `session`, and its own `daemon` subpackage.
    end-to-end** against a throwaway kernel — a single juice-ui launch, with
    realistic pricing (native actions can cost credits).
 
+## Identifying users
+
+An app that serves users is an ordinary HTTP application behind the kernel, and
+identifies them the way any such application does, with the kernel as the
+identity provider:
+
+- **Sign-up** is an action with the owner's own `bearer`, which the kernel injects
+  and so proves the request is the kernel's. The kernel tells every action its
+  immediate caller and the owner of the run's process as principals it sets
+  (`X-Juice-Caller`, `X-Juice-Owner`, kernel D8); sign-up issues a key to the
+  **caller**, never to the run's owner, since an action running inside somebody's
+  run is not that person.
+- **Every call after** carries the key the user connected, injected by the kernel
+  (`delegated_bearer`).
+- **Store principals, show addresses.** A user is held by principal,
+  `user_id@kernel_key`, which names it on every kernel and through a rename; a
+  reply names a user as the kernel names a party, `{address, principal,
+  nickname?}`. An address is translated by the kernel whose name it is
+  (`sys/resolve`, composed on the dispatch) and never stored as identity, so a
+  user at home and one on another kernel are one case.
+- **The app's page is a view, and names by the viewer's kernel.** The address
+  in a service's reply is the service's kernel's spelling, the service's data;
+  the page names each party by its principal as the viewer's kernel does
+  (`sys/resolve`), under the one naming rule (`docs/ui-grammar.md` "Naming").
+- **A task to a user is addressed to its principal** and seals it, since a task's
+  onward is told neither its completer nor, as its owner, anyone but whoever began
+  the run that created it.
+
 ## Reference implementation: chat
 
 Chat is the worked example — a real **application on top of Juice** — with
@@ -238,24 +266,27 @@ Chat is the worked example — a real **application on top of Juice** — with
   `register.go` reconciles them on a kernel. `cmd/juice-chat` is its main. They import
   the kernel client and nothing else of this repository, which a test holds. `chat.go`
   is the App: starting and stopping the program, joining the installation's
-  principals, the conversations seam (the rail, the landing, a room's context), the
+  users, the conversations seam (the rail, the landing, a room's context), the
   browser routes and the heartbeat watcher, all of it a client of the actions.
 - **Self-provisions.** On `Start` it loads, or generates and persists, the
   `chat@<kernel>` password. Once signed in through `apps.ServiceAccount` it records
   that session in the client records, declares the program `chat` to the supervisor,
   runs `juice-chat register`, and joins the local agents. The program keeps its own secret in its own home.
-- **Identity at the door.** `msg/post`, the room commands and the room reads are
-  `delegated_bearer` on `X-Juice-Caller-Key`; the store resolves the injected key to
-  the member. `validate` and `reply` are the onwards of tasks and carry chat's bearer,
-  so only the kernel completing a task reaches them. `register` and `index` are open.
+- **Identity at the door** (Identifying users, above). `join` carries chat's bearer
+  and issues a key to the caller the kernel names; `msg/post`, the room commands and
+  the room reads are `delegated_bearer` on `X-Juice-Caller-Key`, and the store
+  resolves the injected key to the member. `accept` and `reply` are the onwards of
+  tasks and carry chat's bearer, so only the kernel completing a task reaches them.
+  `index` is open.
 - **Tasks are the delivery.** A post creates, through the capability the kernel
   injected into that dispatch (`client.CallbackCreateTask`), one task per
   recipient, and completing it is the answer. No seed trace, no sentinel, no
   app-side notification: the kernel's one signal to a member is a task.
-- **The UI joins its principals, through the kernel alone.** It holds the person's
+- **The UI joins its users, through the kernel alone.** It holds the person's
   session and every local agent's credential file, so as each of them it approves
-  chat, runs `register`, completes the verification task and connects the key at
-  `chat@<kernel>`; nobody is asked to connect. It keeps no chat key.
+  chat, runs `join` and connects the key at `chat@<kernel>`; nobody is asked to
+  connect. Joining again first has the kernel grant the key it kept. It keeps no
+  chat key.
 - **The browser is a member.** Every room read and command on a page is a run of
   chat's action as the viewer, so a person, an agent and a CLI user take one path. A
   page runs a read only when the viewer's open chat tasks moved or the person acted

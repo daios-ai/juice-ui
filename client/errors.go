@@ -135,13 +135,7 @@ func (e *KernelError) Peer() string { return e.MetaString("peer") }
 // varies by failing path, so this abbreviates a KEY and leaves a petname whole:
 // a petname is already what a person recognises the kernel by, however long it
 // is, while 43 characters of base64url in a sentence are unreadable.
-func (e *KernelError) PeerDisplay() string {
-	p := e.Peer()
-	if len(p) == KeyLen {
-		return ShortKey(p)
-	}
-	return p
-}
+func (e *KernelError) PeerDisplay() string { return ShortKey(e.Peer()) }
 
 func (e *KernelError) Error() string {
 	return fmt.Sprintf("kernel error kind=%s status=%d msg=%q", e.Kind, e.Status, e.KernelMessage)

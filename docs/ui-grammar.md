@@ -684,10 +684,24 @@ carries none; a row titled by its key carries the one verb, `Name` — the same
 slot, `margin-left: auto`), linking into its page with the rename modal open:
 the verb appears exactly where the gap it fills is visible.
 
-**The key has one spelling**: `keyDisplay` (8 characters and `…`, the whole
-key in `title`). An unbound row's title is that spelling and the row has no
-ref line; a named row's `.action-ref` is that spelling. `truncate` never
+**The key has one spelling**: `client.ShortKey` (the first 10 characters, `…`,
+the last 4; the whole key in `title`), wherever a key is named, alone or in an
+address. A row whose label is its key has that spelling as its title and no
+ref line; any other row's `.action-ref` is that spelling. `truncate` never
 touches a key.
+
+**A party has one rendering**, in two sizes, wherever a user, a kernel or an
+action's owner is named: its label (`client.Party.Label`, below), the whole
+address in `title` when the text differs, and a copy of the whole address
+whenever no petname names its kernel here, so a key shown shortened, alone or
+as the key a nickname stands in for, always has its copy. `_party`, for roomy
+places (tables, detail pages, dialogs, cards), adds the key a nickname stands
+in for, muted. `_party_brief` and `_ref`, for compact ones (an author line, an
+action reference, a rail row), add it only once two keys have claimed that
+nickname; a status line of a room ("Waiting on …", "Not delivered to …") is
+compact too. A question deciding something about a party names it by
+`client.Party.Shown`, the label and that key. A row that is itself a button or a link copies from
+its menu (`Copy address`).
 
 **The kernel strip** (`_kernel_strip`, `KernelStrip`) ends every peer row, in
 the grammar of an icon and a value per slot, the meaning in `title`,
@@ -712,10 +726,16 @@ classes render differently because they are trusted differently:
 | class | what it is | renders |
 |---|---|---|
 | **key** | global, self-certifying, unreadable | truncated (`esKD_l0c…`), full value in `title`; the only thing URLs and forms key on |
-| **nickname** | the kernel's claim about itself; never resolves | counterparty content (§6): inert, never linked, shown as a claim |
+| **nickname** | the kernel's claim about itself; never resolves | counterparty content (§6): inert, never linked, shown as the claim it is, marked `~` |
 | **petname** | bound here, unique here, resolves | whole, in the provenance face |
 
-An unbound kernel therefore shows its truncated key, never its nickname. The
+**The label** is one rule: a kernel with a petname is shown by it alone
+(`bob@beta`); one without, by its nickname marked `~` (`bob@~alpha`), its key
+beside it where there is room; one with neither, by its key (`bob@g0b6iv3OqL…WhD0`).
+`~` is the one mark of a claim. A named kernel's nickname is shown nowhere. A
+decision on an unnamed kernel (Name, Suspend, Block, Disconnect) names its
+key. A nickname is never accepted as input; only a petname or a key resolves,
+and the nickname's one use is to prefill Name. The
 **one** rename modal (§5.8) lives on the kernel's page, keyed on the public key
 — an unbound kernel has no name to key on, and advertised names collide. Its
 field opens prefilled by the kernel's auto-bind preference: the petname when

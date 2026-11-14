@@ -1,6 +1,6 @@
 {{define "content"}}
 {{$d := .Data}}
-{{$me := $d.Me.Address}}
+{{$me := $d.Me.Address.Principal}}
 <nav class="crumb"><a href="/transactions">← transactions</a></nav>
 <h1>Transaction</h1>
 <p class="subtitle id mono">{{$d.Tx.ID}}</p>
@@ -19,9 +19,9 @@
     <h3>Parties</h3>
     <div class="table-scroll">
     <table class="parties">
-      <tr><th>Buyer</th><td class="mono">{{$d.Tx.Owner}}{{if eq $d.Tx.Owner $me}} <span class="pill">you</span>{{end}}</td></tr>
-      <tr><th>Caller</th><td class="mono">{{$d.Tx.Caller}}{{if eq $d.Tx.Caller $me}} <span class="pill">you</span>{{end}}</td></tr>
-      <tr><th>Seller</th><td class="mono">{{$d.Tx.Target}}{{if eq $d.Tx.Target $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
+      <tr><th>Buyer</th><td>{{template "_party" $d.Tx.Owner}}{{if eq $d.Tx.Owner.Principal $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Caller</th><td>{{template "_party" $d.Tx.Caller}}{{if eq $d.Tx.Caller.Principal $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Seller</th><td>{{template "_party" $d.Tx.Target}}{{if eq $d.Tx.Target.Principal $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
     </table>
     </div>
   </div>

@@ -48,7 +48,7 @@ func newKernel(t *testing.T) *fakeKernel {
 			http.Error(w, `{"error":"account: already exists"}`, http.StatusUnprocessableEntity)
 			return
 		}
-		w.Write([]byte(`{"id":"U1","address":"` + body["handle"] + `"}`))
+		w.Write([]byte(`{"id":"U1","address":{"address":"` + body["handle"] + `"}}`))
 	})
 	mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
@@ -63,7 +63,7 @@ func newKernel(t *testing.T) *fakeKernel {
 		w.Write([]byte(`{"access_token":"AT","refresh_token":"RT"}`))
 	})
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"P1","address":"` + k.me + `"}`))
+		w.Write([]byte(`{"id":"P1","address":{"address":"` + k.me + `"}}`))
 	})
 	k.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		k.mu.Lock()

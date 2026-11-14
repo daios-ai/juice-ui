@@ -4,7 +4,8 @@
      weighted and the one in view current, a room held on another kernel naming
      that kernel after its name, muted, as a kernel is named alone (§4); then
      each chat that could not be read, muted, its reason the row's title. Every
-     row is its name and its menu. Its dialog starts a conversation with the
+     row is its name and its menu; a row naming a kernel no petname names here
+     copies the chat's address from that menu. Its dialog starts a conversation with the
      participants chosen; the name is optional. A page that is not a room holds
      the rename dialog here; a room page holds it in the room, since the sidebar
      is not rendered on a narrow screen. Input: railView. */}}
@@ -13,13 +14,14 @@
   <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>
   {{range .Requests}}{{template "_rail_item" .}}{{end}}
   {{range $room := .Rooms}}<div class="rail-row">
-    <a href="/chat/room/{{.Addr}}"{{if .Unread}} class="unread"{{end}}{{if eq .Addr $.Current}} aria-current="page"{{end}}>{{.Name}}{{with .Elsewhere}} <span class="muted">· {{.}}</span>{{end}}</a>
+    <a href="/chat/room/{{.Addr}}"{{if .Unread}} class="unread"{{end}}{{if eq .Addr $.Current}} aria-current="page"{{end}}>{{.Name}}{{with .Elsewhere}} <span class="muted"{{with $room.Copy}} title="{{.}}"{{end}}>· {{.}}</span>{{end}}</a>
     <button class="btn-icon inline" data-menu="menu-room-{{.Addr}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
     <div class="menu" id="menu-room-{{.Addr}}" role="menu" hidden>
       <a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=members"{{if eq .Addr $.Current}} data-modal="form-members"{{end}}>Members…</a>
-      {{if eq .Creator $.Me}}<a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=rename" hx-get="/chat/room/{{.Addr}}/rename" hx-swap="none">Rename…</a>{{end}}
+      {{if .Mine}}<a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=rename" hx-get="/chat/room/{{.Addr}}/rename" hx-swap="none">Rename…</a>{{end}}
       {{template "_rail_command" ($.Drop $room)}}
       {{if .Elsewhere}}{{range $.Elsewhere $room}}{{template "_rail_command" .}}{{end}}{{end}}
+      {{template "_copy_item" .Copy}}
     </div>
   </div>{{end}}
   {{range .Unread}}{{template "_rail_item" .}}{{end}}
@@ -36,7 +38,7 @@
     <span>{{if .Alert}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{end}}{{.Label}}{{with .Muted}} <span class="muted">· {{.}}</span>{{end}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>
     <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg>
   </button>
-  <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}</div>
+  <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" .Copy}}</div>
 </div>{{end}}
 
 {{/* _rail_command — one command in a rail row's menu: a form posting to its
@@ -44,6 +46,11 @@
      disabled while it runs (it may wait on another kernel), the page answered
      in place. Input: railCommand. */}}
 {{define "_rail_command"}}{{if .Divider}}<div class="menu-divider"></div>{{end}}<form method="post" action="{{.Action}}"{{with .Confirm}} data-confirm="{{.}}?"{{end}} hx-post="{{.Action}}" hx-swap="none" hx-include="#watch-rail,#watch-chat-room" hx-indicator="closest .rail-row" hx-disabled-elt="find button">{{.CSRFField}}<button class="menu-item{{if .Danger}} danger{{end}}" type="submit">{{.Label}}</button></form>{{end}}
+
+{{/* _copy_item — a menu's Copy address, for a row naming a kernel no petname
+     names here (ui-grammar "Naming"): the row is a button or a link, which
+     holds no copy control of its own. Input: the address by key, or "". */}}
+{{define "_copy_item"}}{{with .}}<div class="menu-divider"></div><button type="button" class="menu-item" role="menuitem" data-copy="{{.}}">Copy address</button>{{end}}{{end}}
 
 {{/* _new_room — the new-conversation dialog; the name is optional. Refused, it
      comes back open with the reason and what was chosen and typed. Input:
@@ -106,17 +113,17 @@
     {{with .Error}}{{template "_error" .}}{{end}}
     <div>
       {{range .Room.Members}}
-      <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span>
-        {{if and (eq $v.Room.Creator $v.Me) (ne . $v.Me)}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
+      <div class="member-row"><span class="ref"><span class="owner">{{template "_party" .}}</span></span>
+        {{if and $v.Room.Mine (ne .Principal $v.Me)}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{or .Principal .Address}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
       </div>
       {{end}}
       {{range .Room.Invited}}
-      <div class="member-row"><span class="ref mono"><span class="owner">{{.}}</span></span> <span class="muted">invited</span>
-        {{if eq $v.Room.Creator $v.Me}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{.}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
+      <div class="member-row"><span class="ref"><span class="owner">{{template "_party" .}}</span></span> <span class="muted">invited</span>
+        {{if $v.Room.Mine}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{or .Principal .Address}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
       </div>
       {{end}}
     </div>
-    {{if eq .Room.Creator .Me}}
+    {{if .Room.Mine}}
     <form class="stack" method="post" action="/chat/room/{{.Room.Addr}}/add-member" hx-post="/chat/room/{{.Room.Addr}}/add-member" hx-swap="none">
       {{.CSRFField}}
       <div class="field">
@@ -130,6 +137,7 @@
 </dialog>{{end}}
 
 {{/* _crumb — a room's header: its name, on one line, and the kernel holding
-     it when that is another, muted, as in the rail. A rename answers it. The
-     room's menu is its row in the rail. Input: roomRow. */}}
-{{define "_crumb"}}<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="{{.Name}}">{{.Name}}{{with .Elsewhere}} <span class="muted">· {{.}}</span>{{end}}</b></nav>{{end}}
+     it when that is another, muted, as in the rail, with a copy of that
+     chat's address when no petname names its kernel here. A rename answers
+     it. The room's menu is its row in the rail. Input: roomRow. */}}
+{{define "_crumb"}}<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="{{.Name}}">{{.Name}}{{with .Elsewhere}} <span class="muted">· {{.}}</span>{{end}}</b>{{with .Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}</nav>{{end}}

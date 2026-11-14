@@ -757,7 +757,7 @@ func TestAgentAccountIsOneReadByAddress(t *testing.T) {
 	var paths []string
 	mux.HandleFunc("GET /v1/admin/users/{address}", func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		w.Write([]byte(`{"address":"research@testnet","available":3000000,"locked":0}`))
+		w.Write([]byte(`{"address":{"address":"research@testnet","principal":"research@testnet"},"available":3000000,"locked":0}`))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)

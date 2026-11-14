@@ -1,7 +1,29 @@
 # Juice Web UI Requirements
 
-Version: 0.71.1
+Version: 0.72.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.72.1.** One naming rule on every page (§6.6): a kernel
+> with a petname is shown by it alone, one without by the name it calls itself
+> marked `~`, its key beside it where there is room, in every question
+> deciding something about it and wherever two kernels claim one name, and one
+> with neither by its key; a shortened key always has its copy. The chat page
+> is a view of chat's actions and names every party as the viewer's kernel
+> does (§6.7).
+
+> **What changed in 0.72.0.** The UI follows kernel v0.20.0, which names every
+> party and action in its replies as `{address, principal, nickname?}`: every
+> page shows a party by one rule (§6.6), its kernel by petname, else by the
+> name it calls itself marked `~` with its key beside it where there is room,
+> else by its key, the whole address in the title and on a copy control. Chat
+> holds members by principal, which the kernel gives every user and which names
+> them on every kernel and through a rename, so a member at home and one on
+> another kernel are held, invited, reached and shown alike, and no kernel needs
+> a name for another; a chat is identified by its kernel's key, so naming a
+> kernel changes only how its chat is shown. Joining is approve, `join`, connect, the kernel telling
+> chat who is calling; there is no verification task. Joining again grants the
+> key kept, which keeps the member. A store from 0.71.x is taken over member by
+> member as each presents its key (§6.7).
 
 > **What changed in 0.71.1.** The rail is single rows again: a chat asking, an
 > invitation and a chat that could not be read are each one row whose menu
@@ -2591,12 +2613,19 @@ symmetry, but because the kernel refuses anything else.
     one against another, which two spellings of the same key defeat.
   * its **nickname** — what the kernel calls *itself*. Self-asserted, collides
     freely, and **never resolves**, so it is counterparty content under §8:
-    inert, never a link, and never offered where a name that resolves is
-    expected. It MAY be shown as the claim it is.
+    inert, never a link, and never accepted as input. It is shown as the claim
+    it is, marked `~`.
   * its **petname** — the name bound *here*. Unique here, and the only friendly
     name that resolves. It renders whole, in the provenance face.
-  An unbound kernel therefore shows its truncated key and stays callable by it;
-  it MUST NOT borrow the nickname to fill the gap.
+  **One rule decides what is shown** (`docs/ui-grammar.md` "Naming"): a kernel
+  with a petname is shown by it alone; one without, by its nickname marked `~`
+  (`bob@~alpha`), its key shortened beside it wherever there is room and in
+  every question deciding something about it; one with neither, by its key
+  shortened. A compact place (an author line, an action reference, a rail row)
+  adds the key once two keys have claimed one nickname. Whenever no petname
+  names the kernel, its whole address is in the title and on a copy control,
+  so a shortened key never stands without its copy. An unnamed kernel stays
+  callable by its key alone.
 * **Name and suspend live on the kernel's own page.** Naming binds a petname: the kernel binds one
   automatically only on this kernel's own first outbound use, so an explicit
   bind is the only way to name a kernel merely discovered, and without it the
@@ -2836,41 +2865,64 @@ the transaction's `payment` (§6.5).
 ### 6.7 chat — rooms of people and agents
 
 Chat is the surface a session lands on: an app of this UI (§1, `apps/chat`)
-presenting a program of its own, `juice-chat`. Its terms: a **member** is a kernel principal, `handle@kernel`, person or agent,
-and chat never distinguishes the two (ecosystem-standard §7); an **entry** is
+presenting a program of its own, `juice-chat`. Its terms: a **member** is a kernel user, person or agent,
+and chat never distinguishes the two (ecosystem-standard §7). Chat holds a member
+by its **principal**, `user_id@kernel_key`, which the kernel gives every user and
+which names it on every kernel and through a rename (kernel R3a, D15), and names it
+as the kernel names any party, `{address, principal, nickname?}`: its
+**address**, `handle@kernel`, as chat's kernel writes it, and for a kernel that one
+has given no name the name it calls itself. That address is chat's data: the
+chat page is a view of chat's actions, and names every party of a reply by its
+principal as the viewer's kernel names it (§6.6), asking that kernel
+(`sys/resolve`) at most every ten minutes per principal, each asking within
+3 s; a principal it cannot name is spelled by key, with the name its kernel
+calls itself. What a post's first word addresses stays chat's address, since
+chat routes by it. An address is never stored as identity; an **entry** is
 one thing said in a room, author, time, a body that is a JSON value (a post
 being a string) and a stored kind (post, answer or failure); a
 **delivery** is a kernel task chat creates for one recipient of a post; a
 **hand-off** is a post that addresses a member; a post **addresses** a member
 when it is text whose first word, trailing `,:;.!?` removed, is that member's
 address, compared without case. There is no `@handle`: a member is named as
-everywhere in Juice.
+everywhere in Juice. Local and remote members are held, named and reached alike.
 
 Chat is an HTTP server, the **chat service**, whose endpoints the kernel wraps
-as actions owned by the kernel user `chat@<kernel>`. Its fifteen actions, every
+as actions owned by the kernel user `chat@<kernel>`. Its fourteen actions, every
 schema canonical (§6.4) and every text naming this kernel, are:
 
 | Action | Visibility, auth | Input → output | Who may |
 |---|---|---|---|
 | `index` | public, free | `{}` → `{usage}`, the paragraph a member learns chat from | anyone |
-| `register` | public | `{handle}` → `{api_key, task_id}` | anyone; the key activates only when that address completes the task |
-| `validate` | private, chat's bearer | the verification task's onward | the kernel |
+| `join` | public, chat's bearer | `{}` → `{api_key}`: a key issued to the caller the kernel names | anyone |
 | `reply` | private, chat's bearer | a delivery's onward: `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` | the kernel |
 | `accept` | private, chat's bearer | an invitation's onward: `{thread_id, member, name?, from?}` → `{ok}`; the member joins | the kernel |
-| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the members it could not reach by address, recipients and invitees | a member |
+| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the members it could not reach, recipients and invitees | a member |
 | `room/create` | public, delegated | `{members, name?}` → `{room, uninvited}`, the members whose invitation could not be delivered yet | anyone joined, who becomes the creator; a blank name is the members' handles |
 | `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
 | `room/add` | public, delegated | `{thread_id, member}` → `{room, uninvited}`; a member not reached yet is tried again, one invited or joined is left as it is | the creator |
-| `room/remove` | public, delegated | `{thread_id, member}` → `{room}`, an invitation withdrawn as a member is removed | the creator, never itself |
+| `room/remove` | public, delegated | `{thread_id, member}` → `{room}`, the member by principal, or by the address chat holds a seat by when it has none; an invitation withdrawn as a member is removed | the creator, never itself |
 | `room/leave` | public, delegated | `{thread_id}` → `{ok}`; an invited member leaving declines | a member other than the creator, joined or invited |
 | `room/join` | public, delegated | `{thread_id}` → `{room}`; the caller accepts its invitation | a member invited |
 | `room/delete` | public, delegated | `{thread_id}` → `{ok}` | the creator; everything in the room goes |
 | `room/list` | public, delegated | `{}` → `{rooms, invitations}`, the rooms newest activity first, and each room the caller is invited to as `{thread_id, name, from}` | anyone joined |
 | `room/read` | public, delegated | `{thread_id, after?, seen?}` → `{room, entries, removed, waiting, more, rooms, invitations}` | a member |
 
-Delegated means `delegated_bearer` on the service's caller-key header,
-`X-Juice-Caller-Key`: the kernel injects the key the member connected, and the
-service resolves it to the member.
+Every member, author, invitee and member waited on in a reply is a party; a
+room's `creator` is a principal.
+
+**Identity.** Chat is an ordinary HTTP application behind the kernel. `join` signs
+a user up: the kernel tells every action its immediate caller and the owner of
+the run's process, as principals it sets (`X-Juice-Caller`, `X-Juice-Owner`,
+kernel D8), and chat's own bearer, which the kernel injects for `join` and the
+onwards, proves the request is the kernel's. `join` issues a key to the
+**caller**, never to the run's owner, since an action that runs `join` inside
+somebody's run is not that person; it records how chat's kernel names the caller,
+by composing `sys/resolve`, and a caller it cannot name yet is shown by principal.
+Every key issued works. After that a member is its key: delegated means
+`delegated_bearer` on the service's caller-key header, `X-Juice-Caller-Key`, the
+kernel injecting the key the member connected and the service resolving it to the
+member. A member's address is what the kernel last called it: the reply to every
+task chat creates names the addressee, and chat keeps it.
 The onwards are private so that a member completes a task without being able to
 run the action itself and speak as somebody else: the kernel checks an onward's
 visibility against the task's creator, chat. They are reconciled at every
@@ -2880,12 +2932,17 @@ registration, and any other action the provider owns is deleted.
 invitation, then **joined** once it accepts. The creator is joined; everyone
 `room/create` or `room/add` names is added and invited at once, by one task each,
 created during the command's own dispatch: action `chat@<kernel>/accept`,
-`required_caller` the member, partial args `{thread_id, member, name, from}`, the
-room's name then and its creator, who invited. A member whose kernel the kernel
-cannot reach stays added and is named in `uninvited`; each post in the room tries
+`required_caller` the member's principal, partial args `{thread_id, member, name,
+from}`, the member's principal, the room's name then and its creator's address,
+who invited. A member named by address is first resolved by chat's kernel
+(`sys/resolve`, composed on the dispatch) and seated as the principal it names; one
+whose address does not resolve, its kernel unknown or unreachable, stays added
+under the address typed and is named in `uninvited`; each post in the room tries
 its invitation again with the post's own capability, as a post tries each
 recipient, and names it in `undelivered` while it fails. Adding it again tries at
-once; a member invited or joined gets no second task. The member accepts by
+once; a member invited or joined, however named, gets no second task. A resolve
+and a task creation are each bounded at 3 s, so an unreachable kernel never holds
+a command past the kernel's deadline. The member accepts by
 completing the task or by running `room/join` itself, and declines with
 `room/leave`; an invitation declined or withdrawn has no member to accept, so no
 task still open for it joins anyone. Only joined members read, post, list the
@@ -2893,6 +2950,19 @@ room, are delivered to and are waited on; the room object names the joined in
 `members` and the rest in `invited`, and `room/list` and `room/read` answer the
 caller's own invitations. A store made before invitations has every member
 joined; one from 0.71.0 keeps its invited members.
+
+**A store from before 0.72.0** holds its members by address. A member is bound to
+its principal by its key alone: a member call that presents a key issued to an
+address carries the owner of its run, the user the kernel applied the key for,
+and chat moves everything the address holds — seats, entries, cursors,
+deliveries, keys, rooms created — to that principal, merging with what the
+principal holds already (a seat keeps the further state, a cursor the further
+position) and keeping the address as the principal's, so a task sealed with it
+still completes. An address is never bound by resolving it, since a renamed
+handle may now name someone else: a newcomer the kernel names by an old address
+is given nothing, and a member chat still holds by address is sent no delivery and
+named in `undelivered`. An invitation seated by address whose invitee never held
+a key stays unbound; the creator adds that person again.
 
 **`room/read`.** Without `after` it answers the room's latest entries; with it, the
 oldest entries newer than it and the posts an answer replaced. `waiting` names the
@@ -2942,13 +3012,13 @@ is the consent to be addressed, the grant the connection: approving a chat in th
 inbox lets its invitations reach the viewer and connects nothing, and a grant
 removed anywhere, as in Settings, leaves the chat asking again.
 
-* **Connect** (`POST /chat/chats/<chat>/connect`) is joining (rule 8): approve,
-  register, verify, connect. One that fails leaves a chat that was asking asking:
-  its approval is revoked again. Nothing else connects a chat elsewhere. A run on a
-  joined chat refused for want of a grant joins again only while the viewer's own
-  kernel still lists that grant, which is an upgrade of chat changing its
-  contracts and the kernel holding them revoking the grants (measured on
-  v0.19.0). A grant the viewer removed, in Settings folder by folder or here,
+* **Connect** (`POST /chat/chats/<chat>/connect`) is joining (rule 8). One that
+  fails leaves a chat that was asking asking: its approval is revoked again.
+  Nothing else connects a chat elsewhere. A run on a joined chat refused for want
+  of a grant joins again only while the viewer's own kernel still lists that
+  grant, which is an upgrade of chat changing its contracts and the kernel
+  holding them revoking the grants (measured on v0.19.0). A grant the viewer
+  removed, in Settings folder by folder or here,
   is never restored: such a run says "You disconnected this from chat@k in
   Settings.", and a chat disconnected or blocked is not joined, so no run
   reaches it.
@@ -2963,12 +3033,14 @@ removed anywhere, as in Settings, leaves the chat asking again.
 
 Each takes only a chat that has addressed the viewer, never this kernel's, and a
 failure is said on the page it was sent from, naming the chat ("chat@k is not
-answering. Try again shortly."). A chat on a kernel this one has never called
-asks by its key: the rail reads that chat's index once, which binds the kernel's
-name, and addresses it by that name from then on; a kernel that cannot be
-reached is shown by its key, shortened, and not dialled again while the
-session's rail holds it. A
-room is named by its address, `thread@kernel`, the
+answering. Try again shortly."). A chat is identified by its kernel's key,
+`chat@<key>`, at home too, in a room's address, its URL, the rail and every
+comparison, since no petname changes a key; it is shown by its kernel's label
+(§6.6), `chat@~name` for a kernel the operator has not named, the key address in
+the row's title and on its menu's Copy address. Naming a kernel, which only
+an operator does (kernel v0.20.0), changes how its chat is shown and nothing
+else. A
+room is named by its address, `thread@<key>`, the
 kernel whose chat holds it, at home too: it is the room's URL, `/chat/room/<address>`,
 and its watch; a bare thread names no room. Every read and command runs the
 action of the room's chat, `chat@<kernel>/…`, by one path wherever it is held;
@@ -2982,7 +3054,7 @@ a command sent from a page still showing one of its rooms is refused with
 kernel task is the notice: it moves the signal, and it is what makes a chat
 elsewhere ask on first contact. An invitation is named by its room's address.
 
-* **Accept** (`POST /chat/invites/<thread@kernel>/accept`) runs `room/join` as
+* **Accept** (`POST /chat/invites/<thread@key>/accept`) runs `room/join` as
   the viewer, completes their invitation tasks for the room, which only clears
   them, and opens the room.
 * **Decline** runs `room/leave`, so the inviter sees it declined, then declines
@@ -3096,10 +3168,17 @@ The rules:
    room is in view; a room with unread entries is weighted in the rail.
    Opening a room also completes the viewer's waiting deliveries for it
    (price 0), so a person's next post has depth zero.
-8. **The UI joins its installation's principals, through the kernel alone.**
-   Joining is approving `chat@<kernel>` as a requester, running `register`,
-   completing the verification task and connecting the key at `chat@<kernel>`,
-   each as the principal: the path a member elsewhere walks by hand. A member is
+8. **The UI joins its installation's users, through the kernel alone.**
+   Joining is approving `chat@<kernel>` as a requester, running `join` and
+   connecting the key it returns at `chat@<kernel>`, each as the user: the path a
+   member elsewhere walks by hand. Joining again first asks the kernel to grant
+   the key it kept (`POST /v1/grants/start`), which it does at once after a
+   contract change or a disconnect deleted only the grant (measured on v0.20.0),
+   and approves the chat again; only a key chat refused, or the kernel's answer
+   that it keeps none (`invalid_input`, measured at home and elsewhere), is asked
+   of `join` anew. Any other failure is the run's own: joining anew would
+   replace the kept key. Keeping the key keeps the member (a store from before 0.72.0 binds
+   a member by its key). A member is
    joined when the kernel's grant plan shows every action under that selector
    granted; the UI holds no chat key. The person signed in is joined, with the
    session, by the landing when the plan does not show them joined, and by a run
@@ -3119,9 +3198,8 @@ The rules:
    an agent has nobody to accept, and its operator adding it is the consent, as
    it is for joining. Chat has no rule for agents. A
    join that fails is said on the page that asked for it, and no key is ever
-   retired: `register` is open and names any address, so retiring one would let
-   anyone revoke a member's credential, and a failed connect leaves the earlier key
-   working. A contract change revokes grants; the next join restores them.
+   retired: a failed connect leaves the earlier key working. A contract change
+   revokes grants; the next join grants the key kept again.
 9. **`/chat` is the viewer's conversation with the assistant**: the room whose
    members, joined or invited, are exactly the viewer and `assistant@<kernel>`,
    found among the viewer's rooms, or started with `room/create` and named `assistant`; without an assistant home the
@@ -3132,13 +3210,13 @@ The rules:
    id is three words, `adjective-animal-NN`, which a language model copies
    exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
    26).
-10. **A member on another kernel is a member like any other** (kernel v0.19):
-    it joins through `register` from its own kernel, which forwards the connect,
-    and then reads, posts and runs room commands. Its kernel must be named by
-    this one by the name it calls itself, since chat knows a member by address:
-    until then its verification task, any invitation and any delivery to it
-    cannot be created. A local agent invited to a room elsewhere stays invited:
-    this UI accepts for its agents at home only.
+10. **A member on another kernel is a member like any other** (kernel v0.20):
+    it joins through `join` from its own kernel, which forwards the connect, and
+    then reads, posts and runs room commands. Chat holds it by principal, as it
+    holds a member at home, so no kernel needs a name for another: a member is
+    invited, delivered to and shown alike wherever it lives. A local agent invited
+    to a room elsewhere stays invited: this UI accepts for its agents at home
+    only.
 11. **The assistant exists.** The agents app makes `assistant@<kernel>` when it
     starts and has no home for it: the password it keeps in its app state, the
     account (one the kernel already holds is adopted only when that password
@@ -3181,7 +3259,7 @@ the assistant, else the newest room, else an empty page beside the rail.
   unless a notice heads it, which is then read first, the composer held at
   the foot of the viewport; beside it the **panel**, empty until an action is
   chosen. **Members…** is a dialog (`?form=members`) listing the joined members, then
-  the invited, tagged so, with adding and removing for the creator, removing an
+  the invited, tagged so, each named as every party is (§6.7), with adding and removing for the creator, removing an
   invited member withdrawing the invitation; a member whose invitation could not
   be delivered yet is kept, invited, and the page says "Not delivered to
   remy@nowhere.", the composer's sentence; for the room in view it opens in place, for another it

@@ -17,8 +17,7 @@ import (
 // The actions, by name under chat@<kernel>/.
 const (
 	indexName      = "index"
-	registerName   = "register"
-	validateName   = "validate"
+	joinName       = "join"
 	postName       = "msg/post"
 	replyName      = "reply"
 	acceptName     = "accept"
@@ -46,7 +45,7 @@ const (
 
 // usage is what chat/index answers: the one place a member learns chat.
 // KERNEL is replaced by this kernel's name.
-const usage = "Chat rooms for people and agents; every member is an address, handle@KERNEL. " +
+const usage = "Chat rooms for people and agents. A member is named by its address, handle@kernel, as this kernel names it. " +
 	"You receive a post as a task carrying what the room said since your previous task. Answer by completing the task: your answer appears in the room. " +
 	"To ask another member something, run chat@KERNEL/msg/post with {thread_id: the room, message: your text} and write that member's address as the first word, " +
 	"as in \"critic@KERNEL, which is best?\"; only that member receives it. A post that starts with no address reaches every other member. " +
@@ -55,8 +54,7 @@ const usage = "Chat rooms for people and agents; every member is an address, han
 	"A member added to a room is invited: it receives a task naming the room and finds the room among its invitations in chat@KERNEL/room/list; it joins by completing the task or running chat@KERNEL/room/join, and declines with chat@KERNEL/room/leave. Until it joins it reads nothing there and receives nothing. " +
 	"A member reads with chat@KERNEL/room/list and chat@KERNEL/room/read. " +
 	"The room's creator can rename it with chat@KERNEL/room/rename, change its members with chat@KERNEL/room/add and chat@KERNEL/room/remove, and delete it with chat@KERNEL/room/delete. " +
-	"Members of this installation are joined by its UI. A member elsewhere joins by approving chat@KERNEL as a requester, running chat@KERNEL/register with its own address, " +
-	"completing the verification task, and connecting chat@KERNEL with the key returned."
+	"To join chat, approve chat@KERNEL as a requester, run chat@KERNEL/join, and connect chat@KERNEL with the key it returns."
 
 // Service is the chat service: the HTTP endpoints the kernel wraps as the
 // actions of each provider that registered it, and the store behind them. The
@@ -98,25 +96,32 @@ const (
 	descr       = `"description":`
 	textMessage = `"message":{"type":"string","maxLength":65536,` + descr + `"The text. A member's address as the first word, as in \"critic@KERNEL, which is best?\", reaches that member only; any other text reaches every other member."}`
 	threadProp  = `"thread_id":{"type":"string",` + descr + `"The room."}`
-	memberProp  = `"member":{"type":"string",` + descr + `"The member's address, handle@kernel."}`
-	roomProp    = `"room":` + roomObj
-	roomObj     = `{"type":"object","additionalProperties":false,` + descr + `"The room as it now stands.","properties":{` +
-		threadProp + `,"name":{"type":"string",` + descr + `"The room's name."},"creator":{"type":"string",` + descr + `"The member that made the room."},` +
-		`"members":{"type":"array",` + descr + `"The room's members.","items":{"type":"string"}},"created_at":{"type":"string",` + descr + `"When the room was made."},` +
-		`"invited":{"type":"array",` + descr + `"The members invited who have not joined yet.","items":{"type":"string"}},` +
+	memberProp  = `"member":{"type":"string",` + descr + `"The member's address, handle@kernel, or principal, user_id@kernel_key."}`
+	// party is a member as a reply names it, as the kernel names a party.
+	party = `{"type":"object","additionalProperties":false,` + descr + `"A member.","properties":{` +
+		`"address":{"type":"string",` + descr + `"The member's address, handle@kernel, as this kernel names it."},` +
+		`"principal":{"type":"string",` + descr + `"The member's principal, user_id@kernel_key, which names it on every kernel; empty for a member chat holds by address alone."},` +
+		`"nickname":{"type":"string",` + descr + `"The name the member's kernel calls itself, where this kernel has given it none."}}}`
+	parties  = `{"type":"array",` + descr + `"Members.","items":` + party + `}`
+	roomProp = `"room":` + roomObj
+	roomObj  = `{"type":"object","additionalProperties":false,` + descr + `"The room as it now stands.","properties":{` +
+		threadProp + `,"name":{"type":"string",` + descr + `"The room's name."},"creator":{"type":"string",` + descr + `"The principal of the member that made the room."},` +
+		`"members":` + parties + `,"created_at":{"type":"string",` + descr + `"When the room was made."},"invited":` + parties + `,` +
 		`"unread":{"type":"boolean",` + descr + `"Whether the room holds entries the caller has not read."},"last_at":{"type":"string",` + descr + `"When the room was last spoken in."}}}`
 	okProp        = `"ok":{"type":"boolean",` + descr + `"True when it was done."}`
-	uninvitedProp = `"uninvited":{"type":"array",` + descr + `"The members whose invitation could not be delivered yet, by address; it is tried again at the room's next post.","items":{"type":"string"}}`
+	uninvitedProp = `"uninvited":` + parties
 	roomsProp     = `"rooms":{"type":"array",` + descr + `"The caller's rooms, newest activity first.","items":` + roomObj + `}`
 	invitesProp   = `"invitations":{"type":"array",` + descr + `"The rooms the caller is invited to and has not joined.","items":{"type":"object","additionalProperties":false,` + descr + `"An invitation.","properties":{` +
-		threadProp + `,"name":{"type":"string",` + descr + `"The room's name."},"from":{"type":"string",` + descr + `"The room's creator, who invited."}}}}`
+		threadProp + `,"name":{"type":"string",` + descr + `"The room's name."},"from":` + party + `}}}`
 )
 
 // Contracts are chat's actions. Every schema is canonical: an object naming
-// its properties is closed, and every property is described. The three onwards
-// are private: the kernel checks an onward's visibility against the task's
-// creator, chat, so a member completes the task without being able to run the
-// action itself and speak as somebody else.
+// its properties is closed, and every property is described. join and the two
+// onwards carry chat's own bearer, with which the kernel proves to chat that it
+// sent the request, and so the caller it names. The onwards are private: the
+// kernel checks an onward's visibility against the task's creator, chat, so a
+// member completes the task without being able to run the action itself and
+// speak as somebody else.
 func contracts(self, secret string) []contract {
 	delegated, _ := json.Marshal(map[string]any{"scheme": "delegated_bearer", "config": map[string]any{"header": CallerKey, "template": "{token}"}})
 	bearer, _ := json.Marshal(map[string]any{"scheme": "bearer", "secrets": map[string]any{"token": secret}})
@@ -133,29 +138,24 @@ func contracts(self, secret string) []contract {
 		{name: indexName, title: "Chat", vis: "public",
 			desc: "What chat is and how a member posts, receives and joins.",
 			in:   obj(""), out: obj(`"usage":{"type":"string",` + descr + `"How to use chat."}`)},
-		{name: registerName, title: "Join chat", vis: "public",
-			desc: "Request a chat key for an address. The key activates when that address completes the verification task this creates; then connect it to chat@KERNEL.",
-			in:   obj(`"handle":{"type":"string",`+descr+`"The address to issue a key for, handle@kernel."}`, "handle"),
-			out:  obj(`"api_key":{"type":"string",` + descr + `"The chat key; connect it with juice user connect chat@KERNEL --token."},"task_id":{"type":"string",` + descr + `"The verification task sent to the address."}`)},
-		{name: validateName, title: "Activate a chat key", vis: "private", auth: bearer,
-			desc: "Activates a key; the onward of the verification task, run when the address completes it.",
-			in:   obj(`"key_id":{"type":"string",`+descr+`"The registration the task names."}`, "key_id"),
-			out:  obj(`"ok":{"type":"boolean",` + descr + `"True when the key is active."}`)},
+		{name: joinName, title: "Join chat", vis: "public", auth: bearer,
+			desc: "Issue a chat key to you, whom the kernel names; connect it with juice user connect chat@KERNEL --token. Every key issued to you works.",
+			in:   obj(""), out: obj(`"api_key":{"type":"string",` + descr + `"The chat key; connect it with juice user connect chat@KERNEL --token."}`)},
 		{name: postName, title: "Post to a chat room", vis: "public", auth: delegated,
 			desc: "Speak in a chat room you are a member of, for instance to ask another member something: begin with that member's address, as in \"critic@KERNEL, which is best?\", and only that member receives it; text that begins otherwise reaches every other member. Use this, not a direct message, to reach a member of the room. A task from chat is answered by completing it, not by posting. See chat@KERNEL/index.",
 			in:   obj(`"thread_id":{"type":"string",`+descr+`"The room."},`+textMessage, "thread_id", "message"),
 			out: obj(`"delivered":{"type":"integer",` + descr + `"How many members received it."},` +
-				`"undelivered":{"type":"array",` + descr + `"The members it could not be delivered to, by address.","items":{"type":"string"}}`)},
+				`"undelivered":` + parties)},
 		{name: replyName, title: "Answer in a chat room", vis: "private", auth: bearer,
 			desc: "The onward of a delivery: completing the task settles the answer in the room.",
-			in: obj(`"thread_id":{"type":"string",`+descr+`"The room."},"member":{"type":"string",`+descr+`"The member answering."},"delivery":{"type":"integer",`+descr+`"Which delivery this answers."},`+
+			in: obj(`"thread_id":{"type":"string",`+descr+`"The room."},"member":{"type":"string",`+descr+`"The principal of the member answering."},"delivery":{"type":"integer",`+descr+`"Which delivery this answers."},`+
 				`"message":{`+descr+`"What the room said."},"answer":{"type":"string",`+descr+`"The answer, posted to the room."},`+
 				`"status":{"type":"string",`+descr+`"Set when the member could not answer."},"reason":{"type":"string",`+descr+`"Why the member could not answer."}`,
 				"thread_id", "member", "delivery", "message"),
 			out: obj(`"ok":{"type":"boolean",` + descr + `"True when the answer was recorded."}`)},
 		{name: acceptName, title: "Join a chat room", vis: "private", auth: bearer,
 			desc: "The onward of an invitation: completing the task joins the room.",
-			in: obj(`"thread_id":{"type":"string",`+descr+`"The room."},"member":{"type":"string",`+descr+`"The member invited."},`+
+			in: obj(`"thread_id":{"type":"string",`+descr+`"The room."},"member":{"type":"string",`+descr+`"The principal of the member invited."},`+
 				`"name":{"type":"string",`+descr+`"The room's name when the member was invited."},"from":{"type":"string",`+descr+`"Who invited the member."}`,
 				"thread_id", "member"),
 			out: obj(`"ok":{"type":"boolean",` + descr + `"True when the member joined."}`)},
@@ -172,7 +172,7 @@ func contracts(self, secret string) []contract {
 			in:   obj(threadProp+","+memberProp, "thread_id", "member"), out: invitedOut},
 		{name: roomRemoveName, title: "Remove a chat room member", vis: "public", auth: delegated,
 			desc: "Remove a member from a room, or withdraw an invitation. Only the room's creator can, and never itself.",
-			in:   obj(threadProp+","+memberProp, "thread_id", "member"), out: roomOut},
+			in:   obj(threadProp+`,"member":{"type":"string",`+descr+`"The member's principal, or the address chat holds a member by when it has no principal."}`, "thread_id", "member"), out: roomOut},
 		{name: roomLeaveName, title: "Leave a chat room", vis: "public", auth: delegated,
 			desc: "Leave a room you are a member of, or decline an invitation to it. A room's creator cannot leave it, only delete it.",
 			in:   obj(threadProp, "thread_id"), out: okOut},
@@ -190,10 +190,10 @@ func contracts(self, secret string) []contract {
 			in: obj(threadProp+`,"after":{"type":"integer",`+descr+`"Read the entries newer than this seq."},"seen":{"type":"boolean",`+descr+`"Move your read cursor over the entries read."}`,
 				"thread_id"),
 			out: obj(roomProp + `,"entries":{"type":"array",` + descr + `"The standing entries, oldest first.","items":{"type":"object","additionalProperties":false,` + descr + `"One thing said in the room.","properties":{` +
-				`"seq":{"type":"integer",` + descr + `"Its position in the room."},"author":{"type":"string",` + descr + `"The member that said it."},"body":{` + descr + `"What was said, any JSON value."},` +
+				`"seq":{"type":"integer",` + descr + `"Its position in the room."},"author":` + party + `,"body":{` + descr + `"What was said, any JSON value."},` +
 				`"at":{"type":"string",` + descr + `"When it was said."},"kind":{"type":"integer",` + descr + `"0 a post, 1 an answer, 2 a failure."}}}},` +
 				`"removed":{"type":"array",` + descr + `"The seqs of posts an answer replaced since after.","items":{"type":"integer"}},` +
-				`"waiting":{"type":"array",` + descr + `"The other members holding an unanswered delivery here.","items":{"type":"string"}},` +
+				`"waiting":` + parties + `,` +
 				`"more":{"type":"boolean",` + descr + `"True when newer entries remain past these."},` + roomsProp + "," + invitesProp)},
 	}
 	// Every text names this provider and its kernel.
@@ -217,10 +217,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch name {
 	case indexName:
 		writeJSON(w, http.StatusOK, map[string]any{"usage": named(usage, self)})
-	case registerName:
-		s.serveRegister(w, r, self)
-	case validateName:
-		s.serveValidate(w, r)
+	case joinName:
+		s.serveJoin(w, r, self)
 	case postName:
 		s.servePost(w, r, self)
 	case replyName:
@@ -250,13 +248,23 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// member resolves the caller by the key the kernel injected.
+// member is the caller by the key the kernel injected. A key issued to a
+// member chat holds by address, in a store made before 0.72.0, binds that
+// member to the run's owner, the user for whom the kernel applied the key.
 func (s *Service) member(w http.ResponseWriter, r *http.Request) (string, bool) {
 	m, ok := s.Store.Member(r.Header.Get(CallerKey))
 	if !ok {
 		refuse(w, http.StatusUnauthorized, "unknown_key", "unknown chat key; join chat first")
+		return "", false
 	}
-	return m, ok
+	if owner := r.Header.Get(client.OwnerHeader); !IsPrincipal(m) && IsPrincipal(owner) {
+		if err := s.Store.Bind(m, client.Party{Address: m, Principal: owner}); err != nil {
+			refuseErr(w, err)
+			return "", false
+		}
+		m = owner
+	}
+	return m, true
 }
 
 // memberCommand decodes a member's command, answering the refusal when it
@@ -273,40 +281,34 @@ func (s *Service) memberCommand(w http.ResponseWriter, r *http.Request, in any) 
 	return m, true
 }
 
-// serveRegister mints a pending key for the address and creates, through the
-// capability of this very call, the verification task only that address can
-// complete; its onward activates the key.
-func (s *Service) serveRegister(w http.ResponseWriter, r *http.Request, self string) {
-	var in struct {
-		Handle string `json:"handle"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !strings.Contains(in.Handle, "@") {
-		refuse(w, http.StatusBadRequest, "bad_input", "handle must be an address, handle@kernel")
+// serveJoin issues a key to the caller, whom the kernel names, and records how
+// chat's kernel names them. The key goes to the immediate caller and never to
+// the run's owner: an action that runs join inside somebody's run is not them.
+func (s *Service) serveJoin(w http.ResponseWriter, r *http.Request, self string) {
+	if !s.fromKernel(w, r) {
 		return
 	}
-	cb, cap := r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader)
-	if cb == "" || cap == "" {
-		refuse(w, http.StatusBadRequest, "bad_input", "no capability: register is run through the kernel")
+	caller := r.Header.Get(client.CallerHeader)
+	if !IsPrincipal(caller) {
+		refuse(w, http.StatusBadRequest, "bad_input", "no caller: join is run through the kernel")
 		return
 	}
-	raw, keyID, err := s.Store.RegisterKey(in.Handle)
+	if p, err := s.resolve(r.Context(), traceOf(r, self), caller); err != nil {
+		s.log().Warn("chat: resolve", "member", caller, "err", err)
+	} else if err := s.Store.Named(p); err != nil {
+		refuseErr(w, err)
+		return
+	}
+	raw, err := s.Store.IssueKey(caller)
 	if err != nil {
 		refuseErr(w, err)
 		return
 	}
-	partial, _ := json.Marshal(map[string]string{"key_id": keyID})
-	t, err := s.Kernel.CallbackCreateTask(r.Context(), cb, cap, client.CreateTaskInput{
-		Action: self + "/" + validateName, RequiredCaller: in.Handle, PartialArgs: partial,
-	})
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "kernel", "verification task: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"api_key": raw, "task_id": t.ID})
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": raw})
 }
 
-// fromKernel checks the bearer the private actions carry: the kernel injects
-// it when it dispatches them, so the caller is the kernel completing a task.
+// fromKernel checks chat's own bearer: the kernel injects it when it dispatches
+// join or an onward, so the request is the kernel's, and so is what it says.
 func (s *Service) fromKernel(w http.ResponseWriter, r *http.Request) bool {
 	got := r.Header.Get("Authorization")
 	if subtle.ConstantTimeCompare([]byte(got), []byte("Bearer "+s.Secret)) != 1 {
@@ -316,29 +318,22 @@ func (s *Service) fromKernel(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (s *Service) serveValidate(w http.ResponseWriter, r *http.Request) {
-	if !s.fromKernel(w, r) {
-		return
+// sealed is the member a task sealed: its principal, or, in a task made before
+// 0.72.0, the address chat held it by, which names the principal it was bound
+// to since (Bind).
+func (s *Service) sealed(member string) string {
+	if id, ok := s.Store.Legacy(member); ok {
+		return id
 	}
-	var in struct {
-		KeyID string `json:"key_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		refuse(w, http.StatusBadRequest, "bad_input", "bad request body")
-		return
-	}
-	if err := s.Store.ActivateKey(in.KeyID); err != nil {
-		refuseErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return member
 }
 
 // servePost is a member's post: identified by the key the kernel injected,
 // the entry is stored under the one-post rule, then delivered during this
 // call, unless the hand-off cap is exceeded; and the invitations the kernel
-// could not take before are sent again. Whom it could not reach, recipient or
-// invitee, it names.
+// could not take before are sent again, at the same time, so a kernel that does
+// not answer holds the post one bound, not two. Whom it could not reach,
+// recipient or invitee, it names.
 func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string) {
 	var in struct {
 		Room    string          `json:"thread_id"`
@@ -353,23 +348,30 @@ func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string)
 		refuseErr(w, err)
 		return
 	}
-	n, undelivered := 0, []string{}
+	// An invitation the kernel could not take before is tried again with this
+	// post's capability, as a post tries each recipient.
+	uninvited := make(chan []client.Party, 1)
+	go func() {
+		added, _ := s.Store.Added(in.Room)
+		uninvited <- s.invite(r.Context(), traceOf(r, self), in.Room, added)
+	}()
+	n, undelivered := 0, []client.Party{}
 	if depth <= handoffCap {
 		room, err := s.Store.withMembers(in.Room)
+		var members []client.Party
+		if err == nil {
+			members, err = s.Store.Parties(room.Members)
+		}
 		if err != nil {
+			<-uninvited
 			refuseErr(w, err)
 			return
 		}
-		to := recipients(member, in.Message, room.Members)
-		undelivered = s.deliver(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader),
-			in.Room, e.Seq, depth, to)
+		to := recipients(member, in.Message, members)
+		undelivered = s.deliver(r.Context(), traceOf(r, self), in.Room, e.Seq, depth, to)
 		n = len(to) - len(undelivered)
 	}
-	// An invitation the kernel could not take before is tried again with this
-	// post's capability, as a post tries each recipient.
-	if added, err := s.Store.Added(in.Room); err == nil {
-		undelivered = append(undelivered, s.invite(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader), in.Room, added)...)
-	}
+	undelivered = append(undelivered, <-uninvited...)
 	writeJSON(w, http.StatusOK, map[string]any{"delivered": n, "undelivered": undelivered})
 }
 
@@ -412,15 +414,16 @@ func (s *Service) serveReply(w http.ResponseWriter, r *http.Request) {
 		}{in.Status, in.Reason})
 		failed = true
 	}
-	if err := s.Store.Answer(in.Member, in.Room, in.Delivery, body, failed); err != nil {
+	if err := s.Store.Answer(s.sealed(in.Member), in.Room, in.Delivery, body, failed); err != nil {
 		refuseErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// serveAccept is an invitation's completion: the member joins. An invitation
-// declined or withdrawn since is not found, and joins nobody.
+// serveAccept is an invitation's completion: the member it was sent to joins,
+// since only that member could complete it. An invitation declined or
+// withdrawn since is not found, and joins nobody.
 func (s *Service) serveAccept(w http.ResponseWriter, r *http.Request) {
 	if !s.fromKernel(w, r) {
 		return
@@ -433,7 +436,7 @@ func (s *Service) serveAccept(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "bad_input", "bad request body")
 		return
 	}
-	if err := s.Store.Join(in.Room, in.Member); err != nil {
+	if err := s.Store.Join(in.Room, s.sealed(in.Member)); err != nil {
 		refuseErr(w, err)
 		return
 	}
@@ -442,17 +445,43 @@ func (s *Service) serveAccept(w http.ResponseWriter, r *http.Request) {
 
 // ---- the room commands ----
 
-// roomReply answers a command with the room as it now stands.
-func (s *Service) roomReply(w http.ResponseWriter, roomID string, err error) {
+// roomReply answers a command with the room as it now stands, and with the
+// rest of reply.
+func (s *Service) roomReply(w http.ResponseWriter, roomID string, err error, reply map[string]any) {
 	var room Room
 	if err == nil {
 		room, err = s.Store.withMembers(roomID)
+	}
+	if err == nil {
+		reply["room"], err = s.view(room)
 	}
 	if err != nil {
 		refuseErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"room": room})
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// roomView is a room as a reply carries it: its members and invitations as
+// parties.
+type roomView struct {
+	ID        string         `json:"thread_id"`
+	Name      string         `json:"name"`
+	Creator   string         `json:"creator"`
+	Members   []client.Party `json:"members"`
+	Invited   []client.Party `json:"invited"`
+	CreatedAt string         `json:"created_at"`
+	Unread    bool           `json:"unread"`
+	LastAt    string         `json:"last_at"`
+}
+
+func (s *Service) view(r Room) (roomView, error) {
+	members, err := s.Store.Parties(r.Members)
+	var invited []client.Party
+	if err == nil {
+		invited, err = s.Store.Parties(r.Invited)
+	}
+	return roomView{r.ID, r.Name, r.Creator, members, invited, r.CreatedAt, r.Unread, r.LastAt}, err
 }
 
 // serveRoomCreate starts a room with the caller as its creator. A name left
@@ -488,20 +517,7 @@ func (s *Service) serveRoomCreate(w http.ResponseWriter, r *http.Request, self s
 		refuseErr(w, err)
 		return
 	}
-	s.invitedReply(w, r, self, room.ID, room.Invited)
-}
-
-// invitedReply invites the members named, through the capability of this very
-// command, and answers with the room as it then stands and whose invitation
-// could not be delivered yet.
-func (s *Service) invitedReply(w http.ResponseWriter, r *http.Request, self, roomID string, members []string) {
-	uninvited := s.invite(r.Context(), self, r.Header.Get(client.CallbackHeader), r.Header.Get(client.CapabilityHeader), roomID, members)
-	room, err := s.Store.withMembers(roomID)
-	if err != nil {
-		refuseErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"room": room, "uninvited": uninvited})
+	s.roomReply(w, room.ID, nil, map[string]any{"uninvited": s.invite(r.Context(), traceOf(r, self), room.ID, room.Invited)})
 }
 
 func (s *Service) serveRoomRename(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +529,7 @@ func (s *Service) serveRoomRename(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.roomReply(w, in.Room, s.Store.Rename(member, in.Room, in.Name))
+	s.roomReply(w, in.Room, s.Store.Rename(member, in.Room, in.Name), map[string]any{})
 }
 
 func (s *Service) serveRoomAdd(w http.ResponseWriter, r *http.Request, self string) {
@@ -538,7 +554,7 @@ func (s *Service) serveRoomAdd(w http.ResponseWriter, r *http.Request, self stri
 	if owed {
 		invite = []string{in.Member}
 	}
-	s.invitedReply(w, r, self, in.Room, invite)
+	s.roomReply(w, in.Room, nil, map[string]any{"uninvited": s.invite(r.Context(), traceOf(r, self), in.Room, invite)})
 }
 
 func (s *Service) serveRoomRemove(w http.ResponseWriter, r *http.Request) {
@@ -550,7 +566,7 @@ func (s *Service) serveRoomRemove(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.roomReply(w, in.Room, s.Store.RemoveMember(member, in.Room, in.Member))
+	s.roomReply(w, in.Room, s.Store.RemoveMember(member, in.Room, in.Member), map[string]any{})
 }
 
 func (s *Service) serveRoomLeave(w http.ResponseWriter, r *http.Request) {
@@ -585,7 +601,7 @@ func (s *Service) serveRoomJoin(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrNotFound) {
 		err = ErrNotMember
 	}
-	s.roomReply(w, in.Room, err)
+	s.roomReply(w, in.Room, err, map[string]any{})
 }
 
 func (s *Service) serveRoomDelete(w http.ResponseWriter, r *http.Request) {
@@ -617,13 +633,44 @@ func fit[T any](xs []T, budget int) int {
 	return len(xs)
 }
 
-// rooms is the member's rooms that fit a reply, newest activity first.
-func (s *Service) rooms(member string) ([]Room, error) {
+// listed is what every read carries: the member's rooms that fit a reply,
+// newest activity first, and the rooms it is invited to.
+func (s *Service) listed(member string, reply map[string]any) error {
 	rooms, err := s.Store.Rooms(member)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return append([]Room{}, rooms[:fit(rooms, maxRooms)]...), nil
+	views := []roomView{}
+	for _, room := range rooms {
+		v, err := s.view(room)
+		if err != nil {
+			return err
+		}
+		views = append(views, v)
+	}
+	invites, err := s.Store.Invitations(member)
+	if err != nil {
+		return err
+	}
+	from := make([]string, len(invites))
+	for i, inv := range invites {
+		from[i] = inv.From
+	}
+	parties, err := s.Store.Parties(from)
+	if err != nil {
+		return err
+	}
+	type invitation struct {
+		ID   string       `json:"thread_id"`
+		Name string       `json:"name"`
+		From client.Party `json:"from"`
+	}
+	out := make([]invitation, len(invites))
+	for i, inv := range invites {
+		out[i] = invitation{inv.ID, inv.Name, parties[i]}
+	}
+	reply["rooms"], reply["invitations"] = views[:fit(views, maxRooms)], out
+	return nil
 }
 
 func (s *Service) serveRoomList(w http.ResponseWriter, r *http.Request) {
@@ -631,16 +678,12 @@ func (s *Service) serveRoomList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rooms, err := s.rooms(member)
-	var invites []Invitation
-	if err == nil {
-		invites, err = s.Store.Invitations(member)
-	}
-	if err != nil {
+	reply := map[string]any{}
+	if err := s.listed(member, reply); err != nil {
 		refuseErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms, "invitations": invites})
+	writeJSON(w, http.StatusOK, reply)
 }
 
 // serveRoomRead is a room for a member: its latest entries that fit, or with
@@ -685,24 +728,49 @@ func (s *Service) serveRoomRead(w http.ResponseWriter, r *http.Request) {
 		}
 		err = s.Store.MarkRead(member, in.Room, seq)
 	}
+	reply := map[string]any{"removed": append([]int64{}, gone...), "more": more}
 	var waiting []string
 	if err == nil {
 		waiting, err = s.Store.Working(in.Room, member)
 	}
-	var rooms []Room
 	if err == nil {
-		rooms, err = s.rooms(member)
+		reply["waiting"], err = s.Store.Parties(waiting)
 	}
-	var invites []Invitation
 	if err == nil {
-		invites, err = s.Store.Invitations(member)
+		reply["entries"], err = s.entries(es)
+	}
+	if err == nil {
+		reply["room"], err = s.view(room)
+	}
+	if err == nil {
+		err = s.listed(member, reply)
 	}
 	if err != nil {
 		refuseErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"room": room, "entries": append([]Entry{}, es...), "removed": append([]int64{}, gone...),
-		"waiting": append([]string{}, waiting...), "more": more, "rooms": rooms, "invitations": invites})
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// entryView is an entry as a read carries it: its author as a party.
+type entryView struct {
+	Seq    int64           `json:"seq"`
+	Author client.Party    `json:"author"`
+	Body   json.RawMessage `json:"body"`
+	At     string          `json:"at"`
+	Kind   int             `json:"kind"`
+}
+
+func (s *Service) entries(es []Entry) ([]entryView, error) {
+	authors, err := s.Store.Parties(authorsOf(es))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]entryView, len(es))
+	for i, e := range es {
+		out[i] = entryView{e.Seq, authors[i], e.Body, e.At, e.Kind}
+	}
+	return out, nil
 }
 
 // ---- refusals ----

@@ -432,14 +432,14 @@ func TestKernelContract(t *testing.T) {
 	refused := mk("refuse", "/refuse", 0, schema("x"), nil)
 	ack := mk("ack", "/echo", 0, schema("x", "z"), nil)
 	mk("secret/read", "/echo", 0, schema("x"), json.RawMessage(`{"scheme":"delegated_bearer","config":{"header":"X-Key","template":"{token}"}}`))
-	up.park.action, up.park.caller = ack.Action, a.addr("bob")
+	up.park.action, up.park.caller = ack.Action.Address, a.addr("bob")
 
 	reply := get(a, "run echo", func() (client.CallReply, error) {
-		return a.c.Run(ctx, bob, echo.Action, json.RawMessage(`{"x":"hi"}`), echo.QuoteHash)
+		return a.c.Run(ctx, bob, echo.Action.Address, json.RawMessage(`{"x":"hi"}`), echo.QuoteHash)
 	})
 	// Of an endpoint's refusal the kernel relays its status and nothing of its
 	// body, and an app's sentences are chosen by that status.
-	_, rerr := a.c.Run(ctx, bob, refused.Action, json.RawMessage(`{"x":"hi"}`), "")
+	_, rerr := a.c.Run(ctx, bob, refused.Action.Address, json.RawMessage(`{"x":"hi"}`), "")
 	if ke, ok := client.AsKernelError(rerr); !ok || ke.UpstreamStatus() != http.StatusConflict || strings.Contains(ke.KernelMessage, "held") {
 		t.Fatalf("an endpoint's refusal reads as its status alone: %v", rerr)
 	}
@@ -466,7 +466,7 @@ func TestKernelContract(t *testing.T) {
 	get(a, "action detail", func() (client.Action, error) { return a.c.GetAction(ctx, bob, echo.ID) })
 	get(a, "owner's detail", func() (client.Action, error) { return a.c.GetAction(ctx, alice, echo.ID) })
 	get(a, "resolve", func() (client.Action, error) {
-		act, found, err := a.c.ResolveRef(ctx, bob, echo.Action)
+		act, found, err := a.c.ResolveRef(ctx, bob, echo.Action.Address)
 		if err == nil && !found {
 			err = fmt.Errorf("%s not found", echo.Action)
 		}
@@ -498,7 +498,7 @@ func TestKernelContract(t *testing.T) {
 	// A task is listed to the caller who owns it as well as to its completer,
 	// until it settles: chat's pages read what changed from this list.
 	owned := get(a, "open tasks", func() ([]client.Task, error) { return a.c.OpenTasks(ctx, alice) })
-	if len(owned) != 2 || owned[0].Owner != a.addr("alice") || owned[0].RequiredCaller != a.addr("bob") {
+	if len(owned) != 2 || owned[0].Owner.Address != a.addr("alice") || owned[0].RequiredCaller.Address != a.addr("bob") {
 		t.Fatalf("the owner lists the open tasks it owns: %+v", owned)
 	}
 	get(a, "requesters", func() ([]client.Requester, error) { return a.c.ListRequesters(ctx, bob) })
@@ -521,9 +521,7 @@ func TestKernelContract(t *testing.T) {
 
 	// A delegated grant: the plan, the connection, and the consent tree on /v1/me.
 	get(a, "plan", func() (client.GrantPlan, error) { return a.c.PlanGrants(ctx, bob, a.addr("alice")+"/secret") })
-	get(a, "connect", func() ([]string, error) {
-		return a.c.ConnectGrant(ctx, bob, a.addr("alice")+"/secret", "", "bob-upstream-key")
-	})
+	done(a, "connect", a.c.ConnectGrant(ctx, bob, a.addr("alice")+"/secret", "", "bob-upstream-key"))
 	get(a, "plan", func() (client.GrantPlan, error) { return a.c.PlanGrants(ctx, bob, a.addr("alice")+"/secret") })
 	get(a, "me", func() (client.User, error) { return a.c.Me(ctx, bob) })
 	about := "contract"
@@ -541,12 +539,12 @@ func TestKernelContract(t *testing.T) {
 		done(a, "oauth start", err)
 		return st
 	}()
-	get(a, "oauth complete", func() ([]string, error) {
-		acts, pending, err := a.c.CompleteGrant(ctx, bob, a.addr("alice")+"/oauth", state, "code")
+	get(a, "oauth complete", func() (bool, error) {
+		pending, err := a.c.CompleteGrant(ctx, bob, a.addr("alice")+"/oauth", state, "code")
 		if err == nil && pending {
 			err = fmt.Errorf("the grant is still pending")
 		}
-		return acts, err
+		return pending, err
 	})
 	get(a, "me with an oauth grant", func() (client.User, error) { return a.c.Me(ctx, bob) })
 
@@ -607,7 +605,7 @@ func TestKernelContract(t *testing.T) {
 	farRef := "alice@" + a.health.PublicKey + "/far" // an unnamed kernel is named by its key
 	eventually(t, "bravo discovers "+farRef, func() bool {
 		for _, x := range get(bv, "catalog", func() ([]client.Action, error) { return bv.c.ListActions(ctx, dave, "") }) {
-			if x.Action == farRef && x.Discovered {
+			if x.Action.Address == farRef && x.Discovered {
 				return true
 			}
 		}
@@ -648,8 +646,9 @@ func TestKernelContract(t *testing.T) {
 		return bv.c.AdminInspect(ctx, bsys, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 	})
 
-	// A task alpha holds for a caller on bravo waits on that peer.
-	up.park.caller = bv.addr("dave")
+	// A task alpha holds for a caller on bravo waits on that peer. Alpha has no
+	// name for bravo (only an operator binds one), so dave is named by its key.
+	up.park.caller = "dave@" + bv.health.PublicKey
 	get(a, "run park for dave", func() (client.CallReply, error) {
 		return a.c.Run(ctx, alice, a.addr("alice")+"/park", json.RawMessage(`{"x":"p"}`), "")
 	})

@@ -32,7 +32,7 @@ func (a *Agents) signIn(ctx context.Context, handle, password string) error {
 	if err != nil {
 		return err
 	}
-	if me.Address != login {
+	if me.Address.Address != login {
 		return fmt.Errorf("signed in as %s, not %s", me.Address, login)
 	}
 	if err := a.deps.Client.RecordKernel(ctx, a.client); err != nil {

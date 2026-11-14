@@ -23,12 +23,12 @@
   {{range $d.Requests}}
   <div class="card row">
     <div class="stretch">
-      <span class="mono">{{.Requester}}</span>
+      {{template "_party" .Requester}}
       <div class="small muted">since {{shortDate .Since}}</div>
     </div>
     <div class="cluster">
       <form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>
-      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>
+      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>
     </div>
   </div>
   {{end}}
