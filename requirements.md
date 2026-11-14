@@ -1,7 +1,11 @@
 # Juice Web UI Requirements
 
-Version: 0.72.1
+Version: 0.72.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.72.2.** The installation pins juice-agent v0.11.0, which
+> runs on kernel v0.20.1: v0.10.0 could not read the kernel's v0.20 replies, so
+> no agent started.
 
 > **What changed in 0.72.1.** One naming rule on every page (§6.6): a kernel
 > with a petname is shown by it alone, one without by the name it calls itself

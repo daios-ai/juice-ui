@@ -56,7 +56,7 @@ type Component struct {
 // since nothing is created or served without it.
 var Components = []Component{
 	{Repo: "daios-ai/juice", Name: "juice", Title: "kernel", Release: "v0.20.1", Programs: []string{"juice"}, Setup: []string{"juice", "kernel", "setup"}},
-	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Title: "agent", Release: "v0.10.0", Env: "JUICE_AGENT_BIN", Programs: []string{"juice-agent"}, Setup: []string{"juice-agent", "setup"}},
+	{Repo: "daios-ai/juice-agent", Name: "juice-agent", Title: "agent", Release: "v0.11.0", Env: "JUICE_AGENT_BIN", Programs: []string{"juice-agent"}, Setup: []string{"juice-agent", "setup"}},
 }
 
 // UI is this repository's own asset, the three programs install.sh puts in
