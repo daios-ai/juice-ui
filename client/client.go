@@ -1272,6 +1272,11 @@ const (
 	OwnerHeader      = "X-Juice-Owner"
 )
 
+// Resolve is the system call translating a user's address or principal into
+// the party the kernel running it names (kernel §D15): `localhost` names that
+// kernel on every kernel (v0.20.1), so one spelling reaches it wherever it runs.
+const Resolve = "sys@localhost/resolve"
+
 // CallbackCreateTask creates a task through the capability of a dispatch: the
 // capability names the trace, so the body carries none. Valid only while the
 // dispatch's trace is unsettled, so it is called during the dispatch.

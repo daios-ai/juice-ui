@@ -316,7 +316,7 @@ func (c *Chat) resolve(ctx context.Context, tok, principal string) (client.Party
 	ctx, cancel := context.WithTimeout(ctx, resolveBound)
 	defer cancel()
 	args, _ := json.Marshal(map[string]string{"address": principal})
-	rep, err := c.deps.Client.Run(ctx, tok, c.deps.KeyAddress("sys")+"/resolve", args, "")
+	rep, err := c.deps.Client.Run(ctx, tok, client.Resolve, args, "")
 	if err != nil {
 		return client.Party{}, err
 	}

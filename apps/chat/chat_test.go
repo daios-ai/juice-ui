@@ -351,7 +351,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			} `json:"args"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if r.Header.Get(client.CapabilityHeader) == "" || !strings.HasSuffix(in.Action, "/resolve") || strings.Contains(in.Args.Address, "@nowhere") {
+		if r.Header.Get(client.CapabilityHeader) == "" || in.Action != client.Resolve || strings.Contains(in.Args.Address, "@nowhere") {
 			http.Error(w, `{"code":"not_found","error":"remote user not found"}`, http.StatusNotFound)
 			return
 		}
@@ -480,7 +480,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		}
 		// sys/resolve, run by a viewer: a principal as this kernel names it; a
 		// kernel nobody knows, not.
-		if strings.HasPrefix(in.Action, "sys@") && strings.HasSuffix(in.Action, "/resolve") {
+		if in.Action == client.Resolve {
 			var a struct{ Address string }
 			_ = json.Unmarshal(in.Args, &a)
 			f.resolved = append(f.resolved, a.Address)

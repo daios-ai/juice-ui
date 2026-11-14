@@ -109,7 +109,7 @@ func newFakeKernel(t *testing.T) *fakeKernel {
 			} `json:"args"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if r.Header.Get(client.CapabilityHeader) == "" || !strings.HasPrefix(in.Action, "sys@") || !strings.HasSuffix(in.Action, "/resolve") {
+		if r.Header.Get(client.CapabilityHeader) == "" || in.Action != client.Resolve {
 			http.Error(w, `{"error":"no"}`, http.StatusForbidden)
 			return
 		}

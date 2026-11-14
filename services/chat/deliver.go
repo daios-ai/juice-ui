@@ -76,9 +76,8 @@ func traceOf(r *http.Request, self string) trace {
 func (s *Service) resolve(ctx context.Context, d trace, address string) (client.Party, error) {
 	ctx, cancel := context.WithTimeout(ctx, taskTimeout)
 	defer cancel()
-	_, kernel, _ := strings.Cut(d.self, "@")
 	var p client.Party
-	err := s.Kernel.CallbackCall(ctx, d.callback, d.capability, "sys@"+kernel+"/resolve", map[string]string{"address": address}, &p)
+	err := s.Kernel.CallbackCall(ctx, d.callback, d.capability, client.Resolve, map[string]string{"address": address}, &p)
 	if err == nil && !IsPrincipal(p.Principal) {
 		err = fmt.Errorf("%s resolved to no user", address)
 	}
