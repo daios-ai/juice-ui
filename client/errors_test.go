@@ -275,6 +275,20 @@ func TestRemoteFailed(t *testing.T) {
 	}
 }
 
+// Another kernel that did not answer: what this kernel recorded stands.
+func TestUnanswered(t *testing.T) {
+	for _, k := range []Kind{KindPeerUnreachable, KindTimeout} {
+		if !(&KernelError{Kind: k}).Unanswered() {
+			t.Errorf("%s is unanswered", k)
+		}
+	}
+	for _, k := range []Kind{KindNotFound, KindExecutionFailed, KindUnavailable} {
+		if (&KernelError{Kind: k}).Unanswered() {
+			t.Errorf("%s is not", k)
+		}
+	}
+}
+
 func TestUpstreamDown(t *testing.T) {
 	if !(&KernelError{Kind: KindExecutionFailed, KernelMessage: "upstream request failed"}).UpstreamDown() {
 		t.Error("an endpoint that cannot be reached")

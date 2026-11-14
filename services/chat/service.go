@@ -174,7 +174,7 @@ func contracts(self, secret string) []contract {
 			desc: "Remove a member from a room, or withdraw an invitation. Only the room's creator can, and never itself.",
 			in:   obj(threadProp+`,"member":{"type":"string",`+descr+`"The member's principal, or the address chat holds a member by when it has no principal."}`, "thread_id", "member"), out: roomOut},
 		{name: roomLeaveName, title: "Leave a chat room", vis: "public", auth: delegated,
-			desc: "Leave a room you are a member of, or decline an invitation to it. A room's creator cannot leave it, only delete it.",
+			desc: "Leave a room you are a member of, or decline an invitation to it. A room's creator who leaves hands it to the member who has been in it longest; the only member cannot leave, only delete it.",
 			in:   obj(threadProp, "thread_id"), out: okOut},
 		{name: roomJoinName, title: "Join a chat room", vis: "public", auth: delegated,
 			desc: "Accept an invitation to a room: you join it. See chat@KERNEL/room/list for your invitations.",
@@ -789,7 +789,7 @@ func refuseErr(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "not_member"
 	case errors.Is(err, ErrBadInput):
 		status, code = http.StatusBadRequest, "bad_input"
-	case errors.Is(err, ErrHeld):
+	case errors.Is(err, ErrHeld), errors.Is(err, ErrAlone):
 		status, code = http.StatusConflict, "held"
 	}
 	refuse(w, status, code, err.Error())

@@ -19,7 +19,7 @@
     <div class="menu" id="menu-room-{{.Addr}}" role="menu" hidden>
       <a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=members"{{if eq .Addr $.Current}} data-modal="form-members"{{end}}>Members…</a>
       {{if .Mine}}<a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=rename" hx-get="/chat/room/{{.Addr}}/rename" hx-swap="none">Rename…</a>{{end}}
-      {{template "_rail_command" ($.Drop $room)}}
+      {{range $.Drop $room}}{{template "_rail_command" .}}{{end}}
       {{if .Elsewhere}}{{range $.Elsewhere $room}}{{template "_rail_command" .}}{{end}}{{end}}
       {{template "_copy_item" .Copy}}
     </div>
@@ -32,14 +32,18 @@
 
 {{/* _rail_item — a rail row that is not a room: its name, weighted when new or
      muted behind #alert when its chat could not be read, the kernel muted after
-     it, and "…"; the whole row opens its menu. Input: railItem. */}}
+     it, and "…"; the whole row opens its menu. A row with nothing to do, own
+     chat that could not be read, is a status, not a button: no menu, its
+     reason its title. Input: railItem. */}}
 {{define "_rail_item"}}<div class="rail-row">
-  <button class="rail-item{{if .New}} unread{{end}}{{if .Alert}} rail-down{{end}}" data-menu="menu-{{.ID}}" aria-haspopup="menu" aria-expanded="false"{{with .Title}} title="{{.}}"{{end}}>
-    <span>{{if .Alert}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{end}}{{.Label}}{{with .Muted}} <span class="muted">· {{.}}</span>{{end}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>
+  {{if or .Commands .Copy}}<button class="rail-item{{if .New}} unread{{end}}{{if .Alert}} rail-down{{end}}" data-menu="menu-{{.ID}}" aria-haspopup="menu" aria-expanded="false"{{with .Title}} title="{{.}}"{{end}}>
+    {{template "_rail_label" .}}
     <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg>
   </button>
   <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" .Copy}}</div>
+  {{- else}}<div class="rail-item{{if .Alert}} rail-down{{end}}" role="status"{{with .Title}} title="{{.}}"{{end}}>{{template "_rail_label" .}}</div>{{end}}
 </div>{{end}}
+{{define "_rail_label"}}<span>{{if .Alert}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{end}}{{.Label}}{{with .Muted}} <span class="muted">· {{.}}</span>{{end}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>{{end}}
 
 {{/* _rail_command — one command in a rail row's menu: a form posting to its
      action, asked first when it has a question, the row dimmed and the button

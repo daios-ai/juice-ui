@@ -116,7 +116,7 @@
     <td><div class="cluster">
       {{if eq .Status "approved"}}
       <form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn" type="submit">Remove</button></form>
-      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}?">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn-danger" type="submit">Block</button></form>
+      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}, declining its waiting tasks and refusing new ones?">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn-danger" type="submit">Block</button></form>
       {{else}}
       <form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn" type="submit">Unblock</button></form>
       {{end}}

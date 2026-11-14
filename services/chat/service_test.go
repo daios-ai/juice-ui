@@ -583,8 +583,8 @@ func TestRoomCommands(t *testing.T) {
 	if code, out := cmd(roomLeaveName, bob, map[string]any{"thread_id": id}); code != 200 || out["ok"] != true {
 		t.Errorf("leave: %d %v", code, out)
 	}
-	if code, _ := cmd(roomLeaveName, ann, map[string]any{"thread_id": id}); code != 403 {
-		t.Errorf("the creator leaves: %d", code)
+	if code, out := cmd(roomLeaveName, ann, map[string]any{"thread_id": id}); code != 409 || out["code"] != "held" {
+		t.Errorf("the creator, its only member, cannot leave, only delete: %d %v", code, out)
 	}
 	// room/delete: the creator alone.
 	if code, _ := cmd(roomDeleteName, bob, map[string]any{"thread_id": id}); code != 403 {

@@ -69,6 +69,7 @@ type Server struct {
 	publicURL  string // configured absolute base URL; "" → derive from the request
 	apps       []apps.App
 	appStore   *appStore               // per-app persisted state (state.json), keyed by kernel
+	viewers    *viewers                // per viewer: requesters ignored, disconnects to send again (appstate.go)
 	home       string                  // component home dir handed to apps
 	programs   apps.Programs           // the process supervisor handed to apps
 	badgeTTL   time.Duration           // the heartbeat's slow lane, and the task badge's cache TTL
@@ -321,6 +322,7 @@ func New(o Options) (http.Handler, error) {
 			"kernel", client.ShortKey(o.Identity.recorded))
 	}
 	s.appStore = as
+	s.viewers = newViewers(as)
 
 	mux := http.NewServeMux()
 	// Static assets (open).
@@ -773,14 +775,35 @@ func (s *Server) appDeps() apps.Deps {
 		Address:           s.identity.Address,
 		KeyAddress:        s.identity.KeyAddress,
 		Label:             s.render.Label,
-		RequireAuth:       s.requireAuth,
-		RequireSuperuser:  s.requireSuperuser,
-		LoadAppState:      func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
-		SaveAppState:      func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
-		StatePath:         s.appStore.path,
-		Home:              s.home,
-		Programs:          s.programs,
-		FormArgs:          buildArgs,
+		Ignore: func(r *http.Request, q client.Party) error {
+			me, err := s.me(r)
+			if err != nil {
+				return err
+			}
+			return s.viewers.update(me.Address.Principal, func(v *viewerRecord) { v.Ignored[q.Principal] = true })
+		},
+		Ignored: func(r *http.Request, q client.Party) bool {
+			me, err := s.me(r)
+			return err == nil && s.viewers.ignored(me.Address.Principal, q.Principal)
+		},
+		Disconnect: func(r *http.Request, selector, name string) (string, error) {
+			if unanswered, err := s.disconnect(r, selector); unanswered || err != nil {
+				if unanswered {
+					return unheard(name), err
+				}
+				return "", err
+			}
+			return "", nil
+		},
+		Reconnect:        s.reconnect,
+		RequireAuth:      s.requireAuth,
+		RequireSuperuser: s.requireSuperuser,
+		LoadAppState:     func(slug string) (json.RawMessage, error) { return s.appStore.load(slug), nil },
+		SaveAppState:     func(slug string, v json.RawMessage) error { return s.appStore.save(slug, v) },
+		StatePath:        s.appStore.path,
+		Home:             s.home,
+		Programs:         s.programs,
+		FormArgs:         buildArgs,
 		ConfigEditor: func(schema json.RawMessage, hidden ...string) apps.ConfigEditor {
 			return s.editor(schema, hidden...)
 		},

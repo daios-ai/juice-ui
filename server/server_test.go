@@ -28,6 +28,7 @@ import (
 // name, and how quickly the identity is re-read.
 type testWiring struct {
 	recordedKey string
+	statePath   string // state.json, "" in memory
 	badge       time.Duration
 	config      Configuration
 	apps        []apps.App
@@ -75,6 +76,7 @@ func newTestHandler(t *testing.T, kernelURL string, opts ...func(*testWiring)) h
 		Version:       w.version,
 		Updates:       w.updates,
 		Parts:         w.parts,
+		StatePath:     w.statePath,
 	})
 	if err != nil {
 		t.Fatal(err)

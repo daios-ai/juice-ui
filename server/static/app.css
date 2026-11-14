@@ -78,18 +78,20 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .rail > .btn { flex: none; margin-bottom: var(--space-2); }
 .rail :focus-visible { outline-offset: -2px; } /* the scroller would clip a ring drawn outside */
 .rail-row { display: flex; align-items: center; flex: none; border-radius: var(--radius-s); }
-.rail-row:has(> :is(a, .rail-item)):hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
+.rail-row:has(> :is(a, button.rail-item)):hover, .rail-row:has(> a[aria-current="page"]) { background: var(--surface-2); }
 .rail-row > :is(a, .rail-item) { flex: 1 1 auto; min-width: 0; padding: var(--space-1) var(--space-2); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-row > a:hover { text-decoration: none; }
-.rail-row:hover > :is(a, .rail-item), .rail-row > a[aria-current="page"], .rail-row > .unread { color: var(--text); }
+.rail-row:hover > :is(a, button.rail-item), .rail-row > a[aria-current="page"], .rail-row > .unread { color: var(--text); }
 .rail-row > .unread { font-weight: 700; }
 .rail-row > :is(a, .rail-item) .muted { font-weight: 400; } /* the kernel holding a room elsewhere: never weighted with its name */
 /* A row that is not a room (a chat asking, an invitation, a chat that could not
    be read) is one button opening its menu: its name, and "…" where a room's
    menu trigger stands. A command waiting on another kernel dims its row and
-   takes no second click. */
-.rail-item { display: flex; align-items: center; gap: var(--space-2); background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
-.rail-row > .rail-item { padding-right: 0; } /* its "…" stands where a room's menu trigger does */
+   takes no second click. One with nothing to do (own chat that could not be
+   read) is a status: no button, no hover. */
+.rail-item { display: flex; align-items: center; gap: var(--space-2); background: none; border: 0; font: inherit; text-align: left; }
+button.rail-item { cursor: pointer; }
+.rail-row > button.rail-item { padding-right: 0; } /* its "…" stands where a room's menu trigger does */
 .rail-item > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rail-item > .ico { flex: none; width: var(--icon-sm); height: var(--icon-sm); margin-inline: calc((var(--space-5) - var(--icon-sm)) / 2); color: var(--text-muted); }
 .rail-row.htmx-request { opacity: .5; pointer-events: none; }

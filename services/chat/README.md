@@ -45,7 +45,7 @@ LOGIN owns, so the login is chat's alone. The home holds `config.json` (`listen_
 | `room/rename` | the creator | `{thread_id, name}` → `{room}` |
 | `room/add` | the creator | `{thread_id, member}` → `{room, uninvited}`: invites, once; a member not reached yet is tried again |
 | `room/remove` | the creator, never itself | `{thread_id, member}` → `{room}`: removes a member, by principal or by the address of a seat not bound yet, or withdraws an invitation |
-| `room/leave` | a member other than the creator | `{thread_id}` → `{ok}`: an invited member declines |
+| `room/leave` | a member | `{thread_id}` → `{ok}`: an invited member declines; the creator hands the room to the joined member in it longest, and is refused (409) when none is, since only `room/delete` deletes |
 | `room/join` | a member invited | `{thread_id}` → `{room}`: the caller accepts |
 | `room/delete` | the creator | `{thread_id}` → `{ok}` |
 | `room/list` | anyone joined | `{}` → `{rooms, invitations}`: the caller's rooms, newest activity first, and the rooms it is invited to |

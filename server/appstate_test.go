@@ -2,9 +2,16 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/daios-ai/juice-ui/client"
 )
 
 func TestAppStorePersistAndReload(t *testing.T) {
@@ -142,5 +149,131 @@ func TestAppStoreAdoptsLegacyStateOnce(t *testing.T) {
 	c, _ := newAppStore(path, "KEYB")
 	if c.load("chat") != nil {
 		t.Error("the adopted state belongs to the kernel that adopted it")
+	}
+}
+
+// The viewers' record: what each ignored and each disconnect to send again,
+// kept across a restart; sent again at most once per interval, and only while
+// one waits; two selectors overlap when one covers the other.
+func TestViewersRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "juice-ui.json")
+	a, _ := newAppStore(path, "K")
+	v := newViewers(a)
+	if err := v.update("ann", func(r *viewerRecord) { r.Ignored["chat-david"] = true; r.Unsent["chat@KEY"] = true }); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := newAppStore(path, "K")
+	again := newViewers(b)
+	if !again.ignored("ann", "chat-david") || again.ignored("bob", "chat-david") || !slices.Equal(again.unsent("ann"), []string{"chat@KEY"}) {
+		t.Errorf("kept across a restart, per viewer: %+v", again.m)
+	}
+	now := time.Now()
+	if !again.due("ann", time.Hour, now) || again.due("ann", time.Hour, now.Add(time.Minute)) || !again.due("ann", time.Hour, now.Add(61*time.Minute)) || again.due("bob", time.Hour, now) {
+		t.Error("sent again at most hourly, and only while one waits")
+	}
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{{"chat@K", "chat@K", true}, {"chat@K", "chat@K/msg", true}, {"chat@K/msg", "chat@K", true}, {"chat@K", "chat@K2", false}, {"chat@K/msg", "chat@K/room", false}} {
+		if overlaps(c.a, c.b) != c.want {
+			t.Errorf("overlaps(%q, %q) != %v", c.a, c.b, c.want)
+		}
+	}
+}
+
+// A disconnect sent again never follows a connection made after it. A send
+// under way makes a connection wait for it, and the connection then drops what
+// remains; a connection under way makes a send started meanwhile send nothing.
+// A send is dropped once its kernel answers, or has nothing left to delete, and
+// kept while that kernel does not answer.
+func TestAResentDisconnectNeverFollowsAConnection(t *testing.T) {
+	var mu sync.Mutex
+	var deletes []string
+	status, hold := http.StatusNoContent, false
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	k := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/grants" {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		deletes = append(deletes, r.URL.Query().Get("selector"))
+		st, h := status, hold
+		mu.Unlock()
+		if h {
+			arrived <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(st)
+		if st == http.StatusBadGateway {
+			w.Write([]byte(`{"code":"peer_unreachable","error":"peer unreachable"}`))
+		}
+	}))
+	defer k.Close()
+	a, _ := newAppStore("", "K")
+	s := &Server{client: client.New(k.URL, nil), viewers: newViewers(a)}
+	same := func(sel string) string { return sel }
+	record := func() {
+		_ = s.viewers.update("ann", func(v *viewerRecord) { v.Unsent["chat@K"] = true })
+	}
+
+	// A kernel still not answering keeps the disconnect; one answering drops it.
+	record()
+	status = http.StatusBadGateway
+	s.resend("ann", "tok")
+	if len(s.viewers.unsent("ann")) != 1 {
+		t.Fatal("a kernel not answering keeps the disconnect")
+	}
+	status = http.StatusNotFound
+	s.resend("ann", "tok")
+	if len(s.viewers.unsent("ann")) != 0 {
+		t.Fatal("nothing left to delete drops it")
+	}
+
+	// A send under way: the connection waits for it.
+	record()
+	status, hold = http.StatusBadGateway, true
+	sent := make(chan struct{})
+	go func() { s.resend("ann", "tok"); close(sent) }()
+	<-arrived
+	connected := make(chan struct{})
+	go func() {
+		_ = s.reconnectAs("ann", "chat@K/msg", func() error { close(connected); return nil }, same)
+	}()
+	select {
+	case <-connected:
+		t.Fatal("a connection ran while a disconnect was being sent")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-sent
+	<-connected
+	time.Sleep(20 * time.Millisecond)
+	if len(s.viewers.unsent("ann")) != 0 {
+		t.Errorf("the connection drops the disconnect that covers it: %v", s.viewers.unsent("ann"))
+	}
+
+	// A connection under way: a send started meanwhile sends nothing.
+	record()
+	mu.Lock()
+	hold, deletes = false, nil
+	mu.Unlock()
+	inConnect, unblock, finished := make(chan struct{}), make(chan struct{}), make(chan error)
+	go func() {
+		finished <- s.reconnectAs("ann", "chat@K", func() error { close(inConnect); <-unblock; return nil }, same)
+	}()
+	<-inConnect
+	sent = make(chan struct{})
+	go func() { s.resend("ann", "tok"); close(sent) }()
+	time.Sleep(50 * time.Millisecond)
+	close(unblock)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	<-sent
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deletes) != 0 || len(s.viewers.unsent("ann")) != 0 {
+		t.Errorf("a disconnect was sent after the connection: %v %v", deletes, s.viewers.unsent("ann"))
 	}
 }

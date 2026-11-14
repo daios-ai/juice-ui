@@ -214,6 +214,20 @@ type Deps struct {
 	// its key shortened, the key added once two kernels claim one nickname.
 	Label func(p client.Party) string
 
+	// Ignore records that the viewer ignored the requester q: Ignored then
+	// reports it while it is pending, and the inbox's badge leaves it out. Any
+	// decision on q in the inbox or Settings ends it.
+	Ignore  func(r *http.Request, q client.Party) error
+	Ignored func(r *http.Request, q client.Party) bool
+
+	// Disconnect deletes the viewer's grants under selector; note is what to
+	// say when the kernel holding them did not answer, which keeps its copy
+	// until the disconnect, sent again, reaches it ("" when it answered).
+	// Reconnect runs connect, which grants something under selector, on the
+	// viewer's one ordered path, so no disconnect sent again follows it.
+	Disconnect func(r *http.Request, selector, name string) (note string, err error)
+	Reconnect  func(r *http.Request, selector string, connect func() error) error
+
 	// RequireAuth wraps a handler so unauthenticated requests are redirected to
 	// login. A module wraps each of its routes with this so a handler always runs
 	// with a session.

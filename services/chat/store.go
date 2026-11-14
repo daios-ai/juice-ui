@@ -38,6 +38,7 @@ var (
 	ErrNotMember = errors.New("not a member")
 	ErrBadInput  = errors.New("bad input")
 	ErrHeld      = errors.New("a post is already pending; answer the delivery first")
+	ErrAlone     = errors.New("you are its only member; delete it instead")
 )
 
 // Room is a conversation among its members. A member is added, then invited
@@ -468,8 +469,10 @@ func (s *Store) RemoveMember(actor, roomID, member string) error {
 	return s.drop(roomID, member)
 }
 
-// Leave removes actor from the room; a member that is not the creator. An
-// invited member leaving is the invitation declined.
+// Leave removes actor from the room. An invited member leaving is the
+// invitation declined. The creator leaving hands the room to the joined member
+// held longest, in the same transaction; with no other joined member it is
+// refused and nothing changes, since only Delete deletes a room.
 func (s *Store) Leave(actor, roomID string) error {
 	r, err := s.room(roomID)
 	if err != nil {
@@ -478,10 +481,28 @@ func (s *Store) Leave(actor, roomID string) error {
 	if !s.inRoom(roomID, actor) {
 		return ErrNotMember
 	}
-	if r.Creator == actor {
-		return ErrForbidden
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	return s.drop(roomID, actor)
+	defer func() { _ = tx.Rollback() }()
+	if r.Creator == actor {
+		var heir string
+		err := tx.QueryRow(`SELECT member FROM members WHERE room_id = ? AND state = ? AND member != ? ORDER BY rowid LIMIT 1`, roomID, stateJoined, actor).Scan(&heir)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAlone
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE rooms SET creator = ? WHERE id = ?`, heir, roomID); err != nil {
+			return err
+		}
+	}
+	if err := dropIn(tx, roomID, actor); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // drop removes a member and what the room holds for it.
@@ -491,6 +512,14 @@ func (s *Store) drop(roomID, member string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := dropIn(tx, roomID, member); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// dropIn is drop within a transaction.
+func dropIn(tx *sql.Tx, roomID, member string) error {
 	for _, q := range []string{
 		`DELETE FROM members WHERE room_id = ? AND member = ?`,
 		`DELETE FROM cursors WHERE room_id = ? AND member = ?`,
@@ -500,7 +529,7 @@ func (s *Store) drop(roomID, member string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // DeleteRoom removes the room and everything in it; the creator only.

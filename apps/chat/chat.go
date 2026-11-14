@@ -498,7 +498,7 @@ func (c *Chat) joinViewer(r *http.Request) error {
 		if ok, err := c.covered(ctx, tok, c.self()); err != nil || ok {
 			return err
 		}
-		return c.rejoin(ctx, tok, c.self(), false)
+		return c.deps.Reconnect(r, c.self(), func() error { return c.rejoin(ctx, tok, c.self(), false) })
 	})
 }
 
@@ -762,7 +762,9 @@ func (c *Chat) run(r *http.Request, service, name string, args, out any) error {
 		case ok && (ke.Kind == client.KindGrantRequired || ke.UpstreamStatus() == http.StatusUnauthorized) && !joined && (service == c.self() || c.grantHeld(r, service+"/"+name)):
 			joined = true
 			fresh := ke.Kind != client.KindGrantRequired // chat refused the key itself
-			if jerr := c.deps.Sessions.Do(r.Context(), func(tok string) error { return c.rejoin(r.Context(), tok, service, fresh) }); jerr != nil {
+			if jerr := c.deps.Sessions.Do(r.Context(), func(tok string) error {
+				return c.deps.Reconnect(r, service, func() error { return c.rejoin(r.Context(), tok, service, fresh) })
+			}); jerr != nil {
 				return jerr
 			}
 		default:
@@ -995,7 +997,7 @@ func (c *Chat) chats(r *http.Request, tok string) (joined []string, asking []cli
 		case !strings.HasPrefix(chat, chatHandle+"@") || q.Status == "blocked":
 		case q.Status == "approved" && (chat == c.self() || granted[chat]):
 			joined = append(joined, chat)
-		case chat != c.self():
+		case chat != c.self() && !(q.Status == "pending" && c.deps.Ignored(r, q.Requester)):
 			asking = append(asking, q.Requester)
 		}
 	}
@@ -1309,12 +1311,12 @@ func (v railView) Requests() []railItem {
 	for _, a := range v.Asking {
 		out = append(out, railItem{ID: "ask-" + a.Service, Label: chatHandle + "@" + a.Name, Title: a.Service, Copy: v.Called(a.Service).Copy, New: true, Commands: []railCommand{
 			{Action: "/chat/chats/" + a.Service + "/connect", Label: "Connect", CSRFField: v.CSRFField},
-			v.chatVerb(a.Service, "block", true)}})
+			{Action: "/chat/chats/" + a.Service + "/ignore", Label: "Ignore", CSRFField: v.CSRFField}}})
 	}
 	for _, i := range v.Invites {
 		out = append(out, railItem{ID: "invite-" + i.Addr(), Label: i.Name, Muted: i.Elsewhere, Title: i.From.Shown(), Copy: i.Copy, New: true, Commands: []railCommand{
 			{Action: "/chat/invites/" + i.Addr() + "/accept", Label: "Accept", CSRFField: v.CSRFField},
-			{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline…", Confirm: "Decline " + i.Name, Divider: true, CSRFField: v.CSRFField}}})
+			{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline…", Confirm: "Decline " + i.Name + ", which only its creator can invite you to again", Divider: true, CSRFField: v.CSRFField}}})
 	}
 	return out
 }
@@ -1326,35 +1328,42 @@ func (v railView) Unread() []railItem {
 	for _, d := range v.Down {
 		item := railItem{ID: "down-" + d.Service, Label: chatHandle + "@" + d.Name, Title: d.Reason, Copy: v.Called(d.Service).Copy, Alert: true}
 		if d.Service != v.Home {
-			item.Commands = []railCommand{v.chatVerb(d.Service, "disconnect", false), v.chatVerb(d.Service, "block", false)}
+			item.Commands = []railCommand{v.disconnect(d.Service, false)}
 		}
 		out = append(out, item)
 	}
 	return out
 }
 
-// Drop is a room's command ending the viewer's part in it: Delete for its
-// creator, Leave for any other member, each asked first, naming the room.
-func (v railView) Drop(room roomRow) railCommand {
-	if room.Mine {
-		return railCommand{Action: "/chat/room/" + room.Addr() + "/delete", Label: "Delete…", Confirm: "Delete " + room.Name + " for everyone", Danger: true, Divider: true, CSRFField: v.CSRFField}
+// Drop is a room's commands ending the viewer's part in it, each asked first
+// in one question naming what it costs (grammar §5.8): Leave for a member; for its creator Leave, which hands the
+// room to another member, while one is joined, and Delete.
+func (v railView) Drop(room roomRow) []railCommand {
+	leave := railCommand{Action: "/chat/room/" + room.Addr() + "/leave", Label: "Leave…", Confirm: "Leave " + room.Name, Divider: true, CSRFField: v.CSRFField}
+	if !room.Mine {
+		return []railCommand{leave}
 	}
-	return railCommand{Action: "/chat/room/" + room.Addr() + "/leave", Label: "Leave…", Confirm: "Leave " + room.Name, Divider: true, CSRFField: v.CSRFField}
+	del := railCommand{Action: "/chat/room/" + room.Addr() + "/delete", Label: "Delete…", Confirm: "Delete " + room.Name + " and its history for everyone", Danger: true, Divider: true, CSRFField: v.CSRFField}
+	if len(room.Members) < 2 {
+		return []railCommand{del}
+	}
+	leave.Confirm = "Leave " + room.Name + " and make another member its creator"
+	del.Divider = false
+	return []railCommand{leave, del}
 }
 
-// Elsewhere is the commands a room held elsewhere adds to its menu: its chat
-// disconnected or blocked.
+// Elsewhere is the command a room held elsewhere adds to its menu: its chat
+// disconnected.
 func (v railView) Elsewhere(room roomRow) []railCommand {
-	return []railCommand{v.chatVerb(room.Service, "disconnect", true), v.chatVerb(room.Service, "block", false)}
+	return []railCommand{v.disconnect(room.Service, true)}
 }
 
-// chatVerb is the menu's command disconnecting or blocking the chat at service,
-// named for the viewer by its kernel's label, each asked first naming it as a
-// question does, with the key a nickname stands in for.
-func (v railView) chatVerb(service, verb string, divider bool) railCommand {
-	label, n := map[string]string{"disconnect": "Disconnect", "block": "Block"}[verb], v.Called(service)
-	return railCommand{Action: "/chat/chats/" + service + "/" + verb, Label: label + " " + n.Label + "…", Confirm: label + " " + n.Shown,
-		Danger: verb == "block", Divider: divider, CSRFField: v.CSRFField}
+// disconnect is the menu's command disconnecting the chat at service, named
+// for the viewer by its kernel's label. It asks nothing: it destroys nothing,
+// and Connect restores the chat with every room (Apple HIG, Gmail: only what
+// cannot be undone is asked).
+func (v railView) disconnect(service string, divider bool) railCommand {
+	return railCommand{Action: "/chat/chats/" + service + "/disconnect", Label: "Disconnect " + v.Called(service).Label, Divider: divider, CSRFField: v.CSRFField}
 }
 
 // membersView backs the members dialog: open when Open, and open with the reason
@@ -2011,6 +2020,14 @@ func (c *Chat) drop(w http.ResponseWriter, r *http.Request, action string) {
 	room := r.PathValue("id")
 	service, thread, _ := splitRoom(room)
 	err := c.run(r, service, action, map[string]string{"thread_id": thread}, nil)
+	if ke, ok := client.AsKernelError(err); ok && action == roomLeaveName && ke.UpstreamStatus() == http.StatusConflict {
+		name := c.shownRoom(r).Name
+		if read, err := c.readRoom(r, service, thread, latest, false); name == "" && err == nil {
+			name = read.Room.Name
+		}
+		c.deps.FlashRedirect(w, r, back(r), "error", "You are its only member. Delete "+name+" instead.")
+		return
+	}
 	if !c.deps.IsHTMX(r) || (err != nil && !c.gone(r, service, thread, err, false)) {
 		c.then(w, r, err, "/chat")
 		return
@@ -2120,7 +2137,7 @@ func (c *Chat) joinMembers(w http.ResponseWriter, r *http.Request, members []str
 func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 	ctx, me := r.Context(), c.deps.Me(r)
 	service, verb := r.PathValue("chat"), r.PathValue("verb")
-	unanswered, noChat := false, errors.New("no such chat")
+	note, noChat := "", errors.New("no such chat")
 	err := c.deps.Sessions.Do(ctx, func(tok string) error {
 		reqs, err := c.deps.Client.ListRequesters(ctx, tok)
 		if err != nil {
@@ -2130,27 +2147,36 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 		if service == c.self() || !strings.HasPrefix(service, chatHandle+"@") || i < 0 {
 			return noChat
 		}
-		ungrant := func() error {
-			err := c.deps.Client.DeleteGrant(ctx, tok, service)
-			ke, ok := client.AsKernelError(err)
-			unanswered = ok && (ke.Kind == client.KindPeerUnreachable || ke.Kind == client.KindTimeout)
-			if unanswered || ok && ke.Kind == client.KindNotFound {
+		// revoke returns the chat to pending, where the inbox's requests list
+		// it; this kernel records it whoever is offline.
+		revoke := func() error {
+			err := c.deps.Client.DecideRequester(ctx, tok, service, "revoke")
+			if ke, ok := client.AsKernelError(err); ok && ke.Unanswered() {
 				return nil
 			}
 			return err
 		}
 		switch verb {
 		case "connect":
-			err := c.rejoin(ctx, tok, service, false)
+			err := c.deps.Reconnect(r, service, func() error { return c.rejoin(ctx, tok, service, false) })
 			if err != nil && reqs[i].Status == "pending" {
 				_ = c.deps.Client.DecideRequester(ctx, tok, service, "revoke")
 			}
 			return err
-		case "disconnect", "block":
-			if err := ungrant(); err != nil {
-				return err
+		case "ignore", "disconnect":
+			if verb == "disconnect" {
+				n, err := c.deps.Disconnect(r, service, c.shown(service))
+				if ke, ok := client.AsKernelError(err); err != nil && (!ok || ke.Kind != client.KindNotFound) {
+					return err
+				}
+				note = n
 			}
-			return c.deps.Client.DecideRequester(ctx, tok, service, map[string]string{"disconnect": "revoke", "block": "block"}[verb])
+			if reqs[i].Status != "pending" {
+				if err := revoke(); err != nil {
+					return err
+				}
+			}
+			return c.deps.Ignore(r, reqs[i].Requester)
 		}
 		return noChat
 	})
@@ -2169,8 +2195,8 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 	if verb != "connect" && inView == service {
 		to = "/chat"
 	}
-	if unanswered {
-		c.deps.FlashRedirect(w, r, to, "info", "Disconnected "+c.shown(service)+" here. Its kernel did not answer; disconnect again once it does.")
+	if note != "" {
+		c.deps.FlashRedirect(w, r, to, "info", note)
 		return
 	}
 	if !c.deps.IsHTMX(r) || to != back(r) {

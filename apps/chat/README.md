@@ -22,9 +22,14 @@ asks to be connected when it has addressed the viewer and is neither joined nor
 blocked. Joining is approve, `join` and connect the key it returns; joining again
 first has the kernel grant the key it kept, which keeps the member, and approves
 the chat again. Connect is joining, and one that fails leaves the chat
-asking; Disconnect deletes the grant and
-returns the requester to pending; Block deletes the grant and blocks it. Nothing
-else connects a chat elsewhere. A room is named by its address, `thread@<key>`, in
+asking; Ignore hides a chat asking for this viewer while it is pending,
+revoking an approved one first, and the server leaves it out of the inbox's
+badge; Disconnect deletes the grant, returns the requester to pending and
+ignores it, and a disconnect the chat's kernel did not answer is sent again by
+the server. Each is done when this kernel records it, whoever is offline.
+Block is no command here: the inbox and Settings hold it. Every connect runs
+on the viewer's ordered path (`Deps.Reconnect`), so no disconnect sent again
+follows it. Nothing else connects a chat elsewhere. A room is named by its address, `thread@<key>`, in
 its URL, its watch and the rail; every read and command runs the action of that
 room's chat, at home or elsewhere, by one path. Nothing is run on a chat elsewhere
 that is not joined, and a run on one joined that the kernel refuses for want of a
@@ -54,7 +59,8 @@ a list that answers without it. The UI seats the installation's agents where it
 adds them: joins them and accepts with their own session.
 
 The rail is single rows. A chat asking, an invitation and a chat that could not be
-read are each one button opening its menu; a command that may wait on another
+read are each one button opening its menu, except own chat that could not be
+read, a status row with nothing to do; a command that may wait on another
 kernel dims its row until it answers, and its failure is said on the page it was
 sent from.
 

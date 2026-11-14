@@ -28,7 +28,7 @@
     </div>
     <div class="cluster">
       <form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>
-      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>
+      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}, declining its waiting tasks and refusing new ones?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>
     </div>
   </div>
   {{end}}

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -1064,7 +1065,8 @@ func TestUserShowsConnectors(t *testing.T) {
 }
 
 // Disconnecting a grant held on another kernel that does not answer removes it
-// here and says to disconnect again, rather than showing an error page.
+// here, says that kernel is told when it answers, and keeps the disconnect to
+// send again, rather than showing an error page.
 func TestGrantDisconnectElsewhereUnreachable(t *testing.T) {
 	base := authKernel()
 	defer base.Close()
@@ -1082,7 +1084,8 @@ func TestGrantDisconnectElsewhereUnreachable(t *testing.T) {
 		base.Config.Handler.ServeHTTP(w, r)
 	}))
 	defer wrap.Close()
-	srv := httptest.NewServer(newTestHandler(t, wrap.URL))
+	state := filepath.Join(t.TempDir(), "state.json")
+	srv := httptest.NewServer(newTestHandler(t, wrap.URL, func(w *testWiring) { w.statePath = state }))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/settings"))
@@ -1098,8 +1101,11 @@ func TestGrantDisconnectElsewhereUnreachable(t *testing.T) {
 	if q != "selector=chat%40alpha%2Froom" {
 		t.Errorf("disconnect by selector: %q", q)
 	}
-	if !strings.Contains(string(b), "Disconnected chat@alpha/room here. Its kernel did not answer; disconnect again once it does.") {
+	if !strings.Contains(string(b), "Disconnected chat@alpha/room here. Its kernel did not answer; it is told when it does.") {
 		t.Errorf("the flash must say what happened: %s", b)
+	}
+	if kept, _ := os.ReadFile(state); !strings.Contains(strings.Join(strings.Fields(string(kept)), ""), `"unsent":{"chat@alpha/room":true}`) {
+		t.Errorf("the disconnect is kept to send again: %s", kept)
 	}
 }
 
@@ -2929,6 +2935,11 @@ func taskKernel() *httptest.Server {
 	})
 	mux.HandleFunc("POST /v1/me/requesters/{address}/{verb}", func(w http.ResponseWriter, r *http.Request) {
 		taskDecisions = append(taskDecisions, r.PathValue("address")+" "+r.PathValue("verb"))
+		if r.PathValue("address") == "mallory@bravo" && r.PathValue("verb") == "block" { // recorded; bravo does not answer
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`{"code":"peer_unreachable","error":"peer unreachable"}`))
+			return
+		}
 		w.Write([]byte(`{"requester":"` + r.PathValue("address") + `","status":"approved","since":"2026-08-06T09:30:00Z"}`))
 	})
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
@@ -3023,7 +3034,7 @@ func TestRequestsAndContacts(t *testing.T) {
 	if got := verbs(inbox, "mallory@bravo"); !slices.Equal(got, []string{"approve", "block"}) {
 		t.Errorf("a request offers %v, want approve and block", got)
 	}
-	if !strings.Contains(inbox, `<button class="btn" type="submit">Approve</button>`) || !strings.Contains(inbox, `data-confirm="Block mallory@bravo?"`) {
+	if !strings.Contains(inbox, `<button class="btn" type="submit">Approve</button>`) || !strings.Contains(inbox, `data-confirm="Block mallory@bravo, declining its waiting tasks and refusing new ones?"`) {
 		t.Error("Approve is neutral; Block asks for a confirm")
 	}
 	for _, addr := range []string{"alice@testnet", "eve@testnet"} {
@@ -3041,7 +3052,7 @@ func TestRequestsAndContacts(t *testing.T) {
 		t.Error("a pending requester is not a contact")
 	}
 	row := func(i int) string { return settings[i : i+strings.Index(settings[i:], "</tr>")] }
-	if r := row(a); !slices.Equal(verbs(r, "alice@testnet"), []string{"revoke", "block"}) || !strings.Contains(r, ">Remove</button>") || !strings.Contains(r, `data-confirm="Block alice@testnet?"`) {
+	if r := row(a); !slices.Equal(verbs(r, "alice@testnet"), []string{"revoke", "block"}) || !strings.Contains(r, ">Remove</button>") || !strings.Contains(r, `data-confirm="Block alice@testnet, declining its waiting tasks and refusing new ones?"`) {
 		t.Errorf("an approved contact offers Remove and Block: %s", r)
 	}
 	if r := row(e); !slices.Equal(verbs(r, "eve@testnet"), []string{"revoke"}) || !strings.Contains(r, ">Unblock</button>") || strings.Contains(r, "data-confirm") {
@@ -3074,7 +3085,13 @@ func TestRequestsAndContacts(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("an unknown verb = %d, want 404", resp.StatusCode)
 	}
-	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve,eve@testnet revoke,eve@testnet revoke" {
+	// Blocked while the requester's kernel does not answer: done here.
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/block", inbox, url.Values{})
+	resp.Body.Close()
+	if f := flashOf(t, cl, srv.URL); f != "success|Blocked." {
+		t.Errorf("a block its kernel did not answer is done: flash = %q", f)
+	}
+	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve,eve@testnet revoke,eve@testnet revoke,mallory@bravo block" {
 		t.Errorf("decisions = %q", got)
 	}
 }
@@ -4938,5 +4955,32 @@ func TestRankCardsFollowTheOneSortRule(t *testing.T) {
 		if *cards[i].Rank != want {
 			t.Errorf("row %d ranks %+v, want %+v", i, *cards[i].Rank, want)
 		}
+	}
+}
+
+// An ignored requester is left out of the badge, still listed among the
+// requests; any decision on it in the inbox or Settings ends its being
+// ignored, Block then Unblock included, with no read of it between.
+func TestIgnoredRequesters(t *testing.T) {
+	kernel := taskKernel()
+	defer kernel.Close()
+	state := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(state, []byte(`{"kernels":{"":{"apps":{"viewers":{"bob@testnet":{"ignored":{"mallory@bravo":true}}}}}}}`), 0o600)
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.statePath = state }))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	if got := getBody(t, cl, srv.URL+"/tick?slow=inbox:badge:0"); !strings.Contains(got, `value="inbox:badge:4"`) {
+		t.Errorf("the ignored requester is left out of the badge: %q", got)
+	}
+	inbox := getBody(t, cl, srv.URL+"/inbox")
+	if !strings.Contains(inbox, "mallory@bravo") {
+		t.Error("an ignored requester is still among the requests")
+	}
+	for _, verb := range []string{"block", "revoke"} {
+		resp := postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/"+verb, inbox, url.Values{})
+		resp.Body.Close()
+	}
+	if kept, _ := os.ReadFile(state); strings.Contains(string(kept), "mallory") {
+		t.Errorf("Block then Unblock ends its being ignored: %s", kept)
 	}
 }

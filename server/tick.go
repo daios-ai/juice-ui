@@ -97,6 +97,19 @@ func (s *Server) watchInbox(r *http.Request, key, shown string) (template.HTML, 
 	return apps.Badge("inbox", "Waiting tasks", n), nil
 }
 
+// asking is how many requesters await the viewer's decision, whose tasks the
+// kernel withholds, save those the viewer ignored: a count says what needs
+// attention (Discord, LinkedIn and Signal leave an ignored request out of it).
+func (s *Server) asking(viewer string, reqs []client.Requester) int {
+	n := 0
+	for _, q := range reqs {
+		if q.Status == "pending" && !s.viewers.ignored(viewer, q.Requester.Principal) {
+			n++
+		}
+	}
+	return n
+}
+
 // taskBadgeCount is the badge's count, cached in the session for badgeTTL so
 // the kernel is read no more often than the slow lane ticks.
 func (s *Server) taskBadgeCount(r *http.Request) int {
@@ -122,18 +135,21 @@ func (s *Server) taskBadgeCount(r *http.Request) int {
 			return e
 		}
 		// A superuser lists everyone's tasks; the badge counts the viewer's,
-		// and each requester awaiting a decision, whose tasks are withheld.
+		// and each requester awaiting a decision, whose tasks are withheld,
+		// save one the viewer ignored. The refresh also starts sending again
+		// the viewer's disconnects a kernel did not answer, off this request:
+		// the tick never waits on another kernel.
+		viewer := me.Address.Principal
+		if s.viewers.due(viewer, resendEvery, time.Now()) {
+			go s.resend(viewer, tok)
+		}
 		n := 0
 		for _, t := range tasks {
 			if t.Waiting() && t.RequiredCaller == me.Address {
 				n++
 			}
 		}
-		for _, q := range requesters {
-			if q.Status == "pending" {
-				n++
-			}
-		}
+		n += s.asking(viewer, requesters)
 		count = n
 		sm.Put(ctx, sessionKeyBadgeCount, n)
 		sm.Put(ctx, sessionKeyBadgeAt, time.Now().UnixNano())

@@ -1,7 +1,18 @@
 # Juice Web UI Requirements
 
-Version: 0.72.2
+Version: 0.73.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.73.0.** Nothing in the rail is stuck while another kernel
+> is down, and nothing in it does lasting harm by a slip (§6.7). A chat asking
+> is connected or **ignored**: Ignore hides it, leaves it out of the inbox's
+> badge and keeps it among the inbox's requests. Disconnect asks nothing, is
+> done whoever is offline, and a disconnect the chat's kernel did not answer is
+> sent again until it does (kernel D10), never after a newer connection. Block
+> leaves the rail: it stays in the inbox's requests and Settings' contacts,
+> where Unblock returns a chat to asking. A room's creator can leave, handing
+> the room to the member in it longest; only Delete deletes. Each remaining
+> question names what it costs. Own chat that cannot be read is a status row.
 
 > **What changed in 0.72.2.** The installation pins juice-agent v0.11.0, which
 > runs on kernel v0.20.1: v0.10.0 could not read the kernel's v0.20 replies, so
@@ -2905,7 +2916,7 @@ schema canonical (§6.4) and every text naming this kernel, are:
 | `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
 | `room/add` | public, delegated | `{thread_id, member}` → `{room, uninvited}`; a member not reached yet is tried again, one invited or joined is left as it is | the creator |
 | `room/remove` | public, delegated | `{thread_id, member}` → `{room}`, the member by principal, or by the address chat holds a seat by when it has none; an invitation withdrawn as a member is removed | the creator, never itself |
-| `room/leave` | public, delegated | `{thread_id}` → `{ok}`; an invited member leaving declines | a member other than the creator, joined or invited |
+| `room/leave` | public, delegated | `{thread_id}` → `{ok}`; an invited member leaving declines; the creator leaving hands the room to the joined member in it longest (WhatsApp: when the admin exits, another becomes admin), and is refused `409` when no other member is joined, since only `room/delete` deletes | any member, joined or invited |
 | `room/join` | public, delegated | `{thread_id}` → `{room}`; the caller accepts its invitation | a member invited |
 | `room/delete` | public, delegated | `{thread_id}` → `{ok}` | the creator; everything in the room goes |
 | `room/list` | public, delegated | `{}` → `{rooms, invitations}`, the rooms newest activity first, and each room the caller is invited to as `{thread_id, name, from}` | anyone joined |
@@ -3010,11 +3021,49 @@ handle is `chat` (`GET /v1/me/requesters`) and the grants they hold, from the
 request's one read of the viewer (`GET /v1/me`), which the page's balance shares.
 A chat is **joined** when it is this kernel's and approved, which joining
 approves, or a chat elsewhere approved and holding a grant of the viewer's;
-**asking** when it is elsewhere, has addressed the viewer, and is neither joined
-nor blocked; and absent when blocked. No list is kept by the UI. The requester
+**asking** when it is elsewhere, has addressed the viewer, and is neither joined,
+blocked nor ignored while pending; and absent when blocked. What the UI keeps
+beside the kernel's records is, per viewer, the requesters they ignored and the
+disconnects a kernel did not answer, by selector spelled by key, in state.json
+under the server's `viewers` (not an app's). The requester
 is the consent to be addressed, the grant the connection: approving a chat in the
 inbox lets its invitations reach the viewer and connects nothing, and a grant
-removed anywhere, as in Settings, leaves the chat asking again.
+removed elsewhere, as in Settings, leaves the chat asking again.
+
+**The viewer's own decision never waits for another kernel.** Ignore,
+Disconnect and Block are done when this kernel records them, whoever is
+offline, as Signal blocks and a mail client deletes offline. What this kernel
+cannot do alone is said as a fact, never as a failure: a kernel that did not
+answer (`peer_unreachable`, `timeout`) keeps its copy of the grant, which a run
+composed into that chat from a third kernel can still use (kernel D10: a
+disconnect by selector "is not resent: unreachable, the command says to run it
+again"). So the UI runs it again: a disconnect a kernel did not answer is kept
+and sent again, as an outbox does (RFC 7009 §2.2.1: a revocation not answered
+is assumed to stand, and may be retried). The inbox badge's refresh starts the
+sending off the request, at most once an hour per viewer, so a tick never
+waits on another kernel; each is sent only while still kept, and dropped once
+its kernel answers or has nothing left to delete. Measured on v0.20.1: a
+second disconnect with nothing left here is still forwarded, removes that
+kernel's copy (a run composed there is then refused `grant_required`), and
+answers at once; one with nothing left anywhere answers `not_found`. **Sending
+again never undoes a newer connection:** every connect (chat's Connect and
+its joining, Settings' Connect and its consent's callback) and every send take
+one lock per viewer, and a connect drops the kept disconnects that cover the
+selector connected or lie beneath it, so none is sent after it.
+
+**Nothing in the rail does lasting harm by a slip.** Its verbs are the
+fewest that serve (LinkedIn and Discord: a request is accepted or ignored;
+"connected apps": connect, disconnect): a chat asking is **Connect** or
+**Ignore**; a chat joined is **Disconnect**. Block, coarse (a whole kernel's
+chat, every room and member behind it) and hostile, is not beside them: it
+is where requesters are managed and unblocked, the inbox's requests and
+Settings' contacts (LinkedIn and Discord keep Block one level deeper). Only
+what cannot be undone is asked (Apple HIG, Gmail), in one question naming
+what it costs (§ docs/ui-grammar.md 5.8): "Delete far and its history for
+everyone?", "Leave far?", for its creator "Leave far and make another member
+its creator?", "Decline far, which only its creator can invite you to
+again?", "Block chat@David, declining its waiting tasks and refusing new
+ones?".
 
 * **Connect** (`POST /chat/chats/<chat>/connect`) is joining (rule 8). One that
   fails leaves a chat that was asking asking: its approval is revoked again.
@@ -3026,14 +3075,29 @@ removed anywhere, as in Settings, leaves the chat asking again.
   is never restored: such a run says "You disconnected this from chat@k in
   Settings.", and a chat disconnected or blocked is not joined, so no run
   reaches it.
-* **Disconnect** deletes the grant (`DELETE /v1/grants?selector=chat@k`) and
-  returns the requester to pending (`revoke`): the chat's rooms leave the rail,
-  nothing more is run there, and it asks again. A kernel that does not answer
-  keeps its copy of the grant while this one drops it at once (measured on
-  v0.19.0), so the page says "Disconnected chat@k here. Its kernel did not
-  answer; disconnect again once it does.", as Settings does.
-* **Block** deletes the grant and blocks the requester, which declines its
-  waiting tasks and refuses new ones; Settings' Contacts unblocks.
+* **Ignore** (`POST /chat/chats/<chat>/ignore`), asked nothing, since it
+  destroys nothing (LinkedIn's Ignore, Signal's message requests): the chat
+  leaves the rail for this viewer while it is pending, is left out of the
+  inbox's badge (Discord, LinkedIn, Signal: a count is what needs attention),
+  and is not told. An approved one is revoked first, so an ignored chat is
+  always pending and always among the inbox's requests. Any decision on it
+  there or in Settings' contacts (Approve, Remove, Block, Unblock) ends its
+  being ignored, in the handler that takes it, whatever a read saw between;
+  so Unblock returns a chat to the rail as asking. The kernel's `since` is a
+  requester's first address and moves on no decision (measured on v0.20.1).
+* **Disconnect** (`POST /chat/chats/<chat>/disconnect`), asked nothing, since
+  Connect restores the chat with every room: deletes the grant
+  (`DELETE /v1/grants?selector=chat@k`), returns the requester to pending
+  (`revoke`) and ignores it, so it does not ask again until approved. A kernel
+  that does not answer keeps its copy; the page says "Disconnected chat@k here.
+  Its kernel did not answer; it is told when it does.", as Settings does, and
+  the disconnect is sent again (above).
+* **Block** is no command of the rail; the inbox's requests and Settings'
+  contacts block (`POST /inbox/requesters/<address>/block`), which declines the
+  requester's waiting tasks and refuses new ones. The kernel records a block
+  though the requester's kernel does not answer, and then answers
+  `peer_unreachable` (measured on v0.20.1, 3 s): the block is done, and says
+  "Blocked."
 
 Each takes only a chat that has addressed the viewer, never this kernel's, and a
 failure is said on the page it was sent from, naming the chat ("chat@k is not
@@ -3243,21 +3307,25 @@ the assistant, else the newest room, else an empty page beside the rail.
   first, the room in view `aria-current`, a room with unread entries weighted;
   a read that finds it changed replaces it. Every row is its name and its
   menu. Above the rooms, weighted as new: a chat asking, `chat@alpha`, its menu
-  **Connect** and **Block alpha…**; an invitation, the room's name and its kernel
+  **Connect** and **Ignore**; an invitation, the room's name and its kernel
   when elsewhere, who invited in its title, its menu **Accept** and
   **Decline…**. Under the rooms, muted: a chat that could not be read, `#alert`
   and its address, its reason in its title, and for a chat elsewhere its menu
-  **Disconnect alpha…** and **Block alpha…**. Such a row is one button opening
-  its menu. A command that may wait on another kernel dims its row and takes no
+  **Disconnect alpha**. Such a row is one button opening
+  its menu; own chat that could not be read has nothing to do there, and is a
+  status row, not a button, gone once chat answers (Slack's "trouble
+  connecting"). A command that may wait on another kernel dims its row and takes no
   second click until it answers. Its first row,
   `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
   for the **participants first** — this installation's agents as boxes, then
   any addresses — and a name, optional: a blank one is the participants'
   handles. Refused, it stays open with the reason and what was chosen and typed. There is no rooms page. Each room carries its one menu: **Members…**,
-  **Rename…** and **Delete…** for its creator, **Members…** and **Leave…** for any
-  other member, the question
-  naming the room; a room elsewhere adds **Disconnect alpha…** and **Block alpha…**,
-  each asked as a question naming the kernel.
+  **Rename…**, **Leave…** and **Delete…** for its creator, **Leave…** only
+  while another member is joined; **Members…** and **Leave…** for any other
+  member; each question naming the room and what it costs. A room elsewhere
+  adds **Disconnect alpha**, asked nothing. A creator's Leave the chat refuses,
+  because the last other member left meanwhile, says "You are its only member.
+  Delete far instead." (at home; elsewhere only the status crosses).
 * **A room** is crumb (name, truncating on one line) → entries → whom it
   waits on → composer, the page the scroll container, opened at its newest entry
   unless a notice heads it, which is then read first, the composer held at
@@ -3897,7 +3965,7 @@ once its prerequisite is confirmed on the running kernel.
   folder with no connection and no `provider_key` (measured on v0.19.0), so
   Settings disconnects that folder by its selector. A disconnect that kernel
   cannot be asked to apply takes effect here at once and answers
-  `peer_unreachable`; the UI says so and asks to disconnect again.
+  `peer_unreachable`; the UI says so and sends it again (§6.7).
 * **Trace tree (Wallet receipt page).** No trace-read HTTP route is confirmed.
   Until one is, the Engine-room trace tree stays conditional; receipt
   verification is confirmed and mandatory.

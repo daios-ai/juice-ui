@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/daios-ai/juice-ui/client"
@@ -538,10 +539,12 @@ func (s *Server) getGrantStart(w http.ResponseWriter, r *http.Request) {
 	redirectURI := s.publicBaseURL(r) + "/grants/callback"
 	var authorizeURL, state string
 	var granted bool
-	err := s.sessions.Do(ctx, func(tok string) error {
-		u, st, g, e := s.client.StartGrant(ctx, tok, selector, provider, redirectURI)
-		authorizeURL, state, granted = u, st, g
-		return e
+	err := s.reconnect(r, selector, func() error {
+		return s.sessions.Do(ctx, func(tok string) error {
+			u, st, g, e := s.client.StartGrant(ctx, tok, selector, provider, redirectURI)
+			authorizeURL, state, granted = u, st, g
+			return e
+		})
 	})
 	if s.handleErr(w, r, err) {
 		return
@@ -572,10 +575,12 @@ func (s *Server) getGrantCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var pending bool
-	err := s.sessions.Do(ctx, func(tok string) error {
-		p, e := s.client.CompleteGrant(ctx, tok, action, state, code)
-		pending = p
-		return e
+	err := s.reconnect(r, action, func() error {
+		return s.sessions.Do(ctx, func(tok string) error {
+			p, e := s.client.CompleteGrant(ctx, tok, action, state, code)
+			pending = p
+			return e
+		})
 	})
 	if s.handleErr(w, r, err) {
 		return
@@ -603,9 +608,10 @@ func (s *Server) postGrantConnect(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, back, "error", "Paste an access token to connect.")
 		return
 	}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		e := s.client.ConnectGrant(ctx, tok, selector, provider, token)
-		return e
+	err := s.reconnect(r, selector, func() error {
+		return s.sessions.Do(ctx, func(tok string) error {
+			return s.client.ConnectGrant(ctx, tok, selector, provider, token)
+		})
 	})
 	if s.handleErr(w, r, err) {
 		return
@@ -629,19 +635,127 @@ func (s *Server) postGrantDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	selector, _ := grantTarget(r)
-	err := s.sessions.Do(ctx, func(tok string) error {
-		return s.client.DeleteGrant(ctx, tok, selector)
-	})
-	// A grant held on another kernel is removed here at once; that kernel, when
-	// it cannot be reached, still holds the account until asked again.
-	if ke, ok := client.AsKernelError(err); ok && ke.Kind == client.KindPeerUnreachable {
-		s.flashRedirect(w, r, "/settings", "info", "Disconnected "+selector+" here. Its kernel did not answer; disconnect again once it does.")
+	unanswered, err := s.disconnect(r, selector)
+	if unanswered {
+		s.flashRedirect(w, r, "/settings", "info", unheard(selector))
 		return
 	}
 	if s.handleErr(w, r, err) {
 		return
 	}
 	s.flashRedirect(w, r, "/settings", "success", "Disconnected "+selector+".")
+}
+
+// unheard is what a disconnect its kernel did not answer says: done here, and
+// sent again until that kernel hears it (Server.resend).
+func unheard(name string) string {
+	return "Disconnected " + name + " here. Its kernel did not answer; it is told when it does."
+}
+
+// disconnect deletes the viewer's grants under selector. A kernel that did not
+// answer keeps its copy, which a call served there can still use (kernel D10),
+// so the disconnect is recorded, by key, and sent again (resend). It takes the
+// viewer's one ordered path, as connecting does.
+func (s *Server) disconnect(r *http.Request, selector string) (unanswered bool, err error) {
+	ctx := r.Context()
+	me, err := s.me(r)
+	if err != nil {
+		return false, err
+	}
+	viewer, keyed := me.Address.Principal, keyedSelector(me, selector)
+	mu := s.viewers.lock(viewer)
+	mu.Lock()
+	defer mu.Unlock()
+	err = s.sessions.Do(ctx, func(tok string) error { return s.client.DeleteGrant(ctx, tok, selector) })
+	if ke, ok := client.AsKernelError(err); ok && ke.Unanswered() {
+		return true, s.viewers.update(viewer, func(v *viewerRecord) { v.Unsent[keyed] = true })
+	}
+	return false, err
+}
+
+// reconnect runs connect, which grants the viewer something under selector, on
+// the viewer's one ordered path, and drops every disconnect waiting to be sent
+// again that covers it or lies beneath it: none can then follow the new
+// connection, since sending again takes the same path (resend).
+func (s *Server) reconnect(r *http.Request, selector string, connect func() error) error {
+	ctx := r.Context()
+	me, err := s.me(r)
+	if err != nil {
+		return err
+	}
+	return s.reconnectAs(me.Address.Principal, selector, connect, func(sel string) string {
+		var u client.User
+		if s.sessions.Do(ctx, func(tok string) (e error) { u, e = s.client.Me(ctx, tok); return e }) != nil {
+			return sel
+		}
+		return keyedSelector(u, sel)
+	})
+}
+
+// reconnectAs is reconnect for one viewer, naming the selector by key with
+// name once the grant exists.
+func (s *Server) reconnectAs(viewer, selector string, connect func() error, name func(string) string) error {
+	mu := s.viewers.lock(viewer)
+	mu.Lock()
+	defer mu.Unlock()
+	if err := connect(); err != nil {
+		return err
+	}
+	keyed := name(selector)
+	return s.viewers.update(viewer, func(v *viewerRecord) {
+		for sel := range v.Unsent {
+			if overlaps(sel, keyed) || overlaps(sel, selector) {
+				delete(v.Unsent, sel)
+			}
+		}
+	})
+}
+
+// resend sends again, off any request, each disconnect of the viewer's a
+// kernel did not answer, each on the viewer's ordered path and only while still
+// recorded, and drops one its kernel answered or that has nothing left to
+// delete. A kernel still not answering keeps it for the next time.
+func (s *Server) resend(viewer, tok string) {
+	mu := s.viewers.lock(viewer)
+	for _, sel := range s.viewers.unsent(viewer) {
+		mu.Lock()
+		if slices.Contains(s.viewers.unsent(viewer), sel) {
+			ctx, cancel := context.WithTimeout(context.Background(), resendBound)
+			err := s.client.DeleteGrant(ctx, tok, sel)
+			cancel()
+			if ke, ok := client.AsKernelError(err); err == nil || ok && ke.Kind == client.KindNotFound {
+				_ = s.viewers.update(viewer, func(v *viewerRecord) { delete(v.Unsent, sel) })
+			}
+		}
+		mu.Unlock()
+	}
+}
+
+// resendBound bounds one disconnect sent again; resendEvery is how often a
+// viewer's are, at most.
+const (
+	resendBound = 10 * time.Second
+	resendEvery = time.Hour
+)
+
+// keyedSelector is selector with its kernel spelled by key, as the viewer's
+// grants name it (client.Party.Keyed): a petname changes, a key does not, so a
+// disconnect waiting to be sent again and a later connection compare alike.
+// A selector no grant names is returned as given.
+func keyedSelector(me client.User, selector string) string {
+	for _, cn := range me.Connectors {
+		parties := []client.Party{cn.Directory}
+		for _, g := range cn.Actions {
+			parties = append(parties, g.Action)
+		}
+		for _, p := range parties {
+			owner, keyed := refOwner(p.Address), refOwner(p.Keyed())
+			if owner != "" && (selector == owner || strings.HasPrefix(selector, owner+"/")) {
+				return keyed + selector[len(owner):]
+			}
+		}
+	}
+	return selector
 }
 
 // grantConnectView drives the consent-delta page: the plan for a selector, shown as
@@ -2352,7 +2466,9 @@ var requesterDone = map[string]string{"approve": "Approved.", "revoke": "Back in
 // postRequester approves, revokes or blocks a requester (kernel U52); the
 // kernel refuses a requester it does not list, and the outcome comes back as
 // the flash on the page the form came from — the inbox's requests or the
-// contacts in Settings (post/redirect/get).
+// contacts in Settings (post/redirect/get). A decision this kernel recorded
+// stands though the requester's kernel did not answer: a block there declines
+// its waiting tasks, which waits for it, and is still done here.
 func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 	verb := r.PathValue("verb")
 	if requesterDone[verb] == "" {
@@ -2364,10 +2480,37 @@ func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 		back = "/settings"
 	}
 	ctx := r.Context()
+	address := r.PathValue("address")
 	err := s.sessions.Do(ctx, func(tok string) error {
-		return s.client.DecideRequester(ctx, tok, r.PathValue("address"), verb)
+		return s.client.DecideRequester(ctx, tok, address, verb)
 	})
+	if ke, ok := client.AsKernelError(err); ok && ke.Unanswered() {
+		err = nil
+	}
+	if err == nil {
+		s.decided(r, address)
+	}
 	s.flashResult(w, r, err, back, requesterDone[verb])
+}
+
+// decided drops the requester at address from what the viewer ignored: any
+// decision on it, Unblock and Remove included, takes it out of being ignored,
+// whatever a read of the requesters happened to see between.
+func (s *Server) decided(r *http.Request, address string) {
+	ctx := r.Context()
+	me, err := s.me(r)
+	if err != nil {
+		return
+	}
+	var reqs []client.Requester
+	if s.sessions.Do(ctx, func(tok string) (e error) { reqs, e = s.client.ListRequesters(ctx, tok); return e }) != nil {
+		return
+	}
+	for _, q := range reqs {
+		if q.Requester.Address == address || q.Requester.Principal == address {
+			_ = s.viewers.update(me.Address.Principal, func(v *viewerRecord) { delete(v.Ignored, q.Requester.Principal) })
+		}
+	}
 }
 
 // postCancelTask cancels a waiting task. The kernel decides who may (the one

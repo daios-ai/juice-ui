@@ -47,6 +47,45 @@ func seated(s *Store, creator, name string, members []string) (Room, error) {
 	return s.withMembers(r.ID)
 }
 
+// The creator leaves: the joined member chat has held longest becomes the
+// creator, never an invited one. Alone, or with only invited members, Leave is
+// refused and the room and its history stand: only Delete deletes.
+func TestTheCreatorLeaves(t *testing.T) {
+	s := mustStore(t)
+	r, err := seated(s, "ann@k", "cafe", []string{"bob@k", "cy@k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddMember("ann@k", r.ID, "dee@k"); err != nil { // invited, not joined
+		t.Fatal(err)
+	}
+	if _, _, err := s.Post(r.ID, "ann@k", json.RawMessage(`"hello"`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Leave("ann@k", r.ID); err != nil {
+		t.Fatalf("the creator leaves: %v", err)
+	}
+	room, entries, err := s.Room("bob@k", r.ID)
+	if err != nil || room.Creator != "bob@k" || len(entries) != 1 || slices.Contains(room.Members, "ann@k") {
+		t.Fatalf("bob, held longest, is creator and the history stands: %+v %d %v", room, len(entries), err)
+	}
+	if err := s.Leave("cy@k", r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Leave("bob@k", r.ID); !errors.Is(err, ErrAlone) {
+		t.Errorf("the creator with only an invited member left = %v, want refused", err)
+	}
+	if room, entries, err := s.Room("bob@k", r.ID); err != nil || room.Creator != "bob@k" || len(entries) != 1 {
+		t.Errorf("a refused Leave changes nothing: %+v %d %v", room, len(entries), err)
+	}
+	if err := s.RemoveMember("bob@k", r.ID, "dee@k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Leave("bob@k", r.ID); !errors.Is(err, ErrAlone) {
+		t.Errorf("the creator alone = %v, want refused", err)
+	}
+}
+
 func TestRoomsAndMembership(t *testing.T) {
 	s := mustStore(t)
 	r, err := seated(s, "ann@k", "cafe", []string{"bob@k", "helper@k", ""})
@@ -64,9 +103,6 @@ func TestRoomsAndMembership(t *testing.T) {
 	}
 	if err := s.RemoveMember("ann@k", r.ID, "ann@k"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("creator removing itself = %v", err)
-	}
-	if err := s.Leave("ann@k", r.ID); !errors.Is(err, ErrForbidden) {
-		t.Errorf("creator leaving = %v", err)
 	}
 	if err := s.Leave("bob@k", r.ID); err != nil {
 		t.Fatal(err)

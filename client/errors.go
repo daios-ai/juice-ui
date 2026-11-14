@@ -61,6 +61,13 @@ type KernelError struct {
 // against the installed kernel.
 var upstreamStatus = regexp.MustCompile(`^upstream returned status (\d{3})$`)
 
+// Unanswered reports another kernel that did not answer: what this kernel
+// recorded stands, and only its part on that kernel is undone (a peer that
+// cannot be reached, or one that did not answer in time).
+func (e *KernelError) Unanswered() bool {
+	return e.Kind == KindPeerUnreachable || e.Kind == KindTimeout
+}
+
 // UpstreamDown reports an HTTP action whose endpoint could not be reached.
 func (e *KernelError) UpstreamDown() bool {
 	return e.Kind == KindExecutionFailed && e.KernelMessage == "upstream request failed"
