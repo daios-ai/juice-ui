@@ -584,6 +584,13 @@ input[type=search], textarea, select) {
 }
 :where(input[type=text], input[type=password], input[type=email], input[type=url], input[type=date], input[type=number],
 input[type=search], select) { height: var(--control-h); }
+/* A drop-down select draws the set's chevron, inset by the control's padding,
+   with its own room reserved; the native arrow ignores padding. */
+select:not([multiple], [size]) {
+  appearance: none; padding-inline-end: calc(var(--space-2) * 2 + var(--icon-md));
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgb(136, 145, 164)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-position: right var(--space-2) center; background-size: var(--icon-md); background-repeat: no-repeat;
+}
 /* A textarea sizes to its content (field-sizing), from a one-line floor the
    height of every control, and its height can be dragged. A read-only box of
    the view (§7) has the same geometry. */
@@ -680,6 +687,9 @@ pre.json { background: var(--bg); border: 1px solid var(--border); border-radius
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--border); font-size: var(--font-size-md); }
 th { color: var(--text-muted); font-weight: 600; }
+/* A row's actions: its last cell, ending at the table's right edge (§5.5). */
+td.row-actions { text-align: right; padding-inline-end: 0; }
+td.row-actions .cluster { justify-content: flex-end; }
 /* Collapsible card (details.card): the summary is a flex row — the label sits by
    the disclosure marker on the left, its action .cluster is pushed to the far right
    (clear of the marker). Shared by the peers roster and the user's connectors. */

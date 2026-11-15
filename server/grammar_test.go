@@ -147,6 +147,43 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
+// A table row's actions are its last cell, td.row-actions, which ends at the
+// table's right edge (§5.5): a cell holding a button is that cell, and that
+// cell holds the row's buttons.
+func TestRowActionsGrammar(t *testing.T) {
+	row := regexp.MustCompile(`(?s)<tr\b.*?</tr>`)
+	cell := regexp.MustCompile(`(?s)<td\b([^>]*)>(.*?)</td>`)
+	button := regexp.MustCompile(`<button\b|class="[^"]*\bbtn\b`)
+	marked := regexp.MustCompile(`class="[^"]*\brow-actions\b`)
+	sources := map[string]string{}
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range core {
+		sources[f] = string(mustRead(t, f))
+	}
+	app, _ := outsideTemplates()
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[f] = string(b)
+	}
+	for f, src := range sources {
+		for _, r := range row.FindAllString(src, -1) {
+			cells := cell.FindAllStringSubmatch(r, -1)
+			for i, c := range cells {
+				last, holds, isActions := i == len(cells)-1, button.MatchString(c[2]), marked.MatchString(c[1])
+				if holds && !isActions {
+					t.Errorf("%s: a cell holding a button is the row's td.row-actions (§5.5): %s", f, snippet(r, 0))
+				}
+				if isActions && !last {
+					t.Errorf("%s: td.row-actions is the row's last cell (§5.5): %s", f, snippet(r, 0))
+				}
+			}
+		}
+	}
+}
+
 // TestMoneyGrammar enforces the money rule (§7) over the core and app templates:
 // every amount renders through `money` or `moneyExact`, which scale the kernel's
 // base-unit integer by the world's own decimals and name it with the world's own

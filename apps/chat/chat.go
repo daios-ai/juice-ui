@@ -2147,7 +2147,7 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 		if service == c.self() || !strings.HasPrefix(service, chatHandle+"@") || i < 0 {
 			return noChat
 		}
-		// revoke returns the chat to pending, where the inbox's requests list
+		// revoke returns the chat to pending, where To do lists
 		// it; this kernel records it whoever is offline.
 		revoke := func() error {
 			err := c.deps.Client.DecideRequester(ctx, tok, service, "revoke")

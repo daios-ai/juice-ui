@@ -29,7 +29,7 @@ Three laws underpin everything:
 | Button | `.btn` (the one neutral) · `.btn-money` · `.btn-danger` · `.btn-icon` · `.btn-send` (the composer's alone) | actions |
 | **Tabs** | `.tabs` + `.tab` | **the** view switch — login sign in/create toggle *and* in-content list filters |
 | Menu | `.menu` + `.menu-item` (`[data-menu]` trigger) | dropdowns & popovers, incl. "+ new …" |
-| Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`) | containers & data |
+| Card / list / table | `.card` · `.card-list` · `.action-list` + `.action-row` · `table` (`.rowable`, `.stats-table`, `td.row-actions`) | containers & data |
 | **Media** | `.media` (16:9 slot) · `.media.tile` (square) · `_media` / `_tile` partials · `cardArt` fallback | the action image (§5.13) |
 | **Figures** | `.stat-row` + `.stat` (label · value) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal. One component on the wallet and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
@@ -309,7 +309,7 @@ hand-writes `class="tab{{if …`; a drift guard enforces it.
 |---|---|---|
 | **Entry toggle** | `paneltab` in `.auth-card .tabs` — Sign in / Create account (real `?tab=` links; JS swaps panels **and moves `aria-current`** so only one is lit) | requested tab |
 | **List filters** | `tab` in `.tabs.control-tabs` — action `all/active/inactive` (real query-string links, reload) | selected filter |
-| **Places** | `icontab` in `.tabs` — the inbox's To do · Sent · Done: a sprite icon (`ico-inline`, `aria-hidden`) before the word, never instead of it | the place shown |
+| **Places** | `icontab` in `.tabs` — the inbox's To do · Sent · Done · Requesters: a sprite icon (`ico-inline`, `aria-hidden`) before the word, never instead of it | the place shown |
 
 **Icons mark places, never filters.** A tab that takes you somewhere (the
 inbox's views) carries its icon; a tab that narrows a list (`all/active`,
@@ -496,6 +496,10 @@ separates it from the content above, and nothing else does (§4).
   selectable text and nested links).
 - **Money columns are right-aligned, header included** — a money `<th>` carries
   `class="money"` so the title sits over its right-aligned values.
+- **A row's actions are its last cell, `td.row-actions`**, right-aligned and
+  ending at the table's right edge, so they line up down the table and with
+  the buttons of the card or summary that holds it. A cell holding a button
+  is that cell.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
 - **Chat is the workspace.** `/chat` opens the viewer's room with the

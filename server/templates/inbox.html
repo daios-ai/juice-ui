@@ -6,35 +6,42 @@
 
 {{if $d.Error}}{{template "_error" $d.Error}}{{end}}
 
-{{/* Three views (requirements §6.3): what waits on you, what you asked of
-     others, and what you have handled. The task badge is the one count. */}}
+{{/* Four views (requirements §6.3): what waits on you, what you asked of
+     others, what you have handled, and the requesters you decided on. The
+     task badge is the one count. */}}
 <nav class="tabs" aria-label="Inbox">
   {{template "_tab" (icontab "To do" "/inbox" "inbox" (eq $d.Tab ""))}}
   {{template "_tab" (icontab "Sent" "/inbox?tab=sent" "arrow-up" (eq $d.Tab "sent"))}}
   {{template "_tab" (icontab "Done" "/inbox?tab=done" "check" (eq $d.Tab "done"))}}
+  {{template "_tab" (icontab "Requesters" "/inbox?tab=requesters" "user" (eq $d.Tab "requesters"))}}
 </nav>
 
-{{if eq $d.Tab ""}}
-{{/* Requests: who waits on your approval. The kernel shows nothing they wrote
-     until you approve them (kernel U52), so a request is its address. */}}
-{{if $d.Requests}}
-<h2>Requests</h2>
+{{/* Requesters (kernel U52), each status in one place: the pending on To do,
+     the approved and the blocked on their tab. The kernel shows nothing a
+     requester wrote, so a requester is its address. */}}
+{{$back := ""}}{{if eq $d.Tab "requesters"}}{{$back = "/inbox?tab=requesters"}}{{end}}
+{{range $d.Requesters}}
+<h2>{{.Title}}</h2>
 <div class="card-list">
-  {{range $d.Requests}}
+  {{range .Rows}}
   <div class="card row">
     <div class="stretch">
       {{template "_party" .Requester}}
       <div class="small muted">since {{shortDate .Since}}</div>
     </div>
     <div class="cluster">
-      <form method="post" action="/inbox/requesters/{{.Requester}}/approve">{{$.CSRFField}}<button class="btn" type="submit">Approve</button></form>
-      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}, declining its waiting tasks and refusing new ones?">{{$.CSRFField}}<button class="btn-danger" type="submit">Block</button></form>
+      {{$verb := "revoke"}}{{if eq .Status "pending"}}{{$verb = "approve"}}{{end}}
+      <form method="post" action="/inbox/requesters/{{.Requester}}/{{$verb}}">{{$.CSRFField}}{{with $back}}<input type="hidden" name="back" value="{{.}}">{{end}}<button class="btn" type="submit">{{if eq $verb "approve"}}Approve{{else}}Revoke{{end}}</button></form>
+      {{if ne .Status "blocked"}}
+      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}, declining its waiting tasks and refusing new ones?">{{$.CSRFField}}{{with $back}}<input type="hidden" name="back" value="{{.}}">{{end}}<button class="btn-danger" type="submit">Block</button></form>
+      {{end}}
     </div>
   </div>
   {{end}}
 </div>
 {{end}}
 
+{{if eq $d.Tab ""}}
 <h2>Waiting for you</h2>
 {{if $d.InboxGroups}}
 {{/* Each task is drawn as an action run (§6.3): what runs, who asked, the
@@ -54,6 +61,9 @@
 {{else}}
 <p class="muted">Nothing waiting for you.</p>
 {{end}}
+
+{{else if eq $d.Tab "requesters"}}
+{{if not $d.Requesters}}<p class="muted">No approved or blocked requesters.</p>{{end}}
 
 {{else if $d.Rows}}
 <div class="table-scroll">

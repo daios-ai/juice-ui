@@ -1656,7 +1656,7 @@ func TestARemovedChatRunsNothing(t *testing.T) {
 	far, _ := seated(away.Store, pr("bob@away"), "far", []string{pr("ann@testnet")})
 	room := far.ID + "@" + awayKey
 	st := open(t, c, sm, room)
-	delete(f.requesters, "chat@away") // ann removed the contact
+	delete(f.requesters, "chat@away") // ann's kernel no longer lists it
 	f.mu.Lock()
 	runs, decided := len(f.runs), len(f.decided)
 	f.mu.Unlock()
@@ -3348,7 +3348,7 @@ func TestTheViewerNamesMembersByItsKernel(t *testing.T) {
 // Nothing in the rail is stuck while another kernel is down, and nothing in it
 // does lasting harm by a slip. A chat asking is connected or ignored; Ignore
 // asks nothing, hides it while it is pending, and first returns an approved
-// one to pending, where the inbox's requests list it. Disconnect asks nothing,
+// one to pending, among the pending requesters on To do. Disconnect asks nothing,
 // is done whoever is offline, says when the chat's kernel did not answer, and
 // keeps that disconnect to send again; Block is in no menu of the rail, and is
 // no command here. Every connect takes the viewer's ordered path. Own chat that
@@ -3387,7 +3387,7 @@ func TestNothingInTheRailIsStuck(t *testing.T) {
 		t.Errorf("an ignored chat approved again shows again")
 	}
 	if rec := chatVerb(c, sm, farChat, "ignore"); rec.Code != 303 || f.requesters["chat@away"] != "pending" || asks(rail()) {
-		t.Errorf("ignoring an approved chat returns it to the inbox's requests and hides it: %v", f.requesters)
+		t.Errorf("ignoring an approved chat returns it to pending and hides it: %v", f.requesters)
 	}
 
 	f.awayDown = false

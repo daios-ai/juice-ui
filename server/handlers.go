@@ -60,7 +60,6 @@ func loginTab(r *http.Request) string {
 // userView is the account room: identity and connected accounts.
 type userView struct {
 	User     client.User
-	Contacts []client.Requester // the requesters the viewer approved or blocked; pending ones wait in the inbox
 	OpenForm string
 	Error    string
 }
@@ -278,10 +277,10 @@ type taskGroup struct {
 }
 
 type tasksView struct {
-	Tab         string             // "" (to do) | "sent" | "done"
-	Requests    []client.Requester // to do: who waits on the viewer's approval
-	InboxGroups []taskGroup        // to do: the waiting tasks that require the viewer, grouped by created_by
-	Rows        []taskRow          // sent or done
+	Tab         string           // "" (to do) | "sent" | "done" | "requesters"
+	Requesters  []requesterGroup // to do: the pending; requesters: the approved, then the blocked
+	InboxGroups []taskGroup      // to do: the waiting tasks that require the viewer, grouped by created_by
+	Rows        []taskRow        // sent or done
 	Pager       Pager
 	Me          string // the viewer's address
 	Error       string
@@ -1058,25 +1057,9 @@ func (s *Server) discover(r *http.Request, tok, q, order, quoteHash string) (dis
 // ---- user (account + wallet) ----
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	view := userView{OpenForm: openForm(r, "user")}
-	err := s.sessions.Do(ctx, func(tok string) error {
-		u, e := s.me(r)
-		if e != nil {
-			return e
-		}
-		view.User = u
-		rq, e := s.client.ListRequesters(ctx, tok)
-		if e != nil {
-			return e
-		}
-		view.Contacts = slices.DeleteFunc(rq, func(c client.Requester) bool { return c.Status == "pending" })
-		sort.SliceStable(view.Contacts, func(i, j int) bool {
-			return requesterRank[view.Contacts[i].Status] < requesterRank[view.Contacts[j].Status]
-		})
-		return nil
-	})
-	if s.handleErr(w, r, err) {
+	var err error
+	if view.User, err = s.me(r); s.handleErr(w, r, err) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "settings", "Settings", view)
@@ -1140,10 +1123,11 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	// Three views: what waits on the viewer (To do, the default), what the
-	// viewer asked of others (Sent), and what the viewer has handled (Done).
+	// Four views: what waits on the viewer (To do, the default), what the
+	// viewer asked of others (Sent), what the viewer has handled (Done), and
+	// the requesters the viewer decided on (Requesters).
 	view := tasksView{Tab: r.URL.Query().Get("tab")}
-	if view.Tab != "sent" && view.Tab != "done" {
+	if !slices.Contains([]string{"sent", "done", "requesters"}, view.Tab) {
 		view.Tab = ""
 	}
 	err := s.sessions.Do(ctx, func(tok string) error {
@@ -1152,8 +1136,12 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		view.Me = me.Address.Address
-		if view.Tab == "" {
+		switch view.Tab {
+		case "":
 			return s.todo(ctx, tok, r, view.Me, &view)
+		case "requesters":
+			view.Requesters, e = s.requesterGroups(ctx, tok, "approved", "blocked")
+			return e
 		}
 		// One kernel page, of which the tab keeps its own (a superuser is
 		// served every account's): Sent is what the viewer asked of others,
@@ -1187,6 +1175,37 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, http.StatusOK, "inbox", "Inbox", view)
 }
 
+// requesterGroup is the viewer's requesters of one status (kernel U52),
+// under its heading.
+type requesterGroup struct {
+	Title string
+	Rows  []client.Requester
+}
+
+var requesterTitle = map[string]string{"pending": "Pending requesters", "approved": "Approved", "blocked": "Blocked"}
+
+// requesterGroups reads the viewer's requesters and groups those of the given
+// statuses, in that order, leaving out a status nobody holds.
+func (s *Server) requesterGroups(ctx context.Context, tok string, statuses ...string) ([]requesterGroup, error) {
+	all, err := s.client.ListRequesters(ctx, tok)
+	if err != nil {
+		return nil, err
+	}
+	var groups []requesterGroup
+	for _, st := range statuses {
+		g := requesterGroup{Title: requesterTitle[st]}
+		for _, q := range all {
+			if q.Status == st {
+				g.Rows = append(g.Rows, q)
+			}
+		}
+		if g.Rows != nil {
+			groups = append(groups, g)
+		}
+	}
+	return groups, nil
+}
+
 // todo fills To do: the requesters waiting on the viewer's approval, and the
 // waiting tasks that require the viewer, as cards grouped by their creator.
 func (s *Server) todo(ctx context.Context, tok string, r *http.Request, me string, view *tasksView) error {
@@ -1194,14 +1213,8 @@ func (s *Server) todo(ctx context.Context, tok string, r *http.Request, me strin
 	if err != nil {
 		return err
 	}
-	requesters, err := s.client.ListRequesters(ctx, tok)
-	if err != nil {
+	if view.Requesters, err = s.requesterGroups(ctx, tok, "pending"); err != nil {
 		return err
-	}
-	for _, rq := range requesters {
-		if rq.Status == "pending" {
-			view.Requests = append(view.Requests, rq)
-		}
 	}
 	waiting := slices.DeleteFunc(tasks, func(t client.Task) bool { return !t.Waiting() || t.RequiredCaller.Address != me })
 	waiting, view.Pager = pageOf(r, waiting)
@@ -2456,17 +2469,13 @@ func (s *Server) postCompleteTask(w http.ResponseWriter, r *http.Request) {
 	s.flashRedirect(w, r, "/inbox", "success", "Task completed.")
 }
 
-// requesterRank orders the contacts: approved before blocked.
-var requesterRank = map[string]int{"pending": 0, "approved": 1, "blocked": 2}
-
-// requesterDone is each decision's flash. Revoke is Remove on an approved
-// contact and Unblock on a blocked one; both return the requester to pending.
-var requesterDone = map[string]string{"approve": "Approved.", "revoke": "Back in your requests.", "block": "Blocked."}
+// requesterDone is each decision's flash, in the kernel's verbs.
+var requesterDone = map[string]string{"approve": "Approved.", "revoke": "Revoked.", "block": "Blocked."}
 
 // postRequester approves, revokes or blocks a requester (kernel U52); the
 // kernel refuses a requester it does not list, and the outcome comes back as
-// the flash on the page the form came from — the inbox's requests or the
-// contacts in Settings (post/redirect/get). A decision this kernel recorded
+// the flash on the page the form came from — To do or the Requesters tab
+// (post/redirect/get). A decision this kernel recorded
 // stands though the requester's kernel did not answer: a block there declines
 // its waiting tasks, which waits for it, and is still done here.
 func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
@@ -2476,8 +2485,8 @@ func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	back := "/inbox"
-	if r.FormValue("back") == "/settings" {
-		back = "/settings"
+	if r.FormValue("back") == "/inbox?tab=requesters" {
+		back = "/inbox?tab=requesters"
 	}
 	ctx := r.Context()
 	address := r.PathValue("address")
@@ -2494,7 +2503,7 @@ func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 }
 
 // decided drops the requester at address from what the viewer ignored: any
-// decision on it, Unblock and Remove included, takes it out of being ignored,
+// decision on it, Revoke included, takes it out of being ignored,
 // whatever a read of the requesters happened to see between.
 func (s *Server) decided(r *http.Request, address string) {
 	ctx := r.Context()

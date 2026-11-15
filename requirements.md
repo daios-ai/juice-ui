@@ -1,7 +1,16 @@
 # Juice Web UI Requirements
 
-Version: 0.73.0
+Version: 0.73.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.73.1.** Who may send you tasks is decided in one
+> place, the inbox, in the kernel's words: pending requesters stand at the
+> top of To do, and a fourth tab, **Requesters**, holds the approved and the
+> blocked. Approve, Revoke and Block move a requester between them; Remove and
+> Unblock, which were both Revoke, are gone, and Settings no longer lists
+> contacts (§6.1, §6.3, §6.7). A drop-down draws its own chevron inside the
+> control's padding, and a table row's buttons end at the table's right edge
+> (docs/ui-grammar.md §5.5).
 
 > **What changed in 0.73.0.** Nothing in the rail is stuck while another kernel
 > is down, and nothing in it does lasting harm by a slip (§6.7). A chat asking
@@ -1322,8 +1331,8 @@ Discover and the composer's launcher; `inbox` is `task` — work addressed to th
 user, carrying the sole attention badge, which counts the waiting tasks
 addressed to the user and the requesters awaiting the user's decision (§6.3);
 `workshop` is the provider surface (`action` management + creation); `wallet` is money evidence (`user` balances + `process` lifetimes +
-the `tx` ledger + receipts); `settings` is account, preferences, connected
-accounts and contacts; `network` is federation (peers), and `admin` is operator
+the `tx` ledger + receipts); `settings` is account, preferences and connected
+accounts; `network` is federation (peers), and `admin` is operator
 supervision. Moving a page out of the sidebar grants and removes no authority —
 the underlying routes and superuser gating are unchanged. The kernel still
 creates and closes processes automatically; the UI MUST NOT ask the user to
@@ -2189,12 +2198,14 @@ open (parked tasks), the result MUST say so and link to the Wallet.
 
 ### 6.3 task — the inbox of work addressed to you
 
-* **Three tabs, each task on one.** The inbox answers three questions, as mail
-  and issue trackers do (Inbox · Sent · Done): **To do** (`/inbox`, the
-  default) holds the requests (below) and, as completable cards, the waiting
+* **Four tabs, each task and each requester on one.** The inbox answers three
+  questions about tasks, as mail and issue trackers do (Inbox · Sent · Done),
+  and one about who may send them: **To do** (`/inbox`, the
+  default) holds the pending requesters (below) and, as completable cards, the waiting
   tasks whose `required_caller` is the viewer; **Sent** (`?tab=sent`) the tasks
   the viewer owns and addressed to someone else, waiting or finished; **Done**
-  (`?tab=done`) the tasks addressed to the viewer that no longer wait. A task
+  (`?tab=done`) the tasks addressed to the viewer that no longer wait;
+  **Requesters** (`?tab=requesters`) the approved and the blocked. A task
   the viewer sends itself is a card while it waits and a Done row after, so no
   task shows twice. Sent and Done read one kernel page of `?all=1` (the kernel
   lists only open tasks otherwise) and keep their own rows of it. The tabs are
@@ -2225,29 +2236,31 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   the row names and nothing else, and a Sent or Done row names the same: what
   runs, `via` its creator.
 * **The tabs are places**, so each carries its icon before its word (the tray,
-  an arrow up, a check); the word stays, for a screen reader and a phone.
-* **Requests and contacts (kernel U52).** A task from a requester the user has
-  not approved is withheld: it is not listed, read by id it is not found, and
+  an arrow up, a check, a person); the word stays, for a screen reader and a
+  phone.
+* **Requesters (kernel U52).** A task from a requester the user has not
+  approved is withheld: it is not listed, read by id it is not found, and
   nothing the requester wrote is served (verified live). `GET
   /v1/me/requesters` is read whole and shown by status, each status in one
-  place, as messaging apps hold message requests above the conversations and
-  the blocked list in Settings:
-  * **pending** — under **Requests**, at the head of To do and only while one
-    waits: the address and the date since, `Approve` (`.btn`: it fills
-    nothing) and `Block`;
-  * **approved** and **blocked** — under **Contacts** in Settings, a table of
-    address, status and date since: an approved contact offers `Remove` and
-    `Block`, a blocked one `Unblock`. Remove and Unblock are the kernel's
-    `revoke`: back to pending, its tasks withheld again, and the requester
-    back under Requests.
+  place, all in the inbox, where the tasks they govern are (LinkedIn and
+  Discord hold requests and accepted ones on one page; HEY's Screener admits
+  senders above the inbox), under the kernel's noun, statuses and verbs:
+  * **pending** — under **Pending requesters**, at the head of To do and only
+    while one waits: `Approve` (`.btn`: it fills nothing) and `Block`;
+  * **approved** — under **Approved** on the Requesters tab: `Revoke` and
+    `Block`;
+  * **blocked** — under **Blocked** on the same tab, after Approved: `Revoke`.
 
-  Decisions post `POST /v1/me/requesters/{address}/{approve|revoke|block}`;
-  `Block` is destructive, behind the plain confirm "Block {address}?", since it
-  declines the requester's waiting tasks and refuses new ones. A decision
-  returns to the page it was made on (a form names `back=/settings`; anything
-  else is the inbox), with its flash. A requester has no content to show and
-  no page of its own, so its row is where its decisions stand. The status pill
-  is neutral: it is no money state.
+  Every row is one card: the address, the date since, the buttons. `Revoke`
+  returns a requester to pending, its tasks withheld again, and it to To do.
+  Decisions post `POST /v1/me/requesters/{address}/{approve|revoke|block}`,
+  flashing `Approved.`, `Revoked.` or `Blocked.`; `Block` is destructive,
+  behind the confirm "Block {address}, declining its waiting tasks and
+  refusing new ones?". A decision returns to the page it was made on (a form
+  on the tab names `back=/inbox?tab=requesters`; anything else is To do). A
+  requester has no content to show and no page of its own, so its row is
+  where its decisions stand. The tab with nobody on it says "No approved or
+  blocked requesters."
 * The completion form MUST be built from the task's own `allowed_input` (the
   kernel-derived completion schema on a waiting task), never by reading the
   target action: a task may be parked on a `private`/`local` action the
@@ -3056,8 +3069,8 @@ fewest that serve (LinkedIn and Discord: a request is accepted or ignored;
 "connected apps": connect, disconnect): a chat asking is **Connect** or
 **Ignore**; a chat joined is **Disconnect**. Block, coarse (a whole kernel's
 chat, every room and member behind it) and hostile, is not beside them: it
-is where requesters are managed and unblocked, the inbox's requests and
-Settings' contacts (LinkedIn and Discord keep Block one level deeper). Only
+is where requesters are decided, among the inbox's requesters (LinkedIn and
+Discord keep Block one level deeper). Only
 what cannot be undone is asked (Apple HIG, Gmail), in one question naming
 what it costs (§ docs/ui-grammar.md 5.8): "Delete far and its history for
 everyone?", "Leave far?", for its creator "Leave far and make another member
@@ -3080,11 +3093,12 @@ ones?".
   leaves the rail for this viewer while it is pending, is left out of the
   inbox's badge (Discord, LinkedIn, Signal: a count is what needs attention),
   and is not told. An approved one is revoked first, so an ignored chat is
-  always pending and always among the inbox's requests. Any decision on it
-  there or in Settings' contacts (Approve, Remove, Block, Unblock) ends its
-  being ignored, in the handler that takes it, whatever a read saw between;
-  so Unblock returns a chat to the rail as asking. The kernel's `since` is a
-  requester's first address and moves on no decision (measured on v0.20.1).
+  always pending and always among the pending requesters on To do. Any
+  decision on it in the inbox (Approve, Revoke, Block) ends its being
+  ignored, in the handler that takes it, whatever a read saw between; so
+  Revoke on a blocked chat returns it to the rail as asking. The kernel's
+  `since` is a requester's first address and moves on no decision (measured
+  on v0.20.1).
 * **Disconnect** (`POST /chat/chats/<chat>/disconnect`), asked nothing, since
   Connect restores the chat with every room: deletes the grant
   (`DELETE /v1/grants?selector=chat@k`), returns the requester to pending
@@ -3092,8 +3106,8 @@ ones?".
   that does not answer keeps its copy; the page says "Disconnected chat@k here.
   Its kernel did not answer; it is told when it does.", as Settings does, and
   the disconnect is sent again (above).
-* **Block** is no command of the rail; the inbox's requests and Settings'
-  contacts block (`POST /inbox/requesters/<address>/block`), which declines the
+* **Block** is no command of the rail; the inbox's requesters block
+  (`POST /inbox/requesters/<address>/block`), which declines the
   requester's waiting tasks and refuses new ones. The kernel records a block
   though the requester's kernel does not answer, and then answers
   `peer_unreachable` (measured on v0.20.1, 3 s): the block is done, and says

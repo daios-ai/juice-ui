@@ -1019,7 +1019,7 @@ func statStrip(price PriceView, s *client.Stats) StatStrip {
 func tab(label, href string, active bool) Tab { return Tab{Label: label, Href: href, Active: active} }
 
 // icontab builds a tab that is a place rather than a filter (the inbox's To do,
-// Sent and Done): the same tab, its icon before the word.
+// Sent, Done and Requesters): the same tab, its icon before the word.
 func icontab(label, href, icon string, active bool) Tab {
 	return Tab{Label: label, Href: href, Icon: icon, Active: active}
 }

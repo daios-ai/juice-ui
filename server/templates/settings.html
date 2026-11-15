@@ -68,7 +68,7 @@
         <td>{{template "_ref" (ref .Action "")}}</td>
         <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
         <td class="muted">{{shortTime .CreatedAt}}</td>
-        <td>
+        <td class="row-actions">
           <form method="post" action="/grants/disconnect" data-confirm="Disconnect {{.Action}}?">
             {{$.CSRFField}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn-danger" type="submit">Disconnect</button>
           </form>
@@ -98,35 +98,6 @@
   {{end}}{{end}}
 </div>
 {{else}}<p class="muted">No connected accounts yet.</p>{{end}}
-
-{{/* Contacts: the people whose tasks you approved or blocked (kernel U52).
-     Remove and Unblock return one to your requests in the inbox, where the
-     ones still waiting on you are. */}}
-<h2>Contacts</h2>
-{{if $d.Contacts}}
-<div class="table-scroll">
-<table>
-  <thead><tr><th>Address</th><th>Status</th><th>Since</th><th></th></tr></thead>
-  <tbody>
-  {{range $d.Contacts}}
-  <tr>
-    <td>{{template "_party" .Requester}}</td>
-    <td><span class="pill">{{.Status}}</span></td>
-    <td class="muted">{{shortDate .Since}}</td>
-    <td><div class="cluster">
-      {{if eq .Status "approved"}}
-      <form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn" type="submit">Remove</button></form>
-      <form method="post" action="/inbox/requesters/{{.Requester}}/block" data-confirm="Block {{.Requester.Shown}}, declining its waiting tasks and refusing new ones?">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn-danger" type="submit">Block</button></form>
-      {{else}}
-      <form method="post" action="/inbox/requesters/{{.Requester}}/revoke">{{$.CSRFField}}<input type="hidden" name="back" value="/settings"><button class="btn" type="submit">Unblock</button></form>
-      {{end}}
-    </div></td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
-{{else}}<p class="muted">No contacts yet.</p>{{end}}
 
 {{template "_form_user_update" .}}
 {{end}}

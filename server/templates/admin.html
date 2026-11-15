@@ -33,7 +33,7 @@
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
     <td>{{if .Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</td>
-    <td><div class="cluster">
+    <td class="row-actions"><div class="cluster">
       <a class="btn" href="/admin?form=admin-rename&address={{.Address}}">Rename</a>
       {{if .Suspended}}
       <form method="post" action="/admin/users/{{.Address}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>

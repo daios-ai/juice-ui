@@ -3006,12 +3006,12 @@ func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	}
 }
 
-// Who may send you tasks (kernel U52) stands in two places, each status once:
-// the pending ones as requests above your tasks, with Approve and Block; the
-// approved and blocked ones as contacts in Settings, with Remove and Block,
-// or Unblock. Block alone sits behind a confirm, an unknown verb is no
-// command, and a decision returns to the page it was made on.
-func TestRequestsAndContacts(t *testing.T) {
+// Who may send you tasks (kernel U52) stands in the inbox, each status once:
+// the pending requesters above your tasks on To do, with Approve and Block;
+// the approved and blocked ones on the Requesters tab, with Revoke and Block,
+// or Revoke. Block alone sits behind a confirm, an unknown verb is no command,
+// and a decision returns to the page it was made on.
+func TestRequesters(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
@@ -3027,39 +3027,56 @@ func TestRequestsAndContacts(t *testing.T) {
 		}
 		return got
 	}
+	row := func(page, addr string) string {
+		i := strings.Index(page, `<span class="mono">`+addr+`</span>`)
+		if i < 0 {
+			return ""
+		}
+		return page[i : i+strings.Index(page[i:], "\n  </div>")]
+	}
+	confirm := func(addr string) string {
+		return `data-confirm="Block ` + addr + `, declining its waiting tasks and refusing new ones?"`
+	}
 	inbox := getBody(t, cl, srv.URL+"/inbox")
-	if !strings.Contains(inbox, "<h2>Requests</h2>") || !strings.Contains(inbox, `<span class="mono">mallory@bravo</span>`) || !strings.Contains(inbox, "since 2026-08-06") {
-		t.Error("a pending requester is a request, named with its date")
+	if !strings.Contains(inbox, "<h2>Pending requesters</h2>") || !strings.Contains(inbox, "since 2026-08-06") {
+		t.Error("a pending requester is on To do, named with its date")
 	}
-	if got := verbs(inbox, "mallory@bravo"); !slices.Equal(got, []string{"approve", "block"}) {
-		t.Errorf("a request offers %v, want approve and block", got)
-	}
-	if !strings.Contains(inbox, `<button class="btn" type="submit">Approve</button>`) || !strings.Contains(inbox, `data-confirm="Block mallory@bravo, declining its waiting tasks and refusing new ones?"`) {
-		t.Error("Approve is neutral; Block asks for a confirm")
+	if r := row(inbox, "mallory@bravo"); !slices.Equal(verbs(r, "mallory@bravo"), []string{"approve", "block"}) || !strings.Contains(r, ">Approve</button>") || !strings.Contains(r, confirm("mallory@bravo")) {
+		t.Errorf("a pending requester offers Approve and Block, which asks: %s", r)
 	}
 	for _, addr := range []string{"alice@testnet", "eve@testnet"} {
 		if len(verbs(inbox, addr)) != 0 {
-			t.Errorf("%s is a contact, not a request", addr)
+			t.Errorf("%s is decided, not on To do", addr)
 		}
 	}
+	if strings.Contains(inbox, `name="back"`) {
+		t.Error("a decision on To do returns to To do")
+	}
 
-	settings := getBody(t, cl, srv.URL+"/settings")
-	a, e := strings.Index(settings, `<td><span class="mono">alice@testnet</span></td>`), strings.Index(settings, `<td><span class="mono">eve@testnet</span></td>`)
-	if !strings.Contains(settings, "<h2>Contacts</h2>") || a < 0 || e < a {
-		t.Errorf("contacts list approved before blocked: %d %d", a, e)
+	tab := getBody(t, cl, srv.URL+"/inbox?tab=requesters")
+	for _, want := range []string{`href="/inbox?tab=requesters" aria-current="page"`, `icons.svg#user`, "To do</a>", "Sent</a>", "Done</a>"} {
+		if !strings.Contains(tab, want) {
+			t.Errorf("the Requesters tab is the inbox's fourth, current: missing %q", want)
+		}
 	}
-	if len(verbs(settings, "mallory@bravo")) != 0 {
-		t.Error("a pending requester is not a contact")
+	a, b := strings.Index(tab, "<h2>Approved</h2>"), strings.Index(tab, "<h2>Blocked</h2>")
+	if a < 0 || b < a || strings.Index(tab, `<span class="mono">alice@testnet</span>`) < a || strings.Index(tab, `<span class="mono">eve@testnet</span>`) < b {
+		t.Errorf("approved before blocked, each under its status: %d %d", a, b)
 	}
-	row := func(i int) string { return settings[i : i+strings.Index(settings[i:], "</tr>")] }
-	if r := row(a); !slices.Equal(verbs(r, "alice@testnet"), []string{"revoke", "block"}) || !strings.Contains(r, ">Remove</button>") || !strings.Contains(r, `data-confirm="Block alice@testnet, declining its waiting tasks and refusing new ones?"`) {
-		t.Errorf("an approved contact offers Remove and Block: %s", r)
+	if len(verbs(tab, "mallory@bravo")) != 0 || strings.Contains(tab, "Pending requesters") || strings.Contains(tab, "Waiting for you") {
+		t.Error("the tab holds no pending requester and no task")
 	}
-	if r := row(e); !slices.Equal(verbs(r, "eve@testnet"), []string{"revoke"}) || !strings.Contains(r, ">Unblock</button>") || strings.Contains(r, "data-confirm") {
-		t.Errorf("a blocked contact offers Unblock alone: %s", r)
+	if r := row(tab, "alice@testnet"); !slices.Equal(verbs(r, "alice@testnet"), []string{"revoke", "block"}) || !strings.Contains(r, ">Revoke</button>") || !strings.Contains(r, confirm("alice@testnet")) {
+		t.Errorf("an approved requester offers Revoke and Block: %s", r)
 	}
-	if n := strings.Count(settings, `<input type="hidden" name="back" value="/settings">`); n != 3 {
-		t.Errorf("each contact's decision returns to Settings: %d forms say so", n)
+	if r := row(tab, "eve@testnet"); !slices.Equal(verbs(r, "eve@testnet"), []string{"revoke"}) || !strings.Contains(r, ">Revoke</button>") || strings.Contains(r, "data-confirm") {
+		t.Errorf("a blocked requester offers Revoke alone: %s", r)
+	}
+	if n := strings.Count(tab, `<input type="hidden" name="back" value="/inbox?tab=requesters">`); n != 3 {
+		t.Errorf("each decision on the tab returns to it: %d forms say so", n)
+	}
+	if settings := getBody(t, cl, srv.URL+"/settings"); strings.Contains(settings, "/inbox/requesters/") || strings.Contains(settings, "Contacts") {
+		t.Error("Settings holds no requesters")
 	}
 
 	resp := postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/approve", inbox, url.Values{})
@@ -3070,15 +3087,20 @@ func TestRequestsAndContacts(t *testing.T) {
 	if f := flashOf(t, cl, srv.URL); f != "success|Approved." {
 		t.Errorf("flash = %q", f)
 	}
-	resp = postTo(t, cl, srv.URL+"/inbox/requesters/eve@testnet/revoke", settings, url.Values{"back": {"/settings"}})
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/eve@testnet/revoke", tab, url.Values{"back": {"/inbox?tab=requesters"}})
 	resp.Body.Close()
-	if resp.Header.Get("Location") != "/settings" {
-		t.Errorf("unblock lands on %q, want Settings", resp.Header.Get("Location"))
+	if resp.Header.Get("Location") != "/inbox?tab=requesters" {
+		t.Errorf("revoke lands on %q, want the Requesters tab", resp.Header.Get("Location"))
 	}
-	resp = postTo(t, cl, srv.URL+"/inbox/requesters/eve@testnet/revoke", settings, url.Values{"back": {"https://evil.example"}})
-	resp.Body.Close()
-	if resp.Header.Get("Location") != "/inbox" {
-		t.Errorf("an unknown back lands on %q, want the inbox", resp.Header.Get("Location"))
+	if f := flashOf(t, cl, srv.URL); f != "success|Revoked." {
+		t.Errorf("flash = %q", f)
+	}
+	for _, back := range []string{"https://evil.example", "/settings"} {
+		resp = postTo(t, cl, srv.URL+"/inbox/requesters/eve@testnet/revoke", tab, url.Values{"back": {back}})
+		resp.Body.Close()
+		if resp.Header.Get("Location") != "/inbox" {
+			t.Errorf("back %q lands on %q, want the inbox", back, resp.Header.Get("Location"))
+		}
 	}
 	resp = postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/delete", inbox, url.Values{})
 	resp.Body.Close()
@@ -3091,8 +3113,19 @@ func TestRequestsAndContacts(t *testing.T) {
 	if f := flashOf(t, cl, srv.URL); f != "success|Blocked." {
 		t.Errorf("a block its kernel did not answer is done: flash = %q", f)
 	}
-	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve,eve@testnet revoke,eve@testnet revoke,mallory@bravo block" {
+	if got := strings.Join(taskDecisions, ","); got != "mallory@bravo approve,eve@testnet revoke,eve@testnet revoke,eve@testnet revoke,mallory@bravo block" {
 		t.Errorf("decisions = %q", got)
+	}
+}
+
+// A Requesters tab with nobody approved or blocked says so.
+func TestRequestersTabEmpty(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	if got := getBody(t, loginClient(t, srv.URL), srv.URL+"/inbox?tab=requesters"); !strings.Contains(got, "No approved or blocked requesters.") {
+		t.Error("an empty Requesters tab says so")
 	}
 }
 
@@ -4959,8 +4992,8 @@ func TestRankCardsFollowTheOneSortRule(t *testing.T) {
 }
 
 // An ignored requester is left out of the badge, still listed among the
-// requests; any decision on it in the inbox or Settings ends its being
-// ignored, Block then Unblock included, with no read of it between.
+// pending requesters; any decision on it ends its being ignored, Block then
+// Revoke included, with no read of it between.
 func TestIgnoredRequesters(t *testing.T) {
 	kernel := taskKernel()
 	defer kernel.Close()
@@ -4974,13 +5007,13 @@ func TestIgnoredRequesters(t *testing.T) {
 	}
 	inbox := getBody(t, cl, srv.URL+"/inbox")
 	if !strings.Contains(inbox, "mallory@bravo") {
-		t.Error("an ignored requester is still among the requests")
+		t.Error("an ignored requester is still among the pending requesters")
 	}
 	for _, verb := range []string{"block", "revoke"} {
 		resp := postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/"+verb, inbox, url.Values{})
 		resp.Body.Close()
 	}
 	if kept, _ := os.ReadFile(state); strings.Contains(string(kept), "mallory") {
-		t.Errorf("Block then Unblock ends its being ignored: %s", kept)
+		t.Errorf("Block then Revoke ends its being ignored: %s", kept)
 	}
 }
