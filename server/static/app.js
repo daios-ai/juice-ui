@@ -111,6 +111,63 @@ document.addEventListener('mousedown', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
 
+// hold marks region busy (aria-busy) while a command runs and makes inert every
+// control in it beside the way down to keep, which stays as it is; it returns
+// the release, which undoes exactly that, wherever the page has moved keep.
+function hold(region, keep) {
+  const held = [];
+  for (let el = keep; el !== region && el.parentElement; el = el.parentElement) {
+    for (const sib of el.parentElement.children) if (sib !== el && !sib.inert) { sib.inert = true; held.push(sib); }
+  }
+  region.setAttribute('aria-busy', 'true');
+  return () => { for (const el of held) el.inert = false; region.removeAttribute('aria-busy'); };
+}
+
+// A command in flight (grammar §5.1): from its sending until the page answers,
+// the button that sent it — or, sent from a menu, the menu's trigger, since the
+// menu has closed — is busy (aria-busy, a spinner in app.css), and its group —
+// the commands beside it (.cluster) or its menu, else its form alone — is held:
+// no command of the group is sent, by mouse or by key, so Ignore cannot run
+// while Approve does. A question (data-confirm) has stopped the first submit,
+// so busy starts once it is answered. A form showing its own progress
+// (hx-indicator, Run's bar) keeps it and only the hold applies. The button is
+// never disabled: a submitter disabled during submit drops its name and value
+// from the form's data.
+(function() {
+  let held = new Map(); // a group in flight → { form, release }
+  const groupOf = (form) => form.closest('.cluster, .menu') || form;
+  function start(form, submitter) {
+    const group = groupOf(form);
+    const menu = form.closest('.menu');
+    const el = form.hasAttribute('hx-indicator') ? null
+      : (menu && document.querySelector(`[data-menu="${menu.id}"]`)) || submitter || form.querySelector('[type="submit"]');
+    const release = hold(group, form);
+    el?.setAttribute('aria-busy', 'true');
+    held.set(group, { form, release: () => { release(); el?.removeAttribute('aria-busy'); } });
+  }
+  function end(form) { // by the form, which an answer may have taken out of its group
+    for (const [group, h] of held) if (h.form === form) { h.release(); held.delete(group); }
+  }
+  document.addEventListener('submit', (e) => { // before the question's handler, so a held group asks nothing
+    if (held.has(groupOf(e.target))) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  document.addEventListener('submit', (e) => {
+    if (!e.defaultPrevented) start(e.target, e.submitter); // a plain post: busy until the next page
+  });
+  document.body.addEventListener('htmx:beforeRequest', (e) => {
+    const form = e.detail.elt;
+    if (form?.tagName === 'FORM' && e.detail.requestConfig?.triggeringEvent?.type === 'submit') start(form, e.detail.requestConfig.triggeringEvent.submitter);
+  });
+  document.body.addEventListener('htmx:afterRequest', (e) => {
+    if (e.detail.elt?.tagName === 'FORM' && !e.detail.xhr?.getResponseHeader('HX-Redirect')) end(e.detail.elt); // a redirect stays busy until it lands
+  });
+  window.addEventListener('pageshow', (e) => { // back to a page kept in the cache
+    if (!e.persisted) return;
+    for (const h of held.values()) h.release();
+    held = new Map();
+  });
+})();
+
 // Confirmation modal — a form with data-confirm="message", or the submit
 // button carrying it, shows a styled dialog; the form is then submitted by the
 // same button, so its name and value go with it. A button carries the confirm
@@ -798,15 +855,11 @@ document.addEventListener('click', async (e) => {
   const fields = form.querySelector('[data-fields]');
   const editor = form.querySelector('[data-raw] textarea');
   const say = (text) => { error.textContent = text; error.hidden = !text; };
-  const busy = (on) => {
-    form.setAttribute('aria-busy', on);
-    bar.classList.toggle('htmx-request', on); // in flight (app.css .progress)
-    for (const el of form.querySelectorAll(':scope > :not(.form-tools), .form-tools > button')) el.inert = on;
-  };
   const body = new URLSearchParams(new FormData(form));
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
   say('');
-  busy(true);
+  const release = hold(form, bar);
+  bar.classList.add('htmx-request'); // in flight (app.css .progress)
   try {
     const res = await fetch(btn.dataset.fill, { method: 'POST', body, credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf } });
     const text = await res.text();
@@ -819,6 +872,7 @@ document.addEventListener('click', async (e) => {
   } catch {
     say('The server did not answer.');
   } finally {
-    busy(false);
+    release();
+    bar.classList.remove('htmx-request');
   }
 });

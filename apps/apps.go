@@ -112,6 +112,10 @@ type Conversations interface {
 	Rail(r *http.Request) (template.HTML, error)
 	// Landing is where a signed-in session begins.
 	Landing() string
+	// Approve approves the requester at address when it is one of the app's,
+	// as the app's own approval does; handled is false for any other. A
+	// failure's Error is the sentence the page shows.
+	Approve(r *http.Request, address string) (handled bool, err error)
 	// Context is a room's recent conversation as a model reads it, newest
 	// last; refused for a viewer who is not a member.
 	Context(r *http.Request, room string) ([]client.Message, error)

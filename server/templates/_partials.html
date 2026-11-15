@@ -396,7 +396,7 @@
 {{define "_call_form"}}
 <form class="card stack" method="post" action="{{.PostURL}}" data-json data-to-json="/form/json" data-to-form="{{.FormURL}}" {{if .OneShot}}data-oneshot="true"{{end}}
       hx-post="{{.PostURL}}" hx-target="#{{.ResultID}}" hx-swap="innerHTML"
-      hx-indicator="#{{.ResultID}}-progress" hx-disabled-elt="find button[type='submit']">
+      hx-indicator="#{{.ResultID}}-progress">
   {{.CSRFField}}
   {{/* The quote this form was RENDERED with. The handler reads it back from the
        request, never from a fresh read of the action — a pin taken from the

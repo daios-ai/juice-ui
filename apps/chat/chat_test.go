@@ -730,10 +730,10 @@ func seated(s *svc.Store, creator, name string, members []string) (svc.Room, err
 	return r, nil
 }
 
-// connect is ann's Connect on a chat elsewhere, from the rail.
+// connect is ann's Approve on a chat elsewhere, from the rail, which connects it.
 func connect(t *testing.T, c *Chat, sm *scs.SessionManager, service string) *httptest.ResponseRecorder {
 	t.Helper()
-	return chatVerb(c, sm, service, "connect")
+	return chatVerb(c, sm, service, "approve")
 }
 
 func chatVerb(c *Chat, sm *scs.SessionManager, service, verb string) *httptest.ResponseRecorder {
@@ -1213,13 +1213,13 @@ func TestSetupBringsTheServerUp(t *testing.T) {
 	}
 }
 
-// The landing is the viewer's conversation with the assistant, made once by
-// the direct action. The viewer is joined with its session and the assistant
-// with its own, each through the kernel alone: approving chat, running register,
-// completing the verification task, connecting the key at chat's root. A joined
-// principal is not joined again. Without the assistant's home the landing is the
-// rooms.
-func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
+// The landing opens the viewer's newest room. A viewer with no room gets one
+// with the assistant, named New room, made once by the direct action. The
+// viewer is joined with its session and the assistant with its own, each
+// through the kernel alone: approving chat, running register, completing the
+// verification task, connecting the key at chat's root. A joined principal is
+// not joined again. Without the assistant's home the landing is the rooms.
+func TestLanding(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
@@ -1251,31 +1251,104 @@ func TestLandingJoinsAndOpensTheAssistant(t *testing.T) {
 	if len(f.decided) != 2 || f.decided[1] != "chat@testnet approve" || len(f.completes) != 0 {
 		t.Errorf("join = decided %v completes %v", f.decided, f.completes)
 	}
-	if got := f.ran(roomCreateName); len(got) != 1 || !strings.Contains(got[0], `"members":["assistant@testnet"]`) || !strings.Contains(got[0], `"name":"assistant"`) {
-		t.Errorf("the first visit starts the room: %v", got)
+	if got := f.ran(roomCreateName); len(got) != 1 || got[0] != `{"members":["assistant@testnet"],"name":"New room"}` {
+		t.Errorf("the first visit makes the room: %v", got)
 	}
 	rooms, _ := f.svc.Store.Rooms(pr("ann@testnet"))
-	if len(rooms) != 1 || rooms[0].Name != "assistant" || names(rooms[0].Members) != "ann@testnet,assistant@testnet" || to != "/chat/room/"+addr(rooms[0].ID) {
+	if len(rooms) != 1 || rooms[0].Name != "New room" || names(rooms[0].Members) != "ann@testnet,assistant@testnet" || len(rooms[0].Invited) != 0 || to != "/chat/room/"+addr(rooms[0].ID) {
 		t.Fatalf("rooms = %+v", rooms)
 	}
 	agentReads := f.tasksReadBy("AT")
 	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 || len(f.ran(roomCreateName)) != 1 {
-		t.Errorf("a second landing joins nobody and opens the same room: %s %v %v", rec.Header().Get("Location"), f.grants, f.ran(roomCreateName))
+		t.Errorf("a second landing joins nobody, makes nothing and opens the same room: %s %v %v", rec.Header().Get("Location"), f.grants, f.ran(roomCreateName))
 	}
 	if n := f.tasksReadBy("AT") - agentReads; n != 0 {
 		t.Errorf("a landing with the assistant joined reads none of its tasks: %d", n)
 	}
-	// A room with a third member is not the conversation with the assistant.
-	if _, err := seated(f.svc.Store, pr("ann@testnet"), "three", []string{pr("assistant@testnet"), pr("bob@testnet")}); err != nil {
+	// The newest room opens, whoever is in it.
+	three, err := seated(f.svc.Store, pr("ann@testnet"), "three", []string{pr("assistant@testnet"), pr("bob@testnet")})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := land(); rec.Header().Get("Location") != to {
+	to = "/chat/room/" + addr(three.ID)
+	if rec := land(); rec.Header().Get("Location") != to || len(f.ran(roomCreateName)) != 1 {
 		t.Errorf("the landing opened %s, not %s", rec.Header().Get("Location"), to)
 	}
-	// A join that cannot be made is said on the room the landing opens.
+	// A landing touches no agent that no room waits for: one that could not
+	// be joined is not said on the room it opens.
 	f.expired["AT"], f.expired["R-AT"] = true, true
-	if rec := land(); rec.Header().Get("X-Flash-To") != to || !strings.Contains(rec.Header().Get("X-Flash"), "assistant@testnet is not connected to chat") {
-		t.Errorf("refused join: %s %s", rec.Header().Get("X-Flash-To"), rec.Header().Get("X-Flash"))
+	if rec := land(); rec.Header().Get("Location") != to || rec.Header().Get("X-Flash") != "" {
+		t.Errorf("an agent no room waits for: %s %q", rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
+	}
+}
+
+// A local agent still invited to a room here, its seat having failed, is
+// seated at the next landing, which makes nothing; one that still cannot be
+// is said on the room the landing opens.
+func TestLandingSeatsWhatIsStillInvited(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	agentHome(t, c, "assistant@testnet", "AT")
+	f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
+	land := func() *httptest.ResponseRecorder {
+		return as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
+	}
+	land()
+	late, err := f.svc.Store.CreateRoom(pr("ann@testnet"), "late", []string{pr("assistant@testnet")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invited := func() string {
+		rooms, _ := f.svc.Store.Rooms(pr("ann@testnet"))
+		for _, r := range rooms {
+			if r.ID == late.ID {
+				return names(r.Invited)
+			}
+		}
+		return "gone"
+	}
+	if invited() != "assistant@testnet" {
+		t.Fatalf("the assistant is invited: %s", invited())
+	}
+	rec := land()
+	if invited() != "" || rec.Header().Get("X-Flash") != "" || len(f.ran(roomCreateName)) != 1 || rec.Header().Get("Location") != "/chat/room/"+addr(late.ID) {
+		t.Errorf("the landing seats the assistant and makes nothing: %q %s %v %s", invited(), rec.Header().Get("X-Flash"), f.ran(roomCreateName), rec.Header().Get("Location"))
+	}
+	again, err := f.svc.Store.CreateRoom(pr("ann@testnet"), "again", []string{pr("assistant@testnet")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.expired["AT"], f.expired["R-AT"] = true, true
+	if rec := land(); rec.Header().Get("X-Flash-To") != "/chat/room/"+addr(again.ID) || !strings.Contains(rec.Header().Get("X-Flash"), "assistant@testnet is not connected to chat") {
+		t.Errorf("a seat that fails is said on the room opened: %s %s", rec.Header().Get("X-Flash-To"), rec.Header().Get("X-Flash"))
+	}
+}
+
+// Rooms a chat elsewhere holds are unknown while it does not answer, so a
+// viewer with no room listed gets none made then; once it answers with none,
+// the room is made.
+func TestLandingMakesNoRoomWhileAChatIsDown(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	agentHome(t, c, "assistant@testnet", "AT")
+	f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
+	withAway(t, f)
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, farChat)
+	land := func() *httptest.ResponseRecorder {
+		return as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
+	}
+	var shown any
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) { shown = data }
+	f.awayDown = true
+	if rec := land(); rec.Code != 200 || len(f.ran(roomCreateName)) != 0 || shown != (landingView{Unread: true}) {
+		t.Fatalf("a chat down: nothing is made, and no room is said to be none: %d %v %+v", rec.Code, f.ran(roomCreateName), shown)
+	}
+	f.awayDown = false
+	if rec := land(); rec.Code != 303 || len(f.ran(roomCreateName)) != 1 {
+		t.Errorf("every chat answering with no room: the room is made: %d %v", rec.Code, f.ran(roomCreateName))
 	}
 }
 
@@ -1842,8 +1915,8 @@ func TestRoomRoutes(t *testing.T) {
 	}
 	nobody := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name=cafe"))
 	nobody.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if bad := as(c, sm, c.postCreateRoom, nobody); !strings.Contains(bad.Header().Get("X-Flash"), "Choose who") {
-		t.Errorf("a conversation with nobody: %s", bad.Header().Get("X-Flash"))
+	if bad := as(c, sm, c.postCreateRoom, nobody); !strings.Contains(bad.Header().Get("X-Flash"), "Choose the room's members.") {
+		t.Errorf("a room with nobody: %s", bad.Header().Get("X-Flash"))
 	}
 	// The participants come first; a name left blank is theirs.
 	unnamed := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("name=&agent=helper%40testnet&members=bob%40testnet"))
@@ -1904,7 +1977,7 @@ func TestRail(t *testing.T) {
 	got := string(h)
 	for _, want := range []string{`<a href="/chat/room/` + addr(cafe.ID) + `" aria-current="page">cafe</a>`, `<a href="/chat/room/` + addr(old.ID) + `" class="unread">old</a>`,
 		`id="form-new" class="modal-form" open`,
-		`data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>`} {
+		`data-modal="form-new" aria-label="New room"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New room</span></a>`, `<h2>Rooms</h2>`, `placeholder="The members' names"`, `<button class="btn-primary" type="submit">Create</button>`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rail lacks %q: %s", want, got)
 		}
@@ -2587,7 +2660,7 @@ func TestNewRoomInPlace(t *testing.T) {
 	}
 	rec := post("name=tea")
 	got := rec.Body.String()
-	for _, want := range []string{`<dialog id="form-new" class="modal-form" open aria-label="New conversation" hx-swap-oob="true">`, "Choose who the conversation is with.", `name="name" value="tea"`, `value="helper@testnet">`} {
+	for _, want := range []string{`<dialog id="form-new" class="modal-form" open aria-label="New room" hx-swap-oob="true">`, "Choose the room&#39;s members.", `name="name" value="tea"`, `value="helper@testnet">`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("nobody chosen: lacks %s: %s", want, got)
 		}
@@ -2732,11 +2805,13 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
-	if !strings.Contains(got, `<div class="rail-row">
-  <button class="rail-item unread" data-menu="menu-ask-chat@`+awayKey+`"`) || !strings.Contains(got, `<span>chat@away<span class="sr-only">: chat@`+awayKey+`</span></span>`) ||
-		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/connect"`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
-		strings.Contains(got, "rail-card") || strings.Contains(got, ">far ") || len(f.ranAt("chat@away", roomListName)) != 0 {
-		t.Fatalf("a chat asking is a row whose menu connects or blocks it, and runs nothing: %s", got)
+	if !strings.Contains(got, `<h2>Requests</h2><div class="rail-request">
+  <header><span title="chat@`+awayKey+`">chat@away</span></header>
+  <p class="muted">Connection request</p>`) || strings.Contains(got, `data-menu="menu-ask-`) || strings.Contains(got, "rail-item unread") ||
+		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || !strings.Contains(got, `<button class="btn" type="submit">Approve</button>`) ||
+		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || !strings.Contains(got, `<button class="btn" type="submit">Ignore</button>`) || strings.Contains(got, "Block") ||
+		strings.Index(got, "<h2>Requests</h2>") > strings.Index(got, "<h2>Rooms</h2>") || strings.Contains(got, ">far ") || len(f.ranAt("chat@away", roomListName)) != 0 {
+		t.Fatalf("a chat asking is a request saying so, with Approve and Ignore in view, and runs nothing: %s", got)
 	}
 
 	if rec := connect(t, c, sm, farChat); rec.Code != 303 {
@@ -2756,7 +2831,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	got = string(h)
 	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@`+awayKey+`" class="unread">far <span class="muted">· away</span></a>`) ||
 		!strings.Contains(got, `href="/chat/room/`+cafe.ID+`@`+testKey+`"`) || !strings.Contains(got, `>cafe</a>`) || strings.Index(got, ">far ") > strings.Index(got, ">cafe<") ||
-		strings.Contains(got, "/connect") || !strings.Contains(got, `>Disconnect away</button>`) {
+		strings.Contains(got, "/approve") || strings.Contains(got, "<h2>Requests</h2>") || !strings.Contains(got, `>Disconnect away</button>`) {
 		t.Fatalf("both chats' rooms, newest first, the one elsewhere disconnected from its menu: %s %v", got, err)
 	}
 
@@ -2771,8 +2846,9 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
 	got = string(h)
 	if !strings.Contains(got, `>cafe</a>`) || strings.Contains(got, ">far ") ||
-		!strings.Contains(got, `<button class="rail-item rail-down" data-menu="menu-down-chat@`+awayKey+`" aria-haspopup="menu" aria-expanded="false" title="chat@away refused or failed; a chat on another kernel gives no reason.">`) ||
-		!strings.Contains(got, `#alert"/></svg> chat@away`) || strings.Index(got, "rail-down") < strings.Index(got, ">cafe<") ||
+		!strings.Contains(got, `<span class="rail-item" role="status" title="chat@away refused or failed; a chat on another kernel gives no reason.">`) ||
+		!strings.Contains(got, `<button class="btn-icon inline" data-menu="menu-down-chat@`+awayKey+`" aria-haspopup="menu" aria-expanded="false" aria-label="Manage">`) ||
+		!strings.Contains(got, `#alert"/></svg> chat@away`) || strings.Index(got, "menu-down-") < strings.Index(got, ">cafe<") ||
 		!strings.Contains(got, `>Disconnect away</button>`) || strings.Contains(got, "Block") || st.Fails != 1 {
 		t.Fatalf("a chat down is a row under the rooms, its reason its title, with its menu, and retried; the others stay: %s %+v", got, st)
 	}
@@ -2787,7 +2863,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	}
 	lists := len(f.ranAt("chat@away", roomListName))
 	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
-	if got = string(h); strings.Contains(got, ">far ") || strings.Contains(got, `/chat/chats/chat@`+awayKey+`/connect`) || len(f.ranAt("chat@away", roomListName)) != lists {
+	if got = string(h); strings.Contains(got, ">far ") || strings.Contains(got, `/chat/chats/chat@`+awayKey+`/approve`) || len(f.ranAt("chat@away", roomListName)) != lists {
 		t.Errorf("a chat disconnected leaves the rail and runs nothing: %s", got)
 	}
 	if reg := f.ranAt("chat@away", joinName); len(reg) != 1 {
@@ -2806,7 +2882,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	for range 3 {
 		h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
 	}
-	if got = string(h); strings.Contains(got, ">far ") || !strings.Contains(got, `/chat/chats/chat@`+awayKey+`/connect`) || len(f.regrants) != 1 {
+	if got = string(h); strings.Contains(got, ">far ") || !strings.Contains(got, `/chat/chats/chat@`+awayKey+`/approve`) || len(f.regrants) != 1 {
 		t.Errorf("a grant removed in Settings leaves the chat asking, and nothing joins it: %s %v", got, f.regrants)
 	}
 	// Part of its grants removed, as Settings does folder by folder: a run of an
@@ -3025,9 +3101,10 @@ func TestInvitations(t *testing.T) {
 
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
-	if !strings.Contains(got, `<button class="rail-item unread" data-menu="menu-invite-`+addr(tea)+`" aria-haspopup="menu" aria-expanded="false" title="bob@testnet">`) ||
-		!strings.Contains(got, `action="/chat/invites/`+addr(tea)+`/accept"`) || !strings.Contains(got, `data-confirm="Decline tea, which only its creator can invite you to again?"`) || strings.Contains(got, "rail-card") {
-		t.Fatalf("an invitation is a row whose menu accepts or declines it: %s", got)
+	if !strings.Contains(got, `<p class="muted">Invitation from <span class="mono">bob@testnet</span></p>`) || strings.Contains(got, `data-menu="menu-invite-`) ||
+		!strings.Contains(got, `action="/chat/invites/`+addr(tea)+`/accept"`) || !strings.Contains(got, `<button class="btn" type="submit">Accept</button>`) ||
+		!strings.Contains(got, `data-confirm="Decline tea, which only its creator can invite you to again?"`) || !strings.Contains(got, `<button class="btn-danger" type="submit">Decline</button>`) {
+		t.Fatalf("an invitation is a request naming who sent it, with Accept and Decline in view: %s", got)
 	}
 
 	if rec := invitation(c, sm, addr(tea), "accept", ""); rec.Code != 303 || rec.Header().Get("Location") != "/chat/room/"+addr(tea) {
@@ -3097,7 +3174,7 @@ func TestAFailureElsewhereDestroysNothing(t *testing.T) {
 	away := withAway(t, f)
 	f.requesters["chat@away"] = "pending"
 	f.awayDown = true
-	if rec := chatVerbFrom(c, sm, farChat, "connect", "/settings"); !strings.Contains(rec.Header().Get("X-Flash"), "chat@away refused or failed") || rec.Header().Get("Location") != "/settings" {
+	if rec := chatVerbFrom(c, sm, farChat, "approve", "/settings"); !strings.Contains(rec.Header().Get("X-Flash"), "chat@away refused or failed") || rec.Header().Get("Location") != "/settings" {
 		t.Errorf("a failed Connect is said on the page it was sent from: %d %s %s", rec.Code, rec.Header().Get("X-Flash"), rec.Header().Get("Location"))
 	}
 	if f.requesters["chat@away"] != "pending" {
@@ -3151,10 +3228,9 @@ func TestAChatAskingByKeyIsShownByKey(t *testing.T) {
 	f.requesters[home] = "approved"
 	f.requesters["chat@"+awayKey] = "pending"
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
-	if got := string(h); !strings.Contains(got, `<span>chat@~away<span class="sr-only">: chat@`+awayKey) || !strings.Contains(got, `title="chat@`+awayKey+`"`) ||
-		!strings.Contains(got, `data-copy="chat@`+awayKey+`">Copy address`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
-		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/connect"`) || len(f.refs) != 0 {
-		t.Fatalf("the row shows the key and the kernel's own name, and connects it by key: %s", got)
+	if got := string(h); !strings.Contains(got, `<header><span title="chat@`+awayKey+`">chat@~away</span><button type="button" class="btn-icon inline" data-copy="chat@`+awayKey+`"`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
+		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || len(f.refs) != 0 {
+		t.Fatalf("the card shows the kernel's own name, its copy beside the name, not in it, and connects it by key: %s", got)
 	}
 }
 
@@ -3352,6 +3428,38 @@ func TestTheViewerNamesMembersByItsKernel(t *testing.T) {
 // is done whoever is offline, says when the chat's kernel did not answer, and
 // keeps that disconnect to send again; Block is in no menu of the rail, and is
 // no command here. Every connect takes the viewer's ordered path. Own chat that
+// The inbox's Approve of a chat elsewhere is the rail's: it connects the chat,
+// on the viewer's ordered path. Any other requester, this kernel's chat
+// included, is not chat's to approve.
+func TestApproveInTheInboxConnects(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	withAway(t, f)
+	f.requesters[home] = "approved"
+	f.requesters["chat@away"] = "pending"
+	f.requesters["mallory@testnet"] = "pending"
+	approve := func(address string) (handled bool, err error) {
+		inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { handled, err = c.Approve(r, address) }, httptest.NewRequest(http.MethodPost, "/inbox", nil))
+		return handled, err
+	}
+	if handled, err := approve(party("chat@away").Address); !handled || err != nil || !slices.Contains(f.reconnects, farChat) || len(f.ranAt("chat@away", joinName)) != 1 {
+		t.Fatalf("a chat elsewhere is connected: %v %v %v %v", handled, err, f.reconnects, f.ranAt("chat@away", joinName))
+	}
+	for _, other := range []string{party("mallory@testnet").Address, party(home).Address} {
+		if handled, err := approve(other); handled || err != nil {
+			t.Errorf("%s is not chat's to approve: %v %v", other, handled, err)
+		}
+	}
+	// A failure is said as the rail says it.
+	f.requesters["chat@away"] = "pending"
+	f.awayDown, f.failStart = true, true
+	rail := chatVerb(c, sm, farChat, "approve").Header().Get("X-Flash")
+	if handled, err := approve(party("chat@away").Address); !handled || err == nil || rail != "error: "+err.Error() {
+		t.Errorf("the inbox says %v, the rail %q", err, rail)
+	}
+}
+
 // cannot be read is a status row, never a menu.
 func TestNothingInTheRailIsStuck(t *testing.T) {
 	f := newFakeKernel()
@@ -3367,7 +3475,7 @@ func TestNothingInTheRailIsStuck(t *testing.T) {
 	f.requesters["chat@away"] = "pending"
 	seated(f.away.Store, pr("bob@away"), "far", []string{pr("ann@testnet")})
 	rail := func() string { h, _ := tick(c, sm, railKey, watchState{Signal: "old"}); return string(h) }
-	asks := func(got string) bool { return strings.Contains(got, `data-menu="menu-ask-chat@`+awayKey+`"`) }
+	asks := func(got string) bool { return strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) }
 
 	got := rail()
 	if !strings.Contains(got, `<form method="post" action="/chat/chats/chat@`+awayKey+`/ignore" hx-post`) || strings.Contains(got, `/block"`) || strings.Contains(got, `data-confirm="Ignore`) {

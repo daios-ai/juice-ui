@@ -1,7 +1,22 @@
 # Juice Web UI Requirements
 
-Version: 0.73.1
+Version: 0.73.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.73.2.** What waits on you in the sidebar says what it
+> is. Requests stand under their own heading above the rooms, each a card
+> with its buttons in view: a chat on another kernel asking to be connected
+> reads **Connection request**, Approve · Ignore; an invitation reads
+> **Invitation from** and who sent it, Accept · Decline. Approve is one act
+> wherever it is taken: the inbox's Approve of a chat elsewhere connects it,
+> as the sidebar's does (§6.3, §6.7). A button whose command is in flight
+> shows a spinner, and neither it nor the commands beside it send anything,
+> by click or key, until the page answers (docs/ui-grammar.md §5.1). A room is a room everywhere: **New
+> room**, Create, and a blank name says it becomes the members' names. `/chat`
+> opens the newest room; a viewer with no room at all, as every chat read
+> says, gets one with the assistant named **New room**, and an agent left
+> invited by a failed seat is seated at the next visit (§6.7). A rail row's
+> menu opens from its "…" alone.
 
 > **What changed in 0.73.1.** Who may send you tasks is decided in one
 > place, the inbox, in the kernel's words: pending requesters stand at the
@@ -1656,8 +1671,8 @@ The workspace (§1), on a wide screen:
 ```text
 ┌─ sidebar ───────────┬─ conversation ─────────────────────┬─ panel ──────────┐
 │ ◆ kernel · world  ≡ │ research-room · 3 members · Leave  │ Translate text × │
-│ + New conversation  │ ana@k        Find suppliers …      │ linguist@k/text  │
-│ assistant           │ researcher@k I found three.        │ 2 credits · ▸ ev │
+│ + New room          │ ana@k        Find suppliers …      │ linguist@k/text  │
+│ Rooms               │ researcher@k I found three.        │ 2 credits · ▸ ev │
 │ research-room     • │ Waiting on researcher@k…           │       JSON ○  ✦  │
 │                     │ ┌ message ─────────────── [/] ┐    │ text   [……]      │
 │ (A) ana@k        ③  │ └───────────────────── [Send] ┘    │ [Run (2)]        │
@@ -1671,7 +1686,7 @@ and absent until then.
 
 * **The sidebar is the workspace's conversations.** It MUST hold, in order:
   the brand (the kernel and its world, §7) with the collapse toggle; the
-  conversations rail (§6.7), headed by the opener of a new conversation; and at
+  conversations rail (§6.7), headed by the opener of a new room; and at
   its foot the signed-in user's avatar, which
   carries the task badge and opens the **avatar menu**: the address and the
   available balance, then every destination of the registry with the inbox's
@@ -2246,7 +2261,9 @@ open (parked tasks), the result MUST say so and link to the Wallet.
   Discord hold requests and accepted ones on one page; HEY's Screener admits
   senders above the inbox), under the kernel's noun, statuses and verbs:
   * **pending** — under **Pending requesters**, at the head of To do and only
-    while one waits: `Approve` (`.btn`: it fills nothing) and `Block`;
+    while one waits: `Approve` (`.btn`: it fills nothing) and `Block`. Approve
+    of a chat on another kernel is the chat's own Approve (§6.7), which also
+    connects it, so one decision has one effect wherever it is taken;
   * **approved** — under **Approved** on the Requesters tab: `Revoke` and
     `Block`;
   * **blocked** — under **Blocked** on the same tab, after Approved: `Revoke`.
@@ -3059,14 +3076,14 @@ its kernel answers or has nothing left to delete. Measured on v0.20.1: a
 second disconnect with nothing left here is still forwarded, removes that
 kernel's copy (a run composed there is then refused `grant_required`), and
 answers at once; one with nothing left anywhere answers `not_found`. **Sending
-again never undoes a newer connection:** every connect (chat's Connect and
+again never undoes a newer connection:** every connect (chat's Approve and
 its joining, Settings' Connect and its consent's callback) and every send take
 one lock per viewer, and a connect drops the kept disconnects that cover the
 selector connected or lie beneath it, so none is sent after it.
 
 **Nothing in the rail does lasting harm by a slip.** Its verbs are the
 fewest that serve (LinkedIn and Discord: a request is accepted or ignored;
-"connected apps": connect, disconnect): a chat asking is **Connect** or
+"connected apps": connect, disconnect): a chat asking is **Approve** or
 **Ignore**; a chat joined is **Disconnect**. Block, coarse (a whole kernel's
 chat, every room and member behind it) and hostile, is not beside them: it
 is where requesters are decided, among the inbox's requesters (LinkedIn and
@@ -3078,9 +3095,11 @@ its creator?", "Decline far, which only its creator can invite you to
 again?", "Block chat@David, declining its waiting tasks and refusing new
 ones?".
 
-* **Connect** (`POST /chat/chats/<chat>/connect`) is joining (rule 8). One that
-  fails leaves a chat that was asking asking: its approval is revoked again.
-  Nothing else connects a chat elsewhere. A run on a joined chat refused for want
+* **Approve** (`POST /chat/chats/<chat>/approve`) is joining (rule 8): the
+  kernel's approval and the grant, one act. One that fails leaves a chat that
+  was asking asking: its approval is revoked again. The inbox's Approve of the
+  same chat is this act (§6.3), so one decision has one effect wherever it is
+  taken; nothing else connects a chat elsewhere. A run on a joined chat refused for want
   of a grant joins again only while the viewer's own kernel still lists that
   grant, which is an upgrade of chat changing its contracts and the kernel
   holding them revoking the grants (measured on v0.19.0). A grant the viewer
@@ -3100,7 +3119,7 @@ ones?".
   `since` is a requester's first address and moves on no decision (measured
   on v0.20.1).
 * **Disconnect** (`POST /chat/chats/<chat>/disconnect`), asked nothing, since
-  Connect restores the chat with every room: deletes the grant
+  Approve restores the chat with every room: deletes the grant
   (`DELETE /v1/grants?selector=chat@k`), returns the requester to pending
   (`revoke`) and ignores it, so it does not ask again until approved. A kernel
   that does not answer keeps its copy; the page says "Disconnected chat@k here.
@@ -3265,29 +3284,34 @@ The rules:
    granted; the UI holds no chat key. The person signed in is joined, with the
    session, by the landing when the plan does not show them joined, and by a run
    the kernel refuses for want of a grant or chat refuses for an unknown key. A
-   chat on another kernel is joined by the same steps, by Connect, and joined
+   chat on another kernel is joined by the same steps, by Approve, and joined
    again only by such a run while it stays connected: a session not yet joined
    shows no rooms. An agent with a home under
    `$JUICE_HOME/agents/` named by a login on this
    kernel is joined with its own session, read from
    `client/credentials/<login>.json` under that file's lock and refreshed there
    when the kernel refuses it (ecosystem-standard §4): every time chat signs
-   in, when it is added to a room, and, for the assistant, at every landing,
-   which costs a grant-plan read and nothing more once it is joined. Where the
-   UI adds an agent to a room at home (a new conversation, Members, the
-   assistant's room) it seats it: joins it and runs `room/join` with its
+   in, and when a room seats it, which costs a grant-plan read and nothing
+   more once it is joined; a landing touches no agent that no room waits
+   for. Where the UI adds an
+   agent to a room at home (New room, Members, the first room) it seats it: joins it and runs `room/join` with its
    session, then completes its invitation task so its daemon is not handed it:
    an agent has nobody to accept, and its operator adding it is the consent, as
-   it is for joining. Chat has no rule for agents. A
+   it is for joining. Chat has no rule for agents. A seat that fails leaves the
+   agent invited, and the next landing seats every local agent still invited
+   to a room at home. A
    join that fails is said on the page that asked for it, and no key is ever
    retired: a failed connect leaves the earlier key working. A contract change
    revokes grants; the next join grants the key kept again.
-9. **`/chat` is the viewer's conversation with the assistant**: the room whose
-   members, joined or invited, are exactly the viewer and `assistant@<kernel>`,
-   found among the viewer's rooms, or started with `room/create` and named `assistant`; without an assistant home the
-   landing is the newest room, else an empty page beside the rail. The rail
+9. **`/chat` is the viewer's newest room.** A viewer with no room at all gets
+   one, made with `room/create` with `assistant@<kernel>` and named **New
+   room**, the assistant seated, so there is someone to talk to at once
+   (ChatGPT, Teams: "New chat"). No room at all is what every chat read says:
+   a chat that could not be read may hold rooms, so then nothing is made and
+   the landing is an empty page beside the rail, which shows that chat. A
+   room named `assistant` by an earlier release keeps its name. The rail
    lists the viewer's rooms. Every room read and command on a page is a run of its
-   action as the viewer, so the UI touches no store of chat's, and New conversation
+   action as the viewer, so the UI touches no store of chat's, and New room
    offers this kernel's agents first. A room
    id is three words, `adjective-animal-NN`, which a language model copies
    exactly (48-hex ids came back altered in 5 of 14 replies, words in none of
@@ -3314,26 +3338,32 @@ member addressed. Without the second sentence the model answered by posting
 and then narrated the post in its completion; without the first it reached the
 member by a direct message outside the room.
 
-The UI (the workspace, §6.1): `/chat` lands in the viewer's conversation with
-the assistant, else the newest room, else an empty page beside the rail.
+The UI (the workspace, §6.1): `/chat` lands in the viewer's newest room, else
+the room made for a viewer with none, else an empty page beside the rail.
 
 * **The rail** is the sidebar's list of the viewer's rooms, newest activity
   first, the room in view `aria-current`, a room with unread entries weighted;
-  a read that finds it changed replaces it. Every row is its name and its
-  menu. Above the rooms, weighted as new: a chat asking, `chat@alpha`, its menu
-  **Connect** and **Ignore**; an invitation, the room's name and its kernel
-  when elsewhere, who invited in its title, its menu **Accept** and
-  **Decline…**. Under the rooms, muted: a chat that could not be read, `#alert`
-  and its address, its reason in its title, and for a chat elsewhere its menu
-  **Disconnect alpha**. Such a row is one button opening
-  its menu; own chat that could not be read has nothing to do there, and is a
-  status row, not a button, gone once chat answers (Slack's "trouble
-  connecting"). A command that may wait on another kernel dims its row and takes no
-  second click until it answers. Its first row,
-  `+ New conversation`, opens a dialog (from any page, `?form=new`) that asks
-  for the **participants first** — this installation's agents as boxes, then
-  any addresses — and a name, optional: a blank one is the participants'
-  handles. Refused, it stays open with the reason and what was chosen and typed. There is no rooms page. Each room carries its one menu: **Members…**,
+  a read that finds it changed replaces it, under the heading **Rooms**. Every
+  row is its name and its "…", which alone opens its menu. Above the rooms,
+  while one waits, under the heading **Requests**: each request a card saying
+  what it is, with its buttons in view (Element's Invites, Slack Connect, the
+  message requests of Messenger and Discord), never weighted, since weight
+  means new messages. A chat asking reads `chat@alpha` and **Connection
+  request**, with **Approve** and **Ignore**; an invitation reads the room's
+  name, its kernel when elsewhere, and **Invitation from** and who sent it,
+  with **Accept** and **Decline** (the danger tier, asked first). Under the
+  rooms, muted: a chat that could not be read, `#alert` and its address, its
+  reason in its title, and for a chat elsewhere its menu **Disconnect alpha**;
+  own chat that could not be read has nothing to do there, and is a status
+  row with no menu, gone once chat answers (Slack's "trouble connecting"). A
+  command that may wait on another kernel is busy while it runs: its button,
+  or the "…" of the menu holding it, shows a spinner, and nothing beside it —
+  the request's other button, the menu's other commands — is sent until it
+  answers. Its first row, `+ New room`, opens a dialog
+  (from any page, `?form=new`) that asks for the **members first** — this
+  installation's agents as boxes, then any addresses — and a name, optional:
+  a blank one is the members' handles, which the field's placeholder says;
+  **Create** makes it. Refused, it stays open with the reason and what was chosen and typed. There is no rooms page. Each room carries its one menu: **Members…**,
   **Rename…**, **Leave…** and **Delete…** for its creator, **Leave…** only
   while another member is joined; **Members…** and **Leave…** for any other
   member; each question naming the room and what it costs. A room elsewhere

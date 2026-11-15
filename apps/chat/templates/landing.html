@@ -1,4 +1,4 @@
 {{define "content"}}
 {{if .Data.Error}}{{template "_error" .Data.Error}}{{end}}
-<p class="muted">No conversations yet.</p>
+{{if not .Data.Unread}}<p class="muted">No rooms yet.</p>{{end}}
 {{end}}

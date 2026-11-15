@@ -1,21 +1,23 @@
-{{/* _rail — the sidebar's conversations (requirements §6.7): the opener of a
-     new one; a row for each chat asking to be connected and each invitation,
-     weighted; the viewer's rooms, newest activity first, an unread room
+{{/* _rail — the sidebar's rooms (requirements §6.7): the opener of a new one;
+     then, while one waits, the Requests — each chat asking to be connected and
+     each invitation, a card saying what it is, with its buttons in view; then
+     the Rooms — the viewer's rooms, newest activity first, an unread room
      weighted and the one in view current, a room held on another kernel naming
      that kernel after its name, muted, as a kernel is named alone (§4); then
-     each chat that could not be read, muted, its reason the row's title. Every
-     row is its name and its menu; a row naming a kernel no petname names here
-     copies the chat's address from that menu. Its dialog starts a conversation with the
-     participants chosen; the name is optional. A page that is not a room holds
-     the rename dialog here; a room page holds it in the room, since the sidebar
-     is not rendered on a narrow screen. Input: railView. */}}
+     each chat that could not be read, muted, its reason the row's title. A row
+     is its name and its "…", which alone opens its menu; a row naming a kernel
+     no petname names here copies the chat's address from that menu. The dialog
+     makes a room of the members chosen; the name is optional. A page that is
+     not a room holds the rename dialog here; a room page holds it in the room,
+     since the sidebar is not rendered on a narrow screen. Input: railView. */}}
 {{define "_rail"}}
-<nav class="rail" aria-label="Conversations"{{if .OOB}} hx-swap-oob="outerHTML:.rail"{{end}}>
-  <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New conversation"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New conversation</span></a>
-  {{range .Requests}}{{template "_rail_item" .}}{{end}}
+<nav class="rail" aria-label="Rooms"{{if .OOB}} hx-swap-oob="outerHTML:.rail"{{end}}>
+  <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New room"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New room</span></a>
+  {{with .Requests}}<h2>Requests</h2>{{range .}}{{template "_rail_request" .}}{{end}}{{end}}
+  {{if or .Rooms .Unread}}<h2>Rooms</h2>{{end}}
   {{range $room := .Rooms}}<div class="rail-row">
     <a href="/chat/room/{{.Addr}}"{{if .Unread}} class="unread"{{end}}{{if eq .Addr $.Current}} aria-current="page"{{end}}>{{.Name}}{{with .Elsewhere}} <span class="muted"{{with $room.Copy}} title="{{.}}"{{end}}>· {{.}}</span>{{end}}</a>
-    <button class="btn-icon inline" data-menu="menu-room-{{.Addr}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>
+    {{template "_rail_trigger" (print "room-" .Addr)}}
     <div class="menu" id="menu-room-{{.Addr}}" role="menu" hidden>
       <a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=members"{{if eq .Addr $.Current}} data-modal="form-members"{{end}}>Members…</a>
       {{if .Mine}}<a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=rename" hx-get="/chat/room/{{.Addr}}/rename" hx-swap="none">Rename…</a>{{end}}
@@ -30,37 +32,50 @@
 {{if not .OOB}}{{template "_new_room" .New}}{{end}}
 {{end}}
 
-{{/* _rail_item — a rail row that is not a room: its name, weighted when new or
-     muted behind #alert when its chat could not be read, the kernel muted after
-     it, and "…"; the whole row opens its menu. A row with nothing to do, own
-     chat that could not be read, is a status, not a button: no menu, its
-     reason its title. Input: railItem. */}}
-{{define "_rail_item"}}<div class="rail-row">
-  {{if or .Commands .Copy}}<button class="rail-item{{if .New}} unread{{end}}{{if .Alert}} rail-down{{end}}" data-menu="menu-{{.ID}}" aria-haspopup="menu" aria-expanded="false"{{with .Title}} title="{{.}}"{{end}}>
-    {{template "_rail_label" .}}
-    <svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg>
-  </button>
-  <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" .Copy}}</div>
-  {{- else}}<div class="rail-item{{if .Alert}} rail-down{{end}}" role="status"{{with .Title}} title="{{.}}"{{end}}>{{template "_rail_label" .}}</div>{{end}}
+{{/* _rail_request — a request waiting on the viewer: its header, the name
+     with the kernel muted after it, then a copy of the chat's address when no
+     petname names its kernel here; a muted line saying what it is, and for an
+     invitation who sent it, with that party's copy when a key names it; its
+     buttons. A long name is shortened on its line and a copy stays in view.
+     Input: railItem. */}}
+{{define "_rail_request"}}<div class="rail-request">
+  <header><span{{with .Title}} title="{{.}}"{{end}}>{{.Label}}{{with .Muted}} <span class="muted">· {{.}}</span>{{end}}</span>{{with .Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}</header>
+  <p class="muted">{{.Detail}}{{with .From}} {{template "_party_brief" .}}{{end}}</p>
+  <div class="cluster">{{range .Commands}}{{template "_rail_command" .}}{{end}}</div>
 </div>{{end}}
-{{define "_rail_label"}}<span>{{if .Alert}}<svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{end}}{{.Label}}{{with .Muted}} <span class="muted">· {{.}}</span>{{end}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>{{end}}
 
-{{/* _rail_command — one command in a rail row's menu: a form posting to its
-     action, asked first when it has a question, the row dimmed and the button
-     disabled while it runs (it may wait on another kernel), the page answered
-     in place. Input: railCommand. */}}
-{{define "_rail_command"}}{{if .Divider}}<div class="menu-divider"></div>{{end}}<form method="post" action="{{.Action}}"{{with .Confirm}} data-confirm="{{.}}?"{{end}} hx-post="{{.Action}}" hx-swap="none" hx-include="#watch-rail,#watch-chat-room" hx-indicator="closest .rail-row" hx-disabled-elt="find button">{{.CSRFField}}<button class="menu-item{{if .Danger}} danger{{end}}" type="submit">{{.Label}}</button></form>{{end}}
+{{/* _rail_item — a chat that could not be read: its name muted behind #alert,
+     its reason its title, and "…" opening its menu; own chat, with nothing to
+     do, has no "…". Input: railItem. */}}
+{{define "_rail_item"}}<div class="rail-row">
+  <span class="rail-item" role="status"{{with .Title}} title="{{.}}"{{end}}><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Label}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>
+  {{- if or .Commands .Copy}}
+  {{template "_rail_trigger" .ID}}
+  <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" .Copy}}</div>
+  {{- end}}
+</div>{{end}}
+
+{{/* _rail_trigger — a rail row's "…", the one control opening its menu,
+     menu-<id>. Input: the id. */}}
+{{define "_rail_trigger"}}<button class="btn-icon inline" data-menu="menu-{{.}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>{{end}}
+
+{{/* _rail_command — one command of a rail entry: a form posting to its action,
+     asked first when it has a question, the page answered in place; a menu's
+     item, or a request's button. While it runs its button, or the "…" of the
+     menu holding it, is busy (grammar §5.1). Input: railCommand. */}}
+{{define "_rail_command"}}{{if .Divider}}<div class="menu-divider"></div>{{end}}<form method="post" action="{{.Action}}"{{with .Confirm}} data-confirm="{{.}}?"{{end}} hx-post="{{.Action}}" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{.CSRFField}}<button class="{{if .Button}}{{if .Danger}}btn-danger{{else}}btn{{end}}{{else}}menu-item{{if .Danger}} danger{{end}}{{end}}" type="submit">{{.Label}}</button></form>{{end}}
 
 {{/* _copy_item — a menu's Copy address, for a row naming a kernel no petname
      names here (ui-grammar "Naming"): the row is a button or a link, which
      holds no copy control of its own. Input: the address by key, or "". */}}
 {{define "_copy_item"}}{{with .}}<div class="menu-divider"></div><button type="button" class="menu-item" role="menuitem" data-copy="{{.}}">Copy address</button>{{end}}{{end}}
 
-{{/* _new_room — the new-conversation dialog; the name is optional. Refused, it
+{{/* _new_room — the New room dialog; the name is optional, a blank one the
+     members' names. Refused, it
      comes back open with the reason and what was chosen and typed. Input:
      newRoomView. */}}
-{{define "_new_room"}}<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New conversation" hx-swap-oob="true">
-  <div class="modal-head"><h2>New conversation</h2><a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a></div>
+{{define "_new_room"}}<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New room" hx-swap-oob="true">
+  <div class="modal-head"><h2>New room</h2><a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
     {{with .Error}}{{template "_error" .}}{{end}}
     <form class="stack" method="post" action="/chat/rooms" hx-post="/chat/rooms" hx-swap="none">
@@ -77,10 +92,10 @@
       </div>
       <div class="field">
         <label for="room-name">Name</label>
-        <input id="room-name" type="text" name="name" value="{{.Name}}">
+        <input id="room-name" type="text" name="name" value="{{.Name}}" placeholder="The members' names">
       </div>
       <div class="cluster">
-        <button class="btn-primary" type="submit">Start</button>
+        <button class="btn-primary" type="submit">Create</button>
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>

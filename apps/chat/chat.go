@@ -9,7 +9,8 @@
 //
 // The UI joins the principals of its installation itself: the person signed
 // in, and every agent with a home under $JUICE_HOME/agents, with that agent's
-// own session. A session lands on its conversation with the assistant.
+// own session. A session lands on its newest room; a viewer with none gets one
+// with the assistant.
 //
 // A viewer's chats are this kernel's, which joining approves, and every chat on
 // another kernel they connected to; a chat elsewhere that has addressed them and
@@ -79,8 +80,8 @@ const (
 // chatHandle is chat's own account; its address is Deps.Address(chatHandle).
 const chatHandle = "chat"
 
-// assistantHandle is the agent a session lands in conversation with; the
-// agents app makes it.
+// assistantHandle is the agent a viewer's first room is made with; the agents
+// app makes it.
 const assistantHandle = "assistant"
 
 // Chat is the app.
@@ -110,7 +111,7 @@ func (c *Chat) Slug() string { return "chat" }
 // the sidebar's rail (Rail).
 func (c *Chat) Nav(me string, superuser bool) []apps.NavEntry { return nil }
 
-// Landing is where a session begins: its conversation with the assistant.
+// Landing is where a session begins: its newest room (getLanding).
 func (c *Chat) Landing() string { return "/chat" }
 
 func (c *Chat) Templates() fs.FS { return tmplFS }
@@ -544,7 +545,7 @@ func (c *Chat) asAgent(ctx context.Context, login string, then func(tok string) 
 }
 
 // joinAgents joins every local agent; one that cannot be joined is logged
-// and joined again at the next sign-in, landing or room change.
+// and joined again at the next start, or when a room seats it (seat).
 func (c *Chat) joinAgents(ctx context.Context) {
 	for _, login := range c.agents() {
 		if err := c.joinAgent(ctx, login); err != nil {
@@ -1285,38 +1286,42 @@ type railView struct {
 	Called    func(string) chatName // a chat's kernel as the page names it (Chat.called)
 }
 
-// railItem is a row of the rail that is not a room: a chat asking to be
-// connected, an invitation, a chat that could not be read. The whole row opens
-// its menu. Label is its name, Muted the kernel after it, Alert marks a chat
-// that could not be read, Title what the row's title and a screen reader add,
-// New weights it as an unread room is, Copy what its menu copies (roomRow).
+// railItem is a rail entry that is not a room: a request (a chat asking to be
+// connected, an invitation), or a chat that could not be read. Label is its
+// name, Muted the kernel after it, Title what its title and a screen reader
+// add, Copy the address its copy control copies (roomRow); a request says what
+// it is in Detail, an invitation who sent it in From.
 type railItem struct {
-	ID, Label, Muted, Title, Copy string
-	Alert, New                    bool
-	Commands                      []railCommand
+	ID, Label, Muted, Title, Copy, Detail string
+	From                                  *client.Party
+	Commands                              []railCommand
 }
 
-// railCommand is one item of a rail row's menu: a form posting to Action, asked
-// first when Confirm is set (the question, its mark added by the template),
-// after a divider when Divider is.
+// railCommand is one command of a rail entry: a form posting to Action, asked
+// first when Confirm is set (the question, its mark added by the template). In
+// a menu it is an item, after a divider when Divider is; on a request it is a
+// button (Button), a danger one when Danger.
 type railCommand struct {
-	Action, Label, Confirm string
-	Danger, Divider        bool
-	CSRFField              template.HTML
+	Action, Label, Confirm  string
+	Danger, Divider, Button bool
+	CSRFField               template.HTML
 }
 
-// Requests is the rows above the rooms: each chat asking, then each invitation.
+// Requests is what waits on the viewer above the rooms, each saying what it is
+// with its buttons in view: each chat asking to be connected, then each
+// invitation, naming who sent it (Element's Invites, Slack Connect).
 func (v railView) Requests() []railItem {
 	var out []railItem
 	for _, a := range v.Asking {
-		out = append(out, railItem{ID: "ask-" + a.Service, Label: chatHandle + "@" + a.Name, Title: a.Service, Copy: v.Called(a.Service).Copy, New: true, Commands: []railCommand{
-			{Action: "/chat/chats/" + a.Service + "/connect", Label: "Connect", CSRFField: v.CSRFField},
-			{Action: "/chat/chats/" + a.Service + "/ignore", Label: "Ignore", CSRFField: v.CSRFField}}})
+		out = append(out, railItem{ID: "ask-" + a.Service, Label: chatHandle + "@" + a.Name, Title: a.Service, Copy: v.Called(a.Service).Copy, Detail: "Connection request", Commands: []railCommand{
+			{Action: "/chat/chats/" + a.Service + "/approve", Label: "Approve", Button: true, CSRFField: v.CSRFField},
+			{Action: "/chat/chats/" + a.Service + "/ignore", Label: "Ignore", Button: true, CSRFField: v.CSRFField}}})
 	}
 	for _, i := range v.Invites {
-		out = append(out, railItem{ID: "invite-" + i.Addr(), Label: i.Name, Muted: i.Elsewhere, Title: i.From.Shown(), Copy: i.Copy, New: true, Commands: []railCommand{
-			{Action: "/chat/invites/" + i.Addr() + "/accept", Label: "Accept", CSRFField: v.CSRFField},
-			{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline…", Confirm: "Decline " + i.Name + ", which only its creator can invite you to again", Divider: true, CSRFField: v.CSRFField}}})
+		from := i.From
+		out = append(out, railItem{ID: "invite-" + i.Addr(), Label: i.Name, Muted: i.Elsewhere, Copy: i.Copy, Detail: "Invitation from", From: &from, Commands: []railCommand{
+			{Action: "/chat/invites/" + i.Addr() + "/accept", Label: "Accept", Button: true, CSRFField: v.CSRFField},
+			{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline", Confirm: "Decline " + i.Name + ", which only its creator can invite you to again", Danger: true, Button: true, CSRFField: v.CSRFField}}})
 	}
 	return out
 }
@@ -1326,7 +1331,7 @@ func (v railView) Requests() []railItem {
 func (v railView) Unread() []railItem {
 	var out []railItem
 	for _, d := range v.Down {
-		item := railItem{ID: "down-" + d.Service, Label: chatHandle + "@" + d.Name, Title: d.Reason, Copy: v.Called(d.Service).Copy, Alert: true}
+		item := railItem{ID: "down-" + d.Service, Label: chatHandle + "@" + d.Name, Title: d.Reason, Copy: v.Called(d.Service).Copy}
 		if d.Service != v.Home {
 			item.Commands = []railCommand{v.disconnect(d.Service, false)}
 		}
@@ -1452,14 +1457,16 @@ func (c *Chat) undelivered(r *http.Request, members []client.Party) string {
 	return "Not delivered to " + andList(c.labelled(members)) + "."
 }
 
-// getLanding is where a session lands: the viewer's conversation with the
-// assistant, the room of exactly those two, started on the first visit; else the
-// newest room; else nothing yet beside the rail. The viewer and the assistant are
-// joined here when they are not yet.
+// getLanding is where a session lands. Each local agent still invited to a
+// room here is seated first, so one whose seat failed is seated at the next
+// visit; then the newest room opens. A viewer with no room at all, as every
+// chat read says, gets one with the assistant, named New room; a chat that
+// could not be read may hold rooms, so then nothing is made. The viewer is
+// joined here when not yet; an agent is joined by the seat that needs it.
 func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Me(r)
 	if err := c.joinViewer(r); err != nil {
-		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Conversations", landingView{Error: joinFailed(me, err)})
+		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: joinFailed(me, err)})
 		return
 	}
 	p, err := c.pulse(r)
@@ -1468,56 +1475,77 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	}
 	listed := c.rooms(r, p.Services)
 	for _, d := range listed.Down {
-		if d.Service == c.self() && c.deps.HandleErr(w, r, d.err) { // its rooms unknown, the assistant's room cannot be found
+		if d.Service == c.self() && c.deps.HandleErr(w, r, d.err) { // its rooms unknown, none can be opened or made
 			return
 		}
 	}
 	c.remember(r, c.railOf(r, p, listed, c.signal(me, p)))
+	note := c.seatInvited(r, listed.Rooms)
 	assistant := c.deps.Address(assistantHandle)
-	if me != assistant && c.isLocalAgent(assistant) {
-		room, seated, err := c.assistantRoom(r, listed.Rooms, assistant)
-		if c.deps.HandleErr(w, r, err) {
+	var to string
+	switch {
+	case len(listed.Rooms) > 0:
+		to = listed.Rooms[0].Addr()
+	case len(listed.Down) == 0 && me != assistant && c.isLocalAgent(assistant):
+		var out struct {
+			Room roomRow `json:"room"`
+		}
+		if err := c.run(r, c.self(), roomCreateName, map[string]any{"members": []string{assistant}, "name": firstRoomName}, &out); c.deps.HandleErr(w, r, err) {
 			return
 		}
-		to := "/chat/room/" + url.PathEscape(room)
-		join := func() error { return c.joinAgent(r.Context(), assistant) }
-		if !seated {
-			_, thread, _ := splitRoom(room)
-			join = func() error { return c.seat(r.Context(), assistant, thread) }
+		if err := c.seat(r.Context(), assistant, out.Room.ID); err != nil && note == "" {
+			note = joinFailed(assistant, err)
 		}
-		if err := join(); err != nil {
-			c.deps.FlashRedirect(w, r, to, "error", joinFailed(assistant, err))
-			return
-		}
-		http.Redirect(w, r, to, http.StatusSeeOther)
+		c.changed(me)
+		to = roomAddr(c.self(), out.Room.ID)
+	default:
+		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: note, Unread: len(listed.Down) > 0})
 		return
 	}
-	if len(listed.Rooms) > 0 {
-		http.Redirect(w, r, "/chat/room/"+url.PathEscape(listed.Rooms[0].Addr()), http.StatusSeeOther)
+	to = "/chat/room/" + url.PathEscape(to)
+	if note != "" {
+		c.deps.FlashRedirect(w, r, to, "error", note)
 		return
 	}
-	c.deps.RenderPage(w, r, http.StatusOK, "landing", "Conversations", landingView{})
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-// assistantRoom is the address of the room of exactly the viewer and the
-// assistant at home, started when there is none, and whether the assistant has
-// joined it: one that has not yet accepted is seated next.
-func (c *Chat) assistantRoom(r *http.Request, rooms []roomRow, assistant string) (string, bool, error) {
-	is := func(p client.Party) bool { return p.Address == assistant }
+// firstRoomName is the name of the room made for a viewer who has none.
+const firstRoomName = "New room"
+
+// seatInvited seats each local agent still invited to a room here, as a room
+// made or joined with it seats it; the first that cannot be is named.
+func (c *Chat) seatInvited(r *http.Request, rooms []roomRow) (note string) {
+	seated := false
 	for _, room := range rooms {
-		if room.Service == c.self() && len(room.Members)+len(room.Invited) == 2 && slices.ContainsFunc(append(slices.Clone(room.Members), room.Invited...), is) {
-			return room.Addr(), slices.ContainsFunc(room.Members, is), nil
+		if room.Service != c.self() {
+			continue
+		}
+		for _, m := range room.Invited {
+			if !c.isLocalAgent(m.Address) {
+				continue
+			}
+			if err := c.seat(r.Context(), m.Address, room.ID); err != nil {
+				if note == "" {
+					note = joinFailed(m.Address, err)
+				}
+				continue
+			}
+			seated = true
 		}
 	}
-	var out struct {
-		Room roomRow `json:"room"`
+	if seated {
+		c.changed(c.deps.Me(r))
 	}
-	err := c.run(r, c.self(), roomCreateName, map[string]any{"members": []string{assistant}, "name": assistantHandle}, &out)
-	return roomAddr(c.self(), out.Room.ID), false, err
+	return note
 }
 
-// landingView backs the page a viewer with no conversation lands on.
-type landingView struct{ Error string }
+// landingView backs the page a viewer with no room listed lands on; Unread
+// says a chat could not be read, so rooms may exist that the rail cannot show.
+type landingView struct {
+	Error  string
+	Unread bool
+}
 
 // Rail is the sidebar's list of the viewer's rooms, newest activity first, with
 // the new-conversation dialog, open on ?form=new from any page. It is what the
@@ -1845,7 +1873,7 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	members := append(r.Form["agent"], strings.Fields(strings.ReplaceAll(r.FormValue("members"), ",", " "))...)
 	if len(members) == 0 {
-		c.newRoomRefused(w, r, "Choose who the conversation is with.")
+		c.newRoomRefused(w, r, "Choose the room's members.")
 		return
 	}
 	for _, m := range members {
@@ -2125,11 +2153,10 @@ func (c *Chat) joinMembers(w http.ResponseWriter, r *http.Request, members []str
 
 // ---- the viewer's chats and invitations ----
 
-// postChat connects, disconnects or blocks a chat elsewhere, one that has
-// addressed the viewer. Connect is rejoin: the key kept, or approve, join and connect; one
-// that fails leaves a chat that was asking as it was. Disconnect deletes the
-// grant and returns the chat to asking; block deletes the grant and refuses the
-// chat. A grant held on a kernel that does not answer, or answers late, is gone
+// postChat approves, ignores or disconnects a chat elsewhere, one that has
+// addressed the viewer. Approve is connect, as the inbox's Approve of the same
+// chat is (Approve). Disconnect deletes the grant and returns the chat to
+// asking. A grant held on a kernel that does not answer, or answers late, is gone
 // here at once and the disconnect goes on, and the page says that kernel still
 // holds it, as Settings does. A failure is said
 // on the page it was sent from; a page showing a room of a chat disconnected
@@ -2157,12 +2184,8 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		switch verb {
-		case "connect":
-			err := c.deps.Reconnect(r, service, func() error { return c.rejoin(ctx, tok, service, false) })
-			if err != nil && reqs[i].Status == "pending" {
-				_ = c.deps.Client.DecideRequester(ctx, tok, service, "revoke")
-			}
-			return err
+		case "approve":
+			return c.connect(r, tok, reqs[i])
 		case "ignore", "disconnect":
 			if verb == "disconnect" {
 				n, err := c.deps.Disconnect(r, service, c.shown(service))
@@ -2192,7 +2215,7 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 	key, st := pageWatch(r)
 	inView, _, _ := splitRoom(key)
 	to := back(r)
-	if verb != "connect" && inView == service {
+	if verb != "approve" && inView == service {
 		to = "/chat"
 	}
 	if note != "" {
@@ -2204,6 +2227,48 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.answer(w, r, key, st)
+}
+
+// connect approves the chat elsewhere that q is and connects the viewer to it:
+// rejoin, the key kept, or approve, join and connect, on the viewer's ordered
+// path. One that fails leaves a chat that was pending as it was.
+func (c *Chat) connect(r *http.Request, tok string, q client.Requester) error {
+	ctx, service := r.Context(), c.learn(q.Requester)
+	err := c.deps.Reconnect(r, service, func() error { return c.rejoin(ctx, tok, service, false) })
+	if err != nil && q.Status == "pending" {
+		_ = c.deps.Client.DecideRequester(ctx, tok, service, "revoke")
+	}
+	return err
+}
+
+// Approve is the inbox's Approve of the requester at address, by address or
+// principal: a chat elsewhere is connected, as the rail's Approve connects it,
+// so one decision has one effect wherever it is taken, and a failure is said
+// as the rail says it. Any other requester is not handled here.
+func (c *Chat) Approve(r *http.Request, address string) (handled bool, err error) {
+	ctx, service := r.Context(), ""
+	err = c.deps.Sessions.Do(ctx, func(tok string) error {
+		handled = false
+		reqs, err := c.deps.Client.ListRequesters(ctx, tok)
+		if err != nil {
+			return err
+		}
+		for _, q := range reqs {
+			service = c.learn(q.Requester)
+			if (q.Requester.Address == address || q.Requester.Principal == address) && service != c.self() && strings.HasPrefix(service, chatHandle+"@") {
+				handled = true
+				return c.connect(r, tok, q)
+			}
+		}
+		return nil
+	})
+	switch {
+	case handled && err == nil:
+		c.changed(c.deps.Me(r))
+	case handled:
+		err = said{c.reason(service, err), err}
+	}
+	return handled, err
 }
 
 // postInvite accepts or declines an invitation to a room, as chat's own list
@@ -2263,6 +2328,11 @@ func (c *Chat) clearInvites(r *http.Request, service, thread string, joined bool
 // failed says why a command on the chat at service was refused, on the page it
 // was sent from, where the gesture was made.
 func (c *Chat) failed(w http.ResponseWriter, r *http.Request, service string, err error) {
+	c.deps.FlashRedirect(w, r, back(r), "error", c.reason(service, err))
+}
+
+// reason is a failure of the chat at service as a page says it.
+func (c *Chat) reason(service string, err error) string {
 	reason := refusal(err, c.shown(service))
 	var ke *client.KernelError
 	if reason == "" && errors.As(err, &ke) {
@@ -2273,8 +2343,17 @@ func (c *Chat) failed(w http.ResponseWriter, r *http.Request, service string, er
 	if reason == "" {
 		reason = err.Error()
 	}
-	c.deps.FlashRedirect(w, r, back(r), "error", reason)
+	return reason
 }
+
+// said is a failure as a page says it, the error it came from beneath.
+type said struct {
+	text string
+	err  error
+}
+
+func (e said) Error() string { return e.text }
+func (e said) Unwrap() error { return e.err }
 
 // back is the page a command was sent from, as htmx names it, by its path
 // alone; the landing without script.

@@ -217,7 +217,7 @@ func (a *Agents) adopt() {
 	}
 }
 
-// assistantHandle is the agent every session lands in conversation with
+// assistantHandle is the agent a viewer's first room is made with
 // (requirements §6.7).
 const assistantHandle = "assistant"
 

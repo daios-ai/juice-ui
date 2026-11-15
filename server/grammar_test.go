@@ -147,6 +147,51 @@ func TestTablesAreScrollable(t *testing.T) {
 	}
 }
 
+// A command in flight is shown and held by one rule (§5.1), app.js's busy
+// block, holding the command's group by the hold Fill uses too: no template
+// disables its own button or dims its own row while it runs, an hx-indicator names only the progress bar of a long call, and a
+// row's menu opens from its trigger alone, never from the whole row.
+func TestOneBusyRule(t *testing.T) {
+	indicator := regexp.MustCompile(`hx-indicator="([^"]*)"`)
+	rowMenu := regexp.MustCompile(`<[a-z]+ class="[^"]*\brail-item\b[^"]*"[^>]*\bdata-menu=`)
+	sources := map[string]string{}
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range core {
+		sources[f] = string(mustRead(t, f))
+	}
+	app, _ := outsideTemplates()
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[f] = string(b)
+	}
+	for f, src := range sources {
+		if strings.Contains(src, "hx-disabled-elt") {
+			t.Errorf("%s: hx-disabled-elt; a command in flight is held by the busy rule", f)
+		}
+		for _, m := range indicator.FindAllStringSubmatch(src, -1) {
+			if !strings.HasSuffix(m[1], "-progress") {
+				t.Errorf("%s: hx-indicator=%q names no progress bar", f, m[1])
+			}
+		}
+		if rowMenu.MatchString(src) {
+			t.Errorf("%s: a whole row opens a menu; its \"…\" trigger alone does", f)
+		}
+	}
+	css, _ := staticFS.ReadFile("static/app.css")
+	if strings.Contains(string(css), ".htmx-request { opacity") {
+		t.Error("app.css: a row dimmed in flight; the busy rule shows it on the button")
+	}
+	js, _ := staticFS.ReadFile("static/app.js")
+	for _, want := range []string{"function hold(", "held.has(groupOf(e.target))", "const release = hold(form, bar)", "htmx:beforeRequest", "htmx:afterRequest", "pageshow"} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("app.js: the busy block lacks %q", want)
+		}
+	}
+}
+
 // A table row's actions are its last cell, td.row-actions, which ends at the
 // table's right edge (§5.5): a cell holding a button is that cell, and that
 // cell holds the row's buttons.

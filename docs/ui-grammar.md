@@ -34,7 +34,7 @@ Three laws underpin everything:
 | **Figures** | `.stat-row` + `.stat` (label · value) · `_figures` partial | **the** headline money figures, one block each — label, mono amount coloured by its signal. One component on the wallet and a session |
 | **Pager** | `.pager` + `_pager` partial | quiet offset pagination under any long list (20/page) |
 | **Crumb** | `.crumb` (sticky `<nav>`) | a detail page's context row: back-link + record identity + its inline commands. Sticky — *the way up never scrolls away* (self-gating on short pages; the page's own header, not floating chrome) |
-| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's conversations: `+ New conversation`, then the rows, every one a `.rail-row` of its name and its menu (§5.12): first each chat asking to be connected and each invitation, weighted (`.unread`); then the rooms newest activity first, each its link and its menu trigger, the room in view `aria-current`, an unread one weighted, one held on another kernel followed by that kernel, muted (`far · alpha`); then each chat that could not be read, muted, `#alert` before its address, its reason the row's `title` and a `.sr-only` clause. A row that is not a room is one `.rail-item` button opening its menu, its `#ellipsis` where a room's trigger stands, so no part of it is a dead click. A command that may wait on another kernel (`hx-indicator` on its row, `hx-disabled-elt` on its button) dims the row (`.rail-row.htmx-request`) and takes no second click until it answers; its failure is a notice on the page it was sent from |
+| **Rail** | `.rail` (`_rail`, the conversations app's) | the sidebar's rooms: `+ New room`; then, while one waits, `Requests`, a small `h2`, over a `.rail-request` card for each: its `header`, the name (a chat asking to be connected, or the room it invites to, its kernel muted after it), then `_copy` when only a key names it, and a muted `p` saying what it is (`Connection request`, or `Invitation from` and the inviter by `_party_brief`), each line shortening its names with an ellipsis and keeping its `_copy` in view, and its buttons in view (`Approve` · `Ignore`; `Accept` · `Decline`, the danger tier, asked first), as Element's Invites and Slack Connect's request show theirs. A request is never weighted: weight means new messages. Then `Rooms`, a small `h2`, over the rows, every one a `.rail-row` of its name and its `#ellipsis` trigger (`_rail_trigger`, `.btn-icon.inline`), which alone opens its menu (§5.12): the rooms newest activity first, the room in view `aria-current`, an unread one weighted, one held on another kernel followed by that kernel, muted (`far · alpha`); then each chat that could not be read, a `.rail-item` status (`role="status"`), muted, `#alert` before its address, its reason its `title` and a `.sr-only` clause. A command that may wait on another kernel is busy while it runs (§5.1); its failure is a notice on the page it was sent from |
 | **Composer** | `.composer` + `.composer-bar` (`room.html` alone) | **the one sanctioned exception** to the form's card: the post form drawn as a bar — `/`, `@`, the message control (`_control`, the schema's own), the send arrow (`.btn-icon`, `#arrow-up`) — a refusal above, `_balance` beneath. A drift guard keeps it in the room |
 | **Launcher** | `.launcher` + `[data-launcher]` (`_launcher`, `launcher` helper; `suggestions` in app.js) | **the** list of suggestions beside a text input, the best match nearest it; ↑/↓ walk the rows, Escape empties, Enter on a row follows it. Over the composer, its `/` — the query is the composer's own text after it: the catalog's actions by title or address, the registry's pages, a top `Search "…"` row naming the search's price; Enter submits the search (§5.9); and its addresses. Under Discover's `.search` box: the catalog's actions alone. Rows `.menu-item`, matched in the browser |
 | **Panel** | `.panel` (`_action_panel`, `_search_panel`, `_panel_error`) within `.room` beside `.conversation` | an action or a search's results beside a conversation, one scroller under a sticky `.modal-head`. An action: the head (title, marks, ×), `_action_head` with its evidence folded, then the run form one section step below (`--space-5`, above the form's own `--space-4` field rhythm); opened from results, the head is `← Results` (`.btn`, `[data-panel-back]`) and ×, and the title opens the body. Results: the head `Search "…"` and ×, then `_search_results` — Discover's banner, sort `.tabs` and `.action-list`, each row carrying its rank under every order (`data-rank-*`). A panel that cannot be filled keeps its head — `← Results` where it was opened over results, and × — over the `.banner-error`. A pane of the window: full height at its right edge, `--panel-w` wide, a hairline from the conversation, its width taken from the column, while the main area is 960px and over (a container query, so the sidebar's state counts); narrower, it covers the conversation. Empty, it takes nothing |
@@ -58,8 +58,8 @@ The frame every page renders into: the collaborative workspace
 ```
 ┌─ sidebar ─────────┬───────────────────────────────┬─ panel ──────┐
 │ ◆ k play        ≡ │ notice (one-shot)              │ (a room only: │
-│ + New conversation│ crumb · entries · waiting on   │  an action    │
-│ assistant         │ composer [message …] [/] Send  │  beside the   │
+│ + New room        │ crumb · entries · waiting on   │  an action    │
+│ Rooms             │ composer [message …] [/] Send  │  beside the   │
 │ research-room  •  │ — or any page's content —      │  conversation)│
 │                   │                                │               │
 │ (A) ana@k   ③     │                                │               │
@@ -68,7 +68,7 @@ The frame every page renders into: the collaborative workspace
 
 | Region | Contents | Rules |
 |---|---|---|
-| **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail** (its opener, `#plus` and "New conversation", then the rooms); the **avatar** at the foot | One element, sticky, the visible screen's height (`100dvh`), 240px. The width picks one of two models, never mixed. **Wide (>720px): docked or a strip.** Collapsed, the same element keeps only the toggle, the opener's icon and the avatar with its badge; the brand, the rooms and the handle are hidden, since a list of names has no icon form. The state is persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash) and applies to wide screens only. **Narrow (≤720px): a drawer** (Topbar). |
+| **Sidebar** | brand (kernel and world) and the collapse toggle; the **rail** (its opener, `#plus` and "New room", then the requests and the rooms); the **avatar** at the foot | One element, sticky, the visible screen's height (`100dvh`), 240px. The width picks one of two models, never mixed. **Wide (>720px): docked or a strip.** Collapsed, the same element keeps only the toggle, the opener's icon and the avatar with its badge; the brand, the requests, the rooms and the handle are hidden, since a list of names has no icon form. The state is persisted server-side (`sidebar` cookie on `<html data-sidebar>`, no flash) and applies to wide screens only. **Narrow (≤720px): a drawer** (Topbar). |
 | **Avatar menu** | the address and the available balance; every destination of the registry, the current one `aria-current`, Inbox with the task badge; Sign out | A `.menu` from the avatar (`[data-menu]`), each destination an icon and its name. The avatar carries the task badge too. |
 | **Main area** | the content container, a one-shot notice heading it | Container: `max-width ~1160px`, centered. **The container is the ONLY width decision**: every component fills it — no per-component `max-width` caps. |
 | **page-head** | the title only — no subtitle, no commands (§3, §5.3) | Present on every **index** page. Commands sit inline with their content. |
@@ -274,6 +274,19 @@ one is the action Enter presses.
   `_end` partial; `End` alone when nothing is refunded). There is no
   quiet-danger tier.
 - `TestButtonsHaveOneGeometryAndOneLook` enforces this on every template.
+- **A command in flight is busy.** From its sending until the page answers,
+  the button that sent it carries `aria-busy="true"`: a spinner in place of its
+  label and icon, at the button's own size, so nothing beside it moves
+  (Material's LoadingButton, Polaris; Pico's `aria-busy` names the state), no
+  pointer. Sent from a menu, the menu's trigger is busy, since the menu has
+  closed. Its **group is held**: the commands beside it (its `.cluster`) or
+  its menu, else its form alone, carry `aria-busy`, their other controls
+  `inert` and faded, and nothing in the group is sent again, by mouse or by
+  key, so a request's Ignore cannot run while its Approve does. One block of
+  `app.js` does this for every form, by the same `hold` as Fill from chat's (§5.4); no
+  template disables its own button or dims its row (`TestOneBusyRule`). A long
+  call with a label keeps its `.progress` bar (§5.10) instead of the spinner;
+  the hold still applies.
 - `TestAFormsActionIsItsPrimary` holds the primary rule on every form: one with
   something to fill in or a second button has its first submit solid
   (`.btn-primary`, `.btn-money` or `.btn-danger`), and one with a lone button
@@ -397,8 +410,8 @@ separates it from the content above, and nothing else does (§4).
   title, a `.btn-icon` when the planner is free, the `.btn-money` holding the
   icon and the amount when priced (§5.1: a spend names its amount). While the
   planner works, the same `_progress` bar runs at the row's left, where
-  nothing else stands, the form is `aria-busy` and its other controls
-  `inert`; a refusal is an `.error-text` in the bar's place. Run is the foot's
+  nothing else stands, and the form is held as a command's group is (§5.1),
+  every other control `inert`; a refusal is an `.error-text` in the bar's place. Run is the foot's
   one button. A success's `.outcome` carries its result as the composer's
   draft (`data-draft`), and the panel closes into it.
 - Editable input is schema-driven, one of three: **structured** (typed fields +
@@ -502,8 +515,9 @@ separates it from the content above, and nothing else does (§4).
   is that cell.
 - **Every table lives in a `.table-scroll`** (`overflow-x: auto`) so a wide
   table scrolls inside its own box and the page body never scrolls sideways.
-- **Chat is the workspace.** `/chat` opens the viewer's room with the
-  assistant; the rooms are the sidebar's **rail**. A room is `.room`: the
+- **Chat is the workspace.** `/chat` opens the viewer's newest room; a viewer
+  with no room at all gets one with the assistant, `New room`; the rooms are
+  the sidebar's **rail**. A room is `.room`: the
   `.conversation` — crumb (room name · members · leave/delete) → the entry
   stack (`.msgs`, `[data-autoscroll]`) → whom it waits on (`_working`:
   `.muted`, `#chat-working`, one element for the page and every out-of-band
@@ -659,7 +673,8 @@ task, a ledger entry), the ref alone stands: the kernel serves no title there.
 | `.outcome` (`success`/`failed`/`rejected`) | a call's result panel; a success states no sentence — its styling says it — and carries the result as the view (`_value_block`), an `hr.card-sep` between the result and its receipt and rating row; from a room it carries its draft (`data-draft`) |
 | `.banner` (`-info`/`-error`/`-success`) | inline notice, and the one-shot result of the last action heading the column (dismissable, §1). A `.banner-error` is a warning, led by the `#alert` icon. In page flow it owns its spacing (`.container > .banner`), as `h2` and `.subhead` do; inside a `.stack` the stack spaces it |
 | `.live-region` toast | **the one** polite `aria-live` region — ephemeral, auto-dismiss, **no history, no stack, no feed** |
-| `.progress` | indeterminate bar for long calls (never an indefinite spinner), one partial, `_progress` (id, label): Run's below its form, a form tool's in the form's top row; shown in flight, `.htmx-request`, set by htmx on an `hx-indicator` or by the script owning a fetch |
+| `[aria-busy]` on a button | a command in flight (§5.1): a spinner in place of the button's label and icon, at its own size |
+| `.progress` | indeterminate bar for a long call with a label, standing where its result will appear, one partial, `_progress` (id, label): Run's below its form, a form tool's in the form's top row; shown in flight, `.htmx-request`, set by htmx on an `hx-indicator` or by the script owning a fetch |
 | `.badge` | round, accent — the task count, the **sole** count of the core surface: on the avatar, the menu's Inbox row (inline) and the topbar's trigger, every copy swapped at once by the heartbeat (`.badge-inbox`), **empty when zero** (`.badge:empty` hides it) |
 | `.update-notice` | the one standing notice: the superuser's `Update to 0.69.0` above the avatar while a newer release is out, kept by the heartbeat as the badge is, gone while an update runs. Neutral, never the accent: updating moves no money |
 | `.unread` | a rail room with unseen activity: weighted, so it reads as "new" |
@@ -792,7 +807,8 @@ obligations above.
 
 - `.menu` floating panel via `[data-menu]`; `.menu-item` rows; used by the
   `+ new …` openers (the Workshop's New action), row-lifecycle menus (the rail's rooms),
-  each opened from a `.btn-icon.inline` `#ellipsis`, and the avatar menu.
+  each opened from a `.btn-icon.inline` `#ellipsis`, which alone opens it (never
+  the whole row), and the avatar menu.
   Activating an item closes the menu. An item that leads to a question or a
   dialog ends in `…`.
 - One SVG sprite (`icons.svg`), recolored via `currentColor`, **never emoji**.

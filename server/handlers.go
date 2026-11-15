@@ -2475,7 +2475,8 @@ var requesterDone = map[string]string{"approve": "Approved.", "revoke": "Revoked
 // postRequester approves, revokes or blocks a requester (kernel U52); the
 // kernel refuses a requester it does not list, and the outcome comes back as
 // the flash on the page the form came from — To do or the Requesters tab
-// (post/redirect/get). A decision this kernel recorded
+// (post/redirect/get). Approve of a requester the conversations app holds,
+// a chat elsewhere, is that app's approval, which also connects it. A decision this kernel recorded
 // stands though the requester's kernel did not answer: a block there declines
 // its waiting tasks, which waits for it, and is still done here.
 func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
@@ -2490,11 +2491,21 @@ func (s *Server) postRequester(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	address := r.PathValue("address")
-	err := s.sessions.Do(ctx, func(tok string) error {
-		return s.client.DecideRequester(ctx, tok, address, verb)
-	})
-	if ke, ok := client.AsKernelError(err); ok && ke.Unanswered() {
-		err = nil
+	var handled bool
+	var err error
+	if verb == "approve" && s.conv != nil {
+		if handled, err = s.conv.Approve(r, address); err != nil && !isAuthErr(err) {
+			s.flashRedirect(w, r, back, "error", err.Error()) // the app's own sentence
+			return
+		}
+	}
+	if !handled {
+		err = s.sessions.Do(ctx, func(tok string) error {
+			return s.client.DecideRequester(ctx, tok, address, verb)
+		})
+		if ke, ok := client.AsKernelError(err); ok && ke.Unanswered() {
+			err = nil // recorded here, whoever is offline
+		}
 	}
 	if err == nil {
 		s.decided(r, address)

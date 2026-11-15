@@ -3118,6 +3118,53 @@ func TestRequesters(t *testing.T) {
 	}
 }
 
+// approveApp is a conversations app whose one requester, chat@bravo, it
+// approves itself, recording each approval.
+type approveApp struct {
+	convApp
+	approved *[]string
+}
+
+func (a approveApp) Approve(_ *http.Request, address string) (bool, error) {
+	switch address {
+	case "chat@bravo":
+		*a.approved = append(*a.approved, address)
+		return true, nil
+	case "chat@down":
+		return true, fmt.Errorf("chat@down is not answering. Try again shortly.")
+	}
+	return false, nil
+}
+
+// Approve of a requester the conversations app holds is that app's approval,
+// so one decision has one effect wherever it is taken; any other requester is
+// approved here.
+func TestTheInboxApprovesAChatAsItsAppDoes(t *testing.T) {
+	kernel := taskKernel()
+	defer kernel.Close()
+	var approved []string
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{approveApp{approved: &approved}} }))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	inbox := getBody(t, cl, srv.URL+"/inbox")
+	resp := postTo(t, cl, srv.URL+"/inbox/requesters/chat@bravo/approve", inbox, url.Values{})
+	resp.Body.Close()
+	if f := flashOf(t, cl, srv.URL); f != "success|Approved." || !slices.Equal(approved, []string{"chat@bravo"}) || len(taskDecisions) != 0 {
+		t.Errorf("a chat is approved by its app alone: %q %v %v", f, approved, taskDecisions)
+	}
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/mallory@bravo/approve", inbox, url.Values{})
+	resp.Body.Close()
+	if len(approved) != 1 || strings.Join(taskDecisions, ",") != "mallory@bravo approve" {
+		t.Errorf("anyone else is approved here: %v %v", approved, taskDecisions)
+	}
+	// A chat whose kernel does not answer is not connected, and not said to be.
+	resp = postTo(t, cl, srv.URL+"/inbox/requesters/chat@down/approve", inbox, url.Values{})
+	resp.Body.Close()
+	if f := flashOf(t, cl, srv.URL); f != "error|chat@down is not answering. Try again shortly." {
+		t.Errorf("a connect that failed is said in the app's words: flash = %q", f)
+	}
+}
+
 // A Requesters tab with nobody approved or blocked says so.
 func TestRequestersTabEmpty(t *testing.T) {
 	kernel := authKernel()
@@ -3816,8 +3863,9 @@ func TestPricedPlannerIsPaidOnItsButton(t *testing.T) {
 // conversation is fixed, refused for any other room.
 type convApp struct{ launchApp }
 
-func (convApp) Rail(*http.Request) (template.HTML, error) { return `<nav class="rail"></nav>`, nil }
-func (convApp) Landing() string                           { return "/browse" }
+func (convApp) Rail(*http.Request) (template.HTML, error)   { return `<nav class="rail"></nav>`, nil }
+func (convApp) Landing() string                             { return "/browse" }
+func (convApp) Approve(*http.Request, string) (bool, error) { return false, nil }
 func (convApp) Context(_ *http.Request, room string) ([]client.Message, error) {
 	if room != "r1" {
 		return nil, fmt.Errorf("not a member")
