@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -344,7 +345,7 @@ func TestLoginCarriesThePendingPhrase(t *testing.T) {
 // never brings an ended session back.
 func TestAppCacheLivesInTheEntry(t *testing.T) {
 	m, ctx := newCtx(t, &fakeRefresher{})
-	m.PutAppCache(ctx, "chat", "before-login")
+	put(m, ctx, "chat", "before-login")
 	if _, ok := m.AppCache(ctx, "chat"); ok {
 		t.Fatal("no entry holds nothing, and none is made")
 	}
@@ -354,30 +355,73 @@ func TestAppCacheLivesInTheEntry(t *testing.T) {
 	if _, ok := m.AppCache(ctx, "chat"); ok {
 		t.Fatal("a new login holds nothing yet")
 	}
-	m.PutAppCache(ctx, "chat", "K1")
-	m.PutAppCache(ctx, "other", "K2")
+	put(m, ctx, "chat", "K1")
+	put(m, ctx, "other", "K2")
 	if k, ok := m.AppCache(ctx, "chat"); !ok || k != "K1" {
 		t.Fatalf("AppCache = %q %v", k, ok)
 	}
 	if k, _ := m.AppCache(ctx, "other"); k != "K2" {
 		t.Fatal("each app's own")
 	}
-	m.PutAppCache(ctx, "chat", "K3")
+	put(m, ctx, "chat", "K3")
 	if err := m.Login(ctx, client.Tokens{AccessToken: "b", RefreshToken: "s"}, "bob@k", Pin{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := m.AppCache(ctx, "chat"); ok {
 		t.Fatal("one login's cache is never another's")
 	}
-	m.PutAppCache(ctx, "chat", "K4")
+	put(m, ctx, "chat", "K4")
 	if _, err := m.Logout(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := m.AppCache(ctx, "chat"); ok {
 		t.Fatal("it leaves with the session")
 	}
-	m.PutAppCache(ctx, "chat", "late")
+	put(m, ctx, "chat", "late")
 	if _, ok := m.AppCache(ctx, "chat"); ok {
 		t.Fatal("a late write brings nothing back")
+	}
+}
+
+// put replaces an app's cache whatever it held.
+func put(m *Manager, ctx context.Context, app, value string) {
+	m.UpdateAppCache(ctx, app, func(string) string { return value })
+}
+
+// An update reads and writes the cache under the entry's lock, so concurrent
+// updates each see the one before and none is lost; it reaches the entry from
+// a context detached from its request (context.WithoutCancel), after that
+// request has ended; and an ended session runs no update.
+func TestUpdateAppCacheIsOneStep(t *testing.T) {
+	m, ctx := newCtx(t, &fakeRefresher{})
+	if err := m.Login(ctx, client.Tokens{AccessToken: "a", RefreshToken: "r"}, "ann@k", Pin{}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.UpdateAppCache(ctx, "chat", func(old string) string { return old + "x" })
+		}()
+	}
+	wg.Wait()
+	if k, _ := m.AppCache(ctx, "chat"); k != strings.Repeat("x", 50) {
+		t.Fatalf("an update was lost: %d of 50", len(k))
+	}
+	req, cancel := context.WithCancel(ctx)
+	detached := context.WithoutCancel(req)
+	cancel()
+	m.UpdateAppCache(detached, "chat", func(string) string { return "late" })
+	if k, _ := m.AppCache(ctx, "chat"); k != "late" {
+		t.Fatalf("a detached context reaches the entry: %q", k)
+	}
+	if _, err := m.Logout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	m.UpdateAppCache(ctx, "chat", func(string) string { ran = true; return "back" })
+	if _, ok := m.AppCache(ctx, "chat"); ok || ran {
+		t.Fatal("an ended session runs no update")
 	}
 }

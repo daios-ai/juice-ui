@@ -1,7 +1,28 @@
 # Juice Web UI Requirements
 
-Version: 0.73.3
+Version: 0.73.4
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.73.4.** A request waits only for the kernel it is
+> about, and for any other at most one second. Opening a room, posting in it
+> and its watch read that room's chat alone; the sidebar is what the session
+> last read, kept chat by chat, and every page draws it running nothing. The
+> sidebar has its own watch, on every page, in a third heartbeat lane, apart,
+> at once and every 5 s: it reads each chat that is due on its own, answers
+> with what it holds after one second at most, and draws a slower chat at a
+> later tick; a chat that cannot be read backs off alone, so the others stay
+> as fresh as ever. Each chat's entry is written alone, and an older read
+> never replaces a newer one. A command in the sidebar reads the chat it ran
+> on alone, and a room in view on another chat is left to its own watch. /chat
+> opens the newest room the session holds, reading every chat only when it
+> holds none; a room deleted, left, or found gone has its chat read again
+> first, so /chat never opens it. A name never seen is waited for at most one
+> second, once per request, and spelled by key until its answer arrives, the
+> sidebar drawing it at its next tick; one kept is drawn at once and asked
+> again past the request. The session keeps no name: it keeps each party as
+> its chat sent it, and every draw names it (§6.1, §6.7). A
+> request in the sidebar stands on the rows' edge with no box of its own, its
+> answer, Approve or Accept, the primary and the other neutral.
 
 > **What changed in 0.73.3.** Every name is drawn by one component and each
 > of its parts leads to its page. A user `bob@beta`, a kernel `beta` and an
@@ -1482,8 +1503,13 @@ them. A test holds this.
     htmx swap fragments.
   * **Interactivity:** **htmx** plus small vanilla ES modules — no build step, no
     Node, no SPA framework. Handlers return HTML fragments; htmx performs swaps
-    and the page's heartbeat (one request per lane, every 5 s and every badge
-    interval, carrying each widget's watch). Vanilla JS is limited
+    and the page's heartbeat (one request per lane — every 5 s, every badge
+    interval, and apart, at once and every 5 s, for a watch that may wait on
+    another kernel — carrying each widget's watch). A request waits only for
+    the kernel it is about, and for any other at most one second: what a page
+    shows from another source is what the session last read of it, and the
+    heartbeat brings each source up to date on its own, with its own back-off.
+    Vanilla JS is limited
     to the schema→form renderer, the theme toggle, a tab-visibility signal, and
     the wallet module (`wallet/wallet.mjs`, §6.5), which speaks EIP-6963 and
     EIP-1193 to the person's browser wallet and is tested with `node:test`
@@ -2948,9 +2974,10 @@ as the kernel names any party, `{address, principal, nickname?}`: its
 has given no name the name it calls itself. That address is chat's data: the
 chat page is a view of chat's actions, and names every party of a reply by its
 principal as the viewer's kernel names it (§6.6), asking that kernel
-(`sys/resolve`) at most every ten minutes per principal, each asking within
-3 s; a principal it cannot name is spelled by key, with the name its kernel
-calls itself. What a post's first word addresses stays chat's address, since
+(`sys/resolve`) at most every ten minutes per principal, past the request: a
+name kept is drawn at once, and a principal never seen is waited for at most one
+second; a principal it cannot name, or not yet, is spelled by key, with the name
+its kernel calls itself. What a post's first word addresses stays chat's address, since
 chat routes by it. An address is never stored as identity; an **entry** is
 one thing said in a room, author, time, a body that is a JSON value (a post
 being a string) and a stored kind (post, answer or failure); a
@@ -3214,21 +3241,32 @@ since a post in a room elsewhere holds its process open here until the deliverie
 it made there are answered. To these is added a count of the changes this UI made
 for that address, since a delivery settled by another tab between two ticks leaves
 the open set as it was. A chat joined, asking, disconnected or blocked moves the
-signal by itself. A page carries one chat watch holding the signal
-of its last successful read. On a room page, when the signal differs or a visible tab
-holds a delivery for the room, the tick runs `room/read` once, then settles the
-viewer's deliveries when the tab is visible, and answers the new entries, the rail
-when it changed, and the watch. A delivery is settled only after a read that
-succeeded, because a completion chat cannot receive spends the task. On any other
-page the slow tick runs `room/list` of each chat when the signal differs; a room
-page's read lists the other chats with it. A read that fails acknowledges nothing:
-the watch keeps its signal and cursor, the page reads again after 5 s, then 10, 20,
-40, and every 60 s, and the first success shows the change. A chat that cannot be
-listed is a row under the rooms, muted, its reason the row's title, the other
-chats' rooms still shown, and is retried on the same back-off. A room gone, or held by a chat
-no longer among the viewer's, sends the page to the landing (`HX-Redirect`), so a
-delivery of it still open does not read it again on every tick. The rail on a page load is what the session last read, with no run; a session
-holding nothing lists its chats once, and a session not yet joined shows no rooms.
+signal by itself. A request waits only for the chat it is about (§6.1). A room
+page carries the room's watch, in the 5 s lane, holding the signal of its last
+successful read. When the signal differs or a visible tab holds a delivery for
+the room, the tick runs `room/read` once, then settles the viewer's deliveries
+when the tab is visible, and answers the new entries, the rail when the read
+changed what the session holds of that chat, and the watch. A delivery is settled
+only after a read that succeeded, because a completion chat cannot receive spends
+the task. A read that fails acknowledges nothing: the watch keeps its signal and
+cursor, the page reads again after 5 s, then 10, 20, 40, and every 60 s, and the
+first success shows the change. The session keeps the rail chat by chat: each
+chat's rooms and invitations as last read, or why it could not be, with the
+signal that read answered. `room/read` answers its chat's rooms beside the room,
+so a room page's read is that chat's entry, and a command answered in place
+lists its own chat alone. Every page carries the rail's watch, in the lane apart
+(at once and every 5 s), naming what its rail shows: the tick runs `room/list` of
+each chat that is due — its signal differs, or its retry has come — each on its
+own, past the request, a chat being read not read again meanwhile; it answers
+with what the session holds after one second at most, and a slower chat is drawn
+at a later tick. Each entry is written alone, and an older read never replaces a
+newer one. A chat that cannot be listed is a row under the rooms, muted, its
+reason the row's title, the other chats' rooms still shown, and is retried alone
+on the same back-off. A room gone, or held by a chat no longer among the
+viewer's, sends the page to the landing (`HX-Redirect`), so a delivery of it
+still open does not read it again on every tick. The rail on a page load is what
+the session last read, with no run and no wait; a session holding nothing is
+filled by the rail's first tick, and a session not yet joined shows no rooms.
 The rail and a room's header name the kernel of a room held elsewhere after its
 name, muted (`far · alpha`), as a kernel is named alone (§4).
 
@@ -3367,8 +3405,11 @@ member addressed. Without the second sentence the model answered by posting
 and then narrated the post in its completion; without the first it reached the
 member by a direct message outside the room.
 
-The UI (the workspace, §6.1): `/chat` lands in the viewer's newest room, else
-the room made for a viewer with none, else an empty page beside the rail.
+The UI (the workspace, §6.1): `/chat` lands in the viewer's newest room the
+session holds, else the room made for a viewer with none, else an empty page
+beside the rail. It reads every chat only when the session holds no rail, and
+waits for them one second at most; a chat that could not be read, or has not
+answered yet, may hold rooms, so then no room is made.
 
 * **The rail** is the sidebar's list of the viewer's rooms, newest activity
   first, the room in view `aria-current`, a room with unread entries weighted;
@@ -3380,7 +3421,7 @@ the room made for a viewer with none, else an empty page beside the rail.
   means new messages. A chat asking reads `chat@alpha` and **Connection
   request**, with **Approve** and **Ignore**; an invitation reads the room's
   name, its kernel when elsewhere, and **Invitation from** and who sent it,
-  with **Accept** and **Decline** (the danger tier, asked first). Under the
+  with **Accept** and **Decline** (asked first). A request stands on the rows' edge with no box of its own, its answer, Approve or Accept, the primary and the other neutral. Under the
   rooms, muted: a chat that could not be read, `#alert` and its address, its
   reason in its title, and for a chat elsewhere its menu **Disconnect alpha**;
   own chat that could not be read has nothing to do there, and is a status

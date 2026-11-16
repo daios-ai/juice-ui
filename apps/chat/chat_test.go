@@ -92,6 +92,36 @@ type fakeKernel struct {
 	stale        map[string]bool            // actions whose cached contract moved: refused once, for a refresh
 	regrants     []string                   // selectors granted again from a kept key
 	failStart    bool                       // POST /v1/grants/start cannot reach the kernel holding the chat
+	awayHold     time.Duration              // chat@away answers each run this late, as a slow kernel does
+	listHold     time.Duration              // chat@away's room/list answers this late, what it answers read at once
+	resolveHold  time.Duration              // sys/resolve answers this late, as a principal's kernel far away does
+}
+
+// hold sets how late chat@away, its list and sys/resolve answer.
+func (f *fakeKernel) hold(away, list, resolve time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.awayHold, f.listHold, f.resolveHold = away, list, resolve
+}
+
+// down sets whether chat@away answers.
+func (f *fakeKernel) down(down bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.awayDown = down
+}
+
+// awayRuns is how many runs reached chat@away.
+func (f *fakeKernel) awayRuns() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, run := range f.runs {
+		if strings.Contains(run, `"action":"chat@away/`) {
+			n++
+		}
+	}
+	return n
 }
 
 // home is this kernel's chat.
@@ -490,7 +520,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			_ = json.Unmarshal(in.Args, &a)
 			f.resolved = append(f.resolved, a.Address)
 			p, ok := f.names[a.Address]
+			hold := f.resolveHold
 			f.mu.Unlock()
+			time.Sleep(hold)
 			if !ok {
 				p = party(a.Address)
 			}
@@ -510,7 +542,14 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		if f.failNext[in.Action] > 0 {
 			f.failNext[in.Action]--
 		}
+		hold, listHold := f.awayHold, f.listHold
 		f.mu.Unlock()
+		if away {
+			time.Sleep(hold)
+		}
+		if away && strings.HasSuffix(in.Action, "/"+roomListName) {
+			defer time.Sleep(listHold) // answered late, read now
+		}
 		remoteFailed := func() {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"code":"execution_failed","error":"remote call failed","meta":{"charge":"0","tx_id":"tx"}}`))
@@ -873,10 +912,6 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	if err := st.Register(context.Background(), cl, "t", "chat@testnet", "http://chat.test"); err != nil {
 		t.Fatal(err)
 	}
-	viewers := struct {
-		sync.Mutex
-		m map[context.Context]client.User
-	}{m: map[context.Context]client.User{}}
 	c.deps = apps.Deps{
 		Address:    testAddress,
 		KeyAddress: func(h string) string { return h + "@" + testKey },
@@ -914,15 +949,19 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 		Home:     filepath.Join(root, "ui"),
 		Programs: prog,
 		Me:       func(*http.Request) string { return "ann@testnet" },
-		Viewer: func(r *http.Request) (u client.User, err error) { // read once per request, as the server's is
-			viewers.Lock()
-			defer viewers.Unlock()
-			if u, ok := viewers.m[r.Context()]; ok {
-				return u, nil
+		Viewer: func(r *http.Request) (u client.User, err error) { // read once per request, as the server's is: a slot the request's context carries
+			v, _ := r.Context().Value(viewerSlot{}).(*viewerRead)
+			if v == nil {
+				v = &viewerRead{}
+			}
+			v.Lock()
+			defer v.Unlock()
+			if v.read {
+				return v.user, nil
 			}
 			err = c.deps.Sessions.Do(r.Context(), func(tok string) (e error) { u, e = cl.Me(r.Context(), tok); return e })
 			if err == nil {
-				viewers.m[r.Context()] = u
+				v.user, v.read = u, true
 			}
 			return u, err
 		},
@@ -1018,6 +1057,17 @@ func (f *fakePrograms) register(login string) error {
 	return f.fail
 }
 
+// viewerRead is the viewer as one request has read it, in a slot its context
+// carries, so a read the request leaves running sees it too, as the server's
+// viewer does.
+type viewerRead struct {
+	sync.Mutex
+	user client.User
+	read bool
+}
+
+type viewerSlot struct{}
+
 // sessions is each session manager's cookie, so requests in a test share one
 // session, as a browser's do.
 var sessions sync.Map
@@ -1030,6 +1080,7 @@ func inSession(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, req *http.Re
 	}
 	rec := httptest.NewRecorder()
 	sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(context.WithValue(r.Context(), viewerSlot{}, &viewerRead{}))
 		if _, ok := c.deps.Sessions.Tokens(r.Context()); !ok {
 			_ = c.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "ann@testnet", session.Pin{})
 		}
@@ -1219,13 +1270,43 @@ func TestSetupBringsTheServerUp(t *testing.T) {
 // through the kernel alone: approving chat, running register, completing the
 // verification task, connecting the key at chat's root. A joined principal is
 // not joined again. Without the assistant's home the landing is the rooms.
+// landing opens /chat in ann's session and, as a browser does, follows a
+// redirect to a room, whose read keeps that room's chat in the session's rail.
+func landing(c *Chat, sm *scs.SessionManager) *httptest.ResponseRecorder {
+	rec := as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
+	if to := rec.Header().Get("Location"); rec.Code == http.StatusSeeOther && strings.HasPrefix(to, "/chat/room/") {
+		id, _ := url.PathUnescape(strings.TrimPrefix(to, "/chat/room/"))
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id, nil)
+		req.SetPathValue("id", id)
+		as(c, sm, c.getRoom, req)
+	}
+	return rec
+}
+
+// kept is the rail the session holds.
+func kept(c *Chat, sm *scs.SessionManager) (cache railCache) {
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { cache, _ = c.cachedRail(r) }, httptest.NewRequest(http.MethodGet, "/tick", nil))
+	return cache
+}
+
+// owed makes every chat that failed owed a read now, as its delay passing
+// would.
+func owed(c *Chat, sm *scs.SessionManager) {
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) {
+		c.update(r, func(cache *railCache) {
+			for chat, e := range cache.Read {
+				e.Retry = 0
+				cache.Read[chat] = e
+			}
+		})
+	}, httptest.NewRequest(http.MethodGet, "/tick", nil))
+}
+
 func TestLanding(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
 	c, sm := testChat(t, f)
-	land := func() *httptest.ResponseRecorder {
-		return as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
-	}
+	land := func() *httptest.ResponseRecorder { return landing(c, sm) }
 	if rec := land(); rec.Code != 200 {
 		t.Fatalf("no assistant and no room: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
@@ -1271,6 +1352,7 @@ func TestLanding(t *testing.T) {
 		t.Fatal(err)
 	}
 	to = "/chat/room/" + addr(three.ID)
+	railRead(c, sm) // the page's heartbeat reads the rooms
 	if rec := land(); rec.Header().Get("Location") != to || len(f.ran(roomCreateName)) != 1 {
 		t.Errorf("the landing opened %s, not %s", rec.Header().Get("Location"), to)
 	}
@@ -1292,9 +1374,10 @@ func TestLandingSeatsWhatIsStillInvited(t *testing.T) {
 	agentHome(t, c, "assistant@testnet", "AT")
 	f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
 	land := func() *httptest.ResponseRecorder {
-		return as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
+		railRead(c, sm) // the page's heartbeat reads the rooms
+		return landing(c, sm)
 	}
-	land()
+	landing(c, sm) // the first, after sign-in: the session holds nothing yet
 	late, err := f.svc.Store.CreateRoom(pr("ann@testnet"), "late", []string{pr("assistant@testnet")})
 	if err != nil {
 		t.Fatal(err)
@@ -1326,8 +1409,9 @@ func TestLandingSeatsWhatIsStillInvited(t *testing.T) {
 }
 
 // Rooms a chat elsewhere holds are unknown while it does not answer, so a
-// viewer with no room listed gets none made then; once it answers with none,
-// the room is made.
+// viewer with no room listed gets none made then; /chat reads nothing once the
+// session holds the rail, and once the heartbeat has read the chat answering
+// with none, the room is made.
 func TestLandingMakesNoRoomWhileAChatIsDown(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1337,9 +1421,7 @@ func TestLandingMakesNoRoomWhileAChatIsDown(t *testing.T) {
 	withAway(t, f)
 	f.requesters["chat@away"] = "pending"
 	connect(t, c, sm, farChat)
-	land := func() *httptest.ResponseRecorder {
-		return as(c, sm, c.getLanding, httptest.NewRequest(http.MethodGet, "/chat", nil))
-	}
+	land := func() *httptest.ResponseRecorder { return landing(c, sm) }
 	var shown any
 	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) { shown = data }
 	f.awayDown = true
@@ -1347,6 +1429,11 @@ func TestLandingMakesNoRoomWhileAChatIsDown(t *testing.T) {
 		t.Fatalf("a chat down: nothing is made, and no room is said to be none: %d %v %+v", rec.Code, f.ran(roomCreateName), shown)
 	}
 	f.awayDown = false
+	if rec := land(); rec.Code != 200 || len(f.ran(roomCreateName)) != 0 {
+		t.Fatalf("the rail kept says the chat down: still nothing is made: %d %v", rec.Code, f.ran(roomCreateName))
+	}
+	owed(c, sm)
+	railRead(c, sm) // the page's heartbeat reads it again once its delay passed
 	if rec := land(); rec.Code != 303 || len(f.ran(roomCreateName)) != 1 {
 		t.Errorf("every chat answering with no room: the room is made: %d %v", rec.Code, f.ran(roomCreateName))
 	}
@@ -1491,11 +1578,40 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 
 // tick is one heartbeat of a watch in ann's session, in a visible tab.
 func tick(c *Chat, sm *scs.SessionManager, key string, st watchState) (out template.HTML, err error) {
-	if key != railKey {
-		key = addr(key)
-	}
-	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.watch(r, key, st.String()) }, httptest.NewRequest(http.MethodGet, "/tick", nil))
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.watch(r, addr(key), st.String()) }, httptest.NewRequest(http.MethodGet, "/tick", nil))
 	return out, err
+}
+
+// stale is a room's watch whose signal the kernel has moved past.
+func stale(after int64) watchState {
+	return watchState{After: after, reading: reading{Signal: "stale"}}
+}
+
+// railTick is the rail's watch, in the lane apart, from a page showing the
+// rail of digest shown.
+func railTick(c *Chat, sm *scs.SessionManager, shown string) (out template.HTML, err error) {
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { out, err = c.watch(r, railKey, shown) }, httptest.NewRequest(http.MethodGet, "/tick", nil))
+	return out, err
+}
+
+// railRead is the rail's watch after something moved the signal, from a page
+// showing no rail yet: every chat of ann's that is due is read, and the rail
+// answered.
+func railRead(c *Chat, sm *scs.SessionManager) (template.HTML, error) {
+	c.changed("ann@testnet")
+	return railTick(c, sm, "")
+}
+
+// warm reads ann's chats into the session's rail, joined as a chat page would
+// have, so the rail any page renders holds them.
+func warm(t *testing.T, c *Chat, sm *scs.SessionManager) {
+	t.Helper()
+	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/tick", nil), func(r *http.Request) (template.HTML, error) {
+		c.changed("ann@testnet")
+		return c.watch(r, railKey, "")
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // open opens a room in ann's session and answers the state its watch rendered.
@@ -1646,6 +1762,7 @@ func TestAFailedReadIsRetriedUntilShown(t *testing.T) {
 		}
 		return template.HTML(name), nil
 	}
+	f.requesters[home] = "approved" // ann joined chat
 	room, _ := seated(f.svc.Store, pr("bob@testnet"), "cafe", []string{pr("ann@testnet")})
 	bob := f.joined(t, "bob@testnet")
 	st := open(t, c, sm, room.ID)
@@ -1673,7 +1790,7 @@ func TestAFailedReadIsRetriedUntilShown(t *testing.T) {
 		t.Errorf("after it the change is shown and settled: %q", h)
 	}
 	for fails, want := range map[int]int64{0: 5, 1: 10, 2: 20, 3: 40, 4: 60, 5: 60, 9: 60} {
-		w := watchState{Fails: fails}.failed()
+		w := reading{Fails: fails}.failed()
 		if got := w.Retry - time.Now().Unix(); got < want-1 || got > want || w.Fails != fails+1 {
 			t.Errorf("after %d failures the delay is %d, want %d", fails, got, want)
 		}
@@ -1682,7 +1799,7 @@ func TestAFailedReadIsRetriedUntilShown(t *testing.T) {
 	if err := f.svc.Store.DeleteRoom(pr("bob@testnet"), room.ID); err != nil {
 		t.Fatal(err)
 	}
-	if h, err = tick(c, sm, room.ID, watchState{After: 1, Signal: "stale"}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+	if h, err = tick(c, sm, room.ID, stale(1)); h != "" || !errors.Is(err, apps.Moved("/chat")) {
 		t.Errorf("a room gone: %s %v", h, err)
 	}
 }
@@ -1734,7 +1851,7 @@ func TestARemovedChatRunsNothing(t *testing.T) {
 	runs, decided := len(f.runs), len(f.decided)
 	f.mu.Unlock()
 
-	if h, err := tick(c, sm, room, watchState{After: st.After, Signal: "stale"}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+	if h, err := tick(c, sm, room, stale(st.After)); h != "" || !errors.Is(err, apps.Moved("/chat")) {
 		t.Errorf("the open tab leaves: %q %v", h, err)
 	}
 	var notFound bool
@@ -1771,9 +1888,10 @@ func TestARemovedChatRunsNothing(t *testing.T) {
 	}
 }
 
-// A page that is not a room renders the rail from what the session last read, with
-// no run; its slow watch runs room/list only on a change, and swaps the rail only
-// when the rooms differ.
+// Every page renders the rail from what the session last read and runs
+// nothing for it, with a copy or without; the rail's watch, in the lane apart,
+// lists a chat only when it is due, and swaps the rail only when the rooms
+// differ from what the page shows.
 func TestTheRailCostsNoRun(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1783,66 +1901,80 @@ func TestTheRailCostsNoRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.deps.Fragment = rnd.HTML
+	f.requesters[home] = "approved" // ann joined chat
 	mine, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", nil)
-	rail := func() string {
+	runs := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.runs)
+	}
+	rail := func(path string) string {
 		var h template.HTML
-		as(c, sm, func(w http.ResponseWriter, r *http.Request) { h, err = c.Rail(r) }, httptest.NewRequest(http.MethodGet, "/settings", nil))
+		as(c, sm, func(w http.ResponseWriter, r *http.Request) { h, err = c.Rail(r) }, httptest.NewRequest(http.MethodGet, path, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return string(h)
 	}
-	if got := rail(); strings.Contains(got, "cafe") || len(f.grants) != 0 {
-		t.Fatalf("a session not joined shows no rooms and joins nobody: %s %v", got, f.grants)
+	n := runs()
+	if got := rail("/settings"); strings.Contains(got, "cafe") || len(f.grants) != 0 || runs() != n || f.tasksReadBy("t") != 0 {
+		t.Fatalf("a session holding nothing shows no rooms, joins nobody and reads nothing: %s %v", got, f.grants)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(mine.ID), nil)
 	req.SetPathValue("id", addr(mine.ID))
 	as(c, sm, c.getRoom, req)
-	lists := len(f.ran(roomListName))
-	got := rail()
-	if !strings.Contains(got, ">cafe<") || !strings.Contains(got, `id="watch-rail" name="slow" value="chat:rail:`) {
-		t.Fatalf("the rail is what the room's read answered: %s", got)
+	lists, n := len(f.ran(roomListName)), runs()
+	got := rail("/settings")
+	if !strings.Contains(got, ">cafe<") || !strings.Contains(got, `id="watch-rail" name="apart" value="chat:rail:`) {
+		t.Fatalf("the rail is what the room's read answered, with its watch: %s", got)
 	}
-	if len(f.ran(roomListName)) != lists {
-		t.Errorf("a warm rail ran room/list")
+	if got := rail("/chat/room/" + addr(mine.ID)); !strings.Contains(got, `aria-current="page">cafe<`) || !strings.Contains(got, `id="watch-rail"`) {
+		t.Errorf("a room page's rail keeps its watch too: %s", got)
 	}
-	st := watchState{Signal: "old", Rail: "old"}
-	h, err := tick(c, sm, railKey, st)
-	if err != nil || !strings.Contains(string(h), `class="rail"`) || !strings.Contains(string(h), `id="watch-rail"`) || len(f.ran(roomListName)) != lists+1 {
-		t.Fatalf("a change swaps the rail: %s %v", h, err)
+	if runs() != n {
+		t.Errorf("a warm rail ran %d", runs()-n)
+	}
+	shown := regexp.MustCompile(`value="chat:rail:([^"]+)"`).FindStringSubmatch(got)[1]
+	if h, _ := railTick(c, sm, shown); h != "" || len(f.ran(roomListName)) != lists {
+		t.Errorf("nothing moved: no list, nothing swapped: %s", h)
+	}
+	h, err := railTick(c, sm, "old")
+	if err != nil || !strings.Contains(string(h), `class="rail"`) || !strings.Contains(string(h), `id="watch-rail"`) || len(f.ran(roomListName)) != lists {
+		t.Fatalf("a page showing another rail is answered what the session holds, listing nothing: %s %v", h, err)
 	}
 	if strings.Contains(string(h), `<dialog id="form-new"`) {
 		t.Error("the dialog is never swapped under a click")
 	}
-	var cache railCache
-	as(c, sm, func(w http.ResponseWriter, r *http.Request) {
-		b, _ := c.deps.Sessions.AppCache(r.Context(), c.Slug())
-		_ = json.Unmarshal([]byte(b), &cache)
-	}, httptest.NewRequest(http.MethodGet, "/", nil))
-	quiet := watchState{Signal: cache.Signal, Rail: railDigest(cache)}
-	if h, _ := tick(c, sm, railKey, quiet); h != "" || len(f.ran(roomListName)) != lists+1 {
-		t.Errorf("no change runs nothing: %s", h)
+	if railRead(c, sm); len(f.ran(roomListName)) != lists+1 {
+		t.Errorf("the signal moved: the chat is listed once: %d", len(f.ran(roomListName))-lists)
 	}
-	if h, _ := tick(c, sm, railKey, watchState{Signal: "old", Rail: quiet.Rail}); strings.Contains(string(h), `class="rail"`) {
+	if h, _ := railTick(c, sm, shown); h != "" || len(f.ran(roomListName)) != lists+1 {
 		t.Errorf("the same rooms keep the rail: %s", h)
 	}
 }
 
-// The state a page carries survives its one input, and one from before the
-// upgrade keeps its cursor, so nothing is shown twice.
+// A room's watch survives its one input, and one from before the upgrade keeps
+// its cursor, so nothing is shown twice; a source is due on a moved signal,
+// after its retry once failed, and never while a read holds it.
 func TestWatchStateRoundTrips(t *testing.T) {
-	st := watchState{After: 7, Signal: "ab", Rail: "cd", Fails: 2, Retry: 99}
+	st := watchState{After: 7, reading: reading{Signal: "ab", Fails: 2, Retry: 99}}
 	if got := parseWatch(st.String()); got != st {
 		t.Errorf("parse = %+v", got)
 	}
 	if got := parseWatch("12"); got.After != 12 || got.Signal != "" {
 		t.Errorf("an old value: %+v", got)
 	}
-	if (watchState{Signal: "a"}).due("a") || !(watchState{Signal: "a"}).due("b") || (watchState{Signal: "a", Fails: 1, Retry: time.Now().Unix() + 9}).due("b") {
+	if got := parseWatch("12.ab.cd.0.0"); got.After != 12 || got.Signal != "" {
+		t.Errorf("a value of 0.73.3, with the rail's digest in it: %+v", got)
+	}
+	if (reading{Signal: "a"}).due("a") || !(reading{Signal: "a"}).due("b") || (reading{Signal: "a", Fails: 1, Retry: time.Now().Unix() + 9}).due("b") {
 		t.Error("due")
 	}
-	if !(watchState{Signal: "a", Fails: 1, Retry: time.Now().Unix() - 1}).due("a") {
+	if !(reading{Signal: "a", Fails: 1, Retry: time.Now().Unix() - 1}).due("a") {
 		t.Error("a failed read is owed even when the signal returned to the one shown")
+	}
+	if (reading{Signal: "a", Busy: time.Now().Add(time.Second).UnixNano()}).due("b") || !(reading{Signal: "a", Busy: time.Now().Add(-time.Second).UnixNano()}).due("b") {
+		t.Error("a read in flight holds the source until its bound")
 	}
 }
 
@@ -1953,8 +2085,8 @@ func TestRoutes(t *testing.T) {
 }
 
 // The rail is the viewer's rooms, newest activity first, the one in view
-// current, an unread one weighted, with its watch; ?form=new opens the
-// new-conversation dialog on any page.
+// current, an unread one weighted, with its watch on every page; ?form=new
+// opens the new-conversation dialog on any page.
 func TestRail(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1969,6 +2101,7 @@ func TestRail(t *testing.T) {
 	cafe, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", nil)
 	f.svc.Store.Post(cafe.ID, pr("ann@testnet"), raw("y"))
 	f.svc.Store.MarkRead(pr("ann@testnet"), cafe.ID, 1)
+	warm(t, c, sm)
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(cafe.ID)+"?form=new", nil)
 	h, err := as2(c, sm, req, c.Rail)
 	if err != nil {
@@ -1982,8 +2115,8 @@ func TestRail(t *testing.T) {
 			t.Errorf("rail lacks %q: %s", want, got)
 		}
 	}
-	if strings.Contains(got, `id="watch-rail"`) {
-		t.Error("a room page keeps one watch, the room's")
+	if !strings.Contains(got, `<input type="hidden" id="watch-rail" name="apart" value="chat:rail:`) || strings.Contains(got, `id="form-rename"`) {
+		t.Error("a room page's rail keeps its own watch, in the lane apart, and leaves the rename dialog to the room")
 	}
 	if strings.Index(got, ">cafe<") > strings.Index(got, ">old<") {
 		t.Error("newest activity first")
@@ -2342,6 +2475,7 @@ func rigCommands(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	}
 	c.deps.Fragment = rnd.HTML
 	c.deps.RenderFragment = rnd.Fragment
+	f.requesters[home] = "approved" // ann joined chat, as anyone sending a command has
 	return c, sm
 }
 
@@ -2354,7 +2488,9 @@ func command(c *Chat, sm *scs.SessionManager, h http.HandlerFunc, id, form strin
 	return as(c, sm, h, req)
 }
 
-func railWatch(st watchState) string { return "slow=" + url.QueryEscape("chat:rail:"+st.String()) }
+// railWatch is the rail's watch input of a page, showing the rail of digest
+// shown.
+func railWatch(shown string) string { return "apart=" + url.QueryEscape("chat:rail:"+shown) }
 func roomWatch(id string, st watchState) string {
 	return "watch=" + url.QueryEscape("chat:"+addr(id)+":"+st.String())
 }
@@ -2367,6 +2503,7 @@ func TestRailMenus(t *testing.T) {
 	c, sm := rigCommands(t, f)
 	mine, _ := seated(f.svc.Store, pr("ann@testnet"), "mi<ne", nil)
 	theirs, _ := seated(f.svc.Store, pr("bob@testnet"), "theirs", []string{pr("ann@testnet")})
+	warm(t, c, sm)
 	h, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail)
 	if err != nil {
 		t.Fatal(err)
@@ -2410,9 +2547,7 @@ func TestGetRename(t *testing.T) {
 	c, sm := rigCommands(t, f)
 	mine, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", nil)
 	theirs, _ := seated(f.svc.Store, pr("bob@testnet"), "theirs", []string{pr("ann@testnet")})
-	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail); err != nil {
-		t.Fatal(err)
-	}
+	warm(t, c, sm)
 	runs := len(f.runs)
 	get := func(id string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(id)+"/rename", nil)
@@ -2443,7 +2578,7 @@ func TestRenameInPlace(t *testing.T) {
 	other, _ := seated(f.svc.Store, pr("ann@testnet"), "other", nil)
 
 	lists, renames := len(f.ran(roomListName)), len(f.ran(roomRenameName))
-	got := command(c, sm, c.postRename, room.ID, "name=tea&"+railWatch(watchState{Rail: "old"})).Body.String()
+	got := command(c, sm, c.postRename, room.ID, "name=tea&"+railWatch("old")).Body.String()
 	for _, want := range []string{`<dialog id="form-rename" class="modal-form" aria-label="Rename" hx-swap-oob="true">`, `hx-swap-oob="outerHTML:.rail"`, ">tea<", `id="watch-rail"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the answer lacks %s: %s", want, got)
@@ -2459,26 +2594,26 @@ func TestRenameInPlace(t *testing.T) {
 	if m == nil {
 		t.Fatalf("no watch: %s", got)
 	}
-	if h, err := tick(c, sm, railKey, parseWatch(m[1])); err != nil || h != "" {
+	if h, err := railTick(c, sm, m[1]); err != nil || h != "" {
 		t.Errorf("the tick after the answer swaps nothing: %s %v", h, err)
 	}
 
 	// In view, the crumb follows; another room's rename from that page leaves it.
-	got = command(c, sm, c.postRename, room.ID, "name=coffee&"+roomWatch(room.ID, watchState{Rail: "old"})).Body.String()
+	got = command(c, sm, c.postRename, room.ID, "name=coffee&"+roomWatch(room.ID, watchState{})).Body.String()
 	for _, want := range []string{`<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="coffee">coffee</b></nav>`, `data-confirm="Delete coffee and its history for everyone?"`, `hx-swap-oob="outerHTML:.rail"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("in view, the crumb and the rail follow, lacking %s: %s", want, got)
 		}
 	}
-	got = command(c, sm, c.postRename, other.ID, "name=else&"+roomWatch(room.ID, watchState{Rail: "old"})).Body.String()
+	got = command(c, sm, c.postRename, other.ID, "name=else&"+roomWatch(room.ID, watchState{})).Body.String()
 	if strings.Contains(got, "chat-crumb") || !strings.Contains(got, ">else<") {
 		t.Errorf("another room's rename leaves the crumb: %s", got)
 	}
 
-	// A watch waiting out a failed read still reads after a command.
-	wait := watchState{Rail: "old", Fails: 3, Retry: time.Now().Unix() + 60}
-	got = command(c, sm, c.postRename, room.ID, "name=late&"+railWatch(wait)).Body.String()
-	if !strings.Contains(got, ">late<") || strings.Contains(got, ".3.") {
+	// A room's watch waiting out a failed read still reads after a command.
+	wait := watchState{reading: reading{Fails: 3, Retry: time.Now().Unix() + 60}}
+	got = command(c, sm, c.postRename, room.ID, "name=late&"+roomWatch(room.ID, wait)).Body.String()
+	if !strings.Contains(got, ">late<") || !regexp.MustCompile(`value="chat:`+regexp.QuoteMeta(addr(room.ID))+`:\d+\.\w+\.0\.0"`).MatchString(got) {
 		t.Errorf("a failed watch is read past and cleared: %s", got)
 	}
 }
@@ -2490,7 +2625,7 @@ func TestRenameRefusedInPlace(t *testing.T) {
 	c, sm := rigCommands(t, f)
 	theirs, _ := seated(f.svc.Store, pr("bob@testnet"), "theirs", []string{pr("ann@testnet")})
 	for form, reason := range map[string]string{"name=mi%3Cne": "You may not do that in this room.", "name=+": "A room needs a name."} {
-		rec := command(c, sm, c.postRename, theirs.ID, form+"&"+railWatch(watchState{}))
+		rec := command(c, sm, c.postRename, theirs.ID, form+"&"+railWatch(""))
 		got := rec.Body.String()
 		for _, want := range []string{`hx-swap-oob="true" open>`, reason} {
 			if !strings.Contains(got, want) {
@@ -2516,8 +2651,9 @@ func TestDropInPlace(t *testing.T) {
 	defer f.close()
 	c, sm := rigCommands(t, f)
 	keep, _ := seated(f.svc.Store, pr("ann@testnet"), "keep", nil)
-	mk := func(creator, name string) string {
+	mk := func(creator, name string) string { // a room the page's rail shows
 		r, _ := seated(f.svc.Store, pr(creator), name, []string{pr("ann@testnet")})
+		railRead(c, sm)
 		return r.ID
 	}
 	gone := func(h http.HandlerFunc, id, watch, name string) {
@@ -2528,10 +2664,10 @@ func TestDropInPlace(t *testing.T) {
 			t.Errorf("%s: %d %q %s", name, rec.Code, rec.Header().Get("HX-Redirect"), rec.Body)
 		}
 	}
-	gone(c.postDeleteRoom, mk("ann@testnet", "del"), railWatch(watchState{Rail: "old"}), "del")
-	gone(c.postLeave, mk("bob@testnet", "left"), railWatch(watchState{Rail: "old"}), "left")
-	gone(c.postDeleteRoom, mk("ann@testnet", "del2"), roomWatch(keep.ID, watchState{Rail: "old"}), "del2")
-	gone(c.postLeave, mk("bob@testnet", "left2"), roomWatch(keep.ID, watchState{Rail: "old"}), "left2")
+	gone(c.postDeleteRoom, mk("ann@testnet", "del"), railWatch("old"), "del")
+	gone(c.postLeave, mk("bob@testnet", "left"), railWatch("old"), "left")
+	gone(c.postDeleteRoom, mk("ann@testnet", "del2"), roomWatch(keep.ID, watchState{}), "del2")
+	gone(c.postLeave, mk("bob@testnet", "left2"), roomWatch(keep.ID, watchState{}), "left2")
 
 	for _, in := range []struct {
 		h       http.HandlerFunc
@@ -2546,7 +2682,7 @@ func TestDropInPlace(t *testing.T) {
 
 	// Already gone, from both kinds of page: the run failed, so nothing moved the
 	// signal, and the read is made all the same.
-	for _, watch := range []string{railWatch(watchState{Rail: "old"}), roomWatch(keep.ID, watchState{Rail: "old"})} {
+	for _, watch := range []string{railWatch("old"), roomWatch(keep.ID, watchState{})} {
 		id := mk("ann@testnet", "ghost")
 		if err := f.svc.Store.DeleteRoom(pr("ann@testnet"), id); err != nil {
 			t.Fatal(err)
@@ -2607,9 +2743,7 @@ func TestMembersInPlace(t *testing.T) {
 	c, sm := rigCommands(t, f)
 	mine, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", []string{pr("bob@testnet")})
 	theirs, _ := seated(f.svc.Store, pr("bob@testnet"), "theirs", []string{pr("ann@testnet")})
-	if _, err := as2(c, sm, httptest.NewRequest(http.MethodGet, "/settings", nil), c.Rail); err != nil {
-		t.Fatal(err)
-	}
+	warm(t, c, sm)
 	rec := command(c, sm, c.postAddMember, mine.ID, "member=bare")
 	got := rec.Body.String()
 	for _, want := range []string{`<dialog id="form-members" class="modal-form" aria-label="Members" hx-swap-oob="true" open>`, "A member is an address", `value="bare"`, ">bob@testnet<"} {
@@ -2803,13 +2937,14 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	away.Store.Post(far.ID, pr("bob@away"), raw("there"))
 	f.requesters["chat@away"] = "pending" // chat@away addressed ann
 
-	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ := railRead(c, sm)
 	got := string(h)
 	if !strings.Contains(got, `<h2>Requests</h2><div class="rail-request">
   <header><span class="name mono"><span class="owner"><a href="/browse?owner=chat%40`+awayKey+`">chat@away</a></span></span></header>
   <p class="muted">Connection request</p>`) || strings.Contains(got, `data-menu="menu-ask-`) || strings.Contains(got, "rail-item unread") ||
-		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || !strings.Contains(got, `<button class="btn" type="submit">Approve</button>`) ||
-		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || !strings.Contains(got, `<button class="btn" type="submit">Ignore</button>`) || strings.Contains(got, "Block") ||
+		!strings.Contains(got, `<form id="/chat/chats/chat@`+awayKey+`/approve" method="post" action="/chat/chats/chat@`+awayKey+`/approve"`) ||
+		!strings.Contains(got, `<div class="cluster"><button class="btn-primary" type="submit" form="/chat/chats/chat@`+awayKey+`/approve">Approve</button><button class="btn" type="submit" form="/chat/chats/chat@`+awayKey+`/ignore">Ignore</button></div>`) ||
+		!strings.Contains(got, `<form id="/chat/chats/chat@`+awayKey+`/ignore" method="post" action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
 		strings.Index(got, "<h2>Requests</h2>") > strings.Index(got, "<h2>Rooms</h2>") || strings.Contains(got, ">far ") || len(f.ranAt("chat@away", roomListName)) != 0 {
 		t.Fatalf("a chat asking is a request saying so, with Approve and Ignore in view, and runs nothing: %s", got)
 	}
@@ -2824,7 +2959,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 		t.Errorf("the key is connected at chat@away's root: %v", f.grants)
 	}
 	reads := f.meReads
-	h, err = tick(c, sm, railKey, watchState{Signal: "old"})
+	h, err = railRead(c, sm)
 	if f.meReads-reads > 1 {
 		t.Errorf("a tick reads the viewer once at most: %d", f.meReads-reads)
 	}
@@ -2836,21 +2971,15 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	}
 
 	f.awayDown = true
-	var st watchState
-	c.deps.Fragment = func(name string, data any) (template.HTML, error) {
-		if v, ok := data.(watchView); ok {
-			st = v.State
-		}
-		return rnd.HTML(name, data)
-	}
-	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ = railRead(c, sm)
 	got = string(h)
+	st := kept(c, sm).Read[farChat]
 	if !strings.Contains(got, `>cafe</a>`) || strings.Contains(got, ">far ") ||
 		!strings.Contains(got, `<span class="rail-item" role="status" title="chat@away refused or failed; a chat on another kernel gives no reason.">`) ||
 		!strings.Contains(got, `<button class="btn-icon inline" data-menu="menu-down-chat@`+awayKey+`" aria-haspopup="menu" aria-expanded="false" aria-label="Manage">`) ||
 		!strings.Contains(got, `#alert"/></svg> <span class="name mono"><span class="owner">chat@away</span></span>`) || strings.Index(got, "menu-down-") < strings.Index(got, ">cafe<") ||
-		!strings.Contains(got, `>Disconnect away</button>`) || strings.Contains(got, "Block") || st.Fails != 1 {
-		t.Fatalf("a chat down is a row under the rooms, its reason its title, with its menu, and retried; the others stay: %s %+v", got, st)
+		!strings.Contains(got, `>Disconnect away</button>`) || strings.Contains(got, "Block") || st.Fails != 1 || kept(c, sm).Read[homeChat].Fails != 0 {
+		t.Fatalf("a chat down is a row under the rooms, its reason its title, with its menu, and retried alone; the others stay: %s %+v", got, st)
 	}
 
 	// Disconnected while its kernel does not answer: gone here at once, and said.
@@ -2862,7 +2991,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 		t.Errorf("disconnect revokes and ungrants: %v %v", f.requesters, f.ungrants)
 	}
 	lists := len(f.ranAt("chat@away", roomListName))
-	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ = railRead(c, sm)
 	if got = string(h); strings.Contains(got, ">far ") || strings.Contains(got, `/chat/chats/chat@`+awayKey+`/approve`) || len(f.ranAt("chat@away", roomListName)) != lists {
 		t.Errorf("a chat disconnected leaves the rail and runs nothing: %s", got)
 	}
@@ -2880,7 +3009,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 		_ = c.deps.Sessions.Do(r.Context(), func(tok string) error { return c.deps.Client.DeleteGrant(r.Context(), tok, "chat@away") })
 	}, httptest.NewRequest(http.MethodGet, "/settings", nil))
 	for range 3 {
-		h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+		h, _ = railRead(c, sm)
 	}
 	if got = string(h); strings.Contains(got, ">far ") || !strings.Contains(got, `/chat/chats/chat@`+awayKey+`/approve`) || len(f.regrants) != 1 {
 		t.Errorf("a grant removed in Settings leaves the chat asking, and nothing joins it: %s %v", got, f.regrants)
@@ -2903,7 +3032,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	if rec := chatVerb(c, sm, farChat, "block"); rec.Code == 303 {
 		t.Errorf("Block is no command of the rail: %d", rec.Code)
 	}
-	h, _ = tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ = railRead(c, sm)
 	if got = string(h); strings.Contains(got, "away") || !strings.Contains(got, ">cafe</a>") {
 		t.Errorf("a chat blocked leaves the rail: %s", got)
 	}
@@ -2987,14 +3116,14 @@ func TestAFailureElsewhereIsNotFinal(t *testing.T) {
 		return template.HTML(name), nil
 	}
 	f.awayDown = true
-	if h, _ := tick(c, sm, far.ID+"@"+awayKey, watchState{After: st.After, Signal: "stale"}); h != "_chat_watch" || next.Fails != 1 {
+	if h, _ := tick(c, sm, far.ID+"@"+awayKey, stale(st.After)); h != "_chat_watch" || next.Fails != 1 {
 		t.Fatalf("a chat elsewhere failing backs off: %s %+v", h, next)
 	}
 	f.awayDown = false
 	if err := away.Store.RemoveMember(pr("bob@away"), far.ID, pr("ann@testnet")); err != nil {
 		t.Fatal(err)
 	}
-	if h, err := tick(c, sm, far.ID+"@"+awayKey, watchState{After: st.After, Signal: "stale", Fails: 1}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
+	if h, err := tick(c, sm, far.ID+"@"+awayKey, watchState{After: st.After, reading: reading{Signal: "stale", Fails: 1}}); h != "" || !errors.Is(err, apps.Moved("/chat")) {
 		t.Errorf("its list confirms the room gone: %s %v", h, err)
 	}
 }
@@ -3099,11 +3228,12 @@ func TestInvitations(t *testing.T) {
 	}
 	tea, cake, pie := invite("tea"), invite("cake"), invite("pie")
 
-	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ := railRead(c, sm)
 	got := string(h)
 	if !strings.Contains(got, `<p class="muted">Invitation from <span class="name mono"><span class="owner"><a href="/browse?owner=bob%40`+testKey+`">bob@testnet</a></span></span></p>`) || strings.Contains(got, `data-menu="menu-invite-`) ||
-		!strings.Contains(got, `action="/chat/invites/`+addr(tea)+`/accept"`) || !strings.Contains(got, `<button class="btn" type="submit">Accept</button>`) ||
-		!strings.Contains(got, `data-confirm="Decline tea, which only its creator can invite you to again?"`) || !strings.Contains(got, `<button class="btn-danger" type="submit">Decline</button>`) {
+		!strings.Contains(got, `<form id="/chat/invites/`+addr(tea)+`/accept" method="post" action="/chat/invites/`+addr(tea)+`/accept"`) ||
+		!strings.Contains(got, `<div class="cluster"><button class="btn-primary" type="submit" form="/chat/invites/`+addr(tea)+`/accept">Accept</button><button class="btn" type="submit" form="/chat/invites/`+addr(tea)+`/decline">Decline</button></div>`) ||
+		!strings.Contains(got, `<form id="/chat/invites/`+addr(tea)+`/decline" method="post" action="/chat/invites/`+addr(tea)+`/decline" data-confirm="Decline tea, which only its creator can invite you to again?"`) || strings.Contains(got, "btn-danger") {
 		t.Fatalf("an invitation is a request naming who sent it, with Accept and Decline in view: %s", got)
 	}
 
@@ -3227,7 +3357,7 @@ func TestAChatAskingByKeyIsShownByKey(t *testing.T) {
 	c.deps.Fragment = rnd.HTML
 	f.requesters[home] = "approved"
 	f.requesters["chat@"+awayKey] = "pending"
-	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ := railRead(c, sm)
 	if got := string(h); !strings.Contains(got, `<header><span class="name mono" title="chat@`+awayKey+`"><span class="owner"><a href="/browse?owner=chat%40`+awayKey+`">chat@~away</a></span></span> <button type="button" class="btn-icon inline" data-copy="chat@`+awayKey+`"`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
 		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || len(f.refs) != 0 {
 		t.Fatalf("the card shows the kernel's own name, its copy beside the name, not in it, and connects it by key: %s", got)
@@ -3310,7 +3440,7 @@ func TestNamingAKernelKeepsItsRooms(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.deps.Fragment = rnd.HTML
-	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
+	h, _ := railRead(c, sm)
 	if got := string(h); !strings.Contains(got, `href="/chat/room/`+room+`"`) || !strings.Contains(got, `<span class="muted">· <span class="name mono">away</span></span>`) {
 		t.Errorf("the rail keeps the address and shows the name: %s", got)
 	}
@@ -3475,11 +3605,11 @@ func TestNothingInTheRailIsStuck(t *testing.T) {
 	f.requesters[home] = "approved"
 	f.requesters["chat@away"] = "pending"
 	seated(f.away.Store, pr("bob@away"), "far", []string{pr("ann@testnet")})
-	rail := func() string { h, _ := tick(c, sm, railKey, watchState{Signal: "old"}); return string(h) }
+	rail := func() string { h, _ := railRead(c, sm); return string(h) }
 	asks := func(got string) bool { return strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) }
 
 	got := rail()
-	if !strings.Contains(got, `<form method="post" action="/chat/chats/chat@`+awayKey+`/ignore" hx-post`) || strings.Contains(got, `/block"`) || strings.Contains(got, `data-confirm="Ignore`) {
+	if !strings.Contains(got, `<form id="/chat/chats/chat@`+awayKey+`/ignore" method="post" action="/chat/chats/chat@`+awayKey+`/ignore" hx-post`) || strings.Contains(got, `/block"`) || strings.Contains(got, `data-confirm="Ignore`) {
 		t.Fatalf("an asking chat is connected or ignored, unasked, and never blocked from here: %s", got)
 	}
 	f.awayDown = true
@@ -3552,5 +3682,408 @@ func TestTheQuestionsSayWhatIsLost(t *testing.T) {
 	v.Invites = []inviteRow{{ID: "r", Name: "far", Service: home}}
 	if got := v.Requests()[0].Commands[1].Confirm; got != "Decline far, which only its creator can invite you to again" {
 		t.Errorf("decline: %q", got)
+	}
+}
+
+// twoChats is ann@testnet (test user) joined to her kernel's chat, with room
+// cafe, and connected to chat@away, on another kernel, with room far; her
+// session's rail holds both.
+func twoChats(t *testing.T) (*fakeKernel, *Chat, *scs.SessionManager, svc.Room, svc.Room) {
+	t.Helper()
+	f := newFakeKernel()
+	t.Cleanup(f.close)
+	c, sm := testChat(t, f)
+	away := withAway(t, f)
+	f.requesters[home] = "approved"
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, farChat)
+	cafe, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", nil)
+	far, _ := seated(away.Store, pr("bob@away"), "far", []string{pr("ann@testnet")})
+	railRead(c, sm)
+	return f, c, sm, cafe, far
+}
+
+// post sends a message to a room from the composer, as htmx does.
+func post(c *Chat, sm *scs.SessionManager, room, text string) *httptest.ResponseRecorder {
+	form := url.Values{"raw_args": {`{"message":"` + text + `"}`}, "after": {"0"}}
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+room+"/message", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.SetPathValue("id", room)
+	return as(c, sm, c.postMessage, req)
+}
+
+// A request waits only for the chat it is about: opening a room, posting in
+// it, its watch and /chat run nothing on another chat, whether that chat is
+// down or slow, and take no longer for it.
+func TestARequestWaitsOnlyForItsOwnChat(t *testing.T) {
+	f, c, sm, cafe, _ := twoChats(t)
+	if len(kept(c, sm).shown().Rooms) != 2 {
+		t.Fatalf("the rail holds both chats' rooms: %+v", kept(c, sm))
+	}
+	for _, slow := range []bool{false, true} {
+		f.down(!slow)
+		if slow {
+			f.hold(3*time.Second, 0, 0)
+		}
+		runs, t0 := f.awayRuns(), time.Now()
+		st := open(t, c, sm, cafe.ID)
+		post(c, sm, addr(cafe.ID), "hello")
+		tick(c, sm, cafe.ID, stale(st.After))
+		landing(c, sm)
+		if took := time.Since(t0); f.awayRuns() != runs || took > time.Second {
+			t.Errorf("slow %v: a room at home, its post, its watch and /chat ran %d on chat@away and took %v", slow, f.awayRuns()-runs, took)
+		}
+	}
+	f.hold(0, 0, 0)
+}
+
+// The rail's watch reads each chat on its own: only a chat that is due, none
+// while nothing moved; a slow chat delays no other, the tick answering within
+// about a second with what the others hold, and is not read twice while it is
+// read; a chat down backs off alone and returns at its retry; and an older
+// read never replaces a newer one, so a room read while a list was in flight
+// stays read.
+func TestTheRailReadsEachChatOnItsOwn(t *testing.T) {
+	f, c, sm, _, far := twoChats(t)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	lists := func() (int, int) { return len(f.ranAt(home, roomListName)), len(f.ranAt("chat@away", roomListName)) }
+	digest := func() string { return railDigest(c.drawn(kept(c, sm))) }
+
+	h0, a0 := lists()
+	if h, _ := railTick(c, sm, digest()); h != "" {
+		t.Errorf("nothing moved answers nothing: %s", h)
+	}
+	if h, a := lists(); h != h0 || a != a0 {
+		t.Errorf("nothing moved lists nothing: %d %d", h-h0, a-a0)
+	}
+
+	// chat@away slow: an invitation at home is drawn within about a second.
+	f.hold(3*time.Second, 0, 0)
+	bob := joinedAt(t, f.svc, "bob@testnet")
+	f.dispatch("/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": "tea"})
+	t0 := time.Now()
+	h, _ := railTick(c, sm, digest())
+	if took := time.Since(t0); took > 2*time.Second || !strings.Contains(string(h), "Invitation from") || !strings.Contains(string(h), ">tea<") {
+		t.Errorf("a slow chat delays no other: %v %s", took, h)
+	}
+	railRead(c, sm)
+	if _, a := lists(); a != a0+1 {
+		t.Errorf("a chat being read is not read again meanwhile: %d lists", a-a0)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	f.hold(0, 0, 0)
+	if e := kept(c, sm).Read[farChat]; e.Busy != 0 || e.Reason != "" || len(e.Rooms) != 1 {
+		t.Errorf("its answer is kept once it arrives: %+v", e)
+	}
+
+	// chat@away down: it backs off alone; home is read on every move.
+	f.down(true)
+	railRead(c, sm)
+	if e := kept(c, sm).Read[farChat]; e.Fails != 1 || e.Reason == "" || kept(c, sm).Read[homeChat].Fails != 0 {
+		t.Fatalf("a chat down fails alone: %+v", kept(c, sm).Read)
+	}
+	h1, a1 := lists()
+	f.dispatch("/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": "pie"})
+	h, _ = railRead(c, sm)
+	if h2, a2 := lists(); h2 != h1+1 || a2 != a1 || !strings.Contains(string(h), ">pie<") {
+		t.Errorf("before its retry the chat down is not read, the others are: %d %d %s", h2-h1, a2-a1, h)
+	}
+	f.down(false)
+	owed(c, sm)
+	if h, _ = railRead(c, sm); !strings.Contains(string(h), ">far ") || kept(c, sm).Read[farChat].Fails != 0 {
+		t.Errorf("at its retry the chat answering again returns its rooms: %s", h)
+	}
+
+	// The reviewer's case: a list in flight reads far unread; ann then opens
+	// far, which reads it; the list answers last and is older, so far stays read.
+	away := f.away
+	away.Store.Post(far.ID, pr("bob@away"), raw("news"))
+	f.hold(0, 1500*time.Millisecond, 0)
+	go railRead(c, sm)
+	time.Sleep(200 * time.Millisecond)
+	open(t, c, sm, far.ID+"@"+awayKey)
+	if rooms := kept(c, sm).Read[farChat].Rooms; len(rooms) != 1 || rooms[0].Unread {
+		t.Fatalf("the room read: %+v", rooms)
+	}
+	time.Sleep(2 * time.Second)
+	f.hold(0, 0, 0)
+	if rooms := kept(c, sm).Read[farChat].Rooms; len(rooms) != 1 || rooms[0].Unread {
+		t.Errorf("an older read never replaces a newer one: %+v", rooms)
+	}
+}
+
+// A command reads its own chat alone: declining an invitation at home lists
+// home once, reads nothing elsewhere, and redraws the rail.
+func TestACommandReadsItsOwnChatAlone(t *testing.T) {
+	f, c, sm, _, _ := twoChats(t)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	bob := joinedAt(t, f.svc, "bob@testnet")
+	rec := f.dispatch("/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": "tea"})
+	var out struct {
+		Room svc.Room `json:"room"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	railRead(c, sm)
+	lists, runs := len(f.ran(roomListName)), f.awayRuns()
+	req := httptest.NewRequest(http.MethodPost, "/chat/invites/"+addr(out.Room.ID)+"/decline", strings.NewReader(railWatch(railDigest(c.drawn(kept(c, sm))))))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Current-URL", "http://ui.test/settings")
+	req.SetPathValue("room", addr(out.Room.ID))
+	req.SetPathValue("verb", "decline")
+	got := as(c, sm, c.postInvite, req).Body.String()
+	if len(f.ran(roomListName)) != lists+1 || f.awayRuns() != runs || !strings.Contains(got, `class="rail"`) || strings.Contains(got, ">tea<") || !strings.Contains(got, `href="/settings?form=new"`) {
+		t.Errorf("one list of its own chat, none elsewhere, the rail redrawn for the page it was sent from: %d %d %s", len(f.ran(roomListName))-lists, f.awayRuns()-runs, got)
+	}
+
+	// On the page of far, a room of chat@away, which is down: declining an
+	// invitation at home still reads nothing there, and the rail is redrawn.
+	rec = f.dispatch("/room/create", bob, map[string]any{"members": []string{"ann@testnet"}, "name": "pie"})
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	railRead(c, sm)
+	f.down(true)
+	far := kept(c, sm).Read[farChat].Rooms[0].Addr()
+	lists, runs = len(f.ran(roomListName)), f.awayRuns()
+	req = httptest.NewRequest(http.MethodPost, "/chat/invites/"+addr(out.Room.ID)+"/decline",
+		strings.NewReader("watch="+url.QueryEscape("chat:"+far+":"+watchState{}.String())+"&"+railWatch(railDigest(c.drawn(kept(c, sm))))))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Current-URL", "http://ui.test/chat/room/"+far)
+	req.SetPathValue("room", addr(out.Room.ID))
+	req.SetPathValue("verb", "decline")
+	got = as(c, sm, c.postInvite, req).Body.String()
+	if len(f.ran(roomListName)) != lists+1 || f.awayRuns() != runs || !strings.Contains(got, `class="rail"`) || strings.Contains(got, ">pie<") || strings.Contains(got, `id="watch-chat-room"`) {
+		t.Errorf("a command on another chat than the room in view's leaves that room to its watch: %d %d %s", len(f.ran(roomListName))-lists, f.awayRuns()-runs, got)
+	}
+	f.down(false)
+}
+
+// A room removed lands nowhere near it: deleting the room in view, with script
+// or without, and a room deleted by its creator found gone by the watch, send
+// the page to /chat, which opens another room, not the one removed.
+func TestARoomRemovedIsNotOpenedAgain(t *testing.T) {
+	f, c, sm, cafe, _ := twoChats(t)
+	lands := func() string { return landing(c, sm).Header().Get("Location") }
+	newest := func(id string) { f.svc.Store.Post(id, pr("ann@testnet"), raw("now")); railRead(c, sm) }
+
+	newest(cafe.ID)
+	if to := lands(); to != "/chat/room/"+url.PathEscape(addr(cafe.ID)) {
+		t.Fatalf("the landing opens the newest room: %s", to)
+	}
+	if rec := command(c, sm, c.postDeleteRoom, cafe.ID, roomWatch(cafe.ID, watchState{})); rec.Header().Get("HX-Redirect") != "/chat" {
+		t.Fatalf("deleting the room in view sends the page to /chat: %d %v", rec.Code, rec.Header())
+	}
+	if to := lands(); strings.Contains(to, cafe.ID) {
+		t.Errorf("with script, /chat opens the room deleted: %s", to)
+	}
+
+	tea, _ := seated(f.svc.Store, pr("ann@testnet"), "tea", nil)
+	newest(tea.ID)
+	req := httptest.NewRequest(http.MethodPost, "/chat/room/"+addr(tea.ID)+"/delete", nil)
+	req.SetPathValue("id", addr(tea.ID))
+	if rec := as(c, sm, c.postDeleteRoom, req); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/chat" {
+		t.Fatalf("without script, deleting sends the page to /chat: %d %v", rec.Code, rec.Header())
+	}
+	if to := lands(); strings.Contains(to, tea.ID) {
+		t.Errorf("without script, /chat opens the room deleted: %s", to)
+	}
+
+	bob := joinedAt(t, f.svc, "bob@testnet")
+	pie, _ := seated(f.svc.Store, pr("bob@testnet"), "pie", []string{pr("ann@testnet")})
+	newest(pie.ID)
+	st := open(t, c, sm, pie.ID)
+	f.dispatch("/room/delete", bob, map[string]any{"thread_id": pie.ID})
+	if _, err := tick(c, sm, pie.ID, stale(st.After)); err == nil {
+		t.Fatalf("the watch finds the room gone")
+	}
+	if to := lands(); strings.Contains(to, pie.ID) {
+		t.Errorf("a room found gone by the watch is opened again by /chat: %s", to)
+	}
+}
+
+// Opening a room waits for names at most once: its members and the senders of
+// its chat's invitations, never seen and on a kernel that does not answer, are
+// asked in one batch, so the page waits about a second, not two.
+func TestARoomWaitsForNamesOnce(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	f.requesters[home] = "approved"
+	room, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", []string{pr("bob@testnet"), pr("remy@nowhere")})
+	carol := joinedAt(t, f.svc, "carol@testnet")
+	f.dispatch("/room/create", carol, map[string]any{"members": []string{"ann@testnet"}, "name": "tea"})
+	f.hold(0, 0, 3*time.Second)
+	defer f.hold(0, 0, 0)
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(room.ID), nil)
+	req.SetPathValue("id", addr(room.ID))
+	t0 := time.Now()
+	as(c, sm, c.getRoom, req)
+	if took := time.Since(t0); took < 900*time.Millisecond || took > 1500*time.Millisecond {
+		t.Errorf("a room with a member and an inviter never seen waited %v for names", took)
+	}
+	f.mu.Lock()
+	asked := strings.Join(f.resolved, " ")
+	f.mu.Unlock()
+	if !strings.Contains(asked, pr("bob@testnet")) || !strings.Contains(asked, pr("carol@testnet")) {
+		t.Errorf("both were asked: %s", asked)
+	}
+
+	// A post, the UI having restarted since the page opened, so no name is
+	// kept: whom it missed and the room's parties are one batch, one wait.
+	c.mu.Lock()
+	c.names = map[string]naming{}
+	c.mu.Unlock()
+	var note string
+	c.deps.Fragment = func(name string, data any) (template.HTML, error) {
+		if v, ok := data.(entriesView); ok {
+			note = v.Error
+		}
+		return "", nil
+	}
+	t0 = time.Now()
+	post(c, sm, addr(room.ID), "hello")
+	if took := time.Since(t0); took < 900*time.Millisecond || took > 1500*time.Millisecond || !strings.HasPrefix(note, "Not delivered to remy@") {
+		t.Errorf("a post missing a member never seen, in a room of members never seen, waited %v for names: %q", took, note)
+	}
+}
+
+// An inviter's name that arrives after the invitation was drawn in key form
+// is drawn at the rail's next tick, though nothing else moved: the session's
+// copy keeps the sender as chat sent it, the rail draws it as now named, and
+// the rail's watch counts the name.
+func TestAnInvitersLateNameIsDrawn(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	rnd, err := server.NewRenderer(nil, c.Templates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.deps.Fragment = rnd.HTML
+	f.requesters[home] = "approved"
+	warm(t, c, sm)
+	if err := f.svc.Store.Named(party("ann@testnet")); err != nil {
+		t.Fatal(err)
+	}
+	carol := joinedAt(t, f.svc, "carol@testnet")
+	f.names = map[string]client.Party{pr("carol@testnet"): {Address: "carol@" + awayKey, Principal: pr("carol@testnet"), Nickname: "moved"}}
+	f.dispatch("/room/create", carol, map[string]any{"members": []string{"ann@testnet"}, "name": "tea"})
+	f.hold(0, 0, 2500*time.Millisecond)
+	defer f.hold(0, 0, 0)
+	railRead(c, sm)                    // the list waits a second for carol's name, the tick a second at most
+	time.Sleep(300 * time.Millisecond) // the list has answered; carol's name has not
+	h, _ := railTick(c, sm, "")
+	shown := railDigest(c.drawn(kept(c, sm)))
+	if !strings.Contains(string(h), ">tea<") || strings.Contains(string(h), "~moved") {
+		t.Fatalf("drawn before its sender's name arrives, in key form: %s", h)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if h, _ = railTick(c, sm, shown); !strings.Contains(string(h), "carol@~moved") {
+		t.Errorf("the name arrived since is drawn at the next tick: %s", h)
+	}
+	if e := kept(c, sm).Read[homeChat].Invites; len(e) != 1 || e[0].From.Nickname == "moved" {
+		t.Errorf("the session's copy keeps the sender as chat sent it: %+v", e)
+	}
+}
+
+// /chat in a session holding nothing reads every chat and waits for them at
+// most about a second; a chat that has not answered by then may hold rooms,
+// so no first room is made, and once it has answered with none, it is.
+func TestLandingWithNothingKeptWaitsASecondAtMost(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	agentHome(t, c, "assistant@testnet", "AT")
+	f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
+	withAway(t, f)
+	f.requesters["chat@away"] = "pending"
+	connect(t, c, sm, farChat)
+	inSession(c, sm, func(w http.ResponseWriter, r *http.Request) { // a fresh sign-in: the session holds no rail
+		c.deps.Sessions.UpdateAppCache(r.Context(), c.Slug(), func(string) string { return "" })
+	}, httptest.NewRequest(http.MethodGet, "/", nil))
+	var shown any
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) { shown = data }
+	f.hold(3*time.Second, 0, 0)
+	t0 := time.Now()
+	if rec := landing(c, sm); time.Since(t0) > 2*time.Second || rec.Code != 200 || len(f.ran(roomCreateName)) != 0 || shown != (landingView{Unread: true}) {
+		t.Fatalf("a chat not answering within the wait: %v %d %v %+v", time.Since(t0), rec.Code, f.ran(roomCreateName), shown)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	f.hold(0, 0, 0)
+	if rec := landing(c, sm); rec.Code != 303 || len(f.ran(roomCreateName)) != 1 {
+		t.Errorf("once it answered with none, the room is made: %d %v", rec.Code, f.ran(roomCreateName))
+	}
+}
+
+// A name never seen is waited for at most about a second, then spelled by key
+// until its answer arrives, and is asked once; a name kept past nameKept is
+// drawn as kept at once and asked again past the request.
+func TestANameNeverWaitsLong(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	f.requesters[home] = "approved"
+	f.names = map[string]client.Party{pr("bob@testnet"): {Address: "bob@" + awayKey, Principal: pr("bob@testnet"), Nickname: "home"}}
+	room, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", []string{pr("bob@testnet")})
+	var view roomView
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, page, title string, data any) {
+		view = data.(roomView)
+	}
+	bobShown := func() string {
+		for _, m := range view.Members.Room.Members {
+			if m.Principal == pr("bob@testnet") {
+				return m.Label()
+			}
+		}
+		return ""
+	}
+	asked := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return strings.Count(strings.Join(f.resolved, " "), pr("bob@testnet"))
+	}
+	get := func() time.Duration {
+		t0 := time.Now()
+		req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(room.ID), nil)
+		req.SetPathValue("id", addr(room.ID))
+		as(c, sm, c.getRoom, req)
+		return time.Since(t0)
+	}
+	f.hold(0, 0, 3*time.Second)
+	if took := get(); took < 900*time.Millisecond || took > 2*time.Second || bobShown() == "bob@~home" {
+		t.Errorf("a name never seen: waited %v, drawn %q", took, bobShown())
+	}
+	if took := get(); took > 500*time.Millisecond || asked() != 1 {
+		t.Errorf("a name being asked is not asked again, nor waited for: %v, asked %d", took, asked())
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if get(); bobShown() != "bob@~home" {
+		t.Errorf("its answer is drawn once it arrives: %q", bobShown())
+	}
+	c.mu.Lock()
+	n := c.names[pr("bob@testnet")]
+	n.at = n.at.Add(-2 * nameKept)
+	c.names[pr("bob@testnet")] = n
+	c.mu.Unlock()
+	f.mu.Lock()
+	f.names[pr("bob@testnet")] = client.Party{Address: "bob@" + awayKey, Principal: pr("bob@testnet"), Nickname: "moved"}
+	f.mu.Unlock()
+	if took := get(); took > 500*time.Millisecond || bobShown() != "bob@~home" {
+		t.Errorf("a name kept too long is drawn as kept, at once: %v %q", took, bobShown())
+	}
+	time.Sleep(3500 * time.Millisecond)
+	f.hold(0, 0, 0)
+	if get(); bobShown() != "bob@~moved" || asked() != 2 {
+		t.Errorf("and asked again past the request: %q, asked %d", bobShown(), asked())
 	}
 }

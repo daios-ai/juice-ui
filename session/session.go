@@ -248,20 +248,22 @@ func (m *Manager) Tokens(ctx context.Context) (client.Tokens, bool) {
 	return t, t.AccessToken != "" && t.RefreshToken != ""
 }
 
-// PutAppCache keeps what an app last read for this session's user in the
-// server-side entry, never in the session record or the browser, and gone with
-// the session. It changes only an entry that exists, so a session ended
-// meanwhile stays ended.
-func (m *Manager) PutAppCache(ctx context.Context, app, value string) {
+// UpdateAppCache replaces what an app last read for this session's user with
+// what fn makes of it, in one step under the entry's lock, so concurrent
+// updates each see the one before. The value lives in the server-side entry,
+// never in the session record or the browser, and goes with the session. It
+// changes only an entry that exists, so a session ended meanwhile stays ended
+// and fn is not run.
+func (m *Manager) UpdateAppCache(ctx context.Context, app string, fn func(old string) string) {
 	m.entry(ctx, func(e *live) {
 		if e.cache == nil {
 			e.cache = map[string]string{}
 		}
-		e.cache[app] = value
+		e.cache[app] = fn(e.cache[app])
 	})
 }
 
-// AppCache returns what PutAppCache kept for the app.
+// AppCache returns what UpdateAppCache kept for the app.
 func (m *Manager) AppCache(ctx context.Context, app string) (value string, ok bool) {
 	m.entry(ctx, func(e *live) { value = e.cache[app] })
 	return value, value != ""

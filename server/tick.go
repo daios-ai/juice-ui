@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,10 +19,12 @@ import (
 )
 
 // The heartbeat. A signed-in page makes one request per lane — `watch` every
-// 5 s, `slow` every BadgeSecs — carrying one hidden input per widget that
-// waits for something: kind:key:shown. The tick answers out-of-band fragments
-// for the widgets whose truth differs from what they show and nothing for the
-// rest, so an unchanged widget is never swapped under a click. The kernel-gone
+// 5 s, `slow` every BadgeSecs, and `apart` at once and every 5 s — carrying one
+// hidden input per widget that waits for something: kind:key:shown. A watch
+// whose answer may wait on another kernel rides apart, so it never delays the
+// watches of the other lanes. The tick answers out-of-band fragments for the
+// widgets whose truth differs from what they show and nothing for the rest, so
+// an unchanged widget is never swapped under a click. The kernel-gone
 // sign-out rides the tick, once, for every page. A watcher is registered per
 // kind: the core's below, an app's through Deps.Watch under its slug.
 
@@ -47,7 +50,7 @@ func (s *Server) getTick(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	q := r.URL.Query()
 	var out strings.Builder // written last, since a watcher may send the page on
-	for _, v := range append(q["watch"], q["slow"]...) {
+	for _, v := range slices.Concat(q["watch"], q["slow"], q["apart"]) {
 		kind, rest, _ := strings.Cut(v, ":")
 		key, shown, _ := strings.Cut(rest, ":")
 		fn := s.watchers[kind]

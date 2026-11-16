@@ -126,22 +126,23 @@ function hold(region, keep) {
 // A command in flight (grammar §5.1): from its sending until the page answers,
 // the button that sent it — or, sent from a menu, the menu's trigger, since the
 // menu has closed — is busy (aria-busy, a spinner in app.css), and its group —
-// the commands beside it (.cluster) or its menu, else its form alone — is held:
-// no command of the group is sent, by mouse or by key, so Ignore cannot run
-// while Approve does. A question (data-confirm) has stopped the first submit,
-// so busy starts once it is answered. A form showing its own progress
-// (hx-indicator, Run's bar) keeps it and only the hold applies. The button is
-// never disabled: a submitter disabled during submit drops its name and value
-// from the form's data.
+// the commands beside the button that sent it (.cluster) or its menu, else its
+// form alone — is held: no command of the group is sent, by mouse or by key, so
+// Ignore cannot run while Approve does. The group is the button's, since a
+// button may stand in its row apart from its form (the form attribute). A
+// question (data-confirm) has stopped the first submit, so busy starts once it
+// is answered. A form showing its own progress (hx-indicator, Run's bar) keeps
+// it and only the hold applies. The button is never disabled: a submitter
+// disabled during submit drops its name and value from the form's data.
 (function() {
   let held = new Map(); // a group in flight → { form, release }
-  const groupOf = (form) => form.closest('.cluster, .menu') || form;
+  const groupOf = (form, submitter) => (submitter || form).closest('.cluster, .menu') || form;
   function start(form, submitter) {
-    const group = groupOf(form);
+    const group = groupOf(form, submitter);
     const menu = form.closest('.menu');
     const el = form.hasAttribute('hx-indicator') ? null
       : (menu && document.querySelector(`[data-menu="${menu.id}"]`)) || submitter || form.querySelector('[type="submit"]');
-    const release = hold(group, form);
+    const release = hold(group, group.contains(form) ? form : submitter);
     el?.setAttribute('aria-busy', 'true');
     held.set(group, { form, release: () => { release(); el?.removeAttribute('aria-busy'); } });
   }
@@ -149,7 +150,7 @@ function hold(region, keep) {
     for (const [group, h] of held) if (h.form === form) { h.release(); held.delete(group); }
   }
   document.addEventListener('submit', (e) => { // before the question's handler, so a held group asks nothing
-    if (held.has(groupOf(e.target))) { e.preventDefault(); e.stopImmediatePropagation(); }
+    if (held.has(groupOf(e.target, e.submitter))) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
   document.addEventListener('submit', (e) => {
     if (!e.defaultPrevented) start(e.target, e.submitter); // a plain post: busy until the next page

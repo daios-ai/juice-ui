@@ -31,9 +31,10 @@
 {{template "_working" .}}
 {{end}}
 
-{{/* A page's one chat watch: the rail's in the slow lane, or the room's. One
-     element for the page and every answer, as _working. Input: watchView. */}}
-{{define "_chat_watch"}}<input type="hidden" {{if eq .Key "rail"}}id="watch-rail" name="slow"{{else}}id="watch-chat-room" name="watch"{{end}} value="chat:{{.Key}}:{{.State}}" hx-swap-oob="true">{{end}}
+{{/* A room page's watch, in the 5 s lane: it reads the room alone. One
+     element for the page and every answer, as _working. The rail keeps its
+     own watch (_rail). Input: watchView. */}}
+{{define "_chat_watch"}}<input type="hidden" id="watch-chat-room" name="watch" value="chat:{{.Key}}:{{.State}}" hx-swap-oob="true">{{end}}
 
 {{/* A refused post: the reason beside the composer, nothing appended. */}}
 {{define "_chat_refused"}}

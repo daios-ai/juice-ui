@@ -185,7 +185,7 @@ func TestOneBusyRule(t *testing.T) {
 		t.Error("app.css: a row dimmed in flight; the busy rule shows it on the button")
 	}
 	js, _ := staticFS.ReadFile("static/app.js")
-	for _, want := range []string{"function hold(", "held.has(groupOf(e.target))", "const release = hold(form, bar)", "htmx:beforeRequest", "htmx:afterRequest", "pageshow"} {
+	for _, want := range []string{"function hold(", "held.has(groupOf(e.target, e.submitter))", "const release = hold(form, bar)", "htmx:beforeRequest", "htmx:afterRequest", "pageshow"} {
 		if !strings.Contains(string(js), want) {
 			t.Errorf("app.js: the busy block lacks %q", want)
 		}

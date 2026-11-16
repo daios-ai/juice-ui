@@ -7,9 +7,11 @@
      each chat that could not be read, muted, its reason the row's title. A row
      is its name and its "…", which alone opens its menu; a row naming a kernel
      no petname names here copies the chat's address from that menu. The dialog
-     makes a room of the members chosen; the name is optional. A page that is
-     not a room holds the rename dialog here; a room page holds it in the room,
-     since the sidebar is not rendered on a narrow screen. Input: railView. */}}
+     makes a room of the members chosen; the name is optional. The rail's
+     watch, in the heartbeat's lane apart, carries what the rail shows, on
+     every page. A page that is not a room holds the rename dialog here; a room
+     page holds it in the room, since the sidebar is not rendered on a narrow
+     screen. Input: railView. */}}
 {{define "_rail"}}
 <nav class="rail" aria-label="Rooms"{{if .OOB}} hx-swap-oob="outerHTML:.rail"{{end}}>
   <a class="btn" href="{{.Path}}?form=new" data-modal="form-new" aria-label="New room"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#plus"/></svg><span>New room</span></a>
@@ -27,21 +29,24 @@
   </div>{{end}}
   {{range .Unread}}{{template "_rail_item" .}}{{end}}
 </nav>
-{{with .Watch}}{{template "_chat_watch" .}}{{template "_rename" $.Rename}}{{end}}
+<input type="hidden" id="watch-rail" name="apart" value="chat:rail:{{.Digest}}" hx-swap-oob="true">
+{{if not (or .OOB .Current)}}{{template "_rename" .Rename}}{{end}}
 {{if not .OOB}}{{template "_new_room" .New}}{{end}}
 {{end}}
 
-{{/* _rail_request — a request waiting on the viewer: its header, the name
-     with the kernel muted after it, then a copy of the chat's address when no
-     petname names its kernel here; a muted line saying what it is, and for an
-     invitation who sent it, with that party's copy when a key names it; its
-     buttons. A long name is shortened on its line and a copy stays in view.
-     Input: railItem. */}}
+{{/* _rail_request — a request waiting on the viewer, a row of the rail grown
+     to three lines, on the rows' edge and with no box of its own: its header,
+     the name with the kernel muted after it, then a copy of the chat's address
+     when no petname names its kernel here; a muted line saying what it is, and
+     for an invitation who sent it, with that party's copy when a key names it;
+     its buttons in one row, the answer the primary, each submitting its own
+     form, which stands after the request. A long name is shortened on its line
+     and a copy stays in view. Input: railItem. */}}
 {{define "_rail_request"}}<div class="rail-request">
   <header>{{if .Room}}<span>{{.Room}}{{with .Chat}} <span class="muted">· {{template "_name" (plain (brief .Kernel))}}</span>{{end}}</span>{{with .Chat}}{{with (brief .).Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}{{end}}{{else}}{{template "_name" (brief .Chat)}}{{end}}</header>
   <p class="muted">{{.Detail}}{{with .From}} {{template "_name" (brief .)}}{{end}}</p>
-  <div class="cluster">{{range .Commands}}{{template "_rail_command" .}}{{end}}</div>
-</div>{{end}}
+  <div class="cluster">{{range .Commands}}<button class="{{if .Primary}}btn-primary{{else}}btn{{end}}" type="submit" form="{{.Form}}">{{.Label}}</button>{{end}}</div>
+</div>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{end}}
 
 {{/* _rail_item — a chat that could not be read: its name muted behind #alert,
      its reason its title, and "…" opening its menu; own chat, with nothing to
@@ -60,10 +65,11 @@
 {{define "_rail_trigger"}}<button class="btn-icon inline" data-menu="menu-{{.}}" aria-haspopup="menu" aria-expanded="false" aria-label="Manage"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#ellipsis"/></svg></button>{{end}}
 
 {{/* _rail_command — one command of a rail entry: a form posting to its action,
-     asked first when it has a question, the page answered in place; a menu's
-     item, or a request's button. While it runs its button, or the "…" of the
-     menu holding it, is busy (grammar §5.1). Input: railCommand. */}}
-{{define "_rail_command"}}{{if .Divider}}<div class="menu-divider"></div>{{end}}<form method="post" action="{{.Action}}"{{with .Confirm}} data-confirm="{{.}}?"{{end}} hx-post="{{.Action}}" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{.CSRFField}}<button class="{{if .Button}}{{if .Danger}}btn-danger{{else}}btn{{end}}{{else}}menu-item{{if .Danger}} danger{{end}}{{end}}" type="submit">{{.Label}}</button></form>{{end}}
+     asked first when it has a question, the page answered in place; holding a
+     menu's item, or, for a request, empty, its id the one its button names.
+     While it runs its button, or the "…" of the menu holding it, is busy
+     (grammar §5.1). Input: railCommand. */}}
+{{define "_rail_command"}}{{if .Divider}}<div class="menu-divider"></div>{{end}}<form{{with .Form}} id="{{.}}"{{end}} method="post" action="{{.Action}}"{{with .Confirm}} data-confirm="{{.}}?"{{end}} hx-post="{{.Action}}" hx-swap="none" hx-include="#watch-rail,#watch-chat-room">{{.CSRFField}}{{if not .Form}}<button class="menu-item{{if .Danger}} danger{{end}}" type="submit">{{.Label}}</button>{{end}}</form>{{end}}
 
 {{/* _copy_item — a menu's Copy address, for a row naming a kernel no petname
      names here (ui-grammar "Naming"): the row is a button or a link, which

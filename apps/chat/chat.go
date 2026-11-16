@@ -238,71 +238,103 @@ type naming struct {
 
 // nameKept is how long the viewer's kernel's name for a principal is kept
 // before the kernel is asked again: a name changes by a rename or a petname
-// bound, and asking may dial the principal's kernel. resolveBound bounds one
-// asking, as chat bounds each task it creates.
+// bound, and asking may dial the principal's kernel.
+const nameKept = 10 * time.Minute
+
+// A request waits only for the kernel it is about, and for any other at most
+// wait: what it draws from another source is what was last read of it, and
+// that source is read on its own (requirements §6.1, the heartbeat). readBound
+// bounds one such read, which may run past the request that began it.
 const (
-	nameKept     = 10 * time.Minute
-	resolveBound = 3 * time.Second
+	wait      = time.Second
+	readBound = 15 * time.Second
 )
 
 // name gives each party of a reply of chat the name the viewer's kernel gives
 // its principal, as every page of this UI names a party (ui-grammar "Names").
 // Chat holds a member by principal; the address it sends is its own kernel's
 // spelling, which is chat's data and no name the viewer's kernel gave. The
-// kernel is asked by sys/resolve, every principal not named lately at once,
-// each within resolveBound. A principal it cannot name keeps the name it last
-// gave, else is spelled by key with the nickname its kernel gives itself
-// (client.Party.Keyed). A seat not bound yet has no principal and keeps what
-// was typed for it.
+// kernel is asked by sys/resolve, which may dial the principal's kernel, so a
+// name is asked past the request: one kept, even past nameKept, is drawn as
+// kept and asked again; one never seen is waited for at most wait, then
+// spelled by key with the nickname its kernel gives itself
+// (client.Party.Keyed) until its answer arrives. A principal is stamped as it
+// is asked, so it is not asked twice, and a failed ask leaves the stamp. A seat
+// not bound yet has no principal and keeps what was typed for it.
 func (c *Chat) name(r *http.Request, ps []*client.Party) {
+	c.ask(r, ps)
+	c.kept(ps)
+}
+
+// ask asks the viewer's kernel for the name of each party's principal that is
+// not kept or is kept past nameKept, as name says, and waits for those never
+// seen at most wait. It draws nothing: what is kept is applied by kept, where
+// a party is drawn, so a copy keeps no name and one arriving late is drawn.
+func (c *Chat) ask(r *http.Request, ps []*client.Party) {
 	now := time.Now()
-	ask := map[string]client.Party{}
+	ask, unseen := map[string]bool{}, false
 	c.mu.Lock()
 	for _, p := range ps {
-		if n, ok := c.names[p.Principal]; p.Principal != "" && (!ok || now.Sub(n.at) > nameKept) {
-			ask[p.Principal] = *p
+		n, ok := c.names[p.Principal]
+		if p.Principal == "" || ask[p.Principal] || ok && now.Sub(n.at) <= nameKept {
+			continue
 		}
+		if !ok {
+			n.party, unseen = client.Party{Address: p.Keyed(), Principal: p.Principal, Nickname: p.Nickname}, true
+		}
+		c.names[p.Principal] = naming{n.party, now}
+		ask[p.Principal] = true
 	}
 	c.mu.Unlock()
 	if len(ask) > 0 {
-		_ = c.deps.Sessions.Do(r.Context(), func(tok string) error {
-			var wg sync.WaitGroup
-			for id, p := range ask {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					got, err := c.resolve(r.Context(), tok, id)
-					c.mu.Lock()
-					defer c.mu.Unlock()
-					switch n, ok := c.names[id]; {
-					case err == nil:
-						c.names[id] = naming{got, now}
-					case ok:
-						c.names[id] = naming{n.party, now}
-					default:
-						c.log().Warn("chat: name", "principal", id, "err", err)
-						c.names[id] = naming{client.Party{Address: p.Keyed(), Principal: id, Nickname: p.Nickname}, now}
-					}
-				}()
+		done := make(chan struct{})
+		ctx := context.WithoutCancel(r.Context())
+		go func() {
+			defer close(done)
+			_ = c.deps.Sessions.Do(ctx, func(tok string) error {
+				var wg sync.WaitGroup
+				for id := range ask {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						got, err := c.resolve(ctx, tok, id)
+						if err != nil {
+							c.log().Warn("chat: name", "principal", id, "err", err)
+							return
+						}
+						c.mu.Lock()
+						c.names[id] = naming{got, time.Now()}
+						c.mu.Unlock()
+					}()
+				}
+				wg.Wait()
+				return nil
+			})
+		}()
+		if unseen {
+			select {
+			case <-done:
+			case <-time.After(wait):
 			}
-			wg.Wait()
-			return nil
-		})
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, p := range ps {
-		if n, ok := c.names[p.Principal]; ok {
-			*p = n.party
-		} else if p.Principal != "" {
-			*p = client.Party{Address: p.Keyed(), Principal: p.Principal, Nickname: p.Nickname}
 		}
 	}
 }
 
-// resolve is the viewer's kernel's name for a principal, by sys/resolve.
+// kept gives each party the name kept for its principal, asking nothing.
+func (c *Chat) kept(ps []*client.Party) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range ps {
+		if n, ok := c.names[p.Principal]; ok && p.Principal != "" {
+			*p = n.party
+		}
+	}
+}
+
+// resolve is the viewer's kernel's name for a principal, by sys/resolve,
+// within readBound.
 func (c *Chat) resolve(ctx context.Context, tok, principal string) (client.Party, error) {
-	ctx, cancel := context.WithTimeout(ctx, resolveBound)
+	ctx, cancel := context.WithTimeout(ctx, readBound)
 	defer cancel()
 	args, _ := json.Marshal(map[string]string{"address": principal})
 	rep, err := c.deps.Client.Run(ctx, tok, client.Resolve, args, "")
@@ -327,23 +359,27 @@ func parties(groups ...[]client.Party) []*client.Party {
 	return out
 }
 
-// nameRead names the parties of a room read that a page shows: the room's
-// members and invited, the entries' authors, those it waits on.
-func (c *Chat) nameRead(r *http.Request, read *roomRead) {
-	ps := parties(read.Room.Members, read.Room.Invited, read.Waiting)
+// nameRead names the parties a room page draws of a room read: the room's
+// members and invited, the entries' authors, those it waits on, and more, the
+// request's own (a post's members not reached). Who sent each invitation its
+// chat holds is asked in the same batch, so the request waits for names at
+// most once, and left as read: the rail draws it (drawn).
+func (c *Chat) nameRead(r *http.Request, read *roomRead, more ...*client.Party) {
+	ps := append(parties(read.Room.Members, read.Room.Invited, read.Waiting), more...)
 	for i := range read.Entries {
 		ps = append(ps, &read.Entries[i].Author)
 	}
-	c.name(r, ps)
+	c.ask(r, append(slices.Clip(ps), inviters(read.Invitations)...))
+	c.kept(ps)
 }
 
-// nameInvites names who sent each invitation.
-func (c *Chat) nameInvites(r *http.Request, invites []inviteRow) {
+// inviters is who sent each invitation, to ask or name in place.
+func inviters(invites []inviteRow) []*client.Party {
 	ps := make([]*client.Party, len(invites))
 	for i := range invites {
 		ps[i] = &invites[i].From
 	}
-	c.name(r, ps)
+	return ps
 }
 
 func (c *Chat) log() *slog.Logger {
@@ -799,6 +835,12 @@ func (c *Chat) readRoom(r *http.Request, service, thread string, after int64, se
 	return out, nil
 }
 
+// readOf is a read of one room as the entry of its chat, begun at at: the
+// chat's rooms and invitations that room/read answers beside the room.
+func (c *Chat) readOf(service string, read roomRead, at int64, signal string) map[string]chatRead {
+	return map[string]chatRead{service: {Rooms: read.Rooms, Invites: read.Invitations, Chat: c.chat(service), reading: reading{At: at, Signal: signal}}}
+}
+
 // tagInvites marks invitations as held by the chat at service.
 func (c *Chat) tagInvites(invites []inviteRow, service string) []inviteRow {
 	for i, room := range c.tag(make([]roomRow, len(invites)), service, "") {
@@ -815,66 +857,213 @@ type downRow struct {
 	Service string       `json:"service"`
 	Chat    client.Party `json:"chat"` // as the page names it
 	Reason  string       `json:"reason"`
-	err     error
 }
 
-// rooms is what the chats named hold for the viewer: their rooms, newest
-// activity first, their invitations, and the chats that could not be read,
-// which hide no other chat's.
-func (c *Chat) rooms(r *http.Request, services []string) railCache {
-	var rail railCache
-	for _, service := range services {
-		var out struct {
-			Rooms       []roomRow   `json:"rooms"`
-			Invitations []inviteRow `json:"invitations"`
-		}
-		if err := c.run(r, service, roomListName, struct{}{}, &out); err != nil {
-			c.log().Warn("chat: list rooms", "chat", service, "err", err)
-			rail.Down = append(rail.Down, downRow{service, c.chat(service), c.why(err, service), err})
+// reading is when a source was last read: when that read began, so an older
+// read never replaces a newer one; the signal it answered; until when a read
+// in flight holds it, so it is not read twice; and after a failed read how many
+// failed and when the next may run. A room's watch and each chat of the rail
+// keep one, and back off by the one rule (due, failed).
+type reading struct {
+	At     int64  `json:"at"` // unix nanoseconds
+	Signal string `json:"signal"`
+	Busy   int64  `json:"busy,omitempty"` // unix nanoseconds
+	Fails  int    `json:"fails,omitempty"`
+	Retry  int64  `json:"retry,omitempty"` // unix seconds
+}
+
+// due reports whether a source should be read: never while a read holds it; a
+// failed read is owed once its delay has passed, whatever the signal says by
+// then; otherwise, when its signal is not the kernel's.
+func (g reading) due(signal string) bool {
+	if time.Now().UnixNano() < g.Busy {
+		return false
+	}
+	if g.Fails > 0 {
+		return time.Now().Unix() >= g.Retry
+	}
+	return signal != g.Signal
+}
+
+// failed is the reading after a failed read. It acknowledges nothing, so the
+// source is read again until it answers, 5 s later, then 10, 20, 40, and every
+// 60 s, so a source that is down is not read on every tick.
+func (g reading) failed() reading {
+	delay := min(5<<min(g.Fails, 4), 60)
+	g.Fails, g.Retry = g.Fails+1, time.Now().Unix()+int64(delay)
+	return g
+}
+
+// chatRead is what the session keeps of one chat: its rooms and invitations as
+// last read, or why it could not be read, and its reading. Chat is the chat as
+// a page names it.
+type chatRead struct {
+	Rooms   []roomRow    `json:"rooms"`
+	Invites []inviteRow  `json:"invites"`
+	Chat    client.Party `json:"chat"`
+	Reason  string       `json:"reason,omitempty"` // "" unless the last read failed
+	reading
+}
+
+// railCache is what the session keeps for the rail: the chats asking, as the
+// pulse last held them; the viewer's chats in the pulse's order, this kernel's
+// first; and what was last read of each, by chat. Each chat is read on its own
+// and written alone (put), so no read waits for another chat or undoes one.
+type railCache struct {
+	Asking []client.Party      `json:"asking"`
+	Chats  []string            `json:"chats"`
+	Read   map[string]chatRead `json:"read"`
+}
+
+// railShown is what the rail shows of the cache: the chats asking, the
+// invitations, the rooms newest activity first, and the chats that could not
+// be read, each chat's in the order of the chats.
+type railShown struct {
+	Asking  []client.Party
+	Invites []inviteRow
+	Rooms   []roomRow
+	Down    []downRow
+}
+
+func (cache railCache) shown() railShown {
+	v := railShown{Asking: cache.Asking}
+	for _, chat := range cache.Chats {
+		e := cache.Read[chat]
+		if e.Reason != "" {
+			v.Down = append(v.Down, downRow{chat, e.Chat, e.Reason})
 			continue
 		}
-		rail.Rooms = append(rail.Rooms, c.tag(out.Rooms, service, c.principal(r))...)
-		rail.Invites = append(rail.Invites, c.tagInvites(out.Invitations, service)...)
+		v.Rooms = append(v.Rooms, e.Rooms...)
+		v.Invites = append(v.Invites, e.Invites...)
 	}
-	c.nameInvites(r, rail.Invites)
-	rail.Rooms = byActivity(rail.Rooms)
-	return rail
+	v.Rooms = byActivity(v.Rooms)
+	return v
 }
 
-// railWith is the rail after a read of one chat's room: the rooms and
-// invitations that read returned, and every other chat's listed afresh.
-func (c *Chat) railWith(r *http.Request, service string, read roomRead, services []string) railCache {
-	var others []string
-	for _, s := range services {
-		if s != service {
-			others = append(others, s)
+// drawn is what the rail shows of the cache, each invitation's sender named as
+// the viewer's kernel names it now: the cache keeps the sender as chat sent it,
+// so a name kept after the read is drawn without reading the chat again.
+func (c *Chat) drawn(cache railCache) railShown {
+	v := cache.shown() // its invitations a slice of its own
+	c.kept(inviters(v.Invites))
+	return v
+}
+
+// unknown reports a chat of the viewer's whose rooms are not known: it could
+// not be read, or has not answered yet.
+func (cache railCache) unknown() bool {
+	for _, chat := range cache.Chats {
+		if e := cache.Read[chat]; e.At == 0 || e.Reason != "" {
+			return true
 		}
 	}
-	rail := c.rooms(r, others)
-	rail.Rooms = byActivity(append(rail.Rooms, read.Rooms...))
-	c.nameInvites(r, read.Invitations)
-	rail.Invites = append(rail.Invites, read.Invitations...)
-	return rail
+	return false
 }
 
-// railCache is what the session keeps for the rail, and what the rail shows:
-// the chats asking to be connected, from the pulse; the invitations and rooms
-// last read and the chats that could not be; and the signal read before that
-// run, so a change since is caught by the next tick.
-type railCache struct {
-	Asking  []client.Party `json:"asking"`
-	Invites []inviteRow    `json:"invites"`
-	Rooms   []roomRow      `json:"rooms"`
-	Down    []downRow      `json:"down"`
-	Signal  string         `json:"signal"`
+// put makes read the entry of its chat, unless the chat is no longer the
+// viewer's or a newer read began since. A failed read keeps the signal last
+// answered and backs the chat off.
+func (cache *railCache) put(chat string, read chatRead) {
+	prev := cache.Read[chat]
+	if !slices.Contains(cache.Chats, chat) || read.At <= prev.At {
+		return
+	}
+	if read.Reason != "" {
+		f := prev.reading.failed()
+		read.reading = reading{At: read.At, Signal: prev.Signal, Fails: f.Fails, Retry: f.Retry}
+	}
+	if cache.Read == nil {
+		cache.Read = map[string]chatRead{}
+	}
+	cache.Read[chat] = read
 }
 
-// railOf is the rail after a read, rail, with the chats asking as the pulse
-// holds them and the signal read before it.
-func (c *Chat) railOf(r *http.Request, p pulse, rail railCache, signal string) railCache {
-	rail.Signal = signal
-	rail.Asking = p.Asking
-	return rail
+// list is one chat's rooms and invitations for the viewer, read now, as the
+// entry of that chat; a chat that could not be read is its reason.
+func (c *Chat) list(r *http.Request, chat, signal string) chatRead {
+	at := time.Now().UnixNano()
+	var out struct {
+		Rooms       []roomRow   `json:"rooms"`
+		Invitations []inviteRow `json:"invitations"`
+	}
+	if err := c.run(r, chat, roomListName, struct{}{}, &out); err != nil {
+		c.log().Warn("chat: list rooms", "chat", chat, "err", err)
+		return chatRead{Chat: c.chat(chat), Reason: c.why(err, chat), reading: reading{At: at}}
+	}
+	invites := c.tagInvites(out.Invitations, chat)
+	c.ask(r, inviters(invites))
+	return chatRead{Rooms: c.tag(out.Rooms, chat, c.principal(r)), Invites: invites, Chat: c.chat(chat), reading: reading{At: at, Signal: signal}}
+}
+
+// sidebar brings the session's copy to the pulse and returns it: the chats and
+// those asking as the pulse holds them, a chat no longer the viewer's dropped.
+// fresh is what this request read of its own chats, put as their entries; with
+// others every other chat that is due is read too (refresh), and without, each
+// stays as last read.
+func (c *Chat) sidebar(r *http.Request, p pulse, signal string, fresh map[string]chatRead, others bool) railCache {
+	c.update(r, func(cache *railCache) {
+		cache.Asking, cache.Chats = p.Asking, p.Services
+		for chat := range cache.Read {
+			if !slices.Contains(cache.Chats, chat) {
+				delete(cache.Read, chat)
+			}
+		}
+		for chat, read := range fresh {
+			cache.put(chat, read)
+		}
+	})
+	if others {
+		c.refresh(r, p, signal)
+	}
+	cache, _ := c.cachedRail(r)
+	return cache
+}
+
+// refresh reads each of the viewer's chats that is due, each on its own:
+// claimed, so no other request reads it meanwhile; listed past the request,
+// within readBound; and put as its entry when it answers. It returns once all
+// have answered or after wait, whichever is first; a chat slower than that is
+// drawn by a later request.
+func (c *Chat) refresh(r *http.Request, p pulse, signal string) {
+	ctx := context.WithoutCancel(r.Context())
+	var wg sync.WaitGroup
+	for _, chat := range p.Services {
+		if !c.claim(r, chat, signal) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rctx, cancel := context.WithTimeout(ctx, readBound)
+			defer cancel()
+			rr := r.WithContext(rctx)
+			read := c.list(rr, chat, signal)
+			c.update(rr, func(cache *railCache) { cache.put(chat, read) })
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(wait):
+	}
+}
+
+// claim marks a chat of the viewer's that is due as being read, and reports
+// whether it was.
+func (c *Chat) claim(r *http.Request, chat, signal string) (claimed bool) {
+	c.update(r, func(cache *railCache) {
+		e := cache.Read[chat]
+		if !slices.Contains(cache.Chats, chat) || !e.due(signal) {
+			return
+		}
+		e.Busy = time.Now().Add(readBound).UnixNano()
+		if cache.Read == nil {
+			cache.Read = map[string]chatRead{}
+		}
+		cache.Read[chat], claimed = e, true
+	})
+	return claimed
 }
 
 // invitations are the waiting invitation tasks among tasks addressed to me
@@ -889,6 +1078,7 @@ func invitations(tasks []client.Task, me, service, thread string) []client.Task 
 	return out
 }
 
+// cachedRail is the session's copy of the rail, and whether it holds one.
 func (c *Chat) cachedRail(r *http.Request) (railCache, bool) {
 	var cache railCache
 	b, ok := c.deps.Sessions.AppCache(r.Context(), c.Slug())
@@ -898,9 +1088,16 @@ func (c *Chat) cachedRail(r *http.Request) (railCache, bool) {
 	return cache, ok
 }
 
-func (c *Chat) remember(r *http.Request, rail railCache) {
-	b, _ := json.Marshal(rail)
-	c.deps.Sessions.PutAppCache(r.Context(), c.Slug(), string(b))
+// update changes the session's copy of the rail in one step under the
+// session's lock, so concurrent requests each change what the one before left.
+func (c *Chat) update(r *http.Request, fn func(*railCache)) {
+	c.deps.Sessions.UpdateAppCache(r.Context(), c.Slug(), func(old string) string {
+		var cache railCache
+		_ = json.Unmarshal([]byte(old), &cache)
+		fn(&cache)
+		b, _ := json.Marshal(cache)
+		return string(b)
+	})
 }
 
 // ---- what changed ----
@@ -1062,66 +1259,37 @@ func (c *Chat) settle(r *http.Request, service, thread string, tasks []client.Ta
 	return open
 }
 
-// watchState is what a page's watch says it shows: the room's last entry, the
-// signal of the last read that succeeded, the rail's digest, and after a failed
-// read how many failed and when the next may run.
+// watchState is what a room page's watch says it shows: the room's last
+// entry, and the reading of the room: the signal of the last read that
+// succeeded, and after a failed read how many failed and when the next may run.
 type watchState struct {
-	After  int64
-	Signal string
-	Rail   string
-	Fails  int
-	Retry  int64
+	After int64
+	reading
 }
 
 func (w watchState) String() string {
-	return fmt.Sprintf("%d.%s.%s.%d.%d", w.After, w.Signal, w.Rail, w.Fails, w.Retry)
+	return fmt.Sprintf("%d.%s.%d.%d", w.After, w.Signal, w.Fails, w.Retry)
 }
 
 func parseWatch(s string) (w watchState) {
 	p := strings.Split(s, ".")
 	w.After, _ = strconv.ParseInt(p[0], 10, 64)
-	if len(p) != 5 {
+	if len(p) != 4 {
 		return w
 	}
-	w.Signal, w.Rail = p[1], p[2]
-	w.Fails, _ = strconv.Atoi(p[3])
-	w.Retry, _ = strconv.ParseInt(p[4], 10, 64)
+	w.Signal = p[1]
+	w.Fails, _ = strconv.Atoi(p[2])
+	w.Retry, _ = strconv.ParseInt(p[3], 10, 64)
 	return w
 }
 
-// due reports whether a page should read: a failed read is owed once its delay
-// has passed, whatever the signal says by then; otherwise, when its signal is not
-// the kernel's.
-func (w watchState) due(signal string) bool {
-	if w.Fails > 0 {
-		return time.Now().Unix() >= w.Retry
-	}
-	return signal != w.Signal
-}
-
-// failed is the state after a failed read. It acknowledges nothing, so the page
-// reads again until it has shown the change, 5 s later, then 10, 20, 40, and every
-// 60 s, so a chat that is down is not run on every tick.
+// failed is the watch after a failed read of its room.
 func (w watchState) failed() watchState {
-	delay := min(5<<min(w.Fails, 4), 60)
-	w.Fails, w.Retry = w.Fails+1, time.Now().Unix()+int64(delay)
+	w.reading = w.reading.failed()
 	return w
 }
 
-// settled is the watch after a read that drew the rail: acknowledged, or, while
-// a chat could not be read, still owed after the back-off from prev, so a chat
-// that answers again is shown without waiting for another change.
-func (w watchState) settled(prev watchState, down []downRow) watchState {
-	if len(down) == 0 {
-		return w
-	}
-	f := prev.failed()
-	w.Signal, w.Fails, w.Retry = prev.Signal, f.Fails, f.Retry
-	return w
-}
-
-// watchView is one watch input of a page: the rail's on a page that is not a
-// room, the room's on a room page, keyed by the room's address.
+// watchView is a room page's watch input, keyed by the room's address.
 type watchView struct {
 	Key   string
 	State watchState
@@ -1209,8 +1377,8 @@ func (c *Chat) gone(r *http.Request, service, thread string, err error, invited 
 	if !ok || !ke.RemoteFailed() {
 		return false
 	}
-	listed := c.rooms(r, []string{service})
-	if len(listed.Down) > 0 {
+	listed := c.list(r, service, "")
+	if listed.Reason != "" {
 		return false
 	}
 	for _, room := range listed.Rooms {
@@ -1248,15 +1416,15 @@ type agentChoice struct {
 
 // railView backs the rail: the chats asking to be connected, the invitations,
 // the chats that could not be read, the viewer's rooms, the room in view by its
-// address, and the dialogs a page that is not a room holds. Home is this
-// kernel's chat, which is never disconnected.
+// address, the rail's watch, and the dialogs a page that is not a room holds.
+// Home is this kernel's chat, which is never disconnected.
 type railView struct {
-	railCache
+	railShown
+	Digest    string // what the rail shows, as its watch carries it (railDigest)
 	Me        string
 	Home      string
 	New       newRoomView
 	Rename    renameView
-	Watch     *watchView // nil on a room page, whose own watch keeps the rail too
 	Current   string
 	Path      string
 	CSRFField template.HTML
@@ -1278,32 +1446,46 @@ type railItem struct {
 
 // railCommand is one command of a rail entry: a form posting to Action, asked
 // first when Confirm is set (the question, its mark added by the template). In
-// a menu it is an item, after a divider when Divider is; on a request it is a
-// button (Button), a danger one when Danger.
+// a menu it is an item, after a divider when Divider is, a danger one when
+// Danger. On a request it is a button in the request's row submitting its form
+// by id, Form, through the form attribute (ui-grammar §5.1), the request's
+// answer, Primary, solid.
 type railCommand struct {
-	Action, Label, Confirm  string
-	Danger, Divider, Button bool
-	CSRFField               template.HTML
+	Action, Label, Confirm, Form string
+	Danger, Divider, Primary     bool
+	CSRFField                    template.HTML
 }
 
 // Requests is what waits on the viewer above the rooms, each saying what it is
-// with its buttons in view: each chat asking to be connected, then each
-// invitation, naming who sent it (Element's Invites, Slack Connect).
+// with its buttons in view, its answer first (Element's Invites, LinkedIn's
+// invitations): each chat asking to be connected, then each invitation, naming
+// who sent it.
 func (v railView) Requests() []railItem {
 	var out []railItem
 	for _, a := range v.Asking {
 		chat, service := a, a.Keyed()
-		out = append(out, railItem{ID: "ask-" + service, Chat: &chat, Detail: "Connection request", Commands: []railCommand{
-			{Action: "/chat/chats/" + service + "/approve", Label: "Approve", Button: true, CSRFField: v.CSRFField},
-			{Action: "/chat/chats/" + service + "/ignore", Label: "Ignore", Button: true, CSRFField: v.CSRFField}}})
+		out = append(out, v.request(railItem{ID: "ask-" + service, Chat: &chat, Detail: "Connection request"},
+			railCommand{Action: "/chat/chats/" + service + "/approve", Label: "Approve"},
+			railCommand{Action: "/chat/chats/" + service + "/ignore", Label: "Ignore"}))
 	}
 	for _, i := range v.Invites {
 		from := i.From
-		out = append(out, railItem{ID: "invite-" + i.Addr(), Room: i.Name, Chat: i.Chat, Detail: "Invitation from", From: &from, Commands: []railCommand{
-			{Action: "/chat/invites/" + i.Addr() + "/accept", Label: "Accept", Button: true, CSRFField: v.CSRFField},
-			{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline", Confirm: "Decline " + i.Name + ", which only its creator can invite you to again", Danger: true, Button: true, CSRFField: v.CSRFField}}})
+		out = append(out, v.request(railItem{ID: "invite-" + i.Addr(), Room: i.Name, Chat: i.Chat, Detail: "Invitation from", From: &from},
+			railCommand{Action: "/chat/invites/" + i.Addr() + "/accept", Label: "Accept"},
+			railCommand{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline", Confirm: "Decline " + i.Name + ", which only its creator can invite you to again"}))
 	}
 	return out
+}
+
+// request is item with its two commands, answer and refusal, each a button
+// submitting its own form, the answer the primary.
+func (v railView) request(item railItem, answer, refusal railCommand) railItem {
+	answer.Primary = true
+	for _, c := range []*railCommand{&answer, &refusal} {
+		c.Form, c.CSRFField = c.Action, v.CSRFField
+	}
+	item.Commands = []railCommand{answer, refusal}
+	return item
 }
 
 // Unread is the rows under the rooms: each chat that could not be read, its
@@ -1429,21 +1611,28 @@ func andList(names []string) string {
 }
 
 // undelivered is the line saying whom a post, or an invitation, did not reach
-// yet, "" when it reached everyone it was for.
+// yet, "" when it reached everyone it was for, its members named here.
 func (c *Chat) undelivered(r *http.Request, members []client.Party) string {
-	if len(members) == 0 {
+	c.name(r, parties(members))
+	return notDelivered(c.labelled(members))
+}
+
+// notDelivered is that line for members already named.
+func notDelivered(names []string) string {
+	if len(names) == 0 {
 		return ""
 	}
-	c.name(r, parties(members))
-	return "Not delivered to " + andList(c.labelled(members)) + "."
+	return "Not delivered to " + andList(names) + "."
 }
 
 // getLanding is where a session lands. Each local agent still invited to a
 // room here is seated first, so one whose seat failed is seated at the next
-// visit; then the newest room opens. A viewer with no room at all, as every
-// chat read says, gets one with the assistant, named New room; a chat that
-// could not be read may hold rooms, so then nothing is made. The viewer is
-// joined here when not yet; an agent is joined by the seat that needs it.
+// visit; then the newest room opens. The rooms are the rail's, as the session
+// last read them; a session that holds none reads every chat, and waits for
+// them at most wait. A viewer with no room at all, as every chat read says,
+// gets one with the assistant, named New room; a chat that could not be read,
+// or has not answered yet, may hold rooms, so then nothing is made. The viewer
+// is joined here when not yet; an agent is joined by the seat that needs it.
 func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Me(r)
 	if err := c.joinViewer(r); err != nil {
@@ -1454,20 +1643,16 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
-	listed := c.rooms(r, p.Services)
-	for _, d := range listed.Down {
-		if d.Service == c.self() && c.deps.HandleErr(w, r, d.err) { // its rooms unknown, none can be opened or made
-			return
-		}
-	}
-	c.remember(r, c.railOf(r, p, listed, c.signal(me, p)))
+	_, held := c.cachedRail(r)
+	rail := c.sidebar(r, p, c.signal(me, p), nil, !held)
+	listed := rail.shown()
 	note := c.seatInvited(r, listed.Rooms)
 	assistant := c.deps.Address(assistantHandle)
 	var to string
 	switch {
 	case len(listed.Rooms) > 0:
 		to = listed.Rooms[0].Addr()
-	case len(listed.Down) == 0 && me != assistant && c.isLocalAgent(assistant):
+	case !rail.unknown() && me != assistant && c.isLocalAgent(assistant):
 		var out struct {
 			Room roomRow `json:"room"`
 		}
@@ -1480,7 +1665,7 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 		c.changed(me)
 		to = roomAddr(c.self(), out.Room.ID)
 	default:
-		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: note, Unread: len(listed.Down) > 0})
+		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: note, Unread: rail.unknown()})
 		return
 	}
 	to = "/chat/room/" + url.PathEscape(to)
@@ -1522,7 +1707,8 @@ func (c *Chat) seatInvited(r *http.Request, rooms []roomRow) (note string) {
 }
 
 // landingView backs the page a viewer with no room listed lands on; Unread
-// says a chat could not be read, so rooms may exist that the rail cannot show.
+// says a chat could not be read, or has not answered yet, so rooms may exist
+// that the rail cannot show.
 type landingView struct {
 	Error  string
 	Unread bool
@@ -1530,36 +1716,29 @@ type landingView struct {
 
 // Rail is the sidebar's list of the viewer's rooms, newest activity first, with
 // the new-conversation dialog, open on ?form=new from any page. It is what the
-// session last read, so a page costs no run; a session that holds nothing reads
-// once, and one not yet joined shows no rooms.
+// session last read, so a page runs nothing and waits for no kernel; the rail's
+// watch, in the heartbeat's lane apart, reads the chats and fills it, at once
+// for a session that holds nothing yet.
 func (c *Chat) Rail(r *http.Request) (template.HTML, error) {
-	cache, ok := c.cachedRail(r)
-	if !ok {
-		p, err := c.pulse(r)
-		if err != nil {
-			return "", err
-		}
-		cache = c.railOf(r, p, c.rooms(r, p.Services), c.signal(c.deps.Me(r), p))
-		c.remember(r, cache)
-	}
-	room, onRoom := strings.CutPrefix(r.URL.Path, "/chat/room/")
-	if onRoom {
-		room, _, _ = strings.Cut(room, "/")
-		return c.rail(r, cache, room, nil, false)
-	}
-	st := watchState{Signal: cache.Signal, Rail: railDigest(cache)}.settled(watchState{Signal: cache.Signal}, cache.Down)
-	return c.rail(r, cache, "", &watchView{railKey, st}, false)
+	cache, _ := c.cachedRail(r)
+	return c.rail(r, cache, false)
 }
 
-// rail renders the rail, naming the room in view by its address; oob renders it
-// as the heartbeat's answer, whose watch stands apart.
-func (c *Chat) rail(r *http.Request, cache railCache, current string, watch *watchView, oob bool) (template.HTML, error) {
+// rail renders the rail with its watch, naming the room in view by its
+// address; oob renders it as an answer in place, the rail alone replacing the
+// one shown, for the page the answer is to (back).
+func (c *Chat) rail(r *http.Request, cache railCache, oob bool) (template.HTML, error) {
 	path := r.URL.Path
-	if current != "" {
-		path = "/chat/room/" + current
+	if oob {
+		path = back(r)
+	}
+	current, onRoom := strings.CutPrefix(path, "/chat/room/")
+	if current, _, _ = strings.Cut(current, "/"); !onRoom {
+		current = ""
 	}
 	csrf := c.deps.CSRFField(r)
-	return c.deps.Fragment("_rail", railView{railCache: cache, Me: c.deps.Me(r), Home: c.self(), Rename: renameView{CSRFField: csrf}, Watch: watch, Current: current,
+	shown := c.drawn(cache)
+	return c.deps.Fragment("_rail", railView{railShown: shown, Digest: railDigest(shown), Me: c.deps.Me(r), Home: c.self(), Rename: renameView{CSRFField: csrf}, Current: current,
 		New: newRoomView{Open: r.URL.Query().Get("form") == "new", Agents: c.agentChoices(nil), Path: path, CSRFField: csrf}, Path: path, CSRFField: csrf, OOB: oob, Label: c.deps.Label})
 }
 
@@ -1613,9 +1792,11 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
+	at := time.Now().UnixNano()
 	read, err := c.readRoom(r, service, thread, latest, true)
 	if err != nil {
 		if c.gone(r, service, thread, err, false) {
+			c.relist(r, p, service)
 			err = &client.KernelError{Kind: client.KindNotFound}
 		}
 		c.deps.HandleErr(w, r, err)
@@ -1623,8 +1804,14 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	p.Tasks = c.settle(r, service, thread, p.Tasks)
 	signal := c.signal(me, p)
-	rail := c.railOf(r, p, c.railWith(r, service, read, p.Services), signal)
-	c.remember(r, rail)
+	var others []string // the members a post addresses, in chat's spelling
+	for _, m := range read.Room.Members {
+		if m.Principal != c.principal(r) {
+			others = append(others, m.Address)
+		}
+	}
+	c.nameRead(r, &read)
+	c.sidebar(r, p, signal, c.readOf(service, read, at, signal), false)
 	post, err := c.postSchema(r, service)
 	if c.deps.HandleErr(w, r, err) {
 		return
@@ -1634,14 +1821,7 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("form") == "rename" && read.Room.Mine {
 		rename.Room = &read.Room
 	}
-	var others []string
-	for _, m := range read.Room.Members {
-		if m.Principal != c.principal(r) {
-			others = append(others, m.Address)
-		}
-	}
-	c.nameRead(r, &read)
-	st := watchState{After: maxSeq(read.Entries), Signal: signal, Rail: railDigest(rail)}.settled(watchState{After: maxSeq(read.Entries), Signal: signal}, rail.Down)
+	st := watchState{After: maxSeq(read.Entries), reading: reading{Signal: signal}}
 	c.deps.RenderPage(w, r, http.StatusOK, "room", "Chat", roomView{
 		Room: read.Room, Me: me, Others: others, Rename: rename,
 		Members: membersView{Room: read.Room, Me: c.principal(r), Open: r.URL.Query().Get("form") == "members", CSRFField: c.deps.CSRFField(r)},
@@ -1669,20 +1849,24 @@ func (c *Chat) postSchema(r *http.Request, service string) (json.RawMessage, err
 
 // watch answers the heartbeat. It runs an action only when the kernel shows the
 // viewer's chats moved past what the page last read, or a visible room holds a
-// delivery for the viewer, which a tab read while hidden left open.
+// delivery for the viewer, which a tab read while hidden left open. The rail's
+// watch, in the lane apart, reads each chat that is due, on its own, and
+// answers the rail when what the session holds differs from what the page
+// shows; a room's reads its room alone.
 func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) {
-	st := parseWatch(shown)
 	p, err := c.pulse(r)
 	if err != nil {
 		return "", err
 	}
 	me := c.deps.Me(r)
 	if key == railKey {
-		if signal := c.signal(me, p); st.due(signal) {
-			return c.advanceRail(r, st, p, signal)
+		rail := c.sidebar(r, p, c.signal(me, p), nil, true)
+		if railDigest(c.drawn(rail)) == shown {
+			return "", nil
 		}
-		return "", nil
+		return c.rail(r, rail, true)
 	}
+	st := parseWatch(shown)
 	service, thread, ok := splitRoom(key)
 	if !ok {
 		return "", nil
@@ -1695,35 +1879,27 @@ func (c *Chat) watch(r *http.Request, key, shown string) (template.HTML, error) 
 	if !pending && !st.due(c.signal(me, p)) {
 		return "", nil
 	}
-	return c.advance(r, key, st, p, visible, "")
-}
-
-// advanceRail brings a page that is not a room to the rooms its chats now hold.
-func (c *Chat) advanceRail(r *http.Request, st watchState, p pulse, signal string) (template.HTML, error) {
-	rail := c.railOf(r, p, c.rooms(r, p.Services), signal)
-	c.remember(r, rail)
-	next := watchState{Signal: signal, Rail: railDigest(rail)}.settled(st, rail.Down)
-	out, err := c.deps.Fragment("_chat_watch", watchView{railKey, next})
-	if err != nil || next.Rail == st.Rail {
-		return out, err
-	}
-	h, err := c.rail(r, rail, "", nil, true)
-	return out + h, err
+	return c.advance(r, key, st, p, visible, nil)
 }
 
 // advance brings a room page to what its chat now holds: its new entries, the
-// posts they replaced, whom it waits on, the rail when it changed, and the watch.
-// A room seen has its deliveries settled. A read that leaves more keeps the old
-// signal, so the next tick reads on. A room gone sends the page to the landing:
-// there is nothing more to show, and a delivery of it still open would read it
-// again on every tick. note is the line for beside the composer, "" for none.
-func (c *Chat) advance(r *http.Request, room string, st watchState, p pulse, seen bool, note string) (template.HTML, error) {
+// posts they replaced, whom it waits on, and the watch; and the rail when the
+// read changed what the session holds of its chat. A room seen has its
+// deliveries settled. A read that leaves more keeps the old signal, so the next
+// tick reads on. A room gone sends the page to the landing, its chat relisted
+// first so the landing does not open it again: there is nothing more to show,
+// and a delivery of it still open would read it again on every tick. missed
+// is whom the request's post did not reach, said beside the composer, named
+// in the read's one batch so the request waits for names at most once.
+func (c *Chat) advance(r *http.Request, room string, st watchState, p pulse, seen bool, missed []client.Party) (template.HTML, error) {
 	me := c.deps.Me(r)
 	service, thread, _ := splitRoom(room)
+	at := time.Now().UnixNano()
 	read, err := c.readRoom(r, service, thread, st.After, seen)
 	if err != nil {
 		c.log().Warn("chat: read room", "room", room, "err", err)
 		if c.gone(r, service, thread, err, false) {
+			c.relist(r, p, service)
 			return "", apps.Moved("/chat")
 		}
 		return c.deps.Fragment("_chat_watch", watchView{room, st.failed()})
@@ -1732,36 +1908,36 @@ func (c *Chat) advance(r *http.Request, room string, st watchState, p pulse, see
 		p.Tasks = c.settle(r, service, thread, p.Tasks)
 	}
 	signal := c.signal(me, p)
-	rail := c.railOf(r, p, c.railWith(r, service, read, p.Services), signal)
-	c.remember(r, rail)
-	next := watchState{After: max(st.After, maxSeq(read.Entries)), Signal: signal, Rail: railDigest(rail)}
+	before, _ := c.cachedRail(r)
+	c.nameRead(r, &read, parties(missed)...)
+	rail := c.sidebar(r, p, signal, c.readOf(service, read, at, signal), false)
+	next := watchState{After: max(st.After, maxSeq(read.Entries)), reading: reading{Signal: signal}}
 	if read.More {
 		next.Signal = st.Signal
 	}
-	next = next.settled(st, rail.Down)
-	c.nameRead(r, &read)
 	out, err := c.deps.Fragment("_chat_tick", entriesView{RoomID: room, Entries: read.Entries, Removed: read.Removed,
-		Working: c.labelled(read.Waiting), Watch: watchView{room, next}, Error: note})
-	if err != nil || next.Rail == st.Rail {
+		Working: c.labelled(read.Waiting), Watch: watchView{room, next}, Error: notDelivered(c.labelled(missed))})
+	if err != nil || railDigest(c.drawn(rail)) == railDigest(c.drawn(before)) {
 		return out, err
 	}
-	h, err := c.rail(r, rail, room, nil, true)
+	h, err := c.rail(r, rail, true)
 	return out + h, err
 }
 
 // railKey is the rail's watch: a room's key is its address, never this one.
 const railKey = "rail"
 
-// railDigest names the rail a page shows: the chats asking, the invitations,
-// its rooms, their names and which are unread, and the chats that could not be
-// read, so the heartbeat swaps the rail only when one of them changed.
-func railDigest(rail railCache) string {
+// railDigest names the rail a page shows (drawn): the chats asking, the
+// invitations and who sent them as named, its rooms, their names and which are
+// unread, and the chats that could not be read, so the heartbeat swaps the rail
+// only when one of them changed, a name arriving late included.
+func railDigest(rail railShown) string {
 	h := sha256.New()
 	for _, a := range rail.Asking {
 		fmt.Fprintf(h, "%s\x00%s\x02", a.Keyed(), a.Label())
 	}
 	for _, i := range rail.Invites {
-		fmt.Fprintf(h, "%s\x00%s\x03", i.Addr(), i.Name)
+		fmt.Fprintf(h, "%s\x00%s\x00%s\x03", i.Addr(), i.Name, i.From.Label())
 	}
 	for _, r := range rail.Rooms {
 		fmt.Fprintf(h, "%s\x00%s\x00%t\x00", r.Addr(), r.Name, r.Unread)
@@ -1810,9 +1986,8 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	note := c.undelivered(r, posted.Undelivered)
 	if !c.deps.IsHTMX(r) {
-		if note != "" {
+		if note := c.undelivered(r, posted.Undelivered); note != "" {
 			c.deps.FlashRedirect(w, r, "/chat/room/"+url.PathEscape(room), "error", note)
 			return
 		}
@@ -1824,7 +1999,7 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, _ := strconv.ParseInt(r.FormValue("after"), 10, 64)
-	out, err := c.advance(r, room, watchState{After: after}, p, true, note)
+	out, err := c.advance(r, room, watchState{After: after}, p, true, posted.Undelivered)
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}
@@ -1920,7 +2095,7 @@ func (c *Chat) getRename(w http.ResponseWriter, r *http.Request) {
 func (c *Chat) shownRoom(r *http.Request) roomRow {
 	addr := r.PathValue("id")
 	cache, _ := c.cachedRail(r)
-	for _, room := range cache.Rooms {
+	for _, room := range cache.shown().Rooms {
 		if room.Addr() == addr {
 			c.name(r, parties(room.Members, room.Invited))
 			return room
@@ -1930,32 +2105,66 @@ func (c *Chat) shownRoom(r *http.Request) roomRow {
 	return c.tag([]roomRow{{ID: thread}}, service, "")[0]
 }
 
-// pageWatch is the chat watch a command's form carried: the room in view's, or
-// the rail's on any other page.
-func pageWatch(r *http.Request) (string, watchState) {
-	for _, v := range []string{r.FormValue("watch"), r.FormValue("slow")} {
+// pageWatch is the chat watch a command's form carried, and what it shows: the
+// room in view's, or the rail's on any other page.
+func pageWatch(r *http.Request) (key, shown string) {
+	for _, v := range []string{r.FormValue("watch"), r.FormValue("apart")} {
 		if rest, ok := strings.CutPrefix(v, "chat:"); ok {
-			key, shown, _ := strings.Cut(rest, ":")
-			return key, parseWatch(shown)
+			key, shown, _ = strings.Cut(rest, ":")
+			return key, shown
 		}
 	}
-	return railKey, watchState{}
+	return railKey, ""
 }
 
-// refresh reads after a command, whatever the watch says is due, since the
-// command may have moved nothing the signal counts and a watch that failed waits
-// for its retry; and answers as a tick does. A read that fails answers the watch
-// failed, and the heartbeat retries.
-func (c *Chat) refresh(r *http.Request, key string, st watchState) (template.HTML, error) {
+// reply is a command's answer in place, which waits only for the chat the
+// command ran on. On the page of a room of that chat, the room is brought to
+// what it now holds, as a tick does, whatever the watch says is due, since the
+// command may have moved nothing the signal counts and a watch that failed
+// waits for its retry; the room's read carries its chat's rooms. Anywhere else
+// the chat is listed afresh (relist) and the rail answers; a room in view on
+// another chat is left to its own watch. A read that fails answers the room's
+// watch failed, and the heartbeat retries.
+func (c *Chat) reply(r *http.Request, chat, key, shown string) (template.HTML, error) {
 	p, err := c.pulse(r)
 	if err != nil {
 		c.log().Warn("chat: open tasks", "err", err)
-		return c.deps.Fragment("_chat_watch", watchView{key, st.failed()})
+		if key == railKey {
+			return "", nil
+		}
+		return c.deps.Fragment("_chat_watch", watchView{key, parseWatch(shown).failed()})
 	}
-	if key == railKey {
-		return c.advanceRail(r, st, p, c.signal(c.deps.Me(r), p))
+	if inView, _, _ := splitRoom(key); key != railKey && chat == inView {
+		return c.advance(r, key, parseWatch(shown), p, true, nil)
 	}
-	return c.advance(r, key, st, p, true, "")
+	rail := c.relist(r, p, chat)
+	if key == railKey && railDigest(c.drawn(rail)) == shown {
+		return "", nil
+	}
+	return c.rail(r, rail, true)
+}
+
+// relist lists chat afresh and puts it as its entry in the session's copy,
+// which it returns, so whatever is drawn next, in place or after a redirect,
+// shows what a command on it did or a room found gone; it waits for that chat
+// alone. A chat no longer the viewer's is dropped from the copy as the pulse
+// says.
+func (c *Chat) relist(r *http.Request, p pulse, chat string) railCache {
+	signal := c.signal(c.deps.Me(r), p)
+	fresh := map[string]chatRead{}
+	if slices.Contains(p.Services, chat) {
+		fresh[chat] = c.list(r, chat, signal)
+	}
+	return c.sidebar(r, p, signal, fresh, false)
+}
+
+// relistFirst relists chat ahead of a redirect: a command that leaves the page,
+// or a room found gone, lands on a page drawn from a copy that knows it.
+// Without the pulse the copy stays, and the heartbeat brings it.
+func (c *Chat) relistFirst(r *http.Request, chat string) {
+	if p, err := c.pulse(r); err == nil {
+		c.relist(r, p, chat)
+	}
 }
 
 // postRename runs the rename action of the room's chat as the viewer; the
@@ -2011,7 +2220,7 @@ func (c *Chat) renameInPlace(w http.ResponseWriter, r *http.Request, name string
 		}
 		closed += h
 	}
-	h, err := c.refresh(r, key, st)
+	h, err := c.reply(r, service, key, st)
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}
@@ -2024,7 +2233,8 @@ func (c *Chat) postLeave(w http.ResponseWriter, r *http.Request) { c.drop(w, r, 
 
 // drop deletes or leaves a room. With script the rail answers in place, unless
 // the page shows the room, which is then gone from under it; a room already gone
-// is done.
+// is done. A page left for the landing finds the room's chat relisted, so the
+// landing does not open the room again.
 func (c *Chat) drop(w http.ResponseWriter, r *http.Request, action string) {
 	room := r.PathValue("id")
 	service, thread, _ := splitRoom(room)
@@ -2037,16 +2247,17 @@ func (c *Chat) drop(w http.ResponseWriter, r *http.Request, action string) {
 		c.deps.FlashRedirect(w, r, back(r), "error", "You are its only member. Delete "+name+" instead.")
 		return
 	}
-	if !c.deps.IsHTMX(r) || (err != nil && !c.gone(r, service, thread, err, false)) {
+	if err != nil && !c.gone(r, service, thread, err, false) {
 		c.then(w, r, err, "/chat")
 		return
 	}
 	key, st := pageWatch(r)
-	if key == room {
+	if !c.deps.IsHTMX(r) || key == room {
+		c.relistFirst(r, service)
 		c.deps.Redirect(w, r, "/chat")
 		return
 	}
-	c.answer(w, r, key, st)
+	c.answer(w, r, service, key, st)
 }
 
 // postAddMember and postRemoveMember run the actions of the room's chat as the
@@ -2207,7 +2418,7 @@ func (c *Chat) postChat(w http.ResponseWriter, r *http.Request) {
 		c.deps.Redirect(w, r, to)
 		return
 	}
-	c.answer(w, r, key, st)
+	c.answer(w, r, service, key, st)
 }
 
 // connect approves the chat elsewhere that q is and connects the viewer to it:
@@ -2276,14 +2487,16 @@ func (c *Chat) postInvite(w http.ResponseWriter, r *http.Request) {
 	c.clearInvites(r, service, thread, verb == "accept" && !withdrawn)
 	switch {
 	case withdrawn:
+		c.relistFirst(r, service)
 		c.deps.FlashRedirect(w, r, back(r), "error", "That invitation was withdrawn.")
 	case verb == "accept":
 		c.deps.Redirect(w, r, "/chat/room/"+url.PathEscape(room))
 	case !c.deps.IsHTMX(r):
+		c.relistFirst(r, service)
 		c.deps.Redirect(w, r, back(r))
 	default:
 		key, st := pageWatch(r)
-		c.answer(w, r, key, st)
+		c.answer(w, r, service, key, st)
 	}
 }
 
@@ -2345,10 +2558,9 @@ func back(r *http.Request) string {
 	return "/chat"
 }
 
-// answer is a command's reply in place: the page brought to what its chats now
-// hold, as a tick does.
-func (c *Chat) answer(w http.ResponseWriter, r *http.Request, key string, st watchState) {
-	h, err := c.refresh(r, key, st)
+// answer writes a command's reply in place on chat (reply).
+func (c *Chat) answer(w http.ResponseWriter, r *http.Request, chat, key, shown string) {
+	h, err := c.reply(r, chat, key, shown)
 	if c.deps.HandleErrFragment(w, r, err) {
 		return
 	}

@@ -72,9 +72,12 @@
   </dialog>
   {{/* The heartbeat: one request per lane carrying every watch on the page
        (tick.go). A widget that waits for something holds a hidden input
-       naming what it shows; the reply swaps only what changed. */}}
+       naming what it shows; the reply swaps only what changed. A watch that
+       may wait on another kernel rides the lane apart, which also runs at
+       once, so what it shows is filled as the page opens. */}}
   <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every 5s" hx-include="input[name=watch]" hx-swap="none"></div>
   <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="every {{.BadgeSecs}}s" hx-include="input[name=slow]" hx-swap="none"></div>
+  <div hidden aria-hidden="true" hx-get="/tick" hx-trigger="load, every 5s" hx-include="input[name=apart]" hx-swap="none"></div>
   {{range .Commands}}{{if .Live}}<input type="hidden" id="watch-{{.Slug}}" name="slow" value="{{.Slug}}:badge:">{{end}}{{end}}
   {{template "_idle" (idle .CSRFField)}}
   {{end}}

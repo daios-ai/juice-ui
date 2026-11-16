@@ -32,6 +32,11 @@
   local mirror of kernel data is a defect; unify before adding. No
   overengineering.
 
+- A request waits only for the kernel it is about, and for any other at
+  most one second. What a page shows from another source is what the
+  session last read of it; each source is read on its own, writes only
+  its own entry, and has its own back-off.
+
 - Never add a Claude-Session trailer or any session identifier to commit messages.
   
 

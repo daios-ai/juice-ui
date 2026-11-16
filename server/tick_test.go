@@ -15,7 +15,7 @@ import (
 	"github.com/daios-ai/juice-ui/session"
 )
 
-// The tick answers each watch of both lanes in order through the watcher of
+// The tick answers each watch of the three lanes in order through the watcher of
 // its kind, ignores a kind nobody registered, skips a watcher that fails so
 // the others still answer, and answers a page without watches with nothing.
 // (The kernel-gone sign-out, the badge, process and peer watchers are proved
@@ -32,8 +32,8 @@ func TestTickAnswersEachWatchAndSkipsTheRest(t *testing.T) {
 	s.watch("bad", func(*http.Request, string, string) (template.HTML, error) { return "", errors.New("boom") })
 
 	rec := httptest.NewRecorder()
-	s.getTick(rec, httptest.NewRequest(http.MethodGet, "/tick?watch=a:x:1&slow=bad:y:2&slow=nobody:z&watch=a:w", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "<a>x:1</a><a>w:</a>" {
+	s.getTick(rec, httptest.NewRequest(http.MethodGet, "/tick?watch=a:x:1&slow=bad:y:2&slow=nobody:z&watch=a:w&apart=a:v:3", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "<a>x:1</a><a>w:</a><a>v:3</a>" {
 		t.Fatalf("tick = %d %q", rec.Code, rec.Body.String())
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {

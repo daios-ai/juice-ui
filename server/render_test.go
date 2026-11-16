@@ -908,8 +908,10 @@ func TestRenderFragment(t *testing.T) {
 	}
 }
 
-// TestLayoutRendersTheHeartbeat proves a signed-in page carries the two tick
-// elements — the fast lane and the slow lane on the configured interval — one
+// TestLayoutRendersTheHeartbeat proves a signed-in page carries the three tick
+// elements — the fast lane, the slow lane on the configured interval, and the
+// lane apart, at once and every 5 s, for watches that may wait on another
+// kernel — one
 // slow watch per live registry entry, once, and the inbox badge on the
 // avatar, the menu row and the topbar's trigger, with no poller of its own.
 func TestLayoutRendersTheHeartbeat(t *testing.T) {
@@ -931,6 +933,7 @@ func TestLayoutRendersTheHeartbeat(t *testing.T) {
 	for _, want := range []string{
 		`hx-get="/tick" hx-trigger="every 5s" hx-include="input[name=watch]" hx-swap="none"`,
 		`hx-get="/tick" hx-trigger="every 15s" hx-include="input[name=slow]" hx-swap="none"`,
+		`hx-get="/tick" hx-trigger="load, every 5s" hx-include="input[name=apart]" hx-swap="none"`,
 	} {
 		if strings.Count(body, want) != 1 {
 			t.Errorf("want one %q: %s", want, body)
@@ -942,10 +945,13 @@ func TestLayoutRendersTheHeartbeat(t *testing.T) {
 	if strings.Count(body, `class="badge badge-inbox"`) != 3 {
 		t.Errorf("the inbox badge stands on the avatar, the menu row and the trigger: %s", body)
 	}
-	for _, gone := range []string{`hx-get="/inbox/badge"`, `hx-get="/health"`, `hx-trigger="load`} {
+	for _, gone := range []string{`hx-get="/inbox/badge"`, `hx-get="/health"`} {
 		if strings.Contains(body, gone) {
 			t.Errorf("no poller of its own: %q in %s", gone, body)
 		}
+	}
+	if strings.Count(body, `hx-trigger="load`) != 1 {
+		t.Errorf("only the heartbeat's lane apart loads on its own: %s", body)
 	}
 }
 

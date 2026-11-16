@@ -348,22 +348,20 @@ func View(ctx context.Context, s, held Setup) Form {
 	}
 	asks := map[ask]*answer{}
 	// A provider that needs a key is asked only once one is held: without it
-	// the answer is a refusal, already known.
+	// the answer is a refusal, already known. Each ask has its answer before
+	// any is asked, and each asking fills its own, so the map is only read
+	// while they run.
 	for i, c := range []Choice{s.Chat, s.Embed} {
 		if p, a, k := s.address(c); p != "" && a != "" && (k != "" || !needsKey(c)) && (i == 0 || embeds(p)) {
-			asks[ask{p, a, k}] = nil
+			asks[ask{p, a, k}] = &answer{}
 		}
 	}
-	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for q := range asks {
+	for q, r := range asks {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ids, err := List(ctx, q.protocol, q.addr, q.key)
-			mu.Lock()
-			asks[q] = &answer{ids, err}
-			mu.Unlock()
+			r.ids, r.err = List(ctx, q.protocol, q.addr, q.key)
 		}()
 	}
 	wg.Wait()

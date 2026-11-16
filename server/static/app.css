@@ -79,7 +79,9 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .rail > .btn { flex: none; margin-bottom: var(--space-2); }
 .rail :focus-visible { outline-offset: -2px; } /* the scroller would clip a ring drawn outside */
 .rail > h2 { flex: none; margin: var(--space-3) var(--space-2) var(--space-1); font-size: var(--font-size-sm); font-weight: 600; color: var(--text-muted); }
-.rail-request { flex: none; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); margin-bottom: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-s); }
+/* A request is a rail row grown to three lines: the rows' edge and padding, no
+   box of its own (Element's Invites, LinkedIn's invitations). */
+.rail-request { flex: none; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-1) var(--space-2); margin-bottom: var(--space-2); }
 /* Each of a request's lines, its header and what it is, shortens its names and
    keeps a copy control in view. */
 .rail-request > :is(header, p) { display: flex; align-items: center; gap: var(--space-1); margin: 0; white-space: nowrap; }
