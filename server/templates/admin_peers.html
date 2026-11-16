@@ -54,7 +54,7 @@
   <tbody>
   {{range $d.Deposits.Held}}
   <tr>
-    <td>{{template "_addr" (copyOf "address" .Party.Address)}}</td>
+    <td>{{template "_name" (name .Party)}}</td>
     <td class="money">{{money .Amount}}</td>
     <td class="mono muted" title="{{.TxHash}}">{{truncate 12 .TxHash}} {{template "_copy" (copyOf "hash" .TxHash)}}</td>
     <td class="muted">{{shortTime .CreatedAt}}</td>

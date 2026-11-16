@@ -70,6 +70,46 @@ func withEvidence(row, experience string) string {
 	return strings.TrimSuffix(row, "}") + `,"evidence":{"local_experience":` + experience + `,"provider_reported":null,"observed_by_others":[],"retained_cap":200}}`
 }
 
+// byRef answers the kernel's ?ref= read (GET /v1/actions?ref=) from rows keyed
+// by id: the detail row whose address the reference names, as the kernel
+// resolves it, and none when it names nothing. It reports whether the request
+// was one.
+func byRef(w http.ResponseWriter, r *http.Request, rows map[string]string) bool {
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		return false
+	}
+	for id, row := range rows {
+		if strings.Contains(row, `"action":{"address":"`+ref+`"`) {
+			w.Write([]byte("[" + withEvidence(row, `{"action_id":"`+id+`"}`) + "]"))
+			return true
+		}
+	}
+	w.Write([]byte("[]"))
+	return true
+}
+
+// pageAt is the page of the action at address (actionHref).
+func pageAt(address string) string { return actionHref(client.Party{Address: address}, "") }
+
+// nameHTML is how _name draws a user named by a petname: the address, linked
+// to its actions.
+func nameHTML(address string) string {
+	return `<span class="name mono"><span class="owner"><a href="/browse?owner=` + url.QueryEscape(address) + `">` + address + `</a></span></span>`
+}
+
+// panelAt is the panel of the action at address: its page's path with /panel,
+// as the launcher opens it (app.js openPanel).
+func panelAt(address string) string {
+	return strings.Replace(pageAt(address), "/actions?", "/actions/panel?", 1)
+}
+
+// recordAt is the page a record of a past call opens for its action (actionHref
+// with the id), as an attribute holds it.
+func recordAt(address, id string) string {
+	return strings.ReplaceAll(actionHref(client.Party{Address: address}, id), "&", "&amp;")
+}
+
 func authKernel() *httptest.Server {
 	lastRename, lastDeposit, lastSignIn, lastProcessesQuery = "", "", "", ""
 	mux := http.NewServeMux()
@@ -164,9 +204,12 @@ func authKernel() *httptest.Server {
 		// sys/gmail-read (AN) — the needs-account chip must split them.
 		"AG": `{"id":"AG","action":{"address":"sys@testnet/gmail-send","principal":"sys@testnet/gmail-send"},"name":"gmail-send","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
 		"AN": `{"id":"AN","action":{"address":"sys@testnet/gmail-read","principal":"sys@testnet/gmail-read"},"name":"gmail-read","kind":"http","active":true,"public":true,"price":0,"auth_scheme":"oauth_delegated","requires_grant":true,` + schemas + `}`,
+		// Read by address only: alice's own action, and bob's.
+		"owned": `{"id":"owned","action":{"address":"alice@testnet/x","principal":"alice@testnet/x"},"name":"x","kind":"http","active":true,"public":true,"price":0,` + schemas + `}`,
+		"other": `{"id":"other","action":{"address":"bob@testnet/x","principal":"bob@testnet/x"},"name":"x","kind":"http","active":true,"public":true,"price":0,` + schemas + `}`,
 	}
 	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		if pastEnd(w, r) {
+		if pastEnd(w, r) || byRef(w, r, rows) {
 			return
 		}
 		// The catalog (kernel 034426e): the caller's own actions in every
@@ -208,15 +251,16 @@ func authKernel() *httptest.Server {
 	})
 	// A mutation names a target and answers with the rows it wrote, in name order
 	// — one target may name a whole application (kernel v0.14.0).
-	mux.HandleFunc("POST /v1/actions/enable", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","active":true}]`))
-	})
-	mux.HandleFunc("POST /v1/actions/disable", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","active":false}]`))
-	})
-	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"` + mutationTarget(r) + `","action":{"address":"alice@testnet/x","principal":"alice@testnet/x"},"name":"x","kind":"http","active":true,"price":0}]`))
-	})
+	written := func(r *http.Request) string { // the row the target names, whole, as the kernel answers it
+		id := mutationTarget(r)
+		if row, ok := rows[id]; ok {
+			return "[" + row + "]"
+		}
+		return `[{"id":"` + id + `","action":{"address":"alice@testnet/x","principal":"alice@testnet/x"},"name":"x","kind":"http","active":true,"price":0}]`
+	}
+	mux.HandleFunc("POST /v1/actions/enable", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(written(r))) })
+	mux.HandleFunc("POST /v1/actions/disable", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(written(r))) })
+	mux.HandleFunc("PUT /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(written(r))) })
 	mux.HandleFunc("DELETE /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"id":"` + r.URL.Query().Get("target") + `"}]`))
 	})
@@ -381,7 +425,7 @@ func authKernel() *httptest.Server {
 			names = `"petname":"","nickname":"twin"`
 		}
 		w.Write([]byte(`{` + names + `,"public_key":"` + key + `","about":"a peer kernel",
-		 "actions":[{"action_id":"a2","name":{"address":"synth@kernelc/make"},"description":"synth","price":20,"indicative":true}],
+		 "actions":[{"action_id":"a2","name":{"address":"synth@kernelc/make","principal":"synth@kernelc/make"},"description":"synth","price":20,"indicative":true}],
 		 "evidence":[{"issuer_public_key":"` + key + `","subject_action_id":"a2","uses":6,"successes":6,"failures":0,
 		    "corroborated_uses":0,"avg_latency_ms":690.5,"rating_count":2,"rating_mean":1,"unverified_ratings":1},
 		   {"issuer_public_key":"KEYB","subject_action_id":"a2","uses":1,"successes":0,"failures":1,
@@ -684,7 +728,7 @@ func TestDiscoverNarrowsToAnOwner(t *testing.T) {
 	// Your own name: A3 is alice's inactive/private draft — it must appear (and
 	// self-labels via the card's inactive/lock chips).
 	own := getBody(t, cl, srv.URL+"/browse?owner=alice@testnet")
-	if !strings.Contains(own, `<div class="subhead"><h2 class="mono">alice@testnet</h2><a class="btn" href="/browse">All actions</a></div>`) {
+	if !strings.Contains(own, `<div class="subhead"><h2><span class="name mono"><span class="owner">alice@testnet</span></span></h2><a class="btn" href="/browse">All actions</a></div>`) {
 		t.Error("an owner's actions are headed by the address, with the way back to every owner")
 	}
 	if !strings.Contains(own, `class="action-row`) || !strings.Contains(own, "draft") {
@@ -695,6 +739,11 @@ func TestDiscoverNarrowsToAnOwner(t *testing.T) {
 		t.Error("sorting must keep the owner")
 	}
 
+	// A local owner reached by key with no action listed is headed by this
+	// kernel's name, not its key.
+	if head := getBody(t, cl, srv.URL+"/browse?owner=sys@ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg"); !strings.Contains(head, `<h2><span class="name mono"`) || !strings.Contains(head, `<span class="owner">sys@testnet</span>`) {
+		t.Error("a local owner's page is headed by its name, not its key")
+	}
 	// Someone else's name: caller-visible active set only — no private/inactive.
 	if strings.Contains(getBody(t, cl, srv.URL+"/browse?owner=bob@testnet"), "draft") {
 		t.Error("another owner's actions must not surface inactive/private ones")
@@ -734,14 +783,14 @@ func TestOwnerOnlyAffordances(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	// Owner sees the management controls.
-	owned := getBody(t, cl, srv.URL+"/actions/owned")
+	owned := getBody(t, cl, srv.URL+pageAt("alice@testnet/x"))
 	if !strings.Contains(owned, ">Manage<") {
 		t.Error("owner should see the Manage (owner) section")
 	}
 
 	// Non-owner does not.
-	other := getBody(t, cl, srv.URL+"/actions/other")
-	if strings.Contains(other, ">Manage<") {
+	other := getBody(t, cl, srv.URL+pageAt("bob@testnet/x"))
+	if !strings.Contains(other, "<h1") || strings.Contains(other, ">Manage<") {
 		t.Error("non-owner must NOT see the Manage (owner) section")
 	}
 }
@@ -787,12 +836,12 @@ func TestTransactionsUnifiedRow(t *testing.T) {
 			t.Errorf("transactions list must not carry the %q column", gone)
 		}
 	}
-	// The id links to the record; the action ref links to the action (owner
-	// emphasized via _ref, so it isn't a contiguous substring).
+	// The id links to the record; the action's path links to its page by
+	// address, with the record's id beside it (_name).
 	if !strings.Contains(body, `href="/transactions/T1"`) {
 		t.Error("transaction id must link to the record")
 	}
-	if !strings.Contains(body, `href="/actions/owned"`) {
+	if !strings.Contains(body, `href="`+recordAt("alice@testnet/x", "owned")+`"`) {
 		t.Error("action name must link to the action")
 	}
 	if !strings.Contains(body, `href="/browse?owner=alice%40testnet"`) {
@@ -814,7 +863,7 @@ func TestCallHistoryUsesUnifiedRow(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/transactions")
-	if !strings.Contains(body, `href="/actions/owned"`) {
+	if !strings.Contains(body, `href="`+recordAt("alice@testnet/x", "owned")+`"`) {
 		t.Error("the call history must link the action ref")
 	}
 	if !strings.Contains(body, "-100 credits") || !strings.Contains(body, "+45 credits") {
@@ -1602,7 +1651,7 @@ func TestActionCardChips(t *testing.T) {
 	if !strings.Contains(browse, `class="action-title"`) {
 		t.Error("browse row must carry a title")
 	}
-	if !strings.Contains(browse, `href="/actions/A1"`) {
+	if !strings.Contains(browse, `href="`+pageAt("alice@testnet/hello")+`"`) {
 		t.Error("browse card name must link to the action")
 	}
 	if !strings.Contains(browse, `href="/browse?owner=alice%40testnet"`) {
@@ -1633,10 +1682,10 @@ func TestActionCardChips(t *testing.T) {
 		}
 	}
 	if row := func(b, id string) string {
-		i := strings.Index(b, `data-href="/actions/`+id+`"`)
+		i := strings.Index(b, `data-href="`+pageAt(id)+`"`)
 		return b[i : i+strings.Index(b[i:], "</article>")]
-	}; row(body, "A1") != row(own, "A1") {
-		t.Errorf("the same action is drawn the same on the Workshop and Discover:\n%s\n%s", row(body, "A1"), row(own, "A1"))
+	}; row(body, "alice@testnet/hello") != row(own, "alice@testnet/hello") {
+		t.Errorf("the same action is drawn the same on the Workshop and Discover:\n%s\n%s", row(body, "alice@testnet/hello"), row(own, "alice@testnet/hello"))
 	}
 	if strings.Contains(getBody(t, cl, srv.URL+"/browse?owner=sys@testnet"), "status-credited") {
 		t.Error("another owner's live action carries no state for this viewer")
@@ -1662,7 +1711,7 @@ func TestNeedsAccountChip(t *testing.T) {
 	card := func(body, id string) string {
 		t.Helper()
 		for _, a := range strings.Split(body, "<article") {
-			if strings.Contains(a, `/actions/`+id+`"`) {
+			if strings.Contains(a, `data-href="`+pageAt(id)+`"`) {
 				return a
 			}
 		}
@@ -1670,21 +1719,21 @@ func TestNeedsAccountChip(t *testing.T) {
 		return ""
 	}
 	browse := getBody(t, cl, srv.URL+"/browse")
-	if !strings.Contains(card(browse, "AN"), "icons.svg#key") {
+	if !strings.Contains(card(browse, "sys@testnet/gmail-read"), "icons.svg#key") {
 		t.Error("ungranted delegated action must carry the key chip on its card")
 	}
-	if strings.Contains(card(browse, "AG"), "icons.svg#key") {
+	if strings.Contains(card(browse, "sys@testnet/gmail-send"), "icons.svg#key") {
 		t.Error("granted delegated action must NOT carry the key chip")
 	}
-	if strings.Contains(card(browse, "A1"), "icons.svg#key") {
+	if strings.Contains(card(browse, "alice@testnet/hello"), "icons.svg#key") {
 		t.Error("a grant-free action must NOT carry the key chip")
 	}
 
 	// Same split on the action page's chips row.
-	if !strings.Contains(getBody(t, cl, srv.URL+"/actions/AN"), "icons.svg#key") {
+	if !strings.Contains(getBody(t, cl, srv.URL+pageAt("sys@testnet/gmail-read")), "icons.svg#key") {
 		t.Error("ungranted action page must show the key chip")
 	}
-	if strings.Contains(getBody(t, cl, srv.URL+"/actions/AG"), "icons.svg#key") {
+	if strings.Contains(getBody(t, cl, srv.URL+pageAt("sys@testnet/gmail-send")), "icons.svg#key") {
 		t.Error("granted action page must NOT show the key chip")
 	}
 }
@@ -1699,7 +1748,7 @@ func TestRunFormGatedOnNeedsConnect(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	gated := getBody(t, cl, srv.URL+"/actions/AN")
+	gated := getBody(t, cl, srv.URL+pageAt("sys@testnet/gmail-read"))
 	if !strings.Contains(gated, "Needs a connected account.") ||
 		!strings.Contains(gated, `/grants/connect?selector=`) ||
 		!strings.Contains(gated, ">Connect account</a>") {
@@ -1715,7 +1764,7 @@ func TestRunFormGatedOnNeedsConnect(t *testing.T) {
 		t.Errorf("connect link selector = %q, want the folder sys@testnet (not the action address)", sel)
 	}
 
-	open := getBody(t, cl, srv.URL+"/actions/AG")
+	open := getBody(t, cl, srv.URL+pageAt("sys@testnet/gmail-send"))
 	if !strings.Contains(open, `hx-post="/actions/AG/run"`) {
 		t.Error("granted action page must keep the run form")
 	}
@@ -1747,7 +1796,7 @@ func TestRunGrantRequiredConnectsFolder(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+"/actions/AN"))
+	tok := csrfTokenFrom(t, getBody(t, cl, srv.URL+pageAt("sys@testnet/gmail-read")))
 	form := url.Values{"gorilla.csrf.Token": {tok}}
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/actions/AN/run", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1814,12 +1863,12 @@ func TestOneWorkshopTheSuperuserManagesOnThePage(t *testing.T) {
 	sys := loginClientAs(t, srv.URL, "sys")
 	for _, u := range []string{"/workshop", "/workshop?scope=all"} {
 		body := getBody(t, sys, srv.URL+u)
-		if strings.Contains(body, ">everyone<") || strings.Contains(body, `href="/actions/AG"`) || !strings.Contains(body, `href="/actions/A1"`) {
+		if strings.Contains(body, ">everyone<") || strings.Contains(body, `href="`+pageAt("sys@testnet/gmail-send")+`"`) || !strings.Contains(body, `href="`+pageAt("alice@testnet/hello")+`"`) {
 			t.Errorf("%s: the superuser's Workshop is the viewer's own actions, with no scope switch", u)
 		}
 	}
-	page := getBody(t, sys, srv.URL+"/actions/AG") // not the viewer's
-	for _, want := range []string{"<h2>Manage</h2>", `action="/actions/disable"`, `action="/actions/visibility"`, `action="/actions/delete"`, `?form=action-edit`} {
+	page := getBody(t, sys, srv.URL+pageAt("sys@testnet/gmail-send")) // not the viewer's
+	for _, want := range []string{"<h2>Manage</h2>", `action="/actions/disable"`, `action="/actions/visibility"`, `action="/actions/delete"`, `&amp;form=action-edit`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("sys on another user's action lacks %q", want)
 		}
@@ -1835,11 +1884,11 @@ func TestOneWorkshopTheSuperuserManagesOnThePage(t *testing.T) {
 	}
 	resp := postTo(t, sys, srv.URL+"/actions/disable", page, url.Values{"target": {"AG"}})
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/actions/AG" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != pageAt("sys@testnet/gmail-send") {
 		t.Errorf("disable = %d → %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	// An ordinary user on another's action has nothing to manage.
-	if strings.Contains(getBody(t, loginClient(t, srv.URL), srv.URL+"/actions/AG"), "<h2>Manage</h2>") {
+	if strings.Contains(getBody(t, loginClient(t, srv.URL), srv.URL+pageAt("sys@testnet/gmail-send")), "<h2>Manage</h2>") {
 		t.Error("an ordinary user manages only their own actions")
 	}
 }
@@ -1877,12 +1926,71 @@ func TestWorkshopOrdersInactiveThenRuns(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	body := getBody(t, loginClient(t, srv.URL), srv.URL+"/workshop")
-	d, m, f := strings.Index(body, `data-href="/actions/draft"`), strings.Index(body, `data-href="/actions/many"`), strings.Index(body, `data-href="/actions/few"`)
+	d, m, f := strings.Index(body, `data-href="`+pageAt("alice@testnet/draft")+`"`), strings.Index(body, `data-href="`+pageAt("alice@testnet/many")+`"`), strings.Index(body, `data-href="`+pageAt("alice@testnet/few")+`"`)
 	if d < 0 || m < d || f < m {
 		t.Errorf("order must be inactive, then most run: draft %d, many %d, few %d", d, m, f)
 	}
 	if !strings.Contains(body, `title="100% success · 20 runs"`) || !strings.Contains(body, `<span class="pill status-credited">local</span>`) {
 		t.Errorf("a row shows its counts and who may call it: %s", body)
+	}
+}
+
+// An action's page and its panel have one address each, keyed by the action's
+// address (ui-grammar "Names"): the kernel resolves it, this kernel's action or
+// another's alike. An address naming nothing is the not-found page; the old
+// id and discovered routes are gone. A record's id reads the copy held here
+// when the resolve fails, as it does for another kernel's inactive action while
+// that kernel is away (kernel D13); without it the page says why on Discover.
+func TestAnActionIsReachedByItsAddress(t *testing.T) {
+	base := authKernel()
+	defer base.Close()
+	away := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/actions" && strings.HasPrefix(r.URL.Query().Get("ref"), "bob@far/") {
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`{"code":"peer_unreachable","error":"peer unreachable"}`))
+			return
+		}
+		base.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer away.Close()
+	srv := httptest.NewServer(newTestHandler(t, away.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	noRedirect := &http.Client{Jar: cl.Jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	get := func(path string) (int, string, string) {
+		resp, err := noRedirect.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Location"), string(b)
+	}
+
+	if code, _, body := get(pageAt("alice@testnet/hello")); code != 200 || !strings.Contains(body, "<h1") || !strings.Contains(body, `<span class="owner"><a href="/browse?owner=alice%40testnet">alice@testnet</a></span>/hello</span>`) {
+		t.Errorf("the page by its address: %d %s", code, body)
+	}
+	if code, _, body := get(panelAt("alice@testnet/hello")); code != 200 || !strings.Contains(body, `action="/actions/A1/run"`) {
+		t.Errorf("the panel by its address: %d %s", code, body)
+	}
+	for _, path := range []string{pageAt("alice@testnet/nope"), "/actions?ref="} {
+		if code, _, _ := get(path); code != http.StatusNotFound {
+			t.Errorf("%s names nothing: %d", path, code)
+		}
+	}
+	for _, path := range []string{"/actions/A1", "/actions/A1/panel", "/discovered?ref=alice@testnet/hello", "/discovered/panel?ref=alice@testnet/hello"} {
+		if code, _, body := get(path); code == 200 || strings.Contains(body, `action="/actions/A1/run"`) {
+			t.Errorf("%s is gone: %d", path, code)
+		}
+	}
+	if code, _, body := get(strings.ReplaceAll(recordAt("bob@far/x", "owned"), "&amp;", "&")); code != 200 || !strings.Contains(body, "<h1") {
+		t.Errorf("a record's id reads the copy held here while its kernel is away: %d %s", code, body)
+	}
+	if code, _, body := get(strings.ReplaceAll(recordAt("carol@testnet/x", "owned"), "&amp;", "&")); code != 200 || !strings.Contains(body, "<h1") {
+		t.Errorf("a record's id reads the action whose address no longer resolves (an owner renamed): %d", code)
+	}
+	if code, loc, _ := get(pageAt("bob@far/x")); code != http.StatusSeeOther || loc != "/browse" {
+		t.Errorf("without an id the refusal is said on Discover: %d %q", code, loc)
 	}
 }
 
@@ -1919,7 +2027,7 @@ func TestStudioLifecycleRedirect(t *testing.T) {
 		t.Fatalf("lifecycle POST returned %d, expected 303: %s", resp.StatusCode, body)
 	}
 	loc := resp.Header.Get("Location")
-	if !strings.Contains(loc, "/actions/A1") {
+	if loc != pageAt("alice@testnet/hello") {
 		t.Errorf("lifecycle redirect must go to action detail page, got Location=%q", loc)
 	}
 }
@@ -1954,8 +2062,8 @@ func TestInboxTaskIsAnActionRun(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/inbox")
 
-	head := regexp.MustCompile(`(?s)<h3 class="flush"><span class="ref mono"><span class="owner"><a href="/browse\?owner=alice%40testnet">alice@testnet</a></span>/hello</span></h3>\s*` +
-		`<p class="muted small flush">asked by <span class="mono">bob@testnet</span> · via <span class="ref mono"><span class="owner"><a href="/browse\?owner=sys%40testnet">sys@testnet</a></span>/make</span> · \d+ days? ago</p>\s*` +
+	head := regexp.MustCompile(`(?s)<h3 class="flush"><span class="name mono ref"><span class="owner"><a href="/browse\?owner=alice%40testnet">alice@testnet</a></span>/<a href="/actions\?ref=alice%40testnet%2Fhello">hello</a></span></h3>\s*` +
+		`<p class="muted small flush">asked by <span class="name mono"><span class="owner"><a href="/browse\?owner=bob%40testnet">bob@testnet</a></span></span> · via <span class="name mono ref"><span class="owner"><a href="/browse\?owner=sys%40testnet">sys@testnet</a></span>/<a href="/actions\?ref=sys%40testnet%2Fmake">make</a></span> · \d+ days? ago</p>\s*` +
 		`<form class="card stack" method="post" action="/inbox/S1/complete"`)
 	if !head.MatchString(body) {
 		t.Errorf("a task heads with what runs, then who asked, via what and when, then its form card: %s", body)
@@ -2203,7 +2311,7 @@ func TestUpdateActionPrice(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/actions/A1")
+	body := getBody(t, cl, srv.URL+pageAt("alice@testnet/hello"))
 	tok := csrfTokenFrom(t, body)
 
 	form := url.Values{"gorilla.csrf.Token": {tok}, "price": {"50"}}
@@ -2220,6 +2328,24 @@ func TestUpdateActionPrice(t *testing.T) {
 	page, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(page), "Price updated") {
 		t.Error("update-price must show flash message containing 'Price updated'")
+	}
+	if resp.Request.URL.RequestURI() != pageAt("alice@testnet/hello") {
+		t.Errorf("a command returns to the action's page by its address: %s", resp.Request.URL.RequestURI())
+	}
+
+	// A price that does not parse is refused on the page itself, its edit
+	// dialog open on why, as a refused edit is.
+	form = url.Values{"gorilla.csrf.Token": {tok}, "price": {"not a price"}}
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/actions/A1/update-price", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	refused, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer refused.Body.Close()
+	b, _ := io.ReadAll(refused.Body)
+	if refused.StatusCode != http.StatusUnprocessableEntity || refused.Request.URL.Path != "/actions/A1/update-price" || !strings.Contains(string(b), `id="form-action-edit" class="modal-form" open`) || !strings.Contains(string(b), `<div class="banner banner-error" role="alert">`) {
+		t.Errorf("a refused price re-renders the page with the dialog open on why: %d %s", refused.StatusCode, b)
 	}
 }
 
@@ -2238,7 +2364,13 @@ func actionDetailKernel(actionJSON string) *http.ServeMux {
 		w.Write([]byte(`{"id":"U1","address":{"address":"alice@testnet","principal":"alice@testnet"},"available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "" { // the one action, whatever its address
+			w.Write([]byte("[" + actionJSON + "]"))
+			return
+		}
+		w.Write([]byte(`[]`))
+	})
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	mux.HandleFunc("GET /v1/actions/A1", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(actionJSON)) })
 	return mux
@@ -2255,7 +2387,7 @@ func TestActionDetailShowsHTTPAndEditForm(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	page := getBody(t, cl, srv.URL+"/actions/A1")
+	page := getBody(t, cl, srv.URL+pageAt("alice@testnet/hello"))
 
 	// The header titles on owner/name (the ref), not the bare name, and drops the
 	// spelled-out "active · public" meta line (state shows via chips, like the cards).
@@ -2314,7 +2446,7 @@ func TestActionDetailWasmEditFormHasSchemasNoHTTP(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	page := getBody(t, cl, srv.URL+"/actions/A1")
+	page := getBody(t, cl, srv.URL+pageAt("alice@testnet/hello"))
 
 	// Schema editing is available for wasm too.
 	if !strings.Contains(page, `action="/actions/A1/update"`) || !strings.Contains(page, `name="input_schema"`) {
@@ -2994,11 +3126,11 @@ func TestInboxCompletionNamesNoAmount(t *testing.T) {
 	if len(taskActionReads) != 0 {
 		t.Errorf("the inbox reads no action: %v", taskActionReads)
 	}
-	if !strings.Contains(page, `asked by <span class="mono">alice@testnet</span> · via`) || !strings.Contains(page, `asked by <span class="mono">dan@bravo</span> · `) {
+	if !strings.Contains(page, `asked by `+nameHTML("alice@testnet")+` · via`) || !strings.Contains(page, `asked by `+nameHTML("dan@bravo")+` · `) {
 		t.Errorf("each card names its requester: %s", page)
 	}
 	// A task another kernel holds names no action: its head is that kernel.
-	if !regexp.MustCompile(`<h3 class="flush"><span class="mono" title="[^"]+">`).MatchString(page) {
+	if !regexp.MustCompile(`<h3 class="flush"><span class="name mono" title="[^"]+">`).MatchString(page) {
 		t.Errorf("a held task heads with the holding kernel's name: %s", page)
 	}
 	if resp, err := cl.Get(srv.URL + "/inbox/SO"); err != nil || resp.StatusCode != http.StatusNotFound {
@@ -3028,7 +3160,7 @@ func TestRequesters(t *testing.T) {
 		return got
 	}
 	row := func(page, addr string) string {
-		i := strings.Index(page, `<span class="mono">`+addr+`</span>`)
+		i := strings.Index(page, nameHTML(addr))
 		if i < 0 {
 			return ""
 		}
@@ -3060,7 +3192,7 @@ func TestRequesters(t *testing.T) {
 		}
 	}
 	a, b := strings.Index(tab, "<h2>Approved</h2>"), strings.Index(tab, "<h2>Blocked</h2>")
-	if a < 0 || b < a || strings.Index(tab, `<span class="mono">alice@testnet</span>`) < a || strings.Index(tab, `<span class="mono">eve@testnet</span>`) < b {
+	if a < 0 || b < a || strings.Index(tab, nameHTML("alice@testnet")) < a || strings.Index(tab, nameHTML("eve@testnet")) < b {
 		t.Errorf("approved before blocked, each under its status: %d %d", a, b)
 	}
 	if len(verbs(tab, "mallory@bravo")) != 0 || strings.Contains(tab, "Pending requesters") || strings.Contains(tab, "Waiting for you") {
@@ -3283,7 +3415,7 @@ func TestInboxTabs(t *testing.T) {
 	if got := ids(sent); !slices.Equal(got, []string{"SX", "SA"}) {
 		t.Errorf("Sent holds %v, want what bob asked of others", got)
 	}
-	if !strings.Contains(sent, "<th>To</th>") || !strings.Contains(sent, `<td><span class="mono">carol@testnet</span></td>`) {
+	if !strings.Contains(sent, "<th>To</th>") || !strings.Contains(sent, `<td>`+nameHTML("carol@testnet")+`</td>`) {
 		t.Error("a Sent row names the one asked")
 	}
 	if !strings.Contains(sent, `<form id="decline-SX" method="post" action="/inbox/SX/cancel" data-confirm="Cancel this task?">`) ||
@@ -3301,7 +3433,7 @@ func TestInboxTabs(t *testing.T) {
 	if got := ids(done); !slices.Equal(got, []string{"SD", "SS"}) {
 		t.Errorf("Done holds %v, want what was addressed to bob and finished", got)
 	}
-	if !strings.Contains(done, "<th>From</th>") || !strings.Contains(done, `<td><span class="mono">alice@testnet</span></td>`) {
+	if !strings.Contains(done, "<th>From</th>") || !strings.Contains(done, `<td>`+nameHTML("alice@testnet")+`</td>`) {
 		t.Error("a Done row names the one who asked")
 	}
 	if strings.Contains(done, `href="/transactions/TD"`) || !strings.Contains(done, `<span title="SD">SD</span>`) {
@@ -3339,7 +3471,7 @@ func TestActionRatingsRenderFromProjection(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	body := getBody(t, cl, srv.URL+"/actions/A1")
+	body := getBody(t, cl, srv.URL+pageAt("alice@testnet/hello"))
 	if !strings.Contains(body, ">good<") || strings.Contains(body, ">poor<") {
 		t.Error("a value=1 rating must render good")
 	}
@@ -3515,17 +3647,15 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "alice")
 
 	body := getBody(t, cl, srv.URL+"/browse?q=vendor")
-	// The resolved proxy links to its LOCAL action page and keeps its stats.
-	if !strings.Contains(body, `/actions/proxy-local`) {
-		t.Error("a resolved proxy must link to its local action page, not the discovered view")
+	// Every row opens its action by its address, one route whether it is
+	// resolved or only discovered (actionHref).
+	for _, a := range []string{"vendor@bravo/bought", "vendor@bravo/fresh", "alice@testnet/gone"} {
+		if !strings.Contains(body, `href="`+pageAt(a)+`"`) {
+			t.Errorf("%s opens by its address: %s", a, body)
+		}
 	}
-	if strings.Contains(body, `/discovered?ref=vendor%40bravo%2Fbought`) ||
-		strings.Contains(body, `/discovered?ref=vendor@bravo/bought`) {
-		t.Error("a resolved proxy must not be routed through the discovered view")
-	}
-	// The unresolved one still renders as discovered, from the lookup row alone.
-	if !strings.Contains(body, "/discovered?ref=vendor") {
-		t.Error("an unresolved hit must still render as a discovered card")
+	if strings.Contains(body, "/discovered") || strings.Contains(body, "/actions/proxy-local") {
+		t.Error("no row opens by a route of its own")
 	}
 	// Both rows are remote-backed, so both state the kernel's freshness stamp.
 	if !strings.Contains(body, "terms seen") {
@@ -3533,7 +3663,7 @@ func TestBrowseResolvedProxyIsNotRenderedAsDiscovered(t *testing.T) {
 	}
 	// The lookup ranks active actions only, so a hit whose read failed — remote
 	// or local — is not stated inactive: nothing said it is.
-	if !strings.Contains(body, `href="/actions/gone"`) || strings.Contains(body, ">inactive<") {
+	if strings.Contains(body, ">inactive<") {
 		t.Errorf("a lookup hit is never stated inactive for want of a read: %s", body)
 	}
 }
@@ -3555,11 +3685,14 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 		w.Write([]byte(`{"id":"U1","address":{"address":"alice@testnet","principal":"alice@testnet"},"available":500,"locked":0}`))
 	})
 	mux.HandleFunc("GET /v1/tasks", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"P1","action":{"address":"vendor@bravo/slow","principal":"vendor@bravo/slow"},"name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
-		 "input_schema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"output_schema":{"type":"object"}}`))
+	p1 := `{"id":"P1","action":{"address":"vendor@bravo/slow","principal":"vendor@bravo/slow"},"name":"vendor/slow","kind":"remote_proxy","active":true,"price":111,
+		 "input_schema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"output_schema":{"type":"object"}}`
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if !byRef(w, r, map[string]string{"P1": p1}) {
+			w.Write([]byte(`[]`))
+		}
 	})
+	mux.HandleFunc("GET /v1/actions/{id}", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(p1)) })
 	mux.HandleFunc("GET /v1/actions/{id}/ratings", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
 	// The live d59742b shape: dispatched, unsettled, funds locked, and no date
 	// by which anything expires.
@@ -3573,7 +3706,7 @@ func TestRunOutcomeParkedStatesReservedFundsNotARefund(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "alice")
 
-	page := getBody(t, cl, srv.URL+"/actions/P1")
+	page := getBody(t, cl, srv.URL+pageAt("vendor@bravo/slow"))
 	resp := postTo(t, cl, srv.URL+"/actions/P1/run", page,
 		url.Values{"f_/q": {"hello"}, "t_/q": {"string"}, "has_fields": {"1"}})
 	raw, _ := io.ReadAll(resp.Body)
@@ -3606,7 +3739,7 @@ func TestWalletActivityIsTheLedger(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/wallet")
 	activity := body[strings.Index(body, "Recent activity"):]
-	for _, want := range []string{`to <span class="mono">bob@testnet</span>`, "−300 credits", `from <span class="mono">sys@testnet</span>`, "+5000 credits",
+	for _, want := range []string{`to ` + nameHTML("bob@testnet") + ``, "−300 credits", `from ` + nameHTML("sys@testnet") + ``, "+5000 credits",
 		"obligation e2c28a67-9c1b-4272-abb7-7f13d75cd93b", `href="/transactions/` + ledgerTx + `"`} {
 		if !strings.Contains(activity, want) {
 			t.Errorf("activity missing %q:\n%s", want, activity)
@@ -3884,7 +4017,7 @@ func TestFillPreparesTheFieldsFromTheConversation(t *testing.T) {
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	panel := getBody(t, cl, srv.URL+"/actions/WEB/panel?room=r1")
+	panel := getBody(t, cl, srv.URL+panelAt("sys@testnet/web")+"&room=r1")
 	for _, want := range []string{`name="room" value="r1"`, `name="fill_quote_hash" value="DQ"`, `<button type="button" class="btn-icon" data-fill="/actions/WEB/fill" title="Fill from chat" aria-label="Fill from chat"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg></button>`, `<span>Filling…</span>`} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("panel lacks %s", want)
@@ -3900,7 +4033,7 @@ func TestFillPreparesTheFieldsFromTheConversation(t *testing.T) {
 	if strings.Contains(foot[:strings.Index(foot, "</div>")], "data-fill") {
 		t.Error("Fill must not sit beside Run")
 	}
-	if bare := getBody(t, cl, srv.URL+"/actions/WEB/panel"); strings.Contains(bare, "data-fill") || strings.Contains(bare, "Filling…") {
+	if bare := getBody(t, cl, srv.URL+panelAt("sys@testnet/web")); strings.Contains(bare, "data-fill") || strings.Contains(bare, "Filling…") {
 		t.Error("with no conversation there is nothing to fill from")
 	}
 
@@ -3939,7 +4072,7 @@ func TestFillLeavesTheUnstatedBlank(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{convApp{}} }))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
-	panel := getBody(t, cl, srv.URL+"/actions/WEB/panel?room=r1")
+	panel := getBody(t, cl, srv.URL+panelAt("sys@testnet/web")+"&room=r1")
 	resp := postTo(t, cl, srv.URL+"/actions/WEB/fill", panel, url.Values{"room": {"r1"}})
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -3954,7 +4087,7 @@ func TestPricedFillIsAMoneyButton(t *testing.T) {
 	defer kernel.Close()
 	srv := httptest.NewServer(newTestHandler(t, kernel.URL, func(w *testWiring) { w.apps = []apps.App{convApp{}} }))
 	defer srv.Close()
-	panel := getBody(t, loginClient(t, srv.URL), srv.URL+"/actions/WEB/panel?room=r1")
+	panel := getBody(t, loginClient(t, srv.URL), srv.URL+panelAt("sys@testnet/web")+"&room=r1")
 	if !strings.Contains(panel, `<button type="button" class="btn-money" data-fill="/actions/WEB/fill" title="Fill from chat — 9 credits" aria-label="Fill from chat — 9 credits"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg#sparkles"/></svg><span>9 credits</span></button>`) {
 		t.Errorf("a priced fill is authorized on the money button: %s", panel)
 	}
@@ -4022,24 +4155,27 @@ func TestBrowseSortsByTheSignalsTheKernelServes(t *testing.T) {
 	}
 	// A row is found by its link; the order of the links is the order shown.
 	order := func(body string) []string {
-		out := []string{"/actions/CHEAP", "/actions/LOVED", "/actions/MEH", "/actions/BAD"}
-		sort.Slice(out, func(i, j int) bool { return strings.Index(body, out[i]) < strings.Index(body, out[j]) })
+		out := []string{"CHEAP", "LOVED", "MEH", "BAD"}
+		at := func(id string) int {
+			return strings.Index(body, `href="`+pageAt("alice@testnet/"+strings.ToLower(id))+`"`)
+		}
+		sort.Slice(out, func(i, j int) bool { return at(out[i]) < at(out[j]) })
 		return out
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "/actions/CHEAP" || got[3] != "/actions/LOVED" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=price")); got[0] != "CHEAP" || got[3] != "LOVED" {
 		t.Errorf("price order = %v", got)
 	}
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "/actions/LOVED" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[0] != "LOVED" {
 		t.Errorf("rating order must put the best-rated first: %v", got)
 	}
 	// A row nobody has rated has nothing confirmed good, so it follows every
 	// row with anything confirmed; among rows with nothing confirmed good, it
 	// precedes the one confirmed poor.
-	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[1] != "/actions/MEH" || got[2] != "/actions/CHEAP" || got[3] != "/actions/BAD" {
+	if got := order(getBody(t, cl, srv.URL+"/browse?sort=rating")); got[1] != "MEH" || got[2] != "CHEAP" || got[3] != "BAD" {
 		t.Errorf("rating order must be what each bar confirms: %v", got)
 	}
 	// An unknown sort shows the list, not an error.
-	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, "/actions/CHEAP") {
+	if body := getBody(t, cl, srv.URL+"/browse?sort=nonsense"); !strings.Contains(body, pageAt("alice@testnet/cheap")) {
 		t.Errorf("an unknown sort falls back to relevance: %s", body)
 	}
 }
@@ -4097,7 +4233,7 @@ func TestRatingSortOrdersTheWholeCatalogNotThePage(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	body := getBody(t, cl, srv.URL+"/browse?sort=rating")
-	best := fmt.Sprintf(`href="/actions/A%d"`, total-1)
+	best := `href="` + pageAt(fmt.Sprintf("alice@testnet/a%02d", total-1)) + `"`
 	if !strings.Contains(body, best) {
 		t.Errorf("the best-rated action must be on the first page of a rating sort: %s", best)
 	}
@@ -4506,8 +4642,8 @@ func TestSearchCatalogServesEveryAction(t *testing.T) {
 		if e.Ref == "" {
 			t.Errorf("%q carries no address", e.T)
 		}
-		if e.K == "weather forecast" && e.ID != "" {
-			t.Errorf("a discovered action has no local id, got %q", e.ID)
+		if !strings.HasPrefix(e.Href, "/actions?ref=") || strings.Contains(e.Href, "id=") {
+			t.Errorf("%q opens by its address alone: %q", e.T, e.Href)
 		}
 	}
 	if keys["weather forecast"] != 1 {
@@ -4558,7 +4694,7 @@ func TestSearchCatalogNamesTheSearchsTerms(t *testing.T) {
 }
 
 // The browse catalog renders a discovered row in its discovered form — linked
-// to resolve on open, never to a local action page it does not have — and
+// by its address, which the kernel resolves on open, as every row is — and
 // the workshop, which manages this kernel's actions, leaves it out.
 func TestCatalogDiscoveredRows(t *testing.T) {
 	k := newCatalogKernel(t)
@@ -4567,11 +4703,8 @@ func TestCatalogDiscoveredRows(t *testing.T) {
 	cl := loginClient(t, srv.URL)
 
 	page := getBody(t, cl, srv.URL+"/browse?sort=price")
-	if !strings.Contains(page, `href="/discovered?ref=tom%40BRAVOKEY%2ftools%2fweather"`) {
-		t.Error("a discovered catalog row must link to resolve-on-open")
-	}
-	if strings.Contains(page, `href="/actions/"`) {
-		t.Error("no catalog row may link to an action page without an id")
+	if !strings.Contains(page, `href="`+pageAt("tom@BRAVOKEY/tools/weather")+`"`) {
+		t.Error("a discovered catalog row opens by its address")
 	}
 	if !strings.Contains(page, `title="Discovered`) {
 		t.Error("a discovered catalog row carries the discovered chip")
@@ -4832,6 +4965,8 @@ func newSearchKernel(t *testing.T) *searchKernel {
 			fmt.Fprintf(w, `[{"id":"L","action":{"address":"sys@testnet/lookup","principal":"sys@testnet/lookup"},"name":"lookup","kind":"native","active":true,"price":%d,"quote_hash":%q}]`, k.price, k.quote)
 		case "tom@BRAVOKEY/hola":
 			w.Write([]byte("[" + proxy + "]"))
+		case "alice@testnet/hello":
+			w.Write([]byte("[" + hello + "]"))
 		case "":
 			if k.failList {
 				http.Error(w, `{"code":"internal","error":"boom"}`, http.StatusInternalServerError)
@@ -4899,8 +5034,8 @@ func TestSearchFromTheComposerAnswersThePanel(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<h2>Search “hello”</h2>`, `data-panel-close`,
-		`data-href="/actions/A1" data-rank-relevance="0" data-rank-rating="0" data-rank-price="1"`,
-		`data-href="/discovered?ref=tom%40BRAVOKEY%2fhola" data-rank-relevance="1" data-rank-rating="1" data-rank-price="0"`,
+		`data-href="` + pageAt("alice@testnet/hello") + `" data-rank-relevance="0" data-rank-rating="0" data-rank-price="1"`,
+		`data-href="` + pageAt("tom@BRAVOKEY/hola") + `" data-rank-relevance="1" data-rank-rating="1" data-rank-price="0"`,
 		`href="/browse?q=hello&amp;sort=rating"`, `href="/browse?q=hello"`,
 	} {
 		if !strings.Contains(panel, want) {
@@ -4916,7 +5051,7 @@ func TestSearchFromTheComposerAnswersThePanel(t *testing.T) {
 	if len(k.runs) != 0 {
 		t.Errorf("a priced lookup ran without a pin: %v", k.runs)
 	}
-	if !strings.Contains(panel, "priced on this kernel") || !strings.Contains(panel, `data-href="/actions/A1"`) {
+	if !strings.Contains(panel, "priced on this kernel") || !strings.Contains(panel, `data-href="`+pageAt("alice@testnet/hello")+`"`) {
 		t.Errorf("an unpinned priced search falls back to the catalog and says why: %s", panel)
 	}
 
@@ -4952,7 +5087,7 @@ func TestUnreadableLookupPriceNeverRunsUnpinned(t *testing.T) {
 		t.Fatalf("an unreadable price ran the lookup unpinned: %v", k.runs)
 	}
 	for _, got := range []string{body, panel} {
-		if !strings.Contains(got, "Its price could not be read.") || !strings.Contains(got, `data-href="/actions/A1"`) {
+		if !strings.Contains(got, "Its price could not be read.") || !strings.Contains(got, `data-href="`+pageAt("alice@testnet/hello")+`"`) {
 			t.Errorf("the search falls back and says why: %s", got)
 		}
 	}
@@ -4986,36 +5121,36 @@ func TestChangedSearchTermsAskAgainAtTheNewPrice(t *testing.T) {
 	}
 	k.runs = nil
 	_, panel = postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}, "lookup_quote_hash": {"LQ2"}})
-	if len(k.runs) != 1 || !strings.Contains(panel, `data-href="/actions/A1"`) {
+	if len(k.runs) != 1 || !strings.Contains(panel, `data-href="`+pageAt("alice@testnet/hello")+`"`) {
 		t.Errorf("accepting the new price searches once: %v", k.runs)
 	}
 }
 
-// A row of a search opens in the panel whether or not this kernel holds it: a
-// discovered one is resolved with its home kernel first, as its page is. A
-// panel opened from results carries the way back, and the room for the fill.
+// A row of a search opens in the panel by its address whether or not this
+// kernel holds it: the kernel resolves it, as it does for its page. A panel
+// opened from results carries the way back, and the room for the fill.
 func TestDiscoveredOpensInThePanel(t *testing.T) {
 	k := newSearchKernel(t)
 	srv := httptest.NewServer(newTestHandler(t, k.URL))
 	defer srv.Close()
 	cl := loginClient(t, srv.URL)
 
-	panel := getBody(t, cl, srv.URL+"/discovered/panel?ref="+url.QueryEscape("tom@BRAVOKEY/hola")+"&room=r1&back=1")
+	panel := getBody(t, cl, srv.URL+panelAt("tom@BRAVOKEY/hola")+"&room=r1&back=1")
 	for _, want := range []string{`data-panel-back`, `<h2>Hola`, `action="/actions/P1/run"`, `name="room" value="r1"`} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("panel lacks %s:\n%s", want, panel)
 		}
 	}
-	if plain := getBody(t, cl, srv.URL+"/actions/A1/panel?room=r1"); strings.Contains(plain, "data-panel-back") {
+	if plain := getBody(t, cl, srv.URL+panelAt("alice@testnet/hello")+"&room=r1"); !strings.Contains(plain, "<h2>Hello") || strings.Contains(plain, "data-panel-back") {
 		t.Error("a panel opened from the launcher has no results to return to")
 	}
-	missing := getBody(t, cl, srv.URL+"/discovered/panel?ref="+url.QueryEscape("tom@BRAVOKEY/gone")+"&back=1")
-	for _, want := range []string{"That action could not be resolved from its kernel.", "data-panel-back", "data-panel-close"} {
+	missing := getBody(t, cl, srv.URL+panelAt("tom@BRAVOKEY/gone")+"&back=1")
+	for _, want := range []string{"That action could not be found.", "data-panel-back", "data-panel-close"} {
 		if !strings.Contains(missing, want) {
 			t.Errorf("a failed open over results keeps the way back and the close, lacks %s: %s", want, missing)
 		}
 	}
-	if gone := getBody(t, cl, srv.URL+"/actions/NOPE/panel"); strings.Contains(gone, "data-panel-back") || !strings.Contains(gone, "data-panel-close") {
+	if gone := getBody(t, cl, srv.URL+panelAt("alice@testnet/nope")); strings.Contains(gone, "data-panel-back") || !strings.Contains(gone, "data-panel-close") {
 		t.Errorf("a failed open from the launcher closes, with nothing to go back to: %s", gone)
 	}
 }

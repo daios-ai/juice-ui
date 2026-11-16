@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/daios-ai/juice-ui/client"
 	"time"
 )
 
@@ -309,15 +311,14 @@ type Block struct {
 	Provider string // the chosen option
 	URL, ID  string
 	Price    int64
-	Priced   bool     // the price is asked (the Models page)
-	Held     bool     // a key is held for the chosen provider
-	Models   []string // the models the chosen provider lists: the model is chosen among them; nil, it is typed
-	Unlisted bool     // the model chosen is not among them, as a provider may drop one; it stays chosen
-	Problem  string   // why the chosen provider could not be asked
-	Refresh  string   // where the host answers this block's model field
-	Summary  string   // the choice in a sentence: the model and its provider
-	Action   string   // the native the block backs, on the page: its address
-	Href     string   // and its page
+	Priced   bool          // the price is asked (the Models page)
+	Held     bool          // a key is held for the chosen provider
+	Models   []string      // the models the chosen provider lists: the model is chosen among them; nil, it is typed
+	Unlisted bool          // the model chosen is not among them, as a provider may drop one; it stays chosen
+	Problem  string        // why the chosen provider could not be asked
+	Refresh  string        // where the host answers this block's model field
+	Summary  string        // the choice in a sentence: the model and its provider
+	Action   *client.Party // the native the block backs, drawn by _name; nil when it cannot be read
 	// The options each part of the block belongs to, space-separated: the
 	// reveal shows a part only for those (grammar §5.4).
 	ForURL, ForKey, ForModel string

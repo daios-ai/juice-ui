@@ -48,14 +48,14 @@
       </select>
       <button class="btn-primary" type="submit">Set visibility</button>
     </form>
-    <a class="btn" href="/actions/{{$d.Action.ID}}?form=action-edit" data-modal="form-action-edit">Edit</a>
+    <a class="btn" href="{{actionHref $d.Action.Action ""}}&amp;form=action-edit" data-modal="form-action-edit">Edit</a>
     <form method="post" action="/actions/delete" data-confirm="Delete this action?">{{$.CSRFField}}<input type="hidden" name="target" value="{{$d.Action.ID}}"><button class="btn-danger" type="submit">Delete</button></form>
   </div>
 </div>
 
 <dialog id="form-action-edit" class="modal-form"{{if eq $d.OpenForm "action-edit"}} open{{end}} aria-label="Edit action">
   {{$e := $d.Edit}}
-  <div class="modal-head"><h2>Edit {{$d.Action.Title}}</h2><a class="modal-close" href="/actions/{{$d.Action.ID}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-head"><h2>Edit {{$d.Action.Title}}</h2><a class="modal-close" href="{{actionHref $d.Action.Action ""}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body">
     {{with $e.Error}}{{template "_error" .}}{{end}}
     <form class="stack" method="post" action="/actions/{{$d.Action.ID}}/update">

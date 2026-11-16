@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/daios-ai/juice-ui/client"
 	"github.com/daios-ai/juice-ui/icons"
 )
 
@@ -63,10 +64,10 @@ const defaultGlyph = "widgets"
 // and the glyph on the whole address (the operation); id is accepted so a
 // partial record still draws, and kind selects the fallback glyph.
 func CardArt(id, ref, kind string) template.HTML {
-	hue := artHues[hashOf(hueSeed(refOwner(ref), id, kind))%uint32(len(artHues))]
+	hue := artHues[hashOf(hueSeed(client.OwnerOf(ref), id, kind))%uint32(len(artHues))]
 
 	glyph := ""
-	if refName(ref) != "" {
+	if client.PathOf(ref) != "" {
 		if m, ok := icons.Pick(ref); ok {
 			glyph = m.Name
 		}

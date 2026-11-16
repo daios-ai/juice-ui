@@ -16,14 +16,13 @@
   {{with .Requests}}<h2>Requests</h2>{{range .}}{{template "_rail_request" .}}{{end}}{{end}}
   {{if or .Rooms .Unread}}<h2>Rooms</h2>{{end}}
   {{range $room := .Rooms}}<div class="rail-row">
-    <a href="/chat/room/{{.Addr}}"{{if .Unread}} class="unread"{{end}}{{if eq .Addr $.Current}} aria-current="page"{{end}}>{{.Name}}{{with .Elsewhere}} <span class="muted"{{with $room.Copy}} title="{{.}}"{{end}}>· {{.}}</span>{{end}}</a>
+    <a href="/chat/room/{{.Addr}}"{{if .Unread}} class="unread"{{end}}{{if eq .Addr $.Current}} aria-current="page"{{end}}>{{.Name}}{{with .Chat}} <span class="muted">· {{template "_name" (plain (brief .Kernel))}}</span>{{end}}</a>
     {{template "_rail_trigger" (print "room-" .Addr)}}
     <div class="menu" id="menu-room-{{.Addr}}" role="menu" hidden>
       <a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=members"{{if eq .Addr $.Current}} data-modal="form-members"{{end}}>Members…</a>
       {{if .Mine}}<a class="menu-item" role="menuitem" href="/chat/room/{{.Addr}}?form=rename" hx-get="/chat/room/{{.Addr}}/rename" hx-swap="none">Rename…</a>{{end}}
       {{range $.Drop $room}}{{template "_rail_command" .}}{{end}}
-      {{if .Elsewhere}}{{range $.Elsewhere $room}}{{template "_rail_command" .}}{{end}}{{end}}
-      {{template "_copy_item" .Copy}}
+      {{with .Chat}}{{range $.Elsewhere $room}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" (brief .).Copy}}{{end}}
     </div>
   </div>{{end}}
   {{range .Unread}}{{template "_rail_item" .}}{{end}}
@@ -39,8 +38,8 @@
      buttons. A long name is shortened on its line and a copy stays in view.
      Input: railItem. */}}
 {{define "_rail_request"}}<div class="rail-request">
-  <header><span{{with .Title}} title="{{.}}"{{end}}>{{.Label}}{{with .Muted}} <span class="muted">· {{.}}</span>{{end}}</span>{{with .Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}</header>
-  <p class="muted">{{.Detail}}{{with .From}} {{template "_party_brief" .}}{{end}}</p>
+  <header>{{if .Room}}<span>{{.Room}}{{with .Chat}} <span class="muted">· {{template "_name" (plain (brief .Kernel))}}</span>{{end}}</span>{{with .Chat}}{{with (brief .).Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}{{end}}{{else}}{{template "_name" (brief .Chat)}}{{end}}</header>
+  <p class="muted">{{.Detail}}{{with .From}} {{template "_name" (brief .)}}{{end}}</p>
   <div class="cluster">{{range .Commands}}{{template "_rail_command" .}}{{end}}</div>
 </div>{{end}}
 
@@ -48,10 +47,11 @@
      its reason its title, and "…" opening its menu; own chat, with nothing to
      do, has no "…". Input: railItem. */}}
 {{define "_rail_item"}}<div class="rail-row">
-  <span class="rail-item" role="status"{{with .Title}} title="{{.}}"{{end}}><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{.Label}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>
-  {{- if or .Commands .Copy}}
+  {{- $copy := (brief .Chat).Copy}}
+  <span class="rail-item" role="status"{{with .Title}} title="{{.}}"{{end}}><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> {{template "_name" (plain (brief .Chat))}}{{with .Title}}<span class="sr-only">: {{.}}</span>{{end}}</span>
+  {{- if or .Commands $copy}}
   {{template "_rail_trigger" .ID}}
-  <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" .Copy}}</div>
+  <div class="menu" id="menu-{{.ID}}" role="menu" hidden>{{range .Commands}}{{template "_rail_command" .}}{{end}}{{template "_copy_item" $copy}}</div>
   {{- end}}
 </div>{{end}}
 
@@ -83,7 +83,7 @@
       {{if .Agents}}
       <div class="field">
         <label>Agents</label>
-        {{range .Agents}}<label class="check"><input type="checkbox" name="agent" value="{{.Address}}"{{if .Chosen}} checked{{end}}> <span class="mono">{{.Address}}</span></label>{{end}}
+        {{range .Agents}}<label class="check"><input type="checkbox" name="agent" value="{{.Agent.Address}}"{{if .Chosen}} checked{{end}}> {{template "_name" (plain (name .Agent))}}</label>{{end}}
       </div>
       {{end}}
       <div class="field">
@@ -132,12 +132,12 @@
     {{with .Error}}{{template "_error" .}}{{end}}
     <div>
       {{range .Room.Members}}
-      <div class="member-row"><span class="ref"><span class="owner">{{template "_party" .}}</span></span>
+      <div class="member-row">{{template "_name" (name .)}}
         {{if and $v.Room.Mine (ne .Principal $v.Me)}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{or .Principal .Address}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
       </div>
       {{end}}
       {{range .Room.Invited}}
-      <div class="member-row"><span class="ref"><span class="owner">{{template "_party" .}}</span></span> <span class="muted">invited</span>
+      <div class="member-row">{{template "_name" (name .)}} <span class="muted">invited</span>
         {{if $v.Room.Mine}}<form method="post" action="/chat/room/{{$v.Room.Addr}}/remove-member" hx-post="/chat/room/{{$v.Room.Addr}}/remove-member" hx-swap="none">{{$v.CSRFField}}<input type="hidden" name="member" value="{{or .Principal .Address}}"><button class="btn-danger" type="submit">Remove</button></form>{{end}}
       </div>
       {{end}}
@@ -159,4 +159,4 @@
      it when that is another, muted, as in the rail, with a copy of that
      chat's address when no petname names its kernel here. A rename answers
      it. The room's menu is its row in the rail. Input: roomRow. */}}
-{{define "_crumb"}}<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="{{.Name}}">{{.Name}}{{with .Elsewhere}} <span class="muted">· {{.}}</span>{{end}}</b>{{with .Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}</nav>{{end}}
+{{define "_crumb"}}<nav class="crumb" id="chat-crumb" hx-swap-oob="true"><b class="stretch" title="{{.Name}}">{{.Name}}{{with .Chat}} <span class="muted">· {{template "_name" (plain (brief .Kernel))}}</span>{{end}}</b>{{with .Chat}}{{with (brief .).Copy}}{{template "_copy" (copyOf "address" .)}}{{end}}{{end}}</nav>{{end}}

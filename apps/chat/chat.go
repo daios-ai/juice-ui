@@ -198,45 +198,33 @@ func (c *Chat) Stop(ctx context.Context) error {
 func (c *Chat) self() string  { return c.deps.KeyAddress(chatHandle) }
 func (c *Chat) login() string { return c.deps.Address(chatHandle) }
 
-// chatName is the kernel of a chat as a page names it (ui-grammar "Naming"):
-// Label in a row, Shown in a question or a sentence, which adds the key a
-// nickname stands in for, and Copy, the chat's address by key, when no petname
-// names that kernel here.
-type chatName struct{ Label, Shown, Copy string }
-
-// called is the kernel of the chat at service as the viewer's kernel last
-// named it: this kernel's own name for this kernel's chat, else the requester's
-// kernel as learn recorded it, else the key.
-func (c *Chat) called(service string) chatName {
+// chat is the chat at service as a party, as the viewer's kernel last named
+// it: this kernel's chat by this kernel's own name, else the requester as learn
+// recorded it, else by its key. A page draws it, and its kernel
+// (client.Party.Kernel), by _name; a sentence by shown.
+func (c *Chat) chat(service string) client.Party {
 	if service == c.self() {
-		k := c.kernelName()
-		return chatName{Label: k, Shown: k}
+		return client.Party{Address: c.login(), Principal: service}
 	}
 	c.mu.Lock()
 	p, ok := c.labels[service]
 	c.mu.Unlock()
 	if !ok {
-		p = client.Party{Address: kernelOf(service), Principal: kernelOf(service)}
+		p = client.Party{Address: service, Principal: service}
 	}
-	n := chatName{Label: c.deps.Label(p), Shown: p.Shown()}
-	if client.ShortAddress(p.Address) != p.Address {
-		n.Copy = service
-	}
-	return n
+	return p
 }
 
-// label is the kernel of the chat at service as a row names it; shown is the
-// chat as a sentence names it.
-func (c *Chat) label(service string) string { return c.called(service).Label }
-func (c *Chat) shown(service string) string { return chatHandle + "@" + c.called(service).Shown }
+// shown is the chat at service as a sentence names it.
+func (c *Chat) shown(service string) string { return c.chat(service).Shown() }
 
-// learn records the kernel of a requester that is a chat, as the viewer's
-// kernel names it, and answers the requester by key.
+// learn records a requester that is a chat, as the viewer's kernel names it,
+// and answers the requester by key.
 func (c *Chat) learn(q client.Party) string {
 	chat := q.Keyed()
 	if strings.HasPrefix(chat, chatHandle+"@") {
 		c.mu.Lock()
-		c.labels[chat] = client.Party{Address: kernelOf(q.Address), Principal: kernelOf(chat), Nickname: q.Nickname}
+		c.labels[chat] = q
 		c.mu.Unlock()
 	}
 	return chat
@@ -258,7 +246,7 @@ const (
 )
 
 // name gives each party of a reply of chat the name the viewer's kernel gives
-// its principal, as every page of this UI names a party (ui-grammar "Naming").
+// its principal, as every page of this UI names a party (ui-grammar "Names").
 // Chat holds a member by principal; the address it sends is its own kernel's
 // spelling, which is chat's data and no name the viewer's kernel gave. The
 // kernel is asked by sys/resolve, every principal not named lately at once,
@@ -606,21 +594,20 @@ func joinFailed(member string, err error) string {
 // roomRow and entryRow are chat's replies as the UI reads them: members as
 // parties, named as chat's kernel names them, and the creator by principal.
 // Service is the chat that holds the room, chat@kernel, set by the UI from the
-// chat it read the room from; Elsewhere is that kernel when it is not this one,
-// for the page to name, and Copy that chat's address by key when no petname
-// names its kernel here; Mine says the viewer created it.
+// chat it read the room from; Chat is that chat as a party when it is not this
+// kernel's, for the page to name its kernel and copy its address; Mine says the
+// viewer created it.
 type roomRow struct {
-	ID        string         `json:"thread_id"`
-	Name      string         `json:"name"`
-	Creator   string         `json:"creator"`
-	Members   []client.Party `json:"members"`
-	Invited   []client.Party `json:"invited"`
-	Unread    bool           `json:"unread"`
-	LastAt    string         `json:"last_at"`
-	Service   string         `json:"service"`
-	Elsewhere string         `json:"elsewhere,omitempty"`
-	Copy      string         `json:"copy,omitempty"`
-	Mine      bool           `json:"mine,omitempty"`
+	ID      string         `json:"thread_id"`
+	Name    string         `json:"name"`
+	Creator string         `json:"creator"`
+	Members []client.Party `json:"members"`
+	Invited []client.Party `json:"invited"`
+	Unread  bool           `json:"unread"`
+	LastAt  string         `json:"last_at"`
+	Service string         `json:"service"`
+	Chat    *client.Party  `json:"chat,omitempty"`
+	Mine    bool           `json:"mine,omitempty"`
 }
 
 // Addr is the room's address, thread@kernel: a room is named as everything in
@@ -657,12 +644,13 @@ func (c *Chat) chatOf(r *http.Request) string {
 
 // tag marks rooms as held by the chat at service.
 func (c *Chat) tag(rooms []roomRow, service, me string) []roomRow {
-	var elsewhere chatName
+	var elsewhere *client.Party
 	if service != c.self() {
-		elsewhere = c.called(service)
+		p := c.chat(service)
+		elsewhere = &p
 	}
 	for i := range rooms {
-		rooms[i].Service, rooms[i].Elsewhere, rooms[i].Copy, rooms[i].Mine = service, elsewhere.Label, elsewhere.Copy, me != "" && rooms[i].Creator == me
+		rooms[i].Service, rooms[i].Chat, rooms[i].Mine = service, elsewhere, me != "" && rooms[i].Creator == me
 	}
 	return rooms
 }
@@ -703,14 +691,13 @@ type roomRead struct {
 }
 
 // inviteRow is an invitation to a room as chat lists it: the room, its name, and
-// its creator, who invited; Service, Elsewhere and Copy are set by the UI, as a room's.
+// its creator, who invited; Service and Chat are set by the UI, as a room's.
 type inviteRow struct {
-	ID        string       `json:"thread_id"`
-	Name      string       `json:"name"`
-	From      client.Party `json:"from"`
-	Service   string       `json:"service"`
-	Elsewhere string       `json:"elsewhere,omitempty"`
-	Copy      string       `json:"copy,omitempty"`
+	ID      string        `json:"thread_id"`
+	Name    string        `json:"name"`
+	From    client.Party  `json:"from"`
+	Service string        `json:"service"`
+	Chat    *client.Party `json:"chat,omitempty"`
 }
 
 // Addr is the address of the room the invitation is to.
@@ -815,7 +802,7 @@ func (c *Chat) readRoom(r *http.Request, service, thread string, after int64, se
 // tagInvites marks invitations as held by the chat at service.
 func (c *Chat) tagInvites(invites []inviteRow, service string) []inviteRow {
 	for i, room := range c.tag(make([]roomRow, len(invites)), service, "") {
-		invites[i].Service, invites[i].Elsewhere, invites[i].Copy = room.Service, room.Elsewhere, room.Copy
+		invites[i].Service, invites[i].Chat = room.Service, room.Chat
 	}
 	return invites
 }
@@ -825,9 +812,9 @@ const latest = -1
 
 // downRow is a chat of the viewer's that could not be read, and why.
 type downRow struct {
-	Service string `json:"service"`
-	Name    string `json:"name"` // its kernel's label
-	Reason  string `json:"reason"`
+	Service string       `json:"service"`
+	Chat    client.Party `json:"chat"` // as the page names it
+	Reason  string       `json:"reason"`
 	err     error
 }
 
@@ -843,7 +830,7 @@ func (c *Chat) rooms(r *http.Request, services []string) railCache {
 		}
 		if err := c.run(r, service, roomListName, struct{}{}, &out); err != nil {
 			c.log().Warn("chat: list rooms", "chat", service, "err", err)
-			rail.Down = append(rail.Down, downRow{service, c.label(service), c.why(err, service), err})
+			rail.Down = append(rail.Down, downRow{service, c.chat(service), c.why(err, service), err})
 			continue
 		}
 		rail.Rooms = append(rail.Rooms, c.tag(out.Rooms, service, c.principal(r))...)
@@ -875,27 +862,18 @@ func (c *Chat) railWith(r *http.Request, service string, read roomRead, services
 // last read and the chats that could not be; and the signal read before that
 // run, so a change since is caught by the next tick.
 type railCache struct {
-	Asking  []askRow    `json:"asking"`
-	Invites []inviteRow `json:"invites"`
-	Rooms   []roomRow   `json:"rooms"`
-	Down    []downRow   `json:"down"`
-	Signal  string      `json:"signal"`
-}
-
-// askRow is a chat elsewhere asking to be connected, by its address, and Name,
-// its kernel as a row names it (Chat.called).
-type askRow struct {
-	Service string `json:"service"`
-	Name    string `json:"name"`
+	Asking  []client.Party `json:"asking"`
+	Invites []inviteRow    `json:"invites"`
+	Rooms   []roomRow      `json:"rooms"`
+	Down    []downRow      `json:"down"`
+	Signal  string         `json:"signal"`
 }
 
 // railOf is the rail after a read, rail, with the chats asking as the pulse
 // holds them and the signal read before it.
 func (c *Chat) railOf(r *http.Request, p pulse, rail railCache, signal string) railCache {
 	rail.Signal = signal
-	for _, q := range p.Asking {
-		rail.Asking = append(rail.Asking, askRow{q.Keyed(), c.label(q.Keyed())})
-	}
+	rail.Asking = p.Asking
 	return rail
 }
 
@@ -1264,8 +1242,8 @@ type newRoomView struct {
 }
 
 type agentChoice struct {
-	Address string
-	Chosen  bool
+	Agent  client.Party
+	Chosen bool
 }
 
 // railView backs the rail: the chats asking to be connected, the invitations,
@@ -1282,19 +1260,20 @@ type railView struct {
 	Current   string
 	Path      string
 	CSRFField template.HTML
-	OOB       bool                  // the heartbeat's out-of-band answer: the rail alone, replacing the one shown
-	Called    func(string) chatName // a chat's kernel as the page names it (Chat.called)
+	OOB       bool                      // the heartbeat's out-of-band answer: the rail alone, replacing the one shown
+	Label     func(client.Party) string // a party in a command's words (apps.Deps.Label)
 }
 
 // railItem is a rail entry that is not a room: a request (a chat asking to be
-// connected, an invitation), or a chat that could not be read. Label is its
-// name, Muted the kernel after it, Title what its title and a screen reader
-// add, Copy the address its copy control copies (roomRow); a request says what
-// it is in Detail, an invitation who sent it in From.
+// connected, an invitation), or a chat that could not be read. Chat is the
+// chat it is about, drawn by _name; an invitation names its Room, and the
+// chat's kernel after it when the room is elsewhere; Title is what its title
+// and a screen reader add; a request says what it is in Detail, an invitation
+// who sent it in From.
 type railItem struct {
-	ID, Label, Muted, Title, Copy, Detail string
-	From                                  *client.Party
-	Commands                              []railCommand
+	ID, Room, Title, Detail string
+	Chat, From              *client.Party
+	Commands                []railCommand
 }
 
 // railCommand is one command of a rail entry: a form posting to Action, asked
@@ -1313,13 +1292,14 @@ type railCommand struct {
 func (v railView) Requests() []railItem {
 	var out []railItem
 	for _, a := range v.Asking {
-		out = append(out, railItem{ID: "ask-" + a.Service, Label: chatHandle + "@" + a.Name, Title: a.Service, Copy: v.Called(a.Service).Copy, Detail: "Connection request", Commands: []railCommand{
-			{Action: "/chat/chats/" + a.Service + "/approve", Label: "Approve", Button: true, CSRFField: v.CSRFField},
-			{Action: "/chat/chats/" + a.Service + "/ignore", Label: "Ignore", Button: true, CSRFField: v.CSRFField}}})
+		chat, service := a, a.Keyed()
+		out = append(out, railItem{ID: "ask-" + service, Chat: &chat, Detail: "Connection request", Commands: []railCommand{
+			{Action: "/chat/chats/" + service + "/approve", Label: "Approve", Button: true, CSRFField: v.CSRFField},
+			{Action: "/chat/chats/" + service + "/ignore", Label: "Ignore", Button: true, CSRFField: v.CSRFField}}})
 	}
 	for _, i := range v.Invites {
 		from := i.From
-		out = append(out, railItem{ID: "invite-" + i.Addr(), Label: i.Name, Muted: i.Elsewhere, Copy: i.Copy, Detail: "Invitation from", From: &from, Commands: []railCommand{
+		out = append(out, railItem{ID: "invite-" + i.Addr(), Room: i.Name, Chat: i.Chat, Detail: "Invitation from", From: &from, Commands: []railCommand{
 			{Action: "/chat/invites/" + i.Addr() + "/accept", Label: "Accept", Button: true, CSRFField: v.CSRFField},
 			{Action: "/chat/invites/" + i.Addr() + "/decline", Label: "Decline", Confirm: "Decline " + i.Name + ", which only its creator can invite you to again", Danger: true, Button: true, CSRFField: v.CSRFField}}})
 	}
@@ -1331,9 +1311,10 @@ func (v railView) Requests() []railItem {
 func (v railView) Unread() []railItem {
 	var out []railItem
 	for _, d := range v.Down {
-		item := railItem{ID: "down-" + d.Service, Label: chatHandle + "@" + d.Name, Title: d.Reason, Copy: v.Called(d.Service).Copy}
+		chat := d.Chat
+		item := railItem{ID: "down-" + d.Service, Chat: &chat, Title: d.Reason}
 		if d.Service != v.Home {
-			item.Commands = []railCommand{v.disconnect(d.Service, false)}
+			item.Commands = []railCommand{v.disconnect(chat, false)}
 		}
 		out = append(out, item)
 	}
@@ -1360,15 +1341,15 @@ func (v railView) Drop(room roomRow) []railCommand {
 // Elsewhere is the command a room held elsewhere adds to its menu: its chat
 // disconnected.
 func (v railView) Elsewhere(room roomRow) []railCommand {
-	return []railCommand{v.disconnect(room.Service, true)}
+	return []railCommand{v.disconnect(*room.Chat, true)}
 }
 
 // disconnect is the menu's command disconnecting the chat at service, named
 // for the viewer by its kernel's label. It asks nothing: it destroys nothing,
 // and Connect restores the chat with every room (Apple HIG, Gmail: only what
 // cannot be undone is asked).
-func (v railView) disconnect(service string, divider bool) railCommand {
-	return railCommand{Action: "/chat/chats/" + service + "/disconnect", Label: "Disconnect " + v.Called(service).Label, Divider: divider, CSRFField: v.CSRFField}
+func (v railView) disconnect(chat client.Party, divider bool) railCommand {
+	return railCommand{Action: "/chat/chats/" + chat.Keyed() + "/disconnect", Label: "Disconnect " + v.Label(chat.Kernel()), Divider: divider, CSRFField: v.CSRFField}
 }
 
 // membersView backs the members dialog: open when Open, and open with the reason
@@ -1579,7 +1560,7 @@ func (c *Chat) rail(r *http.Request, cache railCache, current string, watch *wat
 	}
 	csrf := c.deps.CSRFField(r)
 	return c.deps.Fragment("_rail", railView{railCache: cache, Me: c.deps.Me(r), Home: c.self(), Rename: renameView{CSRFField: csrf}, Watch: watch, Current: current,
-		New: newRoomView{Open: r.URL.Query().Get("form") == "new", Agents: c.agentChoices(nil), Path: path, CSRFField: csrf}, Path: path, CSRFField: csrf, OOB: oob, Called: c.called})
+		New: newRoomView{Open: r.URL.Query().Get("form") == "new", Agents: c.agentChoices(nil), Path: path, CSRFField: csrf}, Path: path, CSRFField: csrf, OOB: oob, Label: c.deps.Label})
 }
 
 // Context is a room's recent conversation as the planner reads it: the
@@ -1777,7 +1758,7 @@ const railKey = "rail"
 func railDigest(rail railCache) string {
 	h := sha256.New()
 	for _, a := range rail.Asking {
-		fmt.Fprintf(h, "%s\x00%s\x02", a.Service, a.Name)
+		fmt.Fprintf(h, "%s\x00%s\x02", a.Keyed(), a.Label())
 	}
 	for _, i := range rail.Invites {
 		fmt.Fprintf(h, "%s\x00%s\x03", i.Addr(), i.Name)
@@ -1918,7 +1899,7 @@ func (c *Chat) agentChoices(chosen []string) []agentChoice {
 	agents := c.agents()
 	out := make([]agentChoice, len(agents))
 	for i, a := range agents {
-		out[i] = agentChoice{a, slices.Contains(chosen, a)}
+		out[i] = agentChoice{client.Party{Address: a}, slices.Contains(chosen, a)}
 	}
 	return out
 }

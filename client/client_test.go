@@ -92,10 +92,11 @@ func TestPartyKeyed(t *testing.T) {
 func TestShortAddress(t *testing.T) {
 	key := strings.Repeat("a", 39) + "WXYZ"
 	for in, want := range map[string]string{
-		"bob@" + key:       "bob@aaaaaaaaaa…WXYZ",
-		"bob@beta":         "bob@beta",
-		"bob":              "bob",
-		"bob@" + key + "x": "bob@" + key + "x",
+		"bob@" + key:          "bob@aaaaaaaaaa…WXYZ",
+		"bob@beta":            "bob@beta",
+		"bob":                 "bob",
+		"bob@" + key + "x":    "bob@" + key + "x",
+		"bob@" + key + "/a/b": "bob@aaaaaaaaaa…WXYZ/a/b", // an action's key too
 	} {
 		if got := ShortAddress(in); got != want {
 			t.Errorf("ShortAddress(%q) = %q, want %q", in, got, want)
@@ -130,6 +131,49 @@ func TestPartyLabel(t *testing.T) {
 		if got := c.p.Claim(); got != c.claim {
 			t.Errorf("%+v.Claim() = %q, want %q", c.p, got, c.claim)
 		}
+	}
+}
+
+// Parts is Label cut where a page links it, and Label their join: the handle,
+// the kernel as Label names it, the path; a kernel has neither handle nor path.
+// Owner and Kernel are parties named by the same rule.
+func TestPartyParts(t *testing.T) {
+	key := strings.Repeat("a", 39) + "WXYZ"
+	short := "aaaaaaaaaa…WXYZ"
+	for _, c := range []struct {
+		p                    Party
+		handle, kernel, path string
+	}{
+		{Party{Address: "bob@beta/mail/send", Principal: "u1@" + key + "/mail/send"}, "bob", "beta", "mail/send"},
+		{Party{Address: "bob@" + key + "/sum", Principal: "u1@" + key + "/sum", Nickname: "alpha"}, "bob", "~alpha", "sum"},
+		{Party{Address: "bob@" + key, Principal: "u1@" + key}, "bob", short, ""},
+		{Party{Address: key, Principal: key}, "", short, ""},
+		{Party{Address: "beta", Principal: key}, "", "beta", ""},
+	} {
+		h, k, p := c.p.Parts()
+		if h != c.handle || k != c.kernel || p != c.path {
+			t.Errorf("%+v.Parts() = %q %q %q", c.p, h, k, p)
+		}
+		if joinAddress(h, k, p) != c.p.Label() {
+			t.Errorf("%+v: Label %q is not the join of its parts", c.p, c.p.Label())
+		}
+	}
+	action := Party{Address: "bob@beta/mail/send", Principal: "u1@" + key + "/mail/send"}
+	if o := action.Owner(); o.Address != "bob@beta" || o.Principal != "u1@"+key || o.Keyed() != "bob@"+key {
+		t.Errorf("Owner = %+v", o)
+	}
+	if u := (Party{Address: "bob@beta", Principal: "u1@" + key}); u.Owner() != u {
+		t.Errorf("a party with no path is its own owner: %+v", u.Owner())
+	}
+	claimed := Party{Address: "chat@" + key, Principal: "c1@" + key, Nickname: "alpha"}
+	if k := claimed.Kernel(); k.Address != key || k.Principal != key || k.Label() != "~alpha" || k.Keyed() != key {
+		t.Errorf("Kernel = %+v", k)
+	}
+	if k := (Party{Address: "bob@beta", Principal: "u1@" + key}).Kernel(); k.Label() != "beta" || k.Keyed() != key {
+		t.Errorf("a named kernel = %+v", k)
+	}
+	if OwnerOf("sys@k/llm/chat") != "sys@k" || PathOf("sys@k/llm/chat") != "llm/chat" || PathOf("sys@k") != "" {
+		t.Error("an address is cut on its first slash")
 	}
 }
 

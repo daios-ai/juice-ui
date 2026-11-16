@@ -298,3 +298,13 @@ func TestUpstreamDown(t *testing.T) {
 		t.Error("anything else")
 	}
 }
+
+// A not-found names what was asked for when the caller says, else an item.
+func TestNotFoundNamesItsSubject(t *testing.T) {
+	if got := (&KernelError{Kind: KindNotFound, Subject: "action"}).UserMessage(); got != "That action could not be found." {
+		t.Errorf("with a subject: %q", got)
+	}
+	if got := ErrNotFound.UserMessage(); got != "That item could not be found." {
+		t.Errorf("without: %q", got)
+	}
+}

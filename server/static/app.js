@@ -600,7 +600,7 @@ function row(label, detail, href, icon = "") {
   }
   return a;
 }
-const actionRow = (a) => row(a.t, a.ref, a.id ? "/actions/" + encodeURIComponent(a.id) : "/discovered?ref=" + encodeURIComponent(a.ref));
+const actionRow = (a) => row(a.t, a.ref, a.href);
 
 // suggestions drives a list of rows beside a text input (the combobox
 // pattern), in order of merit from the input outward: over the composer
@@ -631,7 +631,7 @@ function suggestions(form, input, box) {
 let held = null;
 
 // openPanel opens the action behind a row's link in the panel: a row's panel
-// is its page's address with /panel (/actions/{id}, /discovered?ref=), opened
+// is its page's address with /panel (/actions?ref= → /actions/panel?ref=), opened
 // for the room, and over the results when `back` says so.
 function openPanel(href, back = false) {
   const url = new URL(href, location.origin);

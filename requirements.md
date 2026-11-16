@@ -1,7 +1,24 @@
 # Juice Web UI Requirements
 
-Version: 0.73.2
+Version: 0.73.3
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.73.3.** Every name is drawn by one component and each
+> of its parts leads to its page. A user `bob@beta`, a kernel `beta` and an
+> action `bob@beta/mail/send` are one kind of thing, an address, and wherever
+> one stands as a value — a row, a cell, a header, a byline — it is drawn by
+> `_name`: the owner links to its actions, another kernel's owner too, and the
+> path to the action's page; a kernel alone links nowhere, its only page being
+> the superuser's, and so does a name the viewer's kernel could not name, which
+> is spelled as another kernel wrote it. Inside a sentence a name is its text and links nothing. An
+> action's page has one address, keyed by the action's address, whether the
+> action is this kernel's, a copy of another's, or only discovered; the routes
+> by id and the discovered routes are gone, and a receipt still opens its
+> action when the address no longer resolves — another kernel's inactive action
+> while that kernel is away, or an owner renamed since (§4, §6.2;
+> docs/ui-grammar.md §5.7). An owner of this kernel whose page lists no
+> action is headed by this kernel's name, not its key. The rule is general:
+> one concept has one component and one code path.
 
 > **What changed in 0.73.2.** What waits on you in the sidebar says what it
 > is. Requests stand under their own heading above the rooms, each a card
@@ -1554,9 +1571,21 @@ them. A test holds this.
   strips, decorates, or rewrites one — and its only readings of an address are
   two, each defined once: the owner is the segment before the first `/`
   (names may hold `/`, an owner never does), and an action is **local iff its
-  kernel segment is this kernel's name**. A local owner links to its actions on Discover
-  (`/browse?owner={address}`); another kernel's does not, since this kernel
-  cannot list them. The UI composes exactly one address shape, `handle@<this kernel>`, and
+  kernel segment is this kernel's name**. Every owner links to its actions on
+  Discover (`/browse?owner={address}`), another kernel's too, which the kernel
+  lists (`GET /v1/actions?owner=`, verified on v0.20.1). **An action's page is
+  reached by its address** (`GET /actions?ref=<address>`, its panel
+  `GET /actions/panel?ref=`), the kernel spelled by key, which the kernel
+  resolves (`GET /v1/actions?ref=`) whether the action is its own, a proxy of
+  another's, or only discovered; a command on an action names it by id. The
+  resolve of another kernel's inactive proxy dials that kernel (kernel D13) and
+  fails while it is away, and an owner renamed since a record was made leaves
+  its address naming nothing; so a record of a past call (a receipt, a ledger
+  row) adds the action's id, which reads the action whenever its address does
+  not resolve. A command on an action returns to its page by the address in
+  the kernel's reply; one refused re-renders the page with its edit dialog
+  open on why.
+  The UI composes exactly one address shape, `handle@<this kernel>`, and
   only where it names this kernel's own principal from a handle: the entry
   screen (§5), the natives that power a surface (§6.2), the superuser `sys`,
   and an app's service account. In a URL path an address is written with its
@@ -2049,11 +2078,11 @@ both MUST keep planning apart from spending:
   **Evidence**.
 * Ratings MUST render as reviews (0/1 value, `note`, newest first, paginated),
   labeled as ratings from paid calls.
-* The owner of an action address MUST be visually emphasized and, when the
-  action is local (§4), link to that owner's actions on Discover
-  (`/browse?owner={address}`). Another kernel's owner renders in the same
-  emphasized monospace but MUST NOT link anywhere: this kernel cannot list its
-  actions (§4; extends §8's inert counterparty rule). Card-art hue
+* The owner of an action address MUST be visually emphasized and link to that
+  owner's actions on Discover (`/browse?owner={address}`), this kernel's or
+  another's (§4); the path links to the action's page by address. Every name
+  standing as a value is drawn so, by one component (docs/ui-grammar.md
+  §5.7). Card-art hue
   keys off the owner's address; 0.10.0 reshuffles it once, and no compatibility
   shim is permitted.
 
@@ -2662,7 +2691,7 @@ symmetry, but because the kernel refuses anything else.
     it is, marked `~`.
   * its **petname** — the name bound *here*. Unique here, and the only friendly
     name that resolves. It renders whole, in the provenance face.
-  **One rule decides what is shown** (`docs/ui-grammar.md` "Naming"): a kernel
+  **One rule decides what is shown** (`docs/ui-grammar.md` "Names", §5.7): a kernel
   with a petname is shown by it alone; one without, by its nickname marked `~`
   (`bob@~alpha`), its key shortened beside it wherever there is room and in
   every question deciding something about it; one with neither, by its key
@@ -3412,9 +3441,9 @@ the room made for a viewer with none, else an empty page beside the rail.
   keeps what was typed, and clears at the next keystroke. A post is a string
   for now; a document post is a later decision.
 * **The panel** holds an action or a search's results, its head held at the
-  top as the panel scrolls. An action (`GET /actions/{id}/panel`, or
-  `GET /discovered/panel?ref=` for one known only from a peer, resolved first
-  as its page is: a row's panel is its page's address with `/panel`) is the
+  top as the panel scrolls. An action (`GET /actions/panel?ref=`, by its
+  address as its page is, whichever kernel holds it: a row's panel is its
+  page's address with `/panel`) is the
   action as its page states it — title, marks, address, description, its
   figures, what other kernels report folded — and the
   one run form (§6.2), with its outcome below. A search's results

@@ -4,7 +4,7 @@
 <div class="msg" id="e-{{.Seq}}">
   <span class="avatar" aria-hidden="true">{{initial .Author.Address}}</span>
   <div class="msg-body">
-    <div class="msg-who"><span class="h">{{template "_party_brief" .Author}}</span><span class="muted small">{{shortTime .At}}</span></div>
+    <div class="msg-who"><span class="h">{{template "_name" (brief .Author)}}</span><span class="muted small">{{shortTime .At}}</span></div>
     {{template "_value_block" (valueBlock .Body "")}}
   </div>
 </div>

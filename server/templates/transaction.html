@@ -11,7 +11,7 @@
 
   <div class="row">
     <span class="pill {{statusClass $d.Tx.Status}}">{{$d.Tx.Status}}</span>
-    {{template "_ref" (ref $d.Tx.Action $d.Tx.ActionID)}}
+    {{template "_name" (record $d.Tx.Action $d.Tx.ActionID)}}
   </div>
 
   {{/* Parties — kernel-captured addresses; the viewer's own role emphasized */}}
@@ -19,9 +19,9 @@
     <h3>Parties</h3>
     <div class="table-scroll">
     <table class="parties">
-      <tr><th>Buyer</th><td>{{template "_party" $d.Tx.Owner}}{{if eq $d.Tx.Owner.Principal $me}} <span class="pill">you</span>{{end}}</td></tr>
-      <tr><th>Caller</th><td>{{template "_party" $d.Tx.Caller}}{{if eq $d.Tx.Caller.Principal $me}} <span class="pill">you</span>{{end}}</td></tr>
-      <tr><th>Seller</th><td>{{template "_party" $d.Tx.Target}}{{if eq $d.Tx.Target.Principal $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
+      <tr><th>Buyer</th><td>{{template "_name" (name $d.Tx.Owner)}}{{if eq $d.Tx.Owner.Principal $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Caller</th><td>{{template "_name" (name $d.Tx.Caller)}}{{if eq $d.Tx.Caller.Principal $me}} <span class="pill">you</span>{{end}}</td></tr>
+      <tr><th>Seller</th><td>{{template "_name" (name $d.Tx.Target)}}{{if eq $d.Tx.Target.Principal $me}} <span class="pill status-credited">you</span>{{end}}</td></tr>
     </table>
     </div>
   </div>

@@ -86,16 +86,23 @@ func (p Party) Keyed() string {
 	return handle + "@" + key
 }
 
-// Label is the party as a person reads it (ui-grammar "Naming"): its kernel by
+// Label is the party as a person reads it (ui-grammar "Names"): its kernel by
 // the petname bound here, else by the name it calls itself, marked ~ as a
-// claim, else by its key shortened (ShortAddress). bob@beta, bob@~alpha,
-// bob@g0b6iv3OqL…WhD0.
+// claim, else by its key shortened. bob@beta, bob@~alpha, bob@g0b6iv3OqL…WhD0,
+// bob@beta/mail/send. It is the join of Parts.
 func (p Party) Label() string {
-	head, key, tail := p.split()
-	if !p.claimed(key) {
-		return ShortAddress(p.Address)
+	handle, kernel, path := p.Parts()
+	return joinAddress(handle, kernel, path)
+}
+
+// Parts is Label cut where a page links it: the handle, the kernel as Label
+// names it, and the path; handle and path are "" for a kernel alone.
+func (p Party) Parts() (handle, kernel, path string) {
+	handle, kernel, path = splitAddress(p.Address)
+	if p.claimed(kernel) {
+		return handle, "~" + p.Nickname, path
 	}
-	return head + "~" + p.Nickname + tail
+	return handle, ShortKey(kernel), path
 }
 
 // Shown is Label followed by the key a nickname stands in for, shortened: the
@@ -111,23 +118,66 @@ func (p Party) Shown() string {
 // Claim is the key of the kernel Label names by its nickname, "" when Label
 // names it otherwise.
 func (p Party) Claim() string {
-	if _, key, _ := p.split(); p.claimed(key) {
-		return key
+	if _, kernel, _ := splitAddress(p.Address); p.claimed(kernel) {
+		return kernel
 	}
 	return ""
 }
 
-// split cuts the address into "handle@", the kernel, and "/path"; a kernel
-// alone has neither.
-func (p Party) split() (head, kernel, tail string) {
-	kernel = p.Address
-	if h, rest, ok := strings.Cut(kernel, "@"); ok {
-		head, kernel = h+"@", rest
+// Owner is the party an action's address belongs to, bob@beta of
+// bob@beta/mail/send, named and keyed by the same rule; a party with no path is
+// its own owner.
+func (p Party) Owner() Party {
+	o := p
+	o.Address = OwnerOf(p.Address)
+	o.Principal = OwnerOf(p.Principal)
+	return o
+}
+
+// Kernel is the party's kernel as a party: beta of bob@beta, its principal the
+// key, its nickname carried over.
+func (p Party) Kernel() Party {
+	_, kernel, _ := splitAddress(p.Address)
+	key := p.Principal
+	if _, k, ok := strings.Cut(p.Principal, "@"); ok {
+		key = OwnerOf(k)
 	}
-	if k, path, ok := strings.Cut(kernel, "/"); ok {
-		kernel, tail = k, "/"+path
+	return Party{Address: kernel, Principal: key, Nickname: p.Nickname}
+}
+
+// OwnerOf is an address up to its path, owner@kernel of owner@kernel/name: the
+// segment before the first slash, since a name may hold slashes and an owner
+// never does. It is the one cut of an address held as a string.
+func OwnerOf(address string) string {
+	owner, _, _ := strings.Cut(address, "/")
+	return owner
+}
+
+// PathOf is an address's path, name of owner@kernel/name, "" when it has none.
+func PathOf(address string) string {
+	_, path, _ := strings.Cut(address, "/")
+	return path
+}
+
+// splitAddress cuts an address into its handle, its kernel and its path;
+// handle and path are "" for a kernel alone.
+func splitAddress(a string) (handle, kernel, path string) {
+	kernel, path = OwnerOf(a), PathOf(a)
+	if h, k, ok := strings.Cut(kernel, "@"); ok {
+		handle, kernel = h, k
 	}
-	return head, kernel, tail
+	return handle, kernel, path
+}
+
+// joinAddress is splitAddress undone.
+func joinAddress(handle, kernel, path string) string {
+	if handle != "" {
+		kernel = handle + "@" + kernel
+	}
+	if path != "" {
+		kernel += "/" + path
+	}
+	return kernel
 }
 
 // claimed reports that the party's kernel is written by its key, so no petname
@@ -553,14 +603,11 @@ func ShortKey(key string) string {
 	return key[:10] + "…" + key[len(key)-4:]
 }
 
-// ShortAddress is an address, handle@kernel or a kernel alone, with its kernel
-// shown as ShortKey shows it.
+// ShortAddress is an address, handle@kernel[/path] or a kernel alone, with its
+// kernel shown as ShortKey shows it.
 func ShortAddress(a string) string {
-	handle, k, ok := strings.Cut(a, "@")
-	if !ok {
-		return ShortKey(a)
-	}
-	return handle + "@" + ShortKey(k)
+	handle, kernel, path := splitAddress(a)
+	return joinAddress(handle, ShortKey(kernel), path)
 }
 
 // ---- core request helper ----

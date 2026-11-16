@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -239,9 +240,13 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"pct":            pct,
 		"ratingPct":      ratingPct,
 		"refFolder":      refFolder,
-		"nameOf":         nameOf,
-		"party":          r.party,
+		"name":           r.name,
 		"brief":          r.brief,
+		"record":         r.record,
+		"subject":        subject,
+		"plain":          plain,
+		"actionHref":     actionHref,
+		"kernelParty":    kernelParty,
 		"copyOf":         copyOf,
 		"progress":       func(id, label string) progressView { return progressView{ID: id, Label: label} },
 		"idle":           func(csrf template.HTML) idleView { return idleView{CSRFField: csrf} },
@@ -250,7 +255,6 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"endOf":          endOf,
 		"obligation":     obligation,
 		"declineForm":    declineForm,
-		"ref":            r.refOf,
 		"price":          priceOf,
 		"shortTime":      shortTime,
 		"shortDate":      shortDate,
@@ -573,9 +577,11 @@ func priceOf(price int64, indicative bool) PriceView {
 	return PriceView{Price: price, Indicative: indicative}
 }
 
-// Name is a party or a kernel rendered for a human (ui-grammar "Naming"): the
-// label to show, the key its nickname stands in for, the whole value behind it,
-// and whether no petname names it here.
+// Name is an address as a page draws it (_name, ui-grammar "Names"): a user,
+// a kernel or an action, by one component wherever it stands as a value. It
+// holds the label's parts (client.Party.Parts), where each part links, the
+// whole address when the label differs, the key a nickname stands in for, and
+// the address to copy.
 //
 // It exists because the kernel's naming is Stiegler's petname system (§13) and
 // the three name classes are NOT interchangeable: a petname is bound here and
@@ -584,10 +590,12 @@ func priceOf(price int64, indicative bool) PriceView {
 // where there is room; a key is self-certifying but unreadable, so it is shown
 // shortened, with the whole value in the title and on the copy control.
 type Name struct {
-	Text  string // the label (client.Party.Label)
-	Key   string // the shortened key Text names by its nickname, "" otherwise
-	Title string // the whole value, for the title attribute and the copy control
-	IsKey bool   // no petname names it here: the page offers its whole value to copy
+	Handle, Kernel, Path string // the label's parts; Handle and Path "" for a kernel
+	Owner                string // the owner's actions (/browse?owner=), "" for a kernel or where the place links elsewhere
+	Action               string // the action's page (actionHref), "" without a path or where the place is that page
+	Title                string // the whole address, when the label differs from it
+	Key                  string // the shortened key the kernel's nickname stands in for, where it is shown
+	Copy                 string // the whole address to copy, when no petname names its kernel here
 }
 
 // claims remembers, per nickname, the first key seen claiming it and whether a
@@ -665,96 +673,87 @@ func declineForm(csrf template.HTML, id, verb string) taskDecline {
 	return taskDecline{ID: id, Verb: verb, CSRFField: csrf}
 }
 
-// partyName is a party as a roomy place shows it: its label, the key its
-// nickname stands in for, and its address whole the title.
-func partyName(p client.Party) Name {
-	n := Name{Text: p.Label(), Title: p.Address, IsKey: client.ShortAddress(p.Address) != p.Address}
+// nameOf is THE builder of a Name: roomy (tables, detail pages, dialogs,
+// cards) shows the key a nickname stands in for; compact (an author line, a
+// reference, a rail row) shows it only once two keys have claimed that
+// nickname. The owner links to its actions and the path to its page, both by
+// the party's key-spelled address — only when it carries a principal, which
+// names it on every kernel: a party without one is spelled as another kernel
+// wrote it, whose petnames may name another kernel here, so it links nowhere.
+// id, set only on a record of a past call, lets that page be read by id when
+// its address does not resolve (actionHref).
+func (r *Renderer) nameOf(p client.Party, roomy bool, id string) Name {
+	n := Name{}
+	n.Handle, n.Kernel, n.Path = p.Parts()
+	if p.Label() != p.Address {
+		n.Title = p.Address
+	}
+	if client.ShortAddress(p.Address) != p.Address {
+		n.Copy = p.Address
+	}
 	if key := p.Claim(); key != "" {
-		n.Key = client.ShortKey(key)
+		if clash := r.claims.claim(p.Nickname, key); roomy || clash {
+			n.Key = client.ShortKey(key)
+		}
+	}
+	if p.Principal == "" {
+		return n
+	}
+	if n.Handle != "" {
+		n.Owner = "/browse?owner=" + url.QueryEscape(p.Owner().Keyed())
+	}
+	if n.Path != "" {
+		n.Action = actionHref(p, id)
 	}
 	return n
 }
 
-// party is partyName, the nickname's claim recorded (template helper).
-func (r *Renderer) party(p client.Party) Name {
-	if key := p.Claim(); key != "" {
-		r.claims.claim(p.Nickname, key)
-	}
-	return partyName(p)
-}
+// name is a party as a roomy place draws it (template helper).
+func (r *Renderer) name(p client.Party) Name { return r.nameOf(p, true, "") }
 
-// brief is a party as a compact place shows it: the label alone, and the key
-// as well once two keys have claimed its nickname (template helper).
-func (r *Renderer) brief(p client.Party) Name {
-	n := partyName(p)
-	if key := p.Claim(); key == "" || !r.claims.claim(p.Nickname, key) {
-		n.Key = ""
-	}
+// brief is a party as a compact place draws it (template helper).
+func (r *Renderer) brief(p client.Party) Name { return r.nameOf(p, false, "") }
+
+// record is the action a record of a past call names — a receipt, a ledger
+// row — whose page that record can still open by id (template helper).
+func (r *Renderer) record(p client.Party, id string) Name { return r.nameOf(p, false, id) }
+
+// subject is a name where the action itself is presented, under its title on
+// its row, its page or its panel: the title is the link, so the path is not
+// (template helper).
+func subject(n Name) Name {
+	n.Action = ""
 	return n
 }
 
-// Label is brief as one line of text, for an app that builds its labels in Go
-// (apps.Deps.Label).
+// plain is a name inside a link or a heading naming that entity: no link and no
+// copy control, neither of which may stand inside a link (template helper).
+func plain(n Name) Name {
+	n.Owner, n.Action, n.Copy = "", "", ""
+	return n
+}
+
+// Label is a compact name as one line of text, for a sentence an app builds in
+// Go (apps.Deps.Label): the label, and the key once two keys claim its nickname.
 func (r *Renderer) Label(p client.Party) string {
 	if n := r.brief(p); n.Key != "" {
-		return n.Text + " " + n.Key
+		return p.Label() + " " + n.Key
 	}
 	return p.Label()
 }
 
-// nameOf is a kernel as a page names it: by its petname when one is bound,
-// else as any party is (partyName).
-func nameOf(petname, nickname, key string) Name {
-	if petname != "" {
-		return Name{Text: petname, Title: key}
+// actionHref is THE address of an action's page: one route, keyed by the
+// action's address with its kernel spelled by key, which no petname changes
+// (ui-grammar "Names"), whether the action is this kernel's or another's. id is
+// given only by a record of a past call: an inactive copy of another kernel's
+// action re-resolves when named, so with that kernel away only its id reads the
+// copy held here (kernel D13).
+func actionHref(p client.Party, id string) string {
+	v := url.Values{"ref": {p.Keyed()}}
+	if id != "" {
+		v.Set("id", id)
 	}
-	return partyName(client.Party{Address: key, Principal: key, Nickname: nickname})
-}
-
-// refOwner returns the owner of an action address, owner@kernel/name: the
-// segment before the first slash — names may contain slashes (sys@k/llm/chat),
-// but an owner's address never does, so the first slash is unambiguous
-// (requirements.md §4). The owner is emphasized in the UI; a LOCAL owner links
-// to its actions on Discover, a remote one renders unlinked.
-func refOwner(ref string) string {
-	if i := strings.IndexByte(ref, '/'); i >= 0 {
-		return ref[:i]
-	}
-	return ref
-}
-
-// RefView is a rendered action reference: the owner segment, the name half, and
-// the id the name links to when one exists. THE one place a ref is split, so a
-// key never renders whole in one template and truncated in another.
-//
-// Owner is a Name because a remote owner's kernel segment may be a raw public
-// key (owner@<43 chars>) — unreadable as a card title, and truncated here
-// through the same primitive that renders a kernel card (§13 petname model).
-// Local reports that the owner's actions can be listed here: its kernel segment
-// is this kernel's own name (KernelIdentity.Local).
-type RefView struct {
-	Owner Name
-	Name  string
-	ID    string // "" ⇒ the name is not a link
-	Local bool
-}
-
-// refOf splits an action's address for rendering. Split on the FIRST slash:
-// names may contain slashes (sys@k/llm/chat) but an owner never does. The
-// owner is shown as a compact place shows a party (brief).
-func (r *Renderer) refOf(a client.Party, id string) RefView {
-	owner := a
-	owner.Address = refOwner(a.Address)
-	return RefView{Owner: r.brief(owner), Name: refName(a.Address), ID: id, Local: r.identity.Local(a.Address)}
-}
-
-// refName returns the name segment of an action address (everything after the
-// first slash), or "" if there is no slash.
-func refName(ref string) string {
-	if i := strings.IndexByte(ref, '/'); i >= 0 {
-		return ref[i+1:]
-	}
-	return ""
+	return "/actions?" + v.Encode()
 }
 
 // refFolder returns the folder of a ref: everything up to the LAST '/'
@@ -874,34 +873,30 @@ type evidenceTable struct {
 }
 
 type evidenceRow struct {
-	Subject        Name // the action: its address where known, else its id
+	Subject        *client.Party // the action, where its address is known
+	SubjectID      string        // its id, shown where its address is not
 	Strip          StatStrip
-	Source         Name // "provider", else the issuer's key
+	Source         client.Party // the issuing kernel, by key
+	Provider       bool         // the report is the provider's own
 	Contradictions int64
 }
 
 // evidenceOf builds the table, nil when there is nothing to show. provider is
 // the key whose reports are the provider's own; names maps a subject's id to
-// its address, nil on an action. The provider's rows come first, by subject;
+// its action, nil on an action. The provider's rows come first, by subject;
 // nothing is summed (requirements §6.2, §6.6).
-func evidenceOf(rows []client.Evidence, provider string, names map[string]string) *evidenceTable {
+func evidenceOf(rows []client.Evidence, provider string, names map[string]client.Party) *evidenceTable {
 	if len(rows) == 0 {
 		return nil
 	}
 	t := &evidenceTable{Subjects: names != nil}
 	for _, e := range rows {
-		source := nameOf("", "", e.IssuerPublicKey)
-		if e.IssuerPublicKey == provider {
-			source = Name{Text: "provider", Title: e.IssuerPublicKey}
-		}
-		subject := Name{Text: e.SubjectActionID, Title: e.SubjectActionID}
-		if name := names[e.SubjectActionID]; name != "" {
-			subject.Text = name
-		} else if len(e.SubjectActionID) > 8 {
-			subject = Name{Text: truncate(8, e.SubjectActionID), Title: e.SubjectActionID, IsKey: true}
+		var subject *client.Party
+		if a, ok := names[e.SubjectActionID]; ok {
+			subject = &a
 		}
 		t.Rows = append(t.Rows, evidenceRow{
-			Subject: subject,
+			Subject: subject, SubjectID: e.SubjectActionID,
 			Strip: StatStrip{
 				S: client.Stats{
 					Uses: e.Uses, Successes: e.Successes, Failures: e.Failures,
@@ -910,17 +905,18 @@ func evidenceOf(rows []client.Evidence, provider string, names map[string]string
 				},
 				Corroborated: e.CorroboratedUses, Unverified: e.UnverifiedRating,
 			},
-			Source:         source,
+			Source:         kernelParty("", "", e.IssuerPublicKey),
+			Provider:       e.IssuerPublicKey == provider,
 			Contradictions: e.Contradictions,
 		})
 	}
 	slices.SortStableFunc(t.Rows, func(a, b evidenceRow) int {
 		if t.Subjects {
-			if c := strings.Compare(a.Subject.Text, b.Subject.Text); c != 0 {
+			if c := strings.Compare(a.subject(), b.subject()); c != 0 {
 				return c
 			}
 		}
-		return boolOrder(a.Source.Text != "provider") - boolOrder(b.Source.Text != "provider")
+		return boolOrder(!a.Provider) - boolOrder(!b.Provider)
 	})
 	return t
 }
@@ -930,6 +926,14 @@ func boolOrder(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// subject is what a row's subject reads as, for ordering: its label, else its id.
+func (e evidenceRow) subject() string {
+	if e.Subject != nil {
+		return e.Subject.Label()
+	}
+	return e.SubjectID
 }
 
 // actionEvidence is an action's evidence table: the provider's report, then
@@ -949,9 +953,9 @@ func actionEvidence(a client.Action) *evidenceTable {
 // peerEvidence is a peer's evidence table: every report on its actions, each
 // subject named by its address from the inspection's own list.
 func peerEvidence(i client.Inspection) *evidenceTable {
-	names := map[string]string{}
+	names := map[string]client.Party{}
 	for _, a := range i.Actions {
-		names[a.ActionID] = a.Name.Address
+		names[a.ActionID] = a.Name
 	}
 	return evidenceOf(i.Evidence, i.PublicKey, names)
 }

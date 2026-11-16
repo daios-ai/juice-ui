@@ -78,17 +78,29 @@ const (
 	classKnown   = "known"
 )
 
-// kernelRow is one kernel on the network list. Name is what its title shows:
-// a peer's label (nameOf: its petname, else ~nickname, else its key), and for
-// this kernel its own handle — never stored as a petname, which is a name bound here for another
-// kernel, nor as a nickname, which is a peer's unverified claim. Strip is the
+// kernelRow is one kernel on the network list. Kernel is the party its title
+// names (kernelParty): a peer by its petname, else ~nickname, else its key, and
+// this kernel by its own handle — never stored as a petname, which is a name
+// bound here for another kernel, nor as a nickname, which is a peer's
+// unverified claim. Strip is the
 // peer's facts in the stat strip's grammar; this kernel's row has none, since
 // the roster states nothing about it.
 type kernelRow struct {
 	client.Peer
-	Class string
-	Name  Name
-	Strip *KernelStrip
+	Class  string
+	Kernel client.Party
+	Strip  *KernelStrip
+}
+
+// kernelParty is a kernel as a party, so _name draws it as it draws every
+// address: its address the petname bound here, else its key; its principal the
+// key; its nickname the claim a label marks ~ (template helper).
+func kernelParty(petname, nickname, key string) client.Party {
+	address := petname
+	if address == "" {
+		address = key
+	}
+	return client.Party{Address: address, Principal: key, Nickname: nickname}
 }
 
 // KernelStrip is a peer row's facts as a stat strip (§5.5): fixed slots in a
@@ -382,14 +394,14 @@ func (s *Server) getAdminPeers(w http.ResponseWriter, r *http.Request) {
 // network, each class in the kernel's own order (§6.6).
 func kernelRows(id client.Identity, peers []client.Peer) []kernelRow {
 	rows := []kernelRow{{
-		Peer:  client.Peer{PublicKey: id.PublicKey, About: id.About},
-		Class: classCurrent,
-		Name:  Name{Text: id.Handle, Title: id.PublicKey},
+		Peer:   client.Peer{PublicKey: id.PublicKey, About: id.About},
+		Class:  classCurrent,
+		Kernel: kernelParty(id.Handle, "", id.PublicKey),
 	}}
 	for _, class := range []string{classParty, classKnown} {
 		for _, p := range peers {
 			if p.Traded == (class == classParty) {
-				rows = append(rows, kernelRow{Peer: p, Class: class, Name: nameOf(p.Petname, p.Nickname, p.PublicKey), Strip: kernelStrip(p)})
+				rows = append(rows, kernelRow{Peer: p, Class: class, Kernel: kernelParty(p.Petname, p.Nickname, p.PublicKey), Strip: kernelStrip(p)})
 			}
 		}
 	}
@@ -765,7 +777,7 @@ func (s *Server) renderModels(w http.ResponseWriter, r *http.Request, status int
 		_ = s.sessions.Do(ctx, func(tok string) error {
 			a, ok, err := s.client.ResolveRef(ctx, tok, ref)
 			if err == nil && ok {
-				b.Action, b.Href = ref, "/actions/"+url.PathEscape(a.ID)
+				b.Action = &a.Action
 			}
 			return err
 		})

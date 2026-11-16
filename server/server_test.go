@@ -107,7 +107,7 @@ func TestUnauthRedirectsToLogin(t *testing.T) {
 	srv := httptest.NewServer(newTestHandler(t, "http://127.0.0.1:1"))
 	defer srv.Close()
 	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/", "/browse", "/workshop", "/inbox", "/settings", "/wallet", "/processes", "/transactions", "/discovered?ref=vendor@bravo/x"} {
+	for _, path := range []string{"/", "/browse", "/workshop", "/inbox", "/settings", "/wallet", "/processes", "/transactions", "/actions?ref=vendor@bravo/x", "/actions/panel?ref=vendor@bravo/x"} {
 		resp, err := cl.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -551,7 +551,7 @@ func TestKernelIdentityAddressAndLocal(t *testing.T) {
 // launcher or a row, and belongs to no group.
 func TestActiveGroup(t *testing.T) {
 	for path, want := range map[string]string{
-		"/browse": "browse", "/actions/A1": "", "/discovered": "",
+		"/browse": "browse", "/actions": "", "/actions/panel": "",
 		"/inbox": "inbox", "/transactions": "wallet", "/workshop": "workshop",
 	} {
 		if got := activeGroup(path); got != want {

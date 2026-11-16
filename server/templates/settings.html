@@ -11,7 +11,7 @@
 <div class="you-head" role="group" aria-label="Identity">
   <span class="avatar lg" aria-hidden="true">{{initial $d.User.Address.Address}}</span>
   <div class="stretch">
-    <div class="mono"><b>{{$d.User.Address}}</b></div>
+    <div><b>{{template "_name" (name $d.User.Address)}}</b></div>
     {{if $d.User.Description}}<div class="muted small">{{$d.User.Description}}</div>{{end}}
   </div>
 </div>
@@ -43,7 +43,7 @@
   {{range $d.User.Connectors}}
   <details class="card">
     <summary>
-      <span class="grant-dir mono"><b>{{.Directory}}</b></span>
+      <span class="grant-dir"><b>{{template "_name" (plain (name .Directory))}}</b></span>
       {{range .Connections}}<span class="muted small">{{.Provider}}</span>{{end}}
       <span class="muted small">{{len .Actions}} action{{if ne (len .Actions) 1}}s{{end}}</span>
       <span class="cluster grant-actions">
@@ -65,7 +65,7 @@
       <tbody>
       {{range .Actions}}
       <tr>
-        <td>{{template "_ref" (ref .Action "")}}</td>
+        <td>{{template "_name" (brief .Action)}}</td>
         <td class="muted small">{{range .Scopes}}{{.}} {{end}}</td>
         <td class="muted">{{shortTime .CreatedAt}}</td>
         <td class="row-actions">

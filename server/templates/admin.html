@@ -28,7 +28,7 @@
   <tbody>
   {{range $d.Users}}
   <tr>
-    <td class="mono">{{.Address}}</td>
+    <td>{{template "_name" (name .Address)}}</td>
     <td class="muted">{{.Description}}</td>
     <td class="money">{{money .Available}}</td>
     <td class="money">{{money .Locked}}</td>
@@ -38,7 +38,7 @@
       {{if .Suspended}}
       <form method="post" action="/admin/users/{{.Address}}/unsuspend">{{$.CSRFField}}<button class="btn" type="submit">Unsuspend</button></form>
       {{else}}
-      <form method="post" action="/admin/users/{{.Address}}/suspend" data-confirm="Suspend {{.Address}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
+      <form method="post" action="/admin/users/{{.Address}}/suspend" data-confirm="Suspend {{.Address.Shown}}?">{{$.CSRFField}}<button class="btn-danger" type="submit">Suspend</button></form>
       {{end}}
     </div></td>
   </tr>

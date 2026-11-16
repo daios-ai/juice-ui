@@ -192,6 +192,69 @@ func TestOneBusyRule(t *testing.T) {
 	}
 }
 
+// A name standing as a value is drawn by _name and nowhere else (ui-grammar
+// "Names"): the retired partials are gone, no template prints a party's
+// address as element text (a sentence names it by its label, an attribute may
+// carry it), an action's page is reached only by its address, a name inside a
+// link is plain, and the chain-address partial is never given a party.
+func TestOneNameRule(t *testing.T) {
+	retired := regexp.MustCompile(`\{\{(?:define|template) "(_party|_party_brief|_ref|_action_href)"`)
+	attr := regexp.MustCompile(`="[^"]*"`)
+	rawAddress := regexp.MustCompile(`\{\{\s*[$.][\w.$]*\.(Address|Keyed)\s*\}\}`)
+	byID := regexp.MustCompile(`href="/actions/\{\{|/discovered`)
+	nameCall := regexp.MustCompile(`\{\{template "_name" \(([a-z]+)`)
+	partyAddr := regexp.MustCompile(`"_addr" \(copyOf "[a-z]+" [^)]*\.Party\b`)
+	sources := map[string]string{}
+	core, _ := fs.Glob(tmplFS, "templates/*.html")
+	for _, f := range core {
+		sources[f] = string(mustRead(t, f))
+	}
+	app, _ := outsideTemplates()
+	for _, f := range app {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[f] = string(b)
+	}
+	for f, src := range sources {
+		if m := retired.FindStringSubmatch(src); m != nil {
+			t.Errorf("%s: %s is retired; a name is drawn by _name", f, m[1])
+		}
+		if m := rawAddress.FindString(attr.ReplaceAllString(src, `=""`)); m != "" {
+			t.Errorf("%s: %s prints an address as text; a name is drawn by _name", f, m)
+		}
+		if m := byID.FindString(src); m != "" {
+			t.Errorf("%s: %q; an action's page is reached by its address (actionHref)", f, m)
+		}
+		if partyAddr.MatchString(src) {
+			t.Errorf("%s: _addr is for chain addresses; a party is drawn by _name", f)
+		}
+		for rest := src; ; {
+			a := strings.Index(rest, "<a ")
+			if a < 0 {
+				break
+			}
+			end := strings.Index(rest[a:], "</a>")
+			if end < 0 {
+				break
+			}
+			for _, m := range nameCall.FindAllStringSubmatch(rest[a:a+end], -1) {
+				if m[1] != "plain" {
+					t.Errorf("%s: a name inside a link must be plain, got (%s …): %s", f, m[1], snippet(rest, a))
+				}
+			}
+			rest = rest[a+end:]
+		}
+	}
+	for _, f := range []string{"static/app.js"} {
+		b, _ := staticFS.ReadFile(f)
+		if byID.Match(b) || strings.Contains(string(b), `"/actions/" +`) {
+			t.Errorf("%s opens an action by id; the catalog gives each its address (catalogEntry.Href)", f)
+		}
+	}
+}
+
 // A table row's actions are its last cell, td.row-actions, which ends at the
 // table's right edge (§5.5): a cell holding a button is that cell, and that
 // cell holds the row's buttons.

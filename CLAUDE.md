@@ -27,6 +27,11 @@
 - Follow the visual UI grammar. Never implement inline styling,
   always focus on reusable components.
 
+- Aggressively unify code paths: one concept has one component, one
+  route and one store. A second rendering, route, copy of a rule or
+  local mirror of kernel data is a defect; unify before adding. No
+  overengineering.
+
 - Never add a Claude-Session trailer or any session identifier to commit messages.
   
 

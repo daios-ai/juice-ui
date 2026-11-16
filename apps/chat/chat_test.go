@@ -2806,7 +2806,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
 	if !strings.Contains(got, `<h2>Requests</h2><div class="rail-request">
-  <header><span title="chat@`+awayKey+`">chat@away</span></header>
+  <header><span class="name mono"><span class="owner"><a href="/browse?owner=chat%40`+awayKey+`">chat@away</a></span></span></header>
   <p class="muted">Connection request</p>`) || strings.Contains(got, `data-menu="menu-ask-`) || strings.Contains(got, "rail-item unread") ||
 		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || !strings.Contains(got, `<button class="btn" type="submit">Approve</button>`) ||
 		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || !strings.Contains(got, `<button class="btn" type="submit">Ignore</button>`) || strings.Contains(got, "Block") ||
@@ -2829,7 +2829,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 		t.Errorf("a tick reads the viewer once at most: %d", f.meReads-reads)
 	}
 	got = string(h)
-	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@`+awayKey+`" class="unread">far <span class="muted">· away</span></a>`) ||
+	if err != nil || !strings.Contains(got, `<a href="/chat/room/`+far.ID+`@`+awayKey+`" class="unread">far <span class="muted">· <span class="name mono">away</span></span></a>`) ||
 		!strings.Contains(got, `href="/chat/room/`+cafe.ID+`@`+testKey+`"`) || !strings.Contains(got, `>cafe</a>`) || strings.Index(got, ">far ") > strings.Index(got, ">cafe<") ||
 		strings.Contains(got, "/approve") || strings.Contains(got, "<h2>Requests</h2>") || !strings.Contains(got, `>Disconnect away</button>`) {
 		t.Fatalf("both chats' rooms, newest first, the one elsewhere disconnected from its menu: %s %v", got, err)
@@ -2848,7 +2848,7 @@ func TestTheRailHoldsEveryChat(t *testing.T) {
 	if !strings.Contains(got, `>cafe</a>`) || strings.Contains(got, ">far ") ||
 		!strings.Contains(got, `<span class="rail-item" role="status" title="chat@away refused or failed; a chat on another kernel gives no reason.">`) ||
 		!strings.Contains(got, `<button class="btn-icon inline" data-menu="menu-down-chat@`+awayKey+`" aria-haspopup="menu" aria-expanded="false" aria-label="Manage">`) ||
-		!strings.Contains(got, `#alert"/></svg> chat@away`) || strings.Index(got, "menu-down-") < strings.Index(got, ">cafe<") ||
+		!strings.Contains(got, `#alert"/></svg> <span class="name mono"><span class="owner">chat@away</span></span>`) || strings.Index(got, "menu-down-") < strings.Index(got, ">cafe<") ||
 		!strings.Contains(got, `>Disconnect away</button>`) || strings.Contains(got, "Block") || st.Fails != 1 {
 		t.Fatalf("a chat down is a row under the rooms, its reason its title, with its menu, and retried; the others stay: %s %+v", got, st)
 	}
@@ -2931,7 +2931,7 @@ func TestARoomElsewhereTakesTheSamePath(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+far.ID+"@"+awayKey, nil)
 	req.SetPathValue("id", far.ID+"@"+awayKey)
-	if rec := as(c, sm, c.getRoom, req); rec.Code != 200 || view.Room.Addr() != far.ID+"@"+awayKey || view.Room.Elsewhere != "away" || view.Watch.Key != far.ID+"@"+awayKey {
+	if rec := as(c, sm, c.getRoom, req); rec.Code != 200 || view.Room.Addr() != far.ID+"@"+awayKey || view.Room.Chat == nil || view.Room.Chat.Kernel().Label() != "away" || view.Watch.Key != far.ID+"@"+awayKey {
 		t.Fatalf("the page: %d %+v", rec.Code, view)
 	}
 	if got := f.ranAt("chat@away", roomReadName); len(got) != 1 || !strings.Contains(got[0], `"thread_id":"`+far.ID+`"`) {
@@ -3101,7 +3101,7 @@ func TestInvitations(t *testing.T) {
 
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
 	got := string(h)
-	if !strings.Contains(got, `<p class="muted">Invitation from <span class="mono">bob@testnet</span></p>`) || strings.Contains(got, `data-menu="menu-invite-`) ||
+	if !strings.Contains(got, `<p class="muted">Invitation from <span class="name mono"><span class="owner"><a href="/browse?owner=bob%40`+testKey+`">bob@testnet</a></span></span></p>`) || strings.Contains(got, `data-menu="menu-invite-`) ||
 		!strings.Contains(got, `action="/chat/invites/`+addr(tea)+`/accept"`) || !strings.Contains(got, `<button class="btn" type="submit">Accept</button>`) ||
 		!strings.Contains(got, `data-confirm="Decline tea, which only its creator can invite you to again?"`) || !strings.Contains(got, `<button class="btn-danger" type="submit">Decline</button>`) {
 		t.Fatalf("an invitation is a request naming who sent it, with Accept and Decline in view: %s", got)
@@ -3228,7 +3228,7 @@ func TestAChatAskingByKeyIsShownByKey(t *testing.T) {
 	f.requesters[home] = "approved"
 	f.requesters["chat@"+awayKey] = "pending"
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
-	if got := string(h); !strings.Contains(got, `<header><span title="chat@`+awayKey+`">chat@~away</span><button type="button" class="btn-icon inline" data-copy="chat@`+awayKey+`"`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
+	if got := string(h); !strings.Contains(got, `<header><span class="name mono" title="chat@`+awayKey+`"><span class="owner"><a href="/browse?owner=chat%40`+awayKey+`">chat@~away</a></span></span> <button type="button" class="btn-icon inline" data-copy="chat@`+awayKey+`"`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
 		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || len(f.refs) != 0 {
 		t.Fatalf("the card shows the kernel's own name, its copy beside the name, not in it, and connects it by key: %s", got)
 	}
@@ -3311,7 +3311,7 @@ func TestNamingAKernelKeepsItsRooms(t *testing.T) {
 	}
 	c.deps.Fragment = rnd.HTML
 	h, _ := tick(c, sm, railKey, watchState{Signal: "old"})
-	if got := string(h); !strings.Contains(got, `href="/chat/room/`+room+`"`) || !strings.Contains(got, `<span class="muted">· away</span>`) {
+	if got := string(h); !strings.Contains(got, `href="/chat/room/`+room+`"`) || !strings.Contains(got, `<span class="muted">· <span class="name mono">away</span></span>`) {
 		t.Errorf("the rail keeps the address and shows the name: %s", got)
 	}
 }
@@ -3362,14 +3362,15 @@ func TestTwoChatsClaimingOneNicknameNameTheirKeys(t *testing.T) {
 	c.deps.Label = rnd.Label
 	other := kernelKey("other")
 	a := c.learn(client.Party{Address: "chat@" + awayKey, Principal: "c1@" + awayKey, Nickname: "away"})
-	if got := c.label(a); got != "~away" {
+	label := func(chat string) string { return c.deps.Label(c.chat(chat).Kernel()) }
+	if got := label(a); got != "~away" {
 		t.Errorf("one claimant: %q", got)
 	}
 	b := c.learn(client.Party{Address: "chat@" + other, Principal: "c2@" + other, Nickname: "away"})
-	if got := c.label(b); got != "~away "+client.ShortKey(other) {
+	if got := label(b); got != "~away "+client.ShortKey(other) {
 		t.Errorf("the second claimant: %q", got)
 	}
-	if got := c.label(a); got != "~away "+client.ShortKey(awayKey) {
+	if got := label(a); got != "~away "+client.ShortKey(awayKey) {
 		t.Errorf("after the clash the first claimant: %q", got)
 	}
 }
@@ -3520,7 +3521,7 @@ func TestNothingInTheRailIsStuck(t *testing.T) {
 
 	f.failRuns = true // own chat cannot be read
 	got = rail()
-	if !strings.Contains(got, `#alert"/></svg> chat@testnet`) || strings.Contains(got, `data-menu="menu-down-chat@`+testKey+`"`) || strings.Contains(got, `id="menu-down-chat@`+testKey+`"`) {
+	if !strings.Contains(got, `#alert"/></svg> <span class="name mono"><span class="owner">chat@testnet</span></span>`) || strings.Contains(got, `data-menu="menu-down-chat@`+testKey+`"`) || strings.Contains(got, `id="menu-down-chat@`+testKey+`"`) {
 		t.Errorf("own chat that cannot be read is a status row, without a menu: %s", got)
 	}
 }

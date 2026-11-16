@@ -47,6 +47,7 @@ type KernelError struct {
 	Field         string // best-effort offending field for 422 validation errors
 	Code          string // machine code when the kernel sets one (e.g. "grant_required")
 	GrantAction   string // the action ref carried in a grant_required error's meta
+	Subject       string // what a not-found names, "action"; "" for "item"
 	// Meta is the error's structured metadata, kept raw per key so a value's
 	// wire type is not guessed. The kernel answers strings today (verified live:
 	// terms_changed carries {"price":"500","quote_hash":"…"}), but a numeric
@@ -302,6 +303,9 @@ func (e *KernelError) UserMessage() string {
 		}
 		return "You don't have permission to do that."
 	case KindNotFound:
+		if e.Subject != "" {
+			return "That " + e.Subject + " could not be found."
+		}
 		return "That item could not be found."
 	case KindInvalidInput:
 		if e.KernelMessage != "" {

@@ -294,16 +294,13 @@ func TestAdminInspectRenders(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
 	// The kernel names an inspected action by its address (4dbfedd), which
-	// renders as every address does: the owner emphasized, and unlinked — it is
-	// another kernel's, with no local profile or row behind it. The transport
-	// path (direct) is folded into the single online status line.
-	for _, want := range []string{"kernelc", "direct", `class="owner">synth@kernelc</span>/make`} {
+	// renders as every address does (_name): the owner emphasized and linked to
+	// its actions, which the kernel lists for another kernel's owner too. The
+	// transport path (direct) is folded into the single online status line.
+	for _, want := range []string{"kernelc", "direct", `<span class="owner"><a href="/browse?owner=synth%40kernelc">synth@kernelc</a></span>/`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inspect page missing %q", want)
 		}
-	}
-	if strings.Contains(body, `owner=synth`) {
-		t.Error("another kernel's owner must not link to a local profile")
 	}
 	// online/source are top-level in the response; a reachable peer must show the
 	// "online" pill (regression guard for the always-offline decode bug).
@@ -327,9 +324,9 @@ func TestAdminInspectRenders(t *testing.T) {
 	table := body[strings.Index(body, `<table class="stats-table">`):]
 	table = table[:strings.Index(table, "</table>")]
 	for _, want := range []string{
-		`<span class="mono" title="a2">synth@kernelc/make</span>`,
-		`title="100% success · 6 runs"`, `title="100% positive · 2 ratings · 1 more unverified"`, "0.7s", `title="KEYC">provider</span>`,
-		`title="0% success · 1 run · 1 confirmed by the provider"`, `title="KEYB">KEYB</span>`,
+		`<a href="/actions?ref=synth%40kernelc%2Fmake">make</a>`,
+		`title="100% success · 6 runs"`, `title="100% positive · 2 ratings · 1 more unverified"`, "0.7s", `<td><span title="KEYC">provider</span>`,
+		`title="0% success · 1 run · 1 confirmed by the provider"`, `<span class="name mono">KEYB</span>`,
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("evidence table missing %q:\n%s", want, table)
@@ -676,7 +673,7 @@ func TestAdminPeersListOrder(t *testing.T) {
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
 	last := -1
-	for _, mark := range []string{`title="KEY">kernel<`, `"/admin/peers/KEYB"`, `"/admin/peers/KEYD"`, `"/admin/peers/KEYT1"`, `"/admin/peers/KEYT2"`} {
+	for _, mark := range []string{`<span class="action-title"><span class="name mono">kernel</span>`, `"/admin/peers/KEYB"`, `"/admin/peers/KEYD"`, `"/admin/peers/KEYT1"`, `"/admin/peers/KEYT2"`} {
 		i := strings.Index(body, mark)
 		if i <= last {
 			t.Fatalf("%s out of order: %s", mark, body)
@@ -1336,10 +1333,9 @@ func TestCopyControlCarriesTheWholeKey(t *testing.T) {
 	defer srv.Close()
 	cl := loginClientAs(t, srv.URL, "sys")
 
+	// A roster row's key line is _name's, which copies a key-shaped key
+	// (TestKeyRendersInOneSpelling); this fixture's keys are not key-shaped.
 	roster := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(roster, `data-copy="KEYB"`) || !strings.Contains(roster, `aria-label="Copy key"`) {
-		t.Errorf("a roster row must carry its whole key in the copy control: %s", roster)
-	}
 	inspect := getBody(t, cl, srv.URL+"/admin/peers/KEYC")
 	if !strings.Contains(inspect, `data-copy="KEYC"`) {
 		t.Error("the kernel's page must carry its whole key in the copy control")

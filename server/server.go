@@ -232,7 +232,7 @@ func (k *KernelIdentity) KeyAddress(handle string) string {
 // one reading of an address; everything else passes names through verbatim.
 func (k *KernelIdentity) Local(ref string) bool {
 	n := k.name()
-	return n != "" && strings.HasSuffix(refOwner(ref), "@"+n)
+	return n != "" && strings.HasSuffix(client.OwnerOf(ref), "@"+n)
 }
 
 // kernelIdentity is the kernel's banner for this request, or a zero Health when
@@ -363,18 +363,17 @@ func New(o Options) (http.Handler, error) {
 	mux.HandleFunc("GET /workshop", s.requireAuth(s.getWorkshop))
 	mux.HandleFunc("POST /actions", s.requireAuth(s.postCreateAction))
 	mux.HandleFunc("POST /actions/import", s.requireAuth(s.postImport))
-	// A DISCOVERED action has no local row yet: opening it resolves the reference
-	// with its home kernel, which caches a proxy and lands on an ordinary page.
-	mux.HandleFunc("GET /discovered", s.requireAuth(s.getDiscovered))
-	mux.HandleFunc("GET /discovered/panel", s.requireAuth(s.getDiscoveredPanel))
+	// An action's page, and its panel, have one address each, keyed by the
+	// action's address (actionHref): the kernel resolves it, this kernel's action
+	// or another's alike, caching a proxy for a discovered one (ui-grammar "Names").
+	mux.HandleFunc("GET /actions", s.requireAuth(s.getAction))
+	mux.HandleFunc("GET /actions/panel", s.requireAuth(s.getActionPanel))
 	// A mutation names a target — an action id, or an owner/path naming a whole
 	// application — so these are not per-id routes (kernel §D20).
 	mux.HandleFunc("POST /actions/enable", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/disable", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/visibility", s.requireAuth(s.postActionLifecycle))
 	mux.HandleFunc("POST /actions/delete", s.requireAuth(s.postActionDelete))
-	mux.HandleFunc("GET /actions/{id}", s.requireAuth(s.getAction))
-	mux.HandleFunc("GET /actions/{id}/panel", s.requireAuth(s.getActionPanel))
 	mux.HandleFunc("POST /actions/{id}/run", s.requireAuth(s.postRun))
 	mux.HandleFunc("POST /actions/{id}/fill", s.requireAuth(s.postFill))
 	mux.HandleFunc("POST /actions/{id}/form", s.requireAuth(s.postActionForm))

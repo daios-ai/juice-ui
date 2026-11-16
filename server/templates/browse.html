@@ -27,7 +27,7 @@
 {{else}}
 {{/* One owner's actions: an address has no page of its own, and its name on
      an action row opens this (§6.2). */}}
-{{with .Data.Owner}}<div class="subhead"><h2 class="mono">{{.}}</h2><a class="btn" href="/browse">All actions</a></div>{{end}}
+{{with .Data.Owner}}<div class="subhead"><h2>{{template "_name" (plain (name .))}}</h2><a class="btn" href="/browse">All actions</a></div>{{end}}
 {{if .Data.Catalog}}
 <nav class="tabs" aria-label="Sort">
   {{range .Data.Sorts}}{{template "_tab" (tab .Label .Href .Current)}}{{end}}

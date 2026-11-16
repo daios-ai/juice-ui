@@ -46,7 +46,7 @@ Three laws underpin everything:
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`, and `#idle`, the idle warning) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | `.outcome` · `.banner` (the one-shot notice included) · `.live-region` · `.progress` · `.badge` | results/notice |
-| Ref | `_ref` partial | an action address `owner@kernel/name` (owner linked only when local) |
+| Name | `_name` partial (`name`, `brief`, `record`; `subject`, `plain`) | every user, kernel and action address standing as a value, each part linked to its page (§5.7) |
 
 ---
 
@@ -440,12 +440,12 @@ separates it from the content above, and nothing else does (§4).
   facts a person compares. Like every component it fills the container (§1).
 - **Action row:** **one row, `_action_row`, on every list** — Discover, a search
   on the page and in the panel, the Workshop, a peer's actions — a discovered
-  action included (its link, `_action_href`, resolves it; its price is
+  action included (its link, `actionHref`, resolves it; its price is
   indicative). A **square tile** (`.media.tile`, §5.13); then the text
   (`.action-body`): the action's **title** as the link (`.action-title`) —
   never the bare name or the raw kind string, wrapping and **never cut** — with
   its marks following it in the flow (`.action-name`, `.chips`), the **ref** on
-  its own line beneath (`.action-ref`, `_ref`, owner emphasized), and **one
+  its own line beneath (`.action-ref`, `_name` `subject`, owner emphasized), and **one
   line** of description (`.action-desc`); then **the figures** (`_stats`). The
   title is the row's one pointer target; the row is `.rowable` for
   `j`/`k`/`Enter` and carries no click handler. The figures sit outside the
@@ -583,29 +583,73 @@ separates it from the content above, and nothing else does (§4).
   (help/flash/error) is written in the exact form. Where the unit is not yet
   known, a money cell renders an em dash and no amount is accepted.
 
-### 5.7 Refs
+### 5.7 Names
 
-An action address, `owner@kernel/name`, renders via the **one** `_ref`
-partial, built with the `ref` helper (`ref <address> <id>`; pass `""` for no
-link): `<span class="ref mono">` with the owner in `.owner` (weight-emphasized,
-confusable-distinct, **not** accent), split on the first `/`. Passing an action
-id makes the **name** the link to the action. The owner links to its actions
-on Discover (`/browse?owner={address}`) only when the action is **local** — its
-kernel segment is this kernel's own name (requirements.md §4); another kernel's
-owner renders **unlinked**, since this kernel cannot list its actions — don't
-invent a route. A name
-is rendered as served: never stripped of its kernel, never decorated.
+**A name standing as a value is drawn by `_name`, and nowhere else.** A user
+`bob@beta`, a kernel `beta` and an action `bob@beta/mail/send` are one kind of
+thing, an address, and one component draws every one of them wherever it
+stands as a value — a row, a cell, a header, a byline, a card. Its text is the
+label (`client.Party.Label`, §5.11) cut into its parts (`client.Party.Parts`,
+on the first `/`: a name may hold slashes, an owner never does): the **owner**
+`handle@kernel`, weight-emphasized and confusable-distinct, **not** accent,
+when a path follows (`.ref .owner`); the **path**; a kernel alone. Each part
+links to its entity's page where one exists for every viewer:
 
-When that kernel segment is a **raw public key** — an action discovered but not yet
-resolved is `owner@<43 chars>/name` — it is **truncated** through the same
-primitive a kernel card uses (§5.11), leaving the owner legible and the whole
-segment in the `title`. A bound petname is not key-shaped and renders whole. A
-43-character key MUST never be a card title — the action's title is.
+| part | links to |
+|---|---|
+| owner | its actions, `/browse?owner=<keyed owner>` — this kernel's or another's, which the kernel lists too |
+| path | the action's page, `/actions?ref=<keyed address>` (`actionHref`) |
+| kernel alone | nothing: its only page, Inspect, is the superuser's, and the renderer is every viewer's |
+
+A URL carries the address with its kernel spelled by key (`client.Party.Keyed`):
+a petname is display-only. A party with no principal is spelled as another
+kernel wrote it — a room member the viewer's kernel could not name — whose
+petname may name another kernel here, so it links nowhere. Then the key a nickname stands in for, muted, and a
+copy of the whole address when no petname names its kernel here (§5.11).
+
+Built by one builder (`Renderer.nameOf`) in two sizes, and modified by two
+rules of place:
+
+- `name` — roomy (tables, detail pages, dialogs, cards): the key a nickname
+  stands in for, always.
+- `brief` — compact (an author line, an action reference, a rail row): that key
+  only once two keys claim the nickname. `record` is `brief` for the action a
+  record of a past call names (a receipt, a ledger row): its link adds the
+  action's id, which reads the action whenever its address does not resolve —
+  another kernel's inactive action while that kernel is away (kernel D13), an
+  owner renamed since.
+- `subject` — where the action itself is presented, under its title on its
+  row, its page or its panel: the title is the link, so the path is not.
+- `plain` — inside a link, a `label` or a heading naming that entity: no link
+  and no copy, neither of which may stand inside a link; the row's ref line or
+  its menu copies instead.
+
+**Inside a sentence, a name is its text**: a flash, a notice, a question, a
+status line, a dialog's title, a `title` attribute name a party by
+`client.Party.Label`, or `client.Party.Shown` where a decision is asked, and
+an app's sentence built in Go by `apps.Deps.Label`. A sentence links nothing.
+
+**An action's page has one route**, keyed by its address: `GET /actions?ref=`
+and its panel `GET /actions/panel?ref=`, whether the action is this kernel's,
+a proxy of another's, or only discovered — the kernel resolves the address
+(`GET /v1/actions?ref=`), caching a proxy for a discovered one. A command on
+an action stays keyed by its id (`POST /actions/{id}/…`), since the kernel
+reads a path as a subtree; it returns to the page by the address in the
+kernel's reply, and a refused one re-renders the page with its edit dialog open
+on why. An address naming nothing reads "That action could not be found."
+`TestOneNameRule` holds the rule: no retired partial, no address printed as
+text, no route by id, a name inside a link `plain`, the chain-address partial
+(`_addr`) never given a party.
+
+When the kernel segment is a **raw public key** it is cut short by
+`client.ShortKey`, the whole address in the `title`. A bound petname is not
+key-shaped and renders whole. A 43-character key MUST never be a card title —
+the action's title is.
 
 Wherever an action is presented as a thing — a card, the action page's `<h1>`,
-a workshop row, a peer's action list — its **title** leads and its ref follows
-beneath it. A Workshop row is the same `_action_row` as Discover's. Where a row only names the action a record is about (a receipt, a
-task, a ledger entry), the ref alone stands: the kernel serves no title there.
+a workshop row, a peer's action list — its **title** leads and its name follows
+beneath it (`subject`). A Workshop row is the same `_action_row` as Discover's. Where a row only names the action a record is about (a receipt, a
+task, a ledger entry), the name alone stands: the kernel serves no title there.
 
 ### 5.8 Modals & floating forms
 
@@ -709,18 +753,17 @@ address. A row whose label is its key has that spelling as its title and no
 ref line; any other row's `.action-ref` is that spelling. `truncate` never
 touches a key.
 
-**A party has one rendering**, in two sizes, wherever a user, a kernel or an
+**A party has one rendering**, `_name` (§5.7), wherever a user, a kernel or an
 action's owner is named: its label (`client.Party.Label`, below), the whole
 address in `title` when the text differs, and a copy of the whole address
 whenever no petname names its kernel here, so a key shown shortened, alone or
-as the key a nickname stands in for, always has its copy. `_party`, for roomy
-places (tables, detail pages, dialogs, cards), adds the key a nickname stands
-in for, muted. `_party_brief` and `_ref`, for compact ones (an author line, an
-action reference, a rail row), add it only once two keys have claimed that
-nickname; a status line of a room ("Waiting on …", "Not delivered to …") is
-compact too. A question deciding something about a party names it by
-`client.Party.Shown`, the label and that key. A row that is itself a button or a link copies from
-its menu (`Copy address`).
+as the key a nickname stands in for, always has its copy. A kernel is a party
+too (`kernelParty`: its petname, else its key, and its nickname). Roomy places
+add the key a nickname stands in for, muted; compact ones add it only once two
+keys have claimed that nickname; a status line of a room ("Waiting on …", "Not
+delivered to …") is a sentence, compact. A question deciding something about a
+party names it by `client.Party.Shown`, the label and that key. A row that is
+itself a button or a link copies from its menu (`Copy address`).
 
 **The kernel strip** (`_kernel_strip`, `KernelStrip`) ends every peer row, in
 the grammar of an icon and a value per slot, the meaning in `title`,

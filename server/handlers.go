@@ -133,7 +133,7 @@ func (c actionCardView) ObservedAgo() string { return relTime(c.ObservedAt) }
 
 type discoverView struct {
 	Query           string
-	Owner           string // the catalog narrowed to one owner's actions; "" for every owner
+	Owner           *client.Party // the owner the catalog is narrowed to; nil for every owner
 	LookupAvailable bool
 	Reason          string // why semantic search fell back (kernel's own message)
 	Results         []actionCardView
@@ -748,7 +748,7 @@ func keyedSelector(me client.User, selector string) string {
 			parties = append(parties, g.Action)
 		}
 		for _, p := range parties {
-			owner, keyed := refOwner(p.Address), refOwner(p.Keyed())
+			owner, keyed := client.OwnerOf(p.Address), client.OwnerOf(p.Keyed())
 			if owner != "" && (selector == owner || strings.HasPrefix(selector, owner+"/")) {
 				return keyed + selector[len(owner):]
 			}
@@ -879,7 +879,7 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		owner = strings.TrimSpace(r.URL.Query().Get("owner"))
 	}
 	order := sortOrder(r)
-	view := discoverView{Query: q, Owner: owner, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, owner, order)}
+	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, owner, order)}
 	err := s.sessions.Do(ctx, func(tok string) error {
 		if q != "" {
 			// A page load spends nothing (§8.2): no pin, so a priced lookup is
@@ -897,6 +897,9 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		cat, e := s.client.ListActions(ctx, tok, owner)
 		if e != nil {
 			return e
+		}
+		if owner != "" {
+			view.Owner = s.ownerOf(owner, cat)
 		}
 		cards := make([]actionCardView, len(cat))
 		for i, a := range cat {
@@ -922,6 +925,22 @@ func (s *Server) getBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderPage(w, r, http.StatusOK, "browse", "Discover actions", view)
+}
+
+// ownerOf is the owner a catalog was narrowed to, as its actions' replies name
+// it, so the heading names it by the naming rule. When it owns nothing the
+// viewer may see, an owner of this kernel spelled by key is named by this
+// kernel's name; any other is the address as asked.
+func (s *Server) ownerOf(owner string, cat []client.Action) *client.Party {
+	for _, a := range cat {
+		if o := a.Action.Owner(); o.Address == owner || o.Keyed() == owner {
+			return &o
+		}
+	}
+	if h, _, _ := strings.Cut(owner, "@"); owner == s.identity.KeyAddress(h) {
+		return &client.Party{Address: s.identity.Address(h), Principal: owner}
+	}
+	return &client.Party{Address: owner}
 }
 
 // postSearch is the search submitted from a conversation (requirements
@@ -951,7 +970,7 @@ func (s *Server) postSearch(w http.ResponseWriter, r *http.Request) {
 // superuser, whom the kernel lets enable, publish, edit and delete any action
 // (verified live, UI 0.66.0). The one rule for the action's page and every list.
 func (s *Server) manages(r *http.Request, me client.User, a client.Action) bool {
-	return (me.Address.Address != "" && refOwner(a.Action.Address) == me.Address.Address) || s.isSuperuser(r)
+	return (me.Address.Address != "" && client.OwnerOf(a.Action.Address) == me.Address.Address) || s.isSuperuser(r)
 }
 
 // finishCards states on every card of a list what depends on the viewer:
@@ -1273,7 +1292,42 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 // ---- action detail & run ----
 
 func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
-	s.renderAction(w, r, r.PathValue("id"), nil, nil)
+	s.renderAction(w, r, s.byAddress(r), nil, nil)
+}
+
+// loader reads the action a page is about, with the session's token.
+type loader func(tok string) (client.Action, error)
+
+// byAddress loads the action a page names by its address (actionHref): the
+// kernel resolves it, this kernel's action or another's alike, and the reply is
+// the whole row. A record of a past call also gives the id, which reads the
+// copy held here whenever the address does not resolve — another kernel's
+// inactive action while that kernel is away (kernel D13), or an owner renamed
+// since the record was made.
+func (s *Server) byAddress(r *http.Request) loader {
+	return func(tok string) (client.Action, error) {
+		ctx, q := r.Context(), r.URL.Query()
+		a, ok, err := client.Action{}, false, error(nil)
+		if ref := strings.TrimSpace(q.Get("ref")); ref != "" {
+			a, ok, err = s.client.ResolveRef(ctx, tok, ref)
+		}
+		if id := q.Get("id"); id != "" && !ok && !isAuthErr(err) {
+			return s.client.GetAction(ctx, tok, id)
+		}
+		if err == nil && !ok {
+			err = errNoAction
+		}
+		return a, err
+	}
+}
+
+// errNoAction is an address that names no action.
+var errNoAction = &client.KernelError{Kind: client.KindNotFound, Subject: "action"}
+
+// byID loads the action a command names by its id, the key every mutation
+// and run takes (a path would name a subtree, client.UpdateAction).
+func (s *Server) byID(ctx context.Context, id string) loader {
+	return func(tok string) (client.Action, error) { return s.client.GetAction(ctx, tok, id) }
 }
 
 // renderAction renders one action's page. proposed pre-fills the run form's
@@ -1284,22 +1338,23 @@ func (s *Server) getAction(w http.ResponseWriter, r *http.Request) {
 //
 // edit is a refused edit to re-render in the open dialog; nil fills the dialog
 // from the action itself.
-func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string, proposal *proposal, edit *actionDraft) {
+func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, load loader, proposal *proposal, edit *actionDraft) {
 	ctx := r.Context()
 	var view actionView
 	err := s.sessions.Do(ctx, func(tok string) (e error) {
-		if view, e = s.actionView(r, tok, id); e != nil {
+		if view, e = s.actionView(r, tok, load); e != nil {
 			return e
 		}
 		view.OpenForm = openForm(r, "action-detail")
 		if rows, pager, e := fetchPage(r, func(limit, offset int) ([]client.Rating, error) {
-			return s.client.ActionRatings(ctx, tok, id, limit, offset)
+			return s.client.ActionRatings(ctx, tok, view.Action.ID, limit, offset)
 		}); e == nil {
 			view.Ratings, view.RatingsPager = rows, pager
 		}
 		return nil
 	})
-	if s.handleErrFragment(w, r, err) {
+	if err != nil {
+		s.actionError(w, r, err)
 		return
 	}
 	if proposal != nil {
@@ -1323,11 +1378,22 @@ func (s *Server) renderAction(w http.ResponseWriter, r *http.Request, id string,
 	s.renderPage(w, r, status, "action_detail", view.Action.Title, view)
 }
 
+// actionError answers an action that could not be loaded: one gone, or a
+// lapsed session, as anywhere else; another kernel that refused or did not
+// answer, in its own sentence on Discover (§6.2).
+func (s *Server) actionError(w http.ResponseWriter, r *http.Request, err error) {
+	if ke, ok := client.AsKernelError(err); isAuthErr(err) || (ok && ke.Kind == client.KindNotFound) {
+		s.handleErrFragment(w, r, err)
+		return
+	}
+	s.flashRedirect(w, r, "/browse", "error", refusal(err))
+}
+
 // actionView loads one action as its page, its panel and its run show it:
 // the row, the viewer's relation to it, the run form and the first-payee hint.
-func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error) {
+func (s *Server) actionView(r *http.Request, tok string, load loader) (actionView, error) {
 	ctx := r.Context()
-	a, e := s.client.GetAction(ctx, tok, id)
+	a, e := load(tok)
 	if e != nil {
 		return actionView{}, e
 	}
@@ -1345,7 +1411,7 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 	}
 	// First-payee hint on the run form (§8.3): shown unless the viewer has
 	// already transacted with this action's owner. Bounded, best-effort.
-	if owner := refOwner(a.Action.Address); a.Price > 0 && owner != me.Address.Address {
+	if owner := client.OwnerOf(a.Action.Address); a.Price > 0 && owner != me.Address.Address {
 		view.FirstPayee = true
 		if txs, e := s.client.TransactionsPage(ctx, tok, "", 200, 0); e == nil {
 			for _, t := range txs {
@@ -1360,30 +1426,14 @@ func (s *Server) actionView(r *http.Request, tok, id string) (actionView, error)
 }
 
 // getActionPanel is an action as the workspace's panel shows it beside a
-// conversation (requirements §6.7): its head and the one run form.
+// conversation (requirements §6.7), loaded by address as its page is: its head
+// and the one run form, the room it was opened from, the fill when there is
+// one, and the way back when it was opened from a search's results.
 func (s *Server) getActionPanel(w http.ResponseWriter, r *http.Request) {
-	s.renderPanel(w, r, func(string) (string, error) { return r.PathValue("id"), nil })
-}
-
-// getDiscoveredPanel is a discovered action in the panel: resolved with its
-// home kernel as its page is, then shown as any action is.
-func (s *Server) getDiscoveredPanel(w http.ResponseWriter, r *http.Request) {
-	s.renderPanel(w, r, func(tok string) (string, error) {
-		return s.resolveDiscovered(r.Context(), tok, r.URL.Query().Get("ref"))
-	})
-}
-
-// renderPanel renders the panel of the action id names: the room it was
-// opened from, the fill when there is one, and the way back when it was opened
-// from a search's results.
-func (s *Server) renderPanel(w http.ResponseWriter, r *http.Request, id func(tok string) (string, error)) {
 	var view actionView
 	err := s.sessions.Do(r.Context(), func(tok string) error {
-		target, e := id(tok)
-		if e != nil {
-			return e
-		}
-		if view, e = s.actionView(r, tok, target); e != nil {
+		var e error
+		if view, e = s.actionView(r, tok, s.byAddress(r)); e != nil {
 			return e
 		}
 		view.Room, view.Back = r.URL.Query().Get("room"), r.URL.Query().Get("back") == "1"
@@ -1422,49 +1472,6 @@ func (s *Server) panelError(w http.ResponseWriter, r *http.Request, err error, v
 	_ = s.render.Fragment(w, http.StatusOK, "_panel_error", v)
 }
 
-// getDiscovered opens an action this kernel has only heard of through gossip.
-// It has no local row — its action_id belongs to the remote kernel — so the
-// reference is RESOLVED with its home kernel, which verifies the signed contract
-// and caches a proxy. What the buyer reads is then an ordinary priced action
-// page quoting live terms, rather than a catalog row that may be a discovery
-// interval stale.
-func (s *Server) getDiscovered(w http.ResponseWriter, r *http.Request) {
-	var id string
-	err := s.sessions.Do(r.Context(), func(tok string) (e error) {
-		id, e = s.resolveDiscovered(r.Context(), tok, r.URL.Query().Get("ref"))
-		return e
-	})
-	if err != nil {
-		// An unreachable or refusing home kernel is a fact about that kernel, and
-		// its own sentence says so (§6.2).
-		if isAuthErr(err) {
-			s.handleErr(w, r, err)
-			return
-		}
-		s.flashRedirect(w, r, "/browse", "error", refusal(err))
-		return
-	}
-	http.Redirect(w, r, "/actions/"+url.PathEscape(id), http.StatusSeeOther)
-}
-
-// resolveDiscovered resolves a discovered ref with its home kernel, which
-// verifies the signed contract and caches a proxy, and answers the local id.
-// The resolve is a pure read: one round trip, and it spends nothing.
-func (s *Server) resolveDiscovered(ctx context.Context, tok, ref string) (string, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", errors.New("no action specified")
-	}
-	a, ok, err := s.client.ResolveRef(ctx, tok, ref)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", errors.New("that action could not be resolved from its kernel")
-	}
-	return a.ID, nil
-}
-
 func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
@@ -1472,7 +1479,7 @@ func (s *Server) postRun(w http.ResponseWriter, r *http.Request) {
 
 	var view actionView
 	err := s.sessions.Do(ctx, func(tok string) error {
-		v, e := s.actionView(r, tok, id)
+		v, e := s.actionView(r, tok, s.byID(ctx, id))
 		if e != nil {
 			return e
 		}
@@ -1728,29 +1735,44 @@ func (s *Server) postActionLifecycle(w http.ResponseWriter, r *http.Request) {
 	// A single row returns to its own page; a path names many, so the workshop is
 	// where the result is legible.
 	if len(rows) == 1 && rows[0].ID == target {
-		http.Redirect(w, r, "/actions/"+url.PathEscape(target), http.StatusSeeOther)
+		http.Redirect(w, r, actionHref(rows[0].Action, ""), http.StatusSeeOther)
 		return
 	}
 	s.flashRedirect(w, r, "/workshop", "success", fmt.Sprintf("%d action(s) %sd.", len(rows), op))
 }
 
+// postUpdateActionPrice sets the action's price and returns to its page, by
+// the address in the kernel's reply. A refusal, a price that does not parse or
+// the kernel's, re-renders the page with the edit dialog open on why, as a
+// refused edit does.
 func (s *Server) postUpdateActionPrice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
-	price, err := s.parseAmount(r.FormValue("price"))
-	if err != nil {
-		s.flashRedirect(w, r, "/actions/"+id, "error", capitalize(err.Error())+".")
-		return
-	}
-	err = s.sessions.Do(ctx, func(tok string) error {
-		_, e := s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Price: &price})
+	var rows []client.Action
+	price, refused := s.parseAmount(r.FormValue("price"))
+	reason := ""
+	if refused != nil {
+		reason = capitalize(refused.Error()) + "."
+	} else if err := s.sessions.Do(ctx, func(tok string) (e error) {
+		rows, e = s.client.UpdateAction(ctx, tok, id, client.UpdateActionInput{Price: &price})
 		return e
-	})
-	if err != nil {
-		s.flashRedirect(w, r, "/actions/"+id, "error", userMessage(err))
+	}); isAuthErr(err) {
+		s.handleErr(w, r, err)
+		return
+	} else if err != nil {
+		reason = userMessage(err)
+	}
+	if reason != "" {
+		var cur client.Action
+		if err := s.sessions.Do(ctx, func(tok string) (e error) { cur, e = s.client.GetAction(ctx, tok, id); return e }); s.handleErr(w, r, err) {
+			return
+		}
+		d := s.draftOf(cur)
+		d.Error = reason
+		s.renderAction(w, r, func(string) (client.Action, error) { return cur, nil }, nil, &d)
 		return
 	}
-	s.flashRedirect(w, r, "/actions/"+id, "success", "Price updated. Action is now inactive.")
+	s.flashRedirect(w, r, actionHref(rows[0].Action, ""), "success", "Price updated. Action is now inactive.")
 }
 
 // actionDraft is what a person typed into the create or edit dialog, as
@@ -1932,11 +1954,11 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 	d := readDraft(r)
+	var cur client.Action
 	var rows []client.Action
 	changed := false
-	err := s.sessions.Do(ctx, func(tok string) error {
-		cur, e := s.client.GetAction(ctx, tok, id)
-		if e != nil {
+	err := s.sessions.Do(ctx, func(tok string) (e error) {
+		if cur, e = s.client.GetAction(ctx, tok, id); e != nil {
 			return e
 		}
 		in, ok, e := s.updateInput(d, cur)
@@ -1952,9 +1974,9 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 		s.handleErr(w, r, err)
 	case err != nil:
 		d.Error = draftError(err)
-		s.renderAction(w, r, id, nil, &d)
+		s.renderAction(w, r, s.byID(ctx, id), nil, &d)
 	case !changed:
-		s.flashRedirect(w, r, "/actions/"+id, "info", "No changes.")
+		s.flashRedirect(w, r, actionHref(cur.Action, ""), "info", "No changes.")
 	default:
 		// The kernel decides what an edit costs: a price, schema or source change
 		// deactivates, a title or description change does not (kernel §D4).
@@ -1963,7 +1985,7 @@ func (s *Server) postUpdateAction(w http.ResponseWriter, r *http.Request) {
 		if len(rows) == 1 && !rows[0].Active {
 			msg += " It is now inactive — enable it when ready."
 		}
-		s.flashRedirect(w, r, "/actions/"+id, "success", msg)
+		s.flashRedirect(w, r, actionHref(rows[0].Action, ""), "success", msg)
 	}
 }
 
@@ -2936,14 +2958,14 @@ func wordsBegin(words, typed []string) bool {
 }
 
 // catalogEntry is one action as the launcher matches it: its title and the
-// title's hintKey, its id (none for an action only discovered on a peer) and
-// its address. The browser matches typed text against the keys, so a title is
-// normalized once, here, by the one rule the search fallback also uses.
+// title's hintKey, its address as a person reads it (client.Party.Label) and
+// its page (actionHref). The browser matches typed text against the keys, so a
+// title is normalized once, here, by the one rule the search fallback also uses.
 type catalogEntry struct {
-	T   string `json:"t"`
-	K   string `json:"k"`
-	ID  string `json:"id,omitempty"`
-	Ref string `json:"ref"`
+	T    string `json:"t"`
+	K    string `json:"k"`
+	Ref  string `json:"ref"`
+	Href string `json:"href"`
 }
 
 // catalogEntries is the catalog as the launcher reads it, ordered by key.
@@ -2951,7 +2973,7 @@ func catalogEntries(actions []client.Action) []catalogEntry {
 	out := []catalogEntry{}
 	for _, a := range actions {
 		if k := hintKey(a.Title); k != "" {
-			out = append(out, catalogEntry{T: a.Title, K: k, ID: a.ID, Ref: a.Ref()})
+			out = append(out, catalogEntry{T: a.Title, K: k, Ref: a.Action.Label(), Href: actionHref(a.Action, "")})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].K < out[j].K })
@@ -3323,38 +3345,38 @@ func (s *Server) postPropose(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/browse", "error", "Search first, then ask for a proposal.")
 		return
 	}
-	var id string
+	var chosen client.Action
 	var p proposal
 	err := s.sessions.Do(ctx, func(tok string) error {
-		chosen, args, message, e := s.propose(ctx, tok, []client.Message{{Role: "user", Content: q}}, refs, r.FormValue("planner_quote_hash"))
+		ref, args, message, e := s.propose(ctx, tok, []client.Message{{Role: "user", Content: q}}, refs, r.FormValue("planner_quote_hash"))
 		if e != nil {
 			return e
 		}
 		forgetMe(r)
-		if chosen == "" {
+		if ref == "" {
 			return nil
 		}
 		// The chosen ref is resolved the way any ref is, so a proposal lands on
 		// the ordinary action page and inherits every rule that page holds.
-		a, ok, e := s.client.ResolveRef(ctx, tok, chosen)
+		a, ok, e := s.client.ResolveRef(ctx, tok, ref)
 		if e != nil {
 			return e
 		}
 		if !ok {
 			return fmt.Errorf("the chosen action could not be opened")
 		}
-		id, p = a.ID, proposal{Raws: args, Message: message}
+		chosen, p = a, proposal{Raws: args, Message: message}
 		return nil
 	})
 	if err != nil {
 		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "error", refusal(err))
 		return
 	}
-	if id == "" {
+	if chosen.ID == "" {
 		s.flashRedirect(w, r, "/browse?q="+url.QueryEscape(q), "info", "No action was chosen for that.")
 		return
 	}
-	s.renderAction(w, r, id, &p, nil)
+	s.renderAction(w, r, func(string) (client.Action, error) { return chosen, nil }, &p, nil)
 }
 
 // proposal is the planner's choice as the action page renders it: the

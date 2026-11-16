@@ -272,7 +272,7 @@
      only swapped, never a listener, so no change is lost while it is. */}}
 <div class="stack" data-group{{with .Refresh}} hx-target="#m-{{$.Field}}-model-field" hx-swap="outerHTML" hx-include="closest form" hx-vals='{"block": "{{$.Field}}", "list": "1"}' hx-sync="closest [data-group]:replace"{{end}}>
   <h3 class="flush">{{if eq .Field "chat"}}Chat model{{else}}Embedding model{{end}}</h3>
-  {{with .Href}}<p class="small flush"><a class="mono" href="{{.}}">{{$.Action}}</a></p>{{end}}
+  {{with .Action}}<p class="small flush">{{template "_name" (brief .)}}</p>{{end}}
   {{with .Problem}}{{template "_error" .}}{{end}}
   <div class="field">
     <label for="m-{{.Field}}-provider">Provider</label>
