@@ -99,6 +99,7 @@ type fakeKernel struct {
 	refused      []string                   // pinned runs refused for terms that moved
 	runTokens    []string                   // the session token of each of runs
 	reprice      map[string]int64           // an action's price, set once its row is next read: terms that move between a read and the run
+	broke        map[string]bool            // actions the viewer cannot pay for: refused insufficient_funds
 }
 
 // ranBy is the runs made with the session token tok.
@@ -589,6 +590,12 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 				_, _ = w.Write([]byte(`{"code":"terms_changed","error":"the action's terms changed","meta":{"price":"` + strconv.FormatInt(a.Price, 10) + `","quote_hash":"` + a.quote() + `"}}`))
 				return
 			}
+		}
+		if f.broke[in.Action] {
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"code":"insufficient_funds","error":"your balance is 0.00 fUSD and this call costs 0.00011 fUSD"}`))
+			return
 		}
 		needs := false
 		for _, a := range f.delegated() {
@@ -1398,6 +1405,63 @@ func owed(c *Chat, sm *scs.SessionManager) {
 			}
 		})
 	}, httptest.NewRequest(http.MethodGet, "/tick", nil))
+}
+
+// Chat cannot open without money: a refusal for funds on the landing's way
+// in — the viewer's join, listing their rooms (a viewer holding exactly the
+// join's price), making the first room — sends them to the wallet with the
+// reason. Once they can pay, the next visit reads their chat afresh, though
+// the session still holds the failed read, and opens their room.
+func TestNoMoneyLandsOnTheWallet(t *testing.T) {
+	for _, action := range []string{joinName, roomListName, roomCreateName} {
+		f := newFakeKernel()
+		c, sm := testChat(t, f)
+		agentHome(t, c, "assistant@testnet", "AT")
+		f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
+		f.broke = map[string]bool{"chat@testnet/" + action: true}
+		rec := landing(c, sm)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/wallet" || !strings.Contains(rec.Header().Get("X-Flash"), "Not enough balance to open your rooms.") {
+			t.Fatalf("%s refused for funds: %d %q %q", action, rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
+		}
+		f.mu.Lock()
+		f.broke = nil
+		f.mu.Unlock()
+		rec = landing(c, sm)
+		if to := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || !strings.HasPrefix(to, "/chat/room/") {
+			t.Errorf("%s: funded, the landing opens the room: %d %q", action, rec.Code, to)
+		}
+		if action == roomListName {
+			if cache := kept(c, sm); cache.unknown() {
+				t.Errorf("the fresh read replaced the failed one: %+v", cache.Read)
+			}
+		}
+		f.close()
+	}
+}
+
+// A room's read costs too: a viewer who could pay for the landing's list but
+// not for reading the room it opens is sent to the wallet, not an error page.
+func TestARoomUnpaidForOpensTheWallet(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	agentHome(t, c, "assistant@testnet", "AT")
+	f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
+	rec := landing(c, sm)
+	to := rec.Header().Get("Location")
+	if !strings.HasPrefix(to, "/chat/room/") {
+		t.Fatalf("no room: %d %q", rec.Code, to)
+	}
+	f.mu.Lock()
+	f.broke = map[string]bool{"chat@testnet/" + roomReadName: true}
+	f.mu.Unlock()
+	id, _ := url.PathUnescape(strings.TrimPrefix(to, "/chat/room/"))
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+id, nil)
+	req.SetPathValue("id", id)
+	rec = as(c, sm, c.getRoom, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/wallet" || !strings.Contains(rec.Header().Get("X-Flash"), "Not enough balance to open your rooms.") {
+		t.Errorf("an unpaid room read: %d %q %q", rec.Code, rec.Header().Get("Location"), rec.Header().Get("X-Flash"))
+	}
 }
 
 func TestLanding(t *testing.T) {

@@ -2012,6 +2012,7 @@ func (s *Server) postActionDelete(w http.ResponseWriter, r *http.Request) {
 // unless it awaits a peer's receipt), the activity list, and the money acts of
 // package wallet. A review names the amount a confirm will move.
 type walletView struct {
+	depositForm
 	Pager     Pager
 	Available int64
 	Locked    int64
@@ -2054,7 +2055,13 @@ func (v walletView) HasAddresses() bool { return v.KernelAddress != "" }
 
 // CanWithdraw reports that a withdrawal has somewhere to go: every world pays
 // out, but one with addresses pays only to a registered one (template helper).
-func (v walletView) CanWithdraw() bool { return !v.HasAddresses() || v.MyAddress != "" }
+func (v walletView) CanWithdraw() bool {
+	return v.Available > 0 && (!v.HasAddresses() || v.MyAddress != "")
+}
+
+// CanRecord reports that the viewer records money in here: the superuser, on
+// a world whose money has no addresses (kernel §D23).
+func (v walletView) CanRecord() bool { return v.Superuser && !v.HasAddresses() }
 
 func (s *Server) getWallet(w http.ResponseWriter, r *http.Request) {
 	s.renderWallet(w, r, openForm(r, "wallet"), walletReview{})
@@ -2072,6 +2079,7 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 			return e
 		}
 		view.Available, view.Locked, view.MyAddress = me.Available, me.Locked, me.BlockchainAddress
+		view.depositForm = depositForm{Back: "/wallet", Account: me.Address.Address}
 		view.MessagePrefix = wallet.Message(id.PublicKey, me.ID, "")
 		if a := strings.TrimSpace(r.URL.Query().Get("address")); a != "" && form == "address" {
 			view.SignAddress, view.Message = a, wallet.Message(id.PublicKey, me.ID, a)
@@ -2101,6 +2109,9 @@ func (s *Server) renderWallet(w http.ResponseWriter, r *http.Request, form strin
 		return
 	}
 	view.Superuser = s.isSuperuser(r)
+	if view.OpenForm == "admin-deposit" && !view.CanRecord() {
+		view.OpenForm = ""
+	}
 	s.renderPage(w, r, http.StatusOK, "wallet", "Wallet", view)
 }
 
@@ -2582,7 +2593,7 @@ var formWhitelist = map[string]map[string]bool{
 	"action":        {"action-create": true, "action-import": true},
 	"action-detail": {"action-edit": true},
 	"user":          {"user-update": true},
-	"wallet":        {"fund": true, "withdraw": true, "address": true},
+	"wallet":        {"fund": true, "withdraw": true, "address": true, "admin-deposit": true},
 	"admin":         {"admin-deposit": true, "admin-inspect": true, "admin-rename": true},
 	"admin-peer":    {"admin-rename": true},
 }

@@ -33,15 +33,14 @@ import (
 
 // depositForm carries the shared deposit dialog's per-page state. Every view
 // that renders _form_admin_deposit embeds it: FundRef prefills the payment
-// being named, so a transaction hash is never retyped, and Back names the page
-// the operator came from.
-//
-// There is no recipient prefill, because there is no gesture that starts from
-// one: a deposit credits a user the operator names, and the only prefilled
-// form is attributing a held payment, which starts from the payment.
+// being named, so a transaction hash is never retyped, Back names the page
+// the operator came from, and Account the account the gesture started from:
+// the operator's own, from the wallet, where Record a payment is how money
+// comes in on a world without addresses.
 type depositForm struct {
 	FundRef string
 	Back    string
+	Account string
 }
 
 type adminView struct {
@@ -300,7 +299,7 @@ func (s *Server) postAdminPeerRename(w http.ResponseWriter, r *http.Request) {
 // funding from a kernel's inspect page lands on the roster, where the promoted
 // row now appears.
 func adjustBack(v string) string {
-	if v == "/admin/peers" {
+	if v == "/admin/peers" || v == "/wallet" {
 		return v
 	}
 	return "/admin"

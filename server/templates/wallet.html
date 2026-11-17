@@ -17,12 +17,27 @@
 
 {{template "_figures" (figures (figure $d.Available "available" "") (lockedFigure $d.Locked $d.Superuser))}}
 
+{{/* The money acts stand under the balance, as in every wallet app: the way
+     money comes in first — connecting a crypto wallet, then Deposit, or, where
+     money has no addresses, the superuser's Record a payment — and Withdraw
+     only with a balance, since a doomed act is never offered. At zero the way
+     in is the one button here. wallet.mjs speaks above them (§6.5). */}}
+<p class="banner banner-error" role="alert" data-wallet-say hidden></p>
+<div class="cluster" data-wallet-choose hidden></div>
+{{if or $d.HasAddresses $d.CanRecord $d.CanWithdraw}}<div class="cluster">
+  {{if and $d.HasAddresses (not $d.MyAddress)}}<a class="btn" href="/wallet?form=address" data-wallet-register>Connect crypto wallet</a>{{end}}
+  {{if and $d.Chain $d.MyAddress}}<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Deposit</a>{{end}}
+  {{if $d.CanRecord}}<a class="btn" href="/wallet?form=admin-deposit" data-modal="form-admin-deposit">Record a payment</a>{{end}}
+  {{if $d.CanWithdraw}}<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>{{end}}
+  {{if and $d.HasAddresses $d.MyAddress}}<a class="btn" href="/wallet?form=address" data-wallet-register>Change address</a>{{end}}
+</div>{{end}}
+
 {{/* Deposits and withdrawals: the wallet's one explained block (requirements
-     §6.5), in plain words. Your crypto address is the person's own (MetaMask
-     or similar); the Juice deposit address is the server's, shared by every
-     account, never "yours". Where money has no addresses, the
-     operator records money in and out (kernel §D23), and the world is named
-     because it decides how this balance moves (§7). */}}
+     §6.5), in plain words, holding no command. Your crypto address is the
+     person's own (MetaMask or similar); the Juice deposit address is the
+     server's, shared by every account, never "yours". Where money has no
+     addresses, the operator records money in and out (kernel §D23), and the
+     world is named because it decides how this balance moves (§7). */}}
 <h2>Deposits and withdrawals</h2>
 <div class="card stack">
 {{if $d.HasAddresses}}
@@ -35,13 +50,6 @@
 {{else}}
   <p class="help">On {{.KernelNet}}, the operator records money in and out.</p>
 {{end}}
-  <p class="banner banner-error" role="alert" data-wallet-say hidden></p>
-  <div class="cluster" data-wallet-choose hidden></div>
-  <div class="cluster">
-    {{if $d.HasAddresses}}<a class="btn" href="/wallet?form=address" data-wallet-register>{{if $d.MyAddress}}Change address{{else}}Connect crypto wallet{{end}}</a>{{end}}
-    {{if and $d.Chain $d.MyAddress}}<a class="btn" href="/wallet?form=fund" data-modal="form-fund" data-wallet-js hidden>Deposit</a>{{end}}
-    {{if $d.CanWithdraw}}<a class="btn" href="/wallet?form=withdraw" data-modal="form-withdraw">Withdraw</a>{{end}}
-  </div>
 </div>
 
 <div class="subhead"><h2>Open sessions</h2><a class="tabs-action muted small" href="/processes">all sessions →</a></div>
@@ -106,6 +114,8 @@
   </div>
 </dialog>
 {{end}}
+
+{{if $d.CanRecord}}{{template "_form_admin_deposit" .}}{{end}}
 
 {{if $d.CanWithdraw}}
 <dialog id="form-withdraw" class="modal-form"{{if eq $d.OpenForm "withdraw"}} open{{end}} aria-label="Withdraw">

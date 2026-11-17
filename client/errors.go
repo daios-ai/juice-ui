@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -318,7 +319,7 @@ func (e *KernelError) UserMessage() string {
 		}
 		return "This action isn't available right now."
 	case KindInsufficientFunds:
-		return "Not enough available balance for this."
+		return "Not enough balance for this. Add money in Wallet."
 	case KindExecutionFailed:
 		// A provider that changed the action's contract answers the same class
 		// but marks it: nothing executed and nothing was charged, so it must not
@@ -371,8 +372,10 @@ func (e *KernelError) UserMessage() string {
 	}
 }
 
-// AsKernelError extracts a *KernelError from err, if present.
+// AsKernelError extracts a *KernelError from err, if present, wrapped or not:
+// a caller that adds context to a kernel error keeps it the kernel's.
 func AsKernelError(err error) (*KernelError, bool) {
-	ke, ok := err.(*KernelError)
+	var ke *KernelError
+	ok := errors.As(err, &ke)
 	return ke, ok
 }

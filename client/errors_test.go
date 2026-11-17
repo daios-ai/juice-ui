@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -306,5 +307,22 @@ func TestNotFoundNamesItsSubject(t *testing.T) {
 	}
 	if got := ErrNotFound.UserMessage(); got != "That item could not be found." {
 		t.Errorf("without: %q", got)
+	}
+}
+
+// A kernel error wrapped by a caller is still the kernel's, so its kind and
+// its words reach the person, never its raw text; a refusal for funds names
+// where money comes in.
+func TestAWrappedKernelErrorIsRecognised(t *testing.T) {
+	err := fmt.Errorf("join: %w", classify(402, []byte(`{"error":"your balance is 0.00 fUSD","code":"insufficient_funds"}`)))
+	ke, ok := AsKernelError(err)
+	if !ok || ke.Kind != KindInsufficientFunds {
+		t.Fatalf("not recognised: %v", err)
+	}
+	if got := ke.UserMessage(); got != "Not enough balance for this. Add money in Wallet." {
+		t.Errorf("funds refusal reads %q", got)
+	}
+	if _, ok := AsKernelError(fmt.Errorf("plain")); ok {
+		t.Error("a plain error is no kernel error")
 	}
 }

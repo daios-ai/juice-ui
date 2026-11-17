@@ -110,15 +110,27 @@ func TestStories(t *testing.T) {
 		waitTextFor(t, sys, "Sign in", 3*time.Minute)
 	})
 
-	step(t, "operator signs in and records a payment", func(t *testing.T) {
+	step(t, "the operator lands on the wallet and records a payment there", func(t *testing.T) {
 		signIn(t, sys, "sys")
-		deposit(t, sys, "sys@alpha", "100")
+		waitURL(t, sys, "/wallet")
+		waitText(t, sys, "Not enough balance to open your rooms.")
+		click(t, sys, `a[data-modal="form-admin-deposit"]`)
+		wait(t, sys, `document.querySelector("#dep-address").value === "sys@alpha"`)
+		fill(t, sys, "#dep-ref", "e2e-sys@alpha")
+		fill(t, sys, "#dep-amount", "100")
+		click(t, sys, `#form-admin-deposit button.btn-money`)
+		click(t, sys, "#modal-confirm")
+		waitText(t, sys, "Recorded")
+		waitURL(t, sys, "/wallet")
 	})
 
-	step(t, "a person signs up and lands in a room with the assistant", func(t *testing.T) {
+	step(t, "a person without money lands on the wallet, and in their room once funded", func(t *testing.T) {
 		signUp(t, ann, "ann")
-		deposit(t, sys, "ann@alpha", "100")
 		signIn(t, ann, "ann")
+		waitURL(t, ann, "/wallet")
+		waitText(t, ann, "Not enough balance to open your rooms.")
+		waitText(t, ann, "the operator records money in and out")
+		deposit(t, sys, "ann@alpha", "100")
 		visit(t, ann, "/chat")
 		waitURL(t, ann, "/chat/room/")
 		room = path(t, ann)

@@ -1059,8 +1059,9 @@ func (cache *railCache) put(chat string, read chatRead) {
 }
 
 // list is one chat's rooms and invitations for the viewer, read now, as the
-// entry of that chat; a chat that could not be read is its reason.
-func (c *Chat) list(r *http.Request, chat, signal string) chatRead {
+// entry of that chat; a chat that could not be read is its reason, and the
+// error is returned beside it for a caller that acts on its kind.
+func (c *Chat) list(r *http.Request, chat, signal string) (chatRead, error) {
 	at := time.Now().UnixNano()
 	var out struct {
 		Rooms       []roomRow   `json:"rooms"`
@@ -1068,11 +1069,11 @@ func (c *Chat) list(r *http.Request, chat, signal string) chatRead {
 	}
 	if err := c.run(r, chat, roomListName, struct{}{}, &out); err != nil {
 		c.log().Warn("chat: list rooms", "chat", chat, "err", err)
-		return chatRead{Chat: c.chat(chat), Reason: c.why(err, chat), reading: reading{At: at}}
+		return chatRead{Chat: c.chat(chat), Reason: c.why(err, chat), reading: reading{At: at}}, err
 	}
 	invites := c.tagInvites(out.Invitations, chat)
 	c.ask(r, inviters(invites))
-	return chatRead{Rooms: c.tag(out.Rooms, chat, c.principal(r)), Invites: invites, Chat: c.chat(chat), reading: reading{At: at, Signal: signal}}
+	return chatRead{Rooms: c.tag(out.Rooms, chat, c.principal(r)), Invites: invites, Chat: c.chat(chat), reading: reading{At: at, Signal: signal}}, nil
 }
 
 // sidebar brings the session's copy to the pulse and returns it: the chats and
@@ -1117,7 +1118,7 @@ func (c *Chat) refresh(r *http.Request, p pulse, signal string) {
 			rctx, cancel := context.WithTimeout(ctx, readBound)
 			defer cancel()
 			rr := r.WithContext(rctx)
-			read := c.list(rr, chat, signal)
+			read, _ := c.list(rr, chat, signal)
 			c.update(rr, func(cache *railCache) { cache.put(chat, read) })
 		}()
 	}
@@ -1463,7 +1464,7 @@ func (c *Chat) gone(r *http.Request, service, thread string, err error, invited 
 	if !ok || !ke.RemoteFailed() {
 		return false
 	}
-	listed := c.list(r, service, "")
+	listed, _ := c.list(r, service, "")
 	if listed.Reason != "" {
 		return false
 	}
@@ -1725,6 +1726,9 @@ func notDelivered(names []string) string {
 func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	me := c.deps.Me(r)
 	if err := c.joinViewer(r); err != nil {
+		if c.toWallet(w, r, err) {
+			return
+		}
 		c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: joinFailed(me, err)})
 		return
 	}
@@ -1732,8 +1736,20 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 	if c.deps.HandleErr(w, r, err) {
 		return
 	}
+	// The viewer's own chat is read now, as a room's page reads its chat, so
+	// rooms show on the first visit after money arrives; a fresh answer
+	// replaces a failed read the session still holds.
+	signal := c.signal(me, p)
+	fresh := map[string]chatRead{}
+	if slices.Contains(p.Services, c.self()) {
+		read, err := c.list(r, c.self(), signal)
+		if c.toWallet(w, r, err) {
+			return
+		}
+		fresh[c.self()] = read
+	}
 	_, held := c.cachedRail(r)
-	rail := c.sidebar(r, p, c.signal(me, p), nil, !held)
+	rail := c.sidebar(r, p, signal, fresh, !held)
 	listed := rail.shown()
 	note := c.seatInvited(r, listed.Rooms)
 	assistant := c.deps.Address(assistantHandle)
@@ -1748,6 +1764,9 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 		err := c.run(r, c.self(), roomCreateName, map[string]any{"members": []string{assistant}, "name": firstRoomName}, &out)
 		if errors.As(err, new(*errPriced)) {
 			c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: refusal(err, c.shown(c.self()))})
+			return
+		}
+		if c.toWallet(w, r, err) {
 			return
 		}
 		if c.deps.HandleErr(w, r, err) {
@@ -1768,6 +1787,19 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// toWallet sends the viewer to the wallet when chat refused them for funds on
+// the way into their rooms — the landing's join, list and first room, and a
+// room's read — since none opens without money and the wallet says how it
+// comes in.
+func (c *Chat) toWallet(w http.ResponseWriter, r *http.Request, err error) bool {
+	ke, ok := client.AsKernelError(err)
+	if !ok || ke.Kind != client.KindInsufficientFunds {
+		return false
+	}
+	c.deps.FlashRedirect(w, r, "/wallet", "error", "Not enough balance to open your rooms.")
+	return true
 }
 
 // firstRoomName is the name of the room made for a viewer who has none.
@@ -1893,6 +1925,9 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	at := time.Now().UnixNano()
 	read, err := c.readRoom(r, service, thread, latest, true)
 	if err != nil {
+		if c.toWallet(w, r, err) {
+			return
+		}
 		if c.gone(r, service, thread, err, false) {
 			c.relist(r, p, service)
 			err = &client.KernelError{Kind: client.KindNotFound}
@@ -2294,7 +2329,7 @@ func (c *Chat) relist(r *http.Request, p pulse, chat string) railCache {
 	signal := c.signal(c.deps.Me(r), p)
 	fresh := map[string]chatRead{}
 	if slices.Contains(p.Services, chat) {
-		fresh[chat] = c.list(r, chat, signal)
+		fresh[chat], _ = c.list(r, chat, signal)
 	}
 	return c.sidebar(r, p, signal, fresh, false)
 }

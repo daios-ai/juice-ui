@@ -5214,3 +5214,83 @@ func TestAnUnaskedSearchIsPinned(t *testing.T) {
 		t.Errorf("an unasked lookup runs pinned to its row's quote: %d %v", code, k.runs)
 	}
 }
+
+// The wallet's money acts stand under the balance, the way in first; the
+// explained card below holds none. Withdraw needs a balance. On a world
+// without addresses the superuser records a payment from here, the dialog
+// open without script, its account their own and its way back the wallet;
+// nobody else is offered it.
+func TestWalletLeadsWithTheWayMoneyComesIn(t *testing.T) {
+	type world struct{ addressed, connected, superuser bool }
+	for _, tc := range []struct {
+		name      string
+		w         world
+		available int64
+		want, not []string
+	}{
+		{"play, a person, empty", world{}, 0, nil, []string{"form=withdraw", "Record a payment", "Connect crypto wallet"}},
+		{"play, a person, funded", world{}, 7, []string{"form=withdraw"}, []string{"Record a payment"}},
+		{"play, the superuser, empty", world{superuser: true}, 0, []string{"Record a payment"}, []string{"form=withdraw"}},
+		{"chain, not connected", world{addressed: true}, 0, []string{"Connect crypto wallet"}, []string{"form=withdraw", "Change address", "Record a payment"}},
+		{"chain, connected, funded", world{addressed: true, connected: true}, 7, []string{"form=withdraw", "Change address"}, []string{"Connect crypto wallet", "Record a payment"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handle := "alice"
+			if tc.w.superuser {
+				handle = "sys"
+			}
+			mux := http.NewServeMux()
+			health := `{"status":"ok","handle":"testnet","public_key":"PK","network":"play","decimals":6,"symbol":"fUSD"}`
+			if tc.w.addressed {
+				health = `{"status":"ok","handle":"testnet","public_key":"PK","network":"test","network_fingerprint":"D9","decimals":6,"symbol":"USDC","blockchain_address":"0xKERNEL"}`
+			}
+			mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(health)) })
+			mux.HandleFunc("POST /v1/auth/authorize", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"redirect":"?code=C"}`)) })
+			mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"access_token":"at","refresh_token":"rt"}`))
+			})
+			addr := ""
+			if tc.w.connected {
+				addr = "0xALICE"
+			}
+			mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"id":"U1","address":{"address":"%s@testnet","principal":"%s@testnet"},"available":%d,"locked":0,"blockchain_address":"%s"}`, handle, handle, tc.available, addr)
+			})
+			for _, p := range []string{"GET /v1/withdrawals", "GET /v1/processes", "GET /v1/ledger", "GET /v1/tasks", "GET /v1/actions", "GET /v1/transactions"} {
+				mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
+			}
+			kernel := httptest.NewServer(mux)
+			defer kernel.Close()
+			srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+			defer srv.Close()
+			cl := loginClientAs(t, srv.URL, handle)
+			body := getBody(t, cl, srv.URL+"/wallet")
+			head, card, ok := strings.Cut(body, "<h2>Deposits and withdrawals</h2>")
+			if !ok {
+				t.Fatal("no deposits block")
+			}
+			card, _, _ = strings.Cut(card, "<h2>")
+			for _, w := range tc.want {
+				if !strings.Contains(head, w) {
+					t.Errorf("the commands under the balance lack %q", w)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(head, n) {
+					t.Errorf("the commands offer %q", n)
+				}
+			}
+			if regexp.MustCompile(`class="btn(-primary|-money|-danger)?"`).MatchString(card) {
+				t.Error("the explained card holds no command")
+			}
+			open := getBody(t, cl, srv.URL+"/wallet?form=admin-deposit")
+			opened := strings.Contains(open, `<dialog id="form-admin-deposit" class="modal-form" open`)
+			if opened != tc.w.superuser || (tc.w.superuser && (!strings.Contains(open, `value="sys@testnet" required`) || !strings.Contains(open, `name="back" value="/wallet"`))) {
+				t.Errorf("record a payment, superuser %v: opened %v", tc.w.superuser, opened)
+			}
+		})
+	}
+	if adjustBack("/wallet") != "/wallet" || adjustBack("/elsewhere") != "/admin" {
+		t.Error("a deposit returns to the wallet it came from, and nowhere unlisted")
+	}
+}

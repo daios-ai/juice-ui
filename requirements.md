@@ -1,7 +1,21 @@
 # Juice Web UI Requirements
 
-Version: 0.74.2
+Version: 0.75.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.75.0.** An account without money is led to the wallet.
+> Chat cannot open without money, since joining it, listing rooms and making
+> the first room each cost: a refusal for funds on the way into chat goes to
+> the wallet, saying "Not enough balance to open your rooms.", where a blank page
+> stood before, and once money arrives the next visit opens the room at once,
+> chat read afresh rather than after its back-off. The wallet's commands stand
+> under the balance, the way money comes in first, and its explained block
+> holds none: on a chain, Connect crypto wallet, then Deposit; on a world
+> without addresses, the superuser's Record a payment, Admin's dialog with
+> their own account; Withdraw only with a balance. A refusal for funds reads
+> "Not enough balance for this. Add money in Wallet." everywhere, and a kernel
+> error wrapped by the UI is no longer printed raw. Nothing is funded
+> automatically.
 
 > **What changed in 0.74.2.** A tool chosen from search results in a room's
 > panel opens in the panel again and its result becomes the draft; since
@@ -1802,7 +1816,10 @@ and absent until then.
   overlay on a wide screen.
 * **Sign-in lands in a conversation** (§6.7): the conversations app's landing,
   or Discover where no conversations app is mounted. The root address (`/`)
-  renders no page: it MUST redirect a session to that landing. An action page
+  renders no page: it MUST redirect a session to that landing. A session that
+  cannot pay to open its conversations lands on the **wallet** instead, the
+  reason as the one-shot banner, as wallet apps open an empty account on
+  funding it; only the landing does this, so every other page stays reachable. An action page
   belongs to no destination: it is reached from the launcher, Discover or a
   row.
 * The account summary (address, available balance) heads the avatar menu.
@@ -2593,9 +2610,16 @@ open (parked tasks), the result MUST say so and link to the Wallet.
     operator, a loss nothing on screen would otherwise show. Then three rows:
     **Your crypto address** (or "Not connected yet."), **Juice deposit
     address** — the server's, shared by every account, so never labelled
-    "yours" — and **Token**, by symbol and contract. Then one row of commands:
-    **Change address** (or **Connect crypto wallet**), **Deposit** and
-    **Withdraw**, neutral since they open a dialog.
+    "yours" — and **Token**, by symbol and contract. It holds no command.
+  * **The commands stand under the balance**, as in every wallet app, the way
+    money comes in first, all neutral since they open a dialog: on a world with
+    addresses **Connect crypto wallet**, or, once connected, **Deposit**, then
+    **Withdraw** and **Change address**; on a world without, the superuser's
+    **Record a payment**, Admin's deposit dialog with their own account filled
+    in and the wallet its way back. **Withdraw** is offered only with a balance
+    (a doomed act is never offered), so at zero the way in is the one command.
+    Anyone else on a world without addresses reads that the operator records
+    money in and out.
   * **Register:** the wallet signs, EIP-191, the kernel's registration message —
     `juice address registration`, `kernel: <public key>`, `user: <account id>`,
     `address: <address>`, four lines, no trailing newline — with the address
@@ -3484,7 +3508,13 @@ The rules:
    room**, the assistant seated, so there is someone to talk to at once
    (ChatGPT, Teams: "New chat"). No room at all is what every chat read says:
    a chat that could not be read may hold rooms, so then nothing is made and
-   the landing is an empty page beside the rail, which shows that chat. A
+   the landing is an empty page beside the rail, which shows that chat. The
+   landing reads this kernel's chat afresh, as a room's page reads its chat,
+   so a read that failed before is replaced at once, never waited out. A
+   refusal for funds on the way in — joining chat, listing rooms, making the
+   first room, opening a room — sends the viewer to the wallet with "Not
+   enough balance to open your rooms." (§6.1), told by the error's kind,
+   never its words. A
    room named `assistant` by an earlier release keeps its name. The rail
    lists the viewer's rooms. Every room read and command on a page is a run of its
    action as the viewer, so the UI touches no store of chat's, and New room

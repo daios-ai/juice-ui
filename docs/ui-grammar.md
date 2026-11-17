@@ -197,7 +197,10 @@ observe is explained where it moves, in a person's words. The wallet's
 crypto wallet, never from an exchange or any other wallet. …" — then your
 crypto address, the Juice deposit address and the token, since a
 payment from an exchange is held for the operator and nothing else on screen
-would show why. No other surface carries explanation.
+would show why. No other surface carries explanation. The card holds no
+command: the wallet's commands stand under its balance, the way money comes in
+first, as in wallet apps, and Withdraw only with a balance, so at zero the way
+in is the one button.
 
 Empty states name the absence in one phrase ("No connected accounts yet."), never a
 lecture on how the list will fill. Field `help` states what to type or the single
