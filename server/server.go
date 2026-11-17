@@ -774,6 +774,12 @@ func (s *Server) appDeps() apps.Deps {
 		Address:           s.identity.Address,
 		KeyAddress:        s.identity.KeyAddress,
 		Label:             s.render.Label,
+		Unasked: func(price int64) bool {
+			u, ok := s.identity.Unit()
+			return ok && u.Unasked(price)
+		},
+		Money:  s.render.moneyExact,
+		Amount: s.parseAmount,
 		Ignore: func(r *http.Request, q client.Party) error {
 			me, err := s.me(r)
 			if err != nil {

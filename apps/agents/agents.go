@@ -48,6 +48,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -139,6 +140,8 @@ func (a *Agents) Mount(mux *http.ServeMux, d apps.Deps) {
 	mux.HandleFunc("POST /agents/{handle}/start", d.RequireSuperuser(a.postStart))
 	mux.HandleFunc("POST /agents/{handle}/stop", d.RequireSuperuser(a.postStop))
 	mux.HandleFunc("POST /agents/{handle}/delete", d.RequireSuperuser(a.postDelete))
+	mux.HandleFunc("POST /agents/{handle}/fund/review", d.RequireSuperuser(a.postFundReview))
+	mux.HandleFunc("POST /agents/{handle}/fund", d.RequireSuperuser(a.postFund))
 }
 
 // Start resolves the agent root and declares the agents. Each path is left
@@ -326,6 +329,7 @@ func (a *Agents) list(r *http.Request) ([]status, error) {
 		return nil, err
 	}
 	suffix := strings.TrimPrefix(a.deps.Address("x"), "x")
+	prices := map[string]int64{} // each model's price, read once for the page
 	var out []status
 	for _, e := range entries {
 		h, ok := strings.CutSuffix(e.Name(), suffix)
@@ -336,6 +340,7 @@ func (a *Agents) list(r *http.Request) ([]status, error) {
 		if err != nil {
 			return nil, err
 		}
+		st.Short = a.readiness(r, h, a.account(r, h), prices).Short
 		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
@@ -468,6 +473,9 @@ type status struct {
 	// line, a digest of it; the block is swapped only when either changes.
 	State string
 	OOB   bool // a heartbeat answer: the block replaces itself in place
+	// Short is why the agent cannot work, beside the block and not in it:
+	// "no funds" or "budget too low", read by the page, never by the heartbeat.
+	Short string
 }
 
 func (a *Agents) status(r *http.Request, handle string) (status, error) {
@@ -584,7 +592,69 @@ type detailView struct {
 	// alone reach it), so the read is an ordinary superuser read of a user row,
 	// not the UI holding somebody else's credential.
 	Account *client.AdminUser
+	Ready   readiness
+	Fund    fundView // the Fund dialogs' state
 }
+
+// readiness is whether an agent can do one job: one model call of the action
+// its config reasons with, at that action's live price, against its balance
+// and its budget per job. Call is 0 when the config names no model.
+type readiness struct {
+	Call   int64
+	Budget int64
+	Short  string
+}
+
+// readiness reads the agent's config and its model's price (once per page in
+// prices) and says what stops it working, "" when nothing does.
+func (a *Agents) readiness(r *http.Request, handle string, acct *client.AdminUser, prices map[string]int64) readiness {
+	var cfg struct {
+		Reason string `json:"reason"`
+		Budget *int64 `json:"default_budget"`
+	}
+	raw, _ := a.readFile(handle, configFile)
+	_ = json.Unmarshal([]byte(raw), &cfg)
+	var rd readiness
+	if cfg.Budget != nil {
+		rd.Budget = *cfg.Budget
+	}
+	if cfg.Reason != "" && a.deps.Sessions != nil {
+		price, ok := prices[cfg.Reason]
+		if !ok {
+			_ = a.deps.Sessions.Do(r.Context(), func(tok string) error {
+				if row, found, err := a.deps.Client.ResolveRef(r.Context(), tok, cfg.Reason); err == nil && found {
+					price = row.Price
+				}
+				return nil // a model that cannot be read is no claim either way
+			})
+			prices[cfg.Reason] = price
+		}
+		rd.Call = price
+	}
+	switch {
+	case acct == nil:
+	case acct.Available < max(rd.Call, 1):
+		rd.Short = "no funds"
+	case cfg.Budget != nil && rd.Budget < rd.Call:
+		rd.Short = "budget too low"
+	}
+	return rd
+}
+
+// fundView is a funding in progress: the amount typed, and once reviewed the
+// transfer's price and quote, read of its row, and the key that makes the
+// transfer happen once however often it is sent.
+type fundView struct {
+	Typed  string
+	Amount int64
+	Price  int64
+	Quote  string
+	Key    string
+	Error  string
+}
+
+// Total is what the operator pays: the amount and the transfer's price.
+func (f fundView) Total() int64 { return f.Amount + f.Price }
 
 // ---- handlers ----
 
@@ -644,7 +714,7 @@ func (a *Agents) postCreate(w http.ResponseWriter, r *http.Request) {
 		a.deps.FlashRedirect(w, r, "/agents/"+handle, "error", "Could not start: "+err.Error())
 		return
 	}
-	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Agent created.")
+	a.deps.FlashRedirect(w, r, "/agents/"+handle+"?form=fund", "success", "Agent created.")
 }
 
 // accountExists reads the kernel's refusal of a handle it already holds.
@@ -674,6 +744,10 @@ func (a *Agents) getDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string) {
+	a.renderDetailFund(w, r, code, handle, form, errMsg, fundView{})
+}
+
+func (a *Agents) renderDetailFund(w http.ResponseWriter, r *http.Request, code int, handle, form, errMsg string, fund fundView) {
 	st, err := a.status(r, handle)
 	if a.deps.HandleErr(w, r, err) {
 		return
@@ -687,6 +761,7 @@ func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, 
 	if a.deps.HandleErr(w, r, err) {
 		return
 	}
+	acct := a.account(r, handle)
 	a.deps.RenderPage(w, r, code, "agent", "agents", detailView{
 		status:   st,
 		Agent:    agent,
@@ -694,8 +769,120 @@ func (a *Agents) renderDetail(w http.ResponseWriter, r *http.Request, code int, 
 		Version:  a.editor().Version([]byte(file)),
 		OpenForm: form,
 		Error:    errMsg,
-		Account:  a.account(r, handle),
+		Account:  acct,
+		Ready:    a.readiness(r, handle, acct, map[string]int64{}),
+		Fund:     fund,
 	})
+}
+
+// postFundReview reads the amount and the transfer's terms and asks for the
+// confirm naming what the operator pays: the amount and the transfer's price.
+// It mints the key the transfer is sent under, so a double submit moves money
+// once (the withdrawal's pattern, wallet.NewWithdrawalID).
+func (a *Agents) postFundReview(w http.ResponseWriter, r *http.Request) {
+	handle := r.PathValue("handle")
+	if !a.exists(handle) {
+		a.notFound(w, r)
+		return
+	}
+	f := fundView{Typed: strings.TrimSpace(r.FormValue("amount"))}
+	amount, err := a.deps.Amount(f.Typed)
+	if err == nil && amount <= 0 {
+		err = errors.New("enter an amount")
+	}
+	if err != nil {
+		f.Error = capitalize(err.Error()) + "."
+		a.renderDetailFund(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
+		return
+	}
+	f.Amount = amount
+	err = a.deps.Sessions.Do(r.Context(), func(tok string) error {
+		row, found, e := a.deps.Client.ResolveRef(r.Context(), tok, client.Transfer)
+		if e == nil && !found {
+			e = errors.New("this kernel offers no transfer")
+		}
+		f.Price, f.Quote = row.Price, row.QuoteHash
+		return e
+	})
+	if err != nil {
+		a.fundRefused(w, r, handle, f, err)
+		return
+	}
+	f.Key = newPassword()
+	a.renderDetailFund(w, r, http.StatusOK, handle, "fund-review", "", f)
+}
+
+// postFund moves the amount reviewed from the operator to the agent: one run
+// of sys/transfer, pinned to the quote reviewed and named by its key. Terms
+// that moved are reviewed again at the new ones, under a new key, nothing
+// having moved.
+func (a *Agents) postFund(w http.ResponseWriter, r *http.Request) {
+	handle := r.PathValue("handle")
+	if !a.exists(handle) {
+		a.notFound(w, r)
+		return
+	}
+	price, _ := strconv.ParseInt(r.FormValue("price"), 10, 64)
+	f := fundView{Typed: r.FormValue("amount"), Quote: r.FormValue("quote"), Key: r.FormValue("key"), Price: price}
+	amount, err := a.deps.Amount(f.Typed)
+	if err != nil || amount <= 0 || f.Quote == "" || f.Key == "" {
+		a.deps.FlashRedirect(w, r, "/agents/"+handle+"?form=fund", "error", "Review the amount first.")
+		return
+	}
+	f.Amount = amount
+	args, _ := json.Marshal(map[string]any{"target": a.deps.Address(handle), "amount": amount})
+	err = a.deps.Sessions.Do(r.Context(), func(tok string) error {
+		_, e := a.deps.Client.RunOnce(r.Context(), tok, client.Transfer, args, f.Quote, f.Key)
+		return e
+	})
+	if ke, ok := client.AsKernelError(err); ok && ke.Kind == client.KindTermsChanged {
+		f.Price, _ = ke.MetaInt64("price")
+		f.Quote, f.Key = ke.MetaString("quote_hash"), newPassword()
+		f.Error = "The transfer's price changed; nothing was sent."
+		a.renderDetailFund(w, r, http.StatusConflict, handle, "fund-review", "", f)
+		return
+	}
+	if err != nil && unknownOutcome(err) {
+		// The transfer may have happened: the same key asks again, and the
+		// kernel answers a repeat with the first run's outcome.
+		f.Error = "The transfer's outcome is not known yet. Fund again sends nothing twice."
+		a.renderDetailFund(w, r, http.StatusOK, handle, "fund-review", "", f)
+		return
+	}
+	if err != nil {
+		a.fundRefused(w, r, handle, f, err)
+		return
+	}
+	a.deps.FlashRedirect(w, r, "/agents/"+handle, "success", "Funded "+a.deps.Money(amount)+" · "+a.deps.Address(handle)+".")
+}
+
+// unknownOutcome reports a run whose outcome is not known: no answer reached
+// us, the kernel sent the call and it has not settled, or a run under the same
+// key has not settled yet. Anything else is a refusal that moved nothing.
+func unknownOutcome(err error) bool {
+	ke, ok := client.AsKernelError(err)
+	if !ok {
+		return true
+	}
+	switch ke.Kind {
+	case client.KindTimeout, client.KindUnavailable, client.KindInternal:
+		return true
+	}
+	return ke.Status == http.StatusConflict && ke.Kind != client.KindTermsChanged
+}
+
+// fundRefused returns the Fund dialog open on the kernel's reason, the amount
+// kept; a lapsed session goes where any other does.
+func (a *Agents) fundRefused(w http.ResponseWriter, r *http.Request, handle string, f fundView, err error) {
+	if errors.Is(err, client.ErrUnauthenticated) {
+		a.deps.HandleErr(w, r, err)
+		return
+	}
+	f.Error, f.Quote, f.Key = capitalize(err.Error())+".", "", ""
+	if ke, ok := client.AsKernelError(err); ok {
+		f.Error = ke.UserMessage()
+	}
+	a.renderDetailFund(w, r, http.StatusUnprocessableEntity, handle, "fund", "", f)
 }
 
 func (a *Agents) postSaveFile(w http.ResponseWriter, r *http.Request) {

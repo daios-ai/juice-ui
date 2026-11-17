@@ -127,6 +127,11 @@ func serve(ctx context.Context, h home, cfg config) error {
 		return err
 	}
 	defer store.Close()
+	if n, err := store.Full(); err != nil {
+		return err
+	} else if n > 0 {
+		slog.Warn("juice-chat: rooms over the member limit refuse posts until members are removed", "rooms", n)
+	}
 	st, err := chat.LoadState(h.path("state.json"))
 	if err != nil {
 		return err

@@ -337,7 +337,7 @@ func (c *Chat) resolve(ctx context.Context, tok, principal string) (client.Party
 	ctx, cancel := context.WithTimeout(ctx, readBound)
 	defer cancel()
 	args, _ := json.Marshal(map[string]string{"address": principal})
-	rep, err := c.deps.Client.Run(ctx, tok, client.Resolve, args, "")
+	rep, err := c.exec(ctx, tok, client.Resolve, args, "")
 	if err != nil {
 		return client.Party{}, err
 	}
@@ -460,7 +460,7 @@ func (c *Chat) join(ctx context.Context, token, service string) error {
 	if err := c.deps.Client.DecideRequester(ctx, token, service, "approve"); err != nil {
 		return fmt.Errorf("approve %s: %w", service, err)
 	}
-	rep, err := c.deps.Client.Run(ctx, token, service+"/"+joinName, json.RawMessage(`{}`), "")
+	rep, err := c.exec(ctx, token, service+"/"+joinName, json.RawMessage(`{}`), "")
 	if err != nil {
 		return fmt.Errorf("join: %w", err)
 	}
@@ -533,21 +533,43 @@ func (c *Chat) joinAgent(ctx context.Context, login string) error {
 	return c.asAgent(ctx, login, func(string) error { return nil })
 }
 
-// seat joins a local agent and accepts its invitation to a room here, with its
-// own session: an agent has nobody to accept, and its operator adding it is the
-// consent, as it is for joining. The invitation's task is completed too, so the
-// agent's daemon is not handed it as work.
+// seat joins a local agent to a room here, as its operator adding it is its
+// consent: chat approved as its requester, so the kernel shows it chat's tasks
+// (U52), and its invitation completed, which joins it. Both are free to the
+// agent, the room's creator having paid for the invitation, and neither needs
+// a chat key: an agent receives and answers deliveries without one (measured
+// on v0.21.1). Only an agent holding no invitation runs room/join, which needs
+// its key, so that path joins it to chat first (asAgent).
 func (c *Chat) seat(ctx context.Context, login, thread string) error {
-	return c.asAgent(ctx, login, func(tok string) error {
-		args, _ := json.Marshal(map[string]string{"thread_id": thread})
-		if _, err := c.deps.Client.Run(ctx, tok, c.self()+"/"+roomJoinName, args, ""); err != nil {
-			return fmt.Errorf("accept: %w", err)
+	if !c.isLocalAgent(login) {
+		return fmt.Errorf("%s has no home here", login)
+	}
+	invited := false
+	err := c.deps.Client.WithLogin(ctx, filepath.Join(c.root(), "client"), login, func(tok string) error {
+		if err := c.deps.Client.DecideRequester(ctx, tok, c.self(), "approve"); err != nil {
+			return fmt.Errorf("approve %s: %w", c.self(), err)
 		}
 		tasks, err := c.deps.Client.OpenTasks(ctx, tok)
-		for _, t := range invitations(tasks, login, c.self(), thread) {
-			_, _ = c.deps.Client.CompleteTask(ctx, tok, t.ID, nil)
+		if err != nil {
+			return err
 		}
+		for _, t := range invitations(tasks, login, c.self(), thread) {
+			if _, err := c.deps.Client.CompleteTask(ctx, tok, t.ID, nil); err != nil {
+				return fmt.Errorf("accept: %w", err)
+			}
+			invited = true
+		}
+		return nil
+	})
+	if err != nil || invited {
 		return err
+	}
+	return c.asAgent(ctx, login, func(tok string) error {
+		args, _ := json.Marshal(map[string]string{"thread_id": thread})
+		if _, err := c.exec(ctx, tok, c.self()+"/"+roomJoinName, args, ""); err != nil {
+			return fmt.Errorf("accept: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -618,11 +640,14 @@ func (c *Chat) kernelName() string { return kernelOf(c.login()) }
 
 // joinFailed is a refused join as a person reads it.
 func joinFailed(member string, err error) string {
-	detail := err.Error()
-	if ke, ok := client.AsKernelError(err); ok {
-		detail = ke.UserMessage()
+	var ke *client.KernelError
+	if !errors.As(err, &ke) {
+		return member + " is not connected to chat: " + err.Error()
 	}
-	return member + " is not connected to chat: " + detail
+	if ke.Kind == client.KindInsufficientFunds {
+		return member + " has too little balance to join chat."
+	}
+	return member + " is not connected to chat: " + ke.UserMessage()
 }
 
 // ---- chat, as the UI reaches it ----
@@ -740,7 +765,9 @@ type inviteRow struct {
 func (i inviteRow) Addr() string { return roomAddr(i.Service, i.ID) }
 
 // call runs one of the actions of the chat at service as the viewer and decodes
-// its result into out, when there is an out.
+// its result into out, when there is an out. A money button posts the quote it
+// named as quote, for the action it names as quoted, and that run is pinned to
+// it; any other run of the request reads its own terms.
 func (c *Chat) call(r *http.Request, service, name string, args, out any) error {
 	body, err := json.Marshal(args)
 	if err != nil {
@@ -748,12 +775,65 @@ func (c *Chat) call(r *http.Request, service, name string, args, out any) error 
 	}
 	var rep client.CallReply
 	if err := c.deps.Sessions.Do(r.Context(), func(tok string) (e error) {
-		rep, e = c.deps.Client.Run(r.Context(), tok, service+"/"+name, body, "")
+		action, shown := service+"/"+name, ""
+		if r.PostFormValue("quoted") == action {
+			shown = r.PostFormValue("quote")
+		}
+		rep, e = c.exec(r.Context(), tok, action, body, shown)
 		return e
 	}); err != nil || out == nil {
 		return err
 	}
 	return json.Unmarshal(rep.Result, out)
+}
+
+// exec is the one way chat runs an action: with tok, the session of the user
+// or the agent the caller acts for, pinned to the terms of the action's row,
+// so the kernel never charges more than was read. Without a quote the person
+// was shown (shown, from a money button) it reads the row and runs only when
+// the price is minuscule (Deps.Unasked); a dearer action runs nothing and
+// errPriced names its terms. Terms that moved since are taken from the
+// refusal, which charged nothing, and run once more by the same rule; a quote
+// the person was shown and that moved is offered again.
+func (c *Chat) exec(ctx context.Context, tok, action string, args json.RawMessage, shown string) (client.CallReply, error) {
+	quote := shown
+	if quote == "" {
+		a, ok, err := c.deps.Client.ResolveRef(ctx, tok, action)
+		if err != nil {
+			return client.CallReply{}, err
+		}
+		if !ok {
+			return client.CallReply{}, &client.KernelError{Kind: client.KindNotFound, Status: http.StatusNotFound, Subject: "action", KernelMessage: action + " not found"}
+		}
+		if !c.deps.Unasked(a.Price) {
+			return client.CallReply{}, c.priced(action, a.Price, a.QuoteHash)
+		}
+		quote = a.QuoteHash
+	}
+	rep, err := c.deps.Client.Run(ctx, tok, action, args, quote)
+	if ke, ok := client.AsKernelError(err); ok && ke.Kind == client.KindTermsChanged {
+		price, _ := ke.MetaInt64("price")
+		if shown != "" || !c.deps.Unasked(price) {
+			return rep, c.priced(action, price, ke.MetaString("quote_hash"))
+		}
+		rep, err = c.deps.Client.Run(ctx, tok, action, args, ke.MetaString("quote_hash"))
+	}
+	return rep, err
+}
+
+// errPriced is a run not made: its price is not minuscule and nobody was
+// asked. It carries the terms read, for a money button to name and pin.
+type errPriced struct {
+	Action string
+	Price  int64
+	Quote  string
+	Text   string // the price as the person reads it
+}
+
+func (e *errPriced) Error() string { return "not run unasked: it costs " + e.Text }
+
+func (c *Chat) priced(action string, price int64, quote string) *errPriced {
+	return &errPriced{action, price, quote, c.deps.Money(price)}
 }
 
 // run is call for what the viewer does, which recovers from the two refusals
@@ -1307,6 +1387,10 @@ func refusal(err error, service string) string {
 	if errors.Is(err, errNotTheirs) {
 		return service + " is no longer one of your chats."
 	}
+	var priced *errPriced
+	if errors.As(err, &priced) {
+		return "This costs " + priced.Text + ", more than is paid without asking."
+	}
 	ke, ok := client.AsKernelError(err)
 	if !ok {
 		return ""
@@ -1337,6 +1421,8 @@ func refusal(err error, service string) string {
 		return "This room no longer exists."
 	case http.StatusConflict:
 		return "A post is already pending; answer the delivery first."
+	case http.StatusUnprocessableEntity:
+		return "A room holds at most 32 members."
 	}
 	return ""
 }
@@ -1402,6 +1488,9 @@ func (c *Chat) gone(r *http.Request, service, thread string, err error, invited 
 type newRoomView struct {
 	Open      bool
 	Error     string
+	Price     string // a creation priced above what runs unasked, its quote and action
+	Quote     string
+	Quoted    string
 	Agents    []agentChoice
 	Members   string
 	Name      string
@@ -1656,7 +1745,12 @@ func (c *Chat) getLanding(w http.ResponseWriter, r *http.Request) {
 		var out struct {
 			Room roomRow `json:"room"`
 		}
-		if err := c.run(r, c.self(), roomCreateName, map[string]any{"members": []string{assistant}, "name": firstRoomName}, &out); c.deps.HandleErr(w, r, err) {
+		err := c.run(r, c.self(), roomCreateName, map[string]any{"members": []string{assistant}, "name": firstRoomName}, &out)
+		if errors.As(err, new(*errPriced)) {
+			c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{Error: refusal(err, c.shown(c.self()))})
+			return
+		}
+		if c.deps.HandleErr(w, r, err) {
 			return
 		}
 		if err := c.seat(r.Context(), assistant, out.Room.ID); err != nil && note == "" {
@@ -1738,8 +1832,12 @@ func (c *Chat) rail(r *http.Request, cache railCache, oob bool) (template.HTML, 
 	}
 	csrf := c.deps.CSRFField(r)
 	shown := c.drawn(cache)
+	newRoom, answered := r.Context().Value(newRoomKey{}).(newRoomView)
+	if !answered {
+		newRoom = newRoomView{Open: r.URL.Query().Get("form") == "new", Agents: c.agentChoices(nil), Path: path, CSRFField: csrf}
+	}
 	return c.deps.Fragment("_rail", railView{railShown: shown, Digest: railDigest(shown), Me: c.deps.Me(r), Home: c.self(), Rename: renameView{CSRFField: csrf}, Current: current,
-		New: newRoomView{Open: r.URL.Query().Get("form") == "new", Agents: c.agentChoices(nil), Path: path, CSRFField: csrf}, Path: path, CSRFField: csrf, OOB: oob, Label: c.deps.Label})
+		New: newRoom, Path: path, CSRFField: csrf, OOB: oob, Label: c.deps.Label})
 }
 
 // Context is a room's recent conversation as the planner reads it: the
@@ -1974,6 +2072,10 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 		Undelivered []client.Party `json:"undelivered"`
 	}
 	if err := c.run(r, service, postName, fields, &posted); err != nil {
+		if ke, ok := client.AsKernelError(err); ok && ke.UpstreamStatus() == http.StatusUnprocessableEntity {
+			c.composeFailed(w, r, room, c.overFull(r, room))
+			return
+		}
 		if reason := refusal(err, c.shown(service)); reason != "" {
 			c.composeFailed(w, r, room, reason)
 			return
@@ -2009,6 +2111,19 @@ func (c *Chat) postMessage(w http.ResponseWriter, r *http.Request) {
 func writeHTML(w http.ResponseWriter, h template.HTML) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(h))
+}
+
+// overFull is why a post in a room made before the member limit is refused:
+// the room holds more members than a room may, counted as the session last
+// read it.
+func (c *Chat) overFull(r *http.Request, room string) string {
+	cache, _ := c.cachedRail(r)
+	for _, row := range cache.shown().Rooms {
+		if row.Addr() == room {
+			return fmt.Sprintf("This room has %d members; a room holds at most 32. Remove members to post.", len(row.Members)+len(row.Invited))
+		}
+	}
+	return "This room has more than 32 members; a room holds at most 32. Remove members to post."
 }
 
 // composeFailed shows why a post was refused, beside the composer. An htmx
@@ -2047,6 +2162,10 @@ func (c *Chat) postCreateRoom(w http.ResponseWriter, r *http.Request) {
 		Uninvited []client.Party `json:"uninvited"`
 	}
 	err := c.run(r, c.self(), roomCreateName, args, &out)
+	if priced := new(errPriced); errors.As(err, &priced) {
+		c.newRoomAt(w, r, priced)
+		return
+	}
 	if reason := refusal(err, c.shown(c.self())); reason != "" {
 		c.newRoomRefused(w, r, reason)
 		return
@@ -2065,9 +2184,31 @@ func (c *Chat) newRoomRefused(w http.ResponseWriter, r *http.Request, reason str
 		c.deps.FlashRedirect(w, r, "/chat?form=new", "error", reason)
 		return
 	}
-	_ = c.deps.RenderFragment(w, http.StatusOK, "_new_room", newRoomView{Open: true, Error: reason, Agents: c.agentChoices(r.Form["agent"]),
-		Members: r.FormValue("members"), Name: r.FormValue("name"), Path: "/chat", CSRFField: c.deps.CSRFField(r)})
+	c.newRoom(w, r, newRoomView{Error: reason})
 }
+
+// newRoomAt offers the creation again on a money button naming its price and
+// pinned to its quote: chat's operator priced it above what runs unasked.
+func (c *Chat) newRoomAt(w http.ResponseWriter, r *http.Request, p *errPriced) {
+	c.newRoom(w, r, newRoomView{Price: p.Text, Quote: p.Quote, Quoted: p.Action})
+}
+
+// newRoom answers the dialog open again with what was chosen and typed: in
+// place under htmx; without script, the page drawn with the rail's dialog open
+// on it, the one dialog carrying v on the request it is drawn for.
+func (c *Chat) newRoom(w http.ResponseWriter, r *http.Request, v newRoomView) {
+	v.Open, v.Agents, v.Members, v.Name, v.Path, v.CSRFField = true, c.agentChoices(r.Form["agent"]), r.FormValue("members"), r.FormValue("name"), "/chat", c.deps.CSRFField(r)
+	if c.deps.IsHTMX(r) {
+		_ = c.deps.RenderFragment(w, http.StatusOK, "_new_room", v)
+		return
+	}
+	r = r.WithContext(context.WithValue(r.Context(), newRoomKey{}, v))
+	c.deps.RenderPage(w, r, http.StatusOK, "landing", "Rooms", landingView{})
+}
+
+// newRoomKey carries a New room dialog answered without script to the rail
+// that draws it.
+type newRoomKey struct{}
 
 // agentChoices is the installation's agents, those chosen ticked.
 func (c *Chat) agentChoices(chosen []string) []agentChoice {

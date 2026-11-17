@@ -98,6 +98,24 @@ func (u Unit) Format(v int64) string {
 	return u.digits(v) + unit
 }
 
+// Unasked reports whether a run priced price may be made without asking: a
+// price under one hundredth of the world's token, a cent where the token is a
+// dollar, is minuscule (§8.2). The line is the world's decimals, never an
+// amount written down: a price is 100 times under 10^decimals.
+func (u Unit) Unasked(price int64) bool {
+	if price < 0 || price > math.MaxInt64/100 {
+		return false
+	}
+	line := int64(1)
+	for i := 0; i < u.Decimals; i++ {
+		if line > math.MaxInt64/10 {
+			return true
+		}
+		line *= 10
+	}
+	return price*100 < line
+}
+
 // Round renders v for reading: two decimals at one whole unit or more, two
 // significant digits below it, rounded half away from zero. A world with two
 // decimals or fewer has nothing to round. Only the text is rounded: no rounded

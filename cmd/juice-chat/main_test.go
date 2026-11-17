@@ -139,7 +139,13 @@ func TestRegisterUsesTheClientRecords(t *testing.T) {
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"address":{"address":"chat@alpha","principal":"chat@alpha"}}`))
 	})
-	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if ref := r.URL.Query().Get("ref"); ref != "" { // a native, at the operator's price
+			_, _ = w.Write([]byte(`[{"id":"n","name":"` + ref + `","price":50}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	})
 	mux.HandleFunc("POST /v1/actions", func(w http.ResponseWriter, r *http.Request) {
 		var in client.CreateActionInput
 		_ = json.NewDecoder(r.Body).Decode(&in)
@@ -164,7 +170,7 @@ func TestRegisterUsesTheClientRecords(t *testing.T) {
 	if err := run(context.Background(), []string{"register", "chat@alpha"}, root); err != nil {
 		t.Fatal(err)
 	}
-	if len(created) != 14 || !strings.HasPrefix(created[0].Source, "http://127.0.0.1:8090/chat@alpha/") {
+	if len(created) != 14 || !strings.HasPrefix(created[0].Source, "http://127.0.0.1:8090/chat@alpha/") || created[0].Price == 0 {
 		t.Fatalf("created %d: %+v", len(created), created[0].Source)
 	}
 	st, err := chat.LoadState(homeAt(root).path("state.json"))

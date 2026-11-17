@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"io"
@@ -40,6 +41,7 @@ type fakeKernel struct {
 	hanging  map[string]bool           // kernels that never answer: a task or a resolve there waits for the caller to give up
 	renamed  map[string]string         // principal -> the address its kernel now gives it
 	created  func(task map[string]any) // run, apart, once a task is created: a recipient acting on it
+	natives  map[string]int64          // the natives' prices, by reference, as the operator set them
 }
 
 // kernelOf is the kernel an address or a principal names, by name.
@@ -76,7 +78,8 @@ func (f *fakeKernel) party(w http.ResponseWriter, r *http.Request, a string) (cl
 }
 
 func newFakeKernel(t *testing.T) *fakeKernel {
-	f := &fakeKernel{acts: map[string]*client.Action{}, renamed: map[string]string{}}
+	f := &fakeKernel{acts: map[string]*client.Action{}, renamed: map[string]string{},
+		natives: map[string]int64{client.Resolve: 50, client.Sink: 50}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(client.CapabilityHeader) == "" {
@@ -125,7 +128,11 @@ func newFakeKernel(t *testing.T) *fakeKernel {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		out := []*client.Action{}
-		if r.URL.Query().Get("offset") == "" {
+		if ref := r.URL.Query().Get("ref"); ref != "" {
+			if price, ok := f.natives[ref]; ok {
+				out = append(out, &client.Action{Name: ref, Price: price, Active: true})
+			}
+		} else if r.URL.Query().Get("offset") == "" {
 			for _, a := range f.acts {
 				out = append(out, a)
 			}
@@ -139,7 +146,7 @@ func newFakeKernel(t *testing.T) *fakeKernel {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.seq++
-		a := &client.Action{ID: "new" + strconv.Itoa(f.seq), Name: in.Name, Title: in.Title, Description: in.Description,
+		a := &client.Action{ID: "new" + strconv.Itoa(f.seq), Name: in.Name, Title: in.Title, Description: in.Description, Price: in.Price,
 			HTTP: &client.HTTPSpec{URL: in.Source}, InputSchema: in.InputSchema, OutputSchema: in.OutputSchema,
 			AuthScheme: schemeOf(in.Auth), RequiresGrant: schemeOf(in.Auth) == "delegated_bearer"}
 		f.acts[a.ID] = a
@@ -157,6 +164,9 @@ func newFakeKernel(t *testing.T) *fakeKernel {
 		_ = json.Unmarshal(b, &in)
 		if a := f.acts[in.Target]; a != nil && in.Visibility != nil {
 			a.Visibility = *in.Visibility
+		}
+		if a := f.acts[in.Target]; a != nil && in.Price != nil {
+			a.Price = *in.Price
 		}
 		_, _ = w.Write([]byte(`[]`))
 	})
@@ -270,7 +280,7 @@ func TestContractsAreCanonical(t *testing.T) {
 			walk(path+"."+k, m)
 		}
 	}
-	for _, k := range contracts(self, "S") {
+	for _, k := range contracts(self, "S", natives{50, 50}) {
 		for side, raw := range map[string]json.RawMessage{"in": k.in, "out": k.out} {
 			var n map[string]any
 			if err := json.Unmarshal(raw, &n); err != nil {
@@ -279,15 +289,15 @@ func TestContractsAreCanonical(t *testing.T) {
 			walk(k.name+"."+side, n)
 		}
 	}
-	for _, k := range contracts(self, "S") {
+	for _, k := range contracts(self, "S", natives{50, 50}) {
 		if k.name == postName && !strings.Contains(string(k.in), `"message":{"type":"string",`) {
 			t.Errorf("a message is a string: %s", k.in)
 		}
 	}
-	if len(contracts(self, "S")) != 14 {
-		t.Errorf("%d contracts", len(contracts(self, "S")))
+	if len(contracts(self, "S", natives{50, 50})) != 14 {
+		t.Errorf("%d contracts", len(contracts(self, "S", natives{50, 50})))
 	}
-	for _, k := range contracts(self, "S") {
+	for _, k := range contracts(self, "S", natives{50, 50}) {
 		if strings.Contains(k.desc+string(k.in)+string(k.out), "KERNEL") {
 			t.Errorf("%s names no kernel: %s", k.name, k.desc)
 		}
@@ -782,7 +792,7 @@ func TestAnAnswerOverTheLimitIsAFailure(t *testing.T) {
 	if last := es[len(es)-1]; last.Kind != KindFailed || !strings.Contains(string(last.Body), "too long") {
 		t.Errorf("entry = %+v", last)
 	}
-	for _, k := range contracts(self, "S") {
+	for _, k := range contracts(self, "S", natives{50, 50}) {
 		if k.name == postName && !strings.Contains(string(k.in), `"maxLength":`+strconv.Itoa(maxMessage)) {
 			t.Errorf("a post is bounded by its schema: %s", k.in)
 		}
@@ -848,7 +858,7 @@ func TestReplySettles(t *testing.T) {
 // onwards carry chat's own bearer, and the onwards are the kernel's alone.
 func TestEveryOperationIsADelegatedAction(t *testing.T) {
 	by := map[string]contract{}
-	for _, k := range contracts(self, "S") {
+	for _, k := range contracts(self, "S", natives{50, 50}) {
 		by[k.name] = k
 	}
 	for _, name := range []string{postName, roomCreateName, roomRenameName, roomAddName, roomRemoveName, roomLeaveName, roomJoinName, roomDeleteName, roomListName, roomReadName} {
@@ -966,11 +976,11 @@ func TestAnInvitedMemberIsNotYetInTheRoom(t *testing.T) {
 }
 
 // An invitation chat cannot send, the invitee's kernel offline, is kept: the
-// seat stays added under the address typed and is named; the room's next post
-// resolves it, binds the seat to the principal named and sends the invitation,
-// and once the kernel takes it no post sends a second one. Adding an added
-// member again tries at once; adding an invited one, by address or principal,
-// sends nothing.
+// seat stays added under the address typed and is named. A post does not send
+// it, an invitation not being the poster's to pay for; the creator adding the
+// member again resolves it, binds the seat to the principal named and sends the
+// invitation, and adding it again then sends no second one. Adding an invited
+// member, by address or principal, sends nothing.
 func TestAnUndeliveredInvitationIsKept(t *testing.T) {
 	s, f := testService(t)
 	f.offline = map[string]bool{"far": true}
@@ -991,27 +1001,16 @@ func TestAnUndeliveredInvitationIsKept(t *testing.T) {
 	if rec.Code != 200 || len(out.Uninvited) != 1 || len(out.Room.Invited) != 1 || out.Room.Invited[0] != (client.Party{Address: "bob@far"}) {
 		t.Fatalf("an offline invitee is kept and named: %d %s", rec.Code, rec.Body)
 	}
-	post := func() []client.Party {
-		out.Undelivered = nil
-		_ = json.Unmarshal(dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": id, "message": "hi"}).Body.Bytes(), &out)
-		return out.Undelivered
-	}
-	if u := post(); len(u) != 1 || u[0].Address != "bob@far" || invitations("bob@far") != 0 {
-		t.Errorf("while offline a post names it: %v", u)
-	}
 	f.offline["far"] = false
-	if u := post(); len(u) != 0 || invitations("bob@far") != 1 {
-		t.Errorf("back online, the next post sends the invitation: %v, %d", u, invitations("bob@far"))
+	before := len(f.resolves)
+	if rec := dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": id, "message": "hi"}); rec.Code != 200 || invitations("bob@far") != 0 || len(f.resolves) != before {
+		t.Errorf("a post sends no invitation and resolves nobody: %d %s, %d", rec.Code, rec.Body, invitations("bob@far"))
+	}
+	if rec := dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": id, "member": "bob@far"}); rec.Code != 200 || invitations("bob@far") != 1 {
+		t.Errorf("adding it again sends the invitation: %d %s, %d", rec.Code, rec.Body, invitations("bob@far"))
 	}
 	if room, _ := s.Store.withMembers(id); !slices.Equal(room.Invited, prs("bob@far")) {
 		t.Errorf("the seat is his principal's: %+v", room)
-	}
-	post()
-	if invitations("bob@far") != 1 {
-		t.Errorf("one invitation, one task: %d", invitations("bob@far"))
-	}
-	if added, _ := s.Store.Added(id); len(added) != 0 {
-		t.Errorf("invited, no longer added: %v", added)
 	}
 	for _, again := range []string{"bob@far", pr("bob@far")} {
 		dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": id, "member": again})
@@ -1117,14 +1116,14 @@ func TestAKernelThatNeverAnswersHoldsNothing(t *testing.T) {
 	if took := time.Since(t0); rec.Code != 200 || took > time.Second || !strings.Contains(rec.Body.String(), `"delivered":1`) {
 		t.Errorf("post: %d in %v: %s", rec.Code, took, rec.Body)
 	}
-	// A post that delivers to a member whose kernel never answers, in a room
-	// holding seats whose addresses never resolve, waits one bound, not two.
+	// A seat whose address never resolves is not the post's: it neither waits
+	// on it nor names it.
 	_, err := s.Store.AddMember(pr("ann@testnet"), r.ID, "eli@far")
 	must(t, err)
 	t0 = time.Now()
 	rec = dispatch(s, "/"+postName, ann, "", map[string]any{"thread_id": r.ID, "message": "again"})
-	if took := time.Since(t0); rec.Code != 200 || took >= 2*taskTimeout || !strings.Contains(rec.Body.String(), `"address":"eli@far"`) {
-		t.Errorf("a post waits on its deliveries and its invitations at once: %d in %v: %s", rec.Code, took, rec.Body)
+	if took := time.Since(t0); rec.Code != 200 || took >= 2*taskTimeout || strings.Contains(rec.Body.String(), `"address":"eli@far"`) {
+		t.Errorf("a post leaves an added seat alone: %d in %v: %s", rec.Code, took, rec.Body)
 	}
 }
 
@@ -1229,5 +1228,34 @@ func TestAMemberHeldByAddressIsBoundByItsKey(t *testing.T) {
 	}
 	if m, _ := s.Store.Member(annKey); m != "ann@testnet" {
 		t.Errorf("bound by no owner: %q", m)
+	}
+}
+
+// The limit reaches a member as chat's own refusal: a creation or an addition
+// past it, and a post in a room made before it with more, answer 422, and the
+// post delivers nothing.
+func TestTheLimitIsRefused422(t *testing.T) {
+	s, f := testService(t)
+	ann := joined(t, s, "ann@testnet")
+	bob := joined(t, s, "bob@testnet")
+	many := make([]string, maxMembers)
+	for i := range many {
+		many[i] = fmt.Sprintf("m%d@testnet", i)
+	}
+	if rec := dispatch(s, "/"+roomCreateName, ann, "", map[string]any{"members": many}); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("create past the limit: %d %s", rec.Code, rec.Body)
+	}
+	r, err := seated(s.Store, pr("ann@testnet"), "cafe", prs("bob@testnet"))
+	must(t, err)
+	for i := 0; i < maxMembers-1; i++ {
+		_, err := s.Store.db.Exec(`INSERT INTO members(room_id, member, state) VALUES(?,?,?)`, r.ID, pr(fmt.Sprintf("x%d@testnet", i)), stateAdded)
+		must(t, err)
+	}
+	if rec := dispatch(s, "/"+roomAddName, ann, "", map[string]any{"thread_id": r.ID, "member": "late@testnet"}); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("add past the limit: %d %s", rec.Code, rec.Body)
+	}
+	before := len(f.taskBodies())
+	if rec := dispatch(s, "/"+postName, bob, "", map[string]any{"thread_id": r.ID, "message": "hi"}); rec.Code != http.StatusUnprocessableEntity || len(f.taskBodies()) != before {
+		t.Errorf("post in a room over the limit: %d %s, %d tasks", rec.Code, rec.Body, len(f.taskBodies())-before)
 	}
 }

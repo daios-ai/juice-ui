@@ -715,3 +715,88 @@ INSERT INTO members(room_id, member, state) VALUES ('0a1b2c', 'eve@k', 'invited'
 		t.Errorf("a 0.71.0 store: %+v", room)
 	}
 }
+
+// A room holds at most maxMembers, joined, invited and added together: a
+// creation past it is refused whole, and an addition past it refused, while a
+// member already in the room is added again. A room made before the limit with
+// more keeps them all, is counted by Full, and refuses a post.
+func TestARoomHoldsAtMostMaxMembers(t *testing.T) {
+	s := mustStore(t)
+	names := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("m%d@k", i)
+		}
+		return out
+	}
+	if _, err := s.CreateRoom("ann@k", "big", names(maxMembers)); !errors.Is(err, ErrFull) {
+		t.Errorf("creator and %d others: %v", maxMembers, err)
+	}
+	if rooms, _ := s.Rooms("ann@k"); len(rooms) != 0 {
+		t.Errorf("a refused creation leaves nothing: %+v", rooms)
+	}
+	r, err := s.CreateRoom("ann@k", "full", names(maxMembers-1))
+	must(t, err)
+	if _, err := s.AddMember("ann@k", r.ID, "late@k"); !errors.Is(err, ErrFull) {
+		t.Errorf("a member past the limit: %v", err)
+	}
+	if owed, err := s.AddMember("ann@k", r.ID, "m0@k"); err != nil || !owed {
+		t.Errorf("a member added before is added again: %v %v", owed, err)
+	}
+	must(t, s.Join(r.ID, "m0@k"))
+	if _, _, err := s.Post(r.ID, "ann@k", json.RawMessage(`"hi"`)); err != nil {
+		t.Errorf("a full room posts: %v", err)
+	}
+	if n, err := s.Full(); err != nil || n != 0 {
+		t.Errorf("Full = %d %v", n, err)
+	}
+	_, err = s.db.Exec(`INSERT INTO members(room_id, member, state) VALUES(?,?,?)`, r.ID, "old@k", stateJoined)
+	must(t, err)
+	if n, err := s.Full(); err != nil || n != 1 {
+		t.Errorf("Full = %d %v", n, err)
+	}
+	if _, _, err := s.Post(r.ID, "ann@k", json.RawMessage(`"hi"`)); !errors.Is(err, ErrFull) || !strings.Contains(err.Error(), "33 members") {
+		t.Errorf("a room over the limit refuses a post: %v", err)
+	}
+	if room, es, err := s.Room("ann@k", r.ID); err != nil || len(es) != 1 || len(room.Members) != 3 {
+		t.Errorf("and is read as it stands: %d entries, %+v, %v", len(es), room.Members, err)
+	}
+	must(t, s.RemoveMember("ann@k", r.ID, "old@k"))
+	if _, _, err := s.Post(r.ID, "ann@k", json.RawMessage(`"again"`)); err != nil {
+		t.Errorf("a member removed, it posts again: %v", err)
+	}
+}
+
+// Additions at once cannot overfill a room: the check and the insert are one
+// statement, so of many members added to a room of 31 at the same time,
+// exactly one is added.
+func TestAdditionsAtOnceKeepTheLimit(t *testing.T) {
+	s := mustStore(t)
+	others := make([]string, maxMembers-2)
+	for i := range others {
+		others[i] = fmt.Sprintf("m%d@k", i)
+	}
+	r, err := s.CreateRoom("ann@k", "nearly", others)
+	must(t, err)
+	var wg sync.WaitGroup
+	added := make([]error, 10)
+	for i := range added {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, added[i] = s.AddMember("ann@k", r.ID, fmt.Sprintf("late%d@k", i))
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, err := range added {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrFull) {
+			t.Errorf("refused otherwise: %v", err)
+		}
+	}
+	if n, _ := seats(s.db, r.ID); ok != 1 || n != maxMembers {
+		t.Errorf("%d added, %d seats", ok, n)
+	}
+}

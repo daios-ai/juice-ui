@@ -2654,3 +2654,22 @@ func TestFetchRows(t *testing.T) {
 		t.Errorf("a failed read: %v %+v", err, p)
 	}
 }
+
+// A price is minuscule, run without asking, under a hundredth of the world's
+// token: 10,000 units on a six-decimal world, nothing but 0 on a world of two
+// decimals or none, where a cent is one unit or less.
+func TestUnitUnaskedIsUnderAHundredth(t *testing.T) {
+	for _, c := range []struct {
+		decimals int
+		price    int64
+		want     bool
+	}{
+		{6, 0, true}, {6, 1800, true}, {6, 9999, true}, {6, 10000, false}, {6, -1, false},
+		{2, 0, true}, {2, 1, false}, {0, 0, true}, {0, 1, false},
+		{18, 1e15, true}, {18, 1e16, false}, {6, math.MaxInt64, false},
+	} {
+		if got := (Unit{Decimals: c.decimals}).Unasked(c.price); got != c.want {
+			t.Errorf("decimals %d, price %d: %v", c.decimals, c.price, got)
+		}
+	}
+}

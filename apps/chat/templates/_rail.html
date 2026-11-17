@@ -77,9 +77,9 @@
 {{define "_copy_item"}}{{with .}}<div class="menu-divider"></div><button type="button" class="menu-item" role="menuitem" data-copy="{{.}}">Copy address</button>{{end}}{{end}}
 
 {{/* _new_room — the New room dialog; the name is optional, a blank one the
-     members' names. Refused, it
-     comes back open with the reason and what was chosen and typed. Input:
-     newRoomView. */}}
+     members' names. Refused, it comes back open with the reason and what was
+     chosen and typed; priced above what runs unasked, with Create a money
+     button naming the price and carrying its quote. Input: newRoomView. */}}
 {{define "_new_room"}}<dialog id="form-new" class="modal-form"{{if .Open}} open{{end}} aria-label="New room" hx-swap-oob="true">
   <div class="modal-head"><h2>New room</h2><a class="modal-close" href="{{.Path}}" data-modal-close aria-label="Close">×</a></div>
   <div class="modal-body stack">
@@ -101,7 +101,7 @@
         <input id="room-name" type="text" name="name" value="{{.Name}}" placeholder="The members' names">
       </div>
       <div class="cluster">
-        <button class="btn-primary" type="submit">Create</button>
+        {{if not .Quote}}<button class="btn-primary" type="submit">Create</button>{{else}}<input type="hidden" name="quote" value="{{.Quote}}"><input type="hidden" name="quoted" value="{{.Quoted}}"><button class="btn-money" type="submit">Create ({{.Price}})</button>{{end}}
         <button type="button" class="btn" data-modal-close>Cancel</button>
       </div>
     </form>

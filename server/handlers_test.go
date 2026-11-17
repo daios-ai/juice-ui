@@ -3843,7 +3843,7 @@ func TestBrowseDoesNotSpendOnAPricedNative(t *testing.T) {
 	if ran {
 		t.Error("a page load must not run a priced native: that is a spend from a GET (§8.2)")
 	}
-	if !strings.Contains(body, "Semantic search unavailable") || !strings.Contains(body, "priced on this kernel") {
+	if !strings.Contains(body, "Semantic search unavailable") || !strings.Contains(body, "Semantic search costs 7 credits on this kernel.") {
 		t.Errorf("the page must say why it fell back, in our own words: %s", body)
 	}
 	// And it still answers the query, from the catalog.
@@ -5051,7 +5051,7 @@ func TestSearchFromTheComposerAnswersThePanel(t *testing.T) {
 	if len(k.runs) != 0 {
 		t.Errorf("a priced lookup ran without a pin: %v", k.runs)
 	}
-	if !strings.Contains(panel, "priced on this kernel") || !strings.Contains(panel, `data-href="`+pageAt("alice@testnet/hello")+`"`) {
+	if !strings.Contains(panel, "Semantic search costs 7 credits on this kernel.") || !strings.Contains(panel, `data-href="`+pageAt("alice@testnet/hello")+`"`) {
 		t.Errorf("an unpinned priced search falls back to the catalog and says why: %s", panel)
 	}
 
@@ -5198,5 +5198,19 @@ func TestIgnoredRequesters(t *testing.T) {
 	}
 	if kept, _ := os.ReadFile(state); strings.Contains(string(kept), "mallory") {
 		t.Errorf("Block then Revoke ends its being ignored: %s", kept)
+	}
+}
+
+// A lookup whose price is minuscule runs unasked, pinned to the quote its row
+// carries, so a price that moved since the read is refused, not charged.
+func TestAnUnaskedSearchIsPinned(t *testing.T) {
+	k := newSearchKernel(t)
+	srv := httptest.NewServer(newTestHandler(t, k.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	page := getBody(t, cl, srv.URL+"/browse")
+	k.price = 0
+	if code, _ := postHTMX(t, cl, srv.URL+"/browse/search", page, url.Values{"q": {"hello"}}); code != 200 || len(k.runs) != 1 || !strings.Contains(k.runs[0], `"quote_hash":"LQ"`) {
+		t.Errorf("an unasked lookup runs pinned to its row's quote: %d %v", code, k.runs)
 	}
 }

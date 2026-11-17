@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -90,6 +91,88 @@ type contract struct {
 	name, title, desc, vis string
 	auth                   json.RawMessage
 	in, out                json.RawMessage
+	price                  int64
+}
+
+// ---- the prices ----
+
+// natives are the prices of the natives chat's prices are made of, as this
+// kernel's operator set them, read at each registration: sys/resolve, which
+// room/create, room/add and join compose, and sys/sink, the kernel's base
+// charge, the records every call leaves. No native price is written here.
+type natives struct{ resolve, base int64 }
+
+// own is what one average call of an action uses on chat's machine: bytes kept
+// in its store, and bytes of its reply sent out. Kept is measured on a store
+// (2,000 runs each, 2026-11-16; room/create with 31 members, the most it
+// takes); sent is estimated from the replies' shapes. Processor time, 0.5 to
+// 2 ms a call, is below one unit.
+type own struct{ kept, sent float64 }
+
+var owns = map[string]own{
+	indexName:      {0, 1500},
+	joinName:       {567, 100},
+	postName:       {229, 200},
+	replyName:      {230, 20},
+	acceptName:     {0, 20},
+	roomCreateName: {8640, 4000},
+	roomRenameName: {20, 2000},
+	roomAddName:    {199, 2000},
+	roomRemoveName: {0, 2000},
+	roomLeaveName:  {0, 20},
+	roomJoinName:   {0, 2000},
+	roomDeleteName: {0, 20},
+	roomListName:   {0, 20000},
+	roomReadName:   {0, 20000},
+}
+
+// The rates of the pricing guide (ecosystem-standard.md), in the shipped
+// worlds' units: 8 per KB kept and 90 per MB sent out. They are chat's choice
+// as a provider, not the kernel's prices.
+const (
+	keptRate = 8.0 / 1024
+	sentRate = 90.0 / (1 << 20)
+	fee      = 1.25 // the operator keeps 20% of what is left after the sub-calls
+)
+
+// prices are chat's prices, by the pricing guide: the sub-calls an action
+// composes at their worst case, plus 1.25 times its own cost, plus a margin of
+// the kernel's base charge, rounded up. The two onwards take no margin: each is
+// paid for by the call that parks its task, a post per recipient and a room
+// command per invitee. A room holds at most maxMembers, so a post parks at most
+// maxMembers-1 reply tasks, and a creation resolves and invites as many.
+func prices(n natives) map[string]int64 {
+	cost := func(name string) float64 { o := owns[name]; return fee * (o.kept*keptRate + o.sent*sentRate) }
+	others := float64(maxMembers - 1)
+	p := map[string]int64{}
+	p[acceptName] = roundUp(cost(acceptName))
+	p[replyName] = roundUp(cost(replyName))
+	for _, name := range []string{indexName, roomListName, roomReadName, roomRenameName, roomRemoveName, roomLeaveName, roomJoinName, roomDeleteName} {
+		p[name] = roundUp(cost(name) + float64(n.base))
+	}
+	p[roomAddName] = roundUp(float64(n.resolve+p[acceptName]) + cost(roomAddName) + float64(n.base))
+	p[joinName] = roundUp(float64(n.resolve) + cost(joinName) + float64(n.base))
+	p[postName] = roundUp(others*float64(p[replyName]) + cost(postName) + float64(n.base))
+	p[roomCreateName] = roundUp(others*float64(n.resolve+p[acceptName]) + cost(roomCreateName) + float64(n.base))
+	return p
+}
+
+// roundUp is a price rounded up to a round number, never below 1: below 10 to
+// 1, 2, 5 or 10; to 1,000 to the next 10; above it to the next 100.
+func roundUp(x float64) int64 {
+	switch {
+	case x <= 1:
+		return 1
+	case x <= 10:
+		for _, r := range []float64{2, 5, 10} {
+			if x <= r {
+				return int64(r)
+			}
+		}
+	case x <= 1000:
+		return int64(math.Ceil(x/10)) * 10
+	}
+	return int64(math.Ceil(x/100)) * 100
 }
 
 const (
@@ -122,7 +205,7 @@ const (
 // kernel checks an onward's visibility against the task's creator, chat, so a
 // member completes the task without being able to run the action itself and
 // speak as somebody else.
-func contracts(self, secret string) []contract {
+func contracts(self, secret string, n natives) []contract {
 	delegated, _ := json.Marshal(map[string]any{"scheme": "delegated_bearer", "config": map[string]any{"header": CallerKey, "template": "{token}"}})
 	bearer, _ := json.Marshal(map[string]any{"scheme": "bearer", "secrets": map[string]any{"token": secret}})
 	obj := func(props string, required ...string) json.RawMessage {
@@ -196,8 +279,11 @@ func contracts(self, secret string) []contract {
 				`"waiting":` + parties + `,` +
 				`"more":{"type":"boolean",` + descr + `"True when newer entries remain past these."},` + roomsProp + "," + invitesProp)},
 	}
-	// Every text names this provider and its kernel.
+	// Every text names this provider and its kernel, and every action has its
+	// price.
+	p := prices(n)
 	for i := range ks {
+		ks[i].price = p[ks[i].name]
 		ks[i].desc = named(ks[i].desc, self)
 		ks[i].in = json.RawMessage(named(string(ks[i].in), self))
 		ks[i].out = json.RawMessage(named(string(ks[i].out), self))
@@ -330,10 +416,9 @@ func (s *Service) sealed(member string) string {
 
 // servePost is a member's post: identified by the key the kernel injected,
 // the entry is stored under the one-post rule, then delivered during this
-// call, unless the hand-off cap is exceeded; and the invitations the kernel
-// could not take before are sent again, at the same time, so a kernel that does
-// not answer holds the post one bound, not two. Whom it could not reach,
-// recipient or invitee, it names.
+// call, unless the hand-off cap is exceeded. Whom it could not reach it names.
+// An invitation not taken yet is not the poster's to pay for: it is sent
+// again when the room's creator adds the member again.
 func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string) {
 	var in struct {
 		Room    string          `json:"thread_id"`
@@ -348,13 +433,6 @@ func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string)
 		refuseErr(w, err)
 		return
 	}
-	// An invitation the kernel could not take before is tried again with this
-	// post's capability, as a post tries each recipient.
-	uninvited := make(chan []client.Party, 1)
-	go func() {
-		added, _ := s.Store.Added(in.Room)
-		uninvited <- s.invite(r.Context(), traceOf(r, self), in.Room, added)
-	}()
 	n, undelivered := 0, []client.Party{}
 	if depth <= handoffCap {
 		room, err := s.Store.withMembers(in.Room)
@@ -363,7 +441,6 @@ func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string)
 			members, err = s.Store.Parties(room.Members)
 		}
 		if err != nil {
-			<-uninvited
 			refuseErr(w, err)
 			return
 		}
@@ -371,7 +448,6 @@ func (s *Service) servePost(w http.ResponseWriter, r *http.Request, self string)
 		undelivered = s.deliver(r.Context(), traceOf(r, self), in.Room, e.Seq, depth, to)
 		n = len(to) - len(undelivered)
 	}
-	undelivered = append(undelivered, <-uninvited...)
 	writeJSON(w, http.StatusOK, map[string]any{"delivered": n, "undelivered": undelivered})
 }
 
@@ -791,6 +867,8 @@ func refuseErr(w http.ResponseWriter, err error) {
 		status, code = http.StatusBadRequest, "bad_input"
 	case errors.Is(err, ErrHeld), errors.Is(err, ErrAlone):
 		status, code = http.StatusConflict, "held"
+	case errors.Is(err, ErrFull):
+		status, code = http.StatusUnprocessableEntity, "full"
 	}
 	refuse(w, status, code, err.Error())
 }

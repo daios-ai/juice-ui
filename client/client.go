@@ -401,11 +401,14 @@ type Process struct {
 // have earned it (kernel §D19).
 func (p Process) Endable() bool { return p.Status == "open" && !p.AwaitingReceipt }
 
-// RunRequest is the body for POST /v1/run.
+// RunRequest is the body for POST /v1/run. ExternalKey names the run for its
+// caller: a repeat with the same key and {action, args} answers the first
+// run's outcome and moves nothing (API.md, Run action).
 type RunRequest struct {
-	Action    string          `json:"action"`
-	Args      json.RawMessage `json:"args"`
-	QuoteHash string          `json:"quote_hash,omitempty"`
+	Action      string          `json:"action"`
+	Args        json.RawMessage `json:"args"`
+	QuoteHash   string          `json:"quote_hash,omitempty"`
+	ExternalKey string          `json:"external_key,omitempty"`
 }
 
 // Message is one message the kernel's planner reads (sys/llm/decide, kernel
@@ -1196,7 +1199,13 @@ func (c *Client) EndProcess(ctx context.Context, token, id string) error {
 // displayed price is binding rather than advisory. Empty leaves the older
 // behaviour — the call runs at whatever the terms now are.
 func (c *Client) Run(ctx context.Context, token, action string, args json.RawMessage, quoteHash string) (CallReply, error) {
-	req := RunRequest{Action: action, Args: emptyArgs(args), QuoteHash: quoteHash}
+	return c.RunOnce(ctx, token, action, args, quoteHash, "")
+}
+
+// RunOnce is Run named by key, so a double submit or a retry after a lost
+// reply moves money once: the kernel answers a repeat with the first outcome.
+func (c *Client) RunOnce(ctx context.Context, token, action string, args json.RawMessage, quoteHash, key string) (CallReply, error) {
+	req := RunRequest{Action: action, Args: emptyArgs(args), QuoteHash: quoteHash, ExternalKey: key}
 	var r CallReply
 	err := c.do(ctx, http.MethodPost, "/v1/run", token, req, &r)
 	return r, err
@@ -1323,6 +1332,13 @@ const (
 // the party the kernel running it names (kernel §D15): `localhost` names that
 // kernel on every kernel (v0.20.1), so one spelling reaches it wherever it runs.
 const Resolve = "sys@localhost/resolve"
+
+// Transfer is the system call that moves value to another user (kernel D18).
+const Transfer = "sys@localhost/transfer"
+
+// Sink is the system call that does nothing: its price is the kernel's base
+// charge, what keeping the records of one call costs (kernel D17).
+const Sink = "sys@localhost/sink"
 
 // CallbackCreateTask creates a task through the capability of a dispatch: the
 // capability names the trace, so the body carries none. Valid only while the

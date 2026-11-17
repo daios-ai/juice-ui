@@ -988,9 +988,9 @@ func (s *Server) finishCards(r *http.Request, cards []actionCardView) {
 }
 
 // discover is the search Discover and the panel share: sys/lookup for the
-// query, run pinned to the quote the person was shown, or unpinned only when
-// a read of it confirms it free — a lookup priced, or whose price cannot be
-// read, never runs without a pin, so a page load spends nothing (§8.2) — else
+// query, run pinned to the quote the person was shown, or unasked when a read
+// of it finds its price minuscule, pinned to the quote read — a lookup dearer,
+// or whose price cannot be read, never runs unasked (§8.2) — else
 // the catalog matched by the launcher's rules. Each hit
 // is read to decide whether it is discovered (§6.2), and the rows are ranked
 // under every order and arranged under the one asked for. The error is the
@@ -1000,7 +1000,7 @@ func (s *Server) discover(r *http.Request, tok, q, order, quoteHash string) (dis
 	view := discoverView{Query: q, LookupAvailable: true, Sort: order, Sorts: sortTabs(q, "", order)}
 	declined := ""
 	if quoteHash == "" {
-		declined = s.unpinnedRefusal(ctx, tok, s.native(lookupNative))
+		quoteHash, declined = s.unaskedQuote(ctx, tok, s.native(lookupNative))
 	}
 	var out Outcome
 	if declined == "" {
@@ -3134,21 +3134,22 @@ const (
 // native is the address of one of this kernel's natives.
 func (s *Server) native(name string) string { return s.identity.Address(superuserHandle) + "/" + name }
 
-// unpinnedRefusal is why this native may not run without a pin, or "" when a
-// read of it confirms it free. Only a confirmed price of zero runs unpinned:
-// the kernel charges an unpinned run its current price, so a native that is
-// priced, absent or unreadable would otherwise spend what nobody was shown.
-func (s *Server) unpinnedRefusal(ctx context.Context, token, ref string) string {
+// unaskedQuote is the quote this native runs under unasked, read of its row,
+// when its price is minuscule (§8.2), or why it may not run unasked. The run is
+// pinned to the quote, so it never costs more than was read; a native dearer,
+// absent or unreadable would otherwise spend what nobody was shown.
+func (s *Server) unaskedQuote(ctx context.Context, token, ref string) (quote, refusal string) {
 	a, ok, err := s.client.ResolveRef(ctx, token, ref)
+	u, known := s.identity.Unit()
 	switch {
 	case err != nil:
-		return "Its price could not be read."
+		return "", "Its price could not be read."
 	case !ok:
-		return "This kernel offers no semantic search."
-	case a.Price > 0:
-		return "Semantic search is priced on this kernel."
+		return "", "This kernel offers no semantic search."
+	case !known || !u.Unasked(a.Price):
+		return "", "Semantic search costs " + s.render.moneyExact(a.Price) + " on this kernel."
 	}
-	return ""
+	return a.QuoteHash, ""
 }
 
 // planner is the kernel's planner as a page offers it — its price and the

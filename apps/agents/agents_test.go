@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -293,8 +294,8 @@ func TestPostCreateRefusesBeforeTheKernel(t *testing.T) {
 func TestPostCreateMakesAccountSessionHomeAndStarts(t *testing.T) {
 	a, k, fl, cap := kernelApp(t)
 	a.postCreate(httptest.NewRecorder(), postForm("/agents", "handle=research&password=pw"))
-	if cap.flashKind != "success" || cap.flashTo != "/agents/research" {
-		t.Fatalf("create flash = %q to %q (%+v)", cap.flashKind, cap.flashTo, cap.data)
+	if cap.flashKind != "success" || cap.flashTo != "/agents/research?form=fund" {
+		t.Fatalf("create lands on Fund: %q to %q (%+v)", cap.flashKind, cap.flashTo, cap.data)
 	}
 	if len(k.created) != 1 || k.created[0] != "research@testnet" {
 		t.Fatalf("created = %v", k.created)
@@ -718,8 +719,8 @@ func TestMountGatesEveryRouteOnTheSuperuser(t *testing.T) {
 	if len(auth) != 0 {
 		t.Errorf("a host-acting app must gate on the operator, not on any session (%d routes used RequireAuth)", len(auth))
 	}
-	if len(superuser) != 10 {
-		t.Errorf("every route must be gated: %d of 10", len(superuser))
+	if len(superuser) != 12 {
+		t.Errorf("every route must be gated: %d of 12", len(superuser))
 	}
 }
 
@@ -1141,5 +1142,214 @@ func TestEnsureAssistantStartsAStoppedOne(t *testing.T) {
 	a.ensureAssistant(context.Background())
 	if fl.running("assistant@testnet") || len(fl.started) != 1 {
 		t.Fatal("a stopped assistant stays stopped")
+	}
+}
+
+// fundKernel is a kernel for funding: the agent's account at balance, the
+// transfer's row and the model's at their prices, and each run recorded.
+type fundKernel struct {
+	mu       sync.Mutex
+	balance  int64
+	transfer int64 // sys/transfer's price; its quote is "QT<price>"
+	model    int64 // the price of the model the config reasons with
+	refs     []string
+	runs     []client.RunRequest
+	answer   string // what the next run answers instead, once: a status and a body
+}
+
+func (k *fundKernel) quote() string { return fmt.Sprint("QT", k.transfer) }
+
+func fundApp(t *testing.T) (*Agents, *fundKernel, *capture, func(*http.Request, http.HandlerFunc)) {
+	t.Helper()
+	k := &fundKernel{balance: 0, transfer: 50, model: 1200}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/admin/users/{address}", func(w http.ResponseWriter, r *http.Request) {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		fmt.Fprintf(w, `{"address":{"address":%q,"principal":"p"},"available":%d,"locked":0}`, r.PathValue("address"), k.balance)
+	})
+	mux.HandleFunc("GET /v1/actions", func(w http.ResponseWriter, r *http.Request) {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		ref := r.URL.Query().Get("ref")
+		k.refs = append(k.refs, ref)
+		switch ref {
+		case client.Transfer:
+			fmt.Fprintf(w, `[{"id":"T","name":"transfer","price":%d,"quote_hash":%q}]`, k.transfer, k.quote())
+		case "sys@testnet/llm/chat":
+			fmt.Fprintf(w, `[{"id":"M","name":"llm/chat","price":%d,"quote_hash":"QM"}]`, k.model)
+		default:
+			w.Write([]byte(`[]`))
+		}
+	})
+	mux.HandleFunc("POST /v1/run", func(w http.ResponseWriter, r *http.Request) {
+		var in client.RunRequest
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		if k.answer != "" {
+			status, body, _ := strings.Cut(k.answer, " ")
+			k.answer = ""
+			code, _ := strconv.Atoi(status)
+			w.WriteHeader(code)
+			w.Write([]byte(body))
+			return
+		}
+		if in.QuoteHash != k.quote() {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprintf(w, `{"code":"terms_changed","error":"the terms changed","meta":{"price":"%d","quote_hash":%q}}`, k.transfer, k.quote())
+			return
+		}
+		k.runs = append(k.runs, in)
+		w.Write([]byte(`{"result":{"amount":1},"tx_id":"tx","charge":50}`))
+	})
+	kernel := httptest.NewServer(mux)
+	t.Cleanup(kernel.Close)
+	a, _, cap := testApp(t)
+	if err := a.create("research"); err != nil {
+		t.Fatal(err)
+	}
+	cl := client.New(kernel.URL, nil)
+	sm := scs.New()
+	a.deps.Client, a.deps.Sessions = cl, session.NewManager(sm, cl)
+	a.deps.Amount = func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
+	a.deps.Money = func(n int64) string { return fmt.Sprint(n, " u") }
+	serve := func(r *http.Request, h http.HandlerFunc) {
+		sm.LoadAndSave(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = a.deps.Sessions.Login(r.Context(), client.Tokens{AccessToken: "t", RefreshToken: "r"}, "sys@testnet", session.Pin{})
+			r.SetPathValue("handle", "research")
+			h(w, r)
+		})).ServeHTTP(httptest.NewRecorder(), r)
+	}
+	return a, k, cap, serve
+}
+
+// Fund is Review, then the confirm: Review refuses an amount that is not one,
+// and otherwise names the amount, the transfer's price read of its row, and
+// carries its quote and a key; the confirm runs sys/transfer once, pinned to
+// that quote and named by that key, the agent the target and nothing else run.
+// Terms that moved since are reviewed again at the new ones, under a new key.
+func TestFundIsReviewThenOnePinnedTransfer(t *testing.T) {
+	a, k, cap, serve := fundApp(t)
+	for _, bad := range []string{"", "0", "-5", "1.5x"} {
+		serve(postForm("/agents/research/fund/review", "amount="+bad), a.postFundReview)
+		if v, _ := cap.data.(detailView); cap.status != http.StatusUnprocessableEntity || v.OpenForm != "fund" || v.Fund.Error == "" {
+			t.Errorf("%q must be refused in the Fund dialog: %d %+v", bad, cap.status, v.Fund)
+		}
+	}
+	serve(postForm("/agents/research/fund/review", "amount=100000"), a.postFundReview)
+	v, _ := cap.data.(detailView)
+	if v.OpenForm != "fund-review" || v.Fund.Amount != 100000 || v.Fund.Price != 50 || v.Fund.Total() != 100050 || v.Fund.Quote != "QT50" || v.Fund.Key == "" {
+		t.Fatalf("review: %+v", v)
+	}
+	if len(k.runs) != 0 {
+		t.Fatalf("review runs nothing: %+v", k.runs)
+	}
+	key := v.Fund.Key
+	form := "amount=100000&quote=QT50&key=" + key
+	serve(postForm("/agents/research/fund", form), a.postFund)
+	if len(k.runs) != 1 || k.runs[0].Action != client.Transfer || k.runs[0].ExternalKey != key || string(k.runs[0].Args) != `{"amount":100000,"target":"research@testnet"}` {
+		t.Fatalf("one pinned, keyed transfer to the agent: %+v", k.runs)
+	}
+	if cap.flashKind != "success" || cap.flashTo != "/agents/research" || cap.flashMsg != "Funded 100000 u · research@testnet." {
+		t.Errorf("funded: %q %q %q", cap.flashKind, cap.flashTo, cap.flashMsg)
+	}
+	k.mu.Lock()
+	k.transfer = 60
+	k.mu.Unlock()
+	serve(postForm("/agents/research/fund", form), a.postFund)
+	v, _ = cap.data.(detailView)
+	if len(k.runs) != 1 || v.OpenForm != "fund-review" || v.Fund.Price != 60 || v.Fund.Quote != "QT60" || v.Fund.Key == key || v.Fund.Key == "" {
+		t.Errorf("moved terms are reviewed again under a new key: %+v %+v", v.Fund, k.runs)
+	}
+	serve(postForm("/agents/research/fund", "amount=100000"), a.postFund)
+	if len(k.runs) != 1 || cap.flashTo != "/agents/research?form=fund" {
+		t.Errorf("a confirm without its review runs nothing: %+v %q", k.runs, cap.flashTo)
+	}
+}
+
+// An agent says what stops it working, from its config and the live price of
+// the model it reasons with: no funds below one model call, budget too low
+// when its budget per job is below one; nothing with a config naming no model
+// and a balance; the list reads each model's price once.
+func TestAnAgentSaysWhatStopsItWorking(t *testing.T) {
+	a, k, cap, serve := fundApp(t)
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(a.writeConfig("research", []byte(`{"reason":"sys@testnet/llm/chat","default_budget":100}`)))
+	detail := func() readiness {
+		serve(httptest.NewRequest(http.MethodGet, "/agents/research", nil), a.getDetail)
+		v, _ := cap.data.(detailView)
+		return v.Ready
+	}
+	for _, c := range []struct {
+		balance, budget int64
+		want            string
+	}{{0, 50000, "no funds"}, {1199, 50000, "no funds"}, {1200, 100, "budget too low"}, {1200, 1199, "budget too low"}, {1200, 1200, ""}, {100000, 50000, ""}} {
+		k.mu.Lock()
+		k.balance = c.balance
+		k.mu.Unlock()
+		must(a.writeConfig("research", []byte(fmt.Sprintf(`{"reason":"sys@testnet/llm/chat","default_budget":%d}`, c.budget))))
+		if rd := detail(); rd.Short != c.want || rd.Call != 1200 || rd.Budget != c.budget {
+			t.Errorf("balance %d budget %d: %+v, want %q", c.balance, c.budget, rd, c.want)
+		}
+	}
+	must(a.writeConfig("research", []byte(`{}`)))
+	if rd := detail(); rd.Short != "" || rd.Call != 0 {
+		t.Errorf("no model named, a balance: %+v", rd)
+	}
+	k.mu.Lock()
+	k.balance = 0
+	k.mu.Unlock()
+	if rd := detail(); rd.Short != "no funds" {
+		t.Errorf("no model named, nothing held: %+v", rd)
+	}
+	must(a.create("second"))
+	for _, h := range []string{"research", "second"} {
+		must(a.writeConfig(h, []byte(`{"reason":"sys@testnet/llm/chat","default_budget":50000}`)))
+	}
+	k.mu.Lock()
+	k.refs = nil
+	k.mu.Unlock()
+	serve(httptest.NewRequest(http.MethodGet, "/agents", nil), a.getIndex)
+	lv, _ := cap.data.(listView)
+	if len(lv.Agents) != 2 || lv.Agents[0].Short != "no funds" || lv.Agents[1].Short != "no funds" || len(k.refs) != 1 {
+		t.Errorf("the list: %+v, %d price reads", lv.Agents, len(k.refs))
+	}
+}
+
+// A transfer whose outcome is not known — the kernel parked it, or did not
+// answer — returns to the confirm with the same amount, quote and key, so
+// pressing Fund again asks under that key and moves money once; a definite
+// refusal reopens the amount, and its next Review mints a new key.
+func TestAnUnknownFundingKeepsItsKey(t *testing.T) {
+	a, k, cap, serve := fundApp(t)
+	form := "amount=100000&quote=QT50&price=50&key=K1"
+	for _, answer := range []string{
+		`504 {"code":"timeout","error":"the call has not settled"}`,
+		`409 {"code":"invalid_state","error":"a run under this key has not settled"}`,
+	} {
+		k.mu.Lock()
+		k.answer = answer
+		k.mu.Unlock()
+		serve(postForm("/agents/research/fund", form), a.postFund)
+		v, _ := cap.data.(detailView)
+		if v.OpenForm != "fund-review" || v.Fund.Key != "K1" || v.Fund.Quote != "QT50" || v.Fund.Amount != 100000 || v.Fund.Price != 50 || v.Fund.Error == "" {
+			t.Errorf("%s: the confirm again, same key: %+v", answer, v.Fund)
+		}
+	}
+	serve(postForm("/agents/research/fund", form), a.postFund)
+	if len(k.runs) != 1 || k.runs[0].ExternalKey != "K1" || cap.flashKind != "success" {
+		t.Errorf("Fund again goes under the same key: %+v %q", k.runs, cap.flashKind)
+	}
+	k.mu.Lock()
+	k.answer = `402 {"code":"insufficient_funds","error":"your balance is 0.00 fUSD"}`
+	k.mu.Unlock()
+	serve(postForm("/agents/research/fund", "amount=100000&quote=QT50&price=50&key=K2"), a.postFund)
+	if v, _ := cap.data.(detailView); v.OpenForm != "fund" || v.Fund.Key != "" || v.Fund.Error == "" {
+		t.Errorf("a refusal reopens the amount, the key gone: %+v", v.Fund)
 	}
 }

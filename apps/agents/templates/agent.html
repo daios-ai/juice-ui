@@ -14,8 +14,9 @@
      row for that handle's address, read with the viewer's own token; a home
      with no principal says so rather than showing a zero. The kernel filters
      transactions by process, not by party, so its history is the transactions
-     page, not a scan of the whole ledger here. There is no funding gesture —
-     sending money is running an action, on its own page (§6.5). */}}
+     page, not a scan of the whole ledger here. Fund moves the operator's money
+     to it by sys/transfer, the recipient never typed (§6.5); Model call and
+     Budget per job say whether one job fits, at the model's live price. */}}
 <h2>Account</h2>
 {{if $d.Account}}
 <div class="card">
@@ -23,8 +24,11 @@
     <dt>Address</dt><dd>{{template "_name" (name $d.Account.Address)}}</dd>
     <dt>Available</dt><dd class="money">{{money $d.Account.Available}}</dd>
     <dt>Parked</dt><dd class="money">{{money $d.Account.Locked}}</dd>
-    <dt>State</dt><dd>{{if $d.Account.Suspended}}<span class="pill status-danger">suspended</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
+    {{if $d.Ready.Call}}<dt>Model call</dt><dd class="money">{{money $d.Ready.Call}}</dd>
+    <dt>Budget per job</dt><dd class="money">{{money $d.Ready.Budget}}</dd>{{end}}
+    <dt>State</dt><dd>{{if $d.Account.Suspended}}<span class="pill status-danger">suspended</span>{{else if $d.Ready.Short}}<span class="pill status-danger">{{$d.Ready.Short}}</span>{{else}}<span class="pill status-credited">active</span>{{end}}</dd>
   </dl>
+  <div class="cluster"><a class="btn" href="/agents/{{$h}}?form=fund" data-modal="form-fund">Fund</a></div>
 </div>
 <p><a class="muted small" href="/transactions">all transactions →</a></p>
 {{else}}
@@ -68,6 +72,48 @@
     </form>
   </div>
 </dialog>
+
+{{/* ---- Fund: the amount, then the confirm naming what the operator pays,
+     the wallet's Withdraw pair in shape. The review carries the transfer's
+     quote and the key it is sent under, so it moves money once. ---- */}}
+<dialog id="form-fund" class="modal-form"{{if eq $d.OpenForm "fund"}} open{{end}} aria-label="Fund">
+  <div class="modal-head"><h2>Fund {{$h}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    {{with $d.Fund.Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/fund/review">
+      {{.CSRFField}}
+      <div class="field">
+        <label for="fund-amount">Amount</label>
+        <input id="fund-amount" name="amount" type="number" min="0" step="{{amountStep}}" class="input-sm" value="{{$d.Fund.Typed}}" required>
+      </div>
+      <div class="cluster">
+        <button class="btn-primary" type="submit">Review</button>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+{{if eq $d.OpenForm "fund-review"}}
+<dialog id="form-fund-review" class="modal-form" open aria-label="Fund">
+  <div class="modal-head"><h2>Fund {{$h}}</h2><a class="modal-close" href="/agents/{{$h}}" data-modal-close aria-label="Close">×</a></div>
+  <div class="modal-body">
+    {{with $d.Fund.Error}}{{template "_error" .}}{{end}}
+    <form class="stack" method="post" action="/agents/{{$h}}/fund">
+      {{.CSRFField}}
+      <input type="hidden" name="amount" value="{{$d.Fund.Typed}}">
+      <input type="hidden" name="quote" value="{{$d.Fund.Quote}}">
+      <input type="hidden" name="key" value="{{$d.Fund.Key}}">
+      <input type="hidden" name="price" value="{{$d.Fund.Price}}">
+      <dl class="kv"><dt>To {{$h}}</dt><dd class="money">{{moneyExact $d.Fund.Amount}}</dd><dt>Transfer</dt><dd class="money">{{moneyExact $d.Fund.Price}}</dd></dl>
+      <div class="cluster">
+        <button class="btn-money" type="submit">Fund ({{moneyExact $d.Fund.Total}})</button>
+        <button type="button" class="btn" data-modal-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{{end}}
 
 {{/* ---- edit modal (agent.md) ---- */}}
 <dialog id="form-agent" class="modal-form"{{if eq $d.OpenForm "agent"}} open{{end}} aria-label="Edit agent.md">

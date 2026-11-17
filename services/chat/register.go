@@ -53,13 +53,19 @@ func (st *State) Save(path string) error {
 }
 
 // Register makes the actions of the provider self, signed in with tok, exactly
-// chat's, each sourced at base/<self>/<name>, and deletes any other action it
-// owns: chat sits at the root of the provider's namespace, so the login is
-// chat's alone. A changed contract is pushed whole and re-enabled, which revokes
-// members' grants; a member's next run joins again. Failures accumulate so one
-// does not starve the rest; the revision is recorded only after a clean pass.
+// chat's, each sourced at base/<self>/<name> and priced from the natives' prices
+// it reads first, and deletes any other action it owns: chat sits at the root
+// of the provider's namespace, so the login is chat's alone. A changed contract
+// or price is pushed whole and re-enabled, which revokes members' grants (a
+// price alone does too, measured on v0.21.1); a member's next run joins again.
+// Failures accumulate so one does not starve the rest; the revision is recorded
+// only after a clean pass.
 func (st *State) Register(ctx context.Context, k *client.Client, tok, self, base string) error {
-	ks := contracts(self, st.Secret)
+	n, err := readNatives(ctx, k, tok)
+	if err != nil {
+		return err
+	}
+	ks := contracts(self, st.Secret, n)
 	h := sha256.New()
 	for _, c := range ks {
 		h.Write(c.auth)
@@ -94,13 +100,34 @@ func (st *State) Register(ctx context.Context, k *client.Client, tok, self, base
 	return nil
 }
 
+// readNatives reads the prices of the natives chat composes, as a call would
+// resolve them.
+func readNatives(ctx context.Context, k *client.Client, tok string) (natives, error) {
+	price := func(ref string) (int64, error) {
+		a, ok, err := k.ResolveRef(ctx, tok, ref)
+		if err == nil && !ok {
+			err = errors.New("not found")
+		}
+		if err != nil {
+			return 0, fmt.Errorf("chat: price of %s: %w", ref, err)
+		}
+		return a.Price, nil
+	}
+	resolve, err := price(client.Resolve)
+	if err != nil {
+		return natives{}, err
+	}
+	base, err := price(client.Sink)
+	return natives{resolve, base}, err
+}
+
 func ensure(ctx context.Context, k *client.Client, tok string, c contract, source string, have map[string]client.Action, force bool) error {
 	vis, title, desc := c.vis, c.title, c.desc
 	a, ok := have[c.name]
 	if !ok {
 		na, err := k.CreateAction(ctx, tok, client.CreateActionInput{
 			Name: c.name, Title: c.title, Kind: "http", Source: source, Method: "POST",
-			Description: c.desc, Price: 0, InputSchema: c.in, OutputSchema: c.out, Auth: c.auth,
+			Description: c.desc, Price: c.price, InputSchema: c.in, OutputSchema: c.out, Auth: c.auth,
 		})
 		if err != nil {
 			return fmt.Errorf("chat: create %s: %w", c.name, err)
@@ -116,8 +143,9 @@ func ensure(ctx context.Context, k *client.Client, tok string, c contract, sourc
 		return nil
 	}
 	if force || drifted(a, c, source) {
+		price := c.price
 		if _, err := k.UpdateAction(ctx, tok, a.ID, client.UpdateActionInput{
-			Source: &source, Method: "POST", InputSchema: c.in, OutputSchema: c.out,
+			Price: &price, Source: &source, Method: "POST", InputSchema: c.in, OutputSchema: c.out,
 			Title: &title, Description: &desc, Visibility: &vis, Auth: c.auth,
 		}); err != nil {
 			return fmt.Errorf("chat: reconcile %s: %w", c.name, err)
@@ -147,9 +175,10 @@ func ensure(ctx context.Context, k *client.Client, tok string, c contract, sourc
 	return nil
 }
 
-// drifted reports a difference on the fields the kernel serves back.
+// drifted reports a difference on the fields the kernel serves back, the price
+// among them.
 func drifted(a client.Action, c contract, source string) bool {
-	if a.HTTP == nil || a.HTTP.URL != source || a.Description != c.desc {
+	if a.HTTP == nil || a.HTTP.URL != source || a.Description != c.desc || a.Price != c.price {
 		return true
 	}
 	var want struct{ Scheme string }

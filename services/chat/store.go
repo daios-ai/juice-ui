@@ -39,7 +39,13 @@ var (
 	ErrBadInput  = errors.New("bad input")
 	ErrHeld      = errors.New("a post is already pending; answer the delivery first")
 	ErrAlone     = errors.New("you are its only member; delete it instead")
+	ErrFull      = fmt.Errorf("a room holds at most %d members", maxMembers)
 )
+
+// maxMembers is the most members a room holds, joined, invited and added
+// together. It bounds what a post and a room's creation compose, one task or
+// one resolve per other member, so each has a fixed price (service.go).
+const maxMembers = 32
 
 // Room is a conversation among its members. A member is added, then invited
 // once its invitation is delivered, and joined once it accepts: Members are the
@@ -360,7 +366,27 @@ func insertRoom(tx *sql.Tx, creator, name string, members []string) (string, err
 			return "", err
 		}
 	}
+	if n, err := seats(tx, id); err != nil || n > maxMembers {
+		return "", errors.Join(err, ErrFull)
+	}
 	return id, nil
+}
+
+// seats is how many members the room holds, joined, invited and added.
+func seats(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, roomID string) (int, error) {
+	var n int
+	err := q.QueryRow(`SELECT COUNT(*) FROM members WHERE room_id = ?`, roomID).Scan(&n)
+	return n, err
+}
+
+// Full is how many of the rooms hold more members than a room may: rooms made
+// before the limit keep them, and refuse posts until some are removed.
+func (s *Store) Full() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM (SELECT room_id FROM members GROUP BY room_id HAVING COUNT(*) > ?)`, maxMembers).Scan(&n)
+	return n, err
 }
 
 func (s *Store) withMembers(id string) (Room, error) {
@@ -391,7 +417,8 @@ func (s *Store) Rename(actor, roomID, name string) error {
 // AddMember adds member to the room; the creator only. It reports whether the
 // member's invitation is still to be delivered: a member added now, or added
 // earlier and never reached. A member invited or joined is left as it is, so
-// one invitation is ever outstanding.
+// one invitation is ever outstanding. A room at its limit takes nobody new,
+// and a member already in it is added again, so its invitation is tried again.
 func (s *Store) AddMember(actor, roomID, member string) (bool, error) {
 	if member == "" {
 		return false, ErrBadInput
@@ -399,11 +426,18 @@ func (s *Store) AddMember(actor, roomID, member string) (bool, error) {
 	if _, err := s.requireCreator(actor, roomID); err != nil {
 		return false, err
 	}
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO members(room_id, member, state) VALUES(?,?,?)`, roomID, member, stateAdded); err != nil {
+	// One statement checks the limit and inserts, so two additions at once
+	// cannot both see room for one more.
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO members(room_id, member, state)
+		SELECT ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ?) < ?`,
+		roomID, member, stateAdded, roomID, maxMembers); err != nil {
 		return false, err
 	}
 	var state string
 	err := s.db.QueryRow(`SELECT state FROM members WHERE room_id = ? AND member = ?`, roomID, member).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrFull
+	}
 	return state == stateAdded, err
 }
 
@@ -426,9 +460,6 @@ func (s *Store) Invited(roomID, member string) error {
 	_, err := s.db.Exec(`UPDATE members SET state = ? WHERE room_id = ? AND member = ? AND state = ?`, stateInvited, roomID, member, stateAdded)
 	return err
 }
-
-// Added is the room's members whose invitation the kernel has not taken yet.
-func (s *Store) Added(roomID string) ([]string, error) { return s.inState(roomID, stateAdded) }
 
 // Invitation is a room a member is invited to, as that member reads it: the
 // room, its name, and its creator, who invited.
@@ -758,6 +789,11 @@ func (s *Store) Post(roomID, author string, body json.RawMessage) (Entry, int64,
 	}
 	if _, err := s.requireMember(author, roomID); err != nil {
 		return Entry{}, 0, err
+	}
+	if n, err := seats(s.db, roomID); err != nil {
+		return Entry{}, 0, err
+	} else if n > maxMembers {
+		return Entry{}, 0, fmt.Errorf("%w: this room has %d members; remove members to post", ErrFull, n)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {

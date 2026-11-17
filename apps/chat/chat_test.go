@@ -95,6 +95,64 @@ type fakeKernel struct {
 	awayHold     time.Duration              // chat@away answers each run this late, as a slow kernel does
 	listHold     time.Duration              // chat@away's room/list answers this late, what it answers read at once
 	resolveHold  time.Duration              // sys/resolve answers this late, as a principal's kernel far away does
+	natives      map[string]int64           // the natives' prices, by reference
+	refused      []string                   // pinned runs refused for terms that moved
+	runTokens    []string                   // the session token of each of runs
+	reprice      map[string]int64           // an action's price, set once its row is next read: terms that move between a read and the run
+}
+
+// ranBy is the runs made with the session token tok.
+func (f *fakeKernel) ranBy(tok string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for i, run := range f.runs {
+		if f.runTokens[i] == tok {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
+// setPrice prices chat's action name as its operator would.
+func (f *fakeKernel) setPrice(name string, price int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.acts {
+		if a.Name == name {
+			a.Price = price
+		}
+	}
+}
+
+// quoteOf is the quote of chat's action name, as its row now carries it.
+func (f *fakeKernel) quoteOf(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.acts {
+		if a.Name == name {
+			return a.quote()
+		}
+	}
+	return ""
+}
+
+// quotesRun is the quote each run of chat's action name was pinned to.
+func (f *fakeKernel) quotesRun(name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, run := range f.runs {
+		var in struct {
+			Action    string `json:"action"`
+			QuoteHash string `json:"quote_hash"`
+		}
+		_ = json.Unmarshal([]byte(run), &in)
+		if in.Action == "chat@testnet/"+name {
+			out = append(out, in.QuoteHash)
+		}
+	}
+	return out
 }
 
 // hold sets how late chat@away, its list and sys/resolve answer.
@@ -208,7 +266,11 @@ type fakeAction struct {
 	ID, Name, Title, Desc, URL, Vis, Scheme string
 	Active                                  bool
 	In, Out                                 string
+	Price                                   int64
 }
+
+// quote is the action's quote: its terms, here its id and price.
+func (a *fakeAction) quote() string { return "q-" + a.ID + "-" + strconv.FormatInt(a.Price, 10) }
 
 func (a *fakeAction) wire() string {
 	in, out := a.In, a.Out
@@ -223,13 +285,15 @@ func (a *fakeAction) wire() string {
 		scheme = `,"auth_scheme":"` + a.Scheme + `","requires_grant":` + strconv.FormatBool(a.Scheme == "delegated_bearer")
 	}
 	return `{"id":"` + a.ID + `","name":"` + a.Name + `","title":"` + a.Title + `","kind":"http","active":` + strconv.FormatBool(a.Active) +
+		`,"price":` + strconv.FormatInt(a.Price, 10) + `,"quote_hash":"` + a.quote() + `"` +
 		`,"visibility":"` + a.Vis + `","description":` + strconv.Quote(a.Desc) + scheme + `,"http":{"method":"POST","url":"` + a.URL + `"},"input_schema":` + in + `,"output_schema":` + out + `}`
 }
 
 func newFakeKernel(seed ...fakeAction) *fakeKernel {
 	f := &fakeKernel{acts: map[string]*fakeAction{}, updates: map[string][]string{}, me: `{"address":{"address":"ann@testnet","principal":"ann@testnet"},"connectors":[]}`,
 		mes: map[string]string{}, expired: map[string]bool{}, keys: map[string]string{}, granted: map[string]map[string]bool{},
-		requesters: map[string]string{}, state: map[string]json.RawMessage{}, ignored: map[string]bool{}}
+		requesters: map[string]string{}, state: map[string]json.RawMessage{}, ignored: map[string]bool{},
+		natives: map[string]int64{client.Resolve: 50, client.Sink: 50}}
 	for i := range seed {
 		a := seed[i]
 		f.acts[a.ID] = &a
@@ -275,9 +339,17 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.refs = append(f.refs, ref)
+			if price, ok := f.natives[ref]; ok {
+				_, _ = w.Write([]byte(`[{"id":"` + ref + `","name":"` + ref + `","active":true,"price":` + strconv.FormatInt(price, 10) + `,"quote_hash":"q-` + ref + `"}]`))
+				return
+			}
 			for _, a := range f.acts {
 				if "chat@testnet/"+a.Name == ref || "chat@away/"+a.Name == ref {
 					_, _ = w.Write([]byte("[" + a.wire() + "]"))
+					if p, ok := f.reprice[a.Name]; ok {
+						a.Price = p
+						delete(f.reprice, a.Name)
+					}
 					return
 				}
 			}
@@ -302,7 +374,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.seq++
-		a := &fakeAction{ID: "new" + strconv.Itoa(f.seq), Name: in.Name, Title: in.Title, Desc: in.Description, URL: in.Source, Vis: "private", In: string(in.InputSchema), Out: string(in.OutputSchema), Scheme: schemeOf(in.Auth)}
+		a := &fakeAction{ID: "new" + strconv.Itoa(f.seq), Name: in.Name, Title: in.Title, Desc: in.Description, URL: in.Source, Vis: "private", In: string(in.InputSchema), Out: string(in.OutputSchema), Scheme: schemeOf(in.Auth), Price: in.Price}
 		f.acts[a.ID] = a
 		f.creates = append(f.creates, in)
 		w.WriteHeader(201)
@@ -321,6 +393,9 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			}
 			if in.Title != nil {
 				a.Title = *in.Title
+			}
+			if in.Price != nil {
+				a.Price = *in.Price
 			}
 			if in.Source != nil {
 				a.Active = false
@@ -491,11 +566,30 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 		b = []byte(norm(string(b)))
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var in struct {
-			Action string          `json:"action"`
-			Args   json.RawMessage `json:"args"`
+			Action    string          `json:"action"`
+			Args      json.RawMessage `json:"args"`
+			QuoteHash string          `json:"quote_hash"`
 		}
 		_ = json.Unmarshal(b, &in)
 		f.mu.Lock()
+		// A run the UI made unpinned could cost more than it read: chat never
+		// makes one, so this kernel refuses it.
+		if in.QuoteHash == "" {
+			f.mu.Unlock()
+			http.Error(w, `{"code":"invalid_input","error":"unpinned run of `+in.Action+`"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		// A pinned run whose terms moved is refused before anything runs, with
+		// the terms as they now are.
+		for _, a := range f.acts {
+			if ("chat@testnet/"+a.Name == in.Action || "chat@away/"+a.Name == in.Action) && in.QuoteHash != "" && in.QuoteHash != a.quote() {
+				f.refused = append(f.refused, in.Action)
+				f.mu.Unlock()
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"code":"terms_changed","error":"the action's terms changed","meta":{"price":"` + strconv.FormatInt(a.Price, 10) + `","quote_hash":"` + a.quote() + `"}}`))
+				return
+			}
+		}
 		needs := false
 		for _, a := range f.delegated() {
 			needs = needs || a == in.Action
@@ -535,6 +629,7 @@ func newFakeKernel(seed ...fakeAction) *fakeKernel {
 			return
 		}
 		f.runs = append(f.runs, string(b))
+		f.runTokens = append(f.runTokens, tok)
 		key := f.keys[tok+" "+serviceOf(in.Action)]
 		failing := f.failRuns
 		chat, away := f.chatFor(in.Action)
@@ -912,7 +1007,10 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	if err := st.Register(context.Background(), cl, "t", "chat@testnet", "http://chat.test"); err != nil {
 		t.Fatal(err)
 	}
+	unit := server.Unit{Decimals: 6, Symbol: "fUSD"}
 	c.deps = apps.Deps{
+		Unasked:    unit.Unasked,
+		Money:      unit.Format,
 		Address:    testAddress,
 		KeyAddress: func(h string) string { return h + "@" + testKey },
 		Label:      client.Party.Label,
@@ -1326,11 +1424,14 @@ func TestLanding(t *testing.T) {
 	if rec.Code != 303 || !strings.HasPrefix(to, "/chat/room/") || rec.Header().Get("X-Flash") != "" {
 		t.Fatalf("landing: %d %s %s", rec.Code, to, rec.Header().Get("X-Flash"))
 	}
-	if m, ok := f.svc.Store.Member(f.keyOf("AT")); !ok || m != pr("assistant@testnet") {
-		t.Fatalf("the assistant is joined with its own session: %q %v", m, ok)
+	// The assistant is seated by its invitation, which the room's creator paid
+	// for: chat approved as its requester and the task completed, with no chat
+	// key bought and nothing run.
+	if _, ok := f.svc.Store.Member(f.keyOf("AT")); ok || len(f.ranBy("AT")) != 0 {
+		t.Fatalf("the assistant buys no chat key to sit in a room: %v", f.ranBy("AT"))
 	}
-	if len(f.decided) != 2 || f.decided[1] != "chat@testnet approve" || len(f.completes) != 0 {
-		t.Errorf("join = decided %v completes %v", f.decided, f.completes)
+	if len(f.decided) != 2 || f.decided[1] != "chat@testnet approve" || len(f.completes) != 0 { // completes counts tasks other than invitations
+		t.Errorf("seat = decided %v completes %v", f.decided, f.completes)
 	}
 	if got := f.ran(roomCreateName); len(got) != 1 || got[0] != `{"members":["assistant@testnet"],"name":"New room"}` {
 		t.Errorf("the first visit makes the room: %v", got)
@@ -1340,7 +1441,7 @@ func TestLanding(t *testing.T) {
 		t.Fatalf("rooms = %+v", rooms)
 	}
 	agentReads := f.tasksReadBy("AT")
-	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 2 || len(f.ran(roomCreateName)) != 1 {
+	if rec := land(); rec.Header().Get("Location") != to || len(f.grants) != 1 || len(f.ran(roomCreateName)) != 1 {
 		t.Errorf("a second landing joins nobody, makes nothing and opens the same room: %s %v %v", rec.Header().Get("Location"), f.grants, f.ran(roomCreateName))
 	}
 	if n := f.tasksReadBy("AT") - agentReads; n != 0 {
@@ -2312,6 +2413,7 @@ func TestARunJoinsWhenItMust(t *testing.T) {
 func TestRefusalsAreSaidByStatus(t *testing.T) {
 	for status, want := range map[string]string{
 		"400": "not valid", "401": "not joined", "403": "may not", "404": "no longer exists", "409": "already pending",
+		"422": "at most 32 members",
 	} {
 		err := &client.KernelError{Kind: client.KindExecutionFailed, KernelMessage: "upstream returned status " + status}
 		if got := refusal(err, home); !strings.Contains(got, want) {
@@ -2327,6 +2429,9 @@ func TestRefusalsAreSaidByStatus(t *testing.T) {
 		if got := refusal(err, home); got != "" {
 			t.Errorf("%v must be no refusal: %q", err, got)
 		}
+	}
+	if got := refusal(&errPriced{Text: "0.02 fUSD"}, home); got != "This costs 0.02 fUSD, more than is paid without asking." {
+		t.Errorf("a price above the line: %q", got)
 	}
 	if got := refusal(&client.KernelError{Kind: client.KindPeerUnreachable}, "chat@away"); got != "chat@away is not answering. Try again shortly." {
 		t.Errorf("a kernel unreachable: %q", got)
@@ -3359,7 +3464,7 @@ func TestAChatAskingByKeyIsShownByKey(t *testing.T) {
 	f.requesters["chat@"+awayKey] = "pending"
 	h, _ := railRead(c, sm)
 	if got := string(h); !strings.Contains(got, `<header><span class="name mono" title="chat@`+awayKey+`"><span class="owner"><a href="/browse?owner=chat%40`+awayKey+`">chat@~away</a></span></span> <button type="button" class="btn-icon inline" data-copy="chat@`+awayKey+`"`) || !strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/ignore"`) || strings.Contains(got, "Block") ||
-		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || len(f.refs) != 0 {
+		!strings.Contains(got, `action="/chat/chats/chat@`+awayKey+`/approve"`) || slices.ContainsFunc(f.refs, func(ref string) bool { return strings.Contains(ref, "away") }) {
 		t.Fatalf("the card shows the kernel's own name, its copy beside the name, not in it, and connects it by key: %s", got)
 	}
 }
@@ -4085,5 +4190,146 @@ func TestANameNeverWaitsLong(t *testing.T) {
 	f.hold(0, 0, 0)
 	if get(); bobShown() != "bob@~moved" || asked() != 2 {
 		t.Errorf("and asked again past the request: %q, asked %d", bobShown(), asked())
+	}
+}
+
+// A chat priced by its operator runs unasked while a price is minuscule, each
+// run pinned to the terms it read, an agent's and a principal's naming
+// included; terms that moved between the read and the run are read from the
+// refusal and run again. A price at or above the line runs nothing unasked:
+// the landing says what it costs and makes no room, and New room offers Create
+// as a money button naming the price, which, pressed, runs pinned to the quote
+// it named; a quote that moved since is offered again at the new price.
+func TestAPriceAboveTheLineIsAsked(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := testChat(t, f)
+	agentHome(t, c, "assistant@testnet", "AT")
+	f.mes["AT"] = `{"address":{"address":"assistant@testnet","principal":"assistant@testnet"},"connectors":[]}`
+	var page landingView
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, name, title string, data any) {
+		page, _ = data.(landingView)
+		w.WriteHeader(status)
+	}
+	f.setPrice(roomCreateName, 20000)
+	if rec := landing(c, sm); rec.Code != 200 || page.Error != "This costs 0.02 fUSD, more than is paid without asking." || len(f.ran(roomCreateName)) != 0 {
+		t.Fatalf("a dear first room is not made unasked: %d %q %v", rec.Code, page.Error, f.ran(roomCreateName))
+	}
+	for _, name := range []string{joinName, roomJoinName} {
+		for _, q := range f.quotesRun(name) {
+			if q != f.quoteOf(name) {
+				t.Errorf("%s ran at %q, its row's quote %q", name, q, f.quoteOf(name))
+			}
+		}
+	}
+	c2, sm2 := rigCommands(t, f) // registers chat again, at its own prices
+	f.setPrice(roomCreateName, 20000)
+	post := func(form string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		return as(c2, sm2, c2.postCreateRoom, req)
+	}
+	q := f.quoteOf(roomCreateName)
+	got := post("members=bob%40testnet&name=tea").Body.String()
+	for _, want := range []string{`<button class="btn-money" type="submit">Create (0.02 fUSD)</button>`, `name="quote" value="` + q + `"`, `name="quoted" value="` + c2.self() + `/room/create"`, `name="name" value="tea"`, ">bob@testnet</textarea>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Create is a money button: lacks %s: %s", want, got)
+		}
+	}
+	if len(f.ran(roomCreateName)) != 0 {
+		t.Fatalf("offering it ran it: %v", f.ran(roomCreateName))
+	}
+	quoted := "&quoted=" + url.QueryEscape(c2.self()+"/room/create") + "&quote="
+	f.setPrice(roomCreateName, 30000)
+	if got := post("members=bob%40testnet&name=tea" + quoted + url.QueryEscape(q)).Body.String(); !strings.Contains(got, "Create (0.03 fUSD)") || len(f.ran(roomCreateName)) != 0 {
+		t.Errorf("a quote that moved is offered again: %s", got)
+	}
+	q = f.quoteOf(roomCreateName)
+	rec := post("members=bob%40testnet&name=tea" + quoted + url.QueryEscape(q))
+	runs := f.quotesRun(roomCreateName)
+	if to := rec.Header().Get("HX-Redirect"); !strings.HasPrefix(to, "/chat/room/") || len(runs) == 0 || slices.ContainsFunc(runs, func(r string) bool { return r != q }) {
+		t.Errorf("pressed, it runs pinned to the quote named: %v %v", rec.Header(), f.quotesRun(roomCreateName))
+	}
+	f.setPrice(roomCreateName, 1800)
+	f.mu.Lock()
+	f.reprice = map[string]int64{roomCreateName: 2000}
+	f.mu.Unlock()
+	if rec := post("members=bob%40testnet&name=tea"); !strings.HasPrefix(rec.Header().Get("HX-Redirect"), "/chat/room/") || len(f.refused) == 0 {
+		t.Errorf("terms moved under the line are run again: %v %v", rec.Header(), f.refused)
+	}
+	if runs := f.quotesRun(roomCreateName); runs[len(runs)-1] != f.quoteOf(roomCreateName) {
+		t.Errorf("at the new terms: %v", runs)
+	}
+}
+
+// An agent holding no invitation to the room is joined to chat first, with its
+// own session, and then runs room/join, which needs its key.
+func TestSeatWithoutAnInvitationJoinsFirst(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, _ := testChat(t, f)
+	agentHome(t, c, "helper@testnet", "AH")
+	f.mes["AH"] = `{"address":{"address":"helper@testnet","principal":"helper@testnet"},"connectors":[]}`
+	room, err := seated(f.svc.Store, pr("ann@testnet"), "cafe", nil)
+	if err == nil {
+		_, err = f.svc.Store.AddMember(pr("ann@testnet"), room.ID, pr("helper@testnet"))
+	}
+	if err == nil {
+		err = f.svc.Store.Invited(room.ID, pr("helper@testnet"))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.seat(context.Background(), "helper@testnet", room.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.svc.Store.Member(f.keyOf("AH")); !ok || len(f.ran(roomJoinName)) != 1 {
+		t.Errorf("joined to chat, then room/join: %v", f.ranBy("AH"))
+	}
+	if r, _ := f.svc.Store.Rooms(pr("helper@testnet")); len(r) != 1 {
+		t.Errorf("seated: %+v", r)
+	}
+}
+
+// A member that cannot pay to join is said plainly, however the error came
+// wrapped.
+func TestAnUnfundedJoinIsSaidPlainly(t *testing.T) {
+	err := fmt.Errorf("join: %w", &client.KernelError{Kind: client.KindInsufficientFunds, KernelMessage: "your balance is 0.00 fUSD"})
+	if got := joinFailed("helper@testnet", err); got != "helper@testnet has too little balance to join chat." {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Without script, a creation priced above the line answers the page itself,
+// its rail's New room dialog open with what was typed and Create a money
+// button naming the price and carrying its quote, as under htmx.
+func TestAPricedCreationWithoutScriptIsAsked(t *testing.T) {
+	f := newFakeKernel()
+	defer f.close()
+	c, sm := rigCommands(t, f)
+	f.setPrice(roomCreateName, 20000)
+	var drawn *http.Request
+	var page string
+	c.deps.RenderPage = func(w http.ResponseWriter, r *http.Request, status int, name, title string, data any) {
+		drawn, page = r, name
+		w.WriteHeader(status)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/chat/rooms", strings.NewReader("members=bob%40testnet&name=tea"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := as(c, sm, c.postCreateRoom, req)
+	if rec.Code != 200 || page != "landing" || drawn == nil || len(f.ran(roomCreateName)) != 0 {
+		t.Fatalf("the page answers, nothing run: %d %q %v", rec.Code, page, f.ran(roomCreateName))
+	}
+	rail, err := c.Rail(drawn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(rail)
+	for _, want := range []string{`<dialog id="form-new" class="modal-form" open`, `<button class="btn-money" type="submit">Create (0.02 fUSD)</button>`,
+		`name="quote" value="` + f.quoteOf(roomCreateName) + `"`, `name="quoted" value="` + c.self() + `/room/create"`, ">bob@testnet</textarea>", `value="tea"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the rail's dialog lacks %s", want)
+		}
 	}
 }

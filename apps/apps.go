@@ -218,6 +218,16 @@ type Deps struct {
 	// its key shortened, the key added once two kernels claim one nickname.
 	Label func(p client.Party) string
 
+	// Unasked reports whether a run at price may be made without asking the
+	// person: a minuscule price, under a hundredth of the world's token (§8.2).
+	// Such a run is still pinned to the terms read, so it never costs more.
+	// Money is an amount as the person reads it, exact, with its symbol.
+	Unasked func(price int64) bool
+	Money   func(n int64) string
+	// Amount reads an amount a person typed, in the world's decimals, into
+	// base units; a separator or a digit finer than the unit is refused.
+	Amount func(s string) (int64, error)
+
 	// Ignore records that the viewer ignored the requester q: Ignored then
 	// reports it while it is pending, and the inbox's badge leaves it out. Any
 	// decision on q in the inbox or Settings ends it.

@@ -1,7 +1,29 @@
 # Juice Web UI Requirements
 
-Version: 0.73.4
+Version: 0.74.0
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.74.0.** Chat is priced, and a minuscule price needs no
+> confirmation. Kernel v0.21.1 prices every native at its cost, `sys/resolve`
+> among them, so chat's actions, priced 0, could not pay for the resolves they
+> compose. Chat prices each action by the ecosystem's pricing guide from the
+> natives' prices its operator set, read at every registration, none written
+> into chat: at the shipped prices `accept` 1, `reply` 5, the reads and plain
+> commands 60, `room/add` and `join` 110, `msg/post` 210, `room/create` 1,800. A
+> room holds at most 32 members, which bounds a post and a creation; a room
+> made before with more keeps them and refuses posts until members are
+> removed. A post no longer tries invitations again; adding the member again
+> does. A run priced under a hundredth of the world's token is minuscule: it
+> needs no confirmation and may run unasked, and every run the UI makes so is
+> pinned to the row it read, so it never costs more; search runs `sys/lookup`
+> so too. Above the line a surface degrades, saying what it costs, and chat's
+> Create becomes a money button naming the price. An operator funds an agent
+> in two clicks: Fund on its page, Review, `Fund (N)`, sent once by the
+> transfer's `external_key`; New agent lands on Fund; a pill says when an agent
+> has no funds or too low a budget per job. An agent is seated in a room by
+> completing its invitation, free to it. The kernel pin is v0.21.1, and
+> juice-agent's v0.11.1, whose budget per job defaults to 50,000 (§1, §6.5,
+> §6.7, §8.2).
 
 > **What changed in 0.73.4.** A request waits only for the kernel it is
 > about, and for any other at most one second. Opening a room, posting in it
@@ -1822,7 +1844,26 @@ and absent until then.
   removal, so no daemon takes it meanwhile. A stopped agent shows the daemon's
   `error:` line from its current run. The agent's page shows its account;
   its history is the transactions page, since the kernel filters
-  transactions by process and not by party. On its start it makes and runs
+  transactions by process and not by party. An agent pays for its own calls,
+  its model's above all, so the operator **funds** it: Fund on its page takes
+  an amount, Review names it and the price of `sys/transfer` read of its row,
+  and the money button `Fund (N)` sends the amount from the operator's balance
+  to the agent, pinned to the quote reviewed and named by an `external_key`
+  minted at Review, so a double submit or a retry moves money once (the
+  withdrawal's pattern); terms that moved are reviewed again under a new key.
+  An outcome not known — no answer, a call the kernel sent and has not
+  settled, or a run under the same key not settled yet — returns to the
+  confirm with the same amount, quote and key, so Fund again moves money once;
+  only a refusal reopens the amount, whose next Review mints a new key.
+  The recipient is never typed: Fund is a surface powered by a native, as
+  search is by `sys/lookup`, not the send form §6.5 forbids. New agent lands
+  on its page with Fund open (Stripe and Twilio onboarding: create, then add
+  funds). The page shows the price of one call of the model the agent's config
+  names as `reason` and its `default_budget`, both read live, and a pill says
+  what stops it working: `no funds` below one model call, `budget too low`
+  when its budget per job is below one; the list shows the same pill. An
+  existing agent keeps the budget its `config.json` holds (juice-agent
+  0.11.1), raised in the configuration form on the same page. On its start it makes and runs
   the assistant, `assistant@<kernel>`, that a session lands in conversation
   with (§6.7, rule 11); the assistant is otherwise an ordinary agent. It knows
   nothing of chat: chat joins the agents it finds.
@@ -1999,11 +2040,12 @@ both MUST keep planning apart from spending:
   function serves both, and the panel renders Discover's results, its banner
   and its sort switch through the same partial. It runs `sys/lookup` pinned to
   the quote the launcher's row named, which is the person's authorization of
-  that price; without a pin it runs only when a read of it confirms it free —
-  a lookup priced, absent or whose price cannot be read MUST NOT run unpinned,
-  here or on Discover's GET, since the kernel charges an unpinned run its
+  that price; without one it runs only when a read of it finds the price
+  minuscule (§8.2), pinned to the quote read — a lookup dearer, absent or
+  whose price cannot be read MUST NOT run unasked, here or on Discover's GET,
+  and no run is ever unpinned, since the kernel charges an unpinned run its
   current price — and the search falls back to the catalog match with the
-  reason stated.
+  reason stated ("Semantic search costs N on this kernel.").
   A pinned run the kernel refuses because the price moved is said as such —
   not charged, the new price named — with one money button,
   `Search "…" (N)`, pinned to the new quote; it is never shown as the
@@ -2993,14 +3035,14 @@ schema canonical (§6.4) and every text naming this kernel, are:
 
 | Action | Visibility, auth | Input → output | Who may |
 |---|---|---|---|
-| `index` | public, free | `{}` → `{usage}`, the paragraph a member learns chat from | anyone |
+| `index` | public | `{}` → `{usage}`, the paragraph a member learns chat from | anyone |
 | `join` | public, chat's bearer | `{}` → `{api_key}`: a key issued to the caller the kernel names | anyone |
 | `reply` | private, chat's bearer | a delivery's onward: `{thread_id, member, delivery, message, answer?, status?, reason?}` → `{ok}` | the kernel |
 | `accept` | private, chat's bearer | an invitation's onward: `{thread_id, member, name?, from?}` → `{ok}`; the member joins | the kernel |
-| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the members it could not reach, recipients and invitees | a member |
-| `room/create` | public, delegated | `{members, name?}` → `{room, uninvited}`, the members whose invitation could not be delivered yet | anyone joined, who becomes the creator; a blank name is the members' handles |
+| `msg/post` | public, delegated | `{thread_id, message: string}` → `{delivered, undelivered}`, the recipients it could not reach | a member; refused `422` in a room holding more than 32 members |
+| `room/create` | public, delegated | `{members, name?}` → `{room, uninvited}`, the members whose invitation could not be delivered yet | anyone joined, who becomes the creator; a blank name is the members' handles; refused `422` past 32 members |
 | `room/rename` | public, delegated | `{thread_id, name}` → `{room}` | the creator; a name is never blank |
-| `room/add` | public, delegated | `{thread_id, member}` → `{room, uninvited}`; a member not reached yet is tried again, one invited or joined is left as it is | the creator |
+| `room/add` | public, delegated | `{thread_id, member}` → `{room, uninvited}`; a member not reached yet is tried again, one invited or joined is left as it is | the creator; refused `422` for a new member of a room holding 32 |
 | `room/remove` | public, delegated | `{thread_id, member}` → `{room}`, the member by principal, or by the address chat holds a seat by when it has none; an invitation withdrawn as a member is removed | the creator, never itself |
 | `room/leave` | public, delegated | `{thread_id}` → `{ok}`; an invited member leaving declines; the creator leaving hands the room to the joined member in it longest (WhatsApp: when the admin exits, another becomes admin), and is refused `409` when no other member is joined, since only `room/delete` deletes | any member, joined or invited |
 | `room/join` | public, delegated | `{thread_id}` → `{room}`; the caller accepts its invitation | a member invited |
@@ -3010,6 +3052,39 @@ schema canonical (§6.4) and every text naming this kernel, are:
 
 Every member, author, invitee and member waited on in a reply is a party; a
 room's `creator` is a principal.
+
+**Prices.** No action of chat is free: every call costs its operator at least
+the records it leaves. Chat prices each action by the pricing guide
+(`juicedocs/ecosystem-standard.md`): the sub-calls it composes at their worst
+case, plus 1.25 times its own cost, plus a margin of the kernel's base charge,
+rounded up to a round number (below 10 to 1, 2, 5 or 10; to 1,000 to the next
+10; above it to the next 100). The natives' prices are the operator's, read at
+every registration from the rows of `sys/resolve` (R) and `sys/sink` (B, the
+base charge); none is written into chat. Own cost is bytes kept, at 8 units per
+KB, and bytes sent, at 90 per MB, measured on a store; processor time is below
+one unit. A room holds at most 32 members, so a post parks at most 31 `reply`
+tasks and a creation resolves and invites at most 31.
+
+| Action | Price | At R = B = 50 |
+|---|---|---|
+| `accept` | 1.25 × own, at least 1; no margin, its task parked by the inviting command | 1 |
+| `reply` | 1.25 × own (230 B kept); no margin, its task parked by the post | 5 |
+| `index`, `room/list`, `room/read`, `room/rename`, `room/remove`, `room/leave`, `room/join`, `room/delete` | 1.25 × own + B | 60 |
+| `room/add` | R + `accept` + 1.25 × own (199 B) + B | 110 |
+| `join` | R + 1.25 × own (567 B) + B | 110 |
+| `msg/post` | 31 × `reply` + 1.25 × own (229 B) + B | 210 |
+| `room/create` | 31 × (R + `accept`) + 1.25 × own (8.6 KB) + B | 1,800 |
+
+A price changed by a registration is pushed with the whole contract and the
+action enabled again: a price change alone disables an action and drops every
+grant on it (measured on kernel v0.21.1), and a member's next run joins again.
+Every price is minuscule (§8.2), so the chat page runs chat unasked, each run
+pinned to the row it read; a chat whose operator prices an action at or above
+the line has that action degrade in chat's words, "This costs N, more than is
+paid without asking.", and its Create offered on a money button naming N, in
+place under htmx and without script as the page with the New room dialog open. A
+call from another kernel is admitted only when chat can fund it (kernel D14):
+chat's own balance, earned from its members' calls, must hold the price.
 
 **Identity.** Chat is an ordinary HTTP application behind the kernel. `join` signs
 a user up: the kernel tells every action its immediate caller and the owner of
@@ -3038,10 +3113,17 @@ from}`, the member's principal, the room's name then and its creator's address,
 who invited. A member named by address is first resolved by chat's kernel
 (`sys/resolve`, composed on the dispatch) and seated as the principal it names; one
 whose address does not resolve, its kernel unknown or unreachable, stays added
-under the address typed and is named in `uninvited`; each post in the room tries
-its invitation again with the post's own capability, as a post tries each
-recipient, and names it in `undelivered` while it fails. Adding it again tries at
-once; a member invited or joined, however named, gets no second task. A resolve
+under the address typed and is named in `uninvited`. A post does not try it
+again, an invitation not being the poster's to pay for; the creator adding it
+again tries at once, and a member invited or joined, however named, gets no
+second task. A room holds at most 32 members, joined, invited and added
+together: a creation past it is refused whole and an addition past it refused,
+both `422`, "A room holds at most 32 members."; a member already in the room is
+added again. A room made before the limit with more keeps every member and
+every entry and is read, renamed, left and deleted as before; it takes nobody
+new and refuses a post `422`, which the chat page words "This room has N
+members; a room holds at most 32. Remove members to post."; chat logs at start
+how many rooms are over the limit. A resolve
 and a task creation are each bounded at 3 s, so an unreachable kernel never holds
 a command past the kernel's deadline. The member accepts by
 completing the task or by running `room/join` itself, and declines with
@@ -3358,13 +3440,18 @@ The rules:
    kernel is joined with its own session, read from
    `client/credentials/<login>.json` under that file's lock and refreshed there
    when the kernel refuses it (ecosystem-standard §4): every time chat signs
-   in, and when a room seats it, which costs a grant-plan read and nothing
-   more once it is joined; a landing touches no agent that no room waits
-   for. Where the UI adds an
-   agent to a room at home (New room, Members, the first room) it seats it: joins it and runs `room/join` with its
-   session, then completes its invitation task so its daemon is not handed it:
-   an agent has nobody to accept, and its operator adding it is the consent, as
-   it is for joining. Chat has no rule for agents. A seat that fails leaves the
+   in, best effort, so a funded agent may post; a landing touches no agent
+   that no room waits for. Where the UI adds an
+   agent to a room at home (New room, Members, the first room) it seats it with
+   its session: chat approved as its requester and its invitation task
+   completed, which joins it and keeps its daemon from being handed it. Both
+   are free to the agent, the room's creator having paid for the invitation,
+   and neither needs a chat key, since an agent receives and answers
+   deliveries without one (measured on kernel v0.21.1); an agent holding no
+   invitation is joined to chat and runs `room/join`. An agent has nobody to
+   accept, and its operator adding it is the consent, as it is for joining. A
+   join refused for funds reads "<agent> has too little balance to join
+   chat." Chat has no rule for agents. A seat that fails leaves the
    agent invited, and the next landing seats every local agent still invited
    to a room at home. A
    join that fails is said on the page that asked for it, and no key is ever
@@ -3734,15 +3821,28 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    through a confirm whose button names the amount or refund. A task
    completion moves none of the completer's money and stays neutral (§6.3, the
    single statement). No
-   spend MUST be reachable from a list view or by a GET.
+   spend MUST be reachable from a list view or by a GET, except a minuscule
+   one.
 
-   This binds the natives the UI runs **on a person's behalf, unasked**, to
-   power a surface — `sys/lookup` behind search, and any successor. Every
-   native's price is the operator's own configuration and the shipped figures
-   are policy, not contract, so a kernel may price one; the UI MUST read that
-   price from the action row before running it, and where it is non-zero MUST
-   degrade the surface rather than spend. An action a person chooses to run is
-   unaffected: it is priced and confirmed like any other.
+   A run priced **under one hundredth of the world's token** — 10,000 units on
+   the shipped worlds, a cent where the token is a dollar — is **minuscule**: it
+   needs no confirmation and MAY run unasked, on a GET or the heartbeat. The
+   line is computed from the world's decimals, never written as an amount: it
+   lies above every price of chat (1,800 at most at the shipped native prices)
+   with room for an operator raising the natives, and a cent is the usual upper
+   bound of a micropayment. A run the line admits MUST be **pinned**: the UI
+   reads the action's row and runs with its `quote_hash`, so the kernel never
+   charges more than was read; terms that moved since are refused at no charge
+   and read again from the refusal. This binds the natives and the app actions
+   the UI runs **on a person's behalf, unasked**, to power a surface —
+   `sys/lookup` behind search, chat's reads, posts and commands, `sys/resolve`
+   behind every name, and any successor. Every price is its operator's own
+   configuration, so the UI MUST read it from the action row before running;
+   at or above the line it MUST degrade the surface, saying what it costs,
+   rather than spend; an act the person takes at or above it is offered on a
+   money button naming the amount (chat's Create). An action a person chooses
+   to run from its page is unaffected: it is priced and confirmed like any
+   other.
 3. Split an action address by the first-slash rule everywhere (§4); render the
    owner distinguished, in a confusable-distinct monospace face, with the owner
    profile one click away for a local owner and no link for another kernel's;

@@ -197,8 +197,8 @@ func (s *Service) createTasks(ctx context.Context, d trace, tasks []client.Creat
 // task's onward. Each carries the room id as thread_id, the member, the room's
 // name and its creator's address, who invited. A seat whose address does not
 // resolve, or whose task the kernel does not take in time, its kernel offline
-// or unknown, stays added and is tried again at the room's next post. Those
-// are returned, so the poster learns of them.
+// or unknown, stays added and is tried again when the room's creator adds it
+// again. Those are returned, so the creator learns of them.
 func (s *Service) invite(ctx context.Context, d trace, roomID string, seats []string) []client.Party {
 	missed := []client.Party{}
 	if len(seats) == 0 {
