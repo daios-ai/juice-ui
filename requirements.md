@@ -1,7 +1,15 @@
 # Juice Web UI Requirements
 
-Version: 0.74.1
+Version: 0.74.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.74.2.** A tool chosen from search results in a room's
+> panel opens in the panel again and its result becomes the draft; since
+> 0.73.3 it left the room for the tool's page, the panel's script still
+> matching the action addresses 0.73.3 replaced. The user stories now run end
+> to end before every commit, `make e2e` (§9): the pinned kernel and agent,
+> this tree's programs, a fresh home and a real browser, in a network
+> namespace.
 
 > **What changed in 0.74.1.** The installer's World step is a list of radio
 > choices, each world's name, symbol and description in one row, in place of a
@@ -3873,6 +3881,19 @@ Every production `.go` file has a `_test.go` file with independent tests.
 `go test ./...` passes without network access; the kernel API is faked as an
 `httptest.Server`, except in one test. Required coverage:
 
+* the user stories end to end (`e2e`, `make e2e`, build tag `e2e`, so
+  `go test ./...` stays offline): the pinned kernel and agent, installed into a
+  cache by the components' routine, and this tree's programs on a fresh home,
+  driven by headless Chrome inside a network namespace, with a fake
+  OpenAI-compatible model on Ollama's address; one subtest per story, in order,
+  each through the pages a person uses: install with `play` selected, the
+  operator signing in and recording payments, a person signing up and landing
+  in a room with the assistant seated, the assistant funded by Fund, a post
+  answered by the assistant, a tool from the launcher and a tool from search
+  results each opened and run in the panel with its result as the draft and the
+  page still the room, a room made by address and joined by the invited person
+  from the sidebar, and a post's charge in Transactions. A commit needs it green
+  beside `make check`;
 * the process supervisor (`supervisor`), with real short-lived processes: output and
   its bound while a program runs, restart and its growing delay, an unchanged
   declaration leaving the delay alone, SIGTERM then SIGKILL to the group, Start and

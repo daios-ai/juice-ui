@@ -15,7 +15,7 @@ KERNEL  ?= http://127.0.0.1:4040
 ADDR    ?= 127.0.0.1:8080
 SECRET  ?= dev-secret
 
-.PHONY: build test clean install uninstall run fmt vet check
+.PHONY: build test clean install uninstall run fmt vet check e2e
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
@@ -52,6 +52,12 @@ vet:
 # by server/themes_test.go (TestThemesCSSInSync), so a forgotten run fails check.
 themes:
 	go run ./cmd/themegen > server/static/themes.css
+
+# The user stories end to end (requirements §9): the pinned kernel and agent,
+# this tree's programs, a fresh home and headless Chrome, inside a network
+# namespace. A commit needs `make check` and `make e2e` both green.
+e2e:
+	go test -tags e2e -count=1 -v ./e2e/
 
 # CI gate: formatting, vet, and the offline suite must all pass.
 check:

@@ -779,13 +779,15 @@ for (const form of document.querySelectorAll("form.search")) {
 // in the panel over the results, which are held with their scroll position; a
 // sort tab arranges the rows by the rank the server numbered them with, so a
 // search is never run twice; ← Results puts the held results back. Rows and
-// tabs are Discover's links, the no-JS path.
+// tabs are Discover's links, the no-JS path; a row's is the action's one
+// address, /actions?ref= (actionHref).
 document.addEventListener("click", (e) => {
   const panel = document.getElementById("panel");
   if (!panel?.contains(e.target)) return;
   const link = e.target.closest(".action-list a[href]");
   const tab = e.target.closest(".tabs .tab");
-  if (link && /^\/(actions\/[^/]+|discovered)$/.test(new URL(link.href).pathname)) {
+  const to = link && new URL(link.href);
+  if (to && to.pathname === "/actions" && to.searchParams.has("ref")) {
     e.preventDefault();
     held = { nodes: [...panel.childNodes], top: panel.scrollTop };
     openPanel(link.href, true);
