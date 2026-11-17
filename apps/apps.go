@@ -227,6 +227,9 @@ type Deps struct {
 	// Amount reads an amount a person typed, in the world's decimals, into
 	// base units; a separator or a digit finer than the unit is refused.
 	Amount func(s string) (int64, error)
+	// ShowImages lets this response show images from any https address, for a
+	// page whose messages show them when clicked (requirements §8).
+	ShowImages func(w http.ResponseWriter)
 
 	// Ignore records that the viewer ignored the requester q: Ignored then
 	// reports it while it is pending, and the inbox's badge leaves it out. Any

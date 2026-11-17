@@ -1,11 +1,12 @@
-{{/* _entry — one thing said in a room: who, when, and the body as the
-     view. Input: Entry. */}}
+{{/* _entry — one thing said in a room: who, when, and the body: a text as
+     formatted prose (prose, requirements §6.7), any other body as the view
+     with its JSON switch. Input: Entry. */}}
 {{define "_entry"}}
 <div class="msg" id="e-{{.Seq}}">
   <span class="avatar" aria-hidden="true">{{initial .Author.Address}}</span>
   <div class="msg-body">
     <div class="msg-who"><span class="h">{{template "_name" (brief .Author)}}</span><span class="muted small">{{shortTime .At}}</span></div>
-    {{template "_value_block" (valueBlock .Body "")}}
+    {{with prose .Body}}<div class="prose">{{.}}</div>{{else}}{{template "_value_block" (valueBlock $.Body "")}}{{end}}
   </div>
 </div>
 {{end}}

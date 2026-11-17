@@ -495,17 +495,30 @@ func Shell(h http.Handler) http.Handler {
 	return securityHeaders(mux)
 }
 
+// csp is the Content-Security-Policy: images from this server alone, or, on
+// a page that shows a message's images (showImages), from any https address
+// too. No image element exists there until the viewer clicks the image's
+// button, so nothing loads unasked (requirements §8).
+func csp(images bool) string {
+	img := "img-src 'self' data:"
+	if images {
+		img += " https:"
+	}
+	return "default-src 'self'; script-src 'self'; style-src 'self'; " + img + "; font-src 'self'; connect-src 'self'; " +
+		"form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+}
+
+// showImages admits https images on this response alone: a room's page.
+func showImages(w http.ResponseWriter) { w.Header().Set("Content-Security-Policy", csp(true)) }
+
 // securityHeaders serves a strict Content-Security-Policy and related hardening
 // on every response (R8): no inline scripts, self-hosted assets only, no framing,
 // no referrer leakage. The command registry and no-JS forms are designed
 // to satisfy this policy (inert JSON data, external ES modules, no inline JS).
 func securityHeaders(next http.Handler) http.Handler {
-	const csp = "default-src 'self'; script-src 'self'; style-src 'self'; " +
-		"img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
-		"form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", csp)
+		h.Set("Content-Security-Policy", csp(false))
 		// "same-origin": no referrer is ever sent to another origin (the leakage
 		// we care about), but same-origin requests keep their referrer AND their
 		// Origin header. It must NOT be "no-referrer": that makes browsers send
@@ -778,8 +791,9 @@ func (s *Server) appDeps() apps.Deps {
 			u, ok := s.identity.Unit()
 			return ok && u.Unasked(price)
 		},
-		Money:  s.render.moneyExact,
-		Amount: s.parseAmount,
+		Money:      s.render.moneyExact,
+		Amount:     s.parseAmount,
+		ShowImages: showImages,
 		Ignore: func(r *http.Request, q client.Party) error {
 			me, err := s.me(r)
 			if err != nil {

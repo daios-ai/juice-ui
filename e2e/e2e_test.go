@@ -10,11 +10,13 @@ package e2e
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -34,7 +36,8 @@ const (
 	ui       = "http://127.0.0.1:8791"
 	kernelAt = "http://127.0.0.1:4791"
 	password = "secret123"
-	answer   = "The fake model answers."
+	answer   = "The fake model answers." // as read; the model writes it in Markdown (written)
+	written  = "The fake model **answers**."
 )
 
 func TestMain(m *testing.M) {
@@ -102,6 +105,8 @@ func TestStories(t *testing.T) {
 		waitText(t, sys, "Chat model")
 		chooseModel(t, sys, "chat", "fake-chat")
 		chooseModel(t, sys, "embed", "fake-embed")
+		time.Sleep(time.Second) // a refresh the last choice started has answered
+		wait(t, sys, modelChosen("chat", "fake-chat")+" && "+modelChosen("embed", "fake-embed"))
 		submit(t, sys, "form.install-step", nil)
 		waitText(t, sys, "recovery phrase")
 		submit(t, sys, "form.install-step", map[string]string{"understand": "on"})
@@ -150,7 +155,21 @@ func TestStories(t *testing.T) {
 	step(t, "a post is answered by the assistant", func(t *testing.T) {
 		visit(t, ann, room)
 		post(t, ann, "hello")
+		waitText(t, ann, "hello")
 		waitText(t, ann, answer)
+		wait(t, ann, `[...document.querySelectorAll('.prose strong')].some((b) => b.textContent === "answers")`)
+	})
+
+	step(t, "a message is formatted, and its image loads only when clicked", func(t *testing.T) {
+		picture := pictureHost(t)
+		visit(t, ann, room)
+		post(t, ann, "**look** at ![a cat]("+picture+")")
+		wait(t, ann, `[...document.querySelectorAll('.prose strong')].some((b) => b.textContent === "look")`)
+		wait(t, ann, `document.querySelector('a[data-image]')?.textContent.includes("127.0.0.1")`)
+		wait(t, ann, `(() => { const m = [...document.querySelectorAll('.msg')].find((m) => m.querySelector('.prose strong')?.textContent === "look");
+			return m && !m.querySelector('[data-json-switch]') && !document.querySelector('.prose img'); })()`)
+		click(t, ann, `a[data-image]`)
+		wait(t, ann, `(() => { const i = document.querySelector('.prose img'); return i && i.complete && i.naturalWidth > 0 && i.alt === "a cat"; })()`)
 	})
 
 	step(t, "a tool chosen from the launcher runs in the panel and its result is the draft", func(t *testing.T) {
@@ -299,7 +318,7 @@ func fakeModel(t *testing.T) {
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		reply(w, map[string]any{"id": "c1", "object": "chat.completion", "model": "fake-chat", "choices": []any{
-			map[string]any{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": answer}}},
+			map[string]any{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": written}}},
 			"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
 	})
 	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
@@ -324,11 +343,24 @@ func fakeModel(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 }
 
+// pictureHost serves one image over https on loopback, as an image host on
+// the web would, and returns its address.
+func pictureHost(t *testing.T) string {
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/cat.png"
+}
+
 // ---- the browser ----
 
 func newBrowser(t *testing.T) context.Context {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath("/usr/bin/google-chrome"), chromedp.NoSandbox, chromedp.UserDataDir(t.TempDir()),
+		chromedp.Flag("ignore-certificate-errors", true), // pictureHost's certificate is the test's own
 		chromedp.WindowSize(1280, 1000))
 	alloc, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	t.Cleanup(cancel)
@@ -469,9 +501,17 @@ func chooseModel(t *testing.T, ctx context.Context, block, model string) {
 	sel := "#m-" + block + "-provider"
 	run(t, ctx, "provider "+block, chromedp.WaitReady(sel), chromedp.SetValue(sel, "ollama"),
 		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).dispatchEvent(new Event("change", {bubbles: true}))`, sel), nil))
-	opt := fmt.Sprintf(`#m-%s-model option[value=%q]`, block, model)
-	wait(t, ctx, fmt.Sprintf(`!!document.querySelector(%q)`, opt))
-	run(t, ctx, "model "+block, chromedp.SetValue("#m-"+block+"-model", model))
+	// The model field is replaced each time its list arrives, so the model is
+	// chosen once no refresh is in flight, on the field then current.
+	wait(t, ctx, modelChosen(block, model))
+}
+
+// modelChosen chooses a block's model, once no refresh is in flight and its
+// field offers it, and is true when it is chosen.
+func modelChosen(block, model string) string {
+	return fmt.Sprintf(`(() => { const s = document.querySelector("#m-%s-model");
+		if (document.querySelector(".htmx-request") || !s || !s.querySelector('option[value=%q]')) return false;
+		s.value = %q; return s.value === %q; })()`, block, model, model, model)
 }
 
 func signIn(t *testing.T, ctx context.Context, handle string) {
@@ -498,12 +538,13 @@ func deposit(t *testing.T, ctx context.Context, address, amount string) {
 	waitText(t, ctx, "Recorded")
 }
 
-// post types into the composer and sends with Enter.
+// post types into the composer and sends with Enter, waiting until it is
+// sent (the box empties); what it reads as depends on its Markdown.
 func post(t *testing.T, ctx context.Context, text string) {
 	t.Helper()
 	box := `form[data-composer] [data-fields] textarea`
 	run(t, ctx, "post", chromedp.WaitVisible(box), chromedp.Click(box), chromedp.SendKeys(box, text), chromedp.KeyEvent("\r"))
-	waitText(t, ctx, text)
+	wait(t, ctx, `document.querySelector('form[data-composer] [data-fields] textarea').value === ""`)
 }
 
 // launch opens the composer's launcher and types a query after its slash.

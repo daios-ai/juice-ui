@@ -1945,6 +1945,7 @@ func (c *Chat) getRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	c.nameRead(r, &read)
 	c.sidebar(r, p, signal, c.readOf(service, read, at, signal), false)
+	c.deps.ShowImages(w)
 	post, err := c.postSchema(r, service)
 	if c.deps.HandleErr(w, r, err) {
 		return

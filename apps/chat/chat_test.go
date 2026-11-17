@@ -1018,6 +1018,7 @@ func testChat(t *testing.T, f *fakeKernel) (*Chat, *scs.SessionManager) {
 	c.deps = apps.Deps{
 		Unasked:    unit.Unasked,
 		Money:      unit.Format,
+		ShowImages: func(w http.ResponseWriter) { w.Header().Set("X-Images", "shown") },
 		Address:    testAddress,
 		KeyAddress: func(h string) string { return h + "@" + testKey },
 		Label:      client.Party.Label,
@@ -1695,7 +1696,9 @@ func TestPostMessageRunsThePostForm(t *testing.T) {
 // schema's own message control under its own name and type hint, has_fields,
 // no label, no switch, no sealed view (the room is the page's address); [/],
 // the arrow that sends, the balance beneath; [@] only where there is someone
-// to choose among. Every entry is the view of its value.
+// to choose among. A text entry is formatted prose with no JSON switch; any
+// other body, and a text holding a JSON document, is the view of its value.
+// The page alone admits https images, which load only when clicked.
 func TestRoomRendersTheComposerBar(t *testing.T) {
 	f := newFakeKernel()
 	defer f.close()
@@ -1715,10 +1718,31 @@ func TestRoomRendersTheComposerBar(t *testing.T) {
 		return as(c, sm, c.getRoom, req).Body.String()
 	}
 	pair, _ := seated(f.svc.Store, pr("ann@testnet"), "cafe", []string{pr("bob@testnet")})
-	if _, _, err := f.svc.Store.Post(pair.ID, pr("ann@testnet"), json.RawMessage(`"hello"`)); err != nil {
-		t.Fatal(err)
+	for _, b := range []string{`"**hello** ![cat](https://i.example/cat.png)"`, `{"score":7}`, `"{\"a\":1}"`} {
+		if _, _, err := f.svc.Store.Post(pair.ID, pr("ann@testnet"), json.RawMessage(b)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat/room/"+addr(pair.ID), nil)
+	req.SetPathValue("id", addr(pair.ID))
+	if rec := as(c, sm, c.getRoom, req); rec.Header().Get("X-Images") != "shown" {
+		t.Error("a room's page admits https images")
 	}
 	got := page(pair.ID)
+	_, text, ok := strings.Cut(got, `<div class="prose">`)
+	if !ok {
+		t.Fatal("no text entry is drawn as prose")
+	}
+	text, _, _ = strings.Cut(text, "</div>")
+	if !strings.Contains(text, "<strong>hello</strong>") || !strings.Contains(text, `data-image data-alt="cat"`) || strings.Contains(text, "<img") {
+		t.Errorf("a text entry is prose, its image a button: %s", text)
+	}
+	if n := strings.Count(got, `<div class="prose">`); n != 1 {
+		t.Errorf("only the text is prose: %d", n)
+	}
+	if n := strings.Count(got, `class="view" data-json`); n != 2 {
+		t.Errorf("the structured body and the text holding JSON keep the view: %d", n)
+	}
 	for _, want := range []string{`<form class="composer"`, `data-composer`, `<div class="composer-bar">`, `name="has_fields" value="1"`,
 		`name="t_/message" value="string"`, `name="f_/message"`, `<label class="sr-only" for="f_/message">message</label>`,
 		`data-launcher`, `#slash`, `class="btn-send" data-send aria-label="Send"`, `#arrow-up`, `id="balance"`, `name="watch" value="balance::0"`,

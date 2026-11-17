@@ -850,6 +850,25 @@ tr.rowable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px
 .msg-body { flex: 1 1 auto; min-width: 0; }
 .msg-who { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: 0; }
 .msg-who .h { font-size: var(--font-size-sm); font-weight: 650; color: var(--text); }
+/* A text message (requirements §6.7): Markdown at the body's size, set as
+   text, not as a field; links underlined in the text's colour, never the
+   accent (§8.1); code, tables and wide images scroll or shrink within it. */
+.prose { overflow-wrap: anywhere; line-height: 1.5; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose p, .prose ul, .prose ol, .prose blockquote, .prose pre, .prose table { margin: 0 0 var(--space-2); }
+.prose ul, .prose ol { padding-left: var(--space-5); }
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 { font-size: inherit; font-weight: 600; margin: var(--space-3) 0 var(--space-1); }
+.prose a { color: inherit; text-decoration: underline; }
+.prose blockquote { padding-left: var(--space-3); border-left: 2px solid var(--border-strong); color: var(--text-muted); }
+.prose code { font-family: var(--font-mono); font-size: var(--font-size-sm); background: var(--surface-2); border-radius: var(--radius-s); padding: 0 var(--space-1); }
+.prose pre { overflow-x: auto; background: var(--surface-2); border-radius: var(--radius-s); padding: var(--space-2) var(--space-3); }
+.prose pre code { background: none; padding: 0; }
+.prose table { display: block; overflow-x: auto; border-collapse: collapse; }
+.prose th, .prose td { border: 1px solid var(--border); padding: var(--space-1) var(--space-2); text-align: left; }
+.prose hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-3) 0; }
+.prose img { display: block; max-width: 100%; max-height: calc(var(--control-h) * 10); border-radius: var(--radius-s); }
+.prose .image-link { text-decoration: none; }
 /* Members disclosure lives in the room's crumb. */
 .member-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; font-size: var(--font-size-sm); }
 .member-row form { margin-left: auto; }

@@ -121,6 +121,33 @@ func TestCSPHeaderPresent(t *testing.T) {
 	}
 }
 
+// Images from other hosts are admitted on a page that shows a message's
+// images alone, a room's (showImages); every other page keeps images to this
+// server, and the rest of the policy is the same on both.
+func TestOnlyARoomAdmitsWebImages(t *testing.T) {
+	kernel := authKernel()
+	defer kernel.Close()
+	srv := httptest.NewServer(newTestHandler(t, kernel.URL))
+	defer srv.Close()
+	cl := loginClient(t, srv.URL)
+	for _, p := range []string{"/login", "/wallet", "/browse", "/settings"} {
+		resp, err := cl.Get(srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if c := resp.Header.Get("Content-Security-Policy"); !strings.Contains(c, "img-src 'self' data:;") || strings.Contains(c, "https:") {
+			t.Errorf("%s admits images from elsewhere: %q", p, c)
+		}
+	}
+	rec := httptest.NewRecorder()
+	showImages(rec)
+	room := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(room, "img-src 'self' data: https:;") || strings.Replace(room, " https:", "", 1) != csp(false) {
+		t.Errorf("a room admits https images and nothing else more: %q", room)
+	}
+}
+
 // TestFormQueryOpensDialogNoJS verifies the no-JS floating-form fallback: a
 // whitelisted ?form= renders the matching dialog with the [open] attribute.
 func TestFormQueryOpensDialogNoJS(t *testing.T) {

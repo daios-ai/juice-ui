@@ -879,3 +879,22 @@ document.addEventListener('click', async (e) => {
     bar.classList.remove('htmx-request');
   }
 });
+
+// An image in a message is a button naming its host (server/markdown.go):
+// clicked, it becomes the image, linking to its address, so nothing is loaded
+// from another host until the viewer asks. Delegated, so entries arriving by
+// the heartbeat behave alike; without script the button opens the image.
+document.addEventListener("click", (e) => {
+  const button = e.target.closest("a[data-image]");
+  if (!button) return;
+  e.preventDefault();
+  const link = document.createElement("a");
+  link.href = button.href;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  const img = document.createElement("img");
+  img.src = button.href;
+  img.alt = button.dataset.alt || "";
+  link.append(img);
+  button.replaceWith(link);
+});

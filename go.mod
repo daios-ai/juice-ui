@@ -7,6 +7,7 @@ require (
 	github.com/chromedp/chromedp v0.10.0
 	github.com/gorilla/csrf v1.7.3
 	github.com/tyler-smith/go-bip39 v1.1.0
+	github.com/yuin/goldmark v1.7.8
 	golang.org/x/mod v0.17.0
 	golang.org/x/sync v0.8.0
 	golang.org/x/text v0.17.0

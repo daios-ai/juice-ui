@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.75.0
+Version: 0.75.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.75.1.** A text message in a room reads as formatted
+> text: Markdown, as Slack, Discord and ChatGPT render it, with no box and no
+> JSON switch; a structured body keeps the view. An image is a web link in the
+> text, `![alt](https://…)`, shown as a button naming its host and loaded only
+> when clicked, so no host learns who read a message unless the viewer
+> chooses; chat stores no images, since every byte through Juice is a paid,
+> capped action and members share no web server (Nostr's answer for the same
+> reasons). Raw HTML is shown as typed and a named link shows the address it
+> goes to (§8.1). A room's page alone admits https images (§8).
 
 > **What changed in 0.75.0.** An account without money is led to the wallet.
 > Chat cannot open without money, since joining it, listing rooms and making
@@ -3068,7 +3078,13 @@ second; a principal it cannot name, or not yet, is spelled by key, with the name
 its kernel calls itself. What a post's first word addresses stays chat's address, since
 chat routes by it. An address is never stored as identity; an **entry** is
 one thing said in a room, author, time, a body that is a JSON value (a post
-being a string) and a stored kind (post, answer or failure); a
+being a string) and a stored kind (post, answer or failure). A body that is
+text is drawn as Markdown (CommonMark with tables, strikethrough and literal
+addresses as links, the line breaks typed kept), under §8.1's limits, with no
+box and no JSON switch; an image in it, `![alt](https://…)`, is a button naming
+its host that becomes the image when clicked, and without script opens it. Any
+other body, and a text holding a JSON object or array, is drawn as the view
+with its switch (§7); a
 **delivery** is a kernel task chat creates for one recipient of a post; a
 **hand-off** is a post that addresses a member; a post **addresses** a member
 when it is text whose first word, trailing `,:;.!?` removed, is that member's
@@ -3848,7 +3864,9 @@ imports its live rooms, members and messages once and never writes that file.
 refresh, session-limit, logout-revocation, and cookie/CSRF rules of §5, and additionally MUST:
 route all browser traffic through the BFF as the sole kernel client; serve a
 strict `Content-Security-Policy` (no inline script, self-hosted htmx, no
-third-party origins) with `frame-ancestors 'none'` and `Referrer-Policy:
+third-party origins, images from this server alone, save that a room's page
+admits `https` images, which exist there only once a viewer clicks an image's
+button, §6.7) with `frame-ancestors 'none'` and `Referrer-Policy:
 same-origin` (leaks no referrer to any other origin, while preserving the
 same-origin `Origin` header that `gorilla/csrf` validates — `no-referrer` MUST
 NOT be used, as it makes browsers send `Origin: null` and breaks every
@@ -3867,7 +3885,15 @@ descriptions, schemas, lookup results, args, results, `partial_args`, failure
    linked, formatted or turned into an icon, a boolean is its word. The chrome
    vocabulary defined in §7 MUST NOT be applied to counterparty content. Trust affordances
    MUST key on kernel-captured fields (transaction parties, process owner, a
-   task's `required_caller` and `action`), never on payload shape.
+   task's `required_caller` and `action`), never on payload shape. **One
+   exception:** a room's text entry is a member's own words to the room, not a
+   provider's offer, and is drawn as Markdown (§6.7) under limits that keep it
+   from impersonating chrome or moving anyone: raw HTML is shown as typed; a
+   link is only to an `http(s)` address and a named link shows that address
+   beside its name, so a name never disguises a destination (Signal,
+   WhatsApp); an image is never loaded unasked; table cells carry no
+   alignment, which would be an inline style; links take the text's colour,
+   never the accent.
 2. Route every act that moves the user's own money — run (including a run of a
    value-bearing action, which is how money is sent, §6.5), force-end —
    through a confirm whose button names the amount or refund. A task
@@ -3917,13 +3943,22 @@ Every production `.go` file has a `_test.go` file with independent tests.
   driven by headless Chrome inside a network namespace, with a fake
   OpenAI-compatible model on Ollama's address; one subtest per story, in order,
   each through the pages a person uses: install with `play` selected, the
-  operator signing in and recording payments, a person signing up and landing
-  in a room with the assistant seated, the assistant funded by Fund, a post
-  answered by the assistant, a tool from the launcher and a tool from search
+  operator landing on the wallet and recording a payment there, a person
+  without money landing on the wallet and in their room once funded, the
+  assistant funded by Fund, a post answered by the assistant in Markdown and
+  drawn formatted, a message whose bold is drawn bold and whose image loads only
+  when clicked, from an https host of the test's own, a tool from the launcher and a tool from search
   results each opened and run in the panel with its result as the draft and the
   page still the room, a room made by address and joined by the invited person
   from the sidebar, and a post's charge in Transactions. A commit needs it green
   beside `make check`;
+* a room's text (`server/markdown.go`): each Markdown construct drawn as
+  meant, a named link with its address, an image as its button; over a hostile
+  corpus — scripts, raw HTML, `javascript:` and `data:` addresses, attribute
+  breaking alt text and addresses, an aligned table — the output holds only the
+  tags it writes, no handler, `style`, `align` or `src` attribute, no image
+  element, and no link but to an `http(s)` address; only a text body is prose;
+  a room's page alone admits `https` images;
 * the process supervisor (`supervisor`), with real short-lived processes: output and
   its bound while a program runs, restart and its growing delay, an unchanged
   declaration leaving the delay alone, SIGTERM then SIGKILL to the group, Start and

@@ -248,6 +248,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"jsonEdit":       jsonEdit,
 		"view":           View,
 		"valueBlock":     valueBlock,
+		"prose":          prose,
 		"download":       resultDownload,
 		"statusClass":    statusClass,
 		"truncate":       truncate,
@@ -497,11 +498,20 @@ func valueBlock(raw json.RawMessage, download string) ValueBlock {
 	doc := raw
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		if t := strings.TrimSpace(s); t != "" && (t[0] == '{' || t[0] == '[') && json.Valid([]byte(t)) {
-			doc = json.RawMessage(t)
+		if d, ok := textDocument(s); ok {
+			doc = d
 		}
 	}
 	return ValueBlock{Root: View(doc), Raw: raw, Download: download}
+}
+
+// textDocument is the JSON object or array a text holds, if it holds one.
+func textDocument(s string) (json.RawMessage, bool) {
+	t := strings.TrimSpace(s)
+	if t != "" && (t[0] == '{' || t[0] == '[') && json.Valid([]byte(t)) {
+		return json.RawMessage(t), true
+	}
+	return nil, false
 }
 
 // resultDownload is the download route of a transaction's result, or "" when
