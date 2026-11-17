@@ -367,6 +367,12 @@ separates it from the content above, and nothing else does (§4).
   input's border and ground; ticked, it fills with ink (`--text`) and shows
   the set's `#check` tick in the ground — the switch's language, never the
   accent. Beside its words in `label.check`.
+- **Radio:** for one choice among a few (about five at most) that need
+  comparing; a select otherwise. The checkbox's circle: chosen, it fills with
+  ink around a dot of ground. The group is a `fieldset` (no box) whose `legend`
+  reads as a label; each choice is a `label.choice` wrapping its radio and its
+  lines, the name first, then smaller lines (a note, a muted description). A
+  disabled choice carries `aria-disabled` on its label.
 - **Textarea:** starts at **exactly one line** (`min-height: var(--control-h)`),
   **autosizes** to content up to 10 lines then scrolls; mono; `rows="1"`. Never
   a fixed multi-line box.

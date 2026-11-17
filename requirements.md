@@ -1,7 +1,17 @@
 # Juice Web UI Requirements
 
-Version: 0.74.0
+Version: 0.74.1
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.74.1.** The installer's World step is a list of radio
+> choices, each world's name, symbol and description in one row, in place of a
+> drop-down and a separate table in the kernel's alphabetical order. `play`
+> comes first, for learning Juice, and stays selected; `polygon` follows, for
+> real money, so choosing it is deliberate; every other world the kernel lists
+> stands under Experimental. Only the installer names worlds (§1). The
+> interface gains a radio (grammar §5.4). The kernel pin is v0.21.3, whose
+> shipped `llm/chat` price is 1,800 and whose cross-kernel ticket is 0.10 of
+> the token; juicedocs refreshed.
 
 > **What changed in 0.74.0.** Chat is priced, and a minuscule price needs no
 > confirmation. Kernel v0.21.1 prices every native at its cost, `sys/resolve`
@@ -1299,9 +1309,13 @@ words, polled until it answers. Nothing on that card names an installation.
   release would ignore the recovery key, so the step stops there, naming both
   versions, until Try again.
 * **World** is one of those `juice kernel worlds` lists (the world files and the
-  shipped worlds not yet written), each with its symbol and the kernel's own
-  description, `play` preselected, one the kernel would refuse shown disabled with
-  its error; only a listed, servable world is accepted. **Kernel** takes the
+  shipped worlds not yet written), chosen from radio choices, each with its
+  symbol and the kernel's own description, one the kernel would refuse shown
+  disabled with its error; only a listed, servable world is accepted. The
+  installer names two worlds, and nothing else in the interface names any:
+  `play` first, "For learning Juice.", preselected, and `polygon` second, "For
+  real money.", which moves real money and so is never chosen by default; every
+  other world follows under Experimental, in the kernel's order. **Kernel** takes the
   kernel's name and the superuser's password, twice, with `sys` read-only above
   it. The world and the kernel name each state their one consequence.
 * **Models** chooses the kernel's language models with the models form (§6.6):

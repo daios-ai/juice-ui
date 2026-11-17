@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -490,13 +491,31 @@ type view struct {
 	Page, Back, Local, Ended bool
 	Error, URL, Command      string
 	Jobs                     []job
-	Failed                   bool // a job waits for Try again
-	Worlds                   []World
-	World                    World // the chosen one, on the summary
+	Failed                   bool     // a job waits for Try again
+	Worlds, Experimental     []choice // the named worlds, then the rest
+	World                    World    // the chosen one, on the summary
 	Chosen, Handle, Home     string
 	Words                    []string
 	Phrase                   string
 	Models                   any // the models page, and the summary's rows
+}
+
+// The worlds the installer names, in the order it shows them: play to learn
+// on, selected first, and polygon for real money. Every other world the kernel
+// lists is experimental. Nothing outside the installer names a world.
+var named = []note{
+	{"play", "For learning Juice."},
+	{"polygon", "For real money."},
+}
+
+type note struct{ Name, Note string }
+
+// choice is one world on the World page, with the installer's note on it and
+// whether it is the one selected.
+type choice struct {
+	World
+	Note   string
+	Chosen bool
 }
 
 type stepView struct { // State: "done", "current", "todo"
@@ -545,14 +564,23 @@ func (in *Installer) view(r *http.Request) view {
 		if err != nil && v.Error == "" {
 			v.Error = err.Error()
 		}
-		v.Worlds = ws
+		if v.Chosen == "" {
+			v.Chosen = "play"
+		}
+		for _, n := range named {
+			for _, w := range ws {
+				if w.Name == n.Name {
+					v.Worlds = append(v.Worlds, choice{w, n.Note, w.Name == v.Chosen})
+				}
+			}
+		}
 		for _, w := range ws {
 			if w.Name == in.world {
 				v.World = w
 			}
-		}
-		if v.Chosen == "" {
-			v.Chosen = "play"
+			if !slices.ContainsFunc(named, func(n note) bool { return n.Name == w.Name }) {
+				v.Experimental = append(v.Experimental, choice{w, "", w.Name == v.Chosen})
+			}
 		}
 		v.Home = filepath.Join(in.o.Home, "kernels", in.world)
 	case "phrase":

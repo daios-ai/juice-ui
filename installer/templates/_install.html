@@ -19,12 +19,15 @@
   <div class="install-content stack">
     {{if .Error}}{{template "_error" .Error}}{{end}}
     {{if eq .Step "world"}}
-    <div class="field">
-      <label for="i-world">World</label>
+    <fieldset class="field">
+      <legend>World</legend>
       <p class="help">The network this kernel joins, for life.</p>
-      <select id="i-world" name="world" class="mono" required>{{range .Worlds}}<option value="{{.Name}}"{{if .Error}} disabled{{else if eq .Name $.Chosen}} selected{{end}}>{{.Name}}{{with .Symbol}} · {{.}}{{end}}</option>{{end}}</select>
-    </div>
-    <dl class="kv">{{range .Worlds}}<dt class="mono">{{.Name}}</dt><dd>{{if .Error}}{{.Error}}{{else}}{{.Description}}{{end}}</dd>{{end}}</dl>
+      {{range .Worlds}}{{template "_install_world" .}}{{end}}
+    </fieldset>
+    {{with .Experimental}}<fieldset class="field">
+      <legend>Experimental</legend>
+      {{range .}}{{template "_install_world" .}}{{end}}
+    </fieldset>{{end}}
     {{else if eq .Step "kernel"}}
     <div class="field">
       <label for="i-handle">Kernel name</label>
@@ -59,6 +62,15 @@
   </div>
 </form>
 {{end}}
+{{end}}
+
+{{/* _install_world — one world of the World page: a radio beside its name
+     and symbol, the installer's note, and the kernel's description, or the
+     error that makes the kernel refuse it, disabled. */}}
+{{define "_install_world"}}
+<label class="choice"{{if .Error}} aria-disabled="true"{{end}}><input type="radio" name="world" value="{{.Name}}" required{{if .Error}} disabled{{else if .Chosen}} checked{{end}}>
+  <span><span class="mono">{{.Name}}{{with .Symbol}} · {{.}}{{end}}</span>{{with .Note}}<span>{{.}}</span>{{end}}<span class="muted">{{if .Error}}{{.Error}}{{else}}{{.Description}}{{end}}</span></span>
+</label>
 {{end}}
 
 {{/* _install_jobs — a job step in the same three slots, polled every 2 s while

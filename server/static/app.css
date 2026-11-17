@@ -609,8 +609,9 @@ textarea {
 textarea, .field .box { padding-block: calc((var(--control-h) - 1.5em - 2px) / 2); }
 /* A checkbox (§5.4): a square at the icon size, in an input's border and
    ground; ticked, it fills with ink and shows the set's tick in the ground —
-   the switch's language, never the accent. */
-input[type=checkbox] {
+   the switch's language, never the accent. A radio is the same circle; chosen,
+   it fills with ink around a dot of ground. */
+input[type=checkbox], input[type=radio] {
   appearance: none; flex: 0 0 auto; display: inline-grid; place-content: center; vertical-align: middle;
   width: var(--icon-md); height: var(--icon-md); margin: 0;
   border: 1px solid var(--border-strong); border-radius: calc(var(--radius-s) / 2);
@@ -620,10 +621,21 @@ input[type=checkbox]::before {
   content: ""; width: var(--icon-sm); height: var(--icon-sm); background: var(--bg); transform: scale(0); transition: transform .1s;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / contain no-repeat;
 }
-input[type=checkbox]:checked { background: var(--text); border-color: var(--text); }
-input[type=checkbox]:checked::before { transform: scale(1); }
-input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-input[type=checkbox]:disabled { opacity: .5; cursor: default; }
+input[type=checkbox]:checked, input[type=radio]:checked { background: var(--text); border-color: var(--text); }
+input[type=checkbox]:checked::before, input[type=radio]:checked::before { transform: scale(1); }
+input[type=checkbox]:focus-visible, input[type=radio]:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+input[type=checkbox]:disabled, input[type=radio]:disabled { opacity: .5; cursor: default; }
+input[type=radio] { border-radius: 50%; }
+input[type=radio]::before { content: ""; width: calc(var(--icon-md) / 3); height: calc(var(--icon-md) / 3); border-radius: 50%; background: var(--bg); transform: scale(0); transition: transform .1s; }
+/* A radio group (§5.4): a fieldset with no box, its legend read as a label;
+   each choice a label.choice, the radio beside lines of words. */
+fieldset { border: 0; padding: 0; margin-inline: 0; min-width: 0; }
+legend { padding: 0; font-weight: 600; margin-bottom: var(--space-1); }
+label.choice { display: flex; align-items: flex-start; gap: var(--space-2); font-weight: 400; margin: var(--space-3) 0 0; cursor: pointer; }
+label.choice > input { margin-top: calc((1.5em - var(--icon-md)) / 2); }
+label.choice > span { display: flex; flex-direction: column; min-width: 0; }
+label.choice > span > span + span { font-size: var(--font-size-sm); }
+label.choice[aria-disabled] { cursor: default; }
 .error-text { color: var(--danger); font-size: var(--font-size-sm); margin-top: var(--space-1); }
 
 /* Status pills (financial trust signal). Square, bordered, text-only fills. */

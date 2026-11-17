@@ -42,6 +42,7 @@ type fakeKernel struct {
 	startErr  error         // Start fails with it, when set
 	ran       []string      // the programs started (Options.Run): what was installed by then, per call
 	startedAt []int         // how many times the programs had been started, per Start
+	worlds    []World       // the worlds listed, when set
 }
 
 func (k *fakeKernel) Local() bool { return !k.remote }
@@ -77,10 +78,14 @@ func (k *fakeKernel) CanCreate() error {
 	return k.canCreate
 }
 func (k *fakeKernel) Worlds() ([]World, error) {
+	if k.worlds != nil {
+		return k.worlds, nil
+	}
 	return []World{
-		{Name: "play", Description: "no real money", Rail: "manual", Symbol: "fUSD"},
-		{Name: "polygon", Description: "USDT0 on Polygon", Rail: "evm", Symbol: "USDT0"},
 		{Name: "broken", Error: "parse world file"},
+		{Name: "arbitrum-one", Description: "USDT0 on Arbitrum One", Rail: "evm", Symbol: "USDT0"},
+		{Name: "polygon", Description: "USDT0 on Polygon", Rail: "evm", Symbol: "USDT0"},
+		{Name: "play", Description: "no real money", Rail: "manual", Symbol: "fUSD"},
 	}, nil
 }
 func (k *fakeKernel) Create(world, handle, password, key string, m any) error {
@@ -362,8 +367,8 @@ func TestANewMachineInstallsThenOpensTheUI(t *testing.T) {
 	}
 	b := page(t, h)
 	for _, want := range []string{`aria-current="step"><span class="install-mark" aria-hidden="true">2</span><span>World</span>`,
-		"Step 2 of 7", `<option value="play" selected>play · fUSD</option>`, `<dt class="mono">play</dt><dd>no real money</dd>`,
-		`<option value="broken" disabled>broken</option>`, "<span>Download</span>", "<span>Install</span>"} {
+		"Step 2 of 7", `value="play" required checked>`, `<span class="mono">play · fUSD</span>`, `<span class="muted">no real money</span>`,
+		`<label class="choice" aria-disabled="true"><input type="radio" name="world" value="broken" required disabled>`, `<span class="muted">parse world file</span>`, "<span>Download</span>", "<span>Install</span>"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("world page lacks %q", want)
 		}
@@ -452,6 +457,50 @@ func TestNoPhraseKeepsTheInstallerStopped(t *testing.T) {
 	}
 	if rec := next(t, h, "world", url.Values{"world": {"play"}}); rec.Code != http.StatusSeeOther {
 		t.Errorf("a post changes nothing: %d", rec.Code)
+	}
+}
+
+// The World page names two worlds: play to learn on, selected, then polygon
+// for real money, then every other world the kernel lists under Experimental,
+// in the kernel's order and with no note; a world chosen and gone back to is
+// still the one selected.
+func TestTheWorldPageNamesPlayAndPolygon(t *testing.T) {
+	in, h := start(t, &fakeKernel{})
+	waitFor(t, in, "world")
+	b := page(t, h)
+	at := func(s string) int {
+		i := strings.Index(b, s)
+		if i < 0 {
+			t.Errorf("the world page lacks %q", s)
+		}
+		return i
+	}
+	order := []int{at(`value="play"`), at("For learning Juice."), at(`value="polygon"`), at("For real money."),
+		at("<legend>Experimental</legend>"), at(`value="broken"`), at(`value="arbitrum-one"`)}
+	for i := 1; i < len(order); i++ {
+		if order[i] < order[i-1] {
+			t.Errorf("out of order at %d: %v", i, order)
+		}
+	}
+	if strings.Count(b, "For learning Juice.")+strings.Count(b, "For real money.") != 2 || strings.Count(b, " checked>") != 1 ||
+		!strings.Contains(b, `value="play" required checked>`) {
+		t.Error("each note once, and play alone selected")
+	}
+	next(t, h, "world", url.Values{"world": {"polygon"}})
+	waitFor(t, in, "kernel")
+	do(t, h, http.MethodPost, "/install/back", url.Values{"step": {"kernel"}}, nil)
+	waitFor(t, in, "world")
+	if b := page(t, h); !strings.Contains(b, `value="polygon" required checked>`) || strings.Contains(b, `value="play" required checked>`) {
+		t.Error("polygon chosen is polygon shown again")
+	}
+}
+
+// With no world but the two named, the page has no Experimental group.
+func TestNoOtherWorldNoExperimentalGroup(t *testing.T) {
+	in, h := start(t, &fakeKernel{worlds: []World{{Name: "polygon", Symbol: "USDT0"}, {Name: "play", Symbol: "fUSD"}}})
+	waitFor(t, in, "world")
+	if b := page(t, h); strings.Contains(b, "Experimental") || !strings.Contains(b, `value="polygon"`) {
+		t.Errorf("the page: %s", b)
 	}
 }
 
