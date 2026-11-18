@@ -126,8 +126,8 @@ func TestAdminVisibleToSuperuser(t *testing.T) {
 
 	// The peers page leads with this kernel's money and highlights its nav entry.
 	pbody := getBody(t, cl, srv.URL+"/admin/peers")
-	if !strings.Contains(pbody, `class="stat-row"`) || !strings.Contains(pbody, "owed to us") {
-		t.Error("/admin/peers must state this kernel's money through the figures")
+	if !strings.Contains(pbody, `class="stat-row"`) || !strings.Contains(pbody, "Credit to other kernels") {
+		t.Error("/admin/peers must lead with this kernel's money through the figures")
 	}
 	if !regexp.MustCompile(`<a href="/admin/peers" class="menu-item" role="menuitem" aria-current="page"><svg[^>]*>.*?</svg>Network</a>`).MatchString(pbody) {
 		t.Error("/admin/peers must mark the Network destination current")
@@ -451,7 +451,7 @@ func TestNetworkPageStatesCreditAndObligations(t *testing.T) {
 	cl := loginClientAs(t, srv.URL, "sys")
 
 	body := getBody(t, cl, srv.URL+"/admin/peers")
-	for _, want := range []string{"owed to us", "320 credits", "1000 credits", "limit", "fee 20%", "import 5%"} {
+	for _, want := range []string{"Credit to other kernels", "320 credits", "of a 1000 credits limit (credit_limit)", ">Fee</dt>", "20% <span", ">Import fee</dt>", "5% <span"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("kernel card missing the credit position or rates: %q", want)
 		}

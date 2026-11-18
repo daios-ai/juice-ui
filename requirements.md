@@ -1,7 +1,14 @@
 # Juice Web UI Requirements
 
-Version: 0.76.1
+Version: 0.76.2
 Status: design draft — endpoint surface gated against the running kernel
+
+> **What changed in 0.76.2.** The network page leads with three figures of
+> this kernel's money, each with a note: balances held, backed in full or
+> short; credit to other kernels, of its limit; and earnings, with money in
+> transit only when there is some. Below them a card of its fees and
+> tickets, each beside its key in the config file and explained by a tooltip, in place of six unexplained figures and
+> a line of abbreviations (§6.6).
 
 > **What changed in 0.76.1.** Every kernel on the network page carries its
 > key again, shortened, with the copy of the whole key, in a Key column of its
@@ -2917,13 +2924,20 @@ Rename and Suspend (or Unsuspend), since a user has no page here.
   obligation settles per call on the rail (kernel §D14, §P10).
   So a peer row states its names and its strip, and nothing else. A balance, a
   position or a credit figure here would be a fabrication.
-* **This kernel's own credit position is the money fact on this page.** It
-  renders through the figures (§5.6 of the grammar), above the list: what this
-  kernel has delivered to foreign buyers and not been paid for, against the limit it set (`exposure` of `credit_limit`); the
-  rates it serves under (`fee_bps`, `remote_bps`, `import_bps`), its ticket face
-  and the largest ticket it will take from a buyer (`lottery_max`, above which a
-  call is refused with a signed rejection); the operator split of `sys` into earnings and money in transit; and the
-  solvency identity, whose `gap` MUST carry a danger pill when it is non-zero.
+* **This kernel's own money leads the page** through the figures (§5.6 of
+  the grammar), each with one note under its amount: **Balances held** (the
+  solvency identity's `liabilities`), noted "backed in full", or with a danger
+  pill "short by" or "over by" the `gap` when it is non-zero; **Credit to other
+  kernels** (`exposure`), noted "of a … limit (credit_limit)"; **Earned**
+  (`sys.earnings`); and **In transit** only when it is non-zero, noted with its
+  parts (paying out, unclaimed, held for gas: `pending_payouts`,
+  `held_deposits`, `refill_locks`). Below them, a card holding a labelled list
+  (`dl.kv`) of what the config file sets: **Fee**, **Serving markup** and
+  **Import fee** (`fee_bps`, `remote_bps`, `import_bps`), each the exact
+  percentage; **Ticket** and **Largest ticket** (`lottery`, `lottery_max`).
+  Each value stands beside its key in the config file, and each label's
+  tooltip is the config schema's description of that key, so the page and
+  Configuration name and explain it alike.
   A rail halt (`stop`) MUST render as a warning banner, led by `#alert`, naming
   its reason, on this page because the money verbs it refuses are here. Where
   the world has addresses, the page states what the vault held at the last

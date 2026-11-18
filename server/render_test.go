@@ -312,6 +312,16 @@ func TestPct(t *testing.T) {
 	}
 }
 
+// A configured rate reads as the percentage the config file sets, exactly:
+// 250 basis points are 2.5%, never a rounded 2% or 3%.
+func TestBps(t *testing.T) {
+	for n, want := range map[int64]string{2000: "20", 250: "2.5", 5: "0.05", 0: "0", 10000: "100"} {
+		if got := bps(n); got != want {
+			t.Errorf("bps(%d) = %q want %q", n, got, want)
+		}
+	}
+}
+
 func TestRatingPct(t *testing.T) {
 	cases := []struct {
 		est   float64
@@ -1162,16 +1172,21 @@ func TestKernelListOrderAndPills(t *testing.T) {
 	}
 }
 
-// This kernel's money is the page's headline money, so it renders through the
-// one figures component; a solvency gap carries a danger pill only when it is
-// non-zero (§6.6).
-func TestNetworkFiguresAndGap(t *testing.T) {
+// This kernel's money leads the page as headline figures, each with its one
+// note: the balances it holds, backed or short; what other kernels owe it, of
+// the limit the config file sets; its earnings; money in transit only when
+// there is some. Below them the rates and tickets, each beside its config key
+// (§6.6).
+func TestNetworkStatesTheKernelsMoney(t *testing.T) {
 	r, err := NewRenderer(playKernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	render := func(gap int64) string {
-		id := client.Identity{Handle: "me", PublicKey: "PK", Exposure: 7, CreditLimit: 900, Solvency: client.Solvency{Gap: gap}}
+	render := func(gap, transit int64) string {
+		id := client.Identity{Handle: "me", PublicKey: "PK",
+			Sys:      client.SysFunds{Earnings: 710000, PendingPayouts: transit},
+			Solvency: client.Solvency{Liabilities: 10000000, Vault: 10000000 - gap, Gap: gap},
+			Exposure: 420000, CreditLimit: 50000000, FeeBps: 2000, RemoteBps: 500, ImportBps: 250, Lottery: 100000, LotteryMax: 500000}
 		rec := httptest.NewRecorder()
 		p := Page{Me: "sys@testnet", IsSuperuser: true, CSRFField: template.HTML("<input>"), Data: adminPeersView{Identity: id, Kernels: kernelRows(id, nil)}}
 		if err := r.Render(rec, 200, "admin_peers", p); err != nil {
@@ -1179,18 +1194,35 @@ func TestNetworkFiguresAndGap(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	body := render(0)
-	for _, want := range []string{`class="stat-row"`, ">owed to us<", ">credit limit<"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("figures missing %q: %s", want, body)
+	inOrder := func(body string, want ...string) {
+		t.Helper()
+		at := 0
+		for _, w := range want {
+			i := strings.Index(body[at:], w)
+			if i < 0 {
+				t.Fatalf("lacks %q after byte %d, in order: %s", w, at, body)
+			}
+			at += i + len(w)
 		}
 	}
-	if strings.Contains(body, `status-danger">gap`) {
-		t.Error("a zero gap must not render")
+	body := render(0, 0)
+	inOrder(body, `class="stat-row"`,
+		">Balances held<", "10000000 credits", `<div class="note">backed in full</div>`,
+		">Credit to other kernels<", "420000 credits", `<div class="note">of a 50000000 credits limit (credit_limit)</div>`,
+		">Earned<", "+710000 credits",
+		`<dl class="kv card">`,
+		`<dt title="The operator's fee on each call's margin.">Fee</dt>`, `<dd>20% <span class="mono muted">fee_bps</span></dd>`,
+		`<dt title="Markup this kernel adds when serving another kernel's caller.">Serving markup</dt>`, `<dd>5% <span class="mono muted">remote_bps</span></dd>`,
+		`<dt title="Fee this kernel keeps when its caller buys from another kernel.">Import fee</dt>`, `<dd>2.5% <span class="mono muted">import_bps</span></dd>`,
+		`<dt title="Face value of the ticket this kernel writes to settle a small debt to another kernel; 0 pays every debt exactly.">Ticket</dt>`, "100000 credits", `<span class="mono muted">lottery</span>`,
+		`<dt title="Largest ticket this kernel accepts from a buyer.">Largest ticket</dt>`, "500000 credits", `<span class="mono muted">lottery_max</span>`)
+	for _, gone := range []string{"In transit", "status-danger", "margin here", "draws for", "user credits"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("found %q", gone)
+		}
 	}
-	if !strings.Contains(render(3), `<span class="pill status-danger">gap `) {
-		t.Error("a non-zero gap must carry a danger pill")
-	}
+	inOrder(render(300000, 0), ">Balances held<", `<div class="note"><span class="pill status-danger">short by 300000 credits</span></div>`)
+	inOrder(render(0, 4200000), ">Earned<", ">In transit ◷<", "4200000 credits", `<div class="note">paying out 4200000 credits · unclaimed 0 credits · held for gas 0 credits</div>`)
 }
 
 // A named peer row opens the peer's page, where it is named and suspended,

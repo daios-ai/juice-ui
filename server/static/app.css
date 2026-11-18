@@ -501,6 +501,7 @@ h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--font-size-lg); }
 .stat .label { color: var(--text-muted); font-size: var(--font-size-sm); }
 .stat .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-2xl); font-weight: 700; margin: var(--space-1) 0 0; }
 .stat a { font-size: var(--font-size-sm); color: var(--text-muted); }
+.stat .note { font-size: var(--font-size-sm); color: var(--text-muted); margin-top: var(--space-1); }
 
 /* Buttons — ONE geometry (grammar §5.1), four tiers:
      .btn          the neutral button — every command, and every other button

@@ -43,7 +43,7 @@ Three laws underpin everything:
 | **Update notice** | `.update-notice` (`_update_notice`) | the superuser's notice that a newer Juice is out: a `.btn` (`#arrow-up`, `Update to 0.69.0`) leading to Admin, between the rail and the avatar; its icon alone in the strip. The wrapper holds the heartbeat's input and draws no box (`display: contents`) |
 | Field | `.field` + inputs/select/textarea · `details.group` (a named nested node, folded behind its `summary`) · `div.group` (an array's element) · a configuration file's form (`/admin/config`, an agent's Config: `form.card.stack[data-json]` carrying `version`, the switch, `_form_fields`, Save) · `_control` (one control's markup, which `_field` wraps in its label and help and the composer bar uses alone) · `[data-rows]` / `[data-row]` / `[data-row-add]` / `[data-row-remove]` (repeatable rows) | forms |
 | **Switch** | `.switch` (`role="switch"`, `aria-checked`) · `_json_switch` | a binary view or setting: its label, then a track and knob, ink-filled when on; the JSON switch at the top right of a form and of a view (§5.4) |
-| **View** | `.view` · `.field .box` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries; in `_value_block`, a string holding a JSON object or array is viewed as that document, its raw JSON the stored string (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances) |
+| **View** | `.view` · `.field .box` · `_view` / `_value_block` partials (the `_field` partial with `ReadOnly` nodes) · `.switch` | **the** read-only JSON value — a result, a receipt's args and result, sealed `partial_args`, verification checks — in the run form's own anatomy, each control a box in the read-only register (no fill, a hairline), nothing submittable; a named nested node closed behind its name and size; raw JSON and Download behind the same JSON toggle the form carries; in `_value_block`, a string holding a JSON object or array is viewed as that document, its raw JSON the stored string (`requirements.md` §7). `dl.kv` is a label/value list of kernel facts (an account's balances, this kernel's rates and tickets, there in a `.card` with each config key muted beside its value and the key's description as its label's `title`) |
 | Dialog | `dialog.modal-form` · `dialog.modal-confirm` (`#modal-backdrop`, and `#idle`, the idle warning) · `dialog.palette` (the help overlay) | overlays (bottom-sheet on mobile) |
 | Status | `.pill` (+state) · `.sig-*` money signals · `.chip` (visibility/kind) | trust signals |
 | Feedback | `.outcome` · `.banner` (the one-shot notice included) · `.live-region` · `.progress` · `.badge` | results/notice |
@@ -599,8 +599,9 @@ separates it from the content above, and nothing else does (§4).
 
 - **Headline money figures are one component, `_figures`**: a `.stat-row` of
   `.stat` blocks — the label muted on top, the amount in mono coloured by its
-  signal (`sig-credited` with a `+`, `sig-escrow`). The wallet's and a
-  session's funds render through it; no page draws its own figures. An
+  signal (`sig-credited` with a `+`, `sig-escrow`), and an optional note
+  under it (`.note`, muted; a danger pill when it is an alarm). The wallet's,
+  a session's and this kernel's money on the network page render through it; no page draws its own figures. An
   account's locked balance is one helper, `lockedFigure`: `parked ◷` (escrow)
   for everyone, `locked ◷` unsignalled for the operator, whose locked also holds
   payouts in transit.
@@ -770,7 +771,9 @@ task, a ledger entry), the name alone stands: the kernel serves no title there.
 `admin` (users, money, access) and `network` (federation) are **two separate
 top-level nav entries** (`sys` only), not one page with a sub-nav — federation
 is a distinct concern. The `network` page leads with **this kernel's money**
-through `_figures` (§5.6), then the obligations, then **one record list**
+through `_figures` (§5.6, `kernelFigures`, each figure with its note), then a
+`dl.kv.card` of its rates and tickets, each value beside its config key in
+`.mono.muted`, its label's `title` the config schema's description, then the obligations, then **one record list**
 (§5.5, `_kernel_row`) of every known kernel: **this kernel**, then its
 **counterparties**, then the **known network**, each class in the kernel's
 order, paged and never polled. A class is a neutral `.pill` beside its name —
@@ -871,7 +874,8 @@ separate because the kernel's two routes are.
 A counterparty carries **no money at all**: a peer account is identity and
 moderation state, never a wallet (kernel §D14), so a row states its names and
 its strip. The money on this page is this kernel's
-own — exposure against its credit limit, the rates, the operator split, solvency,
+own — the operator split, solvency, exposure against its credit limit, the
+rates and the tickets,
 the vault's holdings at the last finalized block (token and native coin, a
 snapshot, as served), and a rail halt as a `.banner-error` warning — plus the
 obligations above.

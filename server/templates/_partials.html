@@ -111,15 +111,17 @@
 
 {{/* _figures — THE headline money figures (§5.6), one block each on every
      page that leads with money: the label, the mono amount coloured by its
-     signal, and a link to the records behind it when there are any. Build with
-     `figures` of `figure` (or `lockedFigure`, an account's locked), each
-     optionally `linked`. */}}
+     signal, and a link to the records behind it when there are any, then its
+     note when it has one. Build with `figures` of `figure` (or
+     `lockedFigure`, an account's locked), or `kernelFigures`. */}}
 {{define "_figures"}}
 <div class="stat-row">
   {{range .}}
   <div class="stat">
     <div class="label">{{.Label}}</div>
     <div class="value{{if .Signal}} sig-{{.Signal}}{{end}}">{{if eq .Signal "credited"}}+{{end}}{{money .Amount}}</div>
+    {{- if .Note}}
+    <div class="note">{{if .Alarm}}<span class="pill status-danger">{{.Note}}</span>{{else}}{{.Note}}{{end}}</div>{{end}}
   </div>
   {{end}}
 </div>

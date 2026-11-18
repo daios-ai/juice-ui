@@ -287,7 +287,8 @@ func TestStories(t *testing.T) {
 			visit(t, sys, pg)
 			wait(t, sys, `!!document.querySelector('table.records tbody tr td[data-label]')`)
 		}
-		visit(t, sys, "/login") // the entry screen is for a signed-out visitor alone
+		waitText(t, sys, "fee_bps") // the network page states this kernel's money with its config keys
+		visit(t, sys, "/login")     // the entry screen is for a signed-out visitor alone
 		wait(t, sys, `location.pathname !== "/login" && !document.querySelector('.auth')`)
 	})
 

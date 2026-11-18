@@ -259,6 +259,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"buildForm":      BuildForm,     // lets templates derive a FormModel from a raw schema
 		"taskForm":       BuildTaskForm, // a form with sealed arguments: the schema and its sealed part
 		"pct":            pct,
+		"bps":            bps,
 		"ratingPct":      ratingPct,
 		"refFolder":      refFolder,
 		"name":           r.name,
@@ -294,6 +295,7 @@ func NewRenderer(identity *KernelIdentity, appTemplates ...fs.FS) (*Renderer, er
 		"figure":         figure,
 		"lockedFigure":   lockedFigure,
 		"figures":        figures,
+		"kernelFigures":  r.kernelFigures,
 		"cardArt":        CardArt,
 		"initial":        initial,
 		"launcher":       launcherOf,
@@ -570,6 +572,10 @@ func shortAddr(a string) string {
 	}
 	return a[:6] + "…" + a[38:]
 }
+
+// bps renders a rate the config file sets in basis points as its exact
+// percentage, without trailing zeros: 2000 → "20", 250 → "2.5".
+func bps(n int64) string { return strconv.FormatFloat(float64(n)/100, 'f', -1, 64) }
 
 // pct formats the ratio n/d as a whole-number percentage string (e.g. "97").
 // Returns "—" when d is zero to avoid division by zero.
@@ -1042,12 +1048,15 @@ func (v idleView) State() string {
 
 // Figure is one headline money figure, drawn as a block: what it is, the
 // amount with its signal (§7) — "" plain, "credited" earned (signed +),
-// "escrow" parked. Every page that leads with money renders its figures
-// through the one _figures partial.
+// "escrow" parked — and an optional note under it, a danger pill when Alarm.
+// Every page that leads with money renders its figures through the one
+// _figures partial.
 type Figure struct {
 	Amount int64
 	Label  string
 	Signal string
+	Note   string
+	Alarm  bool
 }
 
 // figure builds a Figure (template helper).
@@ -1064,6 +1073,30 @@ func lockedFigure(amount int64, operator bool) Figure {
 		return figure(amount, "locked ◷", "")
 	}
 	return figure(amount, "parked ◷", "escrow")
+}
+
+// kernelFigures is this kernel's money as the network page leads with it
+// (§6.6): the balances it holds, backed in full or by how much they are not
+// (the solvency gap); what other kernels owe it (exposure) of its configured
+// credit_limit; its earnings; and the money in transit, only when there is
+// some, which happens only on a chain.
+func (r *Renderer) kernelFigures(i client.Identity) []Figure {
+	held := Figure{Amount: i.Solvency.Liabilities, Label: "Balances held", Note: "backed in full"}
+	switch gap := i.Solvency.Gap; {
+	case gap > 0:
+		held.Note, held.Alarm = "short by "+r.moneyExact(gap), true
+	case gap < 0:
+		held.Note, held.Alarm = "over by "+r.moneyExact(-gap), true
+	}
+	f := []Figure{held,
+		{Amount: i.Exposure, Label: "Credit to other kernels", Note: "of a " + r.moneyExact(i.CreditLimit) + " limit (credit_limit)"},
+		{Amount: i.Sys.Earnings, Label: "Earned", Signal: "credited"}}
+	s := i.Sys
+	if t := s.PendingPayouts + s.HeldDeposits + s.RefillLocks; t != 0 {
+		f = append(f, Figure{Amount: t, Label: "In transit ◷", Signal: "escrow",
+			Note: "paying out " + r.moneyExact(s.PendingPayouts) + " · unclaimed " + r.moneyExact(s.HeldDeposits) + " · held for gas " + r.moneyExact(s.RefillLocks)})
+	}
+	return f
 }
 
 // figures collects Figures for the _figures partial (template helper).

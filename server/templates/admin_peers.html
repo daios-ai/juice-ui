@@ -9,12 +9,18 @@
      led by #alert. Its reason is the kernel's, naming what to top up. */}}
 {{if $d.Identity.Stop}}<div class="banner banner-error" role="status"><svg class="ico ico-inline" aria-hidden="true"><use href="/static/icons.svg#alert"/></svg> Payments out are paused — {{$d.Identity.Stop.Reason}}{{if $d.Identity.Stop.Since}} (since {{shortTime $d.Identity.Stop.Since}}){{end}}.</div>{{end}}
 
-{{/* This kernel's own money (§6.6): what it has delivered to foreign buyers
-     and not been paid for, against the limit it set (§D14); the operator split
-     of sys; and the solvency identity. */}}
+{{/* This kernel's own money (§6.6): the headline figures, then a card of
+     the rates and tickets it serves under, each beside its key in the config
+     file, its label's title the config schema's description of that key. */}}
 {{$i := $d.Identity}}
-{{template "_figures" (figures (figure $i.Exposure "owed to us" "") (figure $i.CreditLimit "credit limit" "") (figure $i.Sys.Earnings "earned" "credited") (figure (sum (sum $i.Sys.PendingPayouts $i.Sys.HeldDeposits) $i.Sys.RefillLocks) "in transit ◷" "escrow") (figure $i.Solvency.Liabilities "user credits" "") (figure $i.Solvency.Vault "money in" ""))}}
-<p class="small muted">ticket <span class="mono">{{money $i.Lottery}}</span>{{if $i.LotteryMax}}, taking up to <span class="mono">{{money $i.LotteryMax}}</span>{{end}} · fee {{pct $i.FeeBps 10000}}% · serving {{pct $i.RemoteBps 10000}}% · import {{pct $i.ImportBps 10000}}%{{if $i.Solvency.Gap}} · <span class="pill status-danger">gap {{money $i.Solvency.Gap}}</span>{{end}}</p>
+{{template "_figures" (kernelFigures $i)}}
+<dl class="kv card">
+  <dt title="The operator's fee on each call's margin.">Fee</dt><dd>{{bps $i.FeeBps}}% <span class="mono muted">fee_bps</span></dd>
+  <dt title="Markup this kernel adds when serving another kernel's caller.">Serving markup</dt><dd>{{bps $i.RemoteBps}}% <span class="mono muted">remote_bps</span></dd>
+  <dt title="Fee this kernel keeps when its caller buys from another kernel.">Import fee</dt><dd>{{bps $i.ImportBps}}% <span class="mono muted">import_bps</span></dd>
+  <dt title="Face value of the ticket this kernel writes to settle a small debt to another kernel; 0 pays every debt exactly.">Ticket</dt><dd><span class="money">{{money $i.Lottery}}</span> <span class="mono muted">lottery</span></dd>
+  <dt title="Largest ticket this kernel accepts from a buyer.">Largest ticket</dt><dd><span class="money">{{money $i.LotteryMax}}</span> <span class="mono muted">lottery_max</span></dd>
+</dl>
 {{if $i.BlockchainAddress}}<p class="small muted">paid at {{template "_addr" (copyOf "address" $i.BlockchainAddress)}}</p>{{end}}
 {{/* What the vault held at the last finalized block — a snapshot the kernel
      read, not a live balance: the token, and the native coin its payouts burn
